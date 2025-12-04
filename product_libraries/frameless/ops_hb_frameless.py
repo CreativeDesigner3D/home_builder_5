@@ -164,25 +164,34 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         default='BASE'
     )  # type: ignore
 
-    cabinet = None
-    fill_mode: bool = True  # Whether to fill available gap
+    # Preview cage (lightweight, with array modifier)
+    preview_cage = None
+    array_modifier = None
+    
+    fill_mode: bool = True
+    cabinet_quantity: int = 1
+    auto_quantity: bool = True
+    current_gap_width: float = 0
+    max_single_cabinet_width: float = 0
+    individual_cabinet_width: float = 0
 
     def get_placed_object(self):
-        return self.cabinet.obj if self.cabinet else None
+        return self.preview_cage.obj if self.preview_cage else None
     
     def get_placed_object_width(self) -> float:
-        if self.cabinet:
-            return self.cabinet.get_input('Dim X')
-        return 0
+        """Returns the TOTAL width of all cabinets."""
+        return self.individual_cabinet_width * self.cabinet_quantity
     
     def set_placed_object_width(self, width: float):
-        if self.cabinet:
-            self.cabinet.set_input('Dim X', width)
-            self.fill_mode = False  # User set explicit width, disable fill
+        """Set width for a single cabinet."""
+        self.individual_cabinet_width = width
+        self.fill_mode = False
+        self.auto_quantity = False
+        self.update_preview_cage()
     
     def set_placed_object_height(self, height: float):
-        if self.cabinet:
-            self.cabinet.set_input('Dim Z', height)
+        if self.preview_cage:
+            self.preview_cage.set_input('Dim Z', height)
 
     def get_cabinet_depth(self, context) -> float:
         props = context.scene.hb_frameless
@@ -210,32 +219,62 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return props.default_wall_cabinet_location
         return 0
 
-    def create_cabinet(self, context):
-        """Create the cabinet."""
+    def create_preview_cage(self, context):
+        """Create a lightweight preview cage with array modifier."""
         props = context.scene.hb_frameless
         
-        self.cabinet = types_frameless.Cabinet()
-        self.cabinet.width = props.default_cabinet_width
-        self.cabinet.height = self.get_cabinet_height(context)
-        self.cabinet.depth = self.get_cabinet_depth(context)
-        self.cabinet.create('Cabinet')
+        # Create simple cage for preview
+        self.preview_cage = hb_types.GeoNodeCage()
+        self.preview_cage.create('Preview')
         
-        # Add doors
-        doors = types_frameless.Doors()
-        self.cabinet.add_cage_to_bay(doors)
+        self.individual_cabinet_width = props.default_cabinet_width
+        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+        self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
+        self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
+        self.preview_cage.set_input('Mirror Y', True)
         
-        self.register_placement_object(self.cabinet.obj)
+        # Add array modifier for quantity preview
+        self.array_modifier = self.preview_cage.obj.modifiers.new(name='Quantity', type='ARRAY')
+        self.array_modifier.use_relative_offset = True
+        self.array_modifier.relative_offset_displace = (1, 0, 0)
+        self.array_modifier.count = self.cabinet_quantity
         
-        # Register child objects too for cleanup
-        for child in self.cabinet.obj.children_recursive:
-            self.register_placement_object(child)
+        # Style the preview
+        self.preview_cage.obj.display_type = 'WIRE'
+        self.preview_cage.obj.show_in_front = True
+        
+        self.register_placement_object(self.preview_cage.obj)
+
+    def update_preview_cage(self):
+        """Update preview cage dimensions and array count."""
+        if not self.preview_cage:
+            return
+        
+        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+        self.array_modifier.count = self.cabinet_quantity
+
+    def calculate_auto_quantity(self, gap_width: float) -> int:
+        """Calculate how many cabinets needed so none exceed max width."""
+        if gap_width <= 0:
+            return 1
+        if gap_width <= self.max_single_cabinet_width:
+            return 1
+        import math
+        return math.ceil(gap_width / self.max_single_cabinet_width)
+
+    def update_cabinet_quantity(self, context, new_quantity: int):
+        """Update the number of cabinets."""
+        new_quantity = max(1, new_quantity)
+        if new_quantity != self.cabinet_quantity:
+            self.cabinet_quantity = new_quantity
+            self.auto_quantity = False
+            self.update_preview_cage()
 
     def set_position_on_wall(self, context):
-        """Position cabinet on the selected wall with gap-aware snapping."""
-        if not self.selected_wall or not self.cabinet:
+        """Position preview cage on the selected wall."""
+        if not self.selected_wall or not self.preview_cage:
             return
             
-        props = context.scene.hb_frameless
         wall = hb_types.GeoNodeWall(self.selected_wall)
         self.wall_length = wall.get_input('Length')
         
@@ -244,48 +283,86 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
         cursor_x = local_loc.x
         
-        cabinet_width = self.get_placed_object_width()
-        
         # Find available gap
         gap_start, gap_end, snap_x = self.find_placement_gap(
             self.selected_wall, 
             cursor_x, 
-            cabinet_width,
-            exclude_obj=self.cabinet.obj
+            self.individual_cabinet_width,
+            exclude_obj=self.preview_cage.obj
         )
         
         gap_width = gap_end - gap_start
+        self.current_gap_width = gap_width
         
-        # Fill mode - resize cabinet to fill gap
+        # Auto-calculate quantity if in auto mode
+        if self.auto_quantity and self.fill_mode:
+            new_qty = self.calculate_auto_quantity(gap_width)
+            if new_qty != self.cabinet_quantity:
+                self.cabinet_quantity = new_qty
+                self.array_modifier.count = self.cabinet_quantity
+        
+        # Calculate individual cabinet width
         if self.fill_mode and gap_width > 0:
-            # Limit to reasonable max width
-            fill_width = min(gap_width, units.inch(120))
-            self.cabinet.set_input('Dim X', fill_width)
+            self.individual_cabinet_width = gap_width / self.cabinet_quantity
             snap_x = gap_start
-            cabinet_width = fill_width
         
-        # Clamp to wall bounds
-        snap_x = max(0, min(snap_x, self.wall_length - cabinet_width))
+        # Update preview cage
+        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+        
+        # Clamp snap_x to wall bounds
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        snap_x = max(0, min(snap_x, self.wall_length - total_width))
         
         self.placement_x = snap_x
         
-        # Parent to wall and set position
-        self.cabinet.obj.parent = self.selected_wall
-        self.cabinet.obj.location.x = snap_x
-        self.cabinet.obj.location.y = 0  # Back of cabinet against wall
-        self.cabinet.obj.location.z = self.get_cabinet_z_location(context)
-        self.cabinet.obj.rotation_euler = (0, 0, 0)
+        # Position preview
+        self.preview_cage.obj.parent = self.selected_wall
+        self.preview_cage.obj.location.x = snap_x
+        self.preview_cage.obj.location.y = 0
+        self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
+        self.preview_cage.obj.rotation_euler = (0, 0, 0)
 
     def set_position_free(self):
-        """Position cabinet freely when not over a wall."""
-        if self.cabinet and self.hit_location:
-            self.cabinet.obj.parent = None
-            self.cabinet.obj.location = Vector(self.hit_location)
-            self.cabinet.obj.location.z = self.get_cabinet_z_location(bpy.context)
+        """Position preview freely when not over a wall."""
+        if self.preview_cage and self.hit_location:
+            self.preview_cage.obj.parent = None
+            self.preview_cage.obj.location = Vector(self.hit_location)
+            self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
+
+    def create_final_cabinets(self, context):
+        """Create the actual cabinet objects when user confirms placement."""
+        cabinets = []
+        current_x = self.placement_x
+        z_loc = self.get_cabinet_z_location(context)
+        
+        for i in range(self.cabinet_quantity):
+            cabinet = types_frameless.Cabinet()
+            cabinet.width = self.individual_cabinet_width
+            cabinet.height = self.get_cabinet_height(context)
+            cabinet.depth = self.get_cabinet_depth(context)
+            cabinet.create(f'Cabinet')
+            
+            # Add doors
+            doors = types_frameless.Doors()
+            cabinet.add_cage_to_bay(doors)
+            
+            # Position
+            cabinet.obj.parent = self.selected_wall
+            cabinet.obj.location.x = current_x
+            cabinet.obj.location.y = 0
+            cabinet.obj.location.z = z_loc
+            cabinet.obj.rotation_euler = (0, 0, 0)
+            
+            # Apply toggle mode for display
+            bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
+            
+            cabinets.append(cabinet)
+            current_x += self.individual_cabinet_width
+        
+        return cabinets
 
     def update_header(self, context):
         """Update header text with instructions."""
-        props = context.scene.hb_frameless
         unit_settings = context.scene.unit_settings
         
         if self.placement_state == hb_placement.PlacementState.TYPING:
@@ -295,12 +372,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 hb_placement.TypingTarget.WIDTH: "Width",
                 hb_placement.TypingTarget.HEIGHT: "Height",
             }.get(self.typing_target, "Value")
-            text = f"{target_name}: {self.typed_value}_ | Enter confirm | ←/→ offset | W width | F fill | Esc cancel"
+            text = f"{target_name}: {self.typed_value}_ | Enter confirm | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
         elif self.selected_wall:
             offset_str = self.get_offset_display(context)
-            width_str = units.unit_to_string(unit_settings, self.get_placed_object_width())
+            width_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
             fill_str = "Fill: ON" if self.fill_mode else "Fill: OFF"
-            text = f"{offset_str} | Width: {width_str} | {fill_str} | ←/→ offset | W width | F toggle fill | Click place | Esc cancel"
+            qty_str = f"Qty: {self.cabinet_quantity}"
+            text = f"{offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
         else:
             text = f"Place {self.cabinet_type.title()} Cabinet | Move over a wall | Esc to cancel"
         
@@ -309,15 +387,21 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     def execute(self, context):
         self.init_placement(context)
         
-        self.cabinet = None
+        self.preview_cage = None
+        self.array_modifier = None
         self.selected_wall = None
         self.wall_length = 0
         self.placement_x = 0
         self.offset_from_right = False
         self.position_locked = False
         self.fill_mode = context.scene.hb_frameless.fill_cabinets
+        self.cabinet_quantity = 1
+        self.auto_quantity = True
+        self.current_gap_width = 0
+        self.max_single_cabinet_width = units.inch(36)
+        self.individual_cabinet_width = context.scene.hb_frameless.default_cabinet_width
 
-        self.create_cabinet(context)
+        self.create_preview_cage(context)
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -328,10 +412,22 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
 
+        # Up/Down arrows to change quantity
+        if event.type == 'UP_ARROW' and event.value == 'PRESS':
+            self.update_cabinet_quantity(context, self.cabinet_quantity + 1)
+            self.position_locked = False
+            return {'RUNNING_MODAL'}
+        
+        if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
+            self.update_cabinet_quantity(context, self.cabinet_quantity - 1)
+            self.position_locked = False
+            return {'RUNNING_MODAL'}
+
         # Toggle fill mode with F
         if event.type == 'F' and event.value == 'PRESS':
             self.fill_mode = not self.fill_mode
-            self.position_locked = False  # Allow repositioning
+            self.auto_quantity = self.fill_mode
+            self.position_locked = False
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
@@ -340,14 +436,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
-        # Update snap (hide cabinet during raycast)
-        self.cabinet.obj.hide_set(True)
-        for child in self.cabinet.obj.children_recursive:
-            child.hide_set(True)
+        # Update snap (hide preview during raycast)
+        self.preview_cage.obj.hide_set(True)
         self.update_snap(context, event)
-        self.cabinet.obj.hide_set(False)
-        for child in self.cabinet.obj.children_recursive:
-            child.hide_set(False)
+        self.preview_cage.obj.hide_set(False)
 
         # Check if we're over a wall
         self.selected_wall = None
@@ -367,18 +459,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
         self.update_header(context)
 
-        # Left click - place cabinet
+        # Left click - create actual cabinets and place them
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.selected_wall:
-                # Remove from placement objects (confirmed)
-                if self.cabinet.obj in self.placement_objects:
-                    self.placement_objects.remove(self.cabinet.obj)
-                for child in self.cabinet.obj.children_recursive:
-                    if child in self.placement_objects:
-                        self.placement_objects.remove(child)
+                # Create the real cabinets
+                self.create_final_cabinets(context)
                 
-                # Apply toggle mode for display
-                bpy.ops.hb_frameless.toggle_mode(search_obj_name=self.cabinet.obj.name)
+                # Remove preview cage
+                if self.preview_cage and self.preview_cage.obj:
+                    bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
+                self.placement_objects = []
                 
                 hb_placement.clear_header_text(context)
                 context.window.cursor_set('DEFAULT')
