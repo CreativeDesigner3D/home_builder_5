@@ -190,6 +190,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5)
     window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)
     window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
+    window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
 
     wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material)# type: ignore
 

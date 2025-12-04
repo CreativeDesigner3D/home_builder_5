@@ -74,8 +74,8 @@ class HOME_BUILDER_5_PRO_PT_library(bpy.types.Panel):
             row.separator()
             if hb_scene.show_entry_doors_and_windows:
                 row = box.row()
-                row.operator('home_builder_doors_windows.draw_doors_windows',text="Door",icon='GREASEPENCIL')
-                row.operator('home_builder_doors_windows.draw_doors_windows',text="Window",icon='GREASEPENCIL')
+                row.operator('home_builder_doors_windows.place_door',text="Door",icon='GREASEPENCIL')
+                row.operator('home_builder_doors_windows.place_window',text="Window",icon='GREASEPENCIL')
 
             box = main_col.box()
             row = box.row()

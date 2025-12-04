@@ -352,10 +352,14 @@ class PlacementMixin:
     # Wall Children Utilities
     # -------------------------------------------------------------------------
     
-    def get_wall_children_sorted(self, wall_obj) -> list:
+    def get_wall_children_sorted(self, wall_obj, exclude_obj=None) -> list:
         """
         Get all placed objects on a wall, sorted by X location.
         Useful for finding gaps and snap points.
+        
+        Args:
+            wall_obj: The wall object to search
+            exclude_obj: Optional object to exclude (e.g., the object being placed)
         
         Returns list of (x_start, x_end, obj) tuples.
         """
@@ -363,6 +367,9 @@ class PlacementMixin:
         for child in wall_obj.children:
             # Skip helper objects
             if child.get('obj_x'):
+                continue
+            # Skip the object being placed
+            if exclude_obj and child == exclude_obj:
                 continue
             # Get object bounds on wall
             x_start = child.location.x
@@ -380,9 +387,15 @@ class PlacementMixin:
             
         return sorted(children, key=lambda x: x[0])
     
-    def find_placement_gap(self, wall_obj, cursor_x: float, object_width: float) -> tuple:
+    def find_placement_gap(self, wall_obj, cursor_x: float, object_width: float, exclude_obj=None) -> tuple:
         """
         Find the available gap at cursor position on a wall.
+        
+        Args:
+            wall_obj: The wall object
+            cursor_x: Cursor X position in wall's local space
+            object_width: Width of the object being placed
+            exclude_obj: Optional object to exclude from collision checks
         
         Returns (gap_start, gap_end, snap_x) where snap_x is the suggested
         X position for placement.
@@ -392,7 +405,7 @@ class PlacementMixin:
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
         
-        children = self.get_wall_children_sorted(wall_obj)
+        children = self.get_wall_children_sorted(wall_obj, exclude_obj)
         
         if not children:
             # Empty wall - full length available
