@@ -1,0 +1,244 @@
+import bpy
+import os
+from bpy.types import (
+        Operator,
+        Panel,
+        PropertyGroup,
+        UIList,
+        AddonPreferences,
+        )
+from bpy.props import (
+        BoolProperty,
+        FloatProperty,
+        FloatVectorProperty,
+        IntProperty,
+        PointerProperty,
+        StringProperty,
+        CollectionProperty,
+        EnumProperty,
+        )
+from .units import inch
+from .hb_types import Variable
+
+def add_driver_variables(driver,variables):
+    for var in variables:
+        new_var = driver.driver.variables.new()
+        new_var.type = 'SINGLE_PROP'
+        new_var.name = var.name
+        new_var.targets[0].data_path = var.data_path
+        new_var.targets[0].id = var.obj
+
+
+def update_main_tab(self,context):
+    # TODO: Load the correct library based on the main_tab
+    print("update_main_tab")
+
+
+def update_product_tab(self,context):
+    # TODO: Load the correct library based on the product_tab
+    print("update_product_tab")
+
+
+class Calculator_Prompt(PropertyGroup):
+    distance_value: FloatProperty(name="Distance Value",subtype='DISTANCE',precision=5)# type: ignore
+    equal: BoolProperty(name="Equal",default=True)# type: ignore
+    include: BoolProperty(name="Include In Calculation",default=True)# type: ignore
+
+    def draw(self,layout):
+        row = layout.row()
+        row.active = False if self.equal else True
+        row.prop(self,'distance_value',text=self.name)
+        row.prop(self,'equal',text="")
+
+    def get_var(self,calculator_name,name):
+        prompt_path = 'home_builder.calculators["' + calculator_name + '"].prompts["' + self.name + '"]'
+        return Variable(self.id_data, prompt_path + '.distance_value',name)    
+
+    def get_value(self):
+        return self.distance_value
+
+    def set_value(self,value):
+        self.distance_value = value
+
+
+class Calculator(PropertyGroup):
+    prompts: CollectionProperty(name="Prompts",type=Calculator_Prompt)# type: ignore
+    distance_obj: PointerProperty(name="Distance Obj",type=bpy.types.Object)# type: ignore
+
+    def set_total_distance(self,expression="",variables=[],value=0):
+        data_path = 'home_builder.calculator_distance'
+        driver = self.distance_obj.driver_add(data_path)
+        add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def draw(self,layout):
+        col = layout.column(align=True)
+        box = col.box()
+        row = box.row()
+        row.label(text=self.name)
+        props = row.operator('pc_prompts.add_calculator_prompt',text="",icon='ADD')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name
+        props = row.operator('pc_prompts.edit_calculator',text="",icon='OUTLINER_DATA_GP_LAYER')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name
+        
+        box.prop(self.distance_obj.home_builder,'calculator_distance')
+        box = col.box()
+        for prompt in self.prompts:
+            prompt.draw(box)
+        box = col.box()
+        row = box.row()
+        row.scale_y = 1.3
+        props = row.operator('pc_prompts.run_calculator')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name        
+
+    def add_calculator_prompt(self,name):
+        prompt = self.prompts.add()
+        prompt.name = name
+        return prompt
+
+    def get_calculator_prompt(self,name):
+        if name in self.prompts:
+            return self.prompts[name]
+
+    def remove_calculator_prompt(self,name):
+        pass
+
+    def calculate(self):
+        if not self.distance_obj:
+            return
+        self.distance_obj.hide_viewport = False
+        bpy.context.view_layer.update()
+        non_equal_prompts_total_value = 0
+        equal_prompt_qty = 0
+        calc_prompts = []
+        for prompt in self.prompts:
+            if prompt.equal:
+                if prompt.include:
+                    equal_prompt_qty += 1
+                calc_prompts.append(prompt)
+            else:
+                if prompt.include:
+                    non_equal_prompts_total_value += prompt.distance_value
+
+        if equal_prompt_qty > 0:
+            prompt_value = (self.distance_obj.home_builder.calculator_distance - non_equal_prompts_total_value) / equal_prompt_qty
+
+            for prompt in calc_prompts:
+                if prompt.include:
+                    prompt.distance_value = prompt_value
+                else:
+                    prompt.distance_value = 0
+
+            self.id_data.location = self.id_data.location 
+
+
+class Home_Builder_Object_Props(PropertyGroup):
+   
+    mod_name: StringProperty(name="Mod Name", default="")
+
+    calculators: CollectionProperty(type=Calculator, name="Calculators")# type: ignore
+    calculator_distance: FloatProperty(name="Calculator Distance",subtype='DISTANCE')# type: ignore
+    calculator_index: IntProperty(name="Calculator Index")# type: ignore
+
+    @classmethod
+    def register(cls):
+        bpy.types.Object.home_builder = PointerProperty(
+            name="PyCab Props",
+            description="PyCab Props",
+            type=cls,
+        )
+        
+    @classmethod
+    def unregister(cls):
+        del bpy.types.Object.home_builder    
+
+
+class Home_Builder_Scene_Props(PropertyGroup):
+    main_tab: EnumProperty(name="Library Tabs",
+                          items=[('ROOM',"Room","Show the Room Library"),
+                                 ('PRODUCTS',"Product","Show the Products Library")],
+                          default='ROOM',
+                          update=update_main_tab)# type: ignore 
+
+    product_tab: EnumProperty(name="Product Tab",
+                          items=[('FRAMELESS',"Frameless","Show the Frameless Library"),
+                                 ('FACE FRAME',"Face Frame","Show the Face Frame Library"),
+                                 ('CLOSET',"Closet","Show the Closet Library")],
+                          default='FRAMELESS',
+                          update=update_product_tab)# type: ignore 
+
+    room_name: StringProperty(name="Room Name", default="")
+    room_type: StringProperty(name="Room Type", default="")
+
+    wall_type: EnumProperty(name="Wall Type",
+                          items=[('Exterior',"Exterior","Exterior Wall"),
+                                 ('Interior',"Interior","Interior Wall"),
+                                 ('Half',"Half","Half Wall"),
+                                 ('Fake',"Fake","Fake Wall")],
+                          default='Exterior')# type: ignore  
+
+    ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5)
+    half_wall_height: FloatProperty(name="Half Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
+    fake_wall_height: FloatProperty(name="Fake Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
+    wall_thickness: FloatProperty(name="Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)
+
+    door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5)
+    door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5)
+    door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5)
+    window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)
+    window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
+
+    wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material)# type: ignore
+
+    show_entry_doors_and_windows: BoolProperty(name="Show Entry Doors and Windows", default=False)
+    show_obstacles: BoolProperty(name="Show Obstacles", default=False)
+    show_decorations: BoolProperty(name="Show Decorations", default=False)
+    show_materials: BoolProperty(name="Show Materials", default=False)
+    show_room_settings: BoolProperty(name="Show Room Settings", default=False)
+    show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)
+
+    @classmethod
+    def register(cls):
+        bpy.types.Scene.home_builder = PointerProperty(
+            name="Home Builder Props",
+            description="Home Builder Props",
+            type=cls,
+        )
+        
+    @classmethod
+    def unregister(cls):
+        del bpy.types.Scene.home_builder    
+
+class Home_Builder_Window_Manager_Props(PropertyGroup):
+
+    progress: FloatProperty(name="Progress",default=1.0)# type: ignore  
+
+    def get_user_preferences(self,context):
+        preferences = context.preferences
+        add_on_prefs = preferences.addons[os.path.basename(os.path.dirname(__file__))].preferences
+        return add_on_prefs
+
+    @classmethod
+    def register(cls):
+        bpy.types.WindowManager.home_builder = PointerProperty(
+            name="Home Builder Props",
+            description="Home Builder Props",
+            type=cls,
+        )
+        
+    @classmethod
+    def unregister(cls):
+        del bpy.types.WindowManager.home_builder   
+
+classes = (
+    Calculator_Prompt,
+    Calculator,
+    Home_Builder_Object_Props,
+    Home_Builder_Scene_Props,
+    Home_Builder_Window_Manager_Props,
+)
+
+register, unregister = bpy.utils.register_classes_factory(classes)                     

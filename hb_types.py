@@ -1,0 +1,484 @@
+import bpy
+import os
+from typing import Optional, Any
+from . import units
+
+geometry_nodes_path = os.path.join(os.path.dirname(__file__),'geometry_nodes')
+cabinet_part_modifiers_path = os.path.join(geometry_nodes_path,'CabinetPartModifiers')
+
+class Variable():
+
+    obj = None
+    data_path = ""
+    name = ""
+
+    def __init__(self,obj,data_path,name):
+        self.obj = obj
+        self.data_path = data_path
+        self.name = name
+
+
+class GeoNodeObject:
+
+    obj = None
+
+    def __init__(self,obj: Optional[bpy.types.Object] = None):
+        if obj:
+            self.obj = obj
+
+    def create(self,geo_node_name, name):
+        """Load a geometry node group and create an object with it"""
+        if geo_node_name not in bpy.data.node_groups:
+            file_path = os.path.join(geometry_nodes_path, geo_node_name + '.blend')
+            with bpy.data.libraries.load(file_path) as (data_from, data_to):
+                data_to.node_groups = [geo_node_name]
+        
+        geo_node_group = bpy.data.node_groups[geo_node_name]
+        mesh = bpy.data.meshes.new(name)
+        self.obj = bpy.data.objects.new(name, mesh)
+        
+        # Add geometry nodes modifier
+        mod = self.obj.modifiers.new(name=geo_node_name, type='NODES')
+        mod.node_group = geo_node_group
+        
+        # Add custom properties to the object
+        self.obj.home_builder.mod_name = mod.name
+        # Link object to scene collection
+        bpy.context.scene.collection.objects.link(self.obj)
+
+    def create_curve(self,geo_node_name, name):
+        hb_props = bpy.context.window_manager.home_builder
+        add_on_prefs = hb_props.get_user_preferences(bpy.context)           
+        """Load a geometry node group and create an object with it"""
+        if geo_node_name not in bpy.data.node_groups:
+            file_path = os.path.join(geometry_nodes_path, geo_node_name + '.blend')
+            with bpy.data.libraries.load(file_path) as (data_from, data_to):
+                data_to.node_groups = [geo_node_name]
+        
+        geo_node_group = bpy.data.node_groups[geo_node_name]
+        curve = bpy.data.curves.new('Dimension','CURVE')
+        spline = curve.splines.new('POLY')
+        spline.points.add(1)
+        self.obj = bpy.data.objects.new('Dimension',curve)
+        
+        # Add geometry nodes modifier
+        mod = self.obj.modifiers.new(name=geo_node_name, type='NODES')
+        mod.node_group = geo_node_group
+        
+        # Add custom properties to the object
+        self.obj.home_builder.mod_name = mod.name
+        self.obj.color = add_on_prefs.annotation_color
+        # Link object to scene collection
+        bpy.context.scene.collection.objects.link(self.obj)
+
+    def add_driver_variables(self,driver,variables):
+        for var in variables:
+            new_var = driver.driver.variables.new()
+            new_var.type = 'SINGLE_PROP'
+            new_var.name = var.name
+            new_var.targets[0].data_path = var.data_path
+            new_var.targets[0].id = var.obj
+
+    def add_property(self,name,type,value,combo_items=[]):
+        obj = self.obj
+
+        if type == 'CHECKBOX':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(description='CABINET_BUILDER_PROP')
+
+        if type == 'DISTANCE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='DISTANCE',description='CABINET_BUILDER_PROP')
+
+        if type == 'ANGLE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='ANGLE',description='CABINET_BUILDER_PROP')
+
+        if type == 'PERCENTAGE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='PERCENTAGE',min=0,max=100,description='CABINET_BUILDER_PROP')
+
+        if type == 'COMBOBOX':
+            obj[name] = value
+            cb_list = []
+            for item in combo_items:
+                tup_item = (item,item,item)
+                cb_list.append(tup_item)
+            pm = obj.id_properties_ui(name)
+            pm.update(description='CABINET_BUILDER_PROP',items=cb_list)      
+
+    def var_prop(self, prop_name, name):
+        """Get a variable from a property"""
+        return Variable(self.obj,'["' + prop_name + '"]',name)
+
+    def var_input(self, input_name, name):
+        """Safely set geometry node input value
+        
+        Args:
+            input_name: Name of the input parameter
+            Name: Name of the variable
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            raise ValueError("Object does not have geometry node modifier")
+        
+        try:
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
+        except KeyError:
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
+        
+        if not mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = mod.node_group.interface.items_tree[input_name] 
+        data_path = 'modifiers["' + mod.name + '"]["' + node_input.identifier + '"]'    
+        return Variable(self.obj.id_data,data_path,name)
+
+    def var_location(self,name,axis):
+        data_path = 'location.' + axis
+        return Variable(self.obj.id_data,data_path,name)
+
+    def var_rotation(self,name,axis):
+        data_path = 'rotation_euler.' + axis
+        return Variable(self.obj.id_data,data_path,name)
+
+    def driver_location(self,axis,expression,variables=[]):
+        if axis == 'x':
+            index = 0
+        elif axis == 'y':
+            index = 1
+        elif axis == 'z':
+            index = 2
+
+        driver = self.obj.driver_add('location',index)
+        self.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def driver_rotation(self,axis,expression,variables=[]):
+        if axis == 'x':
+            index = 0
+        elif axis == 'y':
+            index = 1
+        elif axis == 'z':
+            index = 2
+
+        driver = self.obj.driver_add('rotation_euler',index)
+        self.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def driver_input(self, input_name, expression, variables=[]):
+        """Safely add driver to input
+        
+        Args:
+            obj: Blender object with geometry node modifier
+            input_name: Name of the input parameter
+            value: Value to set
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            raise ValueError("Object does not have geometry node modifier")
+        
+        try:
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
+        except KeyError:
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
+        
+        if not mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in mod.node_group.interface.items_tree:
+            print("MOD",mod)
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = mod.node_group.interface.items_tree[input_name]
+        driver = self.obj.driver_add('modifiers["' + mod.name + '"]["' + node_input.identifier + '"]')
+        self.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def driver_prop(self, prop_name, expression, variables=[]):
+        """Add driver to Blender Property
+        
+        Args:
+            prop_name: Name of the property
+            expression: Expression to set
+            variables: Variables to use in the expression
+            
+        """
+
+        driver = self.obj.driver_add(f'["{prop_name}"]')
+        self.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def set_input(self, input_name, value):
+        """Safely set geometry node input value
+        
+        Args:
+            obj: Blender object with geometry node modifier
+            input_name: Name of the input parameter
+            value: Value to set
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            raise ValueError("Object does not have geometry node modifier")
+        
+        try:
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
+        except KeyError:
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
+        
+        if not mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = mod.node_group.interface.items_tree[input_name]
+        # If interface_update is not called, the input will change but not update the model
+        mod.node_group.interface_update(bpy.context)
+        mod[node_input.identifier] = value
+
+    def get_input(self,input_name):
+        """Safely get geometry node input value
+        
+        Args:
+            obj: Blender object with geometry node modifier
+            input_name: Name of the input parameter
+            value: Value to set
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            raise ValueError("Object does not have geometry node modifier")
+        
+        try:
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
+        except KeyError:
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
+        
+        if not mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+
+        node_input = mod.node_group.interface.items_tree[input_name]
+        return mod[node_input.identifier]
+     
+
+class GeoNodeWall(GeoNodeObject):
+
+    obj_x = None
+
+    def create(self,name):
+        super().create('GeoNodeWall',name)
+        hb_props = bpy.context.window_manager.home_builder
+        add_on_prefs = hb_props.get_user_preferences(bpy.context)        
+        self.obj['IS_WALL_BP'] = True
+        self.obj.color = add_on_prefs.wall_color
+
+        length = self.var_input('Length', 'length')
+
+        #Create a object to store the wall length used for constraints
+        self.obj_x = bpy.data.objects.new("obj_x",None)
+        self.obj_x.empty_display_size = .01
+        self.obj_x.location = (0,0,0)
+        self.obj_x.parent = self.obj
+        self.obj_x["obj_x"] = True        
+        self.obj_x.lock_location = (False,True,True)       
+        self.obj_x.lock_rotation = (True,True,True) 
+        bpy.context.scene.collection.objects.link(self.obj_x)
+
+        driver = self.obj_x.driver_add('location',0)
+        self.add_driver_variables(driver,[length])
+        driver.driver.expression = 'length'
+
+    def assign_materials(self,context):
+        if not context.scene.home_builder.wall_material:
+            #TODO: GET MATERIAL
+            pass
+        mat = context.scene.home_builder.wall_material
+        self.set_input("Top Surface",mat)
+        self.set_input("Bottom Surface",mat)
+        self.set_input("Left Surface",mat)
+        self.set_input("Right Surface",mat)
+        self.set_input("Front Surface",mat)
+        self.set_input("Back Surface",mat)
+
+    def connect_to_wall(self,wall):
+        constraint = self.obj.constraints.new('COPY_LOCATION')
+        constraint.target = wall.obj_x
+
+
+class GeoNodeCage(GeoNodeObject):
+
+    def create(self,name):
+        super().create('GeoNodeCage',name) 
+        self.obj['IS_GEONODE_CAGE'] = True
+        self.obj.display.show_shadows = False
+        self.obj.display_type = 'WIRE'
+        self.obj.color = (0,0,0,1)
+        self.obj.visible_camera = False
+        self.obj.visible_shadow = False
+        self.obj.hide_probe_volume = False
+        self.obj.hide_probe_sphere = False
+        self.obj.hide_probe_plane = False
+
+
+class GeoNodeRectangle(GeoNodeObject):
+
+    def create(self,name):
+        super().create('GeoNodeRectangle',name)
+
+
+class GeoNodeCutpart(GeoNodeObject):
+
+    def create(self,name):
+        super().create('GeoNodeCutpart',name)  
+
+    def add_part_modifier(self,token_type,token_name):
+        cpm = CabinetPartModifier(self.obj)
+        cpm.add_node(token_type,token_name)
+        cpm.mod.show_viewport = True
+        return cpm
+
+
+class GeoNode5PieceDoor(GeoNodeObject):  
+
+    def create(self,name):
+        super().create('GeoNode5PieceDoor',name)       
+
+
+class GeoNodeHardware(GeoNodeObject):  
+
+    def create(self,name):
+        super().create('GeoNodeHardware',name)  
+
+
+class GeoNodeDimension(GeoNodeObject):  
+
+    def create(self,name):
+        super().create_curve('GeoNodeDimension',name)
+        self.obj['IS_2D_ANNOTATION'] = True  
+        self.set_input("Arrow Height",units.inch(2.8))
+        self.set_input("Arrow Length",units.inch(1.8))
+        self.set_input("Line Thickness",units.inch(.2))
+        self.set_input("Extend Line",units.inch(1))
+        self.set_input("Text Size",units.inch(6.25))
+
+
+class CabinetPartModifier(GeoNodeObject):
+
+    mod = None
+    # node_group = None
+
+    def get_node(self,token_type):
+        token_path = os.path.join(cabinet_part_modifiers_path,token_type + ".blend")
+
+        if token_type in bpy.data.node_groups:
+            return bpy.data.node_groups[token_type]
+
+        if os.path.exists(token_path):
+
+            with bpy.data.libraries.load(token_path) as (data_from, data_to):
+                for ng in data_from.node_groups:
+                    if ng == token_type:
+                        data_to.node_groups = [ng]
+                        break    
+            
+            for ng in data_to.node_groups:
+                return ng    
+
+    def add_node(self,token_type,token_name):
+        node_group = self.get_node(token_type)
+        self.mod = self.obj.modifiers.new(name=token_name,type='NODES')
+        self.mod.node_group = node_group
+        # self.node_group = node_group
+        self.mod.show_expanded = False   
+
+    def driver_input(self, input_name, expression, variables=[]):
+        """Safely add driver to input
+        
+        Args:
+            input_name: Name of the input parameter
+            expression: Expression to set
+            variables: Variables to use in the expression
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not self.mod:
+            raise ValueError("Cabinet Part Modifier not found")
+
+        if not self.mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in self.mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = self.mod.node_group.interface.items_tree[input_name]
+        driver = self.obj.driver_add('modifiers["' + self.mod.name + '"]["' + node_input.identifier + '"]')
+        self.add_driver_variables(driver,variables)
+        driver.driver.expression = expression         
+
+    def set_input(self, input_name, value):
+        """Safely set geometry node input value
+        
+        Args:
+            input_name: Name of the input parameter
+            value: Value to set
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not self.mod:
+            raise ValueError("Cabinet Part Modifier not found")
+        
+        if not self.mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in self.mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = self.mod.node_group.interface.items_tree[input_name]
+        # If interface_update is not called, the input will change but not update the model
+        self.mod.node_group.interface_update(bpy.context)
+        self.mod[node_input.identifier] = value
+
+    def get_input(self,input_name):
+        """Safely get geometry node input value
+        
+        Args:
+            input_name: Name of the input parameter
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not self.mod:
+            raise ValueError("Cabinet Part Modifier not found")
+        
+        if not self.mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in self.mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+
+        node_input = self.mod.node_group.interface.items_tree[input_name]
+        return self.mod[node_input.identifier]        
