@@ -16,7 +16,8 @@ class TypingTarget(Enum):
     """What value the user is typing"""
     NONE = auto()
     LENGTH = auto()         # Wall length, cabinet width
-    OFFSET_X = auto()       # X offset from snap point
+    OFFSET_X = auto()       # X offset from left side
+    OFFSET_RIGHT = auto()   # X offset from right side
     OFFSET_Y = auto()       # Y offset (depth)
     WIDTH = auto()          # Object width
     HEIGHT = auto()         # Object height
@@ -322,7 +323,8 @@ class PlacementMixin:
         
         target_name = {
             TypingTarget.LENGTH: "Length",
-            TypingTarget.OFFSET_X: "Offset",
+            TypingTarget.OFFSET_X: "Offset (←)",
+            TypingTarget.OFFSET_RIGHT: "Offset (→)",
             TypingTarget.WIDTH: "Width",
             TypingTarget.HEIGHT: "Height",
             TypingTarget.DEPTH: "Depth",

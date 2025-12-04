@@ -4,40 +4,222 @@ import math
 from mathutils import Vector
 
 
-class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.PlacementMixin):
-    bl_idname = "home_builder_doors_windows.place_door"
-    bl_label = "Place Door"
-    bl_description = "Place a door on a wall. Type for exact offset, Escape to cancel"
-    bl_options = {'UNDO'}
-
-    # Door-specific state
-    door = None
+class WallObjectPlacementMixin(hb_placement.PlacementMixin):
+    """
+    Extended placement mixin for objects placed on walls (doors, windows, cabinets).
+    Adds support for left/right offset and width input.
+    """
+    
+    # Track which direction offset is measured from
+    offset_from_right: bool = False
+    
+    # Track if user has explicitly set position (don't follow mouse)
+    position_locked: bool = False
+    
+    # Wall context
     selected_wall = None
     wall_length: float = 0
-    
-    # Placement position on wall (local X)
     placement_x: float = 0
-
+    
+    def get_placed_object(self):
+        """Override this to return the object being placed."""
+        raise NotImplementedError
+    
+    def get_placed_object_width(self) -> float:
+        """Override this to return the width of the object being placed."""
+        raise NotImplementedError
+    
+    def set_placed_object_width(self, width: float):
+        """Override this to set the width of the object being placed."""
+        raise NotImplementedError
+    
     def get_default_typing_target(self):
-        """When user starts typing, they're entering X offset."""
+        """Default to offset from left."""
         return hb_placement.TypingTarget.OFFSET_X
-
-    def on_typed_value_changed(self):
-        """Update door position as user types."""
-        if self.typed_value and self.door and self.selected_wall:
-            parsed = self.parse_typed_distance()
-            if parsed is not None:
-                self.placement_x = parsed
-                self.door.obj.location.x = parsed
-        self.update_header(bpy.context)
-
+    
+    def handle_typing_event(self, event) -> bool:
+        """Extended to handle arrow keys and W for switching input mode."""
+        
+        # Check for mode-switching keys before typing starts
+        if event.value == 'PRESS':
+            # Left arrow - offset from left
+            if event.type == 'LEFT_ARROW':
+                self.offset_from_right = False
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Already typing, just switch mode
+                    self.typing_target = hb_placement.TypingTarget.OFFSET_X
+                else:
+                    # Start typing offset from left
+                    self.start_typing(hb_placement.TypingTarget.OFFSET_X)
+                self.on_typed_value_changed()
+                return True
+            
+            # Right arrow - offset from right
+            if event.type == 'RIGHT_ARROW':
+                self.offset_from_right = True
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Already typing, just switch mode
+                    self.typing_target = hb_placement.TypingTarget.OFFSET_RIGHT
+                else:
+                    # Start typing offset from right
+                    self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
+                self.on_typed_value_changed()
+                return True
+            
+            # W - width
+            if event.type == 'W':
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    self.typing_target = hb_placement.TypingTarget.WIDTH
+                else:
+                    self.start_typing(hb_placement.TypingTarget.WIDTH)
+                self.on_typed_value_changed()
+                return True
+            
+            # H - height (for windows/doors)
+            if event.type == 'H':
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    self.typing_target = hb_placement.TypingTarget.HEIGHT
+                else:
+                    self.start_typing(hb_placement.TypingTarget.HEIGHT)
+                self.on_typed_value_changed()
+                return True
+        
+        # Fall back to base typing handler
+        return super().handle_typing_event(event)
+    
     def apply_typed_value(self):
-        """Apply typed offset."""
+        """Apply typed value based on current target."""
         parsed = self.parse_typed_distance()
-        if parsed is not None and self.door:
+        if parsed is None:
+            self.stop_typing()
+            return
+        
+        obj = self.get_placed_object()
+        if not obj:
+            self.stop_typing()
+            return
+            
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            # Offset from left
             self.placement_x = parsed
-            self.door.obj.location.x = parsed
+            obj.location.x = parsed
+            self.offset_from_right = False
+            self.position_locked = True  # Lock position after explicit input
+            
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            # Offset from right - calculate X from right edge
+            if self.selected_wall:
+                obj_width = self.get_placed_object_width()
+                self.placement_x = self.wall_length - parsed - obj_width
+                obj.location.x = self.placement_x
+            self.offset_from_right = True
+            self.position_locked = True  # Lock position after explicit input
+            
+        elif self.typing_target == hb_placement.TypingTarget.WIDTH:
+            self.set_placed_object_width(parsed)
+            # Recalculate position if offset from right
+            if self.offset_from_right and self.selected_wall:
+                # Keep right edge in same place
+                self.update_position_for_width_change()
+                
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            self.set_placed_object_height(parsed)
+        
         self.stop_typing()
+    
+    def set_placed_object_height(self, height: float):
+        """Override this to set height. Default does nothing."""
+        pass
+    
+    def update_position_for_width_change(self):
+        """Recalculate X position after width change when offset from right."""
+        pass
+    
+    def on_typed_value_changed(self):
+        """Update preview as user types."""
+        if not self.typed_value:
+            return
+            
+        parsed = self.parse_typed_distance()
+        if parsed is None:
+            return
+            
+        obj = self.get_placed_object()
+        if not obj:
+            return
+        
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            self.placement_x = parsed
+            obj.location.x = parsed
+            
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            if self.selected_wall:
+                obj_width = self.get_placed_object_width()
+                self.placement_x = self.wall_length - parsed - obj_width
+                obj.location.x = self.placement_x
+                
+        elif self.typing_target == hb_placement.TypingTarget.WIDTH:
+            self.set_placed_object_width(parsed)
+            
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            self.set_placed_object_height(parsed)
+    
+    def get_offset_display(self, context) -> str:
+        """Get formatted offset string showing distance from appropriate edge."""
+        unit_settings = context.scene.unit_settings
+        obj_width = self.get_placed_object_width()
+        
+        if self.offset_from_right:
+            offset_from_right = self.wall_length - self.placement_x - obj_width
+            return f"Offset (→): {units.unit_to_string(unit_settings, offset_from_right)}"
+        else:
+            return f"Offset (←): {units.unit_to_string(unit_settings, self.placement_x)}"
+    
+    def cut_wall(self, wall_obj, cutting_obj):
+        """Add a boolean modifier to the wall to cut a hole for the door/window."""
+        # Create a unique modifier name based on the cutting object
+        mod_name = f"Boolean_{cutting_obj.name}"
+        
+        # Check if modifier already exists
+        if mod_name in wall_obj.modifiers:
+            return wall_obj.modifiers[mod_name]
+        
+        # Add boolean modifier
+        mod = wall_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutting_obj
+        mod.solver = 'EXACT'
+        
+        # Hide the cutting object from render
+        cutting_obj.hide_render = True
+        cutting_obj.display_type = 'WIRE'
+        
+        return mod
+
+
+class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPlacementMixin):
+    bl_idname = "home_builder_doors_windows.place_door"
+    bl_label = "Place Door"
+    bl_description = "Place a door on a wall. Arrow keys for offset direction, W for width, Escape to cancel"
+    bl_options = {'UNDO'}
+
+    door = None
+
+    def get_placed_object(self):
+        return self.door.obj if self.door else None
+    
+    def get_placed_object_width(self) -> float:
+        if self.door:
+            return self.door.get_input('Dim X')
+        return 0
+    
+    def set_placed_object_width(self, width: float):
+        if self.door:
+            self.door.set_input('Dim X', width)
+    
+    def set_placed_object_height(self, height: float):
+        if self.door:
+            self.door.set_input('Dim Z', height)
 
     def create_door(self, context):
         """Create the door object."""
@@ -52,12 +234,6 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.
         
         self.register_placement_object(self.door.obj)
 
-    def get_door_width(self):
-        """Get current door width."""
-        if self.door:
-            return self.door.get_input('Dim X')
-        return 0
-
     def set_position_on_wall(self):
         """Position door on the selected wall with gap-aware snapping."""
         if not self.selected_wall or not self.door:
@@ -66,10 +242,9 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.
         wall = hb_types.GeoNodeWall(self.selected_wall)
         self.wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
-        door_width = self.get_door_width()
+        door_width = self.get_placed_object_width()
         
         # Get local X position on wall from world hit location
-        # Transform hit location to wall's local space
         world_loc = Vector(self.hit_location)
         local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
         cursor_x = local_loc.x
@@ -107,27 +282,32 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.
     def update_header(self, context):
         """Update header text with instructions."""
         if self.placement_state == hb_placement.PlacementState.TYPING:
-            text = f"Offset: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+            target_name = {
+                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+                hb_placement.TypingTarget.WIDTH: "Width",
+                hb_placement.TypingTarget.HEIGHT: "Height",
+            }.get(self.typing_target, "Value")
+            text = f"{target_name}: {self.typed_value}_ | Enter to confirm | ←/→ offset | W width | H height | Esc cancel"
         elif self.selected_wall:
-            offset_str = units.unit_to_string(context.scene.unit_settings, self.placement_x)
-            width_str = units.unit_to_string(context.scene.unit_settings, self.get_door_width())
-            text = f"Offset: {offset_str} | Width: {width_str} | Type for exact offset | Click to place | Esc to cancel"
+            offset_str = self.get_offset_display(context)
+            width_str = units.unit_to_string(context.scene.unit_settings, self.get_placed_object_width())
+            text = f"{offset_str} | Width: {width_str} | ←/→ offset | W width | Click to place | Esc cancel"
         else:
             text = "Move over a wall to place door | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
 
     def execute(self, context):
-        # Initialize placement mixin
         self.init_placement(context)
         
-        # Reset door-specific state
         self.door = None
         self.selected_wall = None
         self.wall_length = 0
         self.placement_x = 0
+        self.offset_from_right = False
+        self.position_locked = False
 
-        # Create door
         self.create_door(context)
 
         context.window_manager.modal_handler_add(self)
@@ -153,27 +333,32 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.
         self.selected_wall = None
         if self.hit_object and 'IS_WALL_BP' in self.hit_object:
             self.selected_wall = self.hit_object
+            # Update wall length for offset calculations
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            self.wall_length = wall.get_input('Length')
 
-        # Update position if not typing
+        # Update position if not typing and not locked
         if self.placement_state != hb_placement.PlacementState.TYPING:
             if self.selected_wall:
-                self.set_position_on_wall()
+                if not self.position_locked:
+                    self.set_position_on_wall()
             else:
                 self.set_position_free()
+                self.position_locked = False  # Reset lock when off wall
 
         self.update_header(context)
 
         # Left click - place door
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.selected_wall:
-                # Confirm placement - remove from cancel list
                 if self.door.obj in self.placement_objects:
                     self.placement_objects.remove(self.door.obj)
+                # Cut hole in wall
+                self.cut_wall(self.selected_wall, self.door.obj)
                 hb_placement.clear_header_text(context)
                 context.window.cursor_set('DEFAULT')
                 return {'FINISHED'}
             else:
-                # Can't place without a wall
                 self.report({'WARNING'}, "Door must be placed on a wall")
                 return {'RUNNING_MODAL'}
 
@@ -183,47 +368,35 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, hb_placement.
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
 
-        # Pass through navigation events
         if hb_snap.event_is_pass_through(event):
             return {'PASS_THROUGH'}
 
         return {'RUNNING_MODAL'}
 
 
-class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placement.PlacementMixin):
+class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectPlacementMixin):
     bl_idname = "home_builder_doors_windows.place_window"
     bl_label = "Place Window"
-    bl_description = "Place a window on a wall. Type for exact offset, Escape to cancel"
+    bl_description = "Place a window on a wall. Arrow keys for offset direction, W for width, Escape to cancel"
     bl_options = {'UNDO'}
 
-    # Window-specific state
     window = None
-    selected_wall = None
-    wall_length: float = 0
+
+    def get_placed_object(self):
+        return self.window.obj if self.window else None
     
-    # Placement position on wall (local X)
-    placement_x: float = 0
-
-    def get_default_typing_target(self):
-        """When user starts typing, they're entering X offset."""
-        return hb_placement.TypingTarget.OFFSET_X
-
-    def on_typed_value_changed(self):
-        """Update window position as user types."""
-        if self.typed_value and self.window and self.selected_wall:
-            parsed = self.parse_typed_distance()
-            if parsed is not None:
-                self.placement_x = parsed
-                self.window.obj.location.x = parsed
-        self.update_header(bpy.context)
-
-    def apply_typed_value(self):
-        """Apply typed offset."""
-        parsed = self.parse_typed_distance()
-        if parsed is not None and self.window:
-            self.placement_x = parsed
-            self.window.obj.location.x = parsed
-        self.stop_typing()
+    def get_placed_object_width(self) -> float:
+        if self.window:
+            return self.window.get_input('Dim X')
+        return 0
+    
+    def set_placed_object_width(self, width: float):
+        if self.window:
+            self.window.set_input('Dim X', width)
+    
+    def set_placed_object_height(self, height: float):
+        if self.window:
+            self.window.set_input('Dim Z', height)
 
     def create_window(self, context):
         """Create the window object."""
@@ -238,18 +411,6 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placemen
         
         self.register_placement_object(self.window.obj)
 
-    def get_window_width(self):
-        """Get current window width."""
-        if self.window:
-            return self.window.get_input('Dim X')
-        return 0
-
-    def get_window_height(self):
-        """Get current window height."""
-        if self.window:
-            return self.window.get_input('Dim Z')
-        return 0
-
     def set_position_on_wall(self):
         """Position window on the selected wall with gap-aware snapping."""
         if not self.selected_wall or not self.window:
@@ -259,7 +420,7 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placemen
         wall = hb_types.GeoNodeWall(self.selected_wall)
         self.wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
-        window_width = self.get_window_width()
+        window_width = self.get_placed_object_width()
         
         # Get local X position on wall from world hit location
         world_loc = Vector(self.hit_location)
@@ -298,27 +459,32 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placemen
     def update_header(self, context):
         """Update header text with instructions."""
         if self.placement_state == hb_placement.PlacementState.TYPING:
-            text = f"Offset: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+            target_name = {
+                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+                hb_placement.TypingTarget.WIDTH: "Width",
+                hb_placement.TypingTarget.HEIGHT: "Height",
+            }.get(self.typing_target, "Value")
+            text = f"{target_name}: {self.typed_value}_ | Enter to confirm | ←/→ offset | W width | H height | Esc cancel"
         elif self.selected_wall:
-            offset_str = units.unit_to_string(context.scene.unit_settings, self.placement_x)
-            width_str = units.unit_to_string(context.scene.unit_settings, self.get_window_width())
-            text = f"Offset: {offset_str} | Width: {width_str} | Type for exact offset | Click to place | Esc to cancel"
+            offset_str = self.get_offset_display(context)
+            width_str = units.unit_to_string(context.scene.unit_settings, self.get_placed_object_width())
+            text = f"{offset_str} | Width: {width_str} | ←/→ offset | W width | Click to place | Esc cancel"
         else:
             text = "Move over a wall to place window | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
 
     def execute(self, context):
-        # Initialize placement mixin
         self.init_placement(context)
         
-        # Reset window-specific state
         self.window = None
         self.selected_wall = None
         self.wall_length = 0
         self.placement_x = 0
+        self.offset_from_right = False
+        self.position_locked = False
 
-        # Create window
         self.create_window(context)
 
         context.window_manager.modal_handler_add(self)
@@ -344,27 +510,32 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placemen
         self.selected_wall = None
         if self.hit_object and 'IS_WALL_BP' in self.hit_object:
             self.selected_wall = self.hit_object
+            # Update wall length for offset calculations
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            self.wall_length = wall.get_input('Length')
 
-        # Update position if not typing
+        # Update position if not typing and not locked
         if self.placement_state != hb_placement.PlacementState.TYPING:
             if self.selected_wall:
-                self.set_position_on_wall()
+                if not self.position_locked:
+                    self.set_position_on_wall()
             else:
                 self.set_position_free()
+                self.position_locked = False  # Reset lock when off wall
 
         self.update_header(context)
 
         # Left click - place window
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.selected_wall:
-                # Confirm placement - remove from cancel list
                 if self.window.obj in self.placement_objects:
                     self.placement_objects.remove(self.window.obj)
+                # Cut hole in wall
+                self.cut_wall(self.selected_wall, self.window.obj)
                 hb_placement.clear_header_text(context)
                 context.window.cursor_set('DEFAULT')
                 return {'FINISHED'}
             else:
-                # Can't place without a wall
                 self.report({'WARNING'}, "Window must be placed on a wall")
                 return {'RUNNING_MODAL'}
 
@@ -374,12 +545,10 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, hb_placemen
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
 
-        # Pass through navigation events
         if hb_snap.event_is_pass_through(event):
             return {'PASS_THROUGH'}
 
         return {'RUNNING_MODAL'}
-
 
 
 classes = (
