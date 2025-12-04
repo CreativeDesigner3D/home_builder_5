@@ -189,6 +189,118 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.auto_quantity = False
         self.update_preview_cage()
     
+    def apply_typed_value(self):
+        """Override to recalculate gap after typing offset."""
+        parsed = self.parse_typed_distance()
+        if parsed is None:
+            self.stop_typing()
+            return
+        
+        if not self.preview_cage:
+            self.stop_typing()
+            return
+        
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            # Offset from left - recalculate gap from this position to wall end/next obstacle
+            self.placement_x = parsed
+            self.offset_from_right = False
+            self.position_locked = True
+            self.recalculate_from_offset(bpy.context)
+            
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            # Offset from right - need to calculate placement_x and gap
+            if self.selected_wall:
+                # First calculate where the right edge should be
+                right_edge_x = self.wall_length - parsed
+                # We'll position cabinets to end at this point
+                self.offset_from_right = True
+                self.position_locked = True
+                self.recalculate_from_right_offset(bpy.context, parsed)
+            
+        elif self.typing_target == hb_placement.TypingTarget.WIDTH:
+            self.individual_cabinet_width = parsed
+            self.fill_mode = False
+            self.auto_quantity = False
+            self.update_preview_cage()
+            self.update_preview_position()
+                
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            self.preview_cage.set_input('Dim Z', parsed)
+        
+        self.stop_typing()
+    
+    def recalculate_from_offset(self, context):
+        """Recalculate quantity and width based on typed left offset."""
+        if not self.selected_wall:
+            return
+        
+        # Find what's to the right of our position
+        children = self.get_wall_children_sorted(self.selected_wall, exclude_obj=self.preview_cage.obj)
+        
+        # Find the next obstacle after our placement_x
+        gap_end = self.wall_length
+        for x_start, x_end, obj in children:
+            if x_start > self.placement_x:
+                gap_end = x_start
+                break
+        
+        gap_width = gap_end - self.placement_x
+        self.current_gap_width = gap_width
+        
+        if self.fill_mode and gap_width > 0:
+            # Auto calculate quantity
+            if self.auto_quantity:
+                self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
+            self.individual_cabinet_width = gap_width / self.cabinet_quantity
+        
+        self.update_preview_cage()
+        self.update_preview_position()
+    
+    def recalculate_from_right_offset(self, context, right_offset: float):
+        """Recalculate quantity and width based on typed right offset."""
+        if not self.selected_wall:
+            return
+        
+        # Right edge position
+        right_edge_x = self.wall_length - right_offset
+        
+        # Find what's to the left of our right edge
+        children = self.get_wall_children_sorted(self.selected_wall, exclude_obj=self.preview_cage.obj)
+        
+        # Find the nearest obstacle to the left of right_edge_x
+        gap_start = 0
+        for x_start, x_end, obj in children:
+            if x_end <= right_edge_x:
+                gap_start = max(gap_start, x_end)
+            else:
+                break
+        
+        gap_width = right_edge_x - gap_start
+        self.current_gap_width = gap_width
+        
+        if self.fill_mode and gap_width > 0:
+            # Auto calculate quantity
+            if self.auto_quantity:
+                self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
+            self.individual_cabinet_width = gap_width / self.cabinet_quantity
+        
+        # Set placement_x so cabinets end at right_edge_x
+        self.placement_x = gap_start
+        
+        self.update_preview_cage()
+        self.update_preview_position()
+    
+    def update_preview_position(self):
+        """Update preview cage position without recalculating gap."""
+        if not self.preview_cage or not self.selected_wall:
+            return
+        
+        self.preview_cage.obj.parent = self.selected_wall
+        self.preview_cage.obj.location.x = self.placement_x
+        self.preview_cage.obj.location.y = 0
+        self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
+        self.preview_cage.obj.rotation_euler = (0, 0, 0)
+    
     def set_placed_object_height(self, height: float):
         if self.preview_cage:
             self.preview_cage.set_input('Dim Z', height)
@@ -252,6 +364,35 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
         self.array_modifier.count = self.cabinet_quantity
+    
+    def on_typed_value_changed(self):
+        """Live preview while typing."""
+        if not self.typed_value:
+            return
+            
+        parsed = self.parse_typed_distance()
+        if parsed is None:
+            return
+        
+        if not self.preview_cage or not self.selected_wall:
+            return
+        
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            # Live preview of left offset
+            self.placement_x = parsed
+            self.recalculate_from_offset(bpy.context)
+            
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            # Live preview of right offset
+            self.recalculate_from_right_offset(bpy.context, parsed)
+                
+        elif self.typing_target == hb_placement.TypingTarget.WIDTH:
+            self.individual_cabinet_width = parsed
+            self.update_preview_cage()
+            self.update_preview_position()
+            
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            self.preview_cage.set_input('Dim Z', parsed)
 
     def calculate_auto_quantity(self, gap_width: float) -> int:
         """Calculate how many cabinets needed so none exceed max width."""
