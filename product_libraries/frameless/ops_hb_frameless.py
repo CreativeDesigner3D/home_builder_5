@@ -174,6 +174,14 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     current_gap_width: float = 0
     max_single_cabinet_width: float = 0
     individual_cabinet_width: float = 0
+    
+    # User-defined offsets (None means not set, use auto snap)
+    left_offset: float = None  # Distance from left gap boundary
+    right_offset: float = None  # Distance from right gap boundary
+    
+    # Current gap boundaries (detected from obstacles)
+    gap_left_boundary: float = 0  # X position of left side of current gap
+    gap_right_boundary: float = 0  # X position of right side of current gap
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -201,21 +209,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return
         
         if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
-            # Offset from left - recalculate gap from this position to wall end/next obstacle
-            self.placement_x = parsed
-            self.offset_from_right = False
+            # Set left offset
+            self.left_offset = parsed
             self.position_locked = True
-            self.recalculate_from_offset(bpy.context)
+            self.recalculate_from_offsets(bpy.context)
             
         elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
-            # Offset from right - need to calculate placement_x and gap
-            if self.selected_wall:
-                # First calculate where the right edge should be
-                right_edge_x = self.wall_length - parsed
-                # We'll position cabinets to end at this point
-                self.offset_from_right = True
-                self.position_locked = True
-                self.recalculate_from_right_offset(bpy.context, parsed)
+            # Set right offset
+            self.right_offset = parsed
+            self.position_locked = True
+            self.recalculate_from_offsets(bpy.context)
             
         elif self.typing_target == hb_placement.TypingTarget.WIDTH:
             self.individual_cabinet_width = parsed
@@ -229,63 +232,35 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.stop_typing()
     
-    def recalculate_from_offset(self, context):
-        """Recalculate quantity and width based on typed left offset."""
+    def recalculate_from_offsets(self, context):
+        """Recalculate quantity and width based on left and/or right offsets relative to current gap."""
         if not self.selected_wall:
             return
         
-        # Find what's to the right of our position
-        children = self.get_wall_children_sorted(self.selected_wall, exclude_obj=self.preview_cage.obj)
+        # Use the detected gap boundaries as the reference
+        # Offsets are relative to these boundaries, not the wall edges
         
-        # Find the next obstacle after our placement_x
-        gap_end = self.wall_length
-        for x_start, x_end, obj in children:
-            if x_start > self.placement_x:
-                gap_end = x_start
-                break
+        # Determine actual gap_start (left boundary + left offset)
+        if self.left_offset is not None:
+            gap_start = self.gap_left_boundary + self.left_offset
+        else:
+            gap_start = self.gap_left_boundary
         
-        gap_width = gap_end - self.placement_x
+        # Determine actual gap_end (right boundary - right offset)
+        if self.right_offset is not None:
+            gap_end = self.gap_right_boundary - self.right_offset
+        else:
+            gap_end = self.gap_right_boundary
+        
+        # Calculate gap
+        gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
-        
-        if self.fill_mode and gap_width > 0:
-            # Auto calculate quantity
-            if self.auto_quantity:
-                self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
-            self.individual_cabinet_width = gap_width / self.cabinet_quantity
-        
-        self.update_preview_cage()
-        self.update_preview_position()
-    
-    def recalculate_from_right_offset(self, context, right_offset: float):
-        """Recalculate quantity and width based on typed right offset."""
-        if not self.selected_wall:
-            return
-        
-        # Right edge position
-        right_edge_x = self.wall_length - right_offset
-        
-        # Find what's to the left of our right edge
-        children = self.get_wall_children_sorted(self.selected_wall, exclude_obj=self.preview_cage.obj)
-        
-        # Find the nearest obstacle to the left of right_edge_x
-        gap_start = 0
-        for x_start, x_end, obj in children:
-            if x_end <= right_edge_x:
-                gap_start = max(gap_start, x_end)
-            else:
-                break
-        
-        gap_width = right_edge_x - gap_start
-        self.current_gap_width = gap_width
-        
-        if self.fill_mode and gap_width > 0:
-            # Auto calculate quantity
-            if self.auto_quantity:
-                self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
-            self.individual_cabinet_width = gap_width / self.cabinet_quantity
-        
-        # Set placement_x so cabinets end at right_edge_x
         self.placement_x = gap_start
+        
+        if self.fill_mode and gap_width > 0:
+            if self.auto_quantity:
+                self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
+            self.individual_cabinet_width = gap_width / self.cabinet_quantity
         
         self.update_preview_cage()
         self.update_preview_position()
@@ -378,13 +353,18 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return
         
         if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
-            # Live preview of left offset
-            self.placement_x = parsed
-            self.recalculate_from_offset(bpy.context)
+            # Live preview of left offset (temporarily set it)
+            old_left = self.left_offset
+            self.left_offset = parsed
+            self.recalculate_from_offsets(bpy.context)
+            self.left_offset = old_left  # Restore until Enter is pressed
             
         elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
-            # Live preview of right offset
-            self.recalculate_from_right_offset(bpy.context, parsed)
+            # Live preview of right offset (temporarily set it)
+            old_right = self.right_offset
+            self.right_offset = parsed
+            self.recalculate_from_offsets(bpy.context)
+            self.right_offset = old_right  # Restore until Enter is pressed
                 
         elif self.typing_target == hb_placement.TypingTarget.WIDTH:
             self.individual_cabinet_width = parsed
@@ -424,13 +404,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
         cursor_x = local_loc.x
         
-        # Find available gap
+        # Find available gap and store boundaries
         gap_start, gap_end, snap_x = self.find_placement_gap(
             self.selected_wall, 
             cursor_x, 
             self.individual_cabinet_width,
             exclude_obj=self.preview_cage.obj
         )
+        
+        # Store gap boundaries for offset calculations
+        self.gap_left_boundary = gap_start
+        self.gap_right_boundary = gap_end
         
         gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
@@ -508,18 +492,30 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         if self.placement_state == hb_placement.PlacementState.TYPING:
             target_name = {
-                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
-                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+                hb_placement.TypingTarget.OFFSET_X: "Gap Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Gap Offset (→)",
                 hb_placement.TypingTarget.WIDTH: "Width",
                 hb_placement.TypingTarget.HEIGHT: "Height",
             }.get(self.typing_target, "Value")
             text = f"{target_name}: {self.typed_value}_ | Enter confirm | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
         elif self.selected_wall:
-            offset_str = self.get_offset_display(context)
+            # Show both offsets if set
+            offset_parts = []
+            if self.left_offset is not None:
+                offset_parts.append(f"←{units.unit_to_string(unit_settings, self.left_offset)}")
+            if self.right_offset is not None:
+                offset_parts.append(f"→{units.unit_to_string(unit_settings, self.right_offset)}")
+            
+            if offset_parts:
+                offset_str = " | ".join(offset_parts)
+            else:
+                offset_str = self.get_offset_display(context)
+            
             width_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
             fill_str = "Fill: ON" if self.fill_mode else "Fill: OFF"
             qty_str = f"Qty: {self.cabinet_quantity}"
-            text = f"{offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
+            gap_str = f"Gap: {units.unit_to_string(unit_settings, self.gap_right_boundary - self.gap_left_boundary)}"
+            text = f"{gap_str} | {offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | Esc cancel"
         else:
             text = f"Place {self.cabinet_type.title()} Cabinet | Move over a wall | Esc to cancel"
         
@@ -541,6 +537,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.current_gap_width = 0
         self.max_single_cabinet_width = units.inch(36)
         self.individual_cabinet_width = context.scene.hb_frameless.default_cabinet_width
+        self.left_offset = None
+        self.right_offset = None
+        self.gap_left_boundary = 0
+        self.gap_right_boundary = 0
 
         self.create_preview_cage(context)
 
