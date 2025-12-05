@@ -27,45 +27,101 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         raise NotImplementedError
     
     def get_default_typing_target(self):
-        return hb_placement.TypingTarget.OFFSET_X
+        return hb_placement.TypingTarget.WIDTH
     
     def handle_typing_event(self, event) -> bool:
         if event.value == 'PRESS':
+            # Intercept Enter - modal handles it as "accept placement"
+            if event.type in {'RET', 'NUMPAD_ENTER'}:
+                # Don't consume - let modal handle as placement accept
+                return False
+            
             if event.type == 'LEFT_ARROW':
                 self.offset_from_right = False
                 if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Accept current value before switching
+                    if self.typed_value:
+                        self.apply_typed_value_silent()
+                    self.typed_value = ""
                     self.typing_target = hb_placement.TypingTarget.OFFSET_X
                 else:
                     self.start_typing(hb_placement.TypingTarget.OFFSET_X)
-                self.on_typed_value_changed()
                 return True
             
             if event.type == 'RIGHT_ARROW':
                 self.offset_from_right = True
                 if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Accept current value before switching
+                    if self.typed_value:
+                        self.apply_typed_value_silent()
+                    self.typed_value = ""
                     self.typing_target = hb_placement.TypingTarget.OFFSET_RIGHT
                 else:
                     self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
-                self.on_typed_value_changed()
                 return True
             
             if event.type == 'W':
                 if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Accept current value before switching
+                    if self.typed_value:
+                        self.apply_typed_value_silent()
+                    self.typed_value = ""
                     self.typing_target = hb_placement.TypingTarget.WIDTH
                 else:
                     self.start_typing(hb_placement.TypingTarget.WIDTH)
-                self.on_typed_value_changed()
                 return True
             
             if event.type == 'H':
                 if self.placement_state == hb_placement.PlacementState.TYPING:
+                    # Accept current value before switching
+                    if self.typed_value:
+                        self.apply_typed_value_silent()
+                    self.typed_value = ""
                     self.typing_target = hb_placement.TypingTarget.HEIGHT
                 else:
                     self.start_typing(hb_placement.TypingTarget.HEIGHT)
+                return True
+        
+        # Call base class but it will also check Enter - we need to skip that
+        # Handle number keys and backspace ourselves to avoid Enter handling
+        if self.placement_state == hb_placement.PlacementState.PLACING:
+            if event.type in hb_placement.NUMBER_KEYS and event.value == 'PRESS':
+                # Auto-start typing with WIDTH as default
+                self.typing_target = hb_placement.TypingTarget.WIDTH
+                self.placement_state = hb_placement.PlacementState.TYPING
+                self.typed_value = hb_placement.NUMBER_KEYS[event.type]
                 self.on_typed_value_changed()
                 return True
         
-        return super().handle_typing_event(event)
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if event.value == 'PRESS':
+                # Number input
+                if event.type in hb_placement.NUMBER_KEYS:
+                    self.typed_value += hb_placement.NUMBER_KEYS[event.type]
+                    self.on_typed_value_changed()
+                    return True
+                
+                # Backspace
+                if event.type == 'BACK_SPACE':
+                    if self.typed_value:
+                        self.typed_value = self.typed_value[:-1]
+                        self.on_typed_value_changed()
+                    else:
+                        self.stop_typing()
+                    return True
+                
+                # Escape - cancel typing
+                if event.type == 'ESC':
+                    self.stop_typing()
+                    return True
+        
+        return False
+    
+    def apply_typed_value_silent(self):
+        """Apply typed value without stopping typing mode."""
+        self.apply_typed_value()
+        # Re-enter typing state (apply_typed_value calls stop_typing)
+        self.placement_state = hb_placement.PlacementState.TYPING
     
     def apply_typed_value(self):
         parsed = self.parse_typed_distance()
@@ -185,6 +241,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     # Which side of wall to place on (True = front/negative Y, False = back/positive Y)
     place_on_front: bool = True
+    
+    # Floor cabinet snapping
+    snap_cabinet = None  # Cabinet we're snapping to
+    snap_side: str = None  # 'LEFT' or 'RIGHT' side of the snap cabinet
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -194,10 +254,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return self.individual_cabinet_width * self.cabinet_quantity
     
     def set_placed_object_width(self, width: float):
-        """Set width for a single cabinet."""
-        self.individual_cabinet_width = width
+        """Set TOTAL width for all cabinets - individual width is total/quantity."""
+        self.individual_cabinet_width = width / self.cabinet_quantity
         self.fill_mode = False
-        self.auto_quantity = False
         self.update_preview_cage()
     
     def apply_typed_value(self):
@@ -224,11 +283,14 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.recalculate_from_offsets(bpy.context)
             
         elif self.typing_target == hb_placement.TypingTarget.WIDTH:
-            self.individual_cabinet_width = parsed
+            # User types TOTAL width - auto-calculate quantity based on max 36" rule
+            if self.auto_quantity:
+                self.cabinet_quantity = self.calculate_auto_quantity(parsed)
+                self.array_modifier.count = self.cabinet_quantity
+            self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.fill_mode = False
-            self.auto_quantity = False
+            # Don't lock position - allow continued movement
             self.update_preview_cage()
-            self.update_preview_position()
                 
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
@@ -365,25 +427,37 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if parsed is None:
             return
         
-        if not self.preview_cage or not self.selected_wall:
+        if not self.preview_cage:
             return
         
         if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            if not self.selected_wall:
+                return
             # Live preview of left offset (temporarily set it)
             old_left = self.left_offset
             self.left_offset = parsed
             self.recalculate_from_offsets(bpy.context)
-            self.left_offset = old_left  # Restore until Enter is pressed
+            self.left_offset = old_left  # Restore until accepted
             
         elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            if not self.selected_wall:
+                return
             # Live preview of right offset (temporarily set it)
             old_right = self.right_offset
             self.right_offset = parsed
             self.recalculate_from_offsets(bpy.context)
-            self.right_offset = old_right  # Restore until Enter is pressed
+            self.right_offset = old_right  # Restore until accepted
                 
         elif self.typing_target == hb_placement.TypingTarget.WIDTH:
-            self.individual_cabinet_width = parsed
+            # User types TOTAL width - disable fill mode so set_position_on_wall doesn't override
+            self.fill_mode = False
+            # Auto-calculate quantity based on max 36" rule
+            if self.auto_quantity:
+                new_qty = self.calculate_auto_quantity(parsed)
+                if new_qty != self.cabinet_quantity:
+                    self.cabinet_quantity = new_qty
+                    self.array_modifier.count = self.cabinet_quantity
+            self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.update_preview_cage()
             self.update_preview_position()
             
@@ -492,7 +566,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         new_quantity = max(1, new_quantity)
         if new_quantity != self.cabinet_quantity:
             self.cabinet_quantity = new_quantity
-            self.auto_quantity = False
             self.update_preview_cage()
 
     def set_position_on_wall(self, context):
@@ -531,15 +604,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
         
-        # Auto-calculate quantity if in auto mode
-        if self.auto_quantity and self.fill_mode:
-            new_qty = self.calculate_auto_quantity(gap_width)
-            if new_qty != self.cabinet_quantity:
-                self.cabinet_quantity = new_qty
-                self.array_modifier.count = self.cabinet_quantity
-        
-        # Calculate individual cabinet width
+        # If fill_mode (user hasn't typed a width), auto-calculate quantity and fill gap
         if self.fill_mode and gap_width > 0:
+            if self.auto_quantity:
+                new_qty = self.calculate_auto_quantity(gap_width)
+                if new_qty != self.cabinet_quantity:
+                    self.cabinet_quantity = new_qty
+                    self.array_modifier.count = self.cabinet_quantity
             self.individual_cabinet_width = gap_width / self.cabinet_quantity
             snap_x = gap_start
         
@@ -571,54 +642,205 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.preview_cage.obj.location.y = wall_thickness
             self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
 
+    def find_cabinet_bp(self, obj):
+        """Find the cabinet base point (cage) from any child object."""
+        if obj is None:
+            return None
+        
+        # Check the object itself
+        if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+            return obj
+        
+        # Walk up parent hierarchy (but stop at walls)
+        current = obj
+        while current:
+            if 'IS_WALL_BP' in current:
+                return None  # Don't snap to wall-parented cabinets from floor mode
+            if 'IS_FRAMELESS_CABINET_CAGE' in current:
+                return current
+            current = current.parent
+        
+        return None
+    
     def set_position_free(self):
-        """Position preview freely when not over a wall."""
-        if self.preview_cage and self.hit_location:
+        """Position cabinet(s) on the floor, snapping to nearby cabinets."""
+        if not self.preview_cage or not self.hit_location:
+            return
+        
+        import math
+        
+        # Reset snap state
+        self.snap_cabinet = None
+        self.snap_side = None
+        
+        # Try to find a cabinet from what we hit
+        snap_target = None
+        if self.hit_object:
+            snap_target = self.find_cabinet_bp(self.hit_object)
+        
+        # Make sure we don't snap to ourselves
+        if snap_target and snap_target != self.preview_cage.obj:
+            try:
+                snap_cab = hb_types.GeoNodeObject(snap_target)
+                snap_width = snap_cab.get_input('Dim X')
+                
+                # Transform hit location to cabinet's local space
+                local_hit = snap_target.matrix_world.inverted() @ Vector(self.hit_location)
+                
+                # Determine which side based on local X position
+                if local_hit.x < snap_width / 2:
+                    self.snap_side = 'LEFT'
+                else:
+                    self.snap_side = 'RIGHT'
+                
+                self.snap_cabinet = snap_target
+            except:
+                pass
+        
+        if self.snap_cabinet:
+            self.position_snapped_to_cabinet()
+        else:
+            # Free placement on floor
             self.preview_cage.obj.parent = None
             self.preview_cage.obj.location = Vector(self.hit_location)
+            if self.cabinet_type == 'UPPER':
+                self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
+            else:
+                self.preview_cage.obj.location.z = 0
+            self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        
+        # Reset gap boundaries for floor placement
+        self.gap_left_boundary = 0
+        self.gap_right_boundary = self.individual_cabinet_width * self.cabinet_quantity
+        self.current_gap_width = self.gap_right_boundary
+    
+    def position_snapped_to_cabinet(self):
+        """Position preview cage snapped to an existing cabinet."""
+        import math
+        from mathutils import Matrix
+        
+        if not self.snap_cabinet or not self.preview_cage:
+            return
+        
+        try:
+            snap_cab = hb_types.GeoNodeObject(self.snap_cabinet)
+            snap_width = snap_cab.get_input('Dim X')
+        except:
+            return
+        
+        # Get the snap cabinet's rotation
+        snap_rotation = self.snap_cabinet.rotation_euler.z
+        
+        # Calculate total width of cabinets being placed
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        
+        # Position based on which side we're snapping to
+        if self.snap_side == 'LEFT':
+            # Place to the left of snap cabinet - our right edge meets their left edge
+            local_offset = Vector((-total_width, 0, 0))
+        else:
+            # Place to the right of snap cabinet - our left edge meets their right edge
+            local_offset = Vector((snap_width, 0, 0))
+        
+        # Transform offset to world space using snap cabinet's rotation
+        rotation_matrix = Matrix.Rotation(snap_rotation, 4, 'Z')
+        world_offset = rotation_matrix @ local_offset
+        
+        # Set position and rotation to match snap cabinet
+        self.preview_cage.obj.parent = None
+        self.preview_cage.obj.location = self.snap_cabinet.location + world_offset
+        
+        if self.cabinet_type == 'UPPER':
             self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
+        else:
+            self.preview_cage.obj.location.z = self.snap_cabinet.location.z
+        
+        self.preview_cage.obj.rotation_euler = self.snap_cabinet.rotation_euler
 
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""
         import math
         cabinets = []
-        current_x = self.placement_x
-        z_loc = self.get_cabinet_z_location(context)
-        
-        wall = hb_types.GeoNodeWall(self.selected_wall)
-        wall_thickness = wall.get_input('Thickness')
         cabinet_depth = self.get_cabinet_depth(context)
         
-        for i in range(self.cabinet_quantity):
-            cabinet = types_frameless.Cabinet()
-            cabinet.width = self.individual_cabinet_width
-            cabinet.height = self.get_cabinet_height(context)
-            cabinet.depth = cabinet_depth
-            cabinet.create(f'Cabinet')
+        if self.selected_wall:
+            # Wall placement
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            current_x = self.placement_x
+            z_loc = self.get_cabinet_z_location(context)
             
-            # Add doors
-            doors = types_frameless.Doors()
-            cabinet.add_cage_to_bay(doors)
+            for i in range(self.cabinet_quantity):
+                cabinet = types_frameless.Cabinet()
+                cabinet.width = self.individual_cabinet_width
+                cabinet.height = self.get_cabinet_height(context)
+                cabinet.depth = cabinet_depth
+                cabinet.create(f'Cabinet')
+                
+                # Add doors
+                doors = types_frameless.Doors()
+                cabinet.add_cage_to_bay(doors)
+                
+                # Position based on which side of wall
+                cabinet.obj.parent = self.selected_wall
+                cabinet.obj.location.z = z_loc
+                
+                if self.place_on_front:
+                    cabinet.obj.location.x = current_x
+                    cabinet.obj.location.y = 0
+                    cabinet.obj.rotation_euler = (0, 0, 0)
+                else:
+                    # Back side - rotated 180° around Z
+                    cabinet.obj.location.x = current_x + self.individual_cabinet_width
+                    cabinet.obj.location.y = wall_thickness
+                    cabinet.obj.rotation_euler = (0, 0, math.pi)
+                
+                # Apply toggle mode for display
+                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
+                
+                cabinets.append(cabinet)
+                current_x += self.individual_cabinet_width
+        else:
+            # Floor placement (free or snapped)
+            import math
+            from mathutils import Matrix
             
-            # Position based on which side of wall
-            cabinet.obj.parent = self.selected_wall
-            cabinet.obj.location.z = z_loc
+            start_loc = self.preview_cage.obj.location.copy()
+            rotation = self.preview_cage.obj.rotation_euler.copy()
+            rotation_z = rotation.z
             
-            if self.place_on_front:
-                cabinet.obj.location.x = current_x
-                cabinet.obj.location.y = 0
-                cabinet.obj.rotation_euler = (0, 0, 0)
-            else:
-                # Back side - rotated 180° around Z
-                cabinet.obj.location.x = current_x + self.individual_cabinet_width
-                cabinet.obj.location.y = wall_thickness
-                cabinet.obj.rotation_euler = (0, 0, math.pi)
-            
-            # Apply toggle mode for display
-            bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
-            
-            cabinets.append(cabinet)
-            current_x += self.individual_cabinet_width
+            for i in range(self.cabinet_quantity):
+                cabinet = types_frameless.Cabinet()
+                cabinet.width = self.individual_cabinet_width
+                cabinet.height = self.get_cabinet_height(context)
+                cabinet.depth = cabinet_depth
+                cabinet.create(f'Cabinet')
+                
+                # Add doors
+                doors = types_frameless.Doors()
+                cabinet.add_cage_to_bay(doors)
+                
+                # Calculate offset for this cabinet in the row
+                # Offset in local X direction based on rotation
+                local_offset = Vector((i * self.individual_cabinet_width, 0, 0))
+                rotation_matrix = Matrix.Rotation(rotation_z, 4, 'Z')
+                world_offset = rotation_matrix @ local_offset
+                
+                # Position on floor
+                cabinet.obj.parent = None
+                cabinet.obj.location = start_loc + world_offset
+                cabinet.obj.rotation_euler = rotation
+                
+                # Base cabinets on floor
+                if self.cabinet_type == 'UPPER':
+                    cabinet.obj.location.z = self.get_cabinet_z_location(context)
+                else:
+                    cabinet.obj.location.z = start_loc.z
+                
+                # Apply toggle mode for display
+                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
+                
+                cabinets.append(cabinet)
         
         return cabinets
 
@@ -633,7 +855,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 hb_placement.TypingTarget.WIDTH: "Width",
                 hb_placement.TypingTarget.HEIGHT: "Height",
             }.get(self.typing_target, "Value")
-            text = f"{target_name}: {self.typed_value}_ | Enter confirm | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
+            text = f"{target_name}: {self.typed_value}_ | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
         elif self.selected_wall:
             # Show which side of wall
             side_str = "Front" if self.place_on_front else "Back"
@@ -650,13 +872,25 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             else:
                 offset_str = self.get_offset_display(context)
             
-            width_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
-            fill_str = "Fill: ON" if self.fill_mode else "Fill: OFF"
-            qty_str = f"Qty: {self.cabinet_quantity}"
+            # Show total width and individual width
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            total_str = units.unit_to_string(unit_settings, total_width)
+            individual_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
+            qty_str = f"{self.cabinet_quantity}"
             gap_str = f"Gap: {units.unit_to_string(unit_settings, self.gap_right_boundary - self.gap_left_boundary)}"
-            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | Esc cancel"
+            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
         else:
-            text = f"Place {self.cabinet_type.title()} Cabinet | Move over a wall | Esc to cancel"
+            # Floor placement
+            unit_settings = context.scene.unit_settings
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            total_str = units.unit_to_string(unit_settings, total_width)
+            individual_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
+            qty_str = f"{self.cabinet_quantity}"
+            if self.snap_cabinet:
+                snap_str = f"Snap {self.snap_side}"
+                text = f"Floor | {snap_str} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | Click place | Esc cancel"
+            else:
+                text = f"Floor | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | Click place | Esc cancel"
         
         hb_placement.draw_header_text(context, text)
 
@@ -681,6 +915,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.gap_left_boundary = 0
         self.gap_right_boundary = 0
         self.place_on_front = True
+        self.snap_cabinet = None
+        self.snap_side = None
 
         self.create_preview_cage(context)
 
@@ -693,23 +929,23 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
 
-        # Up/Down arrows to change quantity
+        # Up/Down arrows to change quantity (disables auto-quantity)
         if event.type == 'UP_ARROW' and event.value == 'PRESS':
+            # Accept any typed value first
+            if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                self.apply_typed_value()
+            self.auto_quantity = False  # User is manually setting quantity
             self.update_cabinet_quantity(context, self.cabinet_quantity + 1)
             self.position_locked = False
             return {'RUNNING_MODAL'}
         
         if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
+            # Accept any typed value first
+            if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                self.apply_typed_value()
+            self.auto_quantity = False  # User is manually setting quantity
             self.update_cabinet_quantity(context, self.cabinet_quantity - 1)
             self.position_locked = False
-            return {'RUNNING_MODAL'}
-
-        # Toggle fill mode with F
-        if event.type == 'F' and event.value == 'PRESS':
-            self.fill_mode = not self.fill_mode
-            self.auto_quantity = self.fill_mode
-            self.position_locked = False
-            self.update_header(context)
             return {'RUNNING_MODAL'}
 
         # Let mixin handle typing events
@@ -729,8 +965,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
 
-        # Update position if not typing and not locked
-        if self.placement_state != hb_placement.PlacementState.TYPING:
+        # Update position if not locked
+        # Allow position updates while typing WIDTH (but not offsets)
+        typing_allows_movement = (
+            self.placement_state != hb_placement.PlacementState.TYPING or
+            self.typing_target == hb_placement.TypingTarget.WIDTH or
+            self.typing_target == hb_placement.TypingTarget.HEIGHT
+        )
+        
+        if typing_allows_movement:
             if self.selected_wall:
                 if not self.position_locked:
                     self.set_position_on_wall(context)
@@ -740,23 +983,23 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
         self.update_header(context)
 
-        # Left click - create actual cabinets and place them
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if self.selected_wall:
-                # Create the real cabinets
-                self.create_final_cabinets(context)
-                
-                # Remove preview cage
-                if self.preview_cage and self.preview_cage.obj:
-                    bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
-                self.placement_objects = []
-                
-                hb_placement.clear_header_text(context)
-                context.window.cursor_set('DEFAULT')
-                return {'FINISHED'}
-            else:
-                self.report({'WARNING'}, "Cabinet must be placed on a wall")
-                return {'RUNNING_MODAL'}
+        # Left click or Enter - create actual cabinets and place them
+        if (event.type == 'LEFTMOUSE' and event.value == 'PRESS') or            (event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS'):
+            # Accept any typed value first
+            if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                self.apply_typed_value()
+            
+            # Create the real cabinets (on wall or floor)
+            self.create_final_cabinets(context)
+            
+            # Remove preview cage
+            if self.preview_cage and self.preview_cage.obj:
+                bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
+            self.placement_objects = []
+            
+            hb_placement.clear_header_text(context)
+            context.window.cursor_set('DEFAULT')
+            return {'FINISHED'}
 
         # Right click or Escape - cancel
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
