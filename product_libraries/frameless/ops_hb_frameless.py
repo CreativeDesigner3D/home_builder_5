@@ -245,6 +245,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     # Floor cabinet snapping
     snap_cabinet = None  # Cabinet we're snapping to
     snap_side: str = None  # 'LEFT' or 'RIGHT' side of the snap cabinet
+    
+    # Placement dimensions
+    dim_total_width = None  # Dimension showing total cabinet width
+    dim_left_offset = None  # Dimension showing left offset from gap edge
+    dim_right_offset = None  # Dimension showing right offset from gap edge
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -409,6 +414,108 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.preview_cage.set_input('Mirror Y', True)  # Always mirror Y for proper display
         
         self.register_placement_object(self.preview_cage.obj)
+    
+    def create_dimensions(self, context):
+        """Create dimension annotations for placement feedback."""
+        # Total width dimension (above cabinets)
+        self.dim_total_width = hb_types.GeoNodeDimension()
+        self.dim_total_width.create("Dim_Total_Width")
+        self.dim_total_width.obj.show_in_front = True
+        self.register_placement_object(self.dim_total_width.obj)
+        
+        # Left offset dimension
+        self.dim_left_offset = hb_types.GeoNodeDimension()
+        self.dim_left_offset.create("Dim_Left_Offset")
+        self.dim_left_offset.obj.show_in_front = True
+        self.register_placement_object(self.dim_left_offset.obj)
+        
+        # Right offset dimension
+        self.dim_right_offset = hb_types.GeoNodeDimension()
+        self.dim_right_offset.create("Dim_Right_Offset")
+        self.dim_right_offset.obj.show_in_front = True
+        self.register_placement_object(self.dim_right_offset.obj)
+    
+    def cleanup_placement_objects(self):
+        """Remove preview cage and dimensions."""
+        if self.preview_cage and self.preview_cage.obj:
+            bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
+        if self.dim_total_width and self.dim_total_width.obj:
+            bpy.data.objects.remove(self.dim_total_width.obj, do_unlink=True)
+        if self.dim_left_offset and self.dim_left_offset.obj:
+            bpy.data.objects.remove(self.dim_left_offset.obj, do_unlink=True)
+        if self.dim_right_offset and self.dim_right_offset.obj:
+            bpy.data.objects.remove(self.dim_right_offset.obj, do_unlink=True)
+        self.placement_objects = []
+    
+    def update_dimensions(self, context):
+        """Update dimension positions and values."""
+        if not self.preview_cage:
+            return
+        
+        if not self.dim_total_width or not self.dim_left_offset or not self.dim_right_offset:
+            return
+        
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        cabinet_height = self.get_cabinet_height(context)
+        dim_z = cabinet_height + units.inch(4)  # Above cabinet
+        
+        # Never parent dimensions to wall - keep in world space
+        self.dim_total_width.obj.parent = None
+        self.dim_left_offset.obj.parent = None
+        self.dim_right_offset.obj.parent = None
+        
+        if self.selected_wall:
+            # Wall placement - show all three dimensions in world space
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            wall_matrix = self.selected_wall.matrix_world
+            
+            left_offset = self.placement_x - self.gap_left_boundary
+            right_offset = self.gap_right_boundary - (self.placement_x + total_width)
+
+            # Y position based on which side of wall (in local space)
+            if self.place_on_front:
+                dim_y = -units.inch(2)
+            else:
+                dim_y = wall_thickness + units.inch(2)
+            
+            # Total width dimension - above cabinets (convert to world space)
+            local_pos = Vector((self.placement_x, dim_y, dim_z))
+            self.dim_total_width.obj.location = wall_matrix @ local_pos
+            self.dim_total_width.obj.rotation_euler = self.selected_wall.rotation_euler
+            self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
+            self.dim_total_width.obj.hide_set(False)
+            
+            # Left offset dimension - from gap start to cabinet start
+            if left_offset > units.inch(0.5):
+                local_pos = Vector((self.gap_left_boundary, dim_y, dim_z + units.inch(8)))
+                self.dim_left_offset.obj.location = wall_matrix @ local_pos
+                self.dim_left_offset.obj.rotation_euler = self.selected_wall.rotation_euler
+                self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
+                self.dim_left_offset.obj.hide_set(False)
+            else:
+                self.dim_left_offset.obj.hide_set(True)
+            
+            # Right offset dimension - from cabinet end to gap end
+            if right_offset > units.inch(0.5):
+                local_pos = Vector((self.placement_x + total_width, dim_y, dim_z + units.inch(8)))
+                self.dim_right_offset.obj.location = wall_matrix @ local_pos
+                self.dim_right_offset.obj.rotation_euler = self.selected_wall.rotation_euler
+                self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
+                self.dim_right_offset.obj.hide_set(False)
+            else:
+                self.dim_right_offset.obj.hide_set(True)
+        else:
+            # Floor placement - just show total width
+            self.dim_total_width.obj.location = self.preview_cage.obj.location.copy()
+            self.dim_total_width.obj.location.z = dim_z
+            self.dim_total_width.obj.rotation_euler = self.preview_cage.obj.rotation_euler
+            self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
+            self.dim_total_width.obj.hide_set(False)
+            
+            # Hide offset dimensions on floor
+            self.dim_left_offset.obj.hide_set(True)
+            self.dim_right_offset.obj.hide_set(True)
 
     def update_preview_cage(self):
         """Update preview cage dimensions and array count."""
@@ -437,6 +544,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             old_left = self.left_offset
             self.left_offset = parsed
             self.recalculate_from_offsets(bpy.context)
+            self.update_dimensions(bpy.context)
             self.left_offset = old_left  # Restore until accepted
             
         elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
@@ -446,6 +554,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             old_right = self.right_offset
             self.right_offset = parsed
             self.recalculate_from_offsets(bpy.context)
+            self.update_dimensions(bpy.context)
             self.right_offset = old_right  # Restore until accepted
                 
         elif self.typing_target == hb_placement.TypingTarget.WIDTH:
@@ -460,6 +569,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.update_preview_cage()
             self.update_preview_position()
+            self.update_dimensions(bpy.context)
             
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
@@ -490,6 +600,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 continue
             # Skip the preview cage
             if self.preview_cage and child == self.preview_cage.obj:
+                continue
+            # Skip dimension annotations (they have IS_2D_ANNOTATION custom property)
+            if child.get('IS_2D_ANNOTATION'):
                 continue
             
             # Doors and windows are obstacles for BOTH sides (they cut through wall)
@@ -641,6 +754,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.preview_cage.obj.location.x = snap_x + total_width
             self.preview_cage.obj.location.y = wall_thickness
             self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
+        
+        # Update dimensions
+        self.update_dimensions(context)
 
     def find_cabinet_bp(self, obj):
         """Find the cabinet base point (cage) from any child object."""
@@ -713,6 +829,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.gap_left_boundary = 0
         self.gap_right_boundary = self.individual_cabinet_width * self.cabinet_quantity
         self.current_gap_width = self.gap_right_boundary
+        
+        # Update dimensions
+        self.update_dimensions(bpy.context)
     
     def position_snapped_to_cabinet(self):
         """Position preview cage snapped to an existing cabinet."""
@@ -917,8 +1036,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.place_on_front = True
         self.snap_cabinet = None
         self.snap_side = None
+        self.dim_total_width = None
+        self.dim_left_offset = None
+        self.dim_right_offset = None
 
         self.create_preview_cage(context)
+        self.create_dimensions(context)
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -953,9 +1076,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
-        # Update snap (hide preview during raycast)
+        # Update snap (hide preview and dimensions during raycast and position calculation)
         self.preview_cage.obj.hide_set(True)
+        if self.dim_total_width:
+            self.dim_total_width.obj.hide_set(True)
+        if self.dim_left_offset:
+            self.dim_left_offset.obj.hide_set(True)
+        if self.dim_right_offset:
+            self.dim_right_offset.obj.hide_set(True)
+        
         self.update_snap(context, event)
+        
         self.preview_cage.obj.hide_set(False)
 
         # Check if we're over a wall
@@ -981,10 +1112,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.set_position_free()
                 self.position_locked = False
 
+        # Show dimensions after position calculation (they were hidden for raycast)
+        self.update_dimensions(context)
+        
         self.update_header(context)
 
         # Left click or Enter - create actual cabinets and place them
-        if (event.type == 'LEFTMOUSE' and event.value == 'PRESS') or            (event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS'):
+        if (event.type == 'LEFTMOUSE' and event.value == 'PRESS') or (event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS'):
             # Accept any typed value first
             if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
                 self.apply_typed_value()
@@ -992,10 +1126,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Create the real cabinets (on wall or floor)
             self.create_final_cabinets(context)
             
-            # Remove preview cage
-            if self.preview_cage and self.preview_cage.obj:
-                bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
-            self.placement_objects = []
+            # Remove preview cage and dimensions
+            self.cleanup_placement_objects()
             
             hb_placement.clear_header_text(context)
             context.window.cursor_set('DEFAULT')
@@ -1003,8 +1135,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
         # Right click or Escape - cancel
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
-            self.cancel_placement(context)
+            self.cleanup_placement_objects()
             hb_placement.clear_header_text(context)
+            context.window.cursor_set('DEFAULT')
             return {'CANCELLED'}
 
         if hb_snap.event_is_pass_through(event):
