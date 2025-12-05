@@ -182,6 +182,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     # Current gap boundaries (detected from obstacles)
     gap_left_boundary: float = 0  # X position of left side of current gap
     gap_right_boundary: float = 0  # X position of right side of current gap
+    
+    # Which side of wall to place on (True = front/negative Y, False = back/positive Y)
+    place_on_front: bool = True
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -270,11 +273,23 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if not self.preview_cage or not self.selected_wall:
             return
         
+        import math
+        wall = hb_types.GeoNodeWall(self.selected_wall)
+        wall_thickness = wall.get_input('Thickness')
+        cabinet_depth = self.get_cabinet_depth(bpy.context)
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        
         self.preview_cage.obj.parent = self.selected_wall
-        self.preview_cage.obj.location.x = self.placement_x
-        self.preview_cage.obj.location.y = 0
         self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
-        self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        
+        if self.place_on_front:
+            self.preview_cage.obj.location.x = self.placement_x
+            self.preview_cage.obj.location.y = 0
+            self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        else:
+            self.preview_cage.obj.location.x = self.placement_x + total_width
+            self.preview_cage.obj.location.y = wall_thickness
+            self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
     
     def set_placed_object_height(self, height: float):
         if self.preview_cage:
@@ -329,6 +344,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Style the preview
         self.preview_cage.obj.display_type = 'WIRE'
         self.preview_cage.obj.show_in_front = True
+        self.preview_cage.set_input('Mirror Y', True)  # Always mirror Y for proper display
         
         self.register_placement_object(self.preview_cage.obj)
 
@@ -374,6 +390,94 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
 
+    def find_placement_gap_by_side(self, wall_obj, cursor_x: float, object_width: float, 
+                                     place_on_front: bool, wall_thickness: float) -> tuple:
+        """
+        Find the available gap at cursor position, only considering objects on the same side.
+        Doors and windows are always considered as they cut through the entire wall.
+        
+        Args:
+            wall_obj: The wall object
+            cursor_x: Cursor X position in wall's local space
+            object_width: Width of the object being placed
+            place_on_front: True if placing on front side of wall
+            wall_thickness: Thickness of the wall
+        
+        Returns (gap_start, gap_end, snap_x)
+        """
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall.get_input('Length')
+        
+        # Get all children and filter appropriately
+        children = []
+        for child in wall_obj.children:
+            # Skip helper objects
+            if child.get('obj_x'):
+                continue
+            # Skip the preview cage
+            if self.preview_cage and child == self.preview_cage.obj:
+                continue
+            
+            # Doors and windows are obstacles for BOTH sides (they cut through wall)
+            is_door_or_window = 'IS_ENTRY_DOOR_BP' in child or 'IS_WINDOW_BP' in child
+            
+            if not is_door_or_window:
+                # For cabinets/other objects, check which side they're on
+                child_y = child.location.y
+                child_on_front = child_y < wall_thickness / 2
+                
+                # Only include children on the same side
+                if child_on_front != place_on_front:
+                    continue
+            
+            # Get object bounds
+            x_start = child.location.x
+            x_end = x_start
+            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
+                try:
+                    geo_obj = hb_types.GeoNodeObject(child)
+                    width = geo_obj.get_input('Dim X')
+                    x_end = x_start + width
+                except:
+                    pass
+            children.append((x_start, x_end, child))
+        
+        # Sort by X position
+        children = sorted(children, key=lambda x: x[0])
+        
+        if not children:
+            return (0, wall_length, cursor_x)
+        
+        # Find which gap the cursor is in
+        gap_start = 0
+        gap_end = wall_length
+        
+        for x_start, x_end, obj in children:
+            if cursor_x < x_start:
+                gap_end = x_start
+                break
+            else:
+                gap_start = x_end
+        
+        # Check if cursor is past all objects
+        if children and cursor_x >= children[-1][1]:
+            gap_start = children[-1][1]
+            gap_end = wall_length
+        
+        # Determine snap position within gap
+        gap_width = gap_end - gap_start
+        
+        if object_width >= gap_width:
+            snap_x = gap_start
+        elif cursor_x - gap_start < object_width / 2:
+            snap_x = gap_start
+        elif gap_end - cursor_x < object_width / 2:
+            snap_x = gap_end - object_width
+        else:
+            snap_x = cursor_x - object_width / 2
+        
+        return (gap_start, gap_end, snap_x)
+
     def calculate_auto_quantity(self, gap_width: float) -> int:
         """Calculate how many cabinets needed so none exceed max width."""
         if gap_width <= 0:
@@ -398,18 +502,26 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
         wall = hb_types.GeoNodeWall(self.selected_wall)
         self.wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        cabinet_depth = self.get_cabinet_depth(context)
         
-        # Get local X position on wall from world hit location
+        # Get local position on wall from world hit location
         world_loc = Vector(self.hit_location)
         local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
         cursor_x = local_loc.x
+        cursor_y = local_loc.y
         
-        # Find available gap and store boundaries
-        gap_start, gap_end, snap_x = self.find_placement_gap(
+        # Determine which side of wall based on cursor Y position
+        # Wall mesh extends from Y=0 (front face) to Y=thickness (back face)
+        self.place_on_front = cursor_y < wall_thickness / 2
+        
+        # Find available gap, filtering by which side we're placing on
+        gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
             self.selected_wall, 
             cursor_x, 
             self.individual_cabinet_width,
-            exclude_obj=self.preview_cage.obj
+            self.place_on_front,
+            wall_thickness
         )
         
         # Store gap boundaries for offset calculations
@@ -440,12 +552,24 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.placement_x = snap_x
         
-        # Position preview
+        # Position preview based on which side of wall
         self.preview_cage.obj.parent = self.selected_wall
-        self.preview_cage.obj.location.x = snap_x
-        self.preview_cage.obj.location.y = 0
         self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
-        self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        
+        if self.place_on_front:
+            # Front side - cabinet back against wall (Y = 0), no rotation
+            self.preview_cage.obj.location.x = snap_x
+            self.preview_cage.obj.location.y = 0
+            self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        else:
+            # Back side - rotated 180° around Z axis
+            # Cabinet origin is back-left, so when rotated 180°:
+            # - Need to offset X by width (since it rotates around origin)
+            # - Y at wall_thickness (cabinet back against wall back)
+            import math
+            self.preview_cage.obj.location.x = snap_x + total_width
+            self.preview_cage.obj.location.y = wall_thickness
+            self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
 
     def set_position_free(self):
         """Position preview freely when not over a wall."""
@@ -456,27 +580,39 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""
+        import math
         cabinets = []
         current_x = self.placement_x
         z_loc = self.get_cabinet_z_location(context)
+        
+        wall = hb_types.GeoNodeWall(self.selected_wall)
+        wall_thickness = wall.get_input('Thickness')
+        cabinet_depth = self.get_cabinet_depth(context)
         
         for i in range(self.cabinet_quantity):
             cabinet = types_frameless.Cabinet()
             cabinet.width = self.individual_cabinet_width
             cabinet.height = self.get_cabinet_height(context)
-            cabinet.depth = self.get_cabinet_depth(context)
+            cabinet.depth = cabinet_depth
             cabinet.create(f'Cabinet')
             
             # Add doors
             doors = types_frameless.Doors()
             cabinet.add_cage_to_bay(doors)
             
-            # Position
+            # Position based on which side of wall
             cabinet.obj.parent = self.selected_wall
-            cabinet.obj.location.x = current_x
-            cabinet.obj.location.y = 0
             cabinet.obj.location.z = z_loc
-            cabinet.obj.rotation_euler = (0, 0, 0)
+            
+            if self.place_on_front:
+                cabinet.obj.location.x = current_x
+                cabinet.obj.location.y = 0
+                cabinet.obj.rotation_euler = (0, 0, 0)
+            else:
+                # Back side - rotated 180° around Z
+                cabinet.obj.location.x = current_x + self.individual_cabinet_width
+                cabinet.obj.location.y = wall_thickness
+                cabinet.obj.rotation_euler = (0, 0, math.pi)
             
             # Apply toggle mode for display
             bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
@@ -499,6 +635,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             }.get(self.typing_target, "Value")
             text = f"{target_name}: {self.typed_value}_ | Enter confirm | ↑/↓ qty | ←/→ offset | W width | F fill | Esc cancel"
         elif self.selected_wall:
+            # Show which side of wall
+            side_str = "Front" if self.place_on_front else "Back"
+            
             # Show both offsets if set
             offset_parts = []
             if self.left_offset is not None:
@@ -515,7 +654,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             fill_str = "Fill: ON" if self.fill_mode else "Fill: OFF"
             qty_str = f"Qty: {self.cabinet_quantity}"
             gap_str = f"Gap: {units.unit_to_string(unit_settings, self.gap_right_boundary - self.gap_left_boundary)}"
-            text = f"{gap_str} | {offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | Esc cancel"
+            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {width_str} | {fill_str} | ↑/↓ qty | ←/→ offset | W width | Esc cancel"
         else:
             text = f"Place {self.cabinet_type.title()} Cabinet | Move over a wall | Esc to cancel"
         
@@ -541,6 +680,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.right_offset = None
         self.gap_left_boundary = 0
         self.gap_right_boundary = 0
+        self.place_on_front = True
 
         self.create_preview_cage(context)
 
