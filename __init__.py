@@ -2,6 +2,8 @@ import bpy
 from . import hb_props
 from . import ops
 from .ui import view3d_sidebar
+from .ui import menu_apend
+from .ui import menus
 from .operators import walls
 from .operators import doors_windows
 from .product_libraries import closets
@@ -126,6 +128,8 @@ def register():
     doors_windows.register()
     ops.register()
     view3d_sidebar.register()
+    menu_apend.register()
+    menus.register()
     closets.register()
     face_frame.register()
     frameless.register()
@@ -140,6 +144,8 @@ def unregister():
     doors_windows.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
+    menu_apend.unregister()
+    menus.unregister()
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()

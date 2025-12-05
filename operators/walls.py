@@ -214,6 +214,75 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         return {'RUNNING_MODAL'}
 
 
+class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
+    bl_idname = "home_builder_walls.wall_prompts"
+    bl_label = "Wall Prompts"
+    bl_description = "This shows the prompts for the selected wall"
+
+    wall: hb_types.GeoNodeWall = None
+
+    def check(self, context):
+        if context.object and 'IS_WALL_BP' in context.object:
+            return True
+        return False
+
+    def invoke(self,context,event):
+        self.wall = hb_types.GeoNodeWall(context.object)
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=400)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def get_first_wall_bp(self,context,obj):
+        if len(obj.constraints) > 0:
+            bp = obj.constraints[0].target.parent
+            return self.get_first_wall_bp(context,bp)
+        else:
+            return obj   
+
+    def draw(self, context):
+        layout = self.layout
+
+        box = layout.box()
+        row = box.row()
+        
+        col = row.column(align=True)
+        row1 = col.row(align=True)
+        row1.label(text='Length:')
+        self.wall.draw_input(row1, 'Length', '')
+        
+        row1 = col.row(align=True)
+        row1.label(text='Height:')
+        self.wall.draw_input(row1, 'Height', '')        
+
+        row1 = col.row(align=True)
+        row1.label(text='Thickness:')
+        self.wall.draw_input(row1, 'Thickness', '')  
+
+        if len(self.wall.obj.constraints) > 0:
+            first_wall = self.get_first_wall_bp(context,self.wall.obj)
+            col = row.column(align=True)
+            col.label(text="Location X:")
+            col.label(text="Location Y:")
+            col.label(text="Location Z:")
+        
+            col = row.column(align=True)
+            col.prop(first_wall,'location',text="")            
+        else:
+            col = row.column(align=True)
+            col.label(text="Location X:")
+            col.label(text="Location Y:")
+            col.label(text="Location Z:")
+        
+            col = row.column(align=True)
+            col.prop(self.wall.obj,'location',text="")
+        
+        row = box.row()
+        row.label(text='Rotation Z:')
+        row.prop(self.wall.obj,'rotation_euler',index=2,text="")  
+
+
 class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_wall_height"
     bl_label = "Update Wall Height"
@@ -244,6 +313,7 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
 
 classes = (
     home_builder_walls_OT_draw_walls,
+    home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
 )

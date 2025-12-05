@@ -224,6 +224,40 @@ class GeoNodeObject:
         self.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
+    def draw_input(self, layout, input_name, text, icon=''):
+        """Safely draw a geometry node input value
+        
+        Args:
+            layout: Layout to draw the input value
+            name: Name of the input parameter
+            text: Text to display
+            icon: Icon to display
+            input_name: Name of the input parameter
+            value: Value to set
+            
+        Raises:
+            ValueError: If object doesn't have geometry node modifier or input not found
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            raise ValueError("Object does not have geometry node modifier")
+        
+        try:
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
+        except KeyError:
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
+        
+        if not mod.node_group:
+            raise ValueError("Geometry node modifier has no node group")
+        
+        if input_name not in mod.node_group.interface.items_tree:
+            raise ValueError(f"Input '{input_name}' not found in geometry node")
+        
+        node_input = mod.node_group.interface.items_tree[input_name]
+        if icon == '':
+            layout.prop(mod,'["' + node_input.identifier + '"]',text=text)
+        else:
+            layout.prop(mod,'["' + node_input.identifier + '"]',text=text,icon=icon)
+
     def set_input(self, input_name, value):
         """Safely set geometry node input value
         
@@ -292,6 +326,7 @@ class GeoNodeWall(GeoNodeObject):
         hb_props = bpy.context.window_manager.home_builder
         add_on_prefs = hb_props.get_user_preferences(bpy.context)        
         self.obj['IS_WALL_BP'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_wall_commands'
         self.obj.color = add_on_prefs.wall_color
 
         length = self.var_input('Length', 'length')
