@@ -52,6 +52,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         # Register for cleanup on cancel
         self.register_placement_object(self.current_wall.obj)
+        for child in self.current_wall.obj.children:
+            self.register_placement_object(child)
         
         if self.previous_wall:
             self.current_wall.connect_to_wall(self.previous_wall)
@@ -119,7 +121,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Current wall becomes previous, remove from cancel list (it's confirmed)
         if self.current_wall.obj in self.placement_objects:
             self.placement_objects.remove(self.current_wall.obj)
-        
+        # Also remove the wall's obj_x object from cancel list
+        for child in self.current_wall.obj.children:
+            if 'obj_x' in child and child in self.placement_objects:
+                self.placement_objects.remove(child)
+
         self.previous_wall = self.current_wall
         self.create_wall(bpy.context)
 
@@ -191,12 +197,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Right click - finish drawing
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
             # Remove current unfinished wall
-            if self.current_wall and self.current_wall.obj:
-                bpy.data.objects.remove(self.current_wall.obj, do_unlink=True)
-            if self.dim and self.dim.obj:
-                bpy.data.objects.remove(self.dim.obj, do_unlink=True)
+            self.cancel_placement(context)
             hb_placement.clear_header_text(context)
-            context.window.cursor_set('DEFAULT')
             return {'FINISHED'}
 
         # Escape - cancel everything
