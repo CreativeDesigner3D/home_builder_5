@@ -17,17 +17,9 @@ from bpy.props import (
         CollectionProperty,
         EnumProperty,
         )
+from . import hb_utils
 from .units import inch
 from .hb_types import Variable
-
-def add_driver_variables(driver,variables):
-    for var in variables:
-        new_var = driver.driver.variables.new()
-        new_var.type = 'SINGLE_PROP'
-        new_var.name = var.name
-        new_var.targets[0].data_path = var.data_path
-        new_var.targets[0].id = var.obj
-
 
 def update_main_tab(self,context):
     # TODO: Load the correct library based on the main_tab
@@ -68,7 +60,7 @@ class Calculator(PropertyGroup):
     def set_total_distance(self,expression="",variables=[],value=0):
         data_path = 'home_builder.calculator_distance'
         driver = self.distance_obj.driver_add(data_path)
-        add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
     def draw(self,layout):
@@ -142,6 +134,59 @@ class Home_Builder_Object_Props(PropertyGroup):
     calculators: CollectionProperty(type=Calculator, name="Calculators")# type: ignore
     calculator_distance: FloatProperty(name="Calculator Distance",subtype='DISTANCE')# type: ignore
     calculator_index: IntProperty(name="Calculator Index")# type: ignore
+
+    def add_property(self,name,type,value,combobox_items=[]):
+        obj = self.id_data
+        if type == 'CHECKBOX':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(description='HOME_BUILDER_PROP')
+
+        if type == 'DISTANCE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='DISTANCE',description='HOME_BUILDER_PROP')
+
+        if type == 'ANGLE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='ANGLE',description='HOME_BUILDER_PROP')
+
+        if type == 'PERCENTAGE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='PERCENTAGE',min=0,max=100,description='HOME_BUILDER_PROP')
+
+        if type == 'COMBOBOX':
+            obj[name] = value
+            cb_list = []
+            for item in combobox_items:
+                tup_item = (item,item,item)
+                cb_list.append(tup_item)
+            pm = obj.id_properties_ui(name)
+            pm.update(description='HOME_BUILDER_PROP',items=cb_list)    
+
+    def driver_prop(self, prop_name, expression, variables=[]):
+        """Add driver to Blender Property
+        
+        Args:
+            prop_name: Name of the property
+            expression: Expression to set
+            variables: Variables to use in the expression
+            
+        """
+
+        driver = self.id_data.driver_add(f'["{prop_name}"]')
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def var_prop(self, prop_name, name):
+        """Get a variable from a property"""
+        return Variable(self.id_data,'["' + prop_name + '"]',name)
 
     @classmethod
     def register(cls):

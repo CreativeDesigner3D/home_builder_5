@@ -2,6 +2,7 @@ import bpy
 import os
 from typing import Optional, Any
 from . import units
+from . import hb_utils
 
 geometry_nodes_path = os.path.join(os.path.dirname(__file__),'geometry_nodes')
 cabinet_part_modifiers_path = os.path.join(geometry_nodes_path,'CabinetPartModifiers')
@@ -71,49 +72,15 @@ class GeoNodeObject:
         # Link object to scene collection
         bpy.context.scene.collection.objects.link(self.obj)
 
-    def add_driver_variables(self,driver,variables):
-        for var in variables:
-            new_var = driver.driver.variables.new()
-            new_var.type = 'SINGLE_PROP'
-            new_var.name = var.name
-            new_var.targets[0].data_path = var.data_path
-            new_var.targets[0].id = var.obj
+    def add_empty(self,obj_name):
+        obj = bpy.data.objects.new(obj_name,None)
+        obj.empty_display_size = 0
+        obj.parent = self.obj
+        bpy.context.scene.collection.objects.link(obj)
+        return obj
 
-    def add_property(self,name,type,value,combo_items=[]):
-        obj = self.obj
-
-        if type == 'CHECKBOX':
-            obj[name] = value
-            obj.id_properties_ensure()
-            pm = obj.id_properties_ui(name)
-            pm.update(description='CABINET_BUILDER_PROP')
-
-        if type == 'DISTANCE':
-            obj[name] = value
-            obj.id_properties_ensure()
-            pm = obj.id_properties_ui(name)
-            pm.update(subtype='DISTANCE',description='CABINET_BUILDER_PROP')
-
-        if type == 'ANGLE':
-            obj[name] = value
-            obj.id_properties_ensure()
-            pm = obj.id_properties_ui(name)
-            pm.update(subtype='ANGLE',description='CABINET_BUILDER_PROP')
-
-        if type == 'PERCENTAGE':
-            obj[name] = value
-            obj.id_properties_ensure()
-            pm = obj.id_properties_ui(name)
-            pm.update(subtype='PERCENTAGE',min=0,max=100,description='CABINET_BUILDER_PROP')
-
-        if type == 'COMBOBOX':
-            obj[name] = value
-            cb_list = []
-            for item in combo_items:
-                tup_item = (item,item,item)
-                cb_list.append(tup_item)
-            pm = obj.id_properties_ui(name)
-            pm.update(description='CABINET_BUILDER_PROP',items=cb_list)      
+    def add_property(self,name,type,value,combobox_items=[]):
+        self.obj.home_builder.add_property(name,type,value,combobox_items)
 
     def var_prop(self, prop_name, name):
         """Get a variable from a property"""
@@ -164,7 +131,7 @@ class GeoNodeObject:
             index = 2
 
         driver = self.obj.driver_add('location',index)
-        self.add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
     def driver_rotation(self,axis,expression,variables=[]):
@@ -176,7 +143,15 @@ class GeoNodeObject:
             index = 2
 
         driver = self.obj.driver_add('rotation_euler',index)
-        self.add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def driver_hide(self,expression,variables=[]):
+        driver = self.obj.driver_add('hide_viewport')
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+        driver = self.obj.driver_add('hide_render')
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
     def driver_input(self, input_name, expression, variables=[]):
@@ -207,7 +182,7 @@ class GeoNodeObject:
         
         node_input = mod.node_group.interface.items_tree[input_name]
         driver = self.obj.driver_add('modifiers["' + mod.name + '"]["' + node_input.identifier + '"]')
-        self.add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
     def driver_prop(self, prop_name, expression, variables=[]):
@@ -221,7 +196,7 @@ class GeoNodeObject:
         """
 
         driver = self.obj.driver_add(f'["{prop_name}"]')
-        self.add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
     def draw_input(self, layout, input_name, text, icon=''):
@@ -342,7 +317,7 @@ class GeoNodeWall(GeoNodeObject):
         bpy.context.scene.collection.objects.link(self.obj_x)
 
         driver = self.obj_x.driver_add('location',0)
-        self.add_driver_variables(driver,[length])
+        hb_utils.add_driver_variables(driver,[length])
         driver.driver.expression = 'length'
 
     def assign_materials(self,context):
@@ -470,7 +445,7 @@ class CabinetPartModifier(GeoNodeObject):
         
         node_input = self.mod.node_group.interface.items_tree[input_name]
         driver = self.obj.driver_add('modifiers["' + self.mod.name + '"]["' + node_input.identifier + '"]')
-        self.add_driver_variables(driver,variables)
+        hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression         
 
     def set_input(self, input_name, value):

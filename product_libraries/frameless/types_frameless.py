@@ -146,8 +146,57 @@ class CabinetOpening(GeoNodeCage):
         self.obj['IS_FRAMELESS_OPENING_CAGE'] = True
         self.obj.display_type = 'WIRE'
 
+    def add_properties_front_overlays(self):
+        self.add_property("Inset Front",'CHECKBOX',False)
+        self.add_property("Door to Cabinet Gap",'DISTANCE',inch(.125))    
+        self.add_property("Half Overlay Top",'CHECKBOX',False)
+        self.add_property("Half Overlay Bottom",'CHECKBOX',False)
+        self.add_property("Half Overlay Left",'CHECKBOX',False)
+        self.add_property("Half Overlay Right",'CHECKBOX',False)
+        self.add_property("Inset Reveal",'DISTANCE',inch(.125))
+        self.add_property("Top Reveal",'DISTANCE',inch(.0625))
+        self.add_property("Bottom Reveal",'DISTANCE',inch(0))
+        self.add_property("Left Reveal",'DISTANCE',inch(.0625))
+        self.add_property("Right Reveal",'DISTANCE',inch(.0625))
+        self.add_property("Vertical Gap",'DISTANCE',inch(.125))
+        self.add_property("Horizontal Gap",'DISTANCE',inch(.125))
 
-class Doors(GeoNodeCage):
+    def add_properties_opening_thickness(self):
+        self.add_property("Left Thickness",'DISTANCE',inch(.75))
+        self.add_property("Right Thickness",'DISTANCE',inch(.75))
+        self.add_property("Top Thickness",'DISTANCE',inch(.75))
+        self.add_property("Bottom Thickness",'DISTANCE',inch(.75))
+
+    def add_properties_front_overlay_calculations(self):
+        hot = self.var_prop('Half Overlay Top', 'hot')
+        hob = self.var_prop('Half Overlay Bottom', 'hob')
+        hol = self.var_prop('Half Overlay Left', 'hol')
+        hor = self.var_prop('Half Overlay Right', 'hor')
+        lt = self.var_prop('Left Thickness', 'lt')
+        rt = self.var_prop('Right Thickness', 'rt')
+        tt = self.var_prop('Top Thickness', 'tt')
+        bt = self.var_prop('Bottom Thickness', 'bt')
+        vg = self.var_prop('Vertical Gap', 'vg')
+        lr = self.var_prop('Left Reveal', 'lr')
+        rr = self.var_prop('Right Reveal', 'rr')
+        tr = self.var_prop('Top Reveal', 'tr')
+        br = self.var_prop('Bottom Reveal', 'br')
+
+        self.overlay_prompts = self.add_empty('Overlay Prompt Obj')
+        self.overlay_prompts.home_builder.add_property("Overlay Top",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Bottom",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Left",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Right",'DISTANCE',0.0)
+
+        self.overlay_prompts.home_builder.driver_prop("Overlay Top", "IF(hot,(tt-vg)/2,tt-tr)", [hot,tt,vg,tr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Bottom", "IF(hob,(bt-vg)/2,bt-br)", [hob,bt,vg,br])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Left", "IF(hol,(lt-vg)/2,lt-lr)", [hol,lt,vg,lr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Right", "IF(hor,(rt-vg)/2,rt-rr)", [hor,rt,vg,rr])
+
+        return self.overlay_prompts
+
+
+class Doors(CabinetOpening):
 
     def create(self):
         super().create("Doors")
@@ -156,23 +205,36 @@ class Doors(GeoNodeCage):
 
         self.add_property('Front Thickness', 'DISTANCE', inch(.75))
         self.add_property('Vertical Gap', 'DISTANCE', inch(.125))
+        self.add_property("Door Swing",'COMBOBOX',2,combobox_items=["Left","Right","Double"])
+        self.add_properties_opening_thickness()
+        self.add_properties_front_overlays()
+        overlay_prompts = self.add_properties_front_overlay_calculations()
+
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         dim_y = self.var_input('Dim Y', 'dim_y')
         dim_z = self.var_input('Dim Z', 'dim_z')
         ft = self.var_prop('Front Thickness', 'ft')
         vg = self.var_prop('Vertical Gap', 'vg')
+        ds = self.var_prop('Door Swing', 'ds')
+        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
         left_door = CabinetDoor()
         left_door.create('Left Door')
         left_door.obj.parent = self.obj
         left_door.obj.rotation_euler.x = math.radians(90)
         left_door.obj.rotation_euler.y = math.radians(-90)
-        # left_door.driver_location('x', 'mt',[mt])
-        # left_door.driver_location('z', 'dim_z',[dim_z])
-        left_door.driver_input("Length", 'dim_z', [dim_z])
-        left_door.driver_input("Width", 'dim_x/2-vg/2', [dim_x,vg])
+        left_door.driver_location('x', '-lo',[lo])
+        left_door.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        left_door.driver_location('z', '-bo',[bo])
+        left_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
+        left_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
         left_door.driver_input("Thickness", 'ft', [ft])   
+        left_door.driver_hide('IF(ds==1,True,False)',[ds])
         left_door.set_input("Mirror Y", True)     
 
         right_door = CabinetDoor()
@@ -180,11 +242,13 @@ class Doors(GeoNodeCage):
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        right_door.driver_location('x', 'dim_x',[dim_x])
-        # right_door.driver_location('z', 'dim_z',[dim_z])
-        right_door.driver_input("Length", 'dim_z', [dim_z])
-        right_door.driver_input("Width", 'dim_x/2-vg/2', [dim_x,vg])
-        right_door.driver_input("Thickness", 'ft', [ft])   
+        right_door.driver_location('x', 'dim_x+ro',[dim_x,ro])
+        right_door.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        right_door.driver_location('z', '-bo',[bo])
+        right_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
+        right_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
+        right_door.driver_input("Thickness", 'ft', [ft]) 
+        right_door.driver_hide('IF(ds==0,True,False)',[ds])  
         right_door.set_input("Mirror Y", False)    
 
 
