@@ -33,12 +33,20 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
                                                         description="This setting turns on the object color type",
                                                         default=True)# type: ignore
     
+    use_vertex_snapping: bpy.props.BoolProperty(name="Use Vertex Snapping",
+                                                        description="This setting turns on vertex snapping",
+                                                        default=True)# type: ignore
+
     turn_off_3d_cursor: bpy.props.BoolProperty(name="Turn Off 3D Cursor",
                                                         description="This setting turns off the 3D cursor",
                                                         default=True)# type: ignore
 
     show_wireframes: bpy.props.BoolProperty(name="Show Wireframes",
                                                         description="This setting shows the wireframes",
+                                                        default=True)# type: ignore
+
+    change_studio_lighting: bpy.props.BoolProperty(name="Change Studio Lighting",
+                                                        description="This setting changes the studio lighting to the recommended lighting",
                                                         default=True)# type: ignore
 
     def check(self, context):
@@ -57,6 +65,7 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         view = context.space_data
         overlay = view.overlay
         shading = view.shading        
+        tool_settings = context.scene.tool_settings
         if self.turn_off_relationship_lines:
             overlay.show_relationship_lines = False
         if self.turn_on_object_color_type:
@@ -67,6 +76,10 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
             overlay.show_wireframes = True
             overlay.wireframe_threshold = 0.0
             overlay.wireframe_opacity = 0.8
+        if self.change_studio_lighting:
+            shading.studio_light = 'paint.sl'
+        if self.use_vertex_snapping:
+            tool_settings.snap_elements_base = {'VERTEX'}
         return {'FINISHED'}
 
     def draw(self, context):
@@ -77,6 +90,8 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         box.prop(self,'turn_on_object_color_type')
         box.prop(self,'turn_off_3d_cursor')
         box.prop(self,'show_wireframes')
+        box.prop(self,'change_studio_lighting')
+        box.prop(self,'use_vertex_snapping')
 
 classes = (
     home_builder_OT_to_do,
