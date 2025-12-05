@@ -447,6 +447,38 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             bpy.data.objects.remove(self.dim_right_offset.obj, do_unlink=True)
         self.placement_objects = []
     
+    def get_dimension_rotation(self, context, base_rotation_z):
+        """Calculate dimension rotation to face the camera based on view angle."""
+        import math
+        
+        # Get the 3D view
+        region_3d = None
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                region_3d = area.spaces.active.region_3d
+                break
+        
+        if not region_3d:
+            return (0, 0, base_rotation_z)
+        
+        # Get view rotation matrix and extract the view direction
+        view_matrix = region_3d.view_matrix
+        # View direction is the negative Z axis of the view matrix (pointing into screen)
+        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
+        
+        # Check if we're looking more from above (plan view) or from the side (elevation)
+        # view_dir.z close to -1 means looking straight down (plan view)
+        # view_dir.z close to 0 means looking from the side (elevation view)
+        
+        vertical_component = abs(view_dir.z)
+        
+        if vertical_component > 0.7:
+            # Plan view - dimension lies flat (X rotation = 0)
+            return (0, 0, base_rotation_z)
+        else:
+            # Elevation/3D view - rotate dimension to stand up (X rotation = 90)
+            return (math.radians(90), 0, base_rotation_z)
+    
     def update_dimensions(self, context):
         """Update dimension positions and values."""
         if not self.preview_cage:
@@ -469,6 +501,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             wall = hb_types.GeoNodeWall(self.selected_wall)
             wall_thickness = wall.get_input('Thickness')
             wall_matrix = self.selected_wall.matrix_world
+            wall_rotation_z = self.selected_wall.rotation_euler.z
             
             left_offset = self.placement_x - self.gap_left_boundary
             right_offset = self.gap_right_boundary - (self.placement_x + total_width)
@@ -479,10 +512,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             else:
                 dim_y = wall_thickness + units.inch(2)
             
+            # Get rotation based on view angle
+            dim_rotation = self.get_dimension_rotation(context, wall_rotation_z)
+            
             # Total width dimension - above cabinets (convert to world space)
             local_pos = Vector((self.placement_x, dim_y, dim_z))
             self.dim_total_width.obj.location = wall_matrix @ local_pos
-            self.dim_total_width.obj.rotation_euler = self.selected_wall.rotation_euler
+            self.dim_total_width.obj.rotation_euler = dim_rotation
             self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
             self.dim_total_width.obj.hide_set(False)
             
@@ -490,7 +526,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             if left_offset > units.inch(0.5):
                 local_pos = Vector((self.gap_left_boundary, dim_y, dim_z + units.inch(8)))
                 self.dim_left_offset.obj.location = wall_matrix @ local_pos
-                self.dim_left_offset.obj.rotation_euler = self.selected_wall.rotation_euler
+                self.dim_left_offset.obj.rotation_euler = dim_rotation
                 self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
                 self.dim_left_offset.obj.hide_set(False)
             else:
@@ -500,16 +536,19 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             if right_offset > units.inch(0.5):
                 local_pos = Vector((self.placement_x + total_width, dim_y, dim_z + units.inch(8)))
                 self.dim_right_offset.obj.location = wall_matrix @ local_pos
-                self.dim_right_offset.obj.rotation_euler = self.selected_wall.rotation_euler
+                self.dim_right_offset.obj.rotation_euler = dim_rotation
                 self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
                 self.dim_right_offset.obj.hide_set(False)
             else:
                 self.dim_right_offset.obj.hide_set(True)
         else:
             # Floor placement - just show total width
+            base_rotation_z = self.preview_cage.obj.rotation_euler.z
+            dim_rotation = self.get_dimension_rotation(context, base_rotation_z)
+            
             self.dim_total_width.obj.location = self.preview_cage.obj.location.copy()
             self.dim_total_width.obj.location.z = dim_z
-            self.dim_total_width.obj.rotation_euler = self.preview_cage.obj.rotation_euler
+            self.dim_total_width.obj.rotation_euler = dim_rotation
             self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
             self.dim_total_width.obj.hide_set(False)
             
