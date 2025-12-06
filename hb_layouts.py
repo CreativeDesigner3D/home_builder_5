@@ -170,26 +170,21 @@ class ElevationView(LayoutView):
             if is_cage or is_helper:
                 continue
             
-            # Get child's world position and convert to wall's local space
-            child_world_pos = child.matrix_world.translation
-            child_local_pos = wall_matrix_inv @ child_world_pos
-            
-            # Get child dimensions if it's a geo node object
-            child_width = 0
-            child_height = 0
-            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
-                try:
-                    geo_obj = hb_types.GeoNodeObject(child)
-                    child_width = geo_obj.get_input('Dim X') if 'Dim X' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
-                    child_height = geo_obj.get_input('Dim Z') if 'Dim Z' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
-                except:
-                    pass
-            
-            # Update bounds
-            min_x = min(min_x, child_local_pos.x)
-            max_x = max(max_x, child_local_pos.x + child_width)
-            min_z = min(min_z, child_local_pos.z)
-            max_z = max(max_z, child_local_pos.z + child_height)
+            # Use bounding box for mesh objects
+            if hasattr(child, 'bound_box') and child.type == 'MESH':
+                # Get world space bounding box corners and convert to wall local space
+                bbox_corners = [child.matrix_world @ Vector(corner) for corner in child.bound_box]
+                bbox_local = [wall_matrix_inv @ corner for corner in bbox_corners]
+                
+                child_min_x = min(c.x for c in bbox_local)
+                child_max_x = max(c.x for c in bbox_local)
+                child_min_z = min(c.z for c in bbox_local)
+                child_max_z = max(c.z for c in bbox_local)
+                
+                min_x = min(min_x, child_min_x)
+                max_x = max(max_x, child_max_x)
+                min_z = min(min_z, child_min_z)
+                max_z = max(max_z, child_max_z)
         
         # Calculate center and size
         center_x = (min_x + max_x) / 2
@@ -198,17 +193,18 @@ class ElevationView(LayoutView):
         width = max_x - min_x
         height = max_z - min_z
         
-        # Add margin
-        margin = 0.3  # 30cm margin
+        # Add margin (10% of the larger dimension)
+        margin = max(width, height) * 0.6
         width += margin * 2
         height += margin * 2
         
-        # Update camera position (center on content)
-        camera_local_pos = Vector((center_x, -2, center_z))
+        # Update camera position (center on content, 3m in front)
+        camera_local_pos = Vector((center_x, -3, center_z))
         camera_world_pos = wall_matrix @ camera_local_pos
         self.camera.location = camera_world_pos
         
         # Set ortho scale to fit content
+        # Account for aspect ratio - use the larger dimension
         max_dimension = max(width, height)
         self.set_camera_ortho_scale(max_dimension)
 
