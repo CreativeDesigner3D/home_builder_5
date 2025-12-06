@@ -5,6 +5,45 @@ from . import hb_types
 from . import units
 
 # =============================================================================
+# PAPER SIZE DEFINITIONS
+# =============================================================================
+
+# Paper sizes in inches (width, height) - portrait orientation
+PAPER_SIZES = {
+    'LETTER': (8.5, 11.0),
+    'LEGAL': (8.5, 14.0),
+    'TABLOID': (11.0, 17.0),
+    'A4': (8.27, 11.69),
+    'A3': (11.69, 16.54),
+}
+
+# Default DPI for rendering
+DEFAULT_DPI = 150
+
+def get_paper_resolution(paper_size: str, landscape: bool = True, dpi: int = DEFAULT_DPI) -> tuple:
+    """Get pixel resolution for a paper size.
+    
+    Args:
+        paper_size: Paper size name (LETTER, LEGAL, TABLOID, A4, A3)
+        landscape: If True, swap width and height
+        dpi: Dots per inch for rendering
+    
+    Returns:
+        Tuple of (width_px, height_px)
+    """
+    if paper_size not in PAPER_SIZES:
+        paper_size = 'LETTER'
+    
+    width_in, height_in = PAPER_SIZES[paper_size]
+    
+    if landscape:
+        width_in, height_in = height_in, width_in
+    
+    return (int(width_in * dpi), int(height_in * dpi))
+
+
+
+# =============================================================================
 # LAYOUT VIEW SYSTEM
 # =============================================================================
 
@@ -13,6 +52,9 @@ class LayoutView:
     
     scene: bpy.types.Scene = None
     camera: bpy.types.Object = None
+    paper_size: str = 'LETTER'
+    landscape: bool = True
+    dpi: int = DEFAULT_DPI
     
     def __init__(self, scene=None):
         if scene:
@@ -22,6 +64,10 @@ class LayoutView:
                 if obj.type == 'CAMERA':
                     self.camera = obj
                     break
+            # Restore paper settings from scene
+            self.paper_size = scene.get('PAPER_SIZE', 'LETTER')
+            self.landscape = scene.get('PAPER_LANDSCAPE', True)
+            self.dpi = scene.get('PAPER_DPI', DEFAULT_DPI)
     
     @staticmethod
     def get_all_layout_views():
@@ -103,6 +149,39 @@ class LayoutView:
         if self.camera and self.camera.data:
             self.camera.data.ortho_scale = scale
     
+    def set_paper_size(self, paper_size: str = 'LETTER', landscape: bool = True, dpi: int = None):
+        """Set the paper size for this layout view.
+        
+        Args:
+            paper_size: Paper size name (LETTER, LEGAL, TABLOID, A4, A3)
+            landscape: If True, use landscape orientation
+            dpi: Dots per inch (uses default if None)
+        """
+        if dpi is None:
+            dpi = self.dpi
+        
+        self.paper_size = paper_size
+        self.landscape = landscape
+        self.dpi = dpi
+        
+        # Store in scene for persistence
+        if self.scene:
+            self.scene['PAPER_SIZE'] = paper_size
+            self.scene['PAPER_LANDSCAPE'] = landscape
+            self.scene['PAPER_DPI'] = dpi
+        
+        # Set render resolution
+        width_px, height_px = get_paper_resolution(paper_size, landscape, dpi)
+        if self.scene:
+            self.scene.render.resolution_x = width_px
+            self.scene.render.resolution_y = height_px
+            self.scene.render.resolution_percentage = 100
+    
+    def get_paper_aspect_ratio(self) -> float:
+        """Get the aspect ratio (width/height) of the current paper size."""
+        width_px, height_px = get_paper_resolution(self.paper_size, self.landscape, self.dpi)
+        return width_px / height_px
+    
     def delete(self):
         """Delete this layout view and its scene."""
         if self.scene:
@@ -133,13 +212,16 @@ class ElevationView(LayoutView):
             if wall_name and wall_name in bpy.data.objects:
                 self.wall_obj = bpy.data.objects[wall_name]
     
-    def create(self, wall_obj: bpy.types.Object, name: str = None) -> bpy.types.Scene:
+    def create(self, wall_obj: bpy.types.Object, name: str = None, 
+               paper_size: str = 'LETTER', landscape: bool = True) -> bpy.types.Scene:
         """
         Create an elevation view for a wall.
         
         Args:
             wall_obj: The wall object to create elevation for
             name: Optional name for the view (defaults to wall name + " Elevation")
+            paper_size: Paper size (LETTER, LEGAL, TABLOID, A4, A3)
+            landscape: If True, use landscape orientation
         
         Returns:
             The created scene
@@ -168,6 +250,9 @@ class ElevationView(LayoutView):
         
         # Create camera
         self.create_camera(f"{view_name} Camera", wall_center_world, camera_rotation)
+        
+        # Set paper size for proper aspect ratio
+        self.set_paper_size(paper_size, landscape)
         
         # Add cabinet dimensions (before fitting camera so they're included)
         self.add_cabinet_dimensions()

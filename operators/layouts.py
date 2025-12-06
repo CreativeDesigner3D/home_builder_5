@@ -18,7 +18,7 @@ class home_builder_layouts_OT_create_elevation_view(bpy.types.Operator):
     def execute(self, context):
         wall_obj = context.object
         view = hb_layouts.ElevationView()
-        scene = view.create(wall_obj)
+        scene = view.create(wall_obj,paper_size='LEGAL')
         
         self.report({'INFO'}, f"Created elevation view: {scene.name}")
         return {'FINISHED'}
