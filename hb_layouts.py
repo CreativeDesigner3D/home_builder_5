@@ -147,12 +147,25 @@ class ElevationView(LayoutView):
         return self.scene
     
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
-        """Recursively add object and its children to collection."""
-        # Link object to collection (it can be in multiple collections)
-        if obj.name not in collection.objects:
-            collection.objects.link(obj)
+        """Recursively add object and its children to collection.
+        Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
         
-        # Add all children recursively
+        # Skip cage objects and helper empties - they are organizational, not visible geometry
+        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
+                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
+                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
+                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
+        
+        # Skip helper empties
+        is_helper = (obj.get('obj_x') or 
+                     'Overlay Prompt Obj' in obj.name)
+        
+        if not is_cage and not is_helper:
+            # Link object to collection (it can be in multiple collections)
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
+        
+        # Add all children recursively (even if parent is a cage)
         for child in obj.children:
             self._add_object_to_collection(child, collection)
     
@@ -263,9 +276,22 @@ class PlanView(LayoutView):
         return self.scene
     
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
-        """Recursively add object and its children to collection."""
-        if obj.name not in collection.objects:
-            collection.objects.link(obj)
+        """Recursively add object and its children to collection.
+        Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
+        
+        # Skip cage objects and helper empties - they are organizational, not visible geometry
+        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
+                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
+                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
+                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
+        
+        # Skip helper empties
+        is_helper = (obj.get('obj_x') or 
+                     'Overlay Prompt Obj' in obj.name)
+        
+        if not is_cage and not is_helper:
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
         
         for child in obj.children:
             self._add_object_to_collection(child, collection)
@@ -347,9 +373,22 @@ class View3D(LayoutView):
         return self.scene
     
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
-        """Recursively add object and its children to collection."""
-        if obj.name not in collection.objects:
-            collection.objects.link(obj)
+        """Recursively add object and its children to collection.
+        Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
+        
+        # Skip cage objects and helper empties - they are organizational, not visible geometry
+        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
+                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
+                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
+                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
+        
+        # Skip helper empties
+        is_helper = (obj.get('obj_x') or 
+                     'Overlay Prompt Obj' in obj.name)
+        
+        if not is_cage and not is_helper:
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
         
         for child in obj.children:
             self._add_object_to_collection(child, collection)
