@@ -131,6 +131,10 @@ class Home_Builder_Object_Props(PropertyGroup):
    
     mod_name: StringProperty(name="Mod Name", default="")
 
+    connected_object: PointerProperty(name="Connected Object",
+                                      type=bpy.types.Object,
+                                      description="This is the used to store objects that are connected together.")# type: ignore  
+
     calculators: CollectionProperty(type=Calculator, name="Calculators")# type: ignore
     calculator_distance: FloatProperty(name="Calculator Distance",subtype='DISTANCE')# type: ignore
     calculator_index: IntProperty(name="Calculator Index")# type: ignore

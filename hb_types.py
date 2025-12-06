@@ -296,6 +296,15 @@ class GeoNodeWall(GeoNodeObject):
 
     obj_x = None
 
+    def __init__(self,obj=None):
+        super().__init__(obj)
+        if obj:
+            self.obj = obj
+            for child in obj.children:
+                if child.get('obj_x'):
+                    self.obj_x = child
+                    break
+
     def create(self,name):
         super().create('GeoNodeWall',name)
         hb_props = bpy.context.window_manager.home_builder
@@ -336,6 +345,36 @@ class GeoNodeWall(GeoNodeObject):
         constraint = self.obj.constraints.new('COPY_LOCATION')
         constraint.target = wall.obj_x
 
+        wall.obj_x.home_builder.connected_object = self.obj
+
+    def get_connected_wall(self, direction='left'):
+        """
+        Get the wall connected to this wall on the left or right side.
+        
+        Args:
+            direction: 'left' for wall at start point, 'right' for wall at end point
+            
+        Returns:
+            GeoNodeWall or None
+        """
+        if direction == 'left':
+            # Left connection: this wall has a COPY_LOCATION constraint
+            # targeting the obj_x of the previous wall
+            for con in self.obj.constraints:
+                if con.type == 'COPY_LOCATION':
+                    target = con.target
+                    if target and target.parent and 'IS_WALL_BP' in target.parent:
+                        return GeoNodeWall(target.parent)
+        elif direction == 'right':
+            # Right connection: find any wall that has a COPY_LOCATION constraint
+            # targeting our obj_x
+            import bpy
+            for obj in bpy.data.objects:
+                if 'IS_WALL_BP' in obj and obj != self.obj:
+                    for con in obj.constraints:
+                        if con.type == 'COPY_LOCATION' and con.target == self.obj_x:
+                            return GeoNodeWall(obj)
+        return None
 
 class GeoNodeCage(GeoNodeObject):
 

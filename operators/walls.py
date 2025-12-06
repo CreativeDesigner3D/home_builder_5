@@ -126,6 +126,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if 'obj_x' in child and child in self.placement_objects:
                 self.placement_objects.remove(child)
 
+        # Update miter angles for this wall and connected walls
+        update_connected_wall_miters(self.current_wall.obj)
+
         self.previous_wall = self.current_wall
         self.create_wall(bpy.context)
 
@@ -220,14 +223,36 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
     bl_description = "This shows the prompts for the selected wall"
 
     wall: hb_types.GeoNodeWall = None
+    previous_rotation: float = 0.0
+
+    wall_length: bpy.props.FloatProperty(name="Width",unit='LENGTH',precision=6)# type: ignore
+    wall_height: bpy.props.FloatProperty(name="Height",unit='LENGTH',precision=6)# type: ignore
+    wall_thickness: bpy.props.FloatProperty(name="Depth",unit='LENGTH',precision=6)# type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and 'IS_WALL_BP' in context.object
 
     def check(self, context):
-        if context.object and 'IS_WALL_BP' in context.object:
-            return True
-        return False
+        self.wall.set_input('Length', self.wall_length)
+        self.wall.set_input('Height', self.wall_height)
+        self.wall.set_input('Thickness', self.wall_thickness)
+        calculate_wall_miter_angles(self.wall.obj)
+        left_wall = self.wall.get_connected_wall('left')
+        if left_wall:
+            calculate_wall_miter_angles(left_wall.obj)
+        
+        right_wall = self.wall.get_connected_wall('right')
+        if right_wall:
+            calculate_wall_miter_angles(right_wall.obj)        
+        return True
 
-    def invoke(self,context,event):
+    def invoke(self, context, event):
         self.wall = hb_types.GeoNodeWall(context.object)
+        self.wall_length = self.wall.get_input('Length')
+        self.wall_height = self.wall.get_input('Height')
+        self.wall_thickness = self.wall.get_input('Thickness')
+        self.previous_rotation = self.wall.obj.rotation_euler.z
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=400)
 
@@ -250,15 +275,15 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         col = row.column(align=True)
         row1 = col.row(align=True)
         row1.label(text='Length:')
-        self.wall.draw_input(row1, 'Length', '')
+        row1.prop(self, 'wall_length', text="")
         
         row1 = col.row(align=True)
         row1.label(text='Height:')
-        self.wall.draw_input(row1, 'Height', '')        
+        row1.prop(self, 'wall_height', text="")      
 
         row1 = col.row(align=True)
         row1.label(text='Thickness:')
-        self.wall.draw_input(row1, 'Thickness', '')  
+        row1.prop(self, 'wall_thickness', text="") 
 
         if len(self.wall.obj.constraints) > 0:
             first_wall = self.get_first_wall_bp(context,self.wall.obj)
@@ -311,11 +336,100 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+class home_builder_walls_OT_update_wall_miters(bpy.types.Operator):
+    """Update miter angles for all walls based on their connections"""
+    bl_idname = "home_builder_walls.update_wall_miters"
+    bl_label = "Update Wall Miters"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        update_all_wall_miters()
+        self.report({'INFO'}, "Updated wall miter angles")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
+    home_builder_walls_OT_update_wall_miters,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
+# Wall Miter Angle Calculation
+def calculate_wall_miter_angles(wall_obj):
+    """
+    Calculate and set the miter angles for a wall based on connected walls.
+    Uses the GeoNodeWall.get_connected_wall() method to find connections.
+    
+    The miter angle formula:
+    - turn_angle = connected_wall_rotation - this_wall_rotation (normalized to -180° to 180°)
+    - For the RIGHT end (end of wall): right_angle = -turn_angle / 2
+    - For the LEFT end (start of wall): left_angle = turn_angle / 2
+    """
+    import math
+    
+    wall = hb_types.GeoNodeWall(wall_obj)
+    this_rot = wall_obj.rotation_euler.z
+    
+    # Get connected wall on the left (at our START)
+    left_wall = wall.get_connected_wall('left')
+    if left_wall:
+        prev_rot = left_wall.obj.rotation_euler.z
+        turn = this_rot - prev_rot
+        # Normalize turn angle to -pi to pi
+        while turn > math.pi: turn -= 2 * math.pi
+        while turn < -math.pi: turn += 2 * math.pi
+        
+        left_angle = turn / 2
+        wall.set_input('Left Angle', left_angle)
+    else:
+        wall.set_input('Left Angle', 0)
+    
+    # Get connected wall on the right (at our END)
+    right_wall = wall.get_connected_wall('right')
+    if right_wall:
+        next_rot = right_wall.obj.rotation_euler.z
+        turn = next_rot - this_rot
+        # Normalize turn angle to -pi to pi
+        while turn > math.pi: turn -= 2 * math.pi
+        while turn < -math.pi: turn += 2 * math.pi
+        
+        right_angle = -turn / 2
+        wall.set_input('Right Angle', right_angle)
+    else:
+        wall.set_input('Right Angle', 0)
+
+
+def update_all_wall_miters():
+    """Update miter angles for all walls in the scene."""
+    for obj in bpy.data.objects:
+        if 'IS_WALL_BP' in obj:
+            calculate_wall_miter_angles(obj)
+
+
+def update_connected_wall_miters(wall_obj):
+    """Update miter angles for a wall and all walls connected to it."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    print("GOT WALL",wall.obj)
+    
+    # Update this wall
+    calculate_wall_miter_angles(wall_obj)
+
+    print("CALCULATED MITERS FOR",wall.obj)
+    
+    # Update connected wall on the left
+    left_wall = wall.get_connected_wall('left')
+    if left_wall:
+        calculate_wall_miter_angles(left_wall.obj)
+        print("CALCULATED MITERS FOR LEFT WALL",left_wall.obj)
+    
+    # Update connected wall on the right
+    right_wall = wall.get_connected_wall('right')
+    if right_wall:
+        calculate_wall_miter_angles(right_wall.obj)
+        print("CALCULATED MITERS FOR RIGHT WALL",right_wall.obj)
+
+
