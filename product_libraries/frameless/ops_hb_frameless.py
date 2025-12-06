@@ -616,7 +616,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     def find_placement_gap_by_side(self, wall_obj, cursor_x: float, object_width: float, 
                                      place_on_front: bool, wall_thickness: float) -> tuple:
         """
-        Find the available gap at cursor position, only considering objects on the same side.
+        Find the available gap at cursor position, only considering objects on the same side
+        that overlap vertically with the cabinet being placed.
         Doors and windows are always considered as they cut through the entire wall.
         
         Args:
@@ -630,6 +631,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
+        
+        # Get the Z bounds of the cabinet being placed
+        cabinet_z_start = self.get_cabinet_z_location(bpy.context)
+        cabinet_height = self.get_cabinet_height(bpy.context)
+        cabinet_z_end = cabinet_z_start + cabinet_height
         
         # Get all children and filter appropriately
         children = []
@@ -656,16 +662,32 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 if child_on_front != place_on_front:
                     continue
             
-            # Get object bounds
-            x_start = child.location.x
-            x_end = x_start
+            # Get object vertical bounds
+            child_z_start = child.location.z
+            child_z_end = child_z_start
+            child_width = 0
+            
             if hasattr(child, 'home_builder') and child.home_builder.mod_name:
                 try:
                     geo_obj = hb_types.GeoNodeObject(child)
-                    width = geo_obj.get_input('Dim X')
-                    x_end = x_start + width
+                    child_width = geo_obj.get_input('Dim X')
+                    child_height = geo_obj.get_input('Dim Z')
+                    child_z_end = child_z_start + child_height
                 except:
                     pass
+            
+            # Check for vertical overlap
+            # Two ranges overlap if: start1 < end2 AND start2 < end1
+            has_vertical_overlap = (cabinet_z_start < child_z_end) and (child_z_start < cabinet_z_end)
+            
+            if not has_vertical_overlap:
+                # No vertical collision, skip this object (including doors/windows)
+                continue
+            
+            # Get object horizontal bounds
+            x_start = child.location.x
+            x_end = x_start + child_width
+            
             children.append((x_start, x_end, child))
         
         # Sort by X position
