@@ -915,6 +915,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.preview_cage.obj.rotation_euler = self.snap_cabinet.rotation_euler
 
+    def get_cabinet_class(self):
+        if self.cabinet_type == 'BASE':
+            cabinet = types_frameless.BaseCabinet()
+        elif self.cabinet_type == 'TALL':
+            cabinet = types_frameless.TallCabinet()
+        elif self.cabinet_type == 'UPPER':
+            cabinet = types_frameless.UpperCabinet()
+        else:
+            cabinet = types_frameless.Cabinet()    
+        return cabinet    
+
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""
         import math
@@ -929,15 +940,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             z_loc = self.get_cabinet_z_location(context)
             
             for i in range(self.cabinet_quantity):
-                cabinet = types_frameless.Cabinet()
+                cabinet = self.get_cabinet_class()
                 cabinet.width = self.individual_cabinet_width
                 cabinet.height = self.get_cabinet_height(context)
                 cabinet.depth = cabinet_depth
                 cabinet.create(f'Cabinet')
                 
                 # Add doors
-                doors = types_frameless.Doors()
-                cabinet.add_cage_to_bay(doors)
+                # doors = types_frameless.Doors()
+                # cabinet.add_cage_to_bay(doors)
                 
                 # Position based on which side of wall
                 cabinet.obj.parent = self.selected_wall
@@ -968,15 +979,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             rotation_z = rotation.z
             
             for i in range(self.cabinet_quantity):
-                cabinet = types_frameless.Cabinet()
+                cabinet = self.get_cabinet_class()
                 cabinet.width = self.individual_cabinet_width
                 cabinet.height = self.get_cabinet_height(context)
                 cabinet.depth = cabinet_depth
                 cabinet.create(f'Cabinet')
                 
                 # Add doors
-                doors = types_frameless.Doors()
-                cabinet.add_cage_to_bay(doors)
+                # doors = types_frameless.Doors()
+                # cabinet.add_cage_to_bay(doors)
                 
                 # Calculate offset for this cabinet in the row
                 # Offset in local X direction based on rotation

@@ -1,5 +1,6 @@
 from . import props_hb_frameless
 from . import ops_hb_frameless
+from . import types_frameless
 
 NAMESPACE = "hb_frameless"
 MENU_NAME = "Frameless"
