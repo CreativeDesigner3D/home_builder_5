@@ -272,6 +272,39 @@ class Frameless_Scene_Props(PropertyGroup):
 
     door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore
     
+    #CABINET PULL OPTIONS
+    current_door_pull_object: PointerProperty(type=bpy.types.Object)# type: ignore
+    current_drawer_front_pull_object: PointerProperty(type=bpy.types.Object)# type: ignore
+
+    pull_dim_from_edge: FloatProperty(name="Pull Distance From Edge",
+                                                 description="Distance from Edge of Door to center of pull",
+                                                 default=units.inch(2.0),
+                                                 unit='LENGTH')# type: ignore
+
+    pull_vertical_location_base: FloatProperty(name="Pull Vertical Location Base",
+                                                 description="Distance from Top of Base Door to Top of Pull",
+                                                 default=units.inch(1.5),
+                                                 unit='LENGTH')# type: ignore
+
+    pull_vertical_location_tall: FloatProperty(name="Pull Vertical Location Base",
+                                                 description="Distance from Bottom of Tall Door to Center of Pull",
+                                                 default=units.inch(45),
+                                                 unit='LENGTH')# type: ignore
+
+    pull_vertical_location_upper: FloatProperty(name="Pull Vertical Location Base",
+                                                 description="Distance from Bottom of Upper Door to Bottom of Pull",
+                                                 default=units.inch(1.5),
+                                                 unit='LENGTH')# type: ignore
+
+    pull_vertical_location_drawers: FloatProperty(name="Pull Vertical Location Drawers",
+                                                 description="Distance from Top of Drawer Front to Center of Pull",
+                                                 default=units.inch(1.5),
+                                                 unit='LENGTH')# type: ignore
+    
+    center_pulls_on_drawer_front: BoolProperty(name="Center Pulls on Drawer Front", 
+                                                        description="Check this to center pulls on drawer fronts. Otherwise vertical location will be used.", 
+                                                        default=True)# type: ignore
+
     def draw_cabinet_sizes_ui(self,layout,context):
         unit_settings = context.scene.unit_settings      
         row = layout.row()
@@ -462,7 +495,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_handle_options',text="Handles",icon='TRIA_DOWN' if self.show_handle_options else 'TRIA_RIGHT',emboss=False)
             if self.show_handle_options:
                 size_box = box.box()
-                # self.draw_cabinet_options_handles(size_box,context)
+                self.draw_cabinet_options_handles(size_box,context)
 
             box = col.box()
             row = box.row()
@@ -548,6 +581,30 @@ class Frameless_Scene_Props(PropertyGroup):
         # row.operator('frameless.add_countertop',text="Add",icon='ADD')
         # row = ctop_box.row(align=True)
         # row.operator('frameless.delete_countertop',text="Clear",icon='X')
+
+    def draw_cabinet_options_handles(self,layout,context):
+        size_box = layout.box()
+        row = size_box.row()
+        row.label(text="Door Pulls:")
+        # row.operator('hb_frameless.update_door_pull_prompts',text="",icon='FILE_REFRESH')
+        row = size_box.row()
+        row.label(text="Door Pull:")
+        row.prop(self,'current_door_pull_object',text="")
+        row = size_box.row()
+        row.label(text="Drawer Front Pull:")
+        row.prop(self,'current_drawer_front_pull_object',text="")
+        row = size_box.row()
+        row.prop(self,'pull_dim_from_edge',text="Pull Distance From Edge")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_base',text="Pull Vertical Location Base")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_tall',text="Pull Vertical Location Tall")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_upper',text="Pull Vertical Location Upper")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_drawers',text="Pull Vertical Location Drawers")
+        row = size_box.row()
+        row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
 
     @classmethod
     def register(cls):

@@ -182,6 +182,7 @@ class CabinetOpening(GeoNodeCage):
         tr = self.var_prop('Top Reveal', 'tr')
         br = self.var_prop('Bottom Reveal', 'br')
 
+        # Overlay Prompts Stored in Separate Empty Object to Avoid Circular Dependency Graph Issues
         self.overlay_prompts = self.add_empty('Overlay Prompt Obj')
         self.overlay_prompts.home_builder.add_property("Overlay Top",'DISTANCE',0.0)
         self.overlay_prompts.home_builder.add_property("Overlay Bottom",'DISTANCE',0.0)
@@ -278,31 +279,47 @@ class CabinetSideNotched(CabinetPart):
 
 class CabinetDoor(CabinetPart):
 
+    def get_pull_object(self):
+        props = bpy.context.scene.hb_frameless
+        if props.current_door_pull_object:
+            return props.current_door_pull_object
+        else:
+            pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
+
+            with bpy.data.libraries.load(pull_path) as (data_from, data_to):
+                data_to.objects = data_from.objects 
+            
+            for obj in data_to.objects:
+                pull_obj = obj   
+                props.current_door_pull_object = pull_obj
+                return pull_obj
+    
     def create(self,name):
         super().create(name)
         self.obj['IS_DOOR_FRONT'] = True
+        props = bpy.context.scene.hb_frameless
 
-        self.add_property('Handle Horizontal Location', 'DISTANCE', inch(2))
+        self.add_property("Pull Location",'COMBOBOX',0,combobox_items=["Base","Tall","Upper"])
+        self.add_property('Handle Horizontal Location', 'DISTANCE', props.pull_dim_from_edge)
+        self.add_property('Base Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_base)
+        self.add_property('Tall Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_tall)
+        self.add_property('Upper Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
 
         length = self.var_input('Length', 'length')
         width = self.var_input('Width', 'width')
         thickness = self.var_input('Thickness', 'thickness')
         mirror_y = self.var_input('Mirror Y', 'mirror_y')
         hhl = self.var_prop('Handle Horizontal Location', 'hhl')
-
-        pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
-
-        with bpy.data.libraries.load(pull_path) as (data_from, data_to):
-            data_to.objects = data_from.objects 
-        
-        for obj in data_to.objects:
-            pull_obj = obj   
+        pl = self.var_prop('Pull Location', 'pl')
+        pvl_base = self.var_prop('Base Pull Vertical Location', 'pvl_base')
+        pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
+        pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
-        pull.set_input("Object",pull_obj)
-        pull.driver_location('x', 'length/2',[length])
+        pull.set_input("Object",self.get_pull_object())
+        pull.driver_location('x', 'IF(pl==0,length-pvl_base,IF(pl==1,pvl_tall,pvl_upper))',[length,pl,pvl_base,pvl_tall,pvl_upper])
         pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
         pull.driver_location('z', 'thickness',[thickness])
