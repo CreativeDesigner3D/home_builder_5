@@ -426,11 +426,11 @@ class GeoNodeDimension(GeoNodeObject):
     def create(self,name):
         super().create_curve('GeoNodeDimension',name)
         self.obj['IS_2D_ANNOTATION'] = True  
-        self.set_input("Arrow Height",units.inch(2.8))
+        self.set_input("Arrow Height",units.inch(1.4))
         self.set_input("Arrow Length",units.inch(1.8))
-        self.set_input("Line Thickness",units.inch(.2))
+        self.set_input("Line Thickness",units.inch(.1))
         self.set_input("Extend Line",units.inch(1))
-        self.set_input("Text Size",units.inch(6.25))
+        self.set_input("Text Size",units.inch(3))
 
 
 class CabinetPartModifier(GeoNodeObject):
