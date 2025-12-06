@@ -36,7 +36,51 @@ class LayoutView:
         """Create a new scene for the layout view."""
         self.scene = bpy.data.scenes.new(name)
         self.scene['IS_LAYOUT_VIEW'] = True
+        
+        # Set up render settings for layout views
+        self._setup_render_settings()
+        
         return self.scene
+    
+    def _setup_render_settings(self):
+        """Configure render settings for 2D layout output."""
+        if not self.scene:
+            return
+        
+        # Use Workbench render engine
+        self.scene.render.engine = 'BLENDER_WORKBENCH'
+        
+        # Set render samples to 32
+        self.scene.display.render_aa = '32'
+        
+        # Set shading color type to Object
+        self.scene.display.shading.color_type = 'OBJECT'
+        self.scene.display.shading.light = 'FLAT'
+        
+        # Set shading to solid
+        self.scene.display.shading.type = 'SOLID'
+        
+        # Enable Freestyle
+        self.scene.render.use_freestyle = True
+        
+        # Set up Freestyle line set on the view layer
+        # First, we need to get the view layer for this scene
+        if self.scene.view_layers:
+            view_layer = self.scene.view_layers[0]
+            
+            # Enable Freestyle on the view layer
+            view_layer.use_freestyle = True
+            
+            # Create a line set if none exists
+            if len(view_layer.freestyle_settings.linesets) == 0:
+                view_layer.freestyle_settings.linesets.new('LineSet')
+            
+            # Configure the line set
+            lineset = view_layer.freestyle_settings.linesets[0]
+            lineset.select_silhouette = True
+            lineset.select_border = True
+            lineset.select_crease = True
+            lineset.select_edge_mark = True
     
     def create_camera(self, name: str, location: Vector, rotation: tuple) -> bpy.types.Object:
         """Create an orthographic camera for the view."""
@@ -198,10 +242,19 @@ class ElevationView(LayoutView):
         width += margin * 2
         height += margin * 2
         
-        # Update camera position (center on content, 3m in front)
+        # Update camera position (center on content, 3m in front of wall)
+        # Wall front is in -Y direction (local), so camera goes to -Y in local space
+        # But we need to position camera to see the FRONT of objects on the wall
+        # Objects on wall front are at negative Y in wall local space
+        # So camera should be at more negative Y to see them
         camera_local_pos = Vector((center_x, -3, center_z))
         camera_world_pos = wall_matrix @ camera_local_pos
         self.camera.location = camera_world_pos
+        
+        # Ensure camera rotation is correct - looking in +Y direction in local space
+        # (which is towards the wall front in world space after transformation)
+        wall_rotation_z = wall_obj.rotation_euler.z
+        self.camera.rotation_euler = (math.radians(90), 0, wall_rotation_z)
         
         # Set ortho scale to fit content
         # Account for aspect ratio - use the larger dimension
