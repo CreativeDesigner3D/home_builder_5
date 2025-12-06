@@ -18,6 +18,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     
     # Track if we've placed the first point
     has_start_point: bool = False
+    
+    # Free rotation mode (Alt toggles, snaps to 15° increments)
+    free_rotation: bool = False
 
     def get_default_typing_target(self):
         """When user starts typing, they're entering wall length."""
@@ -87,22 +90,33 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Drawing length - calculate from start point
             x = self.hit_location[0] - self.start_point[0]
             y = self.hit_location[1] - self.start_point[1]
-
-            # Snap to orthogonal directions
-            if abs(x) > abs(y):
-                # Horizontal
-                if x > 0:
-                    self.current_wall.obj.rotation_euler.z = math.radians(0)
-                else:
-                    self.current_wall.obj.rotation_euler.z = math.radians(180)
-                self.current_wall.set_input('Length', abs(x))
+            
+            if self.free_rotation:
+                # Free rotation mode - snap to 15° increments
+                angle = math.atan2(y, x)
+                # Snap to nearest 15 degrees
+                snap_angle = round(math.degrees(angle) / 15) * 15
+                self.current_wall.obj.rotation_euler.z = math.radians(snap_angle)
+                
+                # Length is the full distance to cursor
+                length = math.sqrt(x * x + y * y)
+                self.current_wall.set_input('Length', length)
             else:
-                # Vertical
-                if y > 0:
-                    self.current_wall.obj.rotation_euler.z = math.radians(90)
+                # Default mode - snap to orthogonal (90°) directions
+                if abs(x) > abs(y):
+                    # Horizontal
+                    if x > 0:
+                        self.current_wall.obj.rotation_euler.z = math.radians(0)
+                    else:
+                        self.current_wall.obj.rotation_euler.z = math.radians(180)
+                    self.current_wall.set_input('Length', abs(x))
                 else:
-                    self.current_wall.obj.rotation_euler.z = math.radians(-90)
-                self.current_wall.set_input('Length', abs(y))
+                    # Vertical
+                    if y > 0:
+                        self.current_wall.obj.rotation_euler.z = math.radians(90)
+                    else:
+                        self.current_wall.obj.rotation_euler.z = math.radians(-90)
+                    self.current_wall.set_input('Length', abs(y))
 
             self.update_dimension()
 
@@ -139,7 +153,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         elif self.has_start_point:
             length = self.current_wall.get_input('Length')
             length_str = units.unit_to_string(context.scene.unit_settings, length)
-            text = f"Length: {length_str} | Type for exact | Click to place | Right-click to finish | Esc to cancel"
+            angle_deg = round(math.degrees(self.current_wall.obj.rotation_euler.z))
+            rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
+            text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place"
         else:
             text = "Click to place first point | Right-click to cancel | Esc to cancel"
         
@@ -155,6 +171,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.start_point = None
         self.has_start_point = False
         self.dim = None
+        self.free_rotation = False
 
         # Create initial objects
         self.create_dimension()
@@ -209,6 +226,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
+
+        # Alt key toggles free rotation mode
+        if event.type == 'LEFT_ALT' and event.value == 'PRESS':
+            self.free_rotation = not self.free_rotation
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
 
         # Pass through navigation events
         if hb_snap.event_is_pass_through(event):
