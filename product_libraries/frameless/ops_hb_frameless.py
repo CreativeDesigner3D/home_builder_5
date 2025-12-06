@@ -37,27 +37,39 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
                 return False
             
             if event.type == 'LEFT_ARROW':
-                self.offset_from_right = False
+                # On back side, left arrow = right offset (directions are flipped)
+                if self.place_on_front:
+                    self.offset_from_right = False
+                    target = hb_placement.TypingTarget.OFFSET_X
+                else:
+                    self.offset_from_right = True
+                    target = hb_placement.TypingTarget.OFFSET_RIGHT
+                
                 if self.placement_state == hb_placement.PlacementState.TYPING:
-                    # Accept current value before switching
                     if self.typed_value:
                         self.apply_typed_value_silent()
                     self.typed_value = ""
-                    self.typing_target = hb_placement.TypingTarget.OFFSET_X
+                    self.typing_target = target
                 else:
-                    self.start_typing(hb_placement.TypingTarget.OFFSET_X)
+                    self.start_typing(target)
                 return True
             
             if event.type == 'RIGHT_ARROW':
-                self.offset_from_right = True
+                # On back side, right arrow = left offset (directions are flipped)
+                if self.place_on_front:
+                    self.offset_from_right = True
+                    target = hb_placement.TypingTarget.OFFSET_RIGHT
+                else:
+                    self.offset_from_right = False
+                    target = hb_placement.TypingTarget.OFFSET_X
+                
                 if self.placement_state == hb_placement.PlacementState.TYPING:
-                    # Accept current value before switching
                     if self.typed_value:
                         self.apply_typed_value_silent()
                     self.typed_value = ""
-                    self.typing_target = hb_placement.TypingTarget.OFFSET_RIGHT
+                    self.typing_target = target
                 else:
-                    self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
+                    self.start_typing(target)
                 return True
             
             if event.type == 'W':
@@ -685,8 +697,18 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 continue
             
             # Get object horizontal bounds
-            x_start = child.location.x
-            x_end = x_start + child_width
+            # Check if object is rotated 180° (back side placement)
+            import math
+            is_rotated = abs(child.rotation_euler.z - math.pi) < 0.1 or abs(child.rotation_euler.z + math.pi) < 0.1
+            
+            if is_rotated:
+                # Back side: location.x is at right edge, cabinet extends left
+                x_start = child.location.x - child_width
+                x_end = child.location.x
+            else:
+                # Front side: location.x is at left edge, cabinet extends right
+                x_start = child.location.x
+                x_end = x_start + child_width
             
             children.append((x_start, x_end, child))
         
