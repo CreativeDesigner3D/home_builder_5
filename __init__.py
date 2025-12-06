@@ -4,11 +4,14 @@ from . import ops
 from .ui import view3d_sidebar
 from .ui import menu_apend
 from .ui import menus
+from .ui import layouts_ui
 from .operators import walls
 from .operators import doors_windows
+from .operators import layouts
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
+from . import hb_layouts
 
 from bpy.app.handlers import persistent
 
@@ -125,11 +128,13 @@ def register():
 
     hb_props.register()
     walls.register()
+    layouts.register()
     doors_windows.register()
     ops.register()
     view3d_sidebar.register()
     menu_apend.register()
     menus.register()
+    layouts_ui.register()
     closets.register()
     face_frame.register()
     frameless.register()
@@ -141,11 +146,13 @@ def unregister():
 
     hb_props.unregister()
     walls.unregister()
+    layouts.unregister()
     doors_windows.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
     menu_apend.unregister()
     menus.unregister()
+    layouts_ui.unregister()
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()
