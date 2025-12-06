@@ -169,7 +169,10 @@ class ElevationView(LayoutView):
         # Create camera
         self.create_camera(f"{view_name} Camera", wall_center_world, camera_rotation)
         
-        # Calculate bounds of all objects to fit camera properly
+        # Add cabinet dimensions (before fitting camera so they're included)
+        self.add_cabinet_dimensions()
+        
+        # Calculate bounds of all objects to fit camera properly (includes dimensions)
         self._fit_camera_to_content(wall_obj)
         
         # Create collection for wall objects
@@ -187,7 +190,7 @@ class ElevationView(LayoutView):
         return self.scene
     
     def _fit_camera_to_content(self, wall_obj):
-        """Adjust camera position and ortho scale to fit all wall content."""
+        """Adjust camera position and ortho scale to fit all wall content including dimensions."""
         from home_builder_5 import hb_types
         
         wall = hb_types.GeoNodeWall(wall_obj)
@@ -216,7 +219,6 @@ class ElevationView(LayoutView):
             
             # Use bounding box for mesh objects
             if hasattr(child, 'bound_box') and child.type == 'MESH':
-                # Get world space bounding box corners and convert to wall local space
                 bbox_corners = [child.matrix_world @ Vector(corner) for corner in child.bound_box]
                 bbox_local = [wall_matrix_inv @ corner for corner in bbox_corners]
                 
@@ -230,6 +232,22 @@ class ElevationView(LayoutView):
                 min_z = min(min_z, child_min_z)
                 max_z = max(max_z, child_max_z)
         
+        # Also check dimension objects in the scene
+        for obj in self.scene.collection.objects:
+            if obj.get('IS_2D_ANNOTATION') and obj.type == 'CURVE':
+                # Get dimension position in wall local space
+                dim_local_pos = wall_matrix_inv @ obj.location
+                
+                # Get the dimension length from the curve endpoint
+                if obj.data.splines and len(obj.data.splines[0].points) > 1:
+                    dim_length = obj.data.splines[0].points[1].co.x
+                    
+                    # Update bounds - add generous margin for arrows and text
+                    min_x = min(min_x, dim_local_pos.x - 0.1)
+                    max_x = max(max_x, dim_local_pos.x + dim_length + 0.1)
+                    min_z = min(min_z, dim_local_pos.z - 0.25)
+                    max_z = max(max_z, dim_local_pos.z + 0.25)
+        
         # Calculate center and size
         center_x = (min_x + max_x) / 2
         center_z = (min_z + max_z) / 2
@@ -238,28 +256,113 @@ class ElevationView(LayoutView):
         height = max_z - min_z
         
         # Add margin (10% of the larger dimension)
-        margin = max(width, height) * 0.6
+        margin = max(width, height) * 0.1
         width += margin * 2
         height += margin * 2
         
-        # Update camera position (center on content, 3m in front of wall)
-        # Wall front is in -Y direction (local), so camera goes to -Y in local space
-        # But we need to position camera to see the FRONT of objects on the wall
-        # Objects on wall front are at negative Y in wall local space
-        # So camera should be at more negative Y to see them
+        # Update camera position (center on content, 3m in front)
         camera_local_pos = Vector((center_x, -3, center_z))
         camera_world_pos = wall_matrix @ camera_local_pos
         self.camera.location = camera_world_pos
         
-        # Ensure camera rotation is correct - looking in +Y direction in local space
-        # (which is towards the wall front in world space after transformation)
-        wall_rotation_z = wall_obj.rotation_euler.z
-        self.camera.rotation_euler = (math.radians(90), 0, wall_rotation_z)
-        
         # Set ortho scale to fit content
-        # Account for aspect ratio - use the larger dimension
         max_dimension = max(width, height)
         self.set_camera_ortho_scale(max_dimension)
+
+    def add_cabinet_dimensions(self):
+        """Add width dimensions for all cabinets on the wall."""
+        # from home_builder_5 import hb_types
+        # from home_builder_5 import units
+        
+        if not self.wall_obj:
+            return
+        
+        wall = hb_types.GeoNodeWall(self.wall_obj)
+        wall_matrix = self.wall_obj.matrix_world
+        wall_matrix_inv = wall_matrix.inverted()
+        
+        # Collect cabinets by type (base/tall vs upper)
+        base_tall_cabinets = []
+        upper_cabinets = []
+        
+        for child in self.wall_obj.children:
+            if child.get('IS_FRAMELESS_CABINET_CAGE'):
+                # Get cabinet position in wall local space
+                cabinet_local_pos = wall_matrix_inv @ child.matrix_world.translation
+                
+                # Get cabinet dimensions from the cage
+                cage = hb_types.GeoNodeCage(child)
+                cabinet_width = cage.get_input('Dim X')
+                cabinet_height = cage.get_input('Dim Z')
+                cabinet_z = cabinet_local_pos.z
+                
+                cabinet_info = {
+                    'obj': child,
+                    'x': cabinet_local_pos.x,
+                    'z': cabinet_z,
+                    'width': cabinet_width,
+                    'height': cabinet_height,
+                }
+                
+                # Upper cabinets typically start above 1.2m (48")
+                if cabinet_z > 1.2:
+                    upper_cabinets.append(cabinet_info)
+                else:
+                    base_tall_cabinets.append(cabinet_info)
+        
+        # Sort by x position
+        base_tall_cabinets.sort(key=lambda c: c['x'])
+        upper_cabinets.sort(key=lambda c: c['x'])
+        
+        # Create dimensions for base/tall cabinets (at bottom)
+        dim_z_bottom = -units.inch(4)  # Below the cabinets
+        for cab in base_tall_cabinets:
+            self._create_cabinet_dimension(cab, dim_z_bottom, wall_matrix, flip_text=True)
+        
+        # Create dimensions for upper cabinets (at top)
+        if upper_cabinets:
+            # Find the top of upper cabinets
+            max_top = max(c['z'] + c['height'] for c in upper_cabinets)
+            dim_z_top = max_top + units.inch(4)
+            for cab in upper_cabinets:
+                self._create_cabinet_dimension(cab, dim_z_top, wall_matrix, flip_text=False)
+    
+    def _create_cabinet_dimension(self, cabinet_info, dim_z, wall_matrix, flip_text=False):
+        """Create a single cabinet width dimension."""
+        # from home_builder_5 import hb_types
+        # from home_builder_5 import units
+        
+        dim = hb_types.GeoNodeDimension()
+        dim.create(f"Dim_{cabinet_info['obj'].name}")
+        dim.obj['IS_2D_ANNOTATION'] = True
+        
+        # The create method links to bpy.context.scene, but we need it in self.scene
+        # Unlink from whatever scene it was added to
+        for scene in bpy.data.scenes:
+            if dim.obj.name in scene.collection.objects:
+                scene.collection.objects.unlink(dim.obj)
+        
+        # Link to our elevation scene
+        self.scene.collection.objects.link(dim.obj)
+        
+        # Position in wall local space, then convert to world
+        local_pos = Vector((cabinet_info['x'], -units.inch(2), dim_z))
+        dim.obj.location = wall_matrix @ local_pos
+        
+        # Rotation to face camera (90 degrees on X to stand up, match wall rotation on Z)
+        wall_rotation_z = self.wall_obj.rotation_euler.z
+        dim.obj.rotation_euler = (math.radians(90), 0, wall_rotation_z)
+        
+        # Set the dimension length via the curve endpoint
+        dim.obj.data.splines[0].points[1].co = (cabinet_info['width'], 0, 0, 1)
+        
+        # Flip text if needed (for upper cabinets)
+        if flip_text:
+            dim.set_input('Leader Length', units.inch(-4))
+        else:
+            dim.set_input('Leader Length', units.inch(4))
+        
+        return dim
 
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
