@@ -93,7 +93,37 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         box.prop(self,'change_studio_lighting')
         box.prop(self,'use_vertex_snapping')
 
+
+class home_builder_OT_reload_addon(bpy.types.Operator):
+    bl_idname = "home_builder.reload_addon"
+    bl_label = "Reload Add-on"
+    bl_description = "Reload the Home Builder add-on code without restarting Blender"
+    bl_options = {'REGISTER'}
+    
+    def execute(self, context):
+        import sys
+        
+        # Store current scene name to return to it
+        current_scene = context.scene.name
+        
+        # Remove all home_builder modules from cache
+        modules_to_remove = [k for k in list(sys.modules.keys()) if 'home_builder' in k]
+        for mod in modules_to_remove:
+            del sys.modules[mod]
+        
+        # Disable and re-enable addon
+        bpy.ops.preferences.addon_disable(module='home_builder_5')
+        bpy.ops.preferences.addon_enable(module='home_builder_5')
+        
+        # Try to return to previous scene
+        if current_scene in bpy.data.scenes:
+            context.window.scene = bpy.data.scenes[current_scene]
+        
+        self.report({'INFO'}, f"Reloaded Home Builder (cleared {len(modules_to_remove)} modules)")
+        return {'FINISHED'}
+
 classes = (
+    home_builder_OT_reload_addon,
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
 )

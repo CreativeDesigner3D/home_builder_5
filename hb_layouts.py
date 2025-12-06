@@ -114,23 +114,19 @@ class ElevationView(LayoutView):
         self.scene['IS_ELEVATION_VIEW'] = True
         self.scene['SOURCE_WALL'] = wall_obj.name
         
-        # Calculate camera position
-        # Camera should be centered on wall, positioned in front
-        wall_center_local = Vector((wall_length / 2, -2, wall_height / 2))  # 2m in front of wall
-        wall_center_world = wall_obj.matrix_world @ wall_center_local
-        
         # Camera rotation to face the wall (pointing in +Y direction in wall's local space)
-        # Wall's local +Y is into the wall, so camera looks in -Y (which is wall's front)
         wall_rotation_z = wall_obj.rotation_euler.z
         camera_rotation = (math.radians(90), 0, wall_rotation_z)
+        
+        # Initial camera position (will be adjusted after calculating bounds)
+        wall_center_local = Vector((wall_length / 2, -2, wall_height / 2))
+        wall_center_world = wall_obj.matrix_world @ wall_center_local
         
         # Create camera
         self.create_camera(f"{view_name} Camera", wall_center_world, camera_rotation)
         
-        # Set ortho scale to fit wall with some margin
-        margin = 0.2  # 20cm margin
-        max_dimension = max(wall_length, wall_height) + margin * 2
-        self.set_camera_ortho_scale(max_dimension)
+        # Calculate bounds of all objects to fit camera properly
+        self._fit_camera_to_content(wall_obj)
         
         # Create collection for wall objects
         self.content_collection = bpy.data.collections.new(f"{view_name} Content")
@@ -146,6 +142,76 @@ class ElevationView(LayoutView):
         
         return self.scene
     
+    def _fit_camera_to_content(self, wall_obj):
+        """Adjust camera position and ortho scale to fit all wall content."""
+        from home_builder_5 import hb_types
+        
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall.get_input('Length')
+        wall_height = wall.get_input('Height')
+        
+        # Get wall's local coordinate system
+        wall_matrix = wall_obj.matrix_world
+        wall_matrix_inv = wall_matrix.inverted()
+        
+        # Start with wall bounds in wall's local space
+        min_x, max_x = 0, wall_length
+        min_z, max_z = 0, wall_height
+        
+        # Check all children for their bounds in wall's local space
+        for child in wall_obj.children_recursive:
+            # Skip cages and helper objects
+            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
+                       child.get('IS_FRAMELESS_BAY_CAGE') or 
+                       child.get('IS_FRAMELESS_OPENING_CAGE') or
+                       child.get('IS_FRAMELESS_DOORS_CAGE'))
+            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            
+            if is_cage or is_helper:
+                continue
+            
+            # Get child's world position and convert to wall's local space
+            child_world_pos = child.matrix_world.translation
+            child_local_pos = wall_matrix_inv @ child_world_pos
+            
+            # Get child dimensions if it's a geo node object
+            child_width = 0
+            child_height = 0
+            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
+                try:
+                    geo_obj = hb_types.GeoNodeObject(child)
+                    child_width = geo_obj.get_input('Dim X') if 'Dim X' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                    child_height = geo_obj.get_input('Dim Z') if 'Dim Z' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                except:
+                    pass
+            
+            # Update bounds
+            min_x = min(min_x, child_local_pos.x)
+            max_x = max(max_x, child_local_pos.x + child_width)
+            min_z = min(min_z, child_local_pos.z)
+            max_z = max(max_z, child_local_pos.z + child_height)
+        
+        # Calculate center and size
+        center_x = (min_x + max_x) / 2
+        center_z = (min_z + max_z) / 2
+        
+        width = max_x - min_x
+        height = max_z - min_z
+        
+        # Add margin
+        margin = 0.3  # 30cm margin
+        width += margin * 2
+        height += margin * 2
+        
+        # Update camera position (center on content)
+        camera_local_pos = Vector((center_x, -2, center_z))
+        camera_world_pos = wall_matrix @ camera_local_pos
+        self.camera.location = camera_world_pos
+        
+        # Set ortho scale to fit content
+        max_dimension = max(width, height)
+        self.set_camera_ortho_scale(max_dimension)
+
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
@@ -275,6 +341,76 @@ class PlanView(LayoutView):
         
         return self.scene
     
+    def _fit_camera_to_content(self, wall_obj):
+        """Adjust camera position and ortho scale to fit all wall content."""
+        from home_builder_5 import hb_types
+        
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall.get_input('Length')
+        wall_height = wall.get_input('Height')
+        
+        # Get wall's local coordinate system
+        wall_matrix = wall_obj.matrix_world
+        wall_matrix_inv = wall_matrix.inverted()
+        
+        # Start with wall bounds in wall's local space
+        min_x, max_x = 0, wall_length
+        min_z, max_z = 0, wall_height
+        
+        # Check all children for their bounds in wall's local space
+        for child in wall_obj.children_recursive:
+            # Skip cages and helper objects
+            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
+                       child.get('IS_FRAMELESS_BAY_CAGE') or 
+                       child.get('IS_FRAMELESS_OPENING_CAGE') or
+                       child.get('IS_FRAMELESS_DOORS_CAGE'))
+            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            
+            if is_cage or is_helper:
+                continue
+            
+            # Get child's world position and convert to wall's local space
+            child_world_pos = child.matrix_world.translation
+            child_local_pos = wall_matrix_inv @ child_world_pos
+            
+            # Get child dimensions if it's a geo node object
+            child_width = 0
+            child_height = 0
+            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
+                try:
+                    geo_obj = hb_types.GeoNodeObject(child)
+                    child_width = geo_obj.get_input('Dim X') if 'Dim X' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                    child_height = geo_obj.get_input('Dim Z') if 'Dim Z' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                except:
+                    pass
+            
+            # Update bounds
+            min_x = min(min_x, child_local_pos.x)
+            max_x = max(max_x, child_local_pos.x + child_width)
+            min_z = min(min_z, child_local_pos.z)
+            max_z = max(max_z, child_local_pos.z + child_height)
+        
+        # Calculate center and size
+        center_x = (min_x + max_x) / 2
+        center_z = (min_z + max_z) / 2
+        
+        width = max_x - min_x
+        height = max_z - min_z
+        
+        # Add margin
+        margin = 0.3  # 30cm margin
+        width += margin * 2
+        height += margin * 2
+        
+        # Update camera position (center on content)
+        camera_local_pos = Vector((center_x, -2, center_z))
+        camera_world_pos = wall_matrix @ camera_local_pos
+        self.camera.location = camera_world_pos
+        
+        # Set ortho scale to fit content
+        max_dimension = max(width, height)
+        self.set_camera_ortho_scale(max_dimension)
+
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
@@ -372,6 +508,76 @@ class View3D(LayoutView):
         
         return self.scene
     
+    def _fit_camera_to_content(self, wall_obj):
+        """Adjust camera position and ortho scale to fit all wall content."""
+        from home_builder_5 import hb_types
+        
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall.get_input('Length')
+        wall_height = wall.get_input('Height')
+        
+        # Get wall's local coordinate system
+        wall_matrix = wall_obj.matrix_world
+        wall_matrix_inv = wall_matrix.inverted()
+        
+        # Start with wall bounds in wall's local space
+        min_x, max_x = 0, wall_length
+        min_z, max_z = 0, wall_height
+        
+        # Check all children for their bounds in wall's local space
+        for child in wall_obj.children_recursive:
+            # Skip cages and helper objects
+            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
+                       child.get('IS_FRAMELESS_BAY_CAGE') or 
+                       child.get('IS_FRAMELESS_OPENING_CAGE') or
+                       child.get('IS_FRAMELESS_DOORS_CAGE'))
+            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            
+            if is_cage or is_helper:
+                continue
+            
+            # Get child's world position and convert to wall's local space
+            child_world_pos = child.matrix_world.translation
+            child_local_pos = wall_matrix_inv @ child_world_pos
+            
+            # Get child dimensions if it's a geo node object
+            child_width = 0
+            child_height = 0
+            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
+                try:
+                    geo_obj = hb_types.GeoNodeObject(child)
+                    child_width = geo_obj.get_input('Dim X') if 'Dim X' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                    child_height = geo_obj.get_input('Dim Z') if 'Dim Z' in [i.name for i in geo_obj.obj.modifiers[geo_obj.obj.home_builder.mod_name].node_group.interface.items_tree] else 0
+                except:
+                    pass
+            
+            # Update bounds
+            min_x = min(min_x, child_local_pos.x)
+            max_x = max(max_x, child_local_pos.x + child_width)
+            min_z = min(min_z, child_local_pos.z)
+            max_z = max(max_z, child_local_pos.z + child_height)
+        
+        # Calculate center and size
+        center_x = (min_x + max_x) / 2
+        center_z = (min_z + max_z) / 2
+        
+        width = max_x - min_x
+        height = max_z - min_z
+        
+        # Add margin
+        margin = 0.3  # 30cm margin
+        width += margin * 2
+        height += margin * 2
+        
+        # Update camera position (center on content)
+        camera_local_pos = Vector((center_x, -2, center_z))
+        camera_world_pos = wall_matrix @ camera_local_pos
+        self.camera.location = camera_world_pos
+        
+        # Set ortho scale to fit content
+        max_dimension = max(width, height)
+        self.set_camera_ortho_scale(max_dimension)
+
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""

@@ -15,6 +15,11 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
+        # Developer Tools Section
+        box = layout.box()
+        box.label(text="Developer", icon='CONSOLE')
+        box.operator("home_builder.reload_addon", text="Reload Add-on", icon='FILE_REFRESH')        
+
         # Check if we're in a layout view
         is_layout_view = context.scene.get('IS_LAYOUT_VIEW', False)
         
@@ -108,6 +113,7 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
                 op = col.operator("home_builder_layouts.go_to_layout_view",
                                  text="Back to 3D Model", icon='LOOP_BACK')
                 op.scene_name = main_scenes[0].name
+        
 
 
 # =============================================================================

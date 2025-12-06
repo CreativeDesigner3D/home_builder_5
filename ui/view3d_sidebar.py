@@ -12,6 +12,11 @@ class HOME_BUILDER_5_PRO_PT_library(bpy.types.Panel):
 
         layout = self.layout
 
+        # Developer Tools Section
+        box = layout.box()
+        box.label(text="Developer", icon='CONSOLE')
+        box.operator("home_builder.reload_addon", text="Reload Add-on", icon='FILE_REFRESH')    
+
         main_box = layout.box()
         main_box.label(text="Recommended Settings")
         row = main_box.row(align=True)
@@ -37,7 +42,7 @@ class HOME_BUILDER_5_PRO_PT_library(bpy.types.Panel):
 
             row = wall_box.row(align=True)
             row.scale_y = 1.3
-            row.operator('home_builder_walls.draw_walls',text="Draw",icon='GREASEPENCIL')
+            row.operator('home_builder_walls.draw_walls',text="Draw Walls",icon='GREASEPENCIL')
             row.separator()
             row.prop(hb_scene,'wall_type',text="")
 
