@@ -1,8 +1,8 @@
 import bpy
-from .. import hb_types, hb_snap, hb_placement, units
+import bmesh
 import math
 from mathutils import Vector
-
+from .. import hb_types, hb_snap, hb_placement, units
 
 class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_walls.draw_walls"
@@ -331,6 +331,172 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         row.prop(self.wall.obj,'rotation_euler',index=2,text="")  
 
 
+class home_builder_walls_OT_add_floor(bpy.types.Operator):
+    bl_idname = "home_builder_walls.add_floor"
+    bl_label = "Add Floor"
+    bl_description = "This will add a floor to the room based on the wall layout"
+    bl_options = {'UNDO'}
+
+    def get_wall_endpoints(self,wall_obj):
+        """Get the start and end points of a wall in world coordinates."""
+        
+        world_matrix = wall_obj.matrix_world
+        start = world_matrix.translation.copy()
+        
+        rot_z = wall_obj.matrix_world.to_euler().z
+        
+        # Find obj_x child to get wall length
+        length = 0
+        for child in wall_obj.children:
+            if 'obj_x' in child.name.lower():
+                length = child.location.x
+                break
+        
+        direction = Vector((math.cos(rot_z), math.sin(rot_z), 0))
+        end = start + direction * length
+        
+        return start.to_2d(), end.to_2d()
+
+    def find_wall_chains(self):
+        """Find connected chains of walls, returning list of ordered wall objects."""
+        walls = [obj for obj in bpy.data.objects if obj.get('IS_WALL_BP')]
+        
+        if not walls:
+            return []
+        
+        wall_data = {}
+        for wall in walls:
+            start, end = self.get_wall_endpoints(wall)
+            wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
+        
+        tolerance = 0.01
+        connections = {}
+        
+        for name1, data1 in wall_data.items():
+            for name2, data2 in wall_data.items():
+                if name1 == name2:
+                    continue
+                if (data1['end'] - data2['start']).length < tolerance:
+                    connections[name1] = name2
+        
+        has_predecessor = set(connections.values())
+        start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
+        
+        if not start_walls and walls:
+            start_walls = [walls[0].name]
+        
+        chains = []
+        used = set()
+        
+        for start_name in start_walls:
+            if start_name in used:
+                continue
+            
+            chain = []
+            current = start_name
+            
+            while current and current not in used:
+                used.add(current)
+                chain.append(wall_data[current]['obj'])
+                current = connections.get(current)
+                if current == start_name:
+                    break
+            
+            if chain:
+                chains.append(chain)
+        
+        return chains
+
+    def get_room_boundary_points(self,wall_chain):
+        """Extract boundary points from a chain of walls."""
+
+        points = []
+        
+        for wall in wall_chain:
+            start, end = self.get_wall_endpoints(wall)
+            if not points or (Vector(points[-1]) - Vector((start.x, start.y, 0))).length > 0.01:
+                points.append(Vector((start.x, start.y, 0)))
+        
+        if wall_chain:
+            start, end = self.get_wall_endpoints(wall_chain[-1])
+            points.append(Vector((end.x, end.y, 0)))
+        
+        return points
+
+    def is_closed_loop(self,points, tolerance=0.01):
+        """Check if the points form a closed loop."""
+        if len(points) < 3:
+            return False
+        return (points[0] - points[-1]).length < tolerance
+
+    def create_floor_mesh(self,name, points):
+        """Create a floor mesh from boundary points."""
+        
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+        
+        bpy.context.collection.objects.link(obj)
+        
+        bm = bmesh.new()
+        
+        # If closed loop, remove duplicate closing point
+        closed = self.is_closed_loop(points)
+        if closed:
+            points = points[:-1]
+        
+        # Add vertices
+        verts = [bm.verts.new(p) for p in points]
+        bm.verts.ensure_lookup_table()
+        
+        # Create boundary edges
+        edges = []
+        for i in range(len(verts)):
+            next_i = (i + 1) % len(verts)
+            edge = bm.edges.new((verts[i], verts[next_i]))
+            edges.append(edge)
+        
+        # Fill to create faces (handles non-convex shapes)
+        bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)
+        
+        bm.to_mesh(mesh)
+        bm.free()
+        
+        return obj      
+
+    def execute(self, context):
+        chains = self.find_wall_chains()
+        
+        if not chains:
+            self.report({'WARNING'}, "No connected walls found")
+            return {'CANCELLED'}
+        
+        floors_created = 0
+        for i, chain in enumerate(chains):
+            points = self.get_room_boundary_points(chain)
+            
+            if len(points) < 3:
+                continue
+            
+            # Close the loop if not already closed
+            if not self.is_closed_loop(points):
+                points.append(points[0].copy())
+            
+            # Create floor name
+            name = "Floor" if i == 0 else f"Floor.{i:03d}"
+            
+            floor_obj = self.create_floor_mesh(name, points)
+            floor_obj['IS_FLOOR_BP'] = True
+            
+            floors_created += 1
+        
+        if floors_created > 0:
+            self.report({'INFO'}, f"Created {floors_created} floor(s)")
+            return {'FINISHED'}
+        else:
+            self.report({'WARNING'}, "Could not create floor - insufficient wall data")
+            return {'CANCELLED'}
+
+
 class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_wall_height"
     bl_label = "Update Wall Height"
@@ -375,6 +541,7 @@ class home_builder_walls_OT_update_wall_miters(bpy.types.Operator):
 classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
+    home_builder_walls_OT_add_floor,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,
@@ -436,23 +603,19 @@ def update_all_wall_miters():
 def update_connected_wall_miters(wall_obj):
     """Update miter angles for a wall and all walls connected to it."""
     wall = hb_types.GeoNodeWall(wall_obj)
-    print("GOT WALL",wall.obj)
-    
+
     # Update this wall
     calculate_wall_miter_angles(wall_obj)
 
-    print("CALCULATED MITERS FOR",wall.obj)
-    
     # Update connected wall on the left
     left_wall = wall.get_connected_wall('left')
     if left_wall:
         calculate_wall_miter_angles(left_wall.obj)
-        print("CALCULATED MITERS FOR LEFT WALL",left_wall.obj)
-    
+
     # Update connected wall on the right
     right_wall = wall.get_connected_wall('right')
     if right_wall:
         calculate_wall_miter_angles(right_wall.obj)
-        print("CALCULATED MITERS FOR RIGHT WALL",right_wall.obj)
 
 
+  
