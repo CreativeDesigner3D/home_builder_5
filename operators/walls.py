@@ -337,98 +337,6 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
     bl_description = "This will add a floor to the room based on the wall layout"
     bl_options = {'UNDO'}
 
-    def get_wall_endpoints(self,wall_obj):
-        """Get the start and end points of a wall in world coordinates."""
-        
-        world_matrix = wall_obj.matrix_world
-        start = world_matrix.translation.copy()
-        
-        rot_z = wall_obj.matrix_world.to_euler().z
-        
-        # Find obj_x child to get wall length
-        length = 0
-        for child in wall_obj.children:
-            if 'obj_x' in child.name.lower():
-                length = child.location.x
-                break
-        
-        direction = Vector((math.cos(rot_z), math.sin(rot_z), 0))
-        end = start + direction * length
-        
-        return start.to_2d(), end.to_2d()
-
-    def find_wall_chains(self):
-        """Find connected chains of walls, returning list of ordered wall objects."""
-        walls = [obj for obj in bpy.data.objects if obj.get('IS_WALL_BP')]
-        
-        if not walls:
-            return []
-        
-        wall_data = {}
-        for wall in walls:
-            start, end = self.get_wall_endpoints(wall)
-            wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
-        
-        tolerance = 0.01
-        connections = {}
-        
-        for name1, data1 in wall_data.items():
-            for name2, data2 in wall_data.items():
-                if name1 == name2:
-                    continue
-                if (data1['end'] - data2['start']).length < tolerance:
-                    connections[name1] = name2
-        
-        has_predecessor = set(connections.values())
-        start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
-        
-        if not start_walls and walls:
-            start_walls = [walls[0].name]
-        
-        chains = []
-        used = set()
-        
-        for start_name in start_walls:
-            if start_name in used:
-                continue
-            
-            chain = []
-            current = start_name
-            
-            while current and current not in used:
-                used.add(current)
-                chain.append(wall_data[current]['obj'])
-                current = connections.get(current)
-                if current == start_name:
-                    break
-            
-            if chain:
-                chains.append(chain)
-        
-        return chains
-
-    def get_room_boundary_points(self,wall_chain):
-        """Extract boundary points from a chain of walls."""
-
-        points = []
-        
-        for wall in wall_chain:
-            start, end = self.get_wall_endpoints(wall)
-            if not points or (Vector(points[-1]) - Vector((start.x, start.y, 0))).length > 0.01:
-                points.append(Vector((start.x, start.y, 0)))
-        
-        if wall_chain:
-            start, end = self.get_wall_endpoints(wall_chain[-1])
-            points.append(Vector((end.x, end.y, 0)))
-        
-        return points
-
-    def is_closed_loop(self,points, tolerance=0.01):
-        """Check if the points form a closed loop."""
-        if len(points) < 3:
-            return False
-        return (points[0] - points[-1]).length < tolerance
-
     def create_floor_mesh(self,name, points):
         """Create a floor mesh from boundary points."""
         
@@ -440,7 +348,7 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         bm = bmesh.new()
         
         # If closed loop, remove duplicate closing point
-        closed = self.is_closed_loop(points)
+        closed = is_closed_loop(points)
         if closed:
             points = points[:-1]
         
@@ -464,7 +372,7 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         return obj      
 
     def execute(self, context):
-        chains = self.find_wall_chains()
+        chains = find_wall_chains()
         
         if not chains:
             self.report({'WARNING'}, "No connected walls found")
@@ -472,13 +380,13 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         
         floors_created = 0
         for i, chain in enumerate(chains):
-            points = self.get_room_boundary_points(chain)
+            points = get_room_boundary_points(chain)
             
             if len(points) < 3:
                 continue
             
             # Close the loop if not already closed
-            if not self.is_closed_loop(points):
+            if not is_closed_loop(points):
                 points.append(points[0].copy())
             
             # Create floor name
@@ -494,6 +402,263 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
             return {'FINISHED'}
         else:
             self.report({'WARNING'}, "Could not create floor - insufficient wall data")
+            return {'CANCELLED'}
+
+
+class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
+    bl_idname = "home_builder_walls.add_room_lights"
+    bl_label = "Add Room Lights"
+    bl_description = "Add ceiling lights to the room based on room size"
+    bl_options = {'UNDO'}
+
+    light_spacing: bpy.props.FloatProperty(
+        name="Light Spacing",
+        description="Minimum spacing between lights",
+        default=1.2192,  # 4 feet in meters
+        min=0.3,
+        max=3.0,
+        unit='LENGTH'
+    )  # type: ignore
+
+    edge_offset: bpy.props.FloatProperty(
+        name="Edge Offset",
+        description="Distance from walls to lights",
+        default=0.6096,  # 2 feet in meters
+        min=0.15,
+        max=1.5,
+        unit='LENGTH'
+    )  # type: ignore
+
+    light_power: bpy.props.FloatProperty(
+        name="Light Power",
+        description="Power of each light in watts",
+        default=200.0,
+        min=10.0,
+        max=2000.0,
+        unit='POWER'
+    )  # type: ignore
+
+    light_temperature: bpy.props.FloatProperty(
+        name="Color Temperature",
+        description="Light color temperature in Kelvin",
+        default=3000.0,
+        min=2000.0,
+        max=6500.0
+    )  # type: ignore
+
+    ceiling_offset: bpy.props.FloatProperty(
+        name="Ceiling Offset", 
+        description="Distance below ceiling to place lights",
+        default=0.0254,  # 1 inch
+        min=0.0,
+        max=0.3,
+        unit='LENGTH'
+    )  # type: ignore
+
+    def calculate_light_grid(self,boundary_points, min_spacing=1.2, edge_offset=0.6):
+        """
+        Calculate optimal light positions for a room.
+        
+        Args:
+            boundary_points: List of 2D vectors defining room boundary
+            min_spacing: Minimum spacing between lights in meters
+            edge_offset: Distance from walls in meters
+        
+        Returns:
+            List of 2D Vector positions for lights
+        """
+
+        xs = [p.x for p in boundary_points]
+        ys = [p.y for p in boundary_points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        
+        width = max_x - min_x
+        depth = max_y - min_y
+        
+        usable_width = width - (2 * edge_offset)
+        usable_depth = depth - (2 * edge_offset)
+        
+        # Ensure at least 1 light
+        num_x = max(1, int(usable_width / min_spacing) + 1)
+        num_y = max(1, int(usable_depth / min_spacing) + 1)
+        
+        spacing_x = usable_width / max(1, num_x - 1) if num_x > 1 else 0
+        spacing_y = usable_depth / max(1, num_y - 1) if num_y > 1 else 0
+        
+        positions = []
+        start_x = min_x + edge_offset
+        start_y = min_y + edge_offset
+        
+        for i in range(num_x):
+            for j in range(num_y):
+                if num_x == 1:
+                    x = (min_x + max_x) / 2
+                else:
+                    x = start_x + i * spacing_x
+                
+                if num_y == 1:
+                    y = (min_y + max_y) / 2
+                else:
+                    y = start_y + j * spacing_y
+                
+                pos = Vector((x, y))
+                if point_in_polygon(pos, boundary_points):
+                    positions.append(pos)
+        
+        return positions
+
+    def kelvin_to_rgb(self,temperature):
+        """Convert color temperature in Kelvin to RGB values."""
+        # Attempt approximation of blackbody radiation curve
+        temp = temperature / 100.0
+        
+        # Red
+        if temp <= 66:
+            red = 255
+        else:
+            red = temp - 60
+            red = 329.698727446 * (red ** -0.1332047592)
+            red = max(0, min(255, red))
+        
+        # Green
+        if temp <= 66:
+            green = temp
+            green = 99.4708025861 * math.log(green) - 161.1195681661
+        else:
+            green = temp - 60
+            green = 288.1221695283 * (green ** -0.0755148492)
+        green = max(0, min(255, green))
+        
+        # Blue
+        if temp >= 66:
+            blue = 255
+        elif temp <= 19:
+            blue = 0
+        else:
+            blue = temp - 10
+            blue = 138.5177312231 * math.log(blue) - 305.0447927307
+            blue = max(0, min(255, blue))
+        
+        return (red / 255.0, green / 255.0, blue / 255.0)
+
+
+    def create_room_lights(self,light_positions, height, light_power=200, light_temperature=3000):
+        """
+        Create point lights at the specified positions.
+        
+        Args:
+            light_positions: List of 2D Vector positions
+            height: Z height for lights
+            light_power: Power in watts
+            light_temperature: Color temperature in Kelvin
+        
+        Returns:
+            List of created light objects
+        """
+
+        lights = []
+        
+        # Create or get collection for lights
+        light_collection_name = "Room Lights"
+        if light_collection_name not in bpy.data.collections:
+            light_collection = bpy.data.collections.new(light_collection_name)
+            bpy.context.scene.collection.children.link(light_collection)
+        else:
+            light_collection = bpy.data.collections[light_collection_name]
+        
+        # Get color from temperature
+        color = self.kelvin_to_rgb(light_temperature)
+        
+        for i, pos in enumerate(light_positions):
+            # Create light data
+            light_data = bpy.data.lights.new(name=f"Room_Light_{i:03d}", type='POINT')
+            light_data.energy = light_power
+            light_data.shadow_soft_size = 0.1  # Soft shadows
+            light_data.color = color
+            
+            # Create light object
+            light_obj = bpy.data.objects.new(name=f"Room_Light_{i:03d}", object_data=light_data)
+            light_obj.location = (pos.x, pos.y, height)
+            
+            # Link to collection
+            light_collection.objects.link(light_obj)
+            
+            # Mark as room light
+            light_obj['IS_ROOM_LIGHT'] = True
+            
+            lights.append(light_obj)
+        
+        return lights
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        
+        box = layout.box()
+        box.label(text="Light Placement", icon='LIGHT')
+        col = box.column(align=True)
+        col.prop(self, 'light_spacing')
+        col.prop(self, 'edge_offset')
+        
+        box = layout.box()
+        box.label(text="Light Properties", icon='OUTLINER_OB_LIGHT')
+        col = box.column(align=True)
+        col.prop(self, 'light_power')
+        col.prop(self, 'light_temperature')
+        col.prop(self, 'ceiling_offset')
+
+    def execute(self, context):
+        chains = find_wall_chains()
+        
+        if not chains:
+            self.report({'WARNING'}, "No connected walls found")
+            return {'CANCELLED'}
+        
+        total_lights = 0
+        
+        for chain in chains:
+            points = get_room_boundary_points(chain)
+            
+            if len(points) < 3:
+                continue
+            
+            # Close polygon for point-in-polygon test
+            if not is_closed_loop(points):
+                points.append(points[0].copy())
+            
+            # Get ceiling height from first wall in chain
+            wall = hb_types.GeoNodeWall(chain[0])
+            ceiling_height = wall.get_input('Height')
+            
+            # Calculate light positions
+            light_positions = self.calculate_light_grid(
+                points, 
+                min_spacing=self.light_spacing, 
+                edge_offset=self.edge_offset
+            )
+            
+            if not light_positions:
+                continue
+            
+            # Create lights
+            lights = self.create_room_lights(
+                light_positions,
+                height=ceiling_height - self.ceiling_offset,
+                light_power=self.light_power,
+                light_temperature=self.light_temperature
+            )
+            
+            total_lights += len(lights)
+        
+        if total_lights > 0:
+            self.report({'INFO'}, f"Created {total_lights} light(s)")
+            return {'FINISHED'}
+        else:
+            self.report({'WARNING'}, "Could not create lights - room too small or invalid")
             return {'CANCELLED'}
 
 
@@ -542,6 +707,7 @@ classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
+    home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,
@@ -617,5 +783,112 @@ def update_connected_wall_miters(wall_obj):
     if right_wall:
         calculate_wall_miter_angles(right_wall.obj)
 
-
+# Room Lighting Helpers
+def point_in_polygon(point, polygon):
+    """Ray casting algorithm to check if point is inside polygon."""
+    x, y = point.x, point.y
+    n = len(polygon)
+    inside = False
+    
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i].x, polygon[i].y
+        xj, yj = polygon[j].x, polygon[j].y
+        
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    
+    return inside
   
+def get_wall_endpoints(wall_obj):
+    """Get the start and end points of a wall in world coordinates."""
+    
+    world_matrix = wall_obj.matrix_world
+    start = world_matrix.translation.copy()
+    
+    rot_z = wall_obj.matrix_world.to_euler().z
+    
+    # Find obj_x child to get wall length
+    length = 0
+    for child in wall_obj.children:
+        if 'obj_x' in child.name.lower():
+            length = child.location.x
+            break
+    
+    direction = Vector((math.cos(rot_z), math.sin(rot_z), 0))
+    end = start + direction * length
+    
+    return start.to_2d(), end.to_2d()
+
+def find_wall_chains():
+    """Find connected chains of walls, returning list of ordered wall objects."""
+    walls = [obj for obj in bpy.data.objects if obj.get('IS_WALL_BP')]
+    
+    if not walls:
+        return []
+    
+    wall_data = {}
+    for wall in walls:
+        start, end = get_wall_endpoints(wall)
+        wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
+    
+    tolerance = 0.01
+    connections = {}
+    
+    for name1, data1 in wall_data.items():
+        for name2, data2 in wall_data.items():
+            if name1 == name2:
+                continue
+            if (data1['end'] - data2['start']).length < tolerance:
+                connections[name1] = name2
+    
+    has_predecessor = set(connections.values())
+    start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
+    
+    if not start_walls and walls:
+        start_walls = [walls[0].name]
+    
+    chains = []
+    used = set()
+    
+    for start_name in start_walls:
+        if start_name in used:
+            continue
+        
+        chain = []
+        current = start_name
+        
+        while current and current not in used:
+            used.add(current)
+            chain.append(wall_data[current]['obj'])
+            current = connections.get(current)
+            if current == start_name:
+                break
+        
+        if chain:
+            chains.append(chain)
+    
+    return chains
+
+def get_room_boundary_points(wall_chain):
+    """Extract boundary points from a chain of walls."""
+
+    points = []
+    
+    for wall in wall_chain:
+        start, end = get_wall_endpoints(wall)
+        if not points or (Vector(points[-1]) - Vector((start.x, start.y, 0))).length > 0.01:
+            points.append(Vector((start.x, start.y, 0)))
+    
+    if wall_chain:
+        start, end = get_wall_endpoints(wall_chain[-1])
+        points.append(Vector((end.x, end.y, 0)))
+    
+    return points
+
+def is_closed_loop(points, tolerance=0.01):
+    """Check if the points form a closed loop."""
+    if len(points) < 3:
+        return False
+    return (points[0] - points[-1]).length < tolerance

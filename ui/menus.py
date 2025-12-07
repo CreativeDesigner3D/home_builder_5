@@ -7,6 +7,7 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts")
         layout.operator("home_builder_walls.add_floor")
+        layout.operator("home_builder_walls.add_room_lights")
 
 classes = (
     HOME_BUILDER_MT_wall_commands,
