@@ -268,6 +268,7 @@ class ElevationView(LayoutView):
         
         # Create collection instance in the new scene
         self.collection_instance = bpy.data.objects.new(f"{view_name} Instance", None)
+        self.collection_instance.empty_display_size = .01
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
@@ -276,8 +277,7 @@ class ElevationView(LayoutView):
     
     def _fit_camera_to_content(self, wall_obj):
         """Adjust camera position and ortho scale to fit all wall content including dimensions."""
-        from home_builder_5 import hb_types
-        
+
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
         wall_height = wall.get_input('Height')
@@ -356,9 +356,7 @@ class ElevationView(LayoutView):
 
     def add_cabinet_dimensions(self):
         """Add width dimensions for all cabinets on the wall."""
-        # from home_builder_5 import hb_types
-        # from home_builder_5 import units
-        
+
         if not self.wall_obj:
             return
         
@@ -414,9 +412,7 @@ class ElevationView(LayoutView):
     
     def _create_cabinet_dimension(self, cabinet_info, dim_z, wall_matrix, flip_text=False):
         """Create a single cabinet width dimension."""
-        # from home_builder_5 import hb_types
-        # from home_builder_5 import units
-        
+
         dim = hb_types.GeoNodeDimension()
         dim.create(f"Dim_{cabinet_info['obj'].name}")
         dim.obj['IS_2D_ANNOTATION'] = True
@@ -572,6 +568,7 @@ class PlanView(LayoutView):
         
         # Create collection instance
         self.collection_instance = bpy.data.objects.new(f"{name} Instance", None)
+        self.collection_instance.empty_display_size = .01
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
@@ -580,8 +577,7 @@ class PlanView(LayoutView):
     
     def _fit_camera_to_content(self, wall_obj):
         """Adjust camera position and ortho scale to fit all wall content."""
-        from home_builder_5 import hb_types
-        
+
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
         wall_height = wall.get_input('Height')
@@ -739,6 +735,7 @@ class View3D(LayoutView):
         
         # Create collection instance
         self.collection_instance = bpy.data.objects.new(f"{name} Instance", None)
+        self.collection_instance.empty_display_size = .01
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
@@ -747,8 +744,7 @@ class View3D(LayoutView):
     
     def _fit_camera_to_content(self, wall_obj):
         """Adjust camera position and ortho scale to fit all wall content."""
-        from home_builder_5 import hb_types
-        
+
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
         wall_height = wall.get_input('Height')
