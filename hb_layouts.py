@@ -43,9 +43,121 @@ def get_paper_resolution(paper_size: str, landscape: bool = True, dpi: int = DEF
 
 
 
+
+
 # =============================================================================
-# LAYOUT VIEW SYSTEM
+# TITLE BLOCK
 # =============================================================================
+
+class TitleBlock:
+    """Title block for layout views."""
+    
+    obj: bpy.types.Object = None
+    text_objects: list = None
+    
+    def __init__(self, obj=None):
+        self.obj = obj
+        self.text_objects = []
+    
+    def create(self, scene: bpy.types.Scene, camera: bpy.types.Object):
+        """Create a title block for the given scene and camera."""
+        
+        # Get camera ortho scale to size the title block
+        ortho_scale = camera.data.ortho_scale
+        
+        # Calculate title block dimensions based on camera view
+        block_width = ortho_scale * 0.95  # 95% of view width
+        block_height = ortho_scale * 0.12  # 12% of view height
+        
+        # Position at bottom of camera view
+        block_y_offset = -10  # Distance from camera (doesn't matter for ortho)
+        block_z_offset = -ortho_scale / 2 + block_height / 2 + ortho_scale * 0.02
+        
+        # Create title block mesh
+        verts = [
+            (-block_width/2, 0, -block_height/2),
+            (block_width/2, 0, -block_height/2),
+            (block_width/2, 0, block_height/2),
+            (-block_width/2, 0, block_height/2),
+        ]
+        faces = [(0, 1, 2, 3)]
+        
+        mesh = bpy.data.meshes.new(f"{scene.name}_TitleBlock_Mesh")
+        mesh.from_pydata(verts, [], faces)
+        mesh.update()
+        
+        self.obj = bpy.data.objects.new(f"{scene.name}_TitleBlock", mesh)
+        scene.collection.objects.link(self.obj)
+        
+        # Parent to camera
+        self.obj.parent = camera
+        self.obj.location = (0, block_y_offset, block_z_offset)
+        
+        # Create material (white background)
+        mat = bpy.data.materials.new(f"{scene.name}_TitleBlock_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
+        self.obj.data.materials.append(mat)
+        
+        # Text size relative to block height
+        large_text_size = block_height * 0.35
+        small_text_size = block_height * 0.25
+        
+        # Add text fields
+        # Project name - top left, large
+        self._add_text_field(scene, camera, "project_name", "Project Name", 
+                            (-block_width/2 + block_width * 0.02, block_y_offset + 0.001, block_z_offset + block_height * 0.15),
+                            size=large_text_size)
+        
+        # View name - bottom left, medium
+        self._add_text_field(scene, camera, "view_name", scene.name,
+                            (-block_width/2 + block_width * 0.02, block_y_offset + 0.001, block_z_offset - block_height * 0.25),
+                            size=small_text_size)
+        
+        # Scale info - right side
+        scale_text = scene.get('hb_layout_scale', '1/4"=1\'')
+        self._add_text_field(scene, camera, "scale", f"Scale: {scale_text}",
+                            (block_width/2 - block_width * 0.25, block_y_offset + 0.001, block_z_offset),
+                            size=small_text_size)
+        
+        return self.obj
+    
+    def _add_text_field(self, scene, camera, field_name, text, location, size=0.05):
+        """Add a text object to the title block."""
+        # Create text curve
+        text_curve = bpy.data.curves.new(f"{scene.name}_{field_name}", 'FONT')
+        text_curve.body = text
+        text_curve.size = size
+        text_curve.align_x = 'LEFT'
+        text_curve.align_y = 'CENTER'
+        
+        text_obj = bpy.data.objects.new(f"{scene.name}_{field_name}", text_curve)
+        scene.collection.objects.link(text_obj)
+        
+        # Parent to camera
+        text_obj.parent = camera
+        text_obj.location = location
+        # Rotate to face camera (text should be in XZ plane, facing -Y)
+        text_obj.rotation_euler = (math.radians(90), 0, 0)
+        
+        # Black material
+        mat = bpy.data.materials.new(f"{scene.name}_{field_name}_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        text_obj.data.materials.append(mat)
+        
+        self.text_objects.append(text_obj)
+        return text_obj
+    
+    def update(self, scene: bpy.types.Scene):
+        """Update title block text from scene properties."""
+        for obj in self.text_objects:
+            if 'view_name' in obj.name:
+                obj.data.body = scene.name
+            elif 'scale' in obj.name:
+                scale_text = scene.get('hb_layout_scale', '1/4"=1\'')
+                obj.data.body = f"Scale: {scale_text}"
+
 
 class LayoutView:
     """Base class for 2D layout views."""
@@ -272,6 +384,10 @@ class ElevationView(LayoutView):
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
+        
+        # Add title block
+        self.title_block = TitleBlock()
+        self.title_block.create(self.scene, self.camera)
         
         return self.scene
     
@@ -573,6 +689,10 @@ class PlanView(LayoutView):
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
         
+        # Add title block
+        self.title_block = TitleBlock()
+        self.title_block.create(self.scene, self.camera)
+        
         return self.scene
     
     def _fit_camera_to_content(self, wall_obj):
@@ -739,6 +859,10 @@ class View3D(LayoutView):
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
+        
+        # Add title block
+        self.title_block = TitleBlock()
+        self.title_block.create(self.scene, self.camera)
         
         return self.scene
     
