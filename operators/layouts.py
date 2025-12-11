@@ -109,10 +109,10 @@ def update_layout_scale(self, context):
     if not camera or camera.type != 'CAMERA':
         return
     
-    # Get settings
-    paper_size = scene.get('hb_paper_size', 'LETTER')
+    # Get settings (use property access, not scene.get() which is for custom props)
+    paper_size = scene.hb_paper_size
     scale_str = scene.hb_layout_scale
-    landscape = scene.get('hb_paper_landscape', True)
+    landscape = scene.hb_paper_landscape
     
     # Calculate and set ortho_scale
     ortho_scale = calculate_ortho_scale(paper_size, scale_str, landscape)
@@ -317,8 +317,8 @@ class home_builder_layouts_OT_fit_view_to_content(bpy.types.Operator):
             # Calculate what scale this represents and update the property
             # (This is approximate - finds nearest scale)
             ortho_scale = scene.camera.data.ortho_scale
-            paper_size = scene.get('hb_paper_size', 'LETTER')
-            landscape = scene.get('hb_paper_landscape', True)
+            paper_size = scene.hb_paper_size
+            landscape = scene.hb_paper_landscape
             
             # Find closest matching scale
             best_scale = '1/4"=1\''
@@ -354,8 +354,8 @@ class home_builder_layouts_OT_render_layout(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         
-        paper_size = scene.get('hb_paper_size', 'LETTER')
-        landscape = scene.get('hb_paper_landscape', True)
+        paper_size = scene.hb_paper_size
+        landscape = scene.hb_paper_landscape
         dpi = scene.get('PAPER_DPI', 150)
         
         paper_w, paper_h = PAPER_SIZES_INCHES.get(paper_size, (8.5, 11.0))
