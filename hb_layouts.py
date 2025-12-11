@@ -50,7 +50,13 @@ def get_paper_resolution(paper_size: str, landscape: bool = True, dpi: int = DEF
 # =============================================================================
 
 class TitleBlock:
-    """Title block for layout views."""
+    """Title block for layout views - vertical strip on left edge.
+    
+    Camera-parented coordinate system:
+    - X = left/right
+    - Y = up/down
+    - Z = distance from camera (use -1)
+    """
     
     obj: bpy.types.Object = None
     text_objects: list = None
@@ -60,25 +66,39 @@ class TitleBlock:
         self.text_objects = []
     
     def create(self, scene: bpy.types.Scene, camera: bpy.types.Object):
-        """Create a title block for the given scene and camera."""
+        """Create a title block on the left edge of the view."""
         
-        # Get camera ortho scale to size the title block
+        # Get camera ortho scale (this is the view height in world units)
         ortho_scale = camera.data.ortho_scale
         
-        # Calculate title block dimensions based on camera view
-        block_width = ortho_scale * 0.95  # 95% of view width
-        block_height = ortho_scale * 0.12  # 12% of view height
+        # Get paper aspect ratio to calculate view width
+        paper_size = scene.hb_paper_size if hasattr(scene, 'hb_paper_size') else 'TABLOID'
+        landscape = scene.hb_paper_landscape if hasattr(scene, 'hb_paper_landscape') else True
         
-        # Position at bottom of camera view
-        block_y_offset = -10  # Distance from camera (doesn't matter for ortho)
-        block_z_offset = -ortho_scale / 2 + block_height / 2 + ortho_scale * 0.02
+        paper_w, paper_h = PAPER_SIZES.get(paper_size, (11.0, 17.0))
+        if landscape:
+            paper_w, paper_h = paper_h, paper_w
         
-        # Create title block mesh
+        aspect_ratio = paper_w / paper_h
+        view_height = ortho_scale
+        view_width = ortho_scale * aspect_ratio
+        
+        # Title block dimensions - vertical strip on left
+        block_width = view_width * 0.06   # 6% of view width (horizontal size)
+        block_height = view_height * 0.90  # 90% of view height (vertical size)
+        
+        # Position on left edge using camera coordinate system:
+        # X = left/right, Y = up/down, Z = distance from camera
+        block_x = -view_width / 2 + block_width / 2 + view_width * 0.02  # left edge + margin
+        block_y = 0  # centered vertically
+        block_z = -1  # in front of camera
+        
+        # Create title block mesh in XY plane (Z is depth)
         verts = [
-            (-block_width/2, 0, -block_height/2),
-            (block_width/2, 0, -block_height/2),
-            (block_width/2, 0, block_height/2),
-            (-block_width/2, 0, block_height/2),
+            (-block_width/2, -block_height/2, 0),
+            (block_width/2, -block_height/2, 0),
+            (block_width/2, block_height/2, 0),
+            (-block_width/2, block_height/2, 0),
         ]
         faces = [(0, 1, 2, 3)]
         
@@ -91,7 +111,7 @@ class TitleBlock:
         
         # Parent to camera
         self.obj.parent = camera
-        self.obj.location = (0, block_y_offset, block_z_offset)
+        self.obj.location = (block_x, block_y, block_z)
         
         # Create material (white background)
         mat = bpy.data.materials.new(f"{scene.name}_TitleBlock_Mat")
@@ -99,32 +119,31 @@ class TitleBlock:
         mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
         self.obj.data.materials.append(mat)
         
-        # Text size relative to block height
-        large_text_size = block_height * 0.35
-        small_text_size = block_height * 0.25
+        # Text size relative to block width (since text is rotated 90 degrees)
+        large_text_size = block_width * 0.5
+        small_text_size = block_width * 0.4
         
-        # Add text fields
-        # Project name - top left, large
+        # Add text fields - rotated 90 degrees CCW to read bottom-to-top
+        # Project name - at bottom of title block
         self._add_text_field(scene, camera, "project_name", "Project Name", 
-                            (-block_width/2 + block_width * 0.02, block_y_offset + 0.001, block_z_offset + block_height * 0.15),
+                            (block_x, block_y - block_height * 0.35, block_z + 0.001),
                             size=large_text_size)
         
-        # View name - bottom left, medium
+        # View name - middle of title block
         self._add_text_field(scene, camera, "view_name", scene.name,
-                            (-block_width/2 + block_width * 0.02, block_y_offset + 0.001, block_z_offset - block_height * 0.25),
+                            (block_x, block_y - block_height * 0.05, block_z + 0.001),
                             size=small_text_size)
         
-        # Scale info - right side
-        scale_text = scene.get('hb_layout_scale', '1/4"=1\'')
+        # Scale info - at top of title block
+        scale_text = scene.hb_layout_scale if hasattr(scene, 'hb_layout_scale') else '1/4"=1\''
         self._add_text_field(scene, camera, "scale", f"Scale: {scale_text}",
-                            (block_width/2 - block_width * 0.25, block_y_offset + 0.001, block_z_offset),
+                            (block_x, block_y + block_height * 0.30, block_z + 0.001),
                             size=small_text_size)
         
         return self.obj
     
     def _add_text_field(self, scene, camera, field_name, text, location, size=0.05):
-        """Add a text object to the title block."""
-        # Create text curve
+        """Add a text object to the title block, rotated 90 degrees for vertical reading."""
         text_curve = bpy.data.curves.new(f"{scene.name}_{field_name}", 'FONT')
         text_curve.body = text
         text_curve.size = size
@@ -137,8 +156,8 @@ class TitleBlock:
         # Parent to camera
         text_obj.parent = camera
         text_obj.location = location
-        # Rotate to face camera (text should be in XZ plane, facing -Y)
-        text_obj.rotation_euler = (math.radians(90), 0, 0)
+        # Rotate 90 degrees CCW around Z so text reads bottom-to-top
+        text_obj.rotation_euler = (0, 0, math.radians(90))
         
         # Black material
         mat = bpy.data.materials.new(f"{scene.name}_{field_name}_Mat")
@@ -155,7 +174,7 @@ class TitleBlock:
             if 'view_name' in obj.name:
                 obj.data.body = scene.name
             elif 'scale' in obj.name:
-                scale_text = scene.get('hb_layout_scale', '1/4"=1\'')
+                scale_text = scene.hb_layout_scale if hasattr(scene, 'hb_layout_scale') else '1/4"=1\''
                 obj.data.body = f"Scale: {scale_text}"
 
 
