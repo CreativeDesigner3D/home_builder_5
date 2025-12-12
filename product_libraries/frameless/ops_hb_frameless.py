@@ -1665,6 +1665,209 @@ class hb_frameless_OT_select_cabinet_group(bpy.types.Operator):
                 obj.hide_viewport = True
         return {'FINISHED'}     
 
+
+class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
+    """Save Cabinet Group to User Library"""
+    bl_idname = "hb_frameless.save_cabinet_group_to_user_library"
+    bl_label = 'Save Cabinet Group to User Library'
+    bl_description = "This will save the cabinet group to the user library"
+    bl_options = {'UNDO'}
+
+    cabinet_group_name: bpy.props.StringProperty(
+        name="Cabinet Group Name",
+        default=""
+    )  # type: ignore
+    
+    save_path: bpy.props.StringProperty(
+        name="Save Location",
+        subtype='DIR_PATH',
+        default=""
+    )  # type: ignore
+    
+    create_thumbnail: bpy.props.BoolProperty(
+        name="Create Thumbnail",
+        description="Generate a thumbnail image for the library",
+        default=True
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if not obj:
+            return False
+        # Check if it's a cabinet group (cabinet cage with cabinet children)
+        if 'IS_CAGE_GROUP' in obj:
+            return True
+        return False
+    
+    def invoke(self, context, event):
+        self.cabinet_group_name = context.object.name
+        
+        # Set default save path to user documents
+        import os
+        default_path = os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
+        self.save_path = default_path
+        
+        return context.window_manager.invoke_props_dialog(self, width=400)
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "cabinet_group_name")
+        layout.prop(self, "save_path")
+        layout.prop(self, "create_thumbnail")
+    
+    def execute(self, context):
+        import os
+        
+        cabinet_group = context.object
+        
+        if not self.cabinet_group_name:
+            self.report({'ERROR'}, "Please enter a name for the cabinet group")
+            return {'CANCELLED'}
+        
+        if not self.save_path:
+            self.report({'ERROR'}, "Please select a save location")
+            return {'CANCELLED'}
+        
+        # Create directory if it doesn't exist
+        os.makedirs(self.save_path, exist_ok=True)
+        
+        # Sanitize filename
+        safe_name = "".join(c for c in self.cabinet_group_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        blend_filename = f"{safe_name}.blend"
+        blend_filepath = os.path.join(self.save_path, blend_filename)
+        
+        # Check if file already exists
+        if os.path.exists(blend_filepath):
+            self.report({'WARNING'}, f"File already exists: {blend_filename}. Overwriting.")
+        
+        # Collect all objects to save (cabinet group and all descendants)
+        objects_to_save = self._collect_objects_recursive(cabinet_group)
+        
+        # Collect all data blocks used by these objects
+        data_blocks = self._collect_data_blocks(objects_to_save)
+        
+        # Save to blend file
+        bpy.data.libraries.write(
+            blend_filepath,
+            data_blocks,
+            path_remap='RELATIVE_ALL',
+            fake_user=True
+        )
+        
+        # Generate thumbnail if requested
+        if self.create_thumbnail:
+            self._create_thumbnail(context, cabinet_group, self.save_path, safe_name)
+        
+        self.report({'INFO'}, f"Saved cabinet group to: {blend_filepath}")
+        return {'FINISHED'}
+    
+    def _collect_objects_recursive(self, obj):
+        """Collect object and all its descendants."""
+        objects = {obj}
+        for child in obj.children:
+            objects.update(self._collect_objects_recursive(child))
+        return objects
+    
+    def _collect_data_blocks(self, objects):
+        """Collect all data blocks needed to save the objects."""
+        data_blocks = set()
+        
+        for obj in objects:
+            data_blocks.add(obj)
+            
+            # Add object data (mesh, curve, etc.)
+            if obj.data:
+                data_blocks.add(obj.data)
+            
+            # Add materials
+            if hasattr(obj, 'data') and obj.data and hasattr(obj.data, 'materials'):
+                for mat in obj.data.materials:
+                    if mat:
+                        data_blocks.add(mat)
+                        # Add material node tree textures
+                        if mat.use_nodes and mat.node_tree:
+                            for node in mat.node_tree.nodes:
+                                if node.type == 'TEX_IMAGE' and node.image:
+                                    data_blocks.add(node.image)
+            
+            # Add modifiers' objects (like geometry nodes)
+            for mod in obj.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    data_blocks.add(mod.node_group)
+        
+        return data_blocks
+    
+    def _create_thumbnail(self, context, cabinet_group, save_path, name):
+        """Create a thumbnail image for the cabinet group."""
+        import os
+        
+        # Store current state
+        original_camera = context.scene.camera
+        original_render_x = context.scene.render.resolution_x
+        original_render_y = context.scene.render.resolution_y
+        original_render_percentage = context.scene.render.resolution_percentage
+        original_engine = context.scene.render.engine
+        original_filepath = context.scene.render.filepath
+        
+        try:
+            # Get cabinet group bounds
+            cage = types_frameless.Cabinet(cabinet_group)
+            width = cage.get_input('Dim X')
+            depth = cage.get_input('Dim Y')
+            height = cage.get_input('Dim Z')
+            
+            # Create temporary camera
+            cam_data = bpy.data.cameras.new("ThumbnailCam")
+            cam_data.type = 'ORTHO'
+            cam_obj = bpy.data.objects.new("ThumbnailCam", cam_data)
+            context.scene.collection.objects.link(cam_obj)
+            
+            # Position camera for isometric-ish view
+            import math
+            center = cabinet_group.matrix_world @ Vector((width/2, -depth/2, height/2))
+            
+            # Camera distance based on largest dimension
+            max_dim = max(width, depth, height)
+            cam_data.ortho_scale = max_dim * 1.5
+            
+            # Position for 3/4 view
+            cam_obj.location = center + Vector((max_dim, -max_dim, max_dim * 0.8))
+            
+            # Point camera at center
+            direction = center - cam_obj.location
+            rot_quat = direction.to_track_quat('-Z', 'Y')
+            cam_obj.rotation_euler = rot_quat.to_euler()
+            
+            # Set up render
+            context.scene.camera = cam_obj
+            context.scene.render.resolution_x = 256
+            context.scene.render.resolution_y = 256
+            context.scene.render.resolution_percentage = 100
+            context.scene.render.engine = 'BLENDER_WORKBENCH'
+            context.scene.render.film_transparent = True
+            
+            # Render thumbnail
+            thumbnail_path = os.path.join(save_path, f"{name}.png")
+            context.scene.render.filepath = thumbnail_path
+            bpy.ops.render.render(write_still=True)
+            
+            # Cleanup
+            bpy.data.objects.remove(cam_obj)
+            bpy.data.cameras.remove(cam_data)
+            
+        except Exception as e:
+            print(f"Failed to create thumbnail: {e}")
+        
+        finally:
+            # Restore original state
+            context.scene.camera = original_camera
+            context.scene.render.resolution_x = original_render_x
+            context.scene.render.resolution_y = original_render_y
+            context.scene.render.resolution_percentage = original_render_percentage
+            context.scene.render.engine = original_engine
+            context.scene.render.filepath = original_filepath  
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_toggle_mode,
@@ -1677,6 +1880,7 @@ classes = (
     hb_frameless_OT_add_door_style,
     hb_frameless_OT_create_cabinet_group,
     hb_frameless_OT_select_cabinet_group,
+    hb_frameless_OT_save_cabinet_group_to_user_library,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

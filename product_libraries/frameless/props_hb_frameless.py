@@ -471,7 +471,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_user_library',text="User",icon='TRIA_DOWN' if self.show_user_library else 'TRIA_RIGHT',emboss=False)
             if self.show_user_library:
                 box.operator('hb_frameless.create_cabinet_group',text="Create Cabinet Group",icon='ADD')
-                box.label(text="TODO: Create User Library UI")  
+                box.operator('hb_frameless.save_cabinet_group_to_user_library',text="Save Cabinet Group to User Library",icon='FILE_TICK')
 
         if self.frameless_tabs == 'OPTIONS':
             box = col.box()
