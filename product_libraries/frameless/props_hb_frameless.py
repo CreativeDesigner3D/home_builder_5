@@ -470,6 +470,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.alignment = 'LEFT'        
             row.prop(self,'show_user_library',text="User",icon='TRIA_DOWN' if self.show_user_library else 'TRIA_RIGHT',emboss=False)
             if self.show_user_library:
+                box.operator('hb_frameless.create_cabinet_group',text="Create Cabinet Group",icon='ADD')
                 box.label(text="TODO: Create User Library UI")  
 
         if self.frameless_tabs == 'OPTIONS':

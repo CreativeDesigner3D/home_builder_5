@@ -1516,6 +1516,151 @@ class hb_frameless_OT_add_door_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
+    bl_idname = "hb_frameless.create_cabinet_group"
+    bl_label = "Create Cabinet Group"
+    bl_description = "This will create a cabinet group for all of the selected cabinets"
+
+    def execute(self, context):
+        import math
+        from mathutils import Matrix
+        
+        # Get Selected Cabinets
+        selected_cabinets = []
+        for obj in context.selected_objects:
+            if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+                cabinet_cage = types_frameless.Cabinet(obj)
+                selected_cabinets.append(cabinet_cage)
+        
+        if not selected_cabinets:
+            self.report({'WARNING'}, "No cabinets selected")
+            return {'CANCELLED'}
+        
+        # Find overall size and base point for new group
+        base_point_location, base_point_rotation, overall_width, overall_depth, overall_height = \
+            self.calculate_group_bounds(selected_cabinets)
+
+        # Create Cabinet Group
+        cabinet_group = types_frameless.Cabinet()
+        cabinet_group.create("New Cabinet Group")
+        cabinet_group.obj.parent = None
+        cabinet_group.obj.location = base_point_location
+        cabinet_group.obj.rotation_euler = base_point_rotation
+        cabinet_group.set_input('Dim X', overall_width)
+        cabinet_group.set_input('Dim Y', overall_depth)
+        cabinet_group.set_input('Dim Z', overall_height)
+        
+        bpy.ops.object.select_all(action='DESELECT')
+
+        # Reparent all selected cabinets to the new group
+        # We need to preserve their world position while changing parent
+        for selected_cabinet in selected_cabinets:
+            # Store world matrix before reparenting
+            world_matrix = selected_cabinet.obj.matrix_world.copy()
+            
+            # Set new parent
+            selected_cabinet.obj.parent = cabinet_group.obj
+            
+            # Restore world position by calculating new local matrix
+            selected_cabinet.obj.matrix_world = world_matrix
+        
+        cabinet_group.obj.select_set(True)
+        context.view_layer.objects.active = cabinet_group.obj
+
+        return {'FINISHED'}
+    
+    def calculate_group_bounds(self, selected_cabinets):
+        """
+        Calculate the overall bounds of selected cabinets.
+        Returns (location, rotation, width, depth, height)
+        
+        The base point is at the left-front-bottom corner of the bounding box,
+        using the rotation of the first cabinet.
+        """
+        import math
+        from mathutils import Matrix, Vector as Vec
+        
+        if not selected_cabinets:
+            return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
+        
+        # Get rotation from first cabinet (assume all cabinets share same orientation)
+        first_cab = selected_cabinets[0]
+        group_rotation = first_cab.obj.rotation_euler.copy()
+        rotation_z = group_rotation.z
+        
+        # Create inverse rotation matrix to transform to local space
+        inv_rotation = Matrix.Rotation(-rotation_z, 4, 'Z')
+        
+        # Find a reference point (use first cabinet's world location)
+        ref_point = first_cab.obj.matrix_world.translation.copy()
+        
+        # Initialize bounds in local (rotated) space
+        local_min_x = float('inf')
+        local_max_x = float('-inf')
+        local_min_y = float('inf')
+        local_max_y = float('-inf')
+        min_z = float('inf')
+        max_z = float('-inf')
+        
+        for cabinet in selected_cabinets:
+            # Get cabinet dimensions
+            cab_width = cabinet.get_input('Dim X')
+            cab_depth = cabinet.get_input('Dim Y')
+            cab_height = cabinet.get_input('Dim Z')
+            
+            # Get cabinet world position
+            cab_world_pos = cabinet.obj.matrix_world.translation.copy()
+            cab_rotation_z = cabinet.obj.rotation_euler.z
+            
+            # Check if cabinet is rotated 180° (back side of wall)
+            is_rotated = abs(cab_rotation_z - math.pi) < 0.1 or abs(cab_rotation_z + math.pi) < 0.1
+            
+            # Calculate cabinet corners in world space
+            # Cabinet origin is at back-left corner
+            if is_rotated:
+                # Rotated 180°: origin is at what was back-right, extends in -X direction
+                corners = [
+                    cab_world_pos,
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, 0, 0)),
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((0, cab_depth, 0)),
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, cab_depth, 0)),
+                ]
+            else:
+                # Normal orientation
+                corners = [
+                    cab_world_pos,
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, 0, 0)),
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((0, cab_depth, 0)),
+                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, cab_depth, 0)),
+                ]
+            
+            # Transform corners to local space (relative to reference, unrotated)
+            for corner in corners:
+                local_corner = inv_rotation @ (corner - ref_point)
+                local_min_x = min(local_min_x, local_corner.x)
+                local_max_x = max(local_max_x, local_corner.x)
+                local_min_y = min(local_min_y, local_corner.y)
+                local_max_y = max(local_max_y, local_corner.y)
+            
+            # Z bounds (world space, rotation doesn't affect Z)
+            cab_z = cab_world_pos.z
+            min_z = min(min_z, cab_z)
+            max_z = max(max_z, cab_z + cab_height)
+        
+        # Calculate overall dimensions
+        overall_width = local_max_x - local_min_x
+        overall_depth = local_max_y - local_min_y
+        overall_height = max_z - min_z
+        
+        # Calculate base point location (left-front-bottom corner in world space)
+        # Start from reference point, add local min offset, then rotate back to world
+        local_base = Vec((local_min_x, local_min_y, 0))
+        world_offset = Matrix.Rotation(rotation_z, 4, 'Z') @ local_base
+        base_point_location = ref_point + world_offset
+        base_point_location.z = min_z
+        
+        return (base_point_location, group_rotation, overall_width, overall_depth, overall_height)
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_toggle_mode,
@@ -1526,6 +1671,7 @@ classes = (
     hb_frameless_OT_update_drawer_front_height_prompts,
     hb_frameless_OT_update_door_and_drawer_front_style,
     hb_frameless_OT_add_door_style,
+    hb_frameless_OT_create_cabinet_group,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
