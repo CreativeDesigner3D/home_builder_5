@@ -117,6 +117,7 @@ def update_layout_scale(self, context):
     # Calculate and set ortho_scale
     ortho_scale = calculate_ortho_scale(paper_size, scale_str, landscape)
     camera.data.ortho_scale = ortho_scale
+    camera.scale = (ortho_scale, ortho_scale, ortho_scale)
     
     # Store scale in scene for title block
     scene['hb_layout_scale_display'] = scale_str
