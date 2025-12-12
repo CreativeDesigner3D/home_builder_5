@@ -1846,6 +1846,8 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
             context.scene.render.resolution_percentage = 100
             context.scene.render.engine = 'BLENDER_WORKBENCH'
             context.scene.render.film_transparent = True
+            context.scene.render.use_freestyle = True
+            context.scene.render.line_thickness = .5
             
             # Render thumbnail
             thumbnail_path = os.path.join(save_path, f"{name}.png")
