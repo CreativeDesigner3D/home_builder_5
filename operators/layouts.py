@@ -1,6 +1,7 @@
 import bpy
 import os
 from .. import hb_layouts
+from .. import hb_types
 
 # =============================================================================
 # SCALE CALCULATION
@@ -130,6 +131,27 @@ def update_layout_scale(self, context):
     
     scene.render.resolution_x = int(paper_w * dpi)
     scene.render.resolution_y = int(paper_h * dpi)
+    
+    # Update title block border to match new aspect ratio
+    update_title_block_border(scene)
+
+
+def update_title_block_border(scene):
+    """Update title block border to match current page aspect ratio."""
+    res_x = scene.render.resolution_x
+    res_y = scene.render.resolution_y
+    aspect_ratio = res_x / res_y
+    
+    # Find the title block border object
+    for obj in scene.objects:
+        if "IS_TITLE_BLOCK_BOARDER" in obj:
+            title_block = hb_types.GeoNodeRectangle(obj)
+            # Update location (bottom-left corner)
+            title_block.obj.location.x = -0.5
+            title_block.obj.location.y = -0.5 / aspect_ratio
+            title_block.set_input("Dim X", 1.0)
+            title_block.set_input("Dim Y", 1.0 / aspect_ratio)
+            break
 
 
 def update_paper_size(self, context):
