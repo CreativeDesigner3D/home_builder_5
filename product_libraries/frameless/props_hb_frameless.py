@@ -335,12 +335,51 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'top_stacked_cabinet_height',text="")
 
     def draw_user_library_ui(self,layout,context):
+        from . import ops_hb_frameless
+        
+        # Header row with refresh and folder buttons
         row = layout.row()
         row.label(text="User Library")
-        row = layout.row()
-        layout.operator('hb_frameless.create_cabinet_group',text="Create Cabinet Group",icon='ADD')
-        layout.operator('hb_frameless.save_cabinet_group_to_user_library',text="Save Cabinet Group to User Library",icon='FILE_TICK')
-        #TODO:Show Items saved in user library and allow users to add them to the current project
+        row.operator('hb_frameless.refresh_user_library', text="", icon='FILE_REFRESH')
+        row.operator('hb_frameless.open_user_library_folder', text="", icon='FILE_FOLDER')
+        
+        # Create/Save buttons
+        col = layout.column(align=True)
+        col.operator('hb_frameless.create_cabinet_group', text="Create Cabinet Group", icon='ADD')
+        col.operator('hb_frameless.save_cabinet_group_to_user_library', text="Save to Library", icon='FILE_TICK')
+        
+        layout.separator()
+        
+        # Get library items
+        library_items = ops_hb_frameless.get_user_library_items()
+        
+        if not library_items:
+            box = layout.box()
+            box.label(text="No saved cabinet groups", icon='INFO')
+            box.label(text="Save a cabinet group to see it here")
+        else:
+            # Display library items
+            box = layout.box()
+            box.label(text=f"Saved Groups ({len(library_items)})", icon='ASSET_MANAGER')
+            
+            # Grid layout for items
+            flow = box.column_flow(columns=2, align=True)
+            
+            for item in library_items:
+                item_box = flow.box()
+                item_box.scale_y = 0.9
+                
+                # Item name with delete button
+                row = item_box.row()
+                row.label(text=item['name'], icon='OUTLINER_OB_GROUP_INSTANCE')
+                del_op = row.operator('hb_frameless.delete_library_item', text="", icon='X', emboss=False)
+                del_op.filepath = item['filepath']
+                del_op.item_name = item['name']
+                
+                # Load button
+                op = item_box.operator('hb_frameless.load_cabinet_group_from_library', 
+                                       text="Add to Scene", icon='IMPORT')
+                op.filepath = item['filepath']
 
     def draw_library_ui(self,layout,context):
         row = layout.row(align=True)

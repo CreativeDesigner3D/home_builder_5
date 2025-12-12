@@ -1868,8 +1868,186 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
             context.scene.render.engine = original_engine
             context.scene.render.filepath = original_filepath  
 
+class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator):
+    """Load Cabinet Group from User Library"""
+    bl_idname = "hb_frameless.load_cabinet_group_from_library"
+    bl_label = 'Load Cabinet Group from Library'
+    bl_description = "Load a cabinet group from the user library into the current scene"
+    bl_options = {'UNDO'}
+
+    filepath: bpy.props.StringProperty(
+        name="File Path",
+        subtype='FILE_PATH'
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return True
+    
+    def execute(self, context):
+        import os
+        
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"File not found: {self.filepath}")
+            return {'CANCELLED'}
+        
+        # Link or append the cabinet group from the library file
+        with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
+            # Get all objects from the file
+            data_to.objects = data_from.objects
+            data_to.meshes = data_from.meshes
+            data_to.materials = data_from.materials
+            data_to.node_groups = data_from.node_groups
+        
+        # Find the root cabinet group (the one without a parent that is a cabinet cage)
+        root_objects = []
+        for obj in data_to.objects:
+            if obj is not None:
+                # Link to scene
+                context.scene.collection.objects.link(obj)
+                
+                # Check if it's a root cabinet group
+                if 'IS_FRAMELESS_CABINET_CAGE' in obj and obj.parent is None:
+                    root_objects.append(obj)
+        
+        # Select the imported objects
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in root_objects:
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+        
+        # Position at 3D cursor
+        for obj in root_objects:
+            obj.location = context.scene.cursor.location
+        
+        self.report({'INFO'}, f"Loaded cabinet group from: {os.path.basename(self.filepath)}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_refresh_user_library(bpy.types.Operator):
+    """Refresh User Library"""
+    bl_idname = "hb_frameless.refresh_user_library"
+    bl_label = 'Refresh User Library'
+    bl_description = "Refresh the list of items in the user library"
+
+    def execute(self, context):
+        # Force UI redraw
+        for area in context.screen.areas:
+            area.tag_redraw()
+        
+        self.report({'INFO'}, "User library refreshed")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_open_user_library_folder(bpy.types.Operator):
+    """Open User Library Folder"""
+    bl_idname = "hb_frameless.open_user_library_folder"
+    bl_label = 'Open User Library Folder'
+    bl_description = "Open the user library folder in file explorer"
+
+    def execute(self, context):
+        import os
+        import subprocess
+        import platform
+        
+        library_path = get_user_library_path()
+        
+        if not os.path.exists(library_path):
+            os.makedirs(library_path, exist_ok=True)
+        
+        # Open folder in system file explorer
+        if platform.system() == 'Windows':
+            os.startfile(library_path)
+        elif platform.system() == 'Darwin':  # macOS
+            subprocess.Popen(['open', library_path])
+        else:  # Linux
+            subprocess.Popen(['xdg-open', library_path])
+        
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_delete_library_item(bpy.types.Operator):
+    """Delete Item from User Library"""
+    bl_idname = "hb_frameless.delete_library_item"
+    bl_label = 'Delete Library Item'
+    bl_description = "Delete a cabinet group from the user library"
+
+    filepath: bpy.props.StringProperty(
+        name="File Path",
+        subtype='FILE_PATH'
+    )  # type: ignore
+    
+    item_name: bpy.props.StringProperty(
+        name="Item Name"
+    )  # type: ignore
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+    
+    def execute(self, context):
+        import os
+        
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"File not found: {self.filepath}")
+            return {'CANCELLED'}
+        
+        # Delete the blend file
+        os.remove(self.filepath)
+        
+        # Delete thumbnail if it exists
+        thumbnail_path = self.filepath.replace('.blend', '.png')
+        if os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+        
+        self.report({'INFO'}, f"Deleted: {self.item_name}")
+        
+        # Force UI redraw
+        for area in context.screen.areas:
+            area.tag_redraw()
+        
+        return {'FINISHED'}
+
+
+def get_user_library_path():
+    """Get the default user library path for cabinet groups."""
+    import os
+    return os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
+
+
+def get_user_library_items():
+    """Get list of cabinet group files in the user library."""
+    import os
+    
+    library_path = get_user_library_path()
+    items = []
+    
+    if not os.path.exists(library_path):
+        return items
+    
+    for filename in os.listdir(library_path):
+        if filename.endswith('.blend'):
+            name = filename[:-6]  # Remove .blend extension
+            filepath = os.path.join(library_path, filename)
+            
+            # Check for thumbnail
+            thumbnail_path = os.path.join(library_path, f"{name}.png")
+            has_thumbnail = os.path.exists(thumbnail_path)
+            
+            items.append({
+                'name': name,
+                'filepath': filepath,
+                'thumbnail': thumbnail_path if has_thumbnail else None
+            })
+    
+    return items
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
+    hb_frameless_OT_load_cabinet_group_from_library,
+    hb_frameless_OT_refresh_user_library,
+    hb_frameless_OT_open_user_library_folder,
+    hb_frameless_OT_delete_library_item,
     hb_frameless_OT_toggle_mode,
     hb_frameless_OT_update_cabinet_sizes,
     hb_frameless_OT_draw_cabinet,
