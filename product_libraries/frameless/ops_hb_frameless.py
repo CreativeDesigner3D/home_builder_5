@@ -1,5 +1,6 @@
 import bpy
-from mathutils import Vector
+import math
+from mathutils import Vector, Matrix
 from . import types_frameless
 from ... import hb_utils, hb_snap, hb_placement, hb_types, units
 
@@ -398,6 +399,76 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.cabinet_type == 'UPPER':
             return props.default_wall_cabinet_location
         return 0
+    
+    def get_cage_center_snap(self, cursor_x: float, cabinet_width: float) -> float:
+        """
+        Check if cursor is over a GeoNodeCage with no height collision.
+        Returns the X position to center the cabinet on that cage, or None.
+        
+        This is used to center a base cabinet under a window, for example.
+        """
+        if not self.hit_object or not self.selected_wall:
+            return None
+        
+        # Find if hit object or its parents is a GeoNodeCage
+        cage_obj = None
+        current = self.hit_object
+        while current and current != self.selected_wall:
+            if 'IS_GEONODE_CAGE' in current:
+                cage_obj = current
+                break
+            # Also check for window/door base points that contain cages
+            if 'IS_WINDOW_BP' in current or 'IS_ENTRY_DOOR_BP' in current:
+                # Find the cage child
+                for child in current.children:
+                    if 'IS_GEONODE_CAGE' in child:
+                        cage_obj = child
+                        break
+                if cage_obj:
+                    break
+            current = current.parent
+        
+        if not cage_obj:
+            return None
+        
+        # Get cage dimensions
+        try:
+            cage = hb_types.GeoNodeObject(cage_obj)
+            cage_width = cage.get_input('Dim X')
+            cage_height = cage.get_input('Dim Z')
+            cage_z_start = cage_obj.location.z
+            cage_z_end = cage_z_start + cage_height
+        except:
+            return None
+        
+        # Get cabinet vertical bounds
+        cabinet_z_start = self.get_cabinet_z_location(bpy.context)
+        cabinet_height = self.get_cabinet_height(bpy.context)
+        cabinet_z_end = cabinet_z_start + cabinet_height
+        
+        # Check for height collision
+        # Two ranges overlap if: start1 < end2 AND start2 < end1
+        has_height_collision = (cabinet_z_start < cage_z_end) and (cage_z_start < cabinet_z_end)
+        
+        if has_height_collision:
+            # There's a collision, don't snap to this cage
+            return None
+        
+        # No height collision - calculate centered position
+        # Get cage X position (handle rotation for back side placement)
+        import math
+        is_rotated = abs(cage_obj.rotation_euler.z - math.pi) < 0.1 or abs(cage_obj.rotation_euler.z + math.pi) < 0.1
+        
+        if is_rotated:
+            cage_x_start = cage_obj.location.x - cage_width
+        else:
+            cage_x_start = cage_obj.location.x
+        
+        cage_center_x = cage_x_start + cage_width / 2
+        
+        # Return position that centers cabinet on cage
+        centered_snap_x = cage_center_x - cabinet_width / 2
+        return centered_snap_x
 
     def create_preview_cage(self, context):
         """Create a lightweight preview cage with array modifier."""
@@ -813,16 +884,23 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             total_width = self.individual_cabinet_width * self.cabinet_quantity
             left_gap = snap_x - gap_start
             
-            # Calculate centered position
-            centered_x = gap_start + (gap_width - total_width) / 2
-            distance_from_center = abs(snap_x - centered_x)
+            # Check if cursor is over a GeoNodeCage with no height collision (e.g., window)
+            cage_center_snap = self.get_cage_center_snap(cursor_x, total_width)
             
-            # Snap to center if cursor is within 4 inches of center position
-            if distance_from_center < units.inch(4):
-                snap_x = centered_x
-            # Snap to left if within 4 inches of left boundary
-            elif left_gap < units.inch(4) and left_gap > 0:
-                snap_x = gap_start
+            if cage_center_snap is not None:
+                # Snap to center on the cage (e.g., center base cabinet under window)
+                snap_x = cage_center_snap
+            else:
+                # Calculate centered position in gap
+                centered_x = gap_start + (gap_width - total_width) / 2
+                distance_from_center = abs(snap_x - centered_x)
+                
+                # Snap to center if cursor is within 4 inches of center position
+                if distance_from_center < units.inch(4):
+                    snap_x = centered_x
+                # Snap to left if within 4 inches of left boundary
+                elif left_gap < units.inch(4) and left_gap > 0:
+                    snap_x = gap_start
         
         # Update preview cage
         self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
@@ -932,9 +1010,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     def position_snapped_to_cabinet(self):
         """Position preview cage snapped to an existing cabinet."""
-        import math
-        from mathutils import Matrix
-        
+
         if not self.snap_cabinet or not self.preview_cage:
             return
         
@@ -1029,9 +1105,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 current_x += self.individual_cabinet_width
         else:
             # Floor placement (free or snapped)
-            import math
-            from mathutils import Matrix
-            
+
             start_loc = self.preview_cage.obj.location.copy()
             rotation = self.preview_cage.obj.rotation_euler.copy()
             rotation_z = rotation.z
@@ -1197,12 +1271,18 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.preview_cage.obj.hide_set(False)
 
-        # Check if we're over a wall
+        # Check if we're over a wall (or a child of a wall like a window)
         self.selected_wall = None
-        if self.hit_object and 'IS_WALL_BP' in self.hit_object:
-            self.selected_wall = self.hit_object
-            wall = hb_types.GeoNodeWall(self.selected_wall)
-            self.wall_length = wall.get_input('Length')
+        if self.hit_object:
+            # Walk up parent hierarchy to find wall
+            current = self.hit_object
+            while current:
+                if 'IS_WALL_BP' in current:
+                    self.selected_wall = current
+                    wall = hb_types.GeoNodeWall(self.selected_wall)
+                    self.wall_length = wall.get_input('Length')
+                    break
+                current = current.parent
 
         # Update position if not locked
         # Allow position updates while typing WIDTH (but not offsets)

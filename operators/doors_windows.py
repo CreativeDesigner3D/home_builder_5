@@ -224,8 +224,8 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
     def create_door(self, context):
         """Create the door object."""
         props = context.scene.home_builder
-        self.door = hb_types.GeoNodeObject()
-        self.door.create("GeoNodeCage", "Door")
+        self.door = hb_types.GeoNodeCage()
+        self.door.create("Door")
         self.door.obj['IS_ENTRY_DOOR_BP'] = True
         self.door.set_input('Dim X', props.door_single_width)
         self.door.set_input('Dim Y', props.wall_thickness)
@@ -401,8 +401,8 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
     def create_window(self, context):
         """Create the window object."""
         props = context.scene.home_builder
-        self.window = hb_types.GeoNodeObject()
-        self.window.create("GeoNodeCage", "Window")
+        self.window = hb_types.GeoNodeCage()
+        self.window.create("Window")
         self.window.obj['IS_WINDOW_BP'] = True
         self.window.set_input('Dim X', props.window_width)
         self.window.set_input('Dim Y', props.wall_thickness)
