@@ -334,6 +334,14 @@ class Frameless_Scene_Props(PropertyGroup):
         row.label(text="Stacked Top Cabinet Height:") 
         row.prop(self,'top_stacked_cabinet_height',text="")
 
+    def draw_user_library_ui(self,layout,context):
+        row = layout.row()
+        row.label(text="User Library")
+        row = layout.row()
+        layout.operator('hb_frameless.create_cabinet_group',text="Create Cabinet Group",icon='ADD')
+        layout.operator('hb_frameless.save_cabinet_group_to_user_library',text="Save Cabinet Group to User Library",icon='FILE_TICK')
+        #TODO:Show Items saved in user library and allow users to add them to the current project
+
     def draw_library_ui(self,layout,context):
         row = layout.row(align=True)
         row.prop_enum(self, "frameless_selection_mode", 'Cabinets', icon='MESH_CUBE')
@@ -470,8 +478,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.alignment = 'LEFT'        
             row.prop(self,'show_user_library',text="User",icon='TRIA_DOWN' if self.show_user_library else 'TRIA_RIGHT',emboss=False)
             if self.show_user_library:
-                box.operator('hb_frameless.create_cabinet_group',text="Create Cabinet Group",icon='ADD')
-                box.operator('hb_frameless.save_cabinet_group_to_user_library',text="Save Cabinet Group to User Library",icon='FILE_TICK')
+                self.draw_user_library_ui(box,context)
 
         if self.frameless_tabs == 'OPTIONS':
             box = col.box()
