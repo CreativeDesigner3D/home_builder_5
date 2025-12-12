@@ -4,6 +4,40 @@ from mathutils import Vector, Matrix
 from . import types_frameless
 from ... import hb_utils, hb_snap, hb_placement, hb_types, units
 
+def has_child_item_type(obj,item_type):
+    for child in obj.children_recursive:
+        if item_type in child:
+            return True
+    return False
+
+def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
+    hb_props = bpy.context.window_manager.home_builder
+    add_on_prefs = hb_props.get_user_preferences(bpy.context)         
+
+    if toggle:
+        if dont_show_parent:
+            if has_child_item_type(obj,type_name):
+                return
+        obj.color = add_on_prefs.cabinet_color
+        obj.show_in_front = True
+        obj.hide_viewport = False
+        obj.display_type = 'SOLID'
+        obj.select_set(True)
+
+    else:
+        obj.show_name = False
+        obj.show_in_front = False
+        if 'IS_GEONODE_CAGE' in obj:
+            obj.color = [0.000000, 0.000000, 0.000000, 0.100000]
+            obj.display_type = 'WIRE'
+            obj.hide_viewport = True
+        elif 'IS_2D_ANNOTATION' in obj:
+            obj.color = add_on_prefs.annotation_color
+            obj.display_type = 'SOLID'
+        else:
+            obj.color = [1.000000, 1.000000, 1.000000, 1.000000]
+            obj.display_type = 'SOLID'
+        obj.select_set(False)
 
 class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     """
@@ -1344,48 +1378,13 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     toggle_type: bpy.props.StringProperty(name="Toggle Type",default="")# type: ignore
     toggle_on: bpy.props.BoolProperty(name="Toggle On",default=False)# type: ignore
 
-    def has_child_item_type(self,obj,item_type):
-        for child in obj.children_recursive:
-            if item_type in child:
-                return True
-        return False
-
-    def toggle_cabinet_color(self,obj,toggle,type_name="",dont_show_parent=True):
-        hb_props = bpy.context.window_manager.home_builder
-        add_on_prefs = hb_props.get_user_preferences(bpy.context)         
-
-        if toggle:
-            if dont_show_parent:
-                if self.has_child_item_type(obj,type_name):
-                    return
-            obj.color = add_on_prefs.cabinet_color
-            obj.show_in_front = True
-            obj.hide_viewport = False
-            obj.display_type = 'SOLID'
-            obj.select_set(True)
-
-        else:
-            obj.show_name = False
-            obj.show_in_front = False
-            if 'IS_GEONODE_CAGE' in obj:
-                obj.color = [0.000000, 0.000000, 0.000000, 0.100000]
-                obj.display_type = 'WIRE'
-                obj.hide_viewport = True
-            elif 'IS_2D_ANNOTATION' in obj:
-                obj.color = add_on_prefs.annotation_color
-                obj.display_type = 'SOLID'
-            else:
-                obj.color = [1.000000, 1.000000, 1.000000, 1.000000]
-                obj.display_type = 'SOLID'
-            obj.select_set(False)
-
     def toggle_obj(self,obj):
         if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj:
             return        
         if self.toggle_type in obj:
-            self.toggle_cabinet_color(obj,True,type_name=self.toggle_type)
+            toggle_cabinet_color(obj,True,type_name=self.toggle_type)
         else:
-            self.toggle_cabinet_color(obj,False,type_name=self.toggle_type)
+            toggle_cabinet_color(obj,False,type_name=self.toggle_type)
 
     def execute(self, context):
         props = context.scene.hb_frameless
@@ -1543,12 +1542,14 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         # Create Cabinet Group
         cabinet_group = types_frameless.Cabinet()
         cabinet_group.create("New Cabinet Group")
+        cabinet_group.obj['IS_FRAMELESS_CABINET_GROUP'] = True
         cabinet_group.obj.parent = None
         cabinet_group.obj.location = base_point_location
         cabinet_group.obj.rotation_euler = base_point_rotation
         cabinet_group.set_input('Dim X', overall_width)
         cabinet_group.set_input('Dim Y', overall_depth)
         cabinet_group.set_input('Dim Z', overall_height)
+        cabinet_group.set_input('Mirror Y', True)
         
         bpy.ops.object.select_all(action='DESELECT')
 
@@ -1567,38 +1568,34 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         cabinet_group.obj.select_set(True)
         context.view_layer.objects.active = cabinet_group.obj
 
+        bpy.ops.hb_frameless.select_cabinet_group(toggle_on=True,cabinet_group_name=cabinet_group.obj.name)
+
         return {'FINISHED'}
     
     def calculate_group_bounds(self, selected_cabinets):
         """
-        Calculate the overall bounds of selected cabinets.
-        Returns (location, rotation, width, depth, height)
+        Calculate the overall bounds of selected cabinets in world space.
+        Works for kitchen islands with cabinets at any rotation (0°, 90°, 180°, 270°).
         
-        The base point is at the left-front-bottom corner of the bounding box,
-        using the rotation of the first cabinet.
+        Cabinet coordinate system:
+        - Origin at back-left-bottom
+        - Dim X extends in +X (local)
+        - Dim Y is MIRRORED, extends in -Y (local) toward front
+        - Dim Z extends in +Z (local)
+        
+        Returns (location, rotation, width, depth, height)
+        Location is at back-left-bottom of the world-space bounding box.
         """
-        import math
-        from mathutils import Matrix, Vector as Vec
+        from mathutils import Vector as Vec
         
         if not selected_cabinets:
             return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
         
-        # Get rotation from first cabinet (assume all cabinets share same orientation)
-        first_cab = selected_cabinets[0]
-        group_rotation = first_cab.obj.rotation_euler.copy()
-        rotation_z = group_rotation.z
-        
-        # Create inverse rotation matrix to transform to local space
-        inv_rotation = Matrix.Rotation(-rotation_z, 4, 'Z')
-        
-        # Find a reference point (use first cabinet's world location)
-        ref_point = first_cab.obj.matrix_world.translation.copy()
-        
-        # Initialize bounds in local (rotated) space
-        local_min_x = float('inf')
-        local_max_x = float('-inf')
-        local_min_y = float('inf')
-        local_max_y = float('-inf')
+        # Initialize world-space bounds
+        min_x = float('inf')
+        max_x = float('-inf')
+        min_y = float('inf')
+        max_y = float('-inf')
         min_z = float('inf')
         max_z = float('-inf')
         
@@ -1608,58 +1605,65 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
             cab_depth = cabinet.get_input('Dim Y')
             cab_height = cabinet.get_input('Dim Z')
             
-            # Get cabinet world position
-            cab_world_pos = cabinet.obj.matrix_world.translation.copy()
-            cab_rotation_z = cabinet.obj.rotation_euler.z
+            # Define the 8 corners in cabinet's LOCAL space
+            # Y is mirrored, so depth extends in -Y direction
+            local_corners = [
+                Vec((0, 0, 0)),                    # back-left-bottom (origin)
+                Vec((cab_width, 0, 0)),            # back-right-bottom
+                Vec((0, -cab_depth, 0)),           # front-left-bottom
+                Vec((cab_width, -cab_depth, 0)),   # front-right-bottom
+                Vec((0, 0, cab_height)),           # back-left-top
+                Vec((cab_width, 0, cab_height)),   # back-right-top
+                Vec((0, -cab_depth, cab_height)),  # front-left-top
+                Vec((cab_width, -cab_depth, cab_height)),  # front-right-top
+            ]
             
-            # Check if cabinet is rotated 180° (back side of wall)
-            is_rotated = abs(cab_rotation_z - math.pi) < 0.1 or abs(cab_rotation_z + math.pi) < 0.1
-            
-            # Calculate cabinet corners in world space
-            # Cabinet origin is at back-left corner
-            if is_rotated:
-                # Rotated 180°: origin is at what was back-right, extends in -X direction
-                corners = [
-                    cab_world_pos,
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, 0, 0)),
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((0, cab_depth, 0)),
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, cab_depth, 0)),
-                ]
-            else:
-                # Normal orientation
-                corners = [
-                    cab_world_pos,
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, 0, 0)),
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((0, cab_depth, 0)),
-                    cab_world_pos + Matrix.Rotation(cab_rotation_z, 4, 'Z') @ Vec((cab_width, cab_depth, 0)),
-                ]
-            
-            # Transform corners to local space (relative to reference, unrotated)
-            for corner in corners:
-                local_corner = inv_rotation @ (corner - ref_point)
-                local_min_x = min(local_min_x, local_corner.x)
-                local_max_x = max(local_max_x, local_corner.x)
-                local_min_y = min(local_min_y, local_corner.y)
-                local_max_y = max(local_max_y, local_corner.y)
-            
-            # Z bounds (world space, rotation doesn't affect Z)
-            cab_z = cab_world_pos.z
-            min_z = min(min_z, cab_z)
-            max_z = max(max_z, cab_z + cab_height)
+            # Transform each corner to world space using cabinet's full matrix
+            world_matrix = cabinet.obj.matrix_world
+            for local_corner in local_corners:
+                world_corner = world_matrix @ local_corner
+                min_x = min(min_x, world_corner.x)
+                max_x = max(max_x, world_corner.x)
+                min_y = min(min_y, world_corner.y)
+                max_y = max(max_y, world_corner.y)
+                min_z = min(min_z, world_corner.z)
+                max_z = max(max_z, world_corner.z)
         
         # Calculate overall dimensions
-        overall_width = local_max_x - local_min_x
-        overall_depth = local_max_y - local_min_y
+        overall_width = max_x - min_x
+        overall_depth = max_y - min_y
         overall_height = max_z - min_z
         
-        # Calculate base point location (left-front-bottom corner in world space)
-        # Start from reference point, add local min offset, then rotate back to world
-        local_base = Vec((local_min_x, local_min_y, 0))
-        world_offset = Matrix.Rotation(rotation_z, 4, 'Z') @ local_base
-        base_point_location = ref_point + world_offset
-        base_point_location.z = min_z
+        # Group cage location: back-left-bottom of world AABB
+        # Since group cage also has mirrored Y, origin is at back (max_y), not front (min_y)
+        base_point_location = Vector((min_x, max_y, min_z))
         
-        return (base_point_location, group_rotation, overall_width, overall_depth, overall_height)
+        # Group rotation is (0, 0, 0) since we're using world-space AABB
+        base_point_rotation = (0, 0, 0)
+        
+        return (base_point_location, base_point_rotation, overall_width, overall_depth, overall_height)
+
+
+class hb_frameless_OT_select_cabinet_group(bpy.types.Operator):
+    """Select Cabinet Group"""
+    bl_idname = "hb_frameless.select_cabinet_group"
+    bl_label = 'Select Cabinet Group'
+    bl_description = "This will select the cabinet group"
+
+    toggle_on: bpy.props.BoolProperty(name="Toggle On",default=False)# type: ignore
+
+    cabinet_group_name: bpy.props.StringProperty(name="Cabinet Group Name",default="")# type: ignore
+
+    def execute(self, context):
+        bpy.ops.object.select_all(action='DESELECT')
+        cabinet_group = bpy.data.objects[self.cabinet_group_name]
+        toggle_cabinet_color(cabinet_group,True,type_name="IS_FRAMELESS_CABINET_CAGE",dont_show_parent=False)
+        cabinet_group.select_set(True)
+        context.view_layer.objects.active = cabinet_group
+        for obj in cabinet_group.children_recursive:
+            if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+                obj.hide_viewport = True
+        return {'FINISHED'}     
 
 classes = (
     hb_frameless_OT_place_cabinet,
@@ -1672,6 +1676,7 @@ classes = (
     hb_frameless_OT_update_door_and_drawer_front_style,
     hb_frameless_OT_add_door_style,
     hb_frameless_OT_create_cabinet_group,
+    hb_frameless_OT_select_cabinet_group,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
