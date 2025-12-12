@@ -101,23 +101,38 @@ class TitleBlock:
             (-block_width/2, block_height/2, 0),
         ]
         faces = [(0, 1, 2, 3)]
+
+        # Create title block boarder that fits the bounds of the camera.
+        # All text and other title block elements will be parented to this object.
+        self.obj = hb_types.GeoNodeRectangle()
+        self.obj.create(f"{scene.name}_TitleBlock_Boarder")
+        self.obj.obj.parent = camera
+        # NEED TO FIGURE OUT THE CORRECT LOCATION FOR THE TITLE BLOCK BOARDER. 
+        # THIS SHOULD BE THE BOTTOM LEFT CORNER OF THE CAMERA BOUNDS
+        self.obj.obj.location = (-.5, -.303, -.1)
+        self.obj.obj.scale = (1, 1, 1)
+        self.obj.obj.rotation_euler = (0, 0, 0)
+        # NEED TO FIGURE OUT THE CORRECT SIZE FOR THE TITLE BLOCK BOARDER. 
+        #THIS SHOULD BE THE WIDTH AND HEIGHT OF THE CAMERA BOUNDS
+        self.obj.set_input("Dim X", 1)
+        self.obj.set_input("Dim Y", .607)
         
-        mesh = bpy.data.meshes.new(f"{scene.name}_TitleBlock_Mesh")
-        mesh.from_pydata(verts, [], faces)
-        mesh.update()
+        # mesh = bpy.data.meshes.new(f"{scene.name}_TitleBlock_Mesh")
+        # mesh.from_pydata(verts, [], faces)
+        # mesh.update()
         
-        self.obj = bpy.data.objects.new(f"{scene.name}_TitleBlock", mesh)
-        scene.collection.objects.link(self.obj)
+        # self.obj = bpy.data.objects.new(f"{scene.name}_TitleBlock", mesh)
+        # scene.collection.objects.link(self.obj)
         
         # Parent to camera
-        self.obj.parent = camera
-        self.obj.location = (block_x, block_y, block_z)
+        # self.obj.parent = camera
+        # self.obj.location = (block_x, block_y, block_z)
         
         # Create material (white background)
-        mat = bpy.data.materials.new(f"{scene.name}_TitleBlock_Mat")
-        mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
-        self.obj.data.materials.append(mat)
+        # mat = bpy.data.materials.new(f"{scene.name}_TitleBlock_Mat")
+        # mat.use_nodes = True
+        # mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
+        # self.obj.data.materials.append(mat)
         
         # TODO: Add text fields later
         
@@ -194,6 +209,7 @@ class LayoutView:
         """Create a new scene for the layout view."""
         self.scene = bpy.data.scenes.new(name)
         self.scene['IS_LAYOUT_VIEW'] = True
+        bpy.context.window.scene = self.scene
         
         # Set up render settings for layout views
         self._setup_render_settings()

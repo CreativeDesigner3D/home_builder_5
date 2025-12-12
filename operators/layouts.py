@@ -160,8 +160,11 @@ class home_builder_layouts_OT_create_elevation_view(bpy.types.Operator):
         wall_obj = context.object
         view = hb_layouts.ElevationView()
         scene = view.create(wall_obj)
+
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
-        # Apply default scale
+        # Apply default scale and page size
+        scene.hb_paper_size = 'LEGAL'
         scene.hb_layout_scale = '1/4"=1\''
         
         self.report({'INFO'}, f"Created elevation view: {scene.name}")
@@ -177,8 +180,11 @@ class home_builder_layouts_OT_create_plan_view(bpy.types.Operator):
     def execute(self, context):
         view = hb_layouts.PlanView()
         scene = view.create()
+
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
-        # Apply default scale for floor plans
+        # Apply default scale and page size for floor plans
+        scene.hb_paper_size = 'LEGAL'
         scene.hb_layout_scale = '1/4"=1\''
         
         self.report({'INFO'}, f"Created plan view: {scene.name}")
@@ -200,6 +206,8 @@ class home_builder_layouts_OT_create_3d_view(bpy.types.Operator):
     def execute(self, context):
         view = hb_layouts.View3D()
         scene = view.create(perspective=self.perspective)
+
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
         view_type = "perspective" if self.perspective else "isometric"
         self.report({'INFO'}, f"Created 3D {view_type} view: {scene.name}")

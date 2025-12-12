@@ -395,6 +395,10 @@ class GeoNodeRectangle(GeoNodeObject):
 
     def create(self,name):
         super().create('GeoNodeRectangle',name)
+        self.obj.color = (0,0,0,1)
+        self.set_input("Dim X", 1)
+        self.set_input("Dim Y", 1)
+        self.set_input("Line Thickness", .001)
 
 
 class GeoNodeCutpart(GeoNodeObject):
