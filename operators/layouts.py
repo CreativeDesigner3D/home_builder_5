@@ -164,7 +164,7 @@ class home_builder_layouts_OT_create_elevation_view(bpy.types.Operator):
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
         # Apply default scale and page size
-        scene.hb_paper_size = 'LEGAL'
+        scene.hb_paper_size = 'LETTER'
         scene.hb_layout_scale = '1/4"=1\''
         
         self.report({'INFO'}, f"Created elevation view: {scene.name}")
@@ -184,7 +184,7 @@ class home_builder_layouts_OT_create_plan_view(bpy.types.Operator):
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
         # Apply default scale and page size for floor plans
-        scene.hb_paper_size = 'LEGAL'
+        # scene.hb_paper_size = 'LEGAL'
         scene.hb_layout_scale = '1/4"=1\''
         
         self.report({'INFO'}, f"Created plan view: {scene.name}")

@@ -80,59 +80,28 @@ class TitleBlock:
         res_y = scene.render.resolution_y
         aspect_ratio = res_x / res_y
         
-        # In normalized coordinates: height = 1.0, width = aspect_ratio
-        # Title block dimensions - vertical strip on left
-        block_width = 0.04    # 4% of view height (will be stretched by aspect)
-        block_height = 0.90   # 90% of view height
-        
-        # Position on left edge using normalized camera coordinates:
-        # X = left/right (-0.5 to 0.5 * aspect_ratio)
-        # Y = up/down (-0.5 to 0.5)
-        # Z = distance from camera
-        block_x = -aspect_ratio / 2 + block_width / 2 + 0.02  # left edge + margin
-        block_y = 0  # centered vertically
-        block_z = -1  # in front of camera
-        
-        # Create title block mesh in XY plane (Z is depth)
-        verts = [
-            (-block_width/2, -block_height/2, 0),
-            (block_width/2, -block_height/2, 0),
-            (block_width/2, block_height/2, 0),
-            (-block_width/2, block_height/2, 0),
-        ]
-        faces = [(0, 1, 2, 3)]
-
-        # Create title block boarder that fits the bounds of the camera.
+        # Create title block border that fits the bounds of the camera.
         # All text and other title block elements will be parented to this object.
-        self.obj = hb_types.GeoNodeRectangle()
-        self.obj.create(f"{scene.name}_TitleBlock_Boarder")
-        self.obj.obj.parent = camera
-        # NEED TO FIGURE OUT THE CORRECT LOCATION FOR THE TITLE BLOCK BOARDER. 
-        # THIS SHOULD BE THE BOTTOM LEFT CORNER OF THE CAMERA BOUNDS
-        self.obj.obj.location = (-.5, -.303, -.1)
-        self.obj.obj.scale = (1, 1, 1)
-        self.obj.obj.rotation_euler = (0, 0, 0)
-        # NEED TO FIGURE OUT THE CORRECT SIZE FOR THE TITLE BLOCK BOARDER. 
-        #THIS SHOULD BE THE WIDTH AND HEIGHT OF THE CAMERA BOUNDS
-        self.obj.set_input("Dim X", 1)
-        self.obj.set_input("Dim Y", .607)
+        #
+        # With camera.scale = ortho_scale, we use normalized coordinates:
+        # - Width (X): -0.5 to 0.5 (total = 1.0)        
+        # - Height (Y): -aspect_ratio/2 to aspect_ratio/2 (total = aspect_ratio)
+        #
+        # GeoNodeRectangle draws from bottom-left corner, so:
+        # - Location = bottom-left corner of camera view
+        # - Dim X = full width = aspect_ratio
+        # - Dim Y = full height = 1.0
         
-        # mesh = bpy.data.meshes.new(f"{scene.name}_TitleBlock_Mesh")
-        # mesh.from_pydata(verts, [], faces)
-        # mesh.update()
-        
-        # self.obj = bpy.data.objects.new(f"{scene.name}_TitleBlock", mesh)
-        # scene.collection.objects.link(self.obj)
-        
-        # Parent to camera
-        # self.obj.parent = camera
-        # self.obj.location = (block_x, block_y, block_z)
-        
-        # Create material (white background)
-        # mat = bpy.data.materials.new(f"{scene.name}_TitleBlock_Mat")
-        # mat.use_nodes = True
-        # mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 1, 1, 1)
-        # self.obj.data.materials.append(mat)
+        self.border = hb_types.GeoNodeRectangle()
+        self.border.create(f"{scene.name}_TitleBlock_Boarder")
+        self.border.obj['IS_TITLE_BLOCK_BOARDER'] = True
+        self.border.obj.parent = camera
+        self.border.obj.location = (-.5, -.5/aspect_ratio, -0.1)
+        self.border.obj.scale = (1, 1, 1)
+        self.border.obj.rotation_euler = (0, 0, 0)
+        self.border.set_input("Dim X", 1.0)
+        self.border.set_input("Dim Y", 1.0 / aspect_ratio)
+        self.obj = self.border.obj
         
         # TODO: Add text fields later
         
