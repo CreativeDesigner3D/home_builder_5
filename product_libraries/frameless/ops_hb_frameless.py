@@ -1411,15 +1411,6 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
-    bl_idname = "hb_frameless.update_cabinet_sizes"
-    bl_label = "Update Cabinet Sizes"
-
-    def execute(self, context):
-        props = context.scene.hb_frameless
-        return {'FINISHED'}
-
-
 class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
     """Legacy operator - redirects to place_cabinet"""
     bl_idname = "hb_frameless.draw_cabinet"
@@ -1504,14 +1495,12 @@ class hb_frameless_OT_update_door_and_drawer_front_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_frameless_OT_add_door_style(bpy.types.Operator):
-    bl_idname = "hb_frameless.add_door_style"
-    bl_label = "Add Door Style"
+class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
+    bl_idname = "hb_frameless.update_cabinet_sizes"
+    bl_label = "Update Cabinet Sizes"
 
     def execute(self, context):
-        frameless_props = context.scene.hb_frameless
-        door_style = frameless_props.door_styles.add()
-        door_style.name = "New Door Style"
+        props = context.scene.hb_frameless
         return {'FINISHED'}
 
 
@@ -1542,7 +1531,7 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         # Create Cabinet Group
         cabinet_group = types_frameless.Cabinet()
         cabinet_group.create("New Cabinet Group")
-        cabinet_group.obj['IS_FRAMELESS_CABINET_GROUP'] = True
+        cabinet_group.obj['IS_CAGE_GROUP'] = True
         cabinet_group.obj.parent = None
         cabinet_group.obj.location = base_point_location
         cabinet_group.obj.rotation_euler = base_point_rotation
@@ -1642,6 +1631,17 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         base_point_rotation = (0, 0, 0)
         
         return (base_point_location, base_point_rotation, overall_width, overall_depth, overall_height)
+
+
+class hb_frameless_OT_add_door_style(bpy.types.Operator):
+    bl_idname = "hb_frameless.add_door_style"
+    bl_label = "Add Door Style"
+
+    def execute(self, context):
+        frameless_props = context.scene.hb_frameless
+        door_style = frameless_props.door_styles.add()
+        door_style.name = "New Door Style"
+        return {'FINISHED'}
 
 
 class hb_frameless_OT_select_cabinet_group(bpy.types.Operator):

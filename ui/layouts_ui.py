@@ -125,6 +125,12 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
                          text="Isometric", icon='VIEW_ORTHO')
         op.perspective = False
         
+        # Cabinet Group Layout
+        col.separator()
+        
+        col.operator("home_builder_layouts.create_multi_view", 
+                    text="Cabinet Group Layout", icon='OUTLINER_OB_GROUP_INSTANCE')
+        
         # Developer Tools Section
         box = layout.box()
         box.label(text="Developer", icon='CONSOLE')

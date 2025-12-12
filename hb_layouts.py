@@ -958,6 +958,268 @@ class View3D(LayoutView):
             self._add_object_to_collection(child, collection)
 
 
+class MultiView(LayoutView):
+    """Multi-view layout showing multiple orthographic views of an object (plan, elevations, sides)."""
+    
+    source_obj: bpy.types.Object = None
+    content_collection: bpy.types.Collection = None
+    view_instances: list = None
+    
+    # View type definitions: (type_id, label, rotation_euler)
+    # Rotations position the camera to look at the object from that direction
+    VIEW_TYPES = {
+        'PLAN': ('Plan View', (0, 0, 0)),                          # Top down, looking -Z
+        'FRONT': ('Front Elevation', (math.radians(90), 0, 0)),    # Looking +Y
+        'BACK': ('Back Elevation', (math.radians(90), 0, math.radians(180))),  # Looking -Y
+        'LEFT': ('Left Side', (math.radians(90), 0, math.radians(-90))),       # Looking +X
+        'RIGHT': ('Right Side', (math.radians(90), 0, math.radians(90))),      # Looking -X
+    }
+    
+    def __init__(self, scene=None):
+        super().__init__(scene)
+        self.view_instances = []
+        if scene:
+            # Find source object
+            source_name = scene.get('SOURCE_OBJECT')
+            if source_name and source_name in bpy.data.objects:
+                self.source_obj = bpy.data.objects[source_name]
+            
+            # Find content collection
+            coll_name = scene.get('CONTENT_COLLECTION')
+            if coll_name and coll_name in bpy.data.collections:
+                self.content_collection = bpy.data.collections[coll_name]
+    
+    def create(self, source_obj: bpy.types.Object, views: list, 
+               name: str = None, paper_size: str = 'TABLOID', 
+               landscape: bool = True) -> bpy.types.Scene:
+        """
+        Create a multi-view layout for an object.
+        
+        Args:
+            source_obj: The object to create views for (e.g., cabinet group)
+            views: List of view types to include ('PLAN', 'FRONT', 'BACK', 'LEFT', 'RIGHT')
+            name: Optional name for the layout
+            paper_size: Paper size (default TABLOID for multi-view)
+            landscape: Paper orientation
+        
+        Returns:
+            The created scene
+        """
+        self.source_obj = source_obj
+        
+        if not views:
+            return None
+        
+        # Get object dimensions
+        obj_width, obj_depth, obj_height = self._get_object_dimensions(source_obj)
+        
+        # Create scene
+        view_name = name or f"{source_obj.name} Layout"
+        self.create_scene(view_name)
+        self.scene['IS_MULTI_VIEW'] = True
+        self.scene['SOURCE_OBJECT'] = source_obj.name
+        
+        # Set paper size
+        self.set_paper_size(paper_size, landscape)
+        
+        # Create collection for source object content
+        self.content_collection = bpy.data.collections.new(f"{view_name} Content")
+        self.scene['CONTENT_COLLECTION'] = self.content_collection.name
+        
+        # Add source object and children to collection
+        self._add_object_to_collection(source_obj, self.content_collection)
+        
+        # Calculate layout grid
+        num_views = len(views)
+        cols, rows = self._calculate_grid(num_views)
+        
+        # Calculate view sizes based on what each view shows
+        view_sizes = []
+        for view_type in views:
+            if view_type == 'PLAN':
+                view_sizes.append((obj_width, obj_depth))
+            elif view_type in ('FRONT', 'BACK'):
+                view_sizes.append((obj_width, obj_height))
+            else:  # LEFT, RIGHT
+                view_sizes.append((obj_depth, obj_height))
+        
+        # Find max dimensions for uniform spacing
+        max_view_width = max(s[0] for s in view_sizes) if view_sizes else 1
+        max_view_height = max(s[1] for s in view_sizes) if view_sizes else 1
+        
+        # Spacing between views
+        spacing = units.inch(12)
+        label_space = units.inch(3)
+        
+        total_width = cols * max_view_width + (cols - 1) * spacing
+        total_height = rows * (max_view_height + label_space) + (rows - 1) * spacing
+        
+        # Create rotated instances for each view
+        for i, view_type in enumerate(views):
+            col_idx = i % cols
+            row_idx = i // cols
+            
+            # Calculate position in layout grid
+            x_pos = col_idx * (max_view_width + spacing)
+            y_pos = -row_idx * (max_view_height + label_space + spacing)
+            
+            view_label, rotation = self.VIEW_TYPES[view_type]
+            view_width, view_height = view_sizes[i]
+            
+            # Create collection instance
+            instance = bpy.data.objects.new(f"{view_label} Instance", None)
+            instance.empty_display_size = 0.01
+            instance.instance_type = 'COLLECTION'
+            instance.instance_collection = self.content_collection
+            self.scene.collection.objects.link(instance)
+            
+            # Set rotation
+            instance.rotation_euler = rotation
+            
+            # Calculate position to center view in its grid cell
+            x_offset = (max_view_width - view_width) / 2
+            y_offset = (max_view_height - view_height) / 2
+            
+            # Position based on view type (accounting for object origin and rotation)
+            instance.location = self._calculate_instance_position(
+                view_type, x_pos + x_offset, y_pos - y_offset,
+                obj_width, obj_depth, obj_height, view_width, view_height
+            )
+            
+            self.view_instances.append(instance)
+            
+            # Add label
+            self._create_view_label(view_label, 
+                                   x_pos + max_view_width / 2, 
+                                   y_pos + units.inch(1))
+        
+        # Create camera
+        margin = units.inch(6)
+        ortho_scale = max(total_width, total_height) + margin * 2
+        
+        cam_data = bpy.data.cameras.new(f"{view_name} Camera")
+        cam_data.type = 'ORTHO'
+        cam_data.ortho_scale = ortho_scale
+        
+        self.camera = bpy.data.objects.new(f"{view_name} Camera", cam_data)
+        self.scene.collection.objects.link(self.camera)
+        self.scene.camera = self.camera
+        
+        # Set camera scale for normalized coordinates
+        self.camera.scale = (ortho_scale, ortho_scale, ortho_scale)
+        
+        # Position camera centered on layout, looking down
+        self.camera.location = (total_width / 2 - max_view_width / 2, 
+                               -total_height / 2 + max_view_height / 2, 
+                               10)
+        self.camera.rotation_euler = (0, 0, 0)
+        
+        # Add title block
+        self.title_block = TitleBlock()
+        self.title_block.create(self.scene, self.camera)
+        
+        return self.scene
+    
+    def _get_object_dimensions(self, obj):
+        """Get object dimensions from GeoNode inputs or bounding box."""
+        try:
+            # Try to get from GeoNode cage
+            cage = hb_types.GeoNodeCage(obj)
+            width = cage.get_input('Dim X')
+            depth = cage.get_input('Dim Y')
+            height = cage.get_input('Dim Z')
+            return (width, depth, height)
+        except:
+            pass
+        
+        # Fallback to bounding box
+        if hasattr(obj, 'dimensions'):
+            return (obj.dimensions.x, obj.dimensions.y, obj.dimensions.z)
+        
+        return (1, 1, 1)
+    
+    def _calculate_grid(self, num_views):
+        """Calculate grid layout for views."""
+        if num_views <= 2:
+            return (num_views, 1)
+        elif num_views <= 4:
+            return (2, 2)
+        else:
+            return (3, 2)
+    
+    def _calculate_instance_position(self, view_type, x_pos, y_pos, 
+                                     obj_width, obj_depth, obj_height,
+                                     view_width, view_height):
+        """Calculate world position for a rotated instance.
+        
+        The object origin is at back-left-bottom with mirrored Y (depth in -Y).
+        We need to position each rotated instance so it appears centered in its grid cell.
+        """
+        if view_type == 'PLAN':
+            # Top down - center on XY, object shows width x depth
+            return Vector((x_pos + obj_width / 2, 
+                          y_pos - obj_depth / 2, 
+                          0))
+        elif view_type == 'FRONT':
+            # Front view - looking +Y, shows width x height
+            return Vector((x_pos + obj_width / 2, 
+                          y_pos - obj_height / 2, 
+                          -obj_depth))
+        elif view_type == 'BACK':
+            # Back view - looking -Y, shows width x height (mirrored)
+            return Vector((x_pos + obj_width / 2, 
+                          y_pos - obj_height / 2, 
+                          0))
+        elif view_type == 'LEFT':
+            # Left side - looking +X, shows depth x height
+            return Vector((x_pos + obj_depth / 2, 
+                          y_pos - obj_height / 2, 
+                          0))
+        elif view_type == 'RIGHT':
+            # Right side - looking -X, shows depth x height (mirrored)
+            return Vector((x_pos + obj_depth / 2, 
+                          y_pos - obj_height / 2, 
+                          -obj_width))
+        
+        return Vector((x_pos, y_pos, 0))
+    
+    def _add_object_to_collection(self, obj, collection):
+        """Recursively add object and children to collection, skipping cages/helpers."""
+        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
+                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
+                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
+                   obj.get('IS_FRAMELESS_DOORS_CAGE') or
+                   obj.get('IS_GEONODE_CAGE'))
+        is_helper = obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name
+        
+        if not is_cage and not is_helper:
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
+        
+        for child in obj.children:
+            self._add_object_to_collection(child, collection)
+    
+    def _create_view_label(self, text, x, y):
+        """Create a text label for a view."""
+        text_curve = bpy.data.curves.new(f"Label_{text}", 'FONT')
+        text_curve.body = text
+        text_curve.size = units.inch(0.5)
+        text_curve.align_x = 'CENTER'
+        text_curve.align_y = 'BOTTOM'
+        
+        text_obj = bpy.data.objects.new(f"Label_{text}", text_curve)
+        self.scene.collection.objects.link(text_obj)
+        text_obj.location = (x, y, 0)
+        
+        # Black material
+        mat = bpy.data.materials.new(f"Label_{text}_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        text_obj.data.materials.append(mat)
+        
+        return text_obj
+
+
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -973,6 +1235,8 @@ def get_layout_view_from_scene(scene: bpy.types.Scene) -> LayoutView:
         return PlanView(scene)
     elif scene.get('IS_3D_VIEW'):
         return View3D(scene)
+    elif scene.get('IS_MULTI_VIEW'):
+        return MultiView(scene)
     else:
         return LayoutView(scene)
 
@@ -1006,3 +1270,15 @@ def create_all_elevations() -> list:
             view = create_elevation_for_wall(obj)
             views.append(view)
     return views
+
+
+def create_multi_view(source_obj: bpy.types.Object, views: list) -> MultiView:
+    """Convenience function to create a multi-view layout.
+    
+    Args:
+        source_obj: Object to create views for
+        views: List of view types ('PLAN', 'FRONT', 'BACK', 'LEFT', 'RIGHT')
+    """
+    view = MultiView()
+    view.create(source_obj, views)
+    return view

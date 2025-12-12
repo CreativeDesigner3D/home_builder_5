@@ -253,6 +253,98 @@ class home_builder_layouts_OT_create_all_elevations(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_layouts_OT_create_multi_view(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.create_multi_view"
+    bl_label = "Create Multi-View Layout"
+    bl_description = "Create a multi-view layout showing plan, elevation, and side views"
+    bl_options = {'UNDO'}
+    
+    include_plan: bpy.props.BoolProperty(
+        name="Plan View (Top)",
+        description="Include a top-down plan view",
+        default=True
+    )  # type: ignore
+    
+    include_front: bpy.props.BoolProperty(
+        name="Front Elevation",
+        description="Include a front elevation view",
+        default=True
+    )  # type: ignore
+    
+    include_back: bpy.props.BoolProperty(
+        name="Back Elevation",
+        description="Include a back elevation view",
+        default=False
+    )  # type: ignore
+    
+    include_left: bpy.props.BoolProperty(
+        name="Left Side",
+        description="Include a left side elevation view",
+        default=True
+    )  # type: ignore
+    
+    include_right: bpy.props.BoolProperty(
+        name="Right Side",
+        description="Include a right side elevation view",
+        default=False
+    )  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if not obj:
+            return False
+        if 'IS_CAGE_GROUP' in obj:
+            return True
+        return False
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Select Views to Include:")
+        
+        col = layout.column(align=True)
+        col.prop(self, "include_plan")
+        
+        layout.separator()
+        layout.label(text="Elevations:")
+        col = layout.column(align=True)
+        col.prop(self, "include_front")
+        col.prop(self, "include_back")
+        col.prop(self, "include_left")
+        col.prop(self, "include_right")
+    
+    def execute(self, context):
+        source_obj = context.object
+        
+        views = []
+        if self.include_plan:
+            views.append('PLAN')
+        if self.include_front:
+            views.append('FRONT')
+        if self.include_back:
+            views.append('BACK')
+        if self.include_left:
+            views.append('LEFT')
+        if self.include_right:
+            views.append('RIGHT')
+        
+        if not views:
+            self.report({'WARNING'}, "No views selected")
+            return {'CANCELLED'}
+        
+        multi_view = hb_layouts.MultiView()
+        scene = multi_view.create(source_obj, views)
+        
+        if scene:
+            bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
+            self.report({'INFO'}, f"Created multi-view layout: {scene.name}")
+        
+        return {'FINISHED'}
+
+
 class home_builder_layouts_OT_update_elevation_view(bpy.types.Operator):
     bl_idname = "home_builder_layouts.update_elevation_view"
     bl_label = "Update Elevation View"
@@ -442,6 +534,7 @@ classes = (
     home_builder_layouts_OT_create_plan_view,
     home_builder_layouts_OT_create_3d_view,
     home_builder_layouts_OT_create_all_elevations,
+    home_builder_layouts_OT_create_multi_view,
     home_builder_layouts_OT_update_elevation_view,
     home_builder_layouts_OT_delete_layout_view,
     home_builder_layouts_OT_go_to_layout_view,
