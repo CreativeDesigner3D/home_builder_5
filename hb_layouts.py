@@ -92,35 +92,51 @@ class TitleBlock:
         # - Dim X = full width = aspect_ratio
         # - Dim Y = full height = 1.0
         
-        self.border = hb_types.GeoNodeRectangle()
-        self.border.create(f"{scene.name}_TitleBlock_Boarder")
-        self.border.obj['IS_TITLE_BLOCK_BOARDER'] = True
-        self.border.obj.parent = camera
-        self.border.obj.location = (-.5, -.5/aspect_ratio, -0.1)
-        self.border.obj.scale = (1, 1, 1)
-        self.border.obj.rotation_euler = (0, 0, 0)
-        self.border.set_input("Dim X", 1.0)
-        self.border.set_input("Dim Y", 1.0 / aspect_ratio)
-        self.obj = self.border.obj
-        
+        border = hb_types.GeoNodeRectangle()
+        border.create(f"{scene.name}_TitleBlock_Boarder")
+        border.obj['IS_TITLE_BLOCK_BOARDER'] = True
+        border.obj.parent = camera
+        border.obj.location = (-.5, -.5/aspect_ratio, -0.1)
+        border.obj.scale = (1, 1, 1)
+        border.obj.rotation_euler = (0, 0, 0)
+        border.set_input("Dim X", 1.0)
+        border.set_input("Dim Y", 1.0 / aspect_ratio)
+        self.obj = border.obj
+
+        dim_x = border.var_input("Dim X", "dim_x")
+        dim_y = border.var_input("Dim Y", "dim_y")
+
+        left_rect = hb_types.GeoNodeRectangle()
+        left_rect.create(f"{scene.name}_TitleBlock_Rectangle")
+        left_rect.obj.parent = border.obj
+        left_rect.obj.location = (.005, .005, 0)
+        left_rect.obj.scale = (1, 1, 1)
+        left_rect.obj.rotation_euler = (0, 0, 0)
+        left_rect.set_input("Dim X", .08)
+        left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])   
+
+        self._add_text_field(scene, left_rect.obj, "View Name", scene.name, (0, 0, 0))
+
         # TODO: Add text fields later
         
         return self.obj
     
-    def _add_text_field(self, scene, camera, field_name, text, location, size=0.05):
+    def _add_text_field(self, scene, parent, field_name, text, location, size=0.03):
         """Add a text object to the title block, rotated 90 degrees for vertical reading."""
         text_curve = bpy.data.curves.new(f"{scene.name}_{field_name}", 'FONT')
         text_curve.body = text
+        
         text_curve.size = size
         text_curve.align_x = 'LEFT'
-        text_curve.align_y = 'CENTER'
+        text_curve.align_y = 'TOP'
         
         text_obj = bpy.data.objects.new(f"{scene.name}_{field_name}", text_curve)
         scene.collection.objects.link(text_obj)
         
         # Parent to camera
-        text_obj.parent = camera
+        text_obj.parent = parent
         text_obj.location = location
+        text_obj.color = (0,0,0,1)
         # Rotate 90 degrees CCW around Z so text reads bottom-to-top
         text_obj.rotation_euler = (0, 0, math.radians(90))
         
