@@ -306,7 +306,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.array_modifier.count = self.cabinet_quantity
             self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.fill_mode = False
-            # Don't lock position - allow continued movement
             self.update_preview_cage()
                 
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
@@ -809,6 +808,21 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.array_modifier.count = self.cabinet_quantity
             self.individual_cabinet_width = gap_width / self.cabinet_quantity
             snap_x = gap_start
+        else:
+            # User has typed a width - check for auto-snap positions
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            left_gap = snap_x - gap_start
+            
+            # Calculate centered position
+            centered_x = gap_start + (gap_width - total_width) / 2
+            distance_from_center = abs(snap_x - centered_x)
+            
+            # Snap to center if cursor is within 4 inches of center position
+            if distance_from_center < units.inch(4):
+                snap_x = centered_x
+            # Snap to left if within 4 inches of left boundary
+            elif left_gap < units.inch(4) and left_gap > 0:
+                snap_x = gap_start
         
         # Update preview cage
         self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
