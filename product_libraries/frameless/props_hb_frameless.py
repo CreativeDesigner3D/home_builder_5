@@ -18,6 +18,37 @@ from bpy.props import (
         EnumProperty,
         )
 from ... import units
+import bpy.utils.previews
+
+# Preview collection for library thumbnails
+preview_collections = {}
+
+def get_library_previews():
+    """Get or create the library preview collection."""
+    if "library_previews" not in preview_collections:
+        preview_collections["library_previews"] = bpy.utils.previews.new()
+    return preview_collections["library_previews"]
+
+def load_library_thumbnail(filepath, name):
+    """Load a thumbnail image into the preview collection."""
+    pcoll = get_library_previews()
+    
+    # Check if already loaded
+    if name in pcoll:
+        return pcoll[name].icon_id
+    
+    # Load the thumbnail
+    if os.path.exists(filepath):
+        thumb = pcoll.load(name, filepath, 'IMAGE')
+        return thumb.icon_id
+    
+    return 0  # Return 0 if no thumbnail
+
+def clear_library_previews():
+    """Clear all loaded previews."""
+    if "library_previews" in preview_collections:
+        pcoll = preview_collections["library_previews"]
+        pcoll.clear()
 
 def update_top_cabinet_clearance(self,context):
     hb_props = context.scene.home_builder
@@ -362,19 +393,24 @@ class Frameless_Scene_Props(PropertyGroup):
             box = layout.box()
             box.label(text=f"Saved Groups ({len(library_items)})", icon='ASSET_MANAGER')
             
-            # Grid layout for items
+            # Grid layout for items with thumbnails
             flow = box.column_flow(columns=2, align=True)
             
             for item in library_items:
                 item_box = flow.box()
-                item_box.scale_y = 0.9
                 
                 # Item name with delete button
                 row = item_box.row()
-                row.label(text=item['name'], icon='OUTLINER_OB_GROUP_INSTANCE')
+                row.label(text=item['name'])
                 del_op = row.operator('hb_frameless.delete_library_item', text="", icon='X', emboss=False)
                 del_op.filepath = item['filepath']
                 del_op.item_name = item['name']
+                
+                # Show thumbnail if available
+                if item['thumbnail']:
+                    icon_id = load_library_thumbnail(item['thumbnail'], item['name'])
+                    if icon_id:
+                        item_box.template_icon(icon_value=icon_id, scale=5.0)
                 
                 # Load button
                 op = item_box.operator('hb_frameless.load_cabinet_group_from_library', 
@@ -671,4 +707,16 @@ classes = (
     Frameless_Scene_Props,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)         
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(classes)
+
+def register():
+    _register_classes()
+    # Initialize preview collection
+    get_library_previews()
+
+def unregister():
+    _unregister_classes()
+    # Clean up preview collections
+    for pcoll in preview_collections.values():
+        bpy.utils.previews.remove(pcoll)
+    preview_collections.clear()         

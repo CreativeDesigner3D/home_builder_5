@@ -386,6 +386,7 @@ class GeoNodeCage(GeoNodeObject):
         self.obj.color = (0,0,0,1)
         self.obj.visible_camera = False
         self.obj.visible_shadow = False
+        self.obj.hide_render = True
         self.obj.hide_probe_volume = False
         self.obj.hide_probe_sphere = False
         self.obj.hide_probe_plane = False

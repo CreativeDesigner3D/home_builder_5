@@ -1931,6 +1931,10 @@ class hb_frameless_OT_refresh_user_library(bpy.types.Operator):
     bl_description = "Refresh the list of items in the user library"
 
     def execute(self, context):
+        # Clear cached previews so they get reloaded
+        from . import props_hb_frameless
+        props_hb_frameless.clear_library_previews()
+        
         # Force UI redraw
         for area in context.screen.areas:
             area.tag_redraw()
@@ -1998,6 +2002,10 @@ class hb_frameless_OT_delete_library_item(bpy.types.Operator):
         thumbnail_path = self.filepath.replace('.blend', '.png')
         if os.path.exists(thumbnail_path):
             os.remove(thumbnail_path)
+        
+        # Clear preview cache so it doesn't show deleted item
+        from . import props_hb_frameless
+        props_hb_frameless.clear_library_previews()
         
         self.report({'INFO'}, f"Deleted: {self.item_name}")
         
