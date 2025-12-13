@@ -698,52 +698,77 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             dim_length = 0
             
             if is_elevation:
-                # Elevation view: work in XZ plane
-                delta_x = p2.x - p1.x
-                delta_z = p2.z - p1.z
+                # Elevation view: work in wall's local coordinate system
+                from mathutils import Matrix
+                
+                # Get wall rotation
+                wall_rotation_z = 0
+                source_wall_name = context.scene.get('SOURCE_WALL')
+                if source_wall_name and source_wall_name in bpy.data.objects:
+                    wall_obj = bpy.data.objects[source_wall_name]
+                    wall_rotation_z = wall_obj.rotation_euler.z
+                
+                # Transform points to wall-local space (rotate around Z by -wall_rotation)
+                rot_matrix = Matrix.Rotation(-wall_rotation_z, 4, 'Z')
+                rot_matrix_inv = Matrix.Rotation(wall_rotation_z, 4, 'Z')
+                
+                p1_local = rot_matrix @ p1
+                p2_local = rot_matrix @ p2
+                
+                delta_x = p2_local.x - p1_local.x
+                delta_z = p2_local.z - p1_local.z
                 
                 if abs(delta_x) > 0.001 or abs(delta_z) > 0.001:
                     is_horizontal = abs(delta_x) >= abs(delta_z)
                     
                     if self.state == 'LEADER' and self.current_snap_point:
-                        cursor_pos = Vector(self.current_snap_point)
+                        cursor_local = rot_matrix @ Vector(self.current_snap_point)
                     else:
-                        cursor_pos = None
+                        cursor_local = None
                     
                     if is_horizontal:
                         dim_length = abs(delta_x)
-                        left_x = min(p1.x, p2.x)
-                        right_x = max(p1.x, p2.x)
+                        left_x = min(p1_local.x, p2_local.x)
+                        right_x = max(p1_local.x, p2_local.x)
                         
-                        if cursor_pos:
-                            dim_z = cursor_pos.z
+                        if cursor_local:
+                            dim_z = cursor_local.z
                         else:
-                            dim_z = min(p1.z, p2.z) - units.inch(4)
+                            dim_z = min(p1_local.z, p2_local.z) - units.inch(4)
                         
-                        start_3d = Vector((left_x, 0, dim_z))
-                        end_3d = Vector((right_x, 0, dim_z))
+                        # Create points in wall-local space then transform back
+                        start_local = Vector((left_x, p1_local.y, dim_z))
+                        end_local = Vector((right_x, p1_local.y, dim_z))
                         
-                        leader1_start = Vector((left_x, 0, p1.z if p1.x < p2.x else p2.z))
-                        leader1_end = Vector((left_x, 0, dim_z))
-                        leader2_start = Vector((right_x, 0, p2.z if p1.x < p2.x else p1.z))
-                        leader2_end = Vector((right_x, 0, dim_z))
+                        l1_start_local = Vector((left_x, p1_local.y, p1_local.z if p1_local.x < p2_local.x else p2_local.z))
+                        l1_end_local = Vector((left_x, p1_local.y, dim_z))
+                        l2_start_local = Vector((right_x, p1_local.y, p2_local.z if p1_local.x < p2_local.x else p1_local.z))
+                        l2_end_local = Vector((right_x, p1_local.y, dim_z))
                     else:
                         dim_length = abs(delta_z)
-                        bottom_z = min(p1.z, p2.z)
-                        top_z = max(p1.z, p2.z)
+                        bottom_z = min(p1_local.z, p2_local.z)
+                        top_z = max(p1_local.z, p2_local.z)
                         
-                        if cursor_pos:
-                            dim_x = cursor_pos.x
+                        if cursor_local:
+                            dim_x = cursor_local.x
                         else:
-                            dim_x = min(p1.x, p2.x) - units.inch(4)
+                            dim_x = min(p1_local.x, p2_local.x) - units.inch(4)
                         
-                        start_3d = Vector((dim_x, 0, bottom_z))
-                        end_3d = Vector((dim_x, 0, top_z))
+                        start_local = Vector((dim_x, p1_local.y, bottom_z))
+                        end_local = Vector((dim_x, p1_local.y, top_z))
                         
-                        leader1_start = Vector((p1.x if p1.z < p2.z else p2.x, 0, bottom_z))
-                        leader1_end = Vector((dim_x, 0, bottom_z))
-                        leader2_start = Vector((p2.x if p1.z < p2.z else p1.x, 0, top_z))
-                        leader2_end = Vector((dim_x, 0, top_z))
+                        l1_start_local = Vector((p1_local.x if p1_local.z < p2_local.z else p2_local.x, p1_local.y, bottom_z))
+                        l1_end_local = Vector((dim_x, p1_local.y, bottom_z))
+                        l2_start_local = Vector((p2_local.x if p1_local.z < p2_local.z else p1_local.x, p1_local.y, top_z))
+                        l2_end_local = Vector((dim_x, p1_local.y, top_z))
+                    
+                    # Transform back to world space
+                    start_3d = rot_matrix_inv @ start_local
+                    end_3d = rot_matrix_inv @ end_local
+                    leader1_start = rot_matrix_inv @ l1_start_local
+                    leader1_end = rot_matrix_inv @ l1_end_local
+                    leader2_start = rot_matrix_inv @ l2_start_local
+                    leader2_end = rot_matrix_inv @ l2_end_local
             else:
                 # Plan view: work in XY plane
                 delta = p2 - p1
@@ -898,7 +923,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         if not region or not rv3d:
             return None, None, False
         
-        # Determine projection plane based on view type
         is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         
         # Get depsgraph for evaluated meshes (geometry nodes)
@@ -945,11 +969,8 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                         
                         if dist < best_dist:
                             best_dist = dist
-                            # Project to appropriate plane
-                            if is_elevation:
-                                best_point = (world_co.x, 0, world_co.z)
-                            else:
-                                best_point = (world_co.x, world_co.y, 0)
+                            # Keep full 3D coordinates - projection happens in create_dimension
+                            best_point = (world_co.x, world_co.y, world_co.z)
                             is_snapped = True
                     
                     eval_obj.to_mesh_clear()
@@ -1001,11 +1022,8 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                         
                         if dist < best_dist:
                             best_dist = dist
-                            # Project to appropriate plane
-                            if is_elevation:
-                                best_point = (world_co.x, 0, world_co.z)
-                            else:
-                                best_point = (world_co.x, world_co.y, 0)
+                            # Keep full 3D coordinates
+                            best_point = (world_co.x, world_co.y, world_co.z)
                     
                     eval_obj.to_mesh_clear()
             except:
@@ -1017,9 +1035,10 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         """Convert 2D mouse coordinates to 3D point on the appropriate layout plane.
         
         For plan views: projects to Z=0 (XY plane)
-        For elevation views: projects to Y=0 (XZ plane)
+        For elevation views: projects to wall's plane (vertical plane aligned with wall)
         """
         from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+        from mathutils import Vector, Matrix
         
         region = context.region
         rv3d = context.region_data
@@ -1030,30 +1049,42 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         origin = region_2d_to_origin_3d(region, rv3d, coord)
         direction = region_2d_to_vector_3d(region, rv3d, coord)
         
-        # Determine which plane to project to based on view type
         is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
-        is_multi_view = context.scene.get('IS_MULTI_VIEW', False)
         
-        # For elevation views, project to Y=0 plane (XZ plane)
-        # For plan/multi views, project to Z=0 plane (XY plane)
         if is_elevation:
-            # XZ plane (Y=0)
-            if abs(direction.y) < 0.0001:
+            # Get wall rotation to determine plane orientation
+            wall_rotation_z = 0
+            source_wall_name = context.scene.get('SOURCE_WALL')
+            if source_wall_name and source_wall_name in bpy.data.objects:
+                wall_obj = bpy.data.objects[source_wall_name]
+                wall_rotation_z = wall_obj.rotation_euler.z
+            
+            # Plane normal is perpendicular to wall (points away from camera)
+            # For wall with rotation 0, normal is (0, 1, 0)
+            # Rotate this normal by wall's Z rotation
+            plane_normal = Vector((0, 1, 0))
+            rot_matrix = Matrix.Rotation(wall_rotation_z, 3, 'Z')
+            plane_normal = rot_matrix @ plane_normal
+            
+            # Ray-plane intersection: plane passes through origin
+            denom = direction.dot(plane_normal)
+            if abs(denom) < 0.0001:
                 return None
-            t = -origin.y / direction.y
+            
+            t = -origin.dot(plane_normal) / denom
             point = origin + direction * t
-            return (point.x, 0, point.z)
-        else:
-            # XY plane (Z=0)
-            if abs(direction.z) < 0.0001:
-                return None
-            t = -origin.z / direction.z
-            point = origin + direction * t
-            return (point.x, point.y, 0)
+            return (point.x, point.y, point.z)
+        
+        # Plan/multi views: XY plane (Z=0)
+        if abs(direction.z) < 0.0001:
+            return None
+        t = -origin.z / direction.z
+        point = origin + direction * t
+        return (point.x, point.y, 0)
     
     def create_dimension(self, context):
         """Create a linear dimension annotation between the two clicked points."""
-        from mathutils import Vector
+        from mathutils import Vector, Matrix
         from .. import units
         import math
         
@@ -1061,13 +1092,28 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         p2 = Vector(self.second_point)
         leader_pos = Vector(self.leader_point)
         
-        # Determine if this is an elevation view (XZ plane) or plan view (XY plane)
         is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         
         if is_elevation:
-            # Elevation view: work in XZ plane
-            delta_x = p2.x - p1.x
-            delta_z = p2.z - p1.z
+            # Get wall rotation from the source wall or camera
+            wall_rotation_z = 0
+            source_wall_name = context.scene.get('SOURCE_WALL')
+            if source_wall_name and source_wall_name in bpy.data.objects:
+                wall_obj = bpy.data.objects[source_wall_name]
+                wall_rotation_z = wall_obj.rotation_euler.z
+            
+            # Create rotation matrix to transform points into wall's local 2D space
+            # Wall's local X runs along wall length, local Z is up
+            rot_matrix = Matrix.Rotation(-wall_rotation_z, 4, 'Z')
+            
+            # Transform points to wall-local space
+            p1_local = rot_matrix @ p1
+            p2_local = rot_matrix @ p2
+            leader_local = rot_matrix @ leader_pos
+            
+            # Now work in wall's local XZ plane
+            delta_x = p2_local.x - p1_local.x
+            delta_z = p2_local.z - p1_local.z
             
             if abs(delta_x) < 0.001 and abs(delta_z) < 0.001:
                 self.report({'WARNING'}, "Points are too close together")
@@ -1077,34 +1123,41 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             
             if is_horizontal:
                 dim_length = abs(delta_x)
-                angle = 0
-                left_x = min(p1.x, p2.x)
+                left_x = min(p1_local.x, p2_local.x)
                 
-                # Reference Z is at the leftmost measurement point
-                ref_z = p1.z if p1.x == left_x else p2.z
+                ref_z = p1_local.z if p1_local.x == left_x else p2_local.z
+                leader_length = leader_local.z - ref_z
                 
-                # Leader length: distance from measurement point to dimension line
-                leader_length = leader_pos.z - ref_z
-                
-                # Start point on XZ plane
-                start_point = Vector((left_x, 0, ref_z))
-                rotation = (math.pi / 2, 0, 0)  # Rotate to stand up in XZ plane
+                # Start point in wall-local space
+                start_local = Vector((left_x, p1_local.y, ref_z))
+                # Horizontal dimension: rotated to stand up in wall plane
+                local_rotation = (math.pi / 2, 0, 0)
             else:
                 dim_length = abs(delta_z)
-                bottom_z = min(p1.z, p2.z)
+                bottom_z = min(p1_local.z, p2_local.z)
                 
-                # Reference X is at the bottom measurement point
-                ref_x = p1.x if p1.z == bottom_z else p2.x
+                ref_x = p1_local.x if p1_local.z == bottom_z else p2_local.x
+                leader_length = -(leader_local.x - ref_x)
                 
-                # Leader length: distance from measurement point to dimension line (negated for vertical)
-                leader_length = -(leader_pos.x - ref_x)
-                
-                # Start point on XZ plane
-                start_point = Vector((ref_x, 0, bottom_z))
-                # Rotate -90° around Y to point along Z axis, then 90° around Z
-                rotation = (0, -math.pi / 2, math.pi / 2)
+                # Start point in wall-local space
+                start_local = Vector((ref_x, p1_local.y, bottom_z))
+                # Vertical dimension
+                local_rotation = (0, -math.pi / 2, math.pi / 2)
+            
+            # Transform start point back to world space
+            rot_matrix_inv = Matrix.Rotation(wall_rotation_z, 4, 'Z')
+            start_point = rot_matrix_inv @ start_local
+            
+            # Combine local rotation with wall rotation
+            from mathutils import Euler
+            local_euler = Euler(local_rotation, 'XYZ')
+            wall_euler = Euler((0, 0, wall_rotation_z), 'XYZ')
+            
+            # Apply rotations: first local, then wall
+            combined_matrix = wall_euler.to_matrix().to_4x4() @ local_euler.to_matrix().to_4x4()
+            rotation = combined_matrix.to_euler('XYZ')
         else:
-            # Plan view: work in XY plane (original behavior)
+            # Plan view: work in XY plane
             delta = p2 - p1
             
             if delta.length < 0.001:
