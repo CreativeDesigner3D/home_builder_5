@@ -968,11 +968,11 @@ class MultiView(LayoutView):
     # View type definitions: (type_id, label, rotation_euler)
     # Rotations position the camera to look at the object from that direction
     VIEW_TYPES = {
-        'PLAN': ('Plan View', (0, 0, 0)),                          # Top down, looking -Z
-        'FRONT': ('Front Elevation', (math.radians(90), 0, 0)),    # Looking +Y
-        'BACK': ('Back Elevation', (math.radians(90), 0, math.radians(180))),  # Looking -Y
-        'LEFT': ('Left Side', (math.radians(90), 0, math.radians(-90))),       # Looking +X
-        'RIGHT': ('Right Side', (math.radians(90), 0, math.radians(90))),      # Looking -X
+        'PLAN': ('Plan View', (0, 0, 0)),                                              # Top down, looking -Z
+        'FRONT': ('Front Elevation', (math.radians(-90), 0, 0)),                       # Looking at front face
+        'BACK': ('Back Elevation', (math.radians(90), 0, math.radians(180))),          # Looking at back face
+        'LEFT': ('Left Side', (0, math.radians(-90), math.radians(-90))),              # Looking at left side
+        'RIGHT': ('Right Side', (0, math.radians(90), math.radians(90))),              # Looking at right side
     }
     
     def __init__(self, scene=None):
@@ -993,7 +993,12 @@ class MultiView(LayoutView):
                name: str = None, paper_size: str = 'TABLOID', 
                landscape: bool = True) -> bpy.types.Scene:
         """
-        Create a multi-view layout for an object.
+        Create a multi-view layout for an object using architectural cross layout.
+        
+        Layout arrangement (when all views selected):
+                    [Back]
+                    [Plan]
+            [Left] [Front] [Right]
         
         Args:
             source_obj: The object to create views for (e.g., cabinet group)
@@ -1029,42 +1034,38 @@ class MultiView(LayoutView):
         # Add source object and children to collection
         self._add_object_to_collection(source_obj, self.content_collection)
         
-        # Calculate layout grid
-        num_views = len(views)
-        cols, rows = self._calculate_grid(num_views)
-        
-        # Calculate view sizes based on what each view shows
-        view_sizes = []
-        for view_type in views:
-            if view_type == 'PLAN':
-                view_sizes.append((obj_width, obj_depth))
-            elif view_type in ('FRONT', 'BACK'):
-                view_sizes.append((obj_width, obj_height))
-            else:  # LEFT, RIGHT
-                view_sizes.append((obj_depth, obj_height))
-        
-        # Find max dimensions for uniform spacing
-        max_view_width = max(s[0] for s in view_sizes) if view_sizes else 1
-        max_view_height = max(s[1] for s in view_sizes) if view_sizes else 1
-        
         # Spacing between views
-        spacing = units.inch(12)
-        label_space = units.inch(3)
+        gap = units.inch(12)
         
-        total_width = cols * max_view_width + (cols - 1) * spacing
-        total_height = rows * (max_view_height + label_space) + (rows - 1) * spacing
+        # Calculate visual bounds for cross layout
+        # All positions are for visual edges, not origins
         
-        # Create rotated instances for each view
-        for i, view_type in enumerate(views):
-            col_idx = i % cols
-            row_idx = i // cols
-            
-            # Calculate position in layout grid
-            x_pos = col_idx * (max_view_width + spacing)
-            y_pos = -row_idx * (max_view_height + label_space + spacing)
-            
+        # Front view visual bounds (reference point)
+        front_vis_bottom = 0
+        front_vis_top = front_vis_bottom + obj_height
+        front_vis_left = 0
+        front_vis_right = front_vis_left + obj_width
+        front_vis_center_x = (front_vis_left + front_vis_right) / 2
+        
+        # Plan view visual bounds (above Front)
+        plan_vis_bottom = front_vis_top + gap  # front edge of plan (closest to front view)
+        plan_vis_top = plan_vis_bottom + obj_depth  # back edge of plan
+        
+        # Back view visual bounds (above Plan)
+        back_vis_bottom = plan_vis_top + gap
+        back_vis_top = back_vis_bottom + obj_height
+        
+        # Left view visual bounds (left of Front)
+        left_vis_right = front_vis_left - gap
+        left_vis_left = left_vis_right - obj_depth
+        
+        # Right view visual bounds (right of Front)
+        right_vis_left = front_vis_right + gap
+        right_vis_right = right_vis_left + obj_depth
+        
+        # Create each view instance
+        for view_type in views:
             view_label, rotation = self.VIEW_TYPES[view_type]
-            view_width, view_height = view_sizes[i]
             
             # Create collection instance
             instance = bpy.data.objects.new(f"{view_label} Instance", None)
@@ -1076,22 +1077,27 @@ class MultiView(LayoutView):
             # Set rotation
             instance.rotation_euler = rotation
             
-            # Calculate position to center view in its grid cell
-            x_offset = (max_view_width - view_width) / 2
-            y_offset = (max_view_height - view_height) / 2
-            
-            # Position based on view type (accounting for object origin and rotation)
+            # Calculate origin position based on view type and rotation
             instance.location = self._calculate_instance_position(
-                view_type, x_pos + x_offset, y_pos - y_offset,
-                obj_width, obj_depth, obj_height, view_width, view_height
+                view_type, 
+                front_vis_left, front_vis_bottom, front_vis_center_x,
+                plan_vis_top, back_vis_top,
+                left_vis_left, right_vis_left,
+                obj_width, obj_depth, obj_height
             )
             
             self.view_instances.append(instance)
-            
-            # Add label
-            self._create_view_label(view_label, 
-                                   x_pos + max_view_width / 2, 
-                                   y_pos + units.inch(1))
+        
+        # Calculate total bounds for camera
+        min_x = left_vis_left if 'LEFT' in views else front_vis_left
+        max_x = right_vis_right if 'RIGHT' in views else front_vis_right
+        min_y = front_vis_bottom
+        max_y = back_vis_top if 'BACK' in views else (plan_vis_top if 'PLAN' in views else front_vis_top)
+        
+        total_width = max_x - min_x
+        total_height = max_y - min_y
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
         
         # Create camera
         margin = units.inch(6)
@@ -1109,9 +1115,7 @@ class MultiView(LayoutView):
         self.camera.scale = (ortho_scale, ortho_scale, ortho_scale)
         
         # Position camera centered on layout, looking down
-        self.camera.location = (total_width / 2 - max_view_width / 2, 
-                               -total_height / 2 + max_view_height / 2, 
-                               10)
+        self.camera.location = (center_x, center_y, 10)
         self.camera.rotation_euler = (0, 0, 0)
         
         # Add title block
@@ -1147,41 +1151,59 @@ class MultiView(LayoutView):
         else:
             return (3, 2)
     
-    def _calculate_instance_position(self, view_type, x_pos, y_pos, 
-                                     obj_width, obj_depth, obj_height,
-                                     view_width, view_height):
-        """Calculate world position for a rotated instance.
+    def _calculate_instance_position(self, view_type, 
+                                     front_vis_left, front_vis_bottom, front_vis_center_x,
+                                     plan_vis_top, back_vis_top,
+                                     left_vis_left, right_vis_left,
+                                     obj_width, obj_depth, obj_height):
+        """Calculate origin position for a rotated instance based on visual bounds.
         
-        The object origin is at back-left-bottom with mirrored Y (depth in -Y).
-        We need to position each rotated instance so it appears centered in its grid cell.
+        Each rotation transforms where the origin appears relative to the visual bounds.
+        This method converts from desired visual position to required origin position.
+        
+        Args:
+            view_type: Type of view ('PLAN', 'FRONT', 'BACK', 'LEFT', 'RIGHT')
+            front_vis_left: X position of Front view's left edge
+            front_vis_bottom: Y position of Front view's bottom edge  
+            front_vis_center_x: X center of Front/Plan/Back column
+            plan_vis_top: Y position of Plan view's top (back) edge
+            back_vis_top: Y position of Back view's top edge
+            left_vis_left: X position of Left view's left edge
+            right_vis_left: X position of Right view's left edge
+            obj_width, obj_depth, obj_height: Object dimensions
         """
         if view_type == 'PLAN':
-            # Top down - center on XY, object shows width x depth
-            return Vector((x_pos + obj_width / 2, 
-                          y_pos - obj_depth / 2, 
-                          0))
-        elif view_type == 'FRONT':
-            # Front view - looking +Y, shows width x height
-            return Vector((x_pos + obj_width / 2, 
-                          y_pos - obj_height / 2, 
-                          -obj_depth))
-        elif view_type == 'BACK':
-            # Back view - looking -Y, shows width x height (mirrored)
-            return Vector((x_pos + obj_width / 2, 
-                          y_pos - obj_height / 2, 
-                          0))
-        elif view_type == 'LEFT':
-            # Left side - looking +X, shows depth x height
-            return Vector((x_pos + obj_depth / 2, 
-                          y_pos - obj_height / 2, 
-                          0))
-        elif view_type == 'RIGHT':
-            # Right side - looking -X, shows depth x height (mirrored)
-            return Vector((x_pos + obj_depth / 2, 
-                          y_pos - obj_height / 2, 
-                          -obj_width))
+            # Rotation (0,0,0): Origin at back-left corner
+            # Visual: origin is at top-left, extends +X (width) and -Y (depth)
+            # Origin X = visual left edge
+            # Origin Y = visual top edge (back of cabinet)
+            return Vector((front_vis_left, plan_vis_top, 0))
         
-        return Vector((x_pos, y_pos, 0))
+        elif view_type == 'FRONT':
+            # Rotation (-90°,0,0): Tipped forward, origin at bottom-left
+            # Visual: origin at bottom-left, extends +X (width) and +Y (height)
+            # Z offset = -depth to bring front face to Z=0 plane
+            return Vector((front_vis_left, front_vis_bottom, -obj_depth))
+        
+        elif view_type == 'BACK':
+            # Rotation (90°,0,180°): Tipped back and flipped
+            # Origin ends up at top-right of visual bounds
+            # Origin X = visual left + width (due to 180° Z rotation)
+            # Origin Y = visual top
+            return Vector((front_vis_left + obj_width, back_vis_top, 0))
+        
+        elif view_type == 'LEFT':
+            # Rotation (0,-90°,-90°): Shows left side of cabinet
+            # Origin at visual bottom-left
+            return Vector((left_vis_left, front_vis_bottom, 0))
+        
+        elif view_type == 'RIGHT':
+            # Rotation (0,90°,90°): Shows right side of cabinet  
+            # Origin at visual bottom-right (due to rotation)
+            # Z offset = -width
+            return Vector((right_vis_left + obj_depth, front_vis_bottom, -obj_width))
+        
+        return Vector((front_vis_left, front_vis_bottom, 0))
     
     def _add_object_to_collection(self, obj, collection):
         """Recursively add object and children to collection, skipping cages/helpers."""
