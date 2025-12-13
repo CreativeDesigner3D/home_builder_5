@@ -534,12 +534,13 @@ class home_builder_layouts_OT_render_layout(bpy.types.Operator):
 class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
     bl_idname = "home_builder_layouts.add_dimension"
     bl_label = "Add Dimension"
-    bl_description = "Click two points to add a linear dimension annotation (snaps to vertices)"
+    bl_description = "Click two points to measure, then click to place the dimension line"
     bl_options = {'UNDO'}
     
-    # State machine
+    # State machine: FIRST -> SECOND -> LEADER
     first_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
     second_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    leader_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
     state: bpy.props.StringProperty(default='FIRST')  # type: ignore
     
     # Snap settings
@@ -561,6 +562,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         self.state = 'FIRST'
         self.first_point = (0, 0, 0)
         self.second_point = (0, 0, 0)
+        self.leader_point = (0, 0, 0)
         self.current_snap_point = None
         self.current_snap_screen = None
         self.is_snapped = False
@@ -582,7 +584,13 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         if event.type == 'MOUSEMOVE':
             # Update snap point for visual feedback
             coord = (event.mouse_region_x, event.mouse_region_y)
-            self.current_snap_point, self.current_snap_screen, self.is_snapped = self.get_snapped_point_with_screen(context, coord)
+            if self.state == 'LEADER':
+                # For leader placement, just get plane point (no snapping needed)
+                self.current_snap_point = self.get_plane_point(context, coord)
+                self.current_snap_screen = coord
+                self.is_snapped = False
+            else:
+                self.current_snap_point, self.current_snap_screen, self.is_snapped = self.get_snapped_point_with_screen(context, coord)
         
         elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.current_snap_point is None:
@@ -597,6 +605,12 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             
             elif self.state == 'SECOND':
                 self.second_point = self.current_snap_point
+                self.state = 'LEADER'
+                context.area.header_text_set("Click to place dimension line")
+                return {'RUNNING_MODAL'}
+            
+            elif self.state == 'LEADER':
+                self.leader_point = self.current_snap_point
                 self.create_dimension(context)
                 self.finish(context)
                 return {'FINISHED'}
@@ -667,9 +681,13 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                 batch.draw(shader)
         
         # Draw dimension preview after first point is set
-        if self.state == 'SECOND' and self.current_snap_point:
+        if self.state in ('SECOND', 'LEADER') and self.current_snap_point:
             p1 = Vector(self.first_point)
-            p2 = Vector(self.current_snap_point)
+            
+            if self.state == 'SECOND':
+                p2 = Vector(self.current_snap_point)
+            else:
+                p2 = Vector(self.second_point)
             
             delta = p2 - p1
             
@@ -677,35 +695,57 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                 # Determine horizontal or vertical
                 is_horizontal = abs(delta.x) >= abs(delta.y)
                 
+                # Calculate leader offset from cursor position
+                if self.state == 'LEADER' and self.current_snap_point:
+                    cursor_pos = Vector(self.current_snap_point)
+                    if is_horizontal:
+                        # For horizontal, leader length is Y offset from measurement points
+                        ref_y = (p1.y + p2.y) / 2
+                        leader_offset = cursor_pos.y - ref_y
+                    else:
+                        # For vertical, leader length is X offset from measurement points
+                        ref_x = (p1.x + p2.x) / 2
+                        leader_offset = cursor_pos.x - ref_x
+                else:
+                    leader_offset = -units.inch(4)  # Default preview offset
+                
                 if is_horizontal:
                     dim_length = abs(delta.x)
-                    # Preview line positions
                     left_x = min(p1.x, p2.x)
                     right_x = max(p1.x, p2.x)
-                    dim_y = min(p1.y, p2.y) - units.inch(4)
+                    
+                    # Use cursor Y for dimension line position
+                    if self.state == 'LEADER':
+                        dim_y = cursor_pos.y
+                    else:
+                        dim_y = min(p1.y, p2.y) + leader_offset
                     
                     start_3d = Vector((left_x, dim_y, 0))
                     end_3d = Vector((right_x, dim_y, 0))
                     
-                    # Leader lines
-                    leader1_start = Vector((left_x, min(p1.y, p2.y), 0))
+                    # Leader lines from measurement points to dimension line
+                    leader1_start = Vector((left_x, p1.y if p1.x < p2.x else p2.y, 0))
                     leader1_end = Vector((left_x, dim_y, 0))
-                    leader2_start = Vector((right_x, min(p1.y, p2.y), 0))
+                    leader2_start = Vector((right_x, p2.y if p1.x < p2.x else p1.y, 0))
                     leader2_end = Vector((right_x, dim_y, 0))
                 else:
                     dim_length = abs(delta.y)
-                    # Preview line positions
                     bottom_y = min(p1.y, p2.y)
                     top_y = max(p1.y, p2.y)
-                    dim_x = min(p1.x, p2.x) - units.inch(4)
+                    
+                    # Use cursor X for dimension line position
+                    if self.state == 'LEADER':
+                        dim_x = cursor_pos.x
+                    else:
+                        dim_x = min(p1.x, p2.x) + leader_offset
                     
                     start_3d = Vector((dim_x, bottom_y, 0))
                     end_3d = Vector((dim_x, top_y, 0))
                     
-                    # Leader lines
-                    leader1_start = Vector((min(p1.x, p2.x), bottom_y, 0))
+                    # Leader lines from measurement points to dimension line
+                    leader1_start = Vector((p1.x if p1.y < p2.y else p2.x, bottom_y, 0))
                     leader1_end = Vector((dim_x, bottom_y, 0))
-                    leader2_start = Vector((min(p1.x, p2.x), top_y, 0))
+                    leader2_start = Vector((p2.x if p1.y < p2.y else p1.x, top_y, 0))
                     leader2_end = Vector((dim_x, top_y, 0))
                 
                 # Convert to screen coordinates
@@ -813,39 +853,56 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         if not region or not rv3d:
             return None, None, False
         
+        # Get depsgraph for evaluated meshes (geometry nodes)
+        depsgraph = context.evaluated_depsgraph_get()
+        
         # Try to find nearest vertex to snap to
         best_dist = self.snap_radius
         best_point = None
         is_snapped = False
         
         for obj in context.scene.objects:
-            if obj.type != 'MESH' or obj.get('IS_2D_ANNOTATION'):
+            # Skip annotation objects
+            if obj.get('IS_2D_ANNOTATION'):
                 continue
             
+            # Check collection instances
             if obj.instance_type == 'COLLECTION' and obj.instance_collection:
                 result = self._check_collection_vertices_with_dist(
-                    context, obj, coord, region, rv3d, best_dist)
+                    context, obj, coord, region, rv3d, depsgraph, best_dist)
                 if result[0] is not None and result[1] < best_dist:
                     best_point = result[0]
                     best_dist = result[1]
                     is_snapped = True
                 continue
             
+            # Check regular mesh objects
+            if obj.type != 'MESH':
+                continue
+            
             matrix_world = obj.matrix_world
             
-            if obj.data and hasattr(obj.data, 'vertices'):
-                for vert in obj.data.vertices:
-                    world_co = matrix_world @ vert.co
-                    screen_co = location_3d_to_region_2d(region, rv3d, world_co)
-                    if screen_co is None:
-                        continue
+            # Get evaluated mesh (handles geometry nodes)
+            eval_obj = obj.evaluated_get(depsgraph)
+            try:
+                eval_mesh = eval_obj.to_mesh()
+                if eval_mesh:
+                    for vert in eval_mesh.vertices:
+                        world_co = matrix_world @ vert.co
+                        screen_co = location_3d_to_region_2d(region, rv3d, world_co)
+                        if screen_co is None:
+                            continue
+                        
+                        dist = (Vector(coord) - screen_co).length
+                        
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_point = (world_co.x, world_co.y, 0)
+                            is_snapped = True
                     
-                    dist = (Vector(coord) - screen_co).length
-                    
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_point = (world_co.x, world_co.y, 0)
-                        is_snapped = True
+                    eval_obj.to_mesh_clear()
+            except:
+                pass
         
         # If we found a snap point, use it
         if best_point:
@@ -859,7 +916,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         
         return None, None, False
     
-    def _check_collection_vertices_with_dist(self, context, instance_obj, coord, region, rv3d, best_dist):
+    def _check_collection_vertices_with_dist(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
         """Check vertices in a collection instance and return best point with distance."""
         from bpy_extras.view3d_utils import location_3d_to_region_2d
         from mathutils import Vector
@@ -871,22 +928,32 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         best_point = None
         
         for obj in instance_obj.instance_collection.objects:
-            if obj.type != 'MESH' or not obj.data or not hasattr(obj.data, 'vertices'):
+            if obj.type != 'MESH':
                 continue
             
+            # Combined matrix: instance transform + object transform
             matrix_world = instance_matrix @ obj.matrix_world
             
-            for vert in obj.data.vertices:
-                world_co = matrix_world @ vert.co
-                screen_co = location_3d_to_region_2d(region, rv3d, world_co)
-                if screen_co is None:
-                    continue
-                
-                dist = (Vector(coord) - screen_co).length
-                
-                if dist < best_dist:
-                    best_dist = dist
-                    best_point = (world_co.x, world_co.y, 0)
+            # Get evaluated mesh (handles geometry nodes)
+            eval_obj = obj.evaluated_get(depsgraph)
+            try:
+                eval_mesh = eval_obj.to_mesh()
+                if eval_mesh:
+                    for vert in eval_mesh.vertices:
+                        world_co = matrix_world @ vert.co
+                        screen_co = location_3d_to_region_2d(region, rv3d, world_co)
+                        if screen_co is None:
+                            continue
+                        
+                        dist = (Vector(coord) - screen_co).length
+                        
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_point = (world_co.x, world_co.y, 0)
+                    
+                    eval_obj.to_mesh_clear()
+            except:
+                pass
         
         return best_point, best_dist
     
@@ -919,6 +986,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         
         p1 = Vector(self.first_point)
         p2 = Vector(self.second_point)
+        leader_pos = Vector(self.leader_point)
         
         delta = p2 - p1
         
@@ -932,12 +1000,28 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             dim_length = abs(delta.x)
             angle = 0
             left_x = min(p1.x, p2.x)
-            start_point = Vector((left_x, min(p1.y, p2.y) - units.inch(4), 0))
+            
+            # Reference Y is at the leftmost measurement point
+            ref_y = p1.y if p1.x == left_x else p2.y
+            
+            # Leader length: distance from measurement point to dimension line
+            leader_length = leader_pos.y - ref_y
+            
+            # Start point is at the measurement point (left edge, at ref_y)
+            start_point = Vector((left_x, ref_y, 0))
         else:
             dim_length = abs(delta.y)
             angle = math.pi / 2
             bottom_y = min(p1.y, p2.y)
-            start_point = Vector((min(p1.x, p2.x) - units.inch(4), bottom_y, 0))
+            
+            # Reference X is at the bottom measurement point
+            ref_x = p1.x if p1.y == bottom_y else p2.x
+            
+            # Leader length: distance from measurement point to dimension line (negated for vertical)
+            leader_length = -(leader_pos.x - ref_x)
+            
+            # Start point is at the measurement point (at ref_x, bottom edge)
+            start_point = Vector((ref_x, bottom_y, 0))
         
         dim = hb_types.GeoNodeDimension()
         dim.create(f"Dimension_{len([o for o in context.scene.objects if 'IS_2D_ANNOTATION' in o])}")
@@ -951,8 +1035,12 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         dim.obj.location = start_point
         dim.obj.rotation_euler = (0, 0, angle)
         
+        # Set dimension length via curve endpoint
         if dim.obj.data.splines and len(dim.obj.data.splines[0].points) > 1:
             dim.obj.data.splines[0].points[1].co = (dim_length, 0, 0, 1)
+        
+        # Set leader length
+        dim.set_input("Leader Length", leader_length)
         
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
