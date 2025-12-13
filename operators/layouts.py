@@ -689,65 +689,110 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             else:
                 p2 = Vector(self.second_point)
             
-            delta = p2 - p1
+            # Check if this is an elevation view
+            is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
             
-            if delta.length > 0.001:
-                # Determine horizontal or vertical
-                is_horizontal = abs(delta.x) >= abs(delta.y)
+            # Initialize variables
+            start_3d = None
+            end_3d = None
+            dim_length = 0
+            
+            if is_elevation:
+                # Elevation view: work in XZ plane
+                delta_x = p2.x - p1.x
+                delta_z = p2.z - p1.z
                 
-                # Calculate leader offset from cursor position
-                if self.state == 'LEADER' and self.current_snap_point:
-                    cursor_pos = Vector(self.current_snap_point)
+                if abs(delta_x) > 0.001 or abs(delta_z) > 0.001:
+                    is_horizontal = abs(delta_x) >= abs(delta_z)
+                    
+                    if self.state == 'LEADER' and self.current_snap_point:
+                        cursor_pos = Vector(self.current_snap_point)
+                    else:
+                        cursor_pos = None
+                    
                     if is_horizontal:
-                        # For horizontal, leader length is Y offset from measurement points
-                        ref_y = (p1.y + p2.y) / 2
-                        leader_offset = cursor_pos.y - ref_y
+                        dim_length = abs(delta_x)
+                        left_x = min(p1.x, p2.x)
+                        right_x = max(p1.x, p2.x)
+                        
+                        if cursor_pos:
+                            dim_z = cursor_pos.z
+                        else:
+                            dim_z = min(p1.z, p2.z) - units.inch(4)
+                        
+                        start_3d = Vector((left_x, 0, dim_z))
+                        end_3d = Vector((right_x, 0, dim_z))
+                        
+                        leader1_start = Vector((left_x, 0, p1.z if p1.x < p2.x else p2.z))
+                        leader1_end = Vector((left_x, 0, dim_z))
+                        leader2_start = Vector((right_x, 0, p2.z if p1.x < p2.x else p1.z))
+                        leader2_end = Vector((right_x, 0, dim_z))
                     else:
-                        # For vertical, leader length is X offset from measurement points
-                        ref_x = (p1.x + p2.x) / 2
-                        leader_offset = cursor_pos.x - ref_x
-                else:
-                    leader_offset = -units.inch(4)  # Default preview offset
+                        dim_length = abs(delta_z)
+                        bottom_z = min(p1.z, p2.z)
+                        top_z = max(p1.z, p2.z)
+                        
+                        if cursor_pos:
+                            dim_x = cursor_pos.x
+                        else:
+                            dim_x = min(p1.x, p2.x) - units.inch(4)
+                        
+                        start_3d = Vector((dim_x, 0, bottom_z))
+                        end_3d = Vector((dim_x, 0, top_z))
+                        
+                        leader1_start = Vector((p1.x if p1.z < p2.z else p2.x, 0, bottom_z))
+                        leader1_end = Vector((dim_x, 0, bottom_z))
+                        leader2_start = Vector((p2.x if p1.z < p2.z else p1.x, 0, top_z))
+                        leader2_end = Vector((dim_x, 0, top_z))
+            else:
+                # Plan view: work in XY plane
+                delta = p2 - p1
                 
-                if is_horizontal:
-                    dim_length = abs(delta.x)
-                    left_x = min(p1.x, p2.x)
-                    right_x = max(p1.x, p2.x)
+                if delta.length > 0.001:
+                    is_horizontal = abs(delta.x) >= abs(delta.y)
                     
-                    # Use cursor Y for dimension line position
-                    if self.state == 'LEADER':
-                        dim_y = cursor_pos.y
+                    if self.state == 'LEADER' and self.current_snap_point:
+                        cursor_pos = Vector(self.current_snap_point)
                     else:
-                        dim_y = min(p1.y, p2.y) + leader_offset
+                        cursor_pos = None
                     
-                    start_3d = Vector((left_x, dim_y, 0))
-                    end_3d = Vector((right_x, dim_y, 0))
-                    
-                    # Leader lines from measurement points to dimension line
-                    leader1_start = Vector((left_x, p1.y if p1.x < p2.x else p2.y, 0))
-                    leader1_end = Vector((left_x, dim_y, 0))
-                    leader2_start = Vector((right_x, p2.y if p1.x < p2.x else p1.y, 0))
-                    leader2_end = Vector((right_x, dim_y, 0))
-                else:
-                    dim_length = abs(delta.y)
-                    bottom_y = min(p1.y, p2.y)
-                    top_y = max(p1.y, p2.y)
-                    
-                    # Use cursor X for dimension line position
-                    if self.state == 'LEADER':
-                        dim_x = cursor_pos.x
+                    if is_horizontal:
+                        dim_length = abs(delta.x)
+                        left_x = min(p1.x, p2.x)
+                        right_x = max(p1.x, p2.x)
+                        
+                        if cursor_pos:
+                            dim_y = cursor_pos.y
+                        else:
+                            dim_y = min(p1.y, p2.y) - units.inch(4)
+                        
+                        start_3d = Vector((left_x, dim_y, 0))
+                        end_3d = Vector((right_x, dim_y, 0))
+                        
+                        leader1_start = Vector((left_x, p1.y if p1.x < p2.x else p2.y, 0))
+                        leader1_end = Vector((left_x, dim_y, 0))
+                        leader2_start = Vector((right_x, p2.y if p1.x < p2.x else p1.y, 0))
+                        leader2_end = Vector((right_x, dim_y, 0))
                     else:
-                        dim_x = min(p1.x, p2.x) + leader_offset
-                    
-                    start_3d = Vector((dim_x, bottom_y, 0))
-                    end_3d = Vector((dim_x, top_y, 0))
-                    
-                    # Leader lines from measurement points to dimension line
-                    leader1_start = Vector((p1.x if p1.y < p2.y else p2.x, bottom_y, 0))
-                    leader1_end = Vector((dim_x, bottom_y, 0))
-                    leader2_start = Vector((p2.x if p1.y < p2.y else p1.x, top_y, 0))
-                    leader2_end = Vector((dim_x, top_y, 0))
-                
+                        dim_length = abs(delta.y)
+                        bottom_y = min(p1.y, p2.y)
+                        top_y = max(p1.y, p2.y)
+                        
+                        if cursor_pos:
+                            dim_x = cursor_pos.x
+                        else:
+                            dim_x = min(p1.x, p2.x) - units.inch(4)
+                        
+                        start_3d = Vector((dim_x, bottom_y, 0))
+                        end_3d = Vector((dim_x, top_y, 0))
+                        
+                        leader1_start = Vector((p1.x if p1.y < p2.y else p2.x, bottom_y, 0))
+                        leader1_end = Vector((dim_x, bottom_y, 0))
+                        leader2_start = Vector((p2.x if p1.y < p2.y else p1.x, top_y, 0))
+                        leader2_end = Vector((dim_x, top_y, 0))
+            
+            # Draw the preview if we have valid points
+            if start_3d and end_3d:
                 # Convert to screen coordinates
                 start_2d = location_3d_to_region_2d(region, rv3d, start_3d)
                 end_2d = location_3d_to_region_2d(region, rv3d, end_3d)
@@ -853,6 +898,9 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         if not region or not rv3d:
             return None, None, False
         
+        # Determine projection plane based on view type
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        
         # Get depsgraph for evaluated meshes (geometry nodes)
         depsgraph = context.evaluated_depsgraph_get()
         
@@ -869,7 +917,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             # Check collection instances
             if obj.instance_type == 'COLLECTION' and obj.instance_collection:
                 result = self._check_collection_vertices_with_dist(
-                    context, obj, coord, region, rv3d, depsgraph, best_dist)
+                    context, obj, coord, region, rv3d, depsgraph, best_dist, is_elevation)
                 if result[0] is not None and result[1] < best_dist:
                     best_point = result[0]
                     best_dist = result[1]
@@ -897,7 +945,11 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                         
                         if dist < best_dist:
                             best_dist = dist
-                            best_point = (world_co.x, world_co.y, 0)
+                            # Project to appropriate plane
+                            if is_elevation:
+                                best_point = (world_co.x, 0, world_co.z)
+                            else:
+                                best_point = (world_co.x, world_co.y, 0)
                             is_snapped = True
                     
                     eval_obj.to_mesh_clear()
@@ -916,7 +968,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         
         return None, None, False
     
-    def _check_collection_vertices_with_dist(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
+    def _check_collection_vertices_with_dist(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist, is_elevation=False):
         """Check vertices in a collection instance and return best point with distance."""
         from bpy_extras.view3d_utils import location_3d_to_region_2d
         from mathutils import Vector
@@ -949,7 +1001,11 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
                         
                         if dist < best_dist:
                             best_dist = dist
-                            best_point = (world_co.x, world_co.y, 0)
+                            # Project to appropriate plane
+                            if is_elevation:
+                                best_point = (world_co.x, 0, world_co.z)
+                            else:
+                                best_point = (world_co.x, world_co.y, 0)
                     
                     eval_obj.to_mesh_clear()
             except:
@@ -958,7 +1014,11 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         return best_point, best_dist
     
     def get_plane_point(self, context, coord):
-        """Convert 2D mouse coordinates to 3D point on the layout plane (Z=0)."""
+        """Convert 2D mouse coordinates to 3D point on the appropriate layout plane.
+        
+        For plan views: projects to Z=0 (XY plane)
+        For elevation views: projects to Y=0 (XZ plane)
+        """
         from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
         
         region = context.region
@@ -970,13 +1030,26 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         origin = region_2d_to_origin_3d(region, rv3d, coord)
         direction = region_2d_to_vector_3d(region, rv3d, coord)
         
-        if abs(direction.z) < 0.0001:
-            return None
+        # Determine which plane to project to based on view type
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        is_multi_view = context.scene.get('IS_MULTI_VIEW', False)
         
-        t = -origin.z / direction.z
-        point = origin + direction * t
-        
-        return (point.x, point.y, 0)
+        # For elevation views, project to Y=0 plane (XZ plane)
+        # For plan/multi views, project to Z=0 plane (XY plane)
+        if is_elevation:
+            # XZ plane (Y=0)
+            if abs(direction.y) < 0.0001:
+                return None
+            t = -origin.y / direction.y
+            point = origin + direction * t
+            return (point.x, 0, point.z)
+        else:
+            # XY plane (Z=0)
+            if abs(direction.z) < 0.0001:
+                return None
+            t = -origin.z / direction.z
+            point = origin + direction * t
+            return (point.x, point.y, 0)
     
     def create_dimension(self, context):
         """Create a linear dimension annotation between the two clicked points."""
@@ -988,40 +1061,76 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         p2 = Vector(self.second_point)
         leader_pos = Vector(self.leader_point)
         
-        delta = p2 - p1
+        # Determine if this is an elevation view (XZ plane) or plan view (XY plane)
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         
-        if delta.length < 0.001:
-            self.report({'WARNING'}, "Points are too close together")
-            return
-        
-        is_horizontal = abs(delta.x) >= abs(delta.y)
-        
-        if is_horizontal:
-            dim_length = abs(delta.x)
-            angle = 0
-            left_x = min(p1.x, p2.x)
+        if is_elevation:
+            # Elevation view: work in XZ plane
+            delta_x = p2.x - p1.x
+            delta_z = p2.z - p1.z
             
-            # Reference Y is at the leftmost measurement point
-            ref_y = p1.y if p1.x == left_x else p2.y
+            if abs(delta_x) < 0.001 and abs(delta_z) < 0.001:
+                self.report({'WARNING'}, "Points are too close together")
+                return
             
-            # Leader length: distance from measurement point to dimension line
-            leader_length = leader_pos.y - ref_y
+            is_horizontal = abs(delta_x) >= abs(delta_z)
             
-            # Start point is at the measurement point (left edge, at ref_y)
-            start_point = Vector((left_x, ref_y, 0))
+            if is_horizontal:
+                dim_length = abs(delta_x)
+                angle = 0
+                left_x = min(p1.x, p2.x)
+                
+                # Reference Z is at the leftmost measurement point
+                ref_z = p1.z if p1.x == left_x else p2.z
+                
+                # Leader length: distance from measurement point to dimension line
+                leader_length = leader_pos.z - ref_z
+                
+                # Start point on XZ plane
+                start_point = Vector((left_x, 0, ref_z))
+                rotation = (math.pi / 2, 0, 0)  # Rotate to stand up in XZ plane
+            else:
+                dim_length = abs(delta_z)
+                bottom_z = min(p1.z, p2.z)
+                
+                # Reference X is at the bottom measurement point
+                ref_x = p1.x if p1.z == bottom_z else p2.x
+                
+                # Leader length: distance from measurement point to dimension line (negated for vertical)
+                leader_length = -(leader_pos.x - ref_x)
+                
+                # Start point on XZ plane
+                start_point = Vector((ref_x, 0, bottom_z))
+                # Rotate -90° around Y to point along Z axis, then 90° around Z
+                rotation = (0, -math.pi / 2, math.pi / 2)
         else:
-            dim_length = abs(delta.y)
-            angle = math.pi / 2
-            bottom_y = min(p1.y, p2.y)
+            # Plan view: work in XY plane (original behavior)
+            delta = p2 - p1
             
-            # Reference X is at the bottom measurement point
-            ref_x = p1.x if p1.y == bottom_y else p2.x
+            if delta.length < 0.001:
+                self.report({'WARNING'}, "Points are too close together")
+                return
             
-            # Leader length: distance from measurement point to dimension line (negated for vertical)
-            leader_length = -(leader_pos.x - ref_x)
+            is_horizontal = abs(delta.x) >= abs(delta.y)
             
-            # Start point is at the measurement point (at ref_x, bottom edge)
-            start_point = Vector((ref_x, bottom_y, 0))
+            if is_horizontal:
+                dim_length = abs(delta.x)
+                left_x = min(p1.x, p2.x)
+                
+                ref_y = p1.y if p1.x == left_x else p2.y
+                leader_length = leader_pos.y - ref_y
+                
+                start_point = Vector((left_x, ref_y, 0))
+                rotation = (0, 0, 0)
+            else:
+                dim_length = abs(delta.y)
+                bottom_y = min(p1.y, p2.y)
+                
+                ref_x = p1.x if p1.y == bottom_y else p2.x
+                leader_length = -(leader_pos.x - ref_x)
+                
+                start_point = Vector((ref_x, bottom_y, 0))
+                rotation = (0, 0, math.pi / 2)
         
         dim = hb_types.GeoNodeDimension()
         dim.create(f"Dimension_{len([o for o in context.scene.objects if 'IS_2D_ANNOTATION' in o])}")
@@ -1033,7 +1142,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         context.scene.collection.objects.link(dim.obj)
         
         dim.obj.location = start_point
-        dim.obj.rotation_euler = (0, 0, angle)
+        dim.obj.rotation_euler = rotation
         
         # Set dimension length via curve endpoint
         if dim.obj.data.splines and len(dim.obj.data.splines[0].points) > 1:
