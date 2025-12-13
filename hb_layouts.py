@@ -192,9 +192,44 @@ class LayoutView:
     
     def create_scene(self, name: str) -> bpy.types.Scene:
         """Create a new scene for the layout view."""
+        # Store original scene's units and tool settings before creating new scene
+        original_scene = bpy.context.scene
+        
+        # Store unit settings
+        unit_system = original_scene.unit_settings.system
+        unit_scale = original_scene.unit_settings.scale_length
+        unit_length = original_scene.unit_settings.length_unit
+        
+        # Store tool settings (snapping)
+        tool_settings = bpy.context.tool_settings
+        snap_elements = set(tool_settings.snap_elements)  # Copy as set
+        use_snap = tool_settings.use_snap
+        snap_target = tool_settings.snap_target
+        use_snap_grid_absolute = tool_settings.use_snap_grid_absolute
+        use_snap_align_rotation = tool_settings.use_snap_align_rotation
+        use_snap_backface_culling = tool_settings.use_snap_backface_culling
+        snap_elements_individual = set(tool_settings.snap_elements_individual) if hasattr(tool_settings, 'snap_elements_individual') else set()
+        
+        # Create new scene
         self.scene = bpy.data.scenes.new(name)
         self.scene['IS_LAYOUT_VIEW'] = True
         bpy.context.window.scene = self.scene
+        
+        # Copy unit settings to new scene
+        self.scene.unit_settings.system = unit_system
+        self.scene.unit_settings.scale_length = unit_scale
+        self.scene.unit_settings.length_unit = unit_length
+        
+        # Copy snap settings (these are per-context tool settings)
+        new_tool_settings = bpy.context.tool_settings
+        new_tool_settings.snap_elements = snap_elements
+        new_tool_settings.use_snap = use_snap
+        new_tool_settings.snap_target = snap_target
+        new_tool_settings.use_snap_grid_absolute = use_snap_grid_absolute
+        new_tool_settings.use_snap_align_rotation = use_snap_align_rotation
+        new_tool_settings.use_snap_backface_culling = use_snap_backface_culling
+        if hasattr(new_tool_settings, 'snap_elements_individual'):
+            new_tool_settings.snap_elements_individual = snap_elements_individual
         
         # Set up render settings for layout views
         self._setup_render_settings()
