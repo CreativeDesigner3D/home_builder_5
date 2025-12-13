@@ -3,9 +3,8 @@ import bpy
 class HOME_BUILDER_5_PRO_PT_library(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_label = "Home Builder 5 Pro"
-    bl_category = "Home Builder 5 Pro"    
-    bl_options = {'HIDE_HEADER'}
+    bl_label = "Home Builder"
+    bl_category = "Home Builder"    
 
     def draw(self, context):
         hb_scene = context.scene.home_builder
@@ -23,7 +22,7 @@ class HOME_BUILDER_5_PRO_PT_library(bpy.types.Panel):
         row.operator('home_builder.set_recommended_settings',text="Set Recommended Settings",icon='PREFERENCES')
 
         main_box = layout.box()
-        main_box.label(text="Home Builder 5 Pro")
+        main_box.label(text="Home Builder")
         
         col = main_box.column(align=True)
         row = col.row(align=True)
