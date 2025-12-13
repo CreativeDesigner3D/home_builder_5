@@ -94,6 +94,14 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
             col.separator()
             col.operator("home_builder_layouts.render_layout", 
                         text="Render Page", icon='RENDER_STILL')
+            
+            # Annotations section
+            box = layout.box()
+            box.label(text="Annotations", icon='GREASEPENCIL')
+            
+            col = box.column(align=True)
+            col.operator("home_builder_layouts.add_dimension", 
+                        text="Add Dimension", icon='DRIVER_DISTANCE')
         
         # Create Views Section
         box = layout.box()

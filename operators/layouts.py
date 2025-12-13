@@ -525,6 +525,150 @@ class home_builder_layouts_OT_render_layout(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+# =============================================================================
+# DIMENSION ANNOTATION OPERATOR
+# =============================================================================
+
+class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.add_dimension"
+    bl_label = "Add Dimension"
+    bl_description = "Click two points to add a dimension annotation"
+    bl_options = {'UNDO'}
+    
+    # State machine
+    first_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    second_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    state: bpy.props.StringProperty(default='FIRST')  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')
+    
+    def invoke(self, context, event):
+        self.state = 'FIRST'
+        self.first_point = (0, 0, 0)
+        self.second_point = (0, 0, 0)
+        
+        context.window_manager.modal_handler_add(self)
+        context.window.cursor_set('CROSSHAIR')
+        context.area.header_text_set("Click first point for dimension")
+        
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.area.tag_redraw()
+        
+        if event.type == 'MOUSEMOVE':
+            # Could add preview line here in the future
+            pass
+        
+        elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            # Get 3D location from mouse position
+            coord = (event.mouse_region_x, event.mouse_region_y)
+            point = self.get_3d_point(context, coord)
+            
+            if point is None:
+                self.report({'WARNING'}, "Could not determine point location")
+                return {'RUNNING_MODAL'}
+            
+            if self.state == 'FIRST':
+                self.first_point = point
+                self.state = 'SECOND'
+                context.area.header_text_set("Click second point for dimension")
+                return {'RUNNING_MODAL'}
+            
+            elif self.state == 'SECOND':
+                self.second_point = point
+                self.create_dimension(context)
+                self.finish(context)
+                return {'FINISHED'}
+        
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            self.finish(context)
+            self.report({'INFO'}, "Dimension cancelled")
+            return {'CANCELLED'}
+        
+        return {'RUNNING_MODAL'}
+    
+    def get_3d_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the layout plane (Z=0)."""
+        from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+        from mathutils import Vector
+        
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        # Get ray from camera through mouse position
+        origin = region_2d_to_origin_3d(region, rv3d, coord)
+        direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        # Intersect with Z=0 plane
+        if abs(direction.z) < 0.0001:
+            # Ray is parallel to plane
+            return None
+        
+        t = -origin.z / direction.z
+        point = origin + direction * t
+        
+        return (point.x, point.y, 0)
+    
+    def create_dimension(self, context):
+        """Create a dimension annotation between the two clicked points."""
+        from mathutils import Vector
+        import math
+        
+        p1 = Vector(self.first_point)
+        p2 = Vector(self.second_point)
+        
+        # Calculate dimension properties
+        delta = p2 - p1
+        length = delta.length
+        
+        if length < 0.001:
+            self.report({'WARNING'}, "Points are too close together")
+            return
+        
+        # Calculate angle from p1 to p2
+        angle = math.atan2(delta.y, delta.x)
+        
+        # Create dimension object
+        dim = hb_types.GeoNodeDimension()
+        dim.create(f"Dimension_{len([o for o in context.scene.objects if 'IS_2D_ANNOTATION' in o])}")
+        
+        # Unlink from default scene if needed
+        for scene in bpy.data.scenes:
+            if dim.obj.name in scene.collection.objects:
+                scene.collection.objects.unlink(dim.obj)
+        
+        # Link to current layout scene
+        context.scene.collection.objects.link(dim.obj)
+        
+        # Position at first point
+        dim.obj.location = p1
+        
+        # Rotate to point toward second point
+        dim.obj.rotation_euler = (0, 0, angle)
+        
+        # Set dimension length via curve endpoint
+        if dim.obj.data.splines and len(dim.obj.data.splines[0].points) > 1:
+            dim.obj.data.splines[0].points[1].co = (length, 0, 0, 1)
+        
+        # Select the new dimension
+        bpy.ops.object.select_all(action='DESELECT')
+        dim.obj.select_set(True)
+        context.view_layer.objects.active = dim.obj
+    
+    def finish(self, context):
+        """Clean up operator state."""
+        context.window.cursor_set('DEFAULT')
+        context.area.header_text_set(None)
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -540,6 +684,7 @@ classes = (
     home_builder_layouts_OT_go_to_layout_view,
     home_builder_layouts_OT_fit_view_to_content,
     home_builder_layouts_OT_render_layout,
+    home_builder_layouts_OT_add_dimension,
 )
 
 def register():
