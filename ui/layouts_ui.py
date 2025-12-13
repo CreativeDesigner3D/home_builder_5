@@ -103,6 +103,15 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
             col.operator("home_builder_layouts.add_dimension", 
                         text="Add Dimension", icon='DRIVER_DISTANCE')
         
+        # Show 3D dimension tool when NOT in a layout view
+        if not is_layout_view:
+            box = layout.box()
+            box.label(text="3D Annotations", icon='GREASEPENCIL')
+            
+            col = box.column(align=True)
+            col.operator("home_builder_layouts.add_dimension_3d", 
+                        text="Add Dimension (3D)", icon='DRIVER_DISTANCE')
+        
         # Create Views Section
         box = layout.box()
         box.label(text="Create Views", icon='ADD')

@@ -1220,6 +1220,595 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         context.area.tag_redraw()
 
 
+class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.add_dimension_3d"
+    bl_label = "Add Dimension (3D View)"
+    bl_description = "Click two points to add a dimension in 3D view (works from any angle)"
+    bl_options = {'UNDO'}
+    
+    # State machine: FIRST -> SECOND -> LEADER
+    first_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    second_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    leader_point: bpy.props.FloatVectorProperty(size=3)  # type: ignore
+    state: bpy.props.StringProperty(default='FIRST')  # type: ignore
+    
+    # Snap settings
+    snap_radius: bpy.props.FloatProperty(default=20.0)  # type: ignore
+    
+    # Current snap point for drawing
+    current_snap_point = None
+    current_snap_screen = None
+    is_snapped = False
+    
+    # View plane info
+    view_plane = 'XY'  # 'XY', 'XZ', or 'YZ'
+    plane_normal = None
+    plane_point = None
+    
+    # Draw handler
+    _handle = None
+    
+    @classmethod
+    def poll(cls, context):
+        # Works in any 3D view that's not a layout view
+        return context.area and context.area.type == 'VIEW_3D'
+    
+    def invoke(self, context, event):
+        self.state = 'FIRST'
+        self.first_point = (0, 0, 0)
+        self.second_point = (0, 0, 0)
+        self.leader_point = (0, 0, 0)
+        self.current_snap_point = None
+        self.current_snap_screen = None
+        self.is_snapped = False
+        
+        # Determine view plane based on current view direction
+        self._detect_view_plane(context)
+        
+        # Add draw handler
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_callback_3d, args, 'WINDOW', 'POST_PIXEL')
+        
+        context.window_manager.modal_handler_add(self)
+        context.window.cursor_set('CROSSHAIR')
+        context.area.header_text_set(f"Click first point for dimension (snaps to vertices) - Plane: {self.view_plane}")
+        
+        return {'RUNNING_MODAL'}
+    
+    def _detect_view_plane(self, context):
+        """Detect which plane the user is most aligned with based on view direction."""
+        from mathutils import Vector
+        
+        rv3d = context.region_data
+        if not rv3d:
+            self.view_plane = 'XY'
+            self.plane_normal = Vector((0, 0, 1))
+            return
+        
+        # Get view direction (camera looks down -Z in view space)
+        view_matrix = rv3d.view_matrix.inverted()
+        view_direction = Vector((0, 0, -1))
+        view_direction.rotate(view_matrix.to_euler())
+        view_direction.normalize()
+        
+        # Check which axis the view is most aligned with
+        abs_x = abs(view_direction.x)
+        abs_y = abs(view_direction.y)
+        abs_z = abs(view_direction.z)
+        
+        if abs_z >= abs_x and abs_z >= abs_y:
+            # Looking down Z axis - use XY plane
+            self.view_plane = 'XY'
+            self.plane_normal = Vector((0, 0, 1))
+        elif abs_y >= abs_x and abs_y >= abs_z:
+            # Looking down Y axis - use XZ plane
+            self.view_plane = 'XZ'
+            self.plane_normal = Vector((0, 1, 0))
+        else:
+            # Looking down X axis - use YZ plane
+            self.view_plane = 'YZ'
+            self.plane_normal = Vector((1, 0, 0))
+    
+    def modal(self, context, event):
+        context.area.tag_redraw()
+        
+        if event.type == 'MOUSEMOVE':
+            coord = (event.mouse_region_x, event.mouse_region_y)
+            if self.state == 'LEADER':
+                self.current_snap_point = self._get_plane_point(context, coord)
+                self.current_snap_screen = coord
+                self.is_snapped = False
+            else:
+                self.current_snap_point, self.current_snap_screen, self.is_snapped = self._get_snapped_point(context, coord)
+        
+        elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.current_snap_point is None:
+                self.report({'WARNING'}, "Could not determine point location")
+                return {'RUNNING_MODAL'}
+            
+            if self.state == 'FIRST':
+                self.first_point = self.current_snap_point
+                self.state = 'SECOND'
+                context.area.header_text_set(f"Click second point for dimension - Plane: {self.view_plane}")
+                return {'RUNNING_MODAL'}
+            
+            elif self.state == 'SECOND':
+                self.second_point = self.current_snap_point
+                self.state = 'LEADER'
+                context.area.header_text_set("Click to place dimension line")
+                return {'RUNNING_MODAL'}
+            
+            elif self.state == 'LEADER':
+                self.leader_point = self.current_snap_point
+                self._create_dimension(context)
+                self._finish(context)
+                return {'FINISHED'}
+        
+        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            self._finish(context)
+            self.report({'INFO'}, "Dimension cancelled")
+            return {'CANCELLED'}
+        
+        return {'RUNNING_MODAL'}
+    
+    def _get_plane_point(self, context, coord):
+        """Get point on the detected view plane, passing through first_point if set."""
+        from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+        from mathutils import Vector
+        
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        origin = region_2d_to_origin_3d(region, rv3d, coord)
+        direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        # Ray-plane intersection
+        # Plane passes through first_point (or origin if not set)
+        if self.state != 'FIRST' and self.first_point:
+            plane_origin = Vector(self.first_point)
+        else:
+            plane_origin = Vector((0, 0, 0))
+        
+        denom = direction.dot(self.plane_normal)
+        if abs(denom) < 0.0001:
+            return None
+        
+        # Calculate intersection: t = (plane_origin - ray_origin) · normal / (direction · normal)
+        t = (plane_origin - origin).dot(self.plane_normal) / denom
+        point = origin + direction * t
+        return (point.x, point.y, point.z)
+    
+    def _get_snapped_point(self, context, coord):
+        """Get 3D point with snapping to nearest vertex."""
+        from bpy_extras.view3d_utils import location_3d_to_region_2d
+        from mathutils import Vector
+        
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None, None, False
+        
+        depsgraph = context.evaluated_depsgraph_get()
+        
+        best_dist = self.snap_radius
+        best_point = None
+        is_snapped = False
+        
+        for obj in context.visible_objects:
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            
+            if obj.type != 'MESH':
+                continue
+            
+            matrix_world = obj.matrix_world
+            
+            eval_obj = obj.evaluated_get(depsgraph)
+            try:
+                eval_mesh = eval_obj.to_mesh()
+                if eval_mesh:
+                    for vert in eval_mesh.vertices:
+                        world_co = matrix_world @ vert.co
+                        screen_co = location_3d_to_region_2d(region, rv3d, world_co)
+                        if screen_co is None:
+                            continue
+                        
+                        dist = (Vector(coord) - screen_co).length
+                        
+                        if dist < best_dist:
+                            best_dist = dist
+                            # Keep actual vertex position - don't project
+                            best_point = (world_co.x, world_co.y, world_co.z)
+                            is_snapped = True
+                    
+                    eval_obj.to_mesh_clear()
+            except:
+                pass
+        
+        if best_point:
+            screen_pos = location_3d_to_region_2d(region, rv3d, Vector(best_point))
+            return best_point, (screen_pos.x, screen_pos.y) if screen_pos else None, True
+        
+        plane_point = self._get_plane_point(context, coord)
+        if plane_point:
+            return plane_point, coord, False
+        
+        return None, None, False
+    
+    def _project_to_plane(self, point):
+        """Project a 3D point onto the view plane."""
+        from mathutils import Vector
+        
+        p = Vector(point)
+        
+        # Project onto plane passing through first_point (or origin if not set)
+        if self.state != 'FIRST':
+            plane_origin = Vector(self.first_point)
+        else:
+            plane_origin = Vector((0, 0, 0))
+        
+        # Distance from point to plane
+        dist = (p - plane_origin).dot(self.plane_normal)
+        
+        # Project point onto plane
+        projected = p - self.plane_normal * dist
+        
+        return (projected.x, projected.y, projected.z)
+    
+    @staticmethod
+    def draw_callback_3d(self, context):
+        """Draw visual feedback for snapping and dimension preview."""
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        import blf
+        from mathutils import Vector
+        from bpy_extras.view3d_utils import location_3d_to_region_2d
+        from .. import units
+        import math
+        
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return
+        
+        # Draw snap indicator
+        if self.current_snap_screen:
+            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            gpu.state.blend_set('ALPHA')
+            gpu.state.line_width_set(2.0)
+            
+            x, y = self.current_snap_screen
+            
+            if self.is_snapped:
+                color = (0.0, 1.0, 0.0, 1.0)
+                radius = 10
+            else:
+                color = (1.0, 1.0, 0.0, 0.8)
+                radius = 6
+            
+            segments = 32
+            circle_verts = []
+            for i in range(segments + 1):
+                angle = 2 * math.pi * i / segments
+                cx = x + radius * math.cos(angle)
+                cy = y + radius * math.sin(angle)
+                circle_verts.append((cx, cy))
+            
+            shader.bind()
+            shader.uniform_float("color", color)
+            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": circle_verts})
+            batch.draw(shader)
+            
+            if self.is_snapped:
+                cross_size = 6
+                cross_verts = [
+                    (x - cross_size, y), (x + cross_size, y),
+                    (x, y - cross_size), (x, y + cross_size),
+                ]
+                batch = batch_for_shader(shader, 'LINES', {"pos": cross_verts})
+                batch.draw(shader)
+        
+        # Draw dimension preview
+        if self.state in ('SECOND', 'LEADER') and self.current_snap_point:
+            p1 = Vector(self.first_point)
+            
+            if self.state == 'SECOND':
+                p2 = Vector(self.current_snap_point)
+            else:
+                p2 = Vector(self.second_point)
+            
+            # Calculate in the view plane's coordinate system
+            if self.view_plane == 'XY':
+                delta_h = p2.x - p1.x
+                delta_v = p2.y - p1.y
+            elif self.view_plane == 'XZ':
+                delta_h = p2.x - p1.x
+                delta_v = p2.z - p1.z
+            else:  # YZ
+                delta_h = p2.y - p1.y
+                delta_v = p2.z - p1.z
+            
+            if abs(delta_h) > 0.001 or abs(delta_v) > 0.001:
+                is_horizontal = abs(delta_h) >= abs(delta_v)
+                
+                if self.state == 'LEADER' and self.current_snap_point:
+                    cursor_pos = Vector(self.current_snap_point)
+                else:
+                    cursor_pos = None
+                
+                # Calculate dimension line positions based on view plane
+                if self.view_plane == 'XY':
+                    if is_horizontal:
+                        dim_length = abs(delta_h)
+                        left = min(p1.x, p2.x)
+                        right = max(p1.x, p2.x)
+                        dim_pos = cursor_pos.y if cursor_pos else min(p1.y, p2.y) - units.inch(4)
+                        
+                        start_3d = Vector((left, dim_pos, p1.z))
+                        end_3d = Vector((right, dim_pos, p1.z))
+                        leader1_start = Vector((left, p1.y if p1.x < p2.x else p2.y, p1.z))
+                        leader1_end = Vector((left, dim_pos, p1.z))
+                        leader2_start = Vector((right, p2.y if p1.x < p2.x else p1.y, p1.z))
+                        leader2_end = Vector((right, dim_pos, p1.z))
+                    else:
+                        dim_length = abs(delta_v)
+                        bottom = min(p1.y, p2.y)
+                        top = max(p1.y, p2.y)
+                        dim_pos = cursor_pos.x if cursor_pos else min(p1.x, p2.x) - units.inch(4)
+                        
+                        start_3d = Vector((dim_pos, bottom, p1.z))
+                        end_3d = Vector((dim_pos, top, p1.z))
+                        leader1_start = Vector((p1.x if p1.y < p2.y else p2.x, bottom, p1.z))
+                        leader1_end = Vector((dim_pos, bottom, p1.z))
+                        leader2_start = Vector((p2.x if p1.y < p2.y else p1.x, top, p1.z))
+                        leader2_end = Vector((dim_pos, top, p1.z))
+                
+                elif self.view_plane == 'XZ':
+                    if is_horizontal:
+                        dim_length = abs(delta_h)
+                        left = min(p1.x, p2.x)
+                        right = max(p1.x, p2.x)
+                        dim_pos = cursor_pos.z if cursor_pos else min(p1.z, p2.z) - units.inch(4)
+                        
+                        start_3d = Vector((left, p1.y, dim_pos))
+                        end_3d = Vector((right, p1.y, dim_pos))
+                        leader1_start = Vector((left, p1.y, p1.z if p1.x < p2.x else p2.z))
+                        leader1_end = Vector((left, p1.y, dim_pos))
+                        leader2_start = Vector((right, p1.y, p2.z if p1.x < p2.x else p1.z))
+                        leader2_end = Vector((right, p1.y, dim_pos))
+                    else:
+                        dim_length = abs(delta_v)
+                        bottom = min(p1.z, p2.z)
+                        top = max(p1.z, p2.z)
+                        dim_pos = cursor_pos.x if cursor_pos else min(p1.x, p2.x) - units.inch(4)
+                        
+                        start_3d = Vector((dim_pos, p1.y, bottom))
+                        end_3d = Vector((dim_pos, p1.y, top))
+                        leader1_start = Vector((p1.x if p1.z < p2.z else p2.x, p1.y, bottom))
+                        leader1_end = Vector((dim_pos, p1.y, bottom))
+                        leader2_start = Vector((p2.x if p1.z < p2.z else p1.x, p1.y, top))
+                        leader2_end = Vector((dim_pos, p1.y, top))
+                
+                else:  # YZ plane
+                    if is_horizontal:
+                        dim_length = abs(delta_h)
+                        left = min(p1.y, p2.y)
+                        right = max(p1.y, p2.y)
+                        dim_pos = cursor_pos.z if cursor_pos else min(p1.z, p2.z) - units.inch(4)
+                        
+                        start_3d = Vector((p1.x, left, dim_pos))
+                        end_3d = Vector((p1.x, right, dim_pos))
+                        leader1_start = Vector((p1.x, left, p1.z if p1.y < p2.y else p2.z))
+                        leader1_end = Vector((p1.x, left, dim_pos))
+                        leader2_start = Vector((p1.x, right, p2.z if p1.y < p2.y else p1.z))
+                        leader2_end = Vector((p1.x, right, dim_pos))
+                    else:
+                        dim_length = abs(delta_v)
+                        bottom = min(p1.z, p2.z)
+                        top = max(p1.z, p2.z)
+                        dim_pos = cursor_pos.y if cursor_pos else min(p1.y, p2.y) - units.inch(4)
+                        
+                        start_3d = Vector((p1.x, dim_pos, bottom))
+                        end_3d = Vector((p1.x, dim_pos, top))
+                        leader1_start = Vector((p1.x, p1.y if p1.z < p2.z else p2.y, bottom))
+                        leader1_end = Vector((p1.x, dim_pos, bottom))
+                        leader2_start = Vector((p1.x, p2.y if p1.z < p2.z else p1.y, top))
+                        leader2_end = Vector((p1.x, dim_pos, top))
+                
+                # Convert to screen and draw
+                start_2d = location_3d_to_region_2d(region, rv3d, start_3d)
+                end_2d = location_3d_to_region_2d(region, rv3d, end_3d)
+                l1_start_2d = location_3d_to_region_2d(region, rv3d, leader1_start)
+                l1_end_2d = location_3d_to_region_2d(region, rv3d, leader1_end)
+                l2_start_2d = location_3d_to_region_2d(region, rv3d, leader2_start)
+                l2_end_2d = location_3d_to_region_2d(region, rv3d, leader2_end)
+                
+                if start_2d and end_2d:
+                    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                    gpu.state.line_width_set(2.0)
+                    
+                    shader.bind()
+                    shader.uniform_float("color", (0.0, 1.0, 1.0, 1.0))
+                    
+                    line_verts = [(start_2d.x, start_2d.y), (end_2d.x, end_2d.y)]
+                    batch = batch_for_shader(shader, 'LINES', {"pos": line_verts})
+                    batch.draw(shader)
+                    
+                    shader.uniform_float("color", (0.0, 0.8, 0.8, 0.6))
+                    
+                    if l1_start_2d and l1_end_2d:
+                        batch = batch_for_shader(shader, 'LINES', {"pos": [(l1_start_2d.x, l1_start_2d.y), (l1_end_2d.x, l1_end_2d.y)]})
+                        batch.draw(shader)
+                    
+                    if l2_start_2d and l2_end_2d:
+                        batch = batch_for_shader(shader, 'LINES', {"pos": [(l2_start_2d.x, l2_start_2d.y), (l2_end_2d.x, l2_end_2d.y)]})
+                        batch.draw(shader)
+                    
+                    # Draw dimension text
+                    mid_2d = ((start_2d.x + end_2d.x) / 2, (start_2d.y + end_2d.y) / 2)
+                    
+                    dim_inches = dim_length / units.inch(1)
+                    whole_inches = int(dim_inches)
+                    frac = dim_inches - whole_inches
+                    sixteenths = round(frac * 16)
+                    if sixteenths == 16:
+                        whole_inches += 1
+                        sixteenths = 0
+                    
+                    if sixteenths == 0:
+                        dim_text = f'{whole_inches}"'
+                    elif sixteenths == 8:
+                        dim_text = f'{whole_inches} 1/2"'
+                    elif sixteenths == 4:
+                        dim_text = f'{whole_inches} 1/4"'
+                    elif sixteenths == 12:
+                        dim_text = f'{whole_inches} 3/4"'
+                    else:
+                        from math import gcd
+                        g = gcd(sixteenths, 16)
+                        num = sixteenths // g
+                        denom = 16 // g
+                        dim_text = f'{whole_inches} {num}/{denom}"'
+                    
+                    font_id = 0
+                    blf.size(font_id, 14)
+                    text_width, text_height = blf.dimensions(font_id, dim_text)
+                    
+                    padding = 4
+                    bg_verts = [
+                        (mid_2d[0] - text_width/2 - padding, mid_2d[1] - text_height/2 - padding),
+                        (mid_2d[0] + text_width/2 + padding, mid_2d[1] - text_height/2 - padding),
+                        (mid_2d[0] + text_width/2 + padding, mid_2d[1] + text_height/2 + padding),
+                        (mid_2d[0] - text_width/2 - padding, mid_2d[1] + text_height/2 + padding),
+                    ]
+                    bg_indices = [(0, 1, 2), (2, 3, 0)]
+                    
+                    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                    shader.bind()
+                    shader.uniform_float("color", (0.1, 0.1, 0.1, 0.9))
+                    batch = batch_for_shader(shader, 'TRIS', {"pos": bg_verts}, indices=bg_indices)
+                    batch.draw(shader)
+                    
+                    blf.position(font_id, mid_2d[0] - text_width/2, mid_2d[1] - text_height/2, 0)
+                    blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+                    blf.draw(font_id, dim_text)
+            
+            gpu.state.blend_set('NONE')
+            gpu.state.line_width_set(1.0)
+    
+    def _create_dimension(self, context):
+        """Create dimension based on detected view plane."""
+        from mathutils import Vector
+        from .. import units
+        import math
+        
+        p1 = Vector(self.first_point)
+        p2 = Vector(self.second_point)
+        leader_pos = Vector(self.leader_point)
+        
+        # Calculate based on view plane
+        if self.view_plane == 'XY':
+            delta_h = p2.x - p1.x
+            delta_v = p2.y - p1.y
+            is_horizontal = abs(delta_h) >= abs(delta_v)
+            
+            if is_horizontal:
+                dim_length = abs(delta_h)
+                left_val = min(p1.x, p2.x)
+                ref_v = p1.y if p1.x == left_val else p2.y
+                leader_length = leader_pos.y - ref_v
+                start_point = Vector((left_val, ref_v, p1.z))
+                rotation = (0, 0, 0)
+            else:
+                dim_length = abs(delta_v)
+                bottom_val = min(p1.y, p2.y)
+                ref_h = p1.x if p1.y == bottom_val else p2.x
+                leader_length = -(leader_pos.x - ref_h)
+                start_point = Vector((ref_h, bottom_val, p1.z))
+                rotation = (0, 0, math.pi / 2)
+        
+        elif self.view_plane == 'XZ':
+            delta_h = p2.x - p1.x
+            delta_v = p2.z - p1.z
+            is_horizontal = abs(delta_h) >= abs(delta_v)
+            
+            if is_horizontal:
+                dim_length = abs(delta_h)
+                left_val = min(p1.x, p2.x)
+                ref_v = p1.z if p1.x == left_val else p2.z
+                leader_length = leader_pos.z - ref_v
+                start_point = Vector((left_val, p1.y, ref_v))
+                rotation = (math.pi / 2, 0, 0)
+            else:
+                dim_length = abs(delta_v)
+                bottom_val = min(p1.z, p2.z)
+                ref_h = p1.x if p1.z == bottom_val else p2.x
+                leader_length = -(leader_pos.x - ref_h)
+                start_point = Vector((ref_h, p1.y, bottom_val))
+                rotation = (0, -math.pi / 2, math.pi / 2)
+        
+        else:  # YZ plane
+            delta_h = p2.y - p1.y
+            delta_v = p2.z - p1.z
+            is_horizontal = abs(delta_h) >= abs(delta_v)
+            
+            if is_horizontal:
+                dim_length = abs(delta_h)
+                left_val = min(p1.y, p2.y)
+                ref_v = p1.z if p1.y == left_val else p2.z
+                leader_length = leader_pos.z - ref_v
+                start_point = Vector((p1.x, left_val, ref_v))
+                rotation = (math.pi / 2, 0, math.pi / 2)
+            else:
+                dim_length = abs(delta_v)
+                bottom_val = min(p1.z, p2.z)
+                ref_h = p1.y if p1.z == bottom_val else p2.y
+                leader_length = -(leader_pos.y - ref_h)
+                start_point = Vector((p1.x, ref_h, bottom_val))
+                rotation = (0, -math.pi / 2, 0)
+        
+        if dim_length < 0.001:
+            self.report({'WARNING'}, "Points are too close together")
+            return
+        
+        dim = hb_types.GeoNodeDimension()
+        dim.create(f"Dimension_{len([o for o in context.scene.objects if 'IS_2D_ANNOTATION' in o])}")
+        
+        for scene in bpy.data.scenes:
+            if dim.obj.name in scene.collection.objects:
+                scene.collection.objects.unlink(dim.obj)
+        
+        context.scene.collection.objects.link(dim.obj)
+        
+        dim.obj.location = start_point
+        dim.obj.rotation_euler = rotation
+        
+        if dim.obj.data.splines and len(dim.obj.data.splines[0].points) > 1:
+            dim.obj.data.splines[0].points[1].co = (dim_length, 0, 0, 1)
+        
+        dim.set_input("Leader Length", leader_length)
+        
+        bpy.ops.object.select_all(action='DESELECT')
+        dim.obj.select_set(True)
+        context.view_layer.objects.active = dim.obj
+    
+    def _finish(self, context):
+        """Clean up operator state."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+        
+        context.window.cursor_set('DEFAULT')
+        context.area.header_text_set(None)
+        context.area.tag_redraw()
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -1236,6 +1825,7 @@ classes = (
     home_builder_layouts_OT_fit_view_to_content,
     home_builder_layouts_OT_render_layout,
     home_builder_layouts_OT_add_dimension,
+    home_builder_layouts_OT_add_dimension_3d,
 )
 
 def register():
