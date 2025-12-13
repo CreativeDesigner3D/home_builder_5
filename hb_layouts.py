@@ -1175,8 +1175,6 @@ class MultiView(LayoutView):
         if view_type == 'PLAN':
             # Rotation (0,0,0): Origin at back-left corner
             # Visual: origin is at top-left, extends +X (width) and -Y (depth)
-            # Origin X = visual left edge
-            # Origin Y = visual top edge (back of cabinet)
             return Vector((front_vis_left, plan_vis_top, 0))
         
         elif view_type == 'FRONT':
@@ -1187,19 +1185,19 @@ class MultiView(LayoutView):
         
         elif view_type == 'BACK':
             # Rotation (90°,0,180°): Tipped back and flipped
-            # Origin ends up at top-right of visual bounds
-            # Origin X = visual left + width (due to 180° Z rotation)
-            # Origin Y = visual top
+            # Due to 180° Z rotation, origin shifts to right side
+            # X offset = +obj_width to align visual left edge with front
             return Vector((front_vis_left + obj_width, back_vis_top, 0))
         
         elif view_type == 'LEFT':
             # Rotation (0,-90°,-90°): Shows left side of cabinet
-            # Origin at visual bottom-left
+            # Origin at visual bottom-left, extends +X (depth) and +Y (height)
             return Vector((left_vis_left, front_vis_bottom, 0))
         
         elif view_type == 'RIGHT':
             # Rotation (0,90°,90°): Shows right side of cabinet  
-            # Origin at visual bottom-right (due to rotation)
+            # Due to rotation, origin shifts right by depth
+            # X offset = +obj_depth to align visual left edge
             # Z offset = -width
             return Vector((right_vis_left + obj_depth, front_vis_bottom, -obj_width))
         
