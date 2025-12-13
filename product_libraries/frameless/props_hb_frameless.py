@@ -29,6 +29,12 @@ def get_library_previews():
         preview_collections["library_previews"] = bpy.utils.previews.new()
     return preview_collections["library_previews"]
 
+def get_cabinet_previews():
+    """Get or create the cabinet preview collection for standard thumbnails."""
+    if "cabinet_previews" not in preview_collections:
+        preview_collections["cabinet_previews"] = bpy.utils.previews.new()
+    return preview_collections["cabinet_previews"]
+
 def load_library_thumbnail(filepath, name):
     """Load a thumbnail image into the preview collection."""
     pcoll = get_library_previews()
@@ -36,6 +42,29 @@ def load_library_thumbnail(filepath, name):
     # Check if already loaded
     if name in pcoll:
         return pcoll[name].icon_id
+    
+    # Load the thumbnail
+    if os.path.exists(filepath):
+        thumb = pcoll.load(name, filepath, 'IMAGE')
+        return thumb.icon_id
+    
+    return 0  # Return 0 if no thumbnail
+
+def get_cabinet_thumbnail_path():
+    """Get the path to the standard cabinet thumbnails folder."""
+    return os.path.join(os.path.dirname(__file__), "frameless_thumbnails")
+
+def load_cabinet_thumbnail(name):
+    """Load a standard cabinet thumbnail by name (without extension)."""
+    pcoll = get_cabinet_previews()
+    
+    # Check if already loaded
+    if name in pcoll:
+        return pcoll[name].icon_id
+    
+    # Build the filepath
+    thumbnails_dir = get_cabinet_thumbnail_path()
+    filepath = os.path.join(thumbnails_dir, f"{name}.png")
     
     # Load the thumbnail
     if os.path.exists(filepath):
@@ -417,6 +446,77 @@ class Frameless_Scene_Props(PropertyGroup):
                                        text="Add to Scene", icon='IMPORT')
                 op.filepath = item['filepath']
 
+    def draw_cabinet_library_ui(self,layout,context):
+        # Cabinet definitions: (display_name, cabinet_name, thumbnail_name)
+        base_cabinets = [
+            ("Door", "Base Door", "Base Door"),
+            ("Door Drw", "Base Door Drw", "Base Door Drw"),
+            ("Drawer", "Base Drawer", "Base Drw"),
+            ("Lap Drawer", "Lap Drawer", "Lap Drw"),
+        ]
+        
+        upper_cabinets = [
+            ("Upper", "Upper", "Upper"),
+            ("Upper Stacked", "Upper Stacked", "Upper Stacked"),
+        ]
+        
+        tall_cabinets = [
+            ("Tall", "Tall", "Tall"),
+            ("Tall Stacked", "Tall Stacked", "Tall Stacked"),
+        ]
+        
+        # Base cabinets
+        layout.label(text="Base Cabinets:")
+        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
+        for display_name, cabinet_name, thumb_name in base_cabinets:
+            box = flow.box()
+            box.scale_y = 0.9
+            
+            # Show thumbnail
+            icon_id = load_cabinet_thumbnail(thumb_name)
+            if icon_id:
+                box.template_icon(icon_value=icon_id, scale=4.0)
+            
+            # Button
+            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
+            op.cabinet_name = cabinet_name
+        
+        # layout.separator()
+        
+        # Upper cabinets
+        layout.label(text="Upper Cabinets:")
+        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
+        for display_name, cabinet_name, thumb_name in upper_cabinets:
+            box = flow.box()
+            box.scale_y = 0.9
+            
+            # Show thumbnail
+            icon_id = load_cabinet_thumbnail(thumb_name)
+            if icon_id:
+                box.template_icon(icon_value=icon_id, scale=4.0)
+            
+            # Button
+            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
+            op.cabinet_name = cabinet_name
+        
+        # layout.separator()
+        
+        # Tall cabinets
+        layout.label(text="Tall Cabinets:")
+        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
+        for display_name, cabinet_name, thumb_name in tall_cabinets:
+            box = flow.box()
+            box.scale_y = 0.9
+            
+            # Show thumbnail
+            icon_id = load_cabinet_thumbnail(thumb_name)
+            if icon_id:
+                box.template_icon(icon_value=icon_id, scale=4.0)
+            
+            # Button
+            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
+            op.cabinet_name = cabinet_name
+          
     def draw_library_ui(self,layout,context):
         row = layout.row(align=True)
         row.prop_enum(self, "frameless_selection_mode", 'Cabinets', icon='MESH_CUBE')
@@ -446,29 +546,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.alignment = 'LEFT'        
             row.prop(self,'show_cabinet_library',text="Cabinets",icon='TRIA_DOWN' if self.show_cabinet_library else 'TRIA_RIGHT',emboss=False)
             if self.show_cabinet_library:
-                row = box.row()
-                row.prop(self,'fill_cabinets',text="Fill")
-                if not self.fill_cabinets:
-                    row.prop(self,'default_cabinet_width',text="Width")
-
-                row = box.row()
-                row.alignment = 'LEFT'
-                row.label(text="Base:")
-                row.prop(self,'base_exterior',text="")
-                row.alignment = 'LEFT'
-                row.label(text="Include Drawer Boxes:")
-                row.prop(self,'include_drawer_boxes',text="")    
-
-                row = box.row()
-                row.scale_y = 1.5                   
-                row.operator('hb_frameless.draw_cabinet',text="Base").cabinet_name = 'Base'
-                row.operator('hb_frameless.draw_cabinet',text="Tall").cabinet_name = 'Tall'
-                row.operator('hb_frameless.draw_cabinet',text="Upper").cabinet_name = 'Upper'
-                row = box.row()
-                row.scale_y = 1.5   
-                row.operator('hb_frameless.draw_cabinet',text="Lap Drawer").cabinet_name = 'Lap Drawer'
-                row.operator('hb_frameless.draw_cabinet',text="Tall Stacked").cabinet_name = 'Tall Stacked'
-                row.operator('hb_frameless.draw_cabinet',text="Upper Stacked").cabinet_name = 'Upper Stacked'  
+                self.draw_cabinet_library_ui(box,context)
 
             box = col.box()
             row = box.row()
@@ -711,8 +789,9 @@ _register_classes, _unregister_classes = bpy.utils.register_classes_factory(clas
 
 def register():
     _register_classes()
-    # Initialize preview collection
+    # Initialize preview collections
     get_library_previews()
+    get_cabinet_previews()
 
 def unregister():
     _unregister_classes()
