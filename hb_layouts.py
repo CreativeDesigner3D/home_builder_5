@@ -1034,6 +1034,10 @@ class MultiView(LayoutView):
         # Add source object and children to collection
         self._add_object_to_collection(source_obj, self.content_collection)
         
+        # Get source object location to offset instances
+        # This ensures layout works regardless of where source object is positioned
+        source_loc = source_obj.location.copy()
+        
         # Spacing between views
         gap = units.inch(12)
         
@@ -1078,13 +1082,38 @@ class MultiView(LayoutView):
             instance.rotation_euler = rotation
             
             # Calculate origin position based on view type and rotation
-            instance.location = self._calculate_instance_position(
+            # Apply rotation-adjusted source offset to account for source object not being at origin
+            base_pos = self._calculate_instance_position(
                 view_type, 
                 front_vis_left, front_vis_bottom, front_vis_center_x,
                 plan_vis_top, back_vis_top,
                 left_vis_left, right_vis_left,
                 obj_width, obj_depth, obj_height
             )
+            
+            # Calculate offset based on how rotation transforms the source position
+            # When instance is rotated, objects in collection rotate around instance origin
+            # These transforms were verified by testing rotation matrices
+            sx, sy, sz = source_loc.x, source_loc.y, source_loc.z
+            if view_type == 'PLAN':
+                # Rotation (0,0,0): identity
+                offset = Vector((sx, sy, sz))
+            elif view_type == 'FRONT':
+                # Rotation (-90,0,0): (sx, sy, sz) -> (sx, sz, -sy)
+                offset = Vector((sx, sz, -sy))
+            elif view_type == 'BACK':
+                # Rotation (90,0,180): (sx, sy, sz) -> (-sx, sz, sy)
+                offset = Vector((-sx, sz, sy))
+            elif view_type == 'LEFT':
+                # Rotation (0,-90,-90): (sx, sy, sz) -> (sy, sz, sx)
+                offset = Vector((sy, sz, sx))
+            elif view_type == 'RIGHT':
+                # Rotation (0,90,90): (sx, sy, sz) -> (-sy, sz, -sx)
+                offset = Vector((-sy, sz, -sx))
+            else:
+                offset = Vector((sx, sy, sz))
+            
+            instance.location = base_pos - offset
             
             self.view_instances.append(instance)
         
