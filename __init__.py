@@ -8,6 +8,7 @@ from .ui import layouts_ui
 from .operators import walls
 from .operators import doors_windows
 from .operators import layouts
+from .operators import rooms
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -129,6 +130,7 @@ def register():
     hb_props.register()
     walls.register()
     layouts.register()
+    rooms.register()
     doors_windows.register()
     ops.register()
     view3d_sidebar.register()
@@ -147,6 +149,7 @@ def unregister():
     hb_props.unregister()
     walls.unregister()
     layouts.unregister()
+    rooms.unregister()
     doors_windows.unregister()
     ops.unregister()
     view3d_sidebar.unregister()

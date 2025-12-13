@@ -5,12 +5,60 @@ from .. import hb_layouts
 # LAYOUT VIEWS UI PANEL
 # =============================================================================
 
+class HOME_BUILDER_PT_rooms(bpy.types.Panel):
+    bl_label = "Rooms"
+    bl_idname = "HOME_BUILDER_PT_rooms"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Layout Views'
+    bl_order = 0
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Get all room scenes (non-layout scenes)
+        room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
+        
+        # Room list
+        box = layout.box()
+        box.label(text=f"Rooms ({len(room_scenes)})", icon='HOME')
+        
+        col = box.column(align=True)
+        for scene in room_scenes:
+            row = col.row(align=True)
+            
+            # Highlight current scene
+            if scene == context.scene:
+                row.alert = True
+            
+            # Switch button
+            op = row.operator("home_builder.switch_room", text=scene.name, icon='SCENE_DATA')
+            op.scene_name = scene.name
+            
+            # Delete button (only if more than one room)
+            if len(room_scenes) > 1:
+                op = row.operator("home_builder.delete_room", text="", icon='X')
+                op.scene_name = scene.name
+        
+        # Room management buttons
+        col = box.column(align=True)
+        col.separator()
+        col.operator("home_builder.create_room", text="New Room", icon='ADD')
+        
+        # Only show these if not in a layout view
+        if not context.scene.get('IS_LAYOUT_VIEW'):
+            row = col.row(align=True)
+            row.operator("home_builder.rename_room", text="Rename", icon='GREASEPENCIL')
+            row.operator("home_builder.duplicate_room", text="Duplicate", icon='DUPLICATE')
+
+
 class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
     bl_label = "Layout Views"
     bl_idname = "HOME_BUILDER_PT_layout_views"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Layout Views'
+    bl_order = 1
     
     def draw(self, context):
         layout = self.layout
@@ -159,6 +207,7 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
 # =============================================================================
 
 classes = (
+    HOME_BUILDER_PT_rooms,
     HOME_BUILDER_PT_layout_views,
 )
 
