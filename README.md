@@ -1,7 +1,4 @@
-# Home Builder 5
-
-!!! warning "Add-on in Development"
-    This add-on is currently being migrated to work with Blender 5.0 
+# Home Builder 5 **Add-on in Development**
 
 A professional Blender add-on for architectural kitchen, bath, and closet cabinet design.
 
