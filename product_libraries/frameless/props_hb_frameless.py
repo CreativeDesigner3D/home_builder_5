@@ -122,7 +122,7 @@ class Frameless_Scene_Props(PropertyGroup):
     show_corner_cabinet_library: BoolProperty(name="Show Corner Cabinet Library",description="Show Corner Cabinet Library.",default=False)# type: ignore
     show_appliance_library: BoolProperty(name="Show Appliance Library",description="Show Appliance Library.",default=False)# type: ignore
     show_part_library: BoolProperty(name="Show Part Library",description="Show Part Library.",default=False)# type: ignore
-    show_user_library: BoolProperty(name="Show User Library",description="Show User Library.",default=True)# type: ignore
+    show_user_library: BoolProperty(name="Show User Library",description="Show User Library.",default=False)# type: ignore
     show_general_options: BoolProperty(name="Show General Options",description="Show General Options.",default=False)# type: ignore
     show_material_options: BoolProperty(name="Show Material Options",description="Show Material Options.",default=False)# type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options",description="Show Handle Options.",default=False)# type: ignore
@@ -518,21 +518,24 @@ class Frameless_Scene_Props(PropertyGroup):
             op.cabinet_name = cabinet_name
           
     def draw_library_ui(self,layout,context):
-        row = layout.row(align=True)
+        selection_mod_box = layout.box()
+        selection_mod_box.label(text="Selection Mode")
+        row = selection_mod_box.row(align=True)
+        row.scale_y = 1.5
         row.prop_enum(self, "frameless_selection_mode", 'Cabinets', icon='MESH_CUBE')
         row.prop_enum(self, "frameless_selection_mode", 'Bays', icon='MESH_CUBE')
         row.prop_enum(self, "frameless_selection_mode", 'Openings', icon='OBJECT_DATAMODE')
         row.prop_enum(self, "frameless_selection_mode", 'Interiors', icon='OBJECT_HIDDEN')    
         row.prop_enum(self, "frameless_selection_mode", 'Parts', icon='EDITMODE_HLT') 
 
-        layout.separator()
+        # layout.separator()
 
         col = layout.column(align=True)
         row = col.row(align=True)
         row.scale_y = 1.3
         row.prop_enum(self, "frameless_tabs", 'LIBRARY', icon='ASSET_MANAGER')
         row.prop_enum(self, "frameless_tabs", 'OPTIONS', icon='PREFERENCES') 
-        col.separator() 
+        # col.separator() 
         if self.frameless_tabs == 'LIBRARY':
             box = col.box()
             row = box.row()
