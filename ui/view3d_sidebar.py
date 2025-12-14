@@ -212,24 +212,6 @@ class HOME_BUILDER_PT_product_library(bpy.types.Panel):
         else:
             context.scene.hb_closets.draw_library_ui(layout, context)
 
-# # SUBPANEL: Product Library Content
-# class HOME_BUILDER_PT_product_library_content(bpy.types.Panel):
-#     bl_label = "Library"
-#     bl_idname = "HOME_BUILDER_PT_product_library_content"
-#     bl_space_type = 'VIEW_3D'
-#     bl_region_type = 'UI'
-#     bl_category = 'Home Builder'
-#     bl_parent_id = "HOME_BUILDER_PT_product_library"
-#     bl_options = {'HIDE_HEADER'}
-    
-#     def draw(self, context):
-#         layout = self.layout
-#         hb_scene = context.scene.home_builder
-        
-#         col = layout.column(align=True)
-        
-
-
 
 # -----------------------------------------------------------------------------
 # PANEL 4: LAYOUT VIEWS
@@ -245,6 +227,11 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+
+        row = layout.row(align=True)
+        row.scale_y = 1.5
+        row.menu("HOME_BUILDER_MT_layout_views_create")
+
         is_layout_view = context.scene.get('IS_LAYOUT_VIEW', False)
         
         # Layout Views List
@@ -290,6 +277,31 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
                 op.scene_name = main_scenes[0].name
         else:
             layout.label(text="No layout views yet", icon='INFO')
+
+
+class HOME_BUILDER_MT_layout_views_create(bpy.types.Menu):
+    bl_label = "Create Layout Views"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("home_builder_layouts.create_all_elevations", 
+                    text="All Wall Elevations", icon='DOCUMENTS')
+        layout.operator("home_builder_layouts.create_elevation_view", 
+                        text="Elevation (Selected Wall)", icon='VIEW_ORTHO')
+        layout.separator()
+        layout.operator("home_builder_layouts.create_plan_view", 
+                    text="Floor Plan", icon='MESH_GRID')
+        layout.separator()
+        op = layout.operator("home_builder_layouts.create_3d_view", 
+                         text="3D Perspective", icon='VIEW_PERSPECTIVE')
+        op.perspective = True
+        
+        op = layout.operator("home_builder_layouts.create_3d_view", 
+                         text="Isometric", icon='VIEW_ORTHO')
+        op.perspective = False
+        layout.separator()
+        layout.operator("home_builder_layouts.create_multi_view", 
+                    text="Multi-View Layout", icon='OUTLINER_OB_GROUP_INSTANCE')
 
 
 # SUBPANEL: Create Layout Views
@@ -459,7 +471,8 @@ classes = (
     HOME_BUILDER_PT_room_layout_obstacles,
     HOME_BUILDER_PT_product_library,
     HOME_BUILDER_PT_layout_views,
-    HOME_BUILDER_PT_layout_views_create,
+    HOME_BUILDER_MT_layout_views_create,
+    # HOME_BUILDER_PT_layout_views_create,
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_settings,
