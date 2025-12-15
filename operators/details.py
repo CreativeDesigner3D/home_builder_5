@@ -8,6 +8,10 @@ from .. import hb_placement
 from .. import units
 
 
+# Snap radius in pixels for vertex snapping
+SNAP_RADIUS = 20
+
+
 # =============================================================================
 # DETAIL SCENE OPERATORS
 # =============================================================================
@@ -74,61 +78,151 @@ class home_builder_details_OT_delete_detail(bpy.types.Operator):
 class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_details.draw_line"
     bl_label = "Draw Line"
-    bl_description = "Draw a 2D line. Click to place points, type for exact length"
+    bl_description = "Draw a 2D polyline. Click to place points, type for exact length. Snaps to existing vertices."
     bl_options = {'UNDO'}
     
-    # Line state
-    current_line: hb_details.GeoNodeLine = None
-    start_point: Vector = None
-    has_start_point: bool = False
+    # Polyline state
+    polyline: hb_details.GeoNodePolyline = None
+    current_point: Vector = None  # The last confirmed point
+    point_count: int = 0  # Number of confirmed points
     
     # Ortho mode (snap to 0, 45, 90 degree angles)
     ortho_mode: bool = True
     ortho_angle: float = 0.0
     
+    # Snap state
+    is_snapped: bool = False
+    
+    def get_curve_vertices(self, context) -> list:
+        """Get all curve vertices in the scene as world coordinates."""
+        vertices = []
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    for point in spline.points:
+                        world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
+                        vertices.append(world_co)
+                    for point in spline.bezier_points:
+                        world_co = matrix @ point.co
+                        vertices.append(world_co)
+        return vertices
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        vertices = self.get_curve_vertices(context)
+        if not vertices:
+            return None
+        
+        best_vertex = None
+        best_distance = SNAP_RADIUS
+        
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_vertex = co.copy()
+                    best_distance = distance
+        
+        return best_vertex
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position, snapping to curves if possible."""
+        snap = self.snap_to_curves(context)
+        if snap:
+            self.is_snapped = True
+            return Vector((snap.x, snap.y, 0))
+        
+        self.is_snapped = False
+        if self.hit_location:
+            return Vector((self.hit_location.x, self.hit_location.y, 0))
+        return Vector((0, 0, 0))
+    
     def get_default_typing_target(self):
         return hb_placement.TypingTarget.LENGTH
     
     def on_typed_value_changed(self):
-        if self.typed_value and self.current_line and self.has_start_point:
+        if self.typed_value and self.polyline and self.point_count > 0:
             parsed = self.parse_typed_distance()
             if parsed is not None:
-                self._update_line_from_length(parsed)
+                self._update_preview_from_length(parsed)
         self.update_header(bpy.context)
     
     def apply_typed_value(self):
         parsed = self.parse_typed_distance()
-        if parsed is not None and self.current_line and self.has_start_point:
-            self._update_line_from_length(parsed)
-            self._confirm_line()
+        if parsed is not None and self.polyline and self.point_count > 0:
+            self._update_preview_from_length(parsed)
+            self._confirm_point()
         self.stop_typing()
     
-    def _update_line_from_length(self, length: float):
-        """Update line end point based on typed length and current angle."""
-        if self.start_point:
-            end_x = self.start_point.x + math.cos(self.ortho_angle) * length
-            end_y = self.start_point.y + math.sin(self.ortho_angle) * length
+    def _update_preview_from_length(self, length: float):
+        """Update preview point based on typed length and current angle."""
+        if self.current_point:
+            end_x = self.current_point.x + math.cos(self.ortho_angle) * length
+            end_y = self.current_point.y + math.sin(self.ortho_angle) * length
             end_point = Vector((end_x, end_y, 0))
-            self.current_line.set_points(self.start_point, end_point)
+            self._set_preview_point(end_point)
     
-    def create_line(self, context):
-        """Create a new line object."""
-        self.current_line = hb_details.GeoNodeLine()
-        self.current_line.create("Line")
-        self.register_placement_object(self.current_line.obj)
+    def _set_preview_point(self, point: Vector):
+        """Set the preview (last) point of the polyline."""
+        if self.polyline and self.polyline.obj:
+            spline = self.polyline.obj.data.splines[0]
+            idx = len(spline.points) - 1
+            spline.points[idx].co = (point.x, point.y, 0, 1)
     
-    def _set_line_from_mouse(self):
-        """Update line based on mouse position."""
-        if not self.has_start_point or not self.hit_location:
+    def _get_preview_point(self) -> Vector:
+        """Get the current preview point position."""
+        if self.polyline and self.polyline.obj:
+            spline = self.polyline.obj.data.splines[0]
+            idx = len(spline.points) - 1
+            co = spline.points[idx].co
+            return Vector((co[0], co[1], co[2]))
+        return Vector((0, 0, 0))
+    
+    def _get_segment_length(self) -> float:
+        """Get the length of the current segment (from last confirmed to preview)."""
+        if self.current_point:
+            preview = self._get_preview_point()
+            return (preview - self.current_point).length
+        return 0.0
+    
+    def create_polyline(self, context):
+        """Create a new polyline object."""
+        self.polyline = hb_details.GeoNodePolyline()
+        self.polyline.create("Line")
+        self.register_placement_object(self.polyline.obj)
+        self.point_count = 0
+        self.current_point = None
+    
+    def _update_from_mouse(self):
+        """Update preview point based on mouse position."""
+        if self.point_count == 0 or not self.hit_location:
             return
         
+        # Check for snap first
+        snap = self.snap_to_curves(bpy.context)
+        if snap:
+            self.is_snapped = True
+            end_point = Vector((snap.x, snap.y, 0))
+            # When snapped, skip ortho calculation
+            if self.current_point:
+                dx = end_point.x - self.current_point.x
+                dy = end_point.y - self.current_point.y
+                self.ortho_angle = math.atan2(dy, dx)
+            self._set_preview_point(end_point)
+            return
+        
+        self.is_snapped = False
         end_point = Vector(self.hit_location)
         end_point.z = 0  # Keep in XY plane
         
-        if self.ortho_mode:
-            # Calculate angle from start to mouse
-            dx = end_point.x - self.start_point.x
-            dy = end_point.y - self.start_point.y
+        if self.ortho_mode and self.current_point:
+            # Calculate angle from last point to mouse
+            dx = end_point.x - self.current_point.x
+            dy = end_point.y - self.current_point.y
             
             if abs(dx) < 0.0001 and abs(dy) < 0.0001:
                 return
@@ -143,42 +237,56 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             length = math.sqrt(dx * dx + dy * dy)
             
             # Recalculate end point on snapped angle
-            end_point.x = self.start_point.x + math.cos(self.ortho_angle) * length
-            end_point.y = self.start_point.y + math.sin(self.ortho_angle) * length
+            end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
+            end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
         else:
-            # Free angle - just use mouse position
-            dx = end_point.x - self.start_point.x
-            dy = end_point.y - self.start_point.y
-            self.ortho_angle = math.atan2(dy, dx)
+            # Free angle
+            if self.current_point:
+                dx = end_point.x - self.current_point.x
+                dy = end_point.y - self.current_point.y
+                self.ortho_angle = math.atan2(dy, dx)
         
-        self.current_line.set_points(self.start_point, end_point)
+        self._set_preview_point(end_point)
     
-    def _confirm_line(self):
-        """Confirm current line and prepare for next."""
-        if self.current_line and self.current_line.obj:
-            # Remove from cancel list (it's confirmed)
-            if self.current_line.obj in self.placement_objects:
-                self.placement_objects.remove(self.current_line.obj)
+    def _confirm_point(self):
+        """Confirm the current preview point and add a new preview point."""
+        if self.polyline and self.polyline.obj:
+            # The current preview point becomes confirmed
+            self.current_point = self._get_preview_point().copy()
+            self.point_count += 1
             
-            # Update start point to end of line
-            spline = self.current_line.obj.data.splines[0]
-            end_co = spline.points[1].co
-            self.start_point = Vector((end_co[0], end_co[1], 0))
-            
-            # Create next line
-            self.create_line(bpy.context)
+            # Add a new point for the next preview (starts at same position)
+            self.polyline.add_point(self.current_point)
+    
+    def _finalize(self):
+        """Finalize the polyline by removing the trailing preview point."""
+        if self.polyline and self.polyline.obj and self.point_count > 0:
+            spline = self.polyline.obj.data.splines[0]
+            # If we have more points than confirmed, remove the preview
+            if len(spline.points) > self.point_count:
+                # Unfortunately Blender doesn't allow removing spline points directly
+                # So we need to recreate the spline with fewer points
+                points_data = [(p.co[0], p.co[1], p.co[2]) for p in spline.points[:self.point_count]]
+                
+                # Clear and recreate
+                self.polyline.obj.data.splines.clear()
+                new_spline = self.polyline.obj.data.splines.new('POLY')
+                new_spline.points.add(len(points_data) - 1)
+                for i, (x, y, z) in enumerate(points_data):
+                    new_spline.points[i].co = (x, y, z, 1)
     
     def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
         if self.placement_state == hb_placement.PlacementState.TYPING:
-            text = f"Line Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
-        elif self.has_start_point:
-            length = self.current_line.get_length()
+            text = f"Segment Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+        elif self.point_count > 0:
+            length = self._get_segment_length()
             length_str = units.unit_to_string(context.scene.unit_settings, length)
             angle_deg = round(math.degrees(self.ortho_angle))
             mode = "Ortho (45°)" if self.ortho_mode else "Free"
-            text = f"Length: {length_str} | Angle: {angle_deg}° | {mode} | Alt: toggle ortho | Type for exact | Click to place"
+            text = f"Length: {length_str} | Angle: {angle_deg}° | {mode}{snap_text} | Alt: toggle ortho | Type for exact | Right-click to finish"
         else:
-            text = "Click to place first point | Right-click/Esc to cancel"
+            text = f"Click to place first point{snap_text} | Right-click/Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
     
@@ -187,14 +295,15 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.init_placement(context)
         
         # Reset state
-        self.current_line = None
-        self.start_point = None
-        self.has_start_point = False
+        self.polyline = None
+        self.current_point = None
+        self.point_count = 0
         self.ortho_mode = True
         self.ortho_angle = 0.0
+        self.is_snapped = False
         
-        # Create first line
-        self.create_line(context)
+        # Create polyline
+        self.create_polyline(context)
         
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -211,43 +320,55 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             return {'RUNNING_MODAL'}
         
         # Update snap
-        if self.current_line and self.current_line.obj:
-            self.current_line.obj.hide_set(True)
+        if self.polyline and self.polyline.obj:
+            self.polyline.obj.hide_set(True)
         self.update_snap(context, event)
-        if self.current_line and self.current_line.obj:
-            self.current_line.obj.hide_set(False)
+        if self.polyline and self.polyline.obj:
+            self.polyline.obj.hide_set(False)
         
-        # Update line position
+        # Update preview point position
         if self.placement_state != hb_placement.PlacementState.TYPING:
-            if not self.has_start_point and self.hit_location:
-                # Move line origin to mouse
-                self.current_line.obj.location = self.hit_location
+            if self.point_count == 0:
+                # Before first click, move the initial point to mouse (with snap)
+                pos = self.get_snapped_position(context)
+                self.polyline.set_point(0, pos)
             else:
-                self._set_line_from_mouse()
+                self._update_from_mouse()
         
         self.update_header(context)
         
         # Left click - place point
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if not self.has_start_point:
-                self.start_point = Vector(self.hit_location) if self.hit_location else Vector((0, 0, 0))
-                self.start_point.z = 0
-                self.has_start_point = True
+            if self.point_count == 0:
+                # First point (with snap)
+                start = self.get_snapped_position(context)
+                self.polyline.set_point(0, start)
+                self.current_point = start.copy()
+                self.point_count = 1
                 
-                # Set line start
-                self.current_line.obj.location = (0, 0, 0)
-                self.current_line.set_points(self.start_point, self.start_point)
+                # Add preview point for next segment
+                self.polyline.add_point(start)
             else:
-                self._confirm_line()
+                # Confirm current segment and add new preview
+                self._confirm_point()
             return {'RUNNING_MODAL'}
         
         # Right click - finish
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
-            self.cancel_placement(context)
-            hb_placement.clear_header_text(context)
-            return {'FINISHED'}
+            if self.point_count > 1:
+                # Finalize and keep the polyline
+                self._finalize()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            else:
+                # Not enough points, cancel
+                self.cancel_placement(context)
+                hb_placement.clear_header_text(context)
+                return {'CANCELLED'}
         
-        # Escape - cancel
+        # Escape - cancel everything
         if event.type == 'ESC' and event.value == 'PRESS':
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
@@ -273,7 +394,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
 class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_details.add_dimension"
     bl_label = "Add Dimension"
-    bl_description = "Add a dimension annotation. Click two points, then set offset"
+    bl_description = "Add a dimension annotation. Click two points, then set offset. Snaps to line vertices."
     bl_options = {'UNDO'}
     
     # Dimension state
@@ -282,6 +403,10 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     second_point: Vector = None
     click_count: int = 0
     
+    # Snap indicator
+    snap_point: Vector = None
+    is_snapped: bool = False
+    
     def create_dimension(self, context):
         """Create dimension object."""
         self.dim = hb_types.GeoNodeDimension()
@@ -289,11 +414,67 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         self.dim.obj['IS_2D_ANNOTATION'] = True
         self.register_placement_object(self.dim.obj)
     
+    def get_curve_vertices(self, context) -> list:
+        """Get all curve vertices in the scene as world coordinates."""
+        vertices = []
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and obj != self.dim.obj:
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    for point in spline.points:
+                        # Convert to world coordinates
+                        world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
+                        vertices.append(world_co)
+                    # Also add bezier points if any
+                    for point in spline.bezier_points:
+                        world_co = matrix @ point.co
+                        vertices.append(world_co)
+        return vertices
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        vertices = self.get_curve_vertices(context)
+        if not vertices:
+            return None
+        
+        best_vertex = None
+        best_distance = SNAP_RADIUS
+        
+        for co in vertices:
+            # Project vertex to 2D screen space
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_vertex = co.copy()
+                    best_distance = distance
+        
+        return best_vertex
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position, snapping to curves if possible."""
+        # First try curve snap
+        snap = self.snap_to_curves(context)
+        if snap:
+            self.is_snapped = True
+            self.snap_point = snap
+            return Vector((snap.x, snap.y, 0))
+        
+        # Fall back to grid/raycast hit
+        self.is_snapped = False
+        self.snap_point = None
+        if self.hit_location:
+            return Vector((self.hit_location.x, self.hit_location.y, 0))
+        return Vector((0, 0, 0))
+    
     def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
         if self.click_count == 0:
-            text = "Click first point | Right-click/Esc to cancel"
+            text = f"Click first point{snap_text} | Right-click/Esc to cancel"
         elif self.click_count == 1:
-            text = "Click second point | Right-click/Esc to cancel"
+            text = f"Click second point{snap_text} | Right-click/Esc to cancel"
         else:
             text = "Move to set offset, then click to place | Right-click/Esc to cancel"
         
@@ -306,6 +487,8 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         self.first_point = None
         self.second_point = None
         self.click_count = 0
+        self.snap_point = None
+        self.is_snapped = False
         
         self.create_dimension(context)
         
@@ -318,15 +501,19 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
         
-        # Update snap
+        # Update base snap (for grid/floor)
         if self.dim and self.dim.obj:
             self.dim.obj.hide_set(True)
         self.update_snap(context, event)
         if self.dim and self.dim.obj:
             self.dim.obj.hide_set(False)
         
-        hit = Vector(self.hit_location) if self.hit_location else Vector((0, 0, 0))
-        hit.z = 0
+        # Get position with curve snapping (only for first two clicks)
+        if self.click_count < 2:
+            hit = self.get_snapped_position(context)
+        else:
+            hit = Vector(self.hit_location) if self.hit_location else Vector((0, 0, 0))
+            hit.z = 0
         
         # Update dimension based on state
         if self.click_count == 0:
