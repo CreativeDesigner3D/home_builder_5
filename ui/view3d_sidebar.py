@@ -1,5 +1,6 @@
 import bpy
 from .. import hb_layouts
+from .. import hb_details
 
 # =============================================================================
 # HOME BUILDER UI PANELS
@@ -408,6 +409,96 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
                     text="Render", icon='RENDER_STILL')
 
 
+
+# -----------------------------------------------------------------------------
+# PANEL: 2D DETAILS
+# -----------------------------------------------------------------------------
+class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
+    bl_label = "2D Details"
+    bl_idname = "HOME_BUILDER_PT_2d_details"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_order = 4
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
+        
+        # Create new detail button
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator("home_builder_details.create_detail", 
+                    text="New Detail", icon='ADD')
+        
+        # List existing details
+        detail_views = hb_details.DetailView.get_all_detail_views()
+        
+        if detail_views:
+            col = layout.column(align=True)
+            for scene in detail_views:
+                row = col.row(align=True)
+                
+                if scene == context.scene:
+                    row.alert = True
+                
+                op = row.operator("home_builder_layouts.go_to_layout_view",
+                                 text=scene.name, icon='FILE_BLANK')
+                op.scene_name = scene.name
+                
+                op = row.operator("home_builder_details.delete_detail",
+                                 text="", icon='X')
+                op.scene_name = scene.name
+            
+            # Back to model button
+            if is_detail_view:
+                col.separator()
+                main_scenes = [s for s in bpy.data.scenes 
+                              if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
+                if main_scenes:
+                    op = col.operator("home_builder_layouts.go_to_layout_view",
+                                     text="Back to 3D Model", icon='LOOP_BACK')
+                    op.scene_name = main_scenes[0].name
+
+
+# SUBPANEL: Drawing Tools (only visible in detail view)
+class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
+    bl_label = "Drawing Tools"
+    bl_idname = "HOME_BUILDER_PT_2d_details_tools"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_2d_details"
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        col = layout.column(align=True)
+        col.scale_y = 1.2
+        
+        # Line drawing
+        col.operator("home_builder_details.draw_line", 
+                    text="Draw Line", icon='IPO_LINEAR')
+        
+        # Dimension
+        col.operator("home_builder_details.add_dimension", 
+                    text="Add Dimension", icon='DRIVER_DISTANCE')
+        
+        col.separator()
+        
+        # Future tools (placeholders)
+        col.label(text="More tools coming soon:", icon='INFO')
+        row = col.row(align=True)
+        row.enabled = False
+        row.operator("home_builder_details.draw_line", text="Rectangle")
+        row.operator("home_builder_details.draw_line", text="Circle")
+
+
 # -----------------------------------------------------------------------------
 # PANEL 5: ANNOTATIONS
 # -----------------------------------------------------------------------------
@@ -417,7 +508,7 @@ class HOME_BUILDER_PT_annotations(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Home Builder'
-    bl_order = 4
+    bl_order = 5
     bl_options = {'DEFAULT_CLOSED'}
     
     def draw(self, context):
@@ -443,7 +534,7 @@ class HOME_BUILDER_PT_settings(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Home Builder'
-    bl_order = 5
+    bl_order = 6
     bl_options = {'DEFAULT_CLOSED'}
     
     def draw(self, context):
@@ -474,6 +565,8 @@ classes = (
     HOME_BUILDER_MT_layout_views_create,
     # HOME_BUILDER_PT_layout_views_create,
     HOME_BUILDER_PT_layout_views_settings,
+    HOME_BUILDER_PT_2d_details,
+    HOME_BUILDER_PT_2d_details_tools,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_settings,
 )

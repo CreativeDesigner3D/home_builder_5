@@ -389,6 +389,92 @@ The dimension is created using `GeoNodeDimension` with:
 - `Leader Length` input defines offset from measurement points
 - Rotation aligns dimension to view plane
 
+
+---
+
+## 2D Details System
+
+The 2D Details system allows creating AutoCAD-style detail drawings for cabinet construction details, sections, and annotations.
+
+### Creating a Detail Scene
+```python
+from . import hb_details
+
+# Create a new detail view
+detail = hb_details.DetailView()
+scene = detail.create("Door Section")
+```
+
+### Detail Scene Properties
+Detail scenes are tagged with both `IS_LAYOUT_VIEW` and `IS_DETAIL_VIEW` markers. They use an orthographic camera looking down at the XY plane.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `IS_DETAIL_VIEW` | bool | Scene is a 2D detail drawing |
+| `IS_LAYOUT_VIEW` | bool | Also set for UI compatibility |
+| `PAPER_SIZE` | string | Paper size (LETTER, LEGAL, etc.) |
+| `PAPER_LANDSCAPE` | bool | Landscape orientation |
+
+### Drawing Lines
+```python
+from . import hb_details
+from mathutils import Vector
+from .units import inch
+
+# Create a simple line
+line = hb_details.GeoNodeLine()
+line.create("My Line")
+line.set_points(Vector((0, 0, 0)), Vector((inch(24), 0, 0)))
+
+# Get line length
+length = line.get_length()
+```
+
+### Drawing Polylines
+```python
+from . import hb_details
+from mathutils import Vector
+
+# Create a polyline (multi-segment line)
+poly = hb_details.GeoNodePolyline()
+poly.create("Outline")
+
+# Add points
+poly.set_point(0, Vector((0, 0, 0)))
+poly.add_point(Vector((1, 0, 0)))
+poly.add_point(Vector((1, 1, 0)))
+poly.add_point(Vector((0, 1, 0)))
+
+# Close the shape
+poly.close()
+```
+
+### Detail Object Markers
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `IS_DETAIL_LINE` | bool | Object is a detail line |
+| `IS_DETAIL_POLYLINE` | bool | Object is a detail polyline |
+| `IS_2D_ANNOTATION` | bool | Object is an annotation (dimension) |
+
+### Operators
+
+| Operator ID | Description |
+|-------------|-------------|
+| `home_builder_details.create_detail` | Create a new detail scene |
+| `home_builder_details.delete_detail` | Delete a detail scene |
+| `home_builder_details.draw_line` | Modal line drawing operator |
+| `home_builder_details.add_dimension` | Add dimension annotation |
+
+### Line Drawing Modal
+The line drawing operator (`home_builder_details.draw_line`) works similarly to wall drawing:
+- Click to place first point
+- Move mouse to set angle and length
+- Type a number for exact length
+- Click to confirm and start next line
+- Alt toggles between ortho (45°) and free angle modes
+- Right-click or Escape to finish
+
 ---
 
 ## Coding Conventions

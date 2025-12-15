@@ -8,6 +8,7 @@ from .operators import walls
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
+from .operators import details
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -130,6 +131,7 @@ def register():
     walls.register()
     layouts.register()
     rooms.register()
+    details.register()
     doors_windows.register()
     ops.register()
     view3d_sidebar.register()
@@ -148,6 +150,7 @@ def unregister():
     walls.unregister()
     layouts.unregister()
     rooms.unregister()
+    details.unregister()
     doors_windows.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
