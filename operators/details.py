@@ -492,6 +492,823 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
 
 
 # =============================================================================
+# RECTANGLE DRAWING OPERATOR
+# =============================================================================
+
+class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_details.draw_rectangle"
+    bl_label = "Draw Rectangle"
+    bl_description = "Draw a rectangle by clicking two corners or typing dimensions. Snaps to existing vertices."
+    bl_options = {'UNDO'}
+    
+    # Rectangle state
+    polyline: hb_details.GeoNodePolyline = None
+    first_corner: Vector = None
+    has_first_corner: bool = False
+    
+    # Typed dimensions
+    typed_width: str = ""
+    typed_height: str = ""
+    typing_width: bool = False  # True = typing width, False = typing height
+    is_typing: bool = False
+    
+    # Current dimensions (for display and rectangle update)
+    current_width: float = 0.0
+    current_height: float = 0.0
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
+    
+    def get_curve_vertices(self, context) -> list:
+        """Get all curve vertices in the scene as world coordinates."""
+        vertices = []
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    for point in spline.points:
+                        world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
+                        vertices.append(world_co)
+                    for point in spline.bezier_points:
+                        world_co = matrix @ point.co
+                        vertices.append(world_co)
+        return vertices
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        vertices = self.get_curve_vertices(context)
+        if not vertices:
+            return None
+        
+        best_vertex = None
+        best_distance = SNAP_RADIUS
+        
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_vertex = co.copy()
+                    best_distance = distance
+        
+        return best_vertex
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position, snapping to curves if possible."""
+        from bpy_extras import view3d_utils
+        
+        snap = self.snap_to_curves(context)
+        if snap:
+            self.is_snapped = True
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((snap.x, snap.y, 0))
+        
+        self.is_snapped = False
+        if self.hit_location:
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((self.hit_location.x, self.hit_location.y, 0))
+        
+        self.snap_screen_pos = None
+        return Vector((0, 0, 0))
+    
+    def create_rectangle(self, context):
+        """Create a new rectangle polyline object."""
+        self.polyline = hb_details.GeoNodePolyline()
+        self.polyline.create("Rectangle")
+        self.register_placement_object(self.polyline.obj)
+        
+        # Add 3 more points (total 4 for rectangle)
+        self.polyline.add_point(Vector((0, 0, 0)))
+        self.polyline.add_point(Vector((0, 0, 0)))
+        self.polyline.add_point(Vector((0, 0, 0)))
+        
+        # Close the rectangle
+        self.polyline.close()
+    
+    def update_rectangle_from_corners(self, second_corner: Vector):
+        """Update rectangle points based on two corners."""
+        if not self.first_corner or not self.polyline:
+            return
+        
+        x1, y1 = self.first_corner.x, self.first_corner.y
+        x2, y2 = second_corner.x, second_corner.y
+        
+        # Store current dimensions
+        self.current_width = abs(x2 - x1)
+        self.current_height = abs(y2 - y1)
+        
+        # Set the 4 corners (counter-clockwise from first corner)
+        self.polyline.set_point(0, Vector((x1, y1, 0)))  # First corner
+        self.polyline.set_point(1, Vector((x2, y1, 0)))  # Bottom-right
+        self.polyline.set_point(2, Vector((x2, y2, 0)))  # Second corner (opposite)
+        self.polyline.set_point(3, Vector((x1, y2, 0)))  # Top-left
+    
+    def update_rectangle_from_dimensions(self, width: float, height: float):
+        """Update rectangle based on typed dimensions."""
+        if not self.first_corner or not self.polyline:
+            return
+        
+        x1, y1 = self.first_corner.x, self.first_corner.y
+        x2 = x1 + width
+        y2 = y1 + height
+        
+        self.current_width = width
+        self.current_height = height
+        
+        # Set the 4 corners
+        self.polyline.set_point(0, Vector((x1, y1, 0)))
+        self.polyline.set_point(1, Vector((x2, y1, 0)))
+        self.polyline.set_point(2, Vector((x2, y2, 0)))
+        self.polyline.set_point(3, Vector((x1, y2, 0)))
+    
+    def parse_dimension(self, value_str: str) -> float:
+        """Parse a typed dimension string to meters. Returns 0.0 if parsing fails."""
+        if not value_str:
+            return 0.0
+        result = self.parse_typed_distance(value_str)
+        return result if result is not None else 0.0
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        
+        if not self.has_first_corner:
+            text = f"Click first corner{snap_text} | Right-click/Esc to cancel"
+        elif self.is_typing:
+            if self.typing_width:
+                text = f"Width: {self.typed_width}_ | Tab for height | Enter to confirm | Esc to cancel"
+            else:
+                width_str = units.unit_to_string(context.scene.unit_settings, self.parse_dimension(self.typed_width) or self.current_width)
+                text = f"Width: {width_str} | Height: {self.typed_height}_ | Enter to confirm | Esc to cancel"
+        else:
+            width_str = units.unit_to_string(context.scene.unit_settings, self.current_width)
+            height_str = units.unit_to_string(context.scene.unit_settings, self.current_height)
+            text = f"Width: {width_str} | Height: {height_str}{snap_text} | Type for exact size | Click to place"
+        
+        hb_placement.draw_header_text(context, text)
+    
+    def handle_typing(self, event) -> bool:
+        """Handle keyboard input for typing dimensions. Returns True if event was consumed."""
+        # Number keys to start or continue typing
+        if event.type in hb_placement.NUMBER_KEYS and event.value == 'PRESS':
+            if not self.is_typing:
+                # Start typing width
+                self.is_typing = True
+                self.typing_width = True
+                self.typed_width = hb_placement.NUMBER_KEYS[event.type]
+                self.typed_height = ""
+            elif self.typing_width:
+                self.typed_width += hb_placement.NUMBER_KEYS[event.type]
+            else:
+                self.typed_height += hb_placement.NUMBER_KEYS[event.type]
+            
+            # Update rectangle preview
+            self._update_from_typed()
+            return True
+        
+        if not self.is_typing:
+            return False
+        
+        # Backspace
+        if event.type == 'BACK_SPACE' and event.value == 'PRESS':
+            if self.typing_width:
+                if self.typed_width:
+                    self.typed_width = self.typed_width[:-1]
+                else:
+                    # Exit typing mode
+                    self.is_typing = False
+            else:
+                if self.typed_height:
+                    self.typed_height = self.typed_height[:-1]
+                else:
+                    # Go back to typing width
+                    self.typing_width = True
+            self._update_from_typed()
+            return True
+        
+        # Tab - switch between width and height
+        if event.type == 'TAB' and event.value == 'PRESS':
+            if self.typing_width:
+                self.typing_width = False
+            else:
+                self.typing_width = True
+            return True
+        
+        # Enter - confirm
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            width = self.parse_dimension(self.typed_width)
+            height = self.parse_dimension(self.typed_height)
+            
+            if width > 0 and height > 0:
+                self.update_rectangle_from_dimensions(width, height)
+                return False  # Let modal handle the finish
+            elif width > 0 and not self.typed_height:
+                # Only width typed, switch to height
+                self.typing_width = False
+                return True
+            return True
+        
+        # Escape - cancel typing
+        if event.type == 'ESC' and event.value == 'PRESS':
+            self.is_typing = False
+            self.typed_width = ""
+            self.typed_height = ""
+            return True
+        
+        return False
+    
+    def _update_from_typed(self):
+        """Update rectangle from currently typed values."""
+        width = self.parse_dimension(self.typed_width) if self.typed_width else self.current_width
+        height = self.parse_dimension(self.typed_height) if self.typed_height else self.current_height
+        
+        # Ensure we have valid numbers (parse_dimension can return 0.0 for incomplete input like ".")
+        width = width or 0.0
+        height = height or 0.0
+        
+        if width > 0 or height > 0:
+            self.update_rectangle_from_dimensions(
+                width if width > 0 else 0.1,
+                height if height > 0 else 0.1
+            )
+    
+    def execute(self, context):
+        # Initialize placement
+        self.init_placement(context)
+        
+        # Reset state
+        self.polyline = None
+        self.first_corner = None
+        self.has_first_corner = False
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        self.typed_width = ""
+        self.typed_height = ""
+        self.typing_width = False
+        self.is_typing = False
+        self.current_width = 0.0
+        self.current_height = 0.0
+        
+        # Add draw handler for snap indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create rectangle
+        self.create_rectangle(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Handle typing input first (only after first corner is placed)
+        if self.has_first_corner and self.handle_typing(event):
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Check if we should finish after Enter with valid dimensions
+        if self.has_first_corner and event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            width = self.parse_dimension(self.typed_width) if self.typed_width else 0
+            height = self.parse_dimension(self.typed_height) if self.typed_height else 0
+            
+            if width > 0 and height > 0:
+                self.update_rectangle_from_dimensions(width, height)
+                self._remove_draw_handler()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+        
+        # Update snap (only if not typing)
+        if not self.is_typing:
+            if self.polyline and self.polyline.obj:
+                self.polyline.obj.hide_set(True)
+            self.update_snap(context, event)
+            if self.polyline and self.polyline.obj:
+                self.polyline.obj.hide_set(False)
+            
+            # Get current position with snapping
+            current_pos = self.get_snapped_position(context)
+            
+            # Update rectangle preview
+            if not self.has_first_corner:
+                # Before first click, show rectangle at cursor (zero size)
+                self.polyline.set_point(0, current_pos)
+                self.polyline.set_point(1, current_pos)
+                self.polyline.set_point(2, current_pos)
+                self.polyline.set_point(3, current_pos)
+            else:
+                # After first click, update rectangle from first corner to cursor
+                self.update_rectangle_from_corners(current_pos)
+        
+        self.update_header(context)
+        
+        # Left click - place corner
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if not self.has_first_corner:
+                # Set first corner
+                current_pos = self.get_snapped_position(context)
+                self.first_corner = current_pos.copy()
+                self.has_first_corner = True
+                self.update_rectangle_from_corners(current_pos)
+            elif not self.is_typing:
+                # Confirm rectangle (only if not currently typing)
+                self._remove_draw_handler()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Right click / Escape - cancel (if not typing)
+        if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        if event.type == 'ESC' and event.value == 'PRESS' and not self.is_typing:
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
+# =============================================================================
+# CIRCLE DRAWING OPERATOR
+# =============================================================================
+
+class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_details.draw_circle"
+    bl_label = "Draw Circle"
+    bl_description = "Draw a circle by clicking center then setting radius. Type for exact size."
+    bl_options = {'UNDO'}
+    
+    # Circle state
+    circle: hb_details.GeoNodeCircle = None
+    center: Vector = None
+    has_center: bool = False
+    
+    # Typed radius
+    typed_radius: str = ""
+    is_typing: bool = False
+    
+    # Current radius for display
+    current_radius: float = 0.0
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
+    
+    def get_curve_vertices(self, context) -> list:
+        """Get all curve vertices in the scene as world coordinates."""
+        vertices = []
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and (not self.circle or obj != self.circle.obj):
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    for point in spline.points:
+                        world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
+                        vertices.append(world_co)
+                    for point in spline.bezier_points:
+                        world_co = matrix @ point.co
+                        vertices.append(world_co)
+        return vertices
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        vertices = self.get_curve_vertices(context)
+        if not vertices:
+            return None
+        
+        best_vertex = None
+        best_distance = SNAP_RADIUS
+        
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_vertex = co.copy()
+                    best_distance = distance
+        
+        return best_vertex
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position, snapping to curves if possible."""
+        from bpy_extras import view3d_utils
+        
+        snap = self.snap_to_curves(context)
+        if snap:
+            self.is_snapped = True
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((snap.x, snap.y, 0))
+        
+        self.is_snapped = False
+        if self.hit_location:
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((self.hit_location.x, self.hit_location.y, 0))
+        
+        self.snap_screen_pos = None
+        return Vector((0, 0, 0))
+    
+    def create_circle(self, context):
+        """Create a new circle object."""
+        self.circle = hb_details.GeoNodeCircle()
+        self.circle.create("Circle")
+        self.circle.obj.color = (0, 0, 0, 1)  # Ensure black color
+        self.circle.set_radius(0.001)  # Start very small
+        self.register_placement_object(self.circle.obj)
+    
+    def parse_radius(self, value_str: str) -> float:
+        """Parse a typed radius string to meters. Returns 0.0 if parsing fails."""
+        if not value_str:
+            return 0.0
+        result = self.parse_typed_distance(value_str)
+        return result if result is not None else 0.0
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        
+        if not self.has_center:
+            text = f"Click to place center{snap_text} | Right-click/Esc to cancel"
+        elif self.is_typing:
+            text = f"Radius: {self.typed_radius}_ | Enter to confirm | Esc to cancel typing"
+        else:
+            radius_str = units.unit_to_string(context.scene.unit_settings, self.current_radius)
+            diameter_str = units.unit_to_string(context.scene.unit_settings, self.current_radius * 2)
+            text = f"Radius: {radius_str} | Diameter: {diameter_str}{snap_text} | Type for exact | Click to place"
+        
+        hb_placement.draw_header_text(context, text)
+    
+    def handle_typing(self, event) -> bool:
+        """Handle keyboard input for typing radius. Returns True if event was consumed."""
+        # Number keys to start or continue typing
+        if event.type in hb_placement.NUMBER_KEYS and event.value == 'PRESS':
+            if not self.is_typing:
+                self.is_typing = True
+                self.typed_radius = hb_placement.NUMBER_KEYS[event.type]
+            else:
+                self.typed_radius += hb_placement.NUMBER_KEYS[event.type]
+            
+            # Update circle preview
+            radius = self.parse_radius(self.typed_radius)
+            if radius > 0:
+                self.circle.set_radius(radius)
+                self.current_radius = radius
+            return True
+        
+        if not self.is_typing:
+            return False
+        
+        # Backspace
+        if event.type == 'BACK_SPACE' and event.value == 'PRESS':
+            if self.typed_radius:
+                self.typed_radius = self.typed_radius[:-1]
+                radius = self.parse_radius(self.typed_radius)
+                if radius > 0:
+                    self.circle.set_radius(radius)
+                    self.current_radius = radius
+            else:
+                self.is_typing = False
+            return True
+        
+        # Enter - confirm
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            radius = self.parse_radius(self.typed_radius)
+            if radius > 0:
+                self.circle.set_radius(radius)
+                self.current_radius = radius
+                return False  # Let modal handle the finish
+            return True
+        
+        # Escape - cancel typing
+        if event.type == 'ESC' and event.value == 'PRESS':
+            self.is_typing = False
+            self.typed_radius = ""
+            return True
+        
+        return False
+    
+    def execute(self, context):
+        # Initialize placement
+        self.init_placement(context)
+        
+        # Reset state
+        self.circle = None
+        self.center = None
+        self.has_center = False
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        self.typed_radius = ""
+        self.is_typing = False
+        self.current_radius = 0.0
+        
+        # Add draw handler for snap indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create circle
+        self.create_circle(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Handle typing input first (only after center is placed)
+        if self.has_center and self.handle_typing(event):
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Check if we should finish after Enter with valid radius
+        if self.has_center and event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            radius = self.parse_radius(self.typed_radius) if self.typed_radius else self.current_radius
+            if radius > 0:
+                self.circle.set_radius(radius)
+                self._remove_draw_handler()
+                if self.circle.obj in self.placement_objects:
+                    self.placement_objects.remove(self.circle.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+        
+        # Update snap (only if not typing)
+        if not self.is_typing:
+            if self.circle and self.circle.obj:
+                self.circle.obj.hide_set(True)
+            self.update_snap(context, event)
+            if self.circle and self.circle.obj:
+                self.circle.obj.hide_set(False)
+            
+            # Get current position with snapping
+            current_pos = self.get_snapped_position(context)
+            
+            # Update circle preview
+            if not self.has_center:
+                # Before center click, move circle to cursor
+                self.circle.set_center(current_pos)
+            else:
+                # After center click, update radius from cursor distance
+                dx = current_pos.x - self.center.x
+                dy = current_pos.y - self.center.y
+                radius = math.sqrt(dx * dx + dy * dy)
+                if radius > 0.001:
+                    self.circle.set_radius(radius)
+                    self.current_radius = radius
+        
+        self.update_header(context)
+        
+        # Left click - place center or confirm
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if not self.has_center:
+                # Set center
+                current_pos = self.get_snapped_position(context)
+                self.center = current_pos.copy()
+                self.circle.set_center(self.center)
+                self.has_center = True
+            elif not self.is_typing:
+                # Confirm circle (only if not currently typing)
+                if self.current_radius > 0.001:
+                    self._remove_draw_handler()
+                    if self.circle.obj in self.placement_objects:
+                        self.placement_objects.remove(self.circle.obj)
+                    hb_placement.clear_header_text(context)
+                    return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Right click / Escape - cancel (if not typing)
+        if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        if event.type == 'ESC' and event.value == 'PRESS' and not self.is_typing:
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
+# =============================================================================
+# TEXT ANNOTATION OPERATOR
+# =============================================================================
+
+class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_details.add_text"
+    bl_label = "Add Text"
+    bl_description = "Add text annotation. Click to place, then Tab to edit."
+    bl_options = {'UNDO'}
+    
+    # Text state
+    text_obj: hb_details.GeoNodeText = None
+    
+    # Text size (default 1/2" for cabinet drawings)
+    text_size: float = 0.0127  # 1/2 inch in meters
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
+    
+    def get_curve_vertices(self, context) -> list:
+        """Get all curve vertices in the scene as world coordinates."""
+        vertices = []
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE':
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    for point in spline.points:
+                        world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
+                        vertices.append(world_co)
+                    for point in spline.bezier_points:
+                        world_co = matrix @ point.co
+                        vertices.append(world_co)
+        return vertices
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        vertices = self.get_curve_vertices(context)
+        if not vertices:
+            return None
+        
+        best_vertex = None
+        best_distance = SNAP_RADIUS
+        
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_vertex = co.copy()
+                    best_distance = distance
+        
+        return best_vertex
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position, snapping to curves if possible."""
+        from bpy_extras import view3d_utils
+        
+        snap = self.snap_to_curves(context)
+        if snap:
+            self.is_snapped = True
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((snap.x, snap.y, 0))
+        
+        self.is_snapped = False
+        if self.hit_location:
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            return Vector((self.hit_location.x, self.hit_location.y, 0))
+        
+        self.snap_screen_pos = None
+        return Vector((0, 0, 0))
+    
+    def create_text(self, context):
+        """Create a new text object."""
+        self.text_obj = hb_details.GeoNodeText()
+        self.text_obj.create("Text", "TEXT", self.text_size)
+        self.register_placement_object(self.text_obj.obj)
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        text = f"Click to place text{snap_text} | Tab to edit after placing | Right-click/Esc to cancel"
+        hb_placement.draw_header_text(context, text)
+    
+    def execute(self, context):
+        # Initialize placement
+        self.init_placement(context)
+        
+        # Reset state
+        self.text_obj = None
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        
+        # Add draw handler for snap indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create text object
+        self.create_text(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Update snap
+        if self.text_obj and self.text_obj.obj:
+            self.text_obj.obj.hide_set(True)
+        self.update_snap(context, event)
+        if self.text_obj and self.text_obj.obj:
+            self.text_obj.obj.hide_set(False)
+        
+        # Get current position with snapping
+        current_pos = self.get_snapped_position(context)
+        
+        # Update text position
+        self.text_obj.set_location(current_pos)
+        
+        self.update_header(context)
+        
+        # Left click - place text
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            current_pos = self.get_snapped_position(context)
+            self.text_obj.set_location(current_pos)
+            
+            # Select the text object so user can Tab to edit
+            bpy.ops.object.select_all(action='DESELECT')
+            self.text_obj.obj.select_set(True)
+            context.view_layer.objects.active = self.text_obj.obj
+            
+            self._remove_draw_handler()
+            if self.text_obj.obj in self.placement_objects:
+                self.placement_objects.remove(self.text_obj.obj)
+            hb_placement.clear_header_text(context)
+            return {'FINISHED'}
+        
+        # Right click / Escape - cancel
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
+# =============================================================================
 # DIMENSION OPERATOR (2D Detail specific)
 # =============================================================================
 
@@ -723,6 +1540,9 @@ classes = (
     home_builder_details_OT_create_detail,
     home_builder_details_OT_delete_detail,
     home_builder_details_OT_draw_line,
+    home_builder_details_OT_draw_rectangle,
+    home_builder_details_OT_draw_circle,
+    home_builder_details_OT_add_text,
     home_builder_details_OT_add_dimension,
 )
 

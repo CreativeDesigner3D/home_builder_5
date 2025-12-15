@@ -206,3 +206,134 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
         """Close the polyline to form a closed shape."""
         if self.obj and self.obj.type == 'CURVE':
             self.obj.data.splines[0].use_cyclic_u = True
+
+
+class GeoNodeCircle(hb_types.GeoNodeObject):
+    """Circle shape for 2D details."""
+    
+    SEGMENTS = 32  # Number of segments for smooth circle
+    
+    def create(self, name: str = "Circle", radius: float = 1.0):
+        """Create a circle as a closed curve."""
+        import math
+        
+        # Create curve data
+        curve_data = bpy.data.curves.new(name, 'CURVE')
+        curve_data.dimensions = '2D'
+        
+        # Create object
+        self.obj = bpy.data.objects.new(name, curve_data)
+        self.obj['IS_DETAIL_CIRCLE'] = True
+        self.obj.color = (0, 0, 0, 1)
+        
+        bpy.context.scene.collection.objects.link(self.obj)
+        
+        # Create circular spline
+        spline = curve_data.splines.new('POLY')
+        spline.points.add(self.SEGMENTS - 1)  # Already has 1 point
+        
+        # Set points in a circle at the given radius
+        for i in range(self.SEGMENTS):
+            angle = 2 * math.pi * i / self.SEGMENTS
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+            spline.points[i].co = (x, y, 0, 1)
+        
+        # Close the circle
+        spline.use_cyclic_u = True
+        
+        # Set up material (black line) - match GeoNodeLine approach
+        mat = bpy.data.materials.new(f"{name}_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        curve_data.materials.append(mat)
+        
+        # Set bevel for line thickness
+        curve_data.bevel_depth = 0.002
+        
+        # Store radius for later reference
+        self._radius = radius
+        
+        return self.obj
+    
+    def set_radius(self, radius: float):
+        """Set the circle radius by updating all points."""
+        import math
+        
+        if self.obj and self.obj.type == 'CURVE':
+            spline = self.obj.data.splines[0]
+            for i in range(len(spline.points)):
+                angle = 2 * math.pi * i / len(spline.points)
+                x = radius * math.cos(angle)
+                y = radius * math.sin(angle)
+                spline.points[i].co = (x, y, 0, 1)
+            self._radius = radius
+    
+    def set_center(self, center):
+        """Set the circle center location."""
+        if self.obj:
+            self.obj.location = (center[0], center[1], 0)
+    
+    def get_radius(self) -> float:
+        """Get the current radius."""
+        return getattr(self, '_radius', 1.0)
+
+class GeoNodeText(hb_types.GeoNodeObject):
+    """Text annotation for 2D details."""
+    
+    def create(self, name: str = "Text", text: str = "Text", size: float = 0.05):
+        """Create a text object."""
+        # Create font/text data
+        text_data = bpy.data.curves.new(name, 'FONT')
+        text_data.body = text
+        text_data.size = size
+        text_data.align_x = 'LEFT'
+        text_data.align_y = 'BOTTOM'
+        
+        # Create object
+        self.obj = bpy.data.objects.new(name, text_data)
+        self.obj['IS_DETAIL_TEXT'] = True
+        self.obj.color = (0, 0, 0, 1)
+        
+        bpy.context.scene.collection.objects.link(self.obj)
+        
+        # Create black material
+        mat = bpy.data.materials.new(f"{name}_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        text_data.materials.append(mat)
+        
+        # Set extrude for visibility (thin 3D text)
+        text_data.extrude = 0.001
+        
+        return self.obj
+    
+    def set_text(self, text: str):
+        """Set the text content."""
+        if self.obj and self.obj.type == 'FONT':
+            self.obj.data.body = text
+    
+    def get_text(self) -> str:
+        """Get the current text content."""
+        if self.obj and self.obj.type == 'FONT':
+            return self.obj.data.body
+        return ""
+    
+    def set_size(self, size: float):
+        """Set the text size."""
+        if self.obj and self.obj.type == 'FONT':
+            self.obj.data.size = size
+    
+    def set_location(self, location):
+        """Set the text location."""
+        if self.obj:
+            self.obj.location = (location[0], location[1], 0)
+    
+    def set_alignment(self, align_x: str = 'LEFT', align_y: str = 'BOTTOM'):
+        """Set text alignment. 
+        align_x: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY', 'FLUSH'
+        align_y: 'TOP', 'TOP_BASELINE', 'MIDDLE', 'BOTTOM_BASELINE', 'BOTTOM'
+        """
+        if self.obj and self.obj.type == 'FONT':
+            self.obj.data.align_x = align_x
+            self.obj.data.align_y = align_y

@@ -485,18 +485,23 @@ class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
         col.operator("home_builder_details.draw_line", 
                     text="Draw Line", icon='IPO_LINEAR')
         
-        # Dimension
-        col.operator("home_builder_details.add_dimension", 
-                    text="Add Dimension", icon='DRIVER_DISTANCE')
+        # Rectangle drawing
+        col.operator("home_builder_details.draw_rectangle", 
+                    text="Draw Rectangle", icon='MESH_PLANE')
+        
+        # Circle drawing
+        col.operator("home_builder_details.draw_circle", 
+                    text="Draw Circle", icon='MESH_CIRCLE')
         
         col.separator()
         
-        # Future tools (placeholders)
-        col.label(text="More tools coming soon:", icon='INFO')
-        row = col.row(align=True)
-        row.enabled = False
-        row.operator("home_builder_details.draw_line", text="Rectangle")
-        row.operator("home_builder_details.draw_line", text="Circle")
+        # Text annotation
+        col.operator("home_builder_details.add_text", 
+                    text="Add Text", icon='FONT_DATA')
+        
+        # Dimension
+        col.operator("home_builder_details.add_dimension", 
+                    text="Add Dimension", icon='DRIVER_DISTANCE')
 
 
 # -----------------------------------------------------------------------------
