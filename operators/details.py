@@ -13,6 +13,62 @@ SNAP_RADIUS = 20
 
 
 # =============================================================================
+# SNAP INDICATOR DRAWING
+# =============================================================================
+
+def draw_snap_indicator(self, context):
+    """Draw visual feedback for snapping - green circle when snapped, yellow when not."""
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    import math
+    
+    if not hasattr(self, 'snap_screen_pos') or self.snap_screen_pos is None:
+        return
+    
+    x, y = self.snap_screen_pos
+    
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(2.0)
+    
+    if self.is_snapped:
+        # Green circle for snapped point
+        color = (0.0, 1.0, 0.0, 1.0)
+        radius = 10
+    else:
+        # Yellow circle for unsnapped point  
+        color = (1.0, 1.0, 0.0, 0.8)
+        radius = 6
+    
+    # Draw circle
+    segments = 32
+    circle_verts = []
+    for i in range(segments + 1):
+        angle = 2 * math.pi * i / segments
+        cx = x + radius * math.cos(angle)
+        cy = y + radius * math.sin(angle)
+        circle_verts.append((cx, cy))
+    
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": circle_verts})
+    batch.draw(shader)
+    
+    # Draw crosshair inside circle if snapped
+    if self.is_snapped:
+        cross_size = 6
+        cross_verts = [
+            (x - cross_size, y), (x + cross_size, y),
+            (x, y - cross_size), (x, y + cross_size),
+        ]
+        batch = batch_for_shader(shader, 'LINES', {"pos": cross_verts})
+        batch.draw(shader)
+    
+    gpu.state.blend_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
+# =============================================================================
 # DETAIL SCENE OPERATORS
 # =============================================================================
 
@@ -92,6 +148,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     # Snap state
     is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
     
     def get_curve_vertices(self, context) -> list:
         """Get all curve vertices in the scene as world coordinates."""
@@ -131,14 +191,24 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
+        from bpy_extras import view3d_utils
+        
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
+            # Store screen position for visual indicator
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             return Vector((snap.x, snap.y, 0))
         
         self.is_snapped = False
         if self.hit_location:
+            # Store screen position for visual indicator
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             return Vector((self.hit_location.x, self.hit_location.y, 0))
+        
+        self.snap_screen_pos = None
         return Vector((0, 0, 0))
     
     def get_default_typing_target(self):
@@ -199,6 +269,8 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def _update_from_mouse(self):
         """Update preview point based on mouse position."""
+        from bpy_extras import view3d_utils
+        
         if self.point_count == 0 or not self.hit_location:
             return
         
@@ -207,6 +279,9 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         if snap:
             self.is_snapped = True
             end_point = Vector((snap.x, snap.y, 0))
+            # Store screen position for visual indicator
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             # When snapped, skip ortho calculation
             if self.current_point:
                 dx = end_point.x - self.current_point.x
@@ -218,6 +293,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.is_snapped = False
         end_point = Vector(self.hit_location)
         end_point.z = 0  # Keep in XY plane
+        
+        # Store screen position for visual indicator (unsnapped)
+        screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, end_point)
+        self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
         
         if self.ortho_mode and self.current_point:
             # Calculate angle from last point to mouse
@@ -239,6 +318,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             # Recalculate end point on snapped angle
             end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
             end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
+            
+            # Update screen position after ortho adjustment
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, end_point)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
         else:
             # Free angle
             if self.current_point:
@@ -258,6 +341,12 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             # Add a new point for the next preview (starts at same position)
             self.polyline.add_point(self.current_point)
     
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
     def _finalize(self):
         """Finalize the polyline by removing the trailing preview point."""
         if self.polyline and self.polyline.obj and self.point_count > 0:
@@ -274,6 +363,12 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
                 new_spline.points.add(len(points_data) - 1)
                 for i, (x, y, z) in enumerate(points_data):
                     new_spline.points[i].co = (x, y, z, 1)
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
     
     def update_header(self, context):
         snap_text = " [SNAP]" if self.is_snapped else ""
@@ -301,6 +396,12 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.ortho_mode = True
         self.ortho_angle = 0.0
         self.is_snapped = False
+        self.snap_screen_pos = None
+        
+        # Add draw handler for snap indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
         
         # Create polyline
         self.create_polyline(context)
@@ -310,6 +411,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def modal(self, context, event):
         context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
         
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
@@ -330,7 +432,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         if self.placement_state != hb_placement.PlacementState.TYPING:
             if self.point_count == 0:
                 # Before first click, move the initial point to mouse (with snap)
-                pos = self.get_snapped_position(context)
+                pos = self.get_snapped_position(context)  # This also updates snap_screen_pos
                 self.polyline.set_point(0, pos)
             else:
                 self._update_from_mouse()
@@ -355,6 +457,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         
         # Right click - finish
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
             if self.point_count > 1:
                 # Finalize and keep the polyline
                 self._finalize()
@@ -370,6 +473,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         
         # Escape - cancel everything
         if event.type == 'ESC' and event.value == 'PRESS':
+            self._remove_draw_handler()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
@@ -406,6 +510,10 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     # Snap indicator
     snap_point: Vector = None
     is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
     
     def create_dimension(self, context):
         """Create dimension object."""
@@ -455,19 +563,35 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
+        from bpy_extras import view3d_utils
+        
         # First try curve snap
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
             self.snap_point = snap
+            # Store screen position for visual indicator
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             return Vector((snap.x, snap.y, 0))
         
         # Fall back to grid/raycast hit
         self.is_snapped = False
         self.snap_point = None
         if self.hit_location:
+            # Store screen position for visual indicator
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             return Vector((self.hit_location.x, self.hit_location.y, 0))
+        
+        self.snap_screen_pos = None
         return Vector((0, 0, 0))
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
     
     def update_header(self, context):
         snap_text = " [SNAP]" if self.is_snapped else ""
@@ -489,6 +613,12 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         self.click_count = 0
         self.snap_point = None
         self.is_snapped = False
+        self.snap_screen_pos = None
+        
+        # Add draw handler for snap indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
         
         self.create_dimension(context)
         
@@ -497,6 +627,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     
     def modal(self, context, event):
         context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
         
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
@@ -543,11 +674,13 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
                 offset = perp.length
                 
                 # Determine sign based on which side of line
+                # Cross product Z component: positive = left side, negative = right side
                 cross = line_dir.x * to_hit.y - line_dir.y * to_hit.x
                 if cross < 0:
                     offset = -offset
                 
-                self.dim.set_input("Leader Length", abs(offset))
+                # Allow negative leader length for dimensions on either side
+                self.dim.set_input("Leader Length", offset)
         
         self.update_header(context)
         
@@ -562,6 +695,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
                 self.click_count = 2
             else:
                 # Confirm dimension
+                self._remove_draw_handler()
                 if self.dim.obj in self.placement_objects:
                     self.placement_objects.remove(self.dim.obj)
                 hb_placement.clear_header_text(context)
@@ -570,6 +704,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         
         # Right click / Escape - cancel
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._remove_draw_handler()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}

@@ -431,8 +431,8 @@ class GeoNodeDimension(GeoNodeObject):
     def create(self,name):
         super().create_curve('GeoNodeDimension',name)
         self.obj['IS_2D_ANNOTATION'] = True  
-        self.set_input("Arrow Height",units.inch(1.4))
-        self.set_input("Arrow Length",units.inch(1.8))
+        self.set_input("Tick Length",units.inch(1.4))
+        self.set_input("Tick Thickness",units.inch(.1))
         self.set_input("Line Thickness",units.inch(.1))
         self.set_input("Extend Line",units.inch(1))
         self.set_input("Text Size",units.inch(3))
