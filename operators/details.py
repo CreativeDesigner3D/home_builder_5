@@ -5,6 +5,7 @@ from .. import hb_details
 from .. import hb_types
 from .. import hb_snap
 from .. import hb_placement
+from .. import hb_detail_library
 from .. import units
 
 
@@ -2830,6 +2831,144 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
 # REGISTRATION
 # =============================================================================
 
+# =============================================================================
+# DETAIL LIBRARY OPERATORS
+# =============================================================================
+
+class home_builder_details_OT_save_detail_to_library(bpy.types.Operator):
+    bl_idname = "home_builder_details.save_to_library"
+    bl_label = "Save Detail to Library"
+    bl_description = "Save the current detail to your user library"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    name: bpy.props.StringProperty(
+        name="Name",
+        description="Name for this detail in the library",
+        default="My Detail"
+    )
+    
+    description: bpy.props.StringProperty(
+        name="Description",
+        description="Optional description",
+        default=""
+    )
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def invoke(self, context, event):
+        # Default name from scene name
+        scene_name = context.scene.name
+        if scene_name != "Detail":
+            self.name = scene_name
+        return context.window_manager.invoke_props_dialog(self, width=300)
+    
+    def execute(self, context):
+        success, message, filepath = hb_detail_library.save_detail_to_library(
+            context, self.name, self.description
+        )
+        
+        if success:
+            self.report({'INFO'}, message)
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+        
+        return {'FINISHED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "name")
+        layout.prop(self, "description")
+
+
+class home_builder_details_OT_load_detail_from_library(bpy.types.Operator):
+    bl_idname = "home_builder_details.load_from_library"
+    bl_label = "Load Detail from Library"
+    bl_description = "Load a detail from your user library"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filepath: bpy.props.StringProperty(
+        name="Filepath",
+        description="Path to the detail file",
+        default=""
+    )
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def execute(self, context):
+        if not self.filepath:
+            self.report({'ERROR'}, "No file specified")
+            return {'CANCELLED'}
+        
+        success, message, objects = hb_detail_library.load_detail_from_library(
+            context, self.filepath
+        )
+        
+        if success:
+            self.report({'INFO'}, message)
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+        
+        return {'FINISHED'}
+
+
+class home_builder_details_OT_delete_library_detail(bpy.types.Operator):
+    bl_idname = "home_builder_details.delete_library_detail"
+    bl_label = "Delete Library Detail"
+    bl_description = "Delete a detail from your user library"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filename: bpy.props.StringProperty(
+        name="Filename",
+        description="Filename of the detail to delete",
+        default=""
+    )
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+    
+    def execute(self, context):
+        if not self.filename:
+            self.report({'ERROR'}, "No file specified")
+            return {'CANCELLED'}
+        
+        success, message = hb_detail_library.delete_detail_from_library(self.filename)
+        
+        if success:
+            self.report({'INFO'}, message)
+        else:
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+        
+        return {'FINISHED'}
+
+
+class home_builder_details_OT_open_library_folder(bpy.types.Operator):
+    bl_idname = "home_builder_details.open_library_folder"
+    bl_label = "Open Library Folder"
+    bl_description = "Open the detail library folder in file explorer"
+    
+    def execute(self, context):
+        import subprocess
+        import sys
+        
+        library_path = hb_detail_library.get_user_library_path()
+        
+        if sys.platform == 'win32':
+            subprocess.Popen(['explorer', library_path])
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', library_path])
+        else:
+            subprocess.Popen(['xdg-open', library_path])
+        
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_details_OT_create_detail,
     home_builder_details_OT_delete_detail,
@@ -2840,6 +2979,10 @@ classes = (
     home_builder_details_OT_add_fillet,
     home_builder_details_OT_offset_curve,
     home_builder_details_OT_add_dimension,
+    home_builder_details_OT_save_detail_to_library,
+    home_builder_details_OT_load_detail_from_library,
+    home_builder_details_OT_delete_library_detail,
+    home_builder_details_OT_open_library_folder,
 )
 
 

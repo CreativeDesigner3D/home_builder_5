@@ -520,6 +520,63 @@ class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
                         text="Offset Curve", icon='MOD_OFFSET')
 
 
+# SUBPANEL: Detail Library (only visible in detail view)
+class HOME_BUILDER_PT_2d_details_library(bpy.types.Panel):
+    bl_label = "Detail Library"
+    bl_idname = "HOME_BUILDER_PT_2d_details_library"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_2d_details"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def draw(self, context):
+        from .. import hb_detail_library
+        
+        layout = self.layout
+        
+        # Save current detail button
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator("home_builder_details.save_to_library", 
+                    text="Save Detail to Library", icon='FILE_NEW')
+        
+        layout.separator()
+        
+        # List saved details
+        details = hb_detail_library.get_library_details()
+        
+        if details:
+            box = layout.box()
+            box.label(text=f"Saved Details ({len(details)}):", icon='FILE_FOLDER')
+            
+            for detail in details:
+                row = box.row(align=True)
+                
+                # Load button
+                op = row.operator("home_builder_details.load_from_library",
+                                 text=detail.get("name", "Unnamed"), 
+                                 icon='IMPORT')
+                op.filepath = detail.get("filepath", "")
+                
+                # Delete button
+                op = row.operator("home_builder_details.delete_library_detail",
+                                 text="", icon='X')
+                op.filename = detail.get("filename", "")
+        else:
+            layout.label(text="No saved details", icon='INFO')
+        
+        layout.separator()
+        
+        # Open folder button
+        layout.operator("home_builder_details.open_library_folder",
+                       text="Open Library Folder", icon='FILE_FOLDER')
+
+
 # -----------------------------------------------------------------------------
 # PANEL 5: ANNOTATIONS
 # -----------------------------------------------------------------------------
@@ -588,6 +645,7 @@ classes = (
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_2d_details,
     HOME_BUILDER_PT_2d_details_tools,
+    HOME_BUILDER_PT_2d_details_library,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_settings,
 )
