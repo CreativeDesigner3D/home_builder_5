@@ -378,8 +378,9 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             length = self._get_segment_length()
             length_str = units.unit_to_string(context.scene.unit_settings, length)
             angle_deg = round(math.degrees(self.ortho_angle))
-            mode = "Ortho (45°)" if self.ortho_mode else "Free"
-            text = f"Length: {length_str} | Angle: {angle_deg}° | {mode}{snap_text} | Alt: toggle ortho | Type for exact | Right-click to finish"
+            mode = "Ortho" if self.ortho_mode else "Free"
+            close_text = " | C: close" if self.point_count >= 2 else ""
+            text = f"Length: {length_str} | {angle_deg}° | {mode}{snap_text} | Alt: ortho{close_text} | Right-click: finish"
         else:
             text = f"Click to place first point{snap_text} | Right-click/Esc to cancel"
         
@@ -470,6 +471,23 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
                 self.cancel_placement(context)
                 hb_placement.clear_header_text(context)
                 return {'CANCELLED'}
+        
+        # C key - close the shape
+        if event.type == 'C' and event.value == 'PRESS':
+            if self.point_count >= 2:
+                # Need at least 2 points to close
+                self._remove_draw_handler()
+                self._finalize()
+                
+                # Close the polyline
+                if self.polyline and self.polyline.obj:
+                    self.polyline.obj.data.splines[0].use_cyclic_u = True
+                
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
         
         # Escape - cancel everything
         if event.type == 'ESC' and event.value == 'PRESS':
