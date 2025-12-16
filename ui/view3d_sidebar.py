@@ -22,8 +22,9 @@ class HOME_BUILDER_PT_rooms(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        # Get all room scenes (non-layout scenes)
-        room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
+        # Get all room scenes (non-layout and non-detail scenes)
+        room_scenes = [s for s in bpy.data.scenes 
+                      if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
         
         col = layout.column(align=True)
         for scene in room_scenes:
@@ -259,13 +260,19 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
                                  text="", icon='X')
                 op.scene_name = scene.name
             
-            # Back to model button
-            col.separator()
-            main_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
-            if main_scenes and is_layout_view:
-                op = col.operator("home_builder_layouts.go_to_layout_view",
-                                 text="Back to 3D Model", icon='LOOP_BACK')
-                op.scene_name = main_scenes[0].name
+            # Back to room button(s)
+            if is_layout_view:
+                col.separator()
+                room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
+                
+                if len(room_scenes) == 1:
+                    # Single room - direct button
+                    op = col.operator("home_builder_layouts.go_to_layout_view",
+                                     text="Back to Room", icon='LOOP_BACK')
+                    op.scene_name = room_scenes[0].name
+                elif len(room_scenes) > 1:
+                    # Multiple rooms - show menu
+                    col.menu("HOME_BUILDER_MT_room_list", text="Go Back to Room", icon='LOOP_BACK')
         else:
             layout.label(text="No layout views yet", icon='INFO')
 
@@ -293,6 +300,21 @@ class HOME_BUILDER_MT_layout_views_create(bpy.types.Menu):
         layout.separator()
         layout.operator("home_builder_layouts.create_multi_view", 
                     text="Multi-View Layout", icon='OUTLINER_OB_GROUP_INSTANCE')
+
+
+class HOME_BUILDER_MT_room_list(bpy.types.Menu):
+    """Menu to select which room to return to"""
+    bl_label = "Select Room"
+
+    def draw(self, context):
+        layout = self.layout
+        room_scenes = [s for s in bpy.data.scenes 
+                      if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
+        
+        for scene in room_scenes:
+            op = layout.operator("home_builder_layouts.go_to_layout_view",
+                               text=scene.name, icon='HOME')
+            op.scene_name = scene.name
 
 
 # SUBPANEL: Create Layout Views
@@ -442,15 +464,19 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
                                  text="", icon='X')
                 op.scene_name = scene.name
             
-            # Back to model button
+            # Back to room button(s)
             if is_detail_view:
                 col.separator()
-                main_scenes = [s for s in bpy.data.scenes 
-                              if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
-                if main_scenes:
+                room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
+                
+                if len(room_scenes) == 1:
+                    # Single room - direct button
                     op = col.operator("home_builder_layouts.go_to_layout_view",
-                                     text="Back to 3D Model", icon='LOOP_BACK')
-                    op.scene_name = main_scenes[0].name
+                                     text="Back to Room", icon='LOOP_BACK')
+                    op.scene_name = room_scenes[0].name
+                elif len(room_scenes) > 1:
+                    # Multiple rooms - show menu
+                    col.menu("HOME_BUILDER_MT_room_list", text="Go Back to Room", icon='LOOP_BACK')
 
 
 # SUBPANEL: Drawing Tools (only visible in detail view)
@@ -632,6 +658,7 @@ classes = (
     HOME_BUILDER_PT_product_library,
     HOME_BUILDER_PT_layout_views,
     HOME_BUILDER_MT_layout_views_create,
+    HOME_BUILDER_MT_room_list,
     # HOME_BUILDER_PT_layout_views_create,
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_2d_details,
