@@ -29,12 +29,12 @@ class HOME_BUILDER_PT_rooms(bpy.types.Panel):
         for scene in room_scenes:
             row = col.row(align=True)
             
-            # Highlight current scene
-            if scene == context.scene:
-                row.alert = True
+            # Use checkbox icon for selection state
+            is_selected = scene == context.scene
+            icon = 'CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT'
             
             # Switch button
-            op = row.operator("home_builder.switch_room", text=scene.name, icon='HOME')
+            op = row.operator("home_builder.switch_room", text=scene.name, icon=icon)
             op.scene_name = scene.name
             
             # Delete button (only if more than one room)
@@ -243,19 +243,9 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
             for scene in layout_views:
                 row = col.row(align=True)
                 
-                if scene.get('IS_ELEVATION_VIEW'):
-                    icon = 'VIEW_ORTHO'
-                elif scene.get('IS_PLAN_VIEW'):
-                    icon = 'MESH_GRID'
-                elif scene.get('IS_3D_VIEW'):
-                    icon = 'VIEW_PERSPECTIVE'
-                elif scene.get('IS_MULTI_VIEW'):
-                    icon = 'OUTLINER_OB_GROUP_INSTANCE'
-                else:
-                    icon = 'RENDERLAYERS'
-                
-                if scene == context.scene:
-                    row.alert = True
+                # Use checkbox icon for selection state
+                is_selected = scene == context.scene
+                icon = 'CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT'
                 
                 op = row.operator("home_builder_layouts.go_to_layout_view",
                                  text=scene.name, icon=icon)
@@ -440,11 +430,12 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
             for scene in detail_views:
                 row = col.row(align=True)
                 
-                if scene == context.scene:
-                    row.alert = True
+                # Use checkbox icon for selection state
+                is_selected = scene == context.scene
+                icon = 'CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT'
                 
                 op = row.operator("home_builder_layouts.go_to_layout_view",
-                                 text=scene.name, icon='FILE_BLANK')
+                                 text=scene.name, icon=icon)
                 op.scene_name = scene.name
                 
                 op = row.operator("home_builder_details.delete_detail",
