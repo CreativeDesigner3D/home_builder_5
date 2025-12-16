@@ -1563,6 +1563,11 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         default='LEFT',
     )
     
+    # Store references for live preview
+    _source_obj = None
+    _preview_obj = None
+    _was_edit_mode = False
+    
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -1571,21 +1576,60 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         return context.mode in {'OBJECT', 'EDIT_CURVE'}
     
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-    
-    def execute(self, context):
-        import math
-        
-        obj = context.active_object
+        self._source_obj = context.active_object
         
         # If in edit mode, go to object mode
+        self._was_edit_mode = (context.mode == 'EDIT_CURVE')
+        if self._was_edit_mode:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        
+        # Create initial preview
+        self._create_preview(context)
+        
+        return context.window_manager.invoke_props_dialog(self)
+    
+    def check(self, context):
+        """Called when properties change - update the preview."""
+        self._update_preview(context)
+        return True  # Redraw the UI
+    
+    def cancel(self, context):
+        """Called when dialog is cancelled - remove preview."""
+        self._remove_preview(context)
+        
+        if self._was_edit_mode:
+            bpy.ops.object.mode_set(mode='EDIT')
+    
+    def execute(self, context):
+        # If preview exists (from invoke), keep it as the result
+        if self._preview_obj:
+            # Deselect source, select the offset result
+            if self._source_obj:
+                self._source_obj.select_set(False)
+            
+            self._preview_obj.select_set(True)
+            context.view_layer.objects.active = self._preview_obj
+            
+            # Clear references
+            self._preview_obj = None
+            self._source_obj = None
+            
+            if self._was_edit_mode:
+                bpy.ops.object.mode_set(mode='EDIT')
+            
+            return {'FINISHED'}
+        
+        # Direct execution (not through invoke) - create the offset now
+        obj = context.active_object
+        if not obj or obj.type != 'CURVE':
+            self.report({'WARNING'}, "No curve selected")
+            return {'CANCELLED'}
+        
         was_edit_mode = (context.mode == 'EDIT_CURVE')
         if was_edit_mode:
             bpy.ops.object.mode_set(mode='OBJECT')
         
         curve = obj.data
-        
-        # Process each spline
         new_splines_data = []
         
         for spline in curve.splines:
@@ -1599,11 +1643,8 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
             if num_points < 2:
                 continue
             
-            # Get point coordinates
             coords = [Vector((p.co[0], p.co[1], 0)) for p in points]
-            
-            # Calculate offset points
-            offset_coords = self.calculate_offset(coords, is_cyclic)
+            offset_coords = self._calculate_offset(coords, is_cyclic)
             
             if offset_coords:
                 new_splines_data.append({
@@ -1617,7 +1658,7 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
                 bpy.ops.object.mode_set(mode='EDIT')
             return {'CANCELLED'}
         
-        # Create new curve object with offset splines
+        # Create new curve
         new_curve = bpy.data.curves.new(f"{obj.name}_Offset", 'CURVE')
         new_curve.dimensions = '2D'
         
@@ -1641,22 +1682,19 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         
         context.scene.collection.objects.link(new_obj)
         
-        # Copy material from original
+        # Copy or create material
         if curve.materials:
-            mat = curve.materials[0]
-            new_curve.materials.append(mat)
+            new_curve.materials.append(curve.materials[0])
         else:
-            # Create black material
             mat = bpy.data.materials.new(f"{new_obj.name}_Mat")
             mat.use_nodes = True
             mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
             new_curve.materials.append(mat)
         
-        # Set bevel
         new_curve.bevel_depth = curve.bevel_depth if curve.bevel_depth > 0 else 0.002
         
         # Select new object
-        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(False)
         new_obj.select_set(True)
         context.view_layer.objects.active = new_obj
         
@@ -1665,7 +1703,124 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         
         return {'FINISHED'}
     
-    def calculate_offset(self, coords, is_cyclic):
+    def _create_preview(self, context):
+        """Create the preview offset curve."""
+        if not self._source_obj:
+            return
+        
+        obj = self._source_obj
+        curve = obj.data
+        
+        # Calculate offset for all splines
+        new_splines_data = []
+        
+        for spline in curve.splines:
+            if spline.type != 'POLY':
+                continue
+            
+            points = spline.points
+            num_points = len(points)
+            is_cyclic = spline.use_cyclic_u
+            
+            if num_points < 2:
+                continue
+            
+            coords = [Vector((p.co[0], p.co[1], 0)) for p in points]
+            offset_coords = self._calculate_offset(coords, is_cyclic)
+            
+            if offset_coords:
+                new_splines_data.append({
+                    'points': offset_coords,
+                    'cyclic': is_cyclic
+                })
+        
+        if not new_splines_data:
+            return
+        
+        # Create new curve object
+        new_curve = bpy.data.curves.new(f"{obj.name}_Offset", 'CURVE')
+        new_curve.dimensions = '2D'
+        
+        for spline_data in new_splines_data:
+            new_spline = new_curve.splines.new('POLY')
+            pts = spline_data['points']
+            new_spline.points.add(len(pts) - 1)
+            
+            for i, pt in enumerate(pts):
+                new_spline.points[i].co = (pt.x, pt.y, 0, 1)
+            
+            new_spline.use_cyclic_u = spline_data['cyclic']
+        
+        # Create object
+        self._preview_obj = bpy.data.objects.new(f"{obj.name}_Offset", new_curve)
+        self._preview_obj.location = obj.location.copy()
+        self._preview_obj.rotation_euler = obj.rotation_euler.copy()
+        self._preview_obj.scale = obj.scale.copy()
+        self._preview_obj.color = (0, 0, 0, 1)
+        self._preview_obj['IS_DETAIL_POLYLINE'] = True
+        
+        context.scene.collection.objects.link(self._preview_obj)
+        
+        # Copy or create material
+        if curve.materials:
+            new_curve.materials.append(curve.materials[0])
+        else:
+            mat = bpy.data.materials.new(f"{self._preview_obj.name}_Mat")
+            mat.use_nodes = True
+            mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+            new_curve.materials.append(mat)
+        
+        new_curve.bevel_depth = curve.bevel_depth if curve.bevel_depth > 0 else 0.002
+    
+    def _update_preview(self, context):
+        """Update the preview with current settings."""
+        if not self._preview_obj or not self._source_obj:
+            return
+        
+        obj = self._source_obj
+        curve = obj.data
+        preview_curve = self._preview_obj.data
+        
+        # Recalculate offset for each spline
+        spline_idx = 0
+        for spline in curve.splines:
+            if spline.type != 'POLY':
+                continue
+            
+            points = spline.points
+            num_points = len(points)
+            is_cyclic = spline.use_cyclic_u
+            
+            if num_points < 2:
+                continue
+            
+            coords = [Vector((p.co[0], p.co[1], 0)) for p in points]
+            offset_coords = self._calculate_offset(coords, is_cyclic)
+            
+            if offset_coords and spline_idx < len(preview_curve.splines):
+                preview_spline = preview_curve.splines[spline_idx]
+                
+                # Update points
+                for i, pt in enumerate(offset_coords):
+                    if i < len(preview_spline.points):
+                        preview_spline.points[i].co = (pt.x, pt.y, 0, 1)
+                
+                spline_idx += 1
+        
+        # Force viewport update
+        self._preview_obj.data.update_tag()
+        context.area.tag_redraw()
+    
+    def _remove_preview(self, context):
+        """Remove the preview object."""
+        if self._preview_obj:
+            # Remove the curve data and object
+            curve_data = self._preview_obj.data
+            bpy.data.objects.remove(self._preview_obj)
+            bpy.data.curves.remove(curve_data)
+            self._preview_obj = None
+    
+    def _calculate_offset(self, coords, is_cyclic):
         """Calculate offset points for a polyline."""
         import math
         
@@ -1680,7 +1835,6 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         offset_points = []
         
         for i in range(num_points):
-            # Get current point and neighbors
             p_curr = coords[i]
             
             if is_cyclic:
@@ -1695,45 +1849,36 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
                 p_next = coords[i + 1] if has_next else None
             
             if has_prev and has_next:
-                # Interior point - calculate bisector offset
                 dir_in = (p_curr - p_prev).normalized()
                 dir_out = (p_next - p_curr).normalized()
                 
-                # Calculate perpendiculars (rotated 90 degrees)
                 perp_in = Vector((-dir_in.y, dir_in.x, 0))
                 perp_out = Vector((-dir_out.y, dir_out.x, 0))
                 
-                # Average perpendicular (bisector direction)
                 bisector = (perp_in + perp_out).normalized()
                 
-                # Calculate the miter length
-                # The miter length accounts for the angle between segments
                 dot = perp_in.dot(bisector)
                 if abs(dot) > 0.001:
                     miter_length = offset / dot
                 else:
                     miter_length = offset
                 
-                # Limit miter length to avoid extreme spikes at sharp angles
                 max_miter = abs(offset) * 4
                 miter_length = max(-max_miter, min(max_miter, miter_length))
                 
                 offset_point = p_curr + bisector * miter_length
                 
             elif has_prev:
-                # End point - offset perpendicular to incoming edge
                 dir_in = (p_curr - p_prev).normalized()
                 perp = Vector((-dir_in.y, dir_in.x, 0))
                 offset_point = p_curr + perp * offset
                 
             elif has_next:
-                # Start point - offset perpendicular to outgoing edge
                 dir_out = (p_next - p_curr).normalized()
                 perp = Vector((-dir_out.y, dir_out.x, 0))
                 offset_point = p_curr + perp * offset
                 
             else:
-                # Single point - can't offset
                 offset_point = p_curr
             
             offset_points.append(offset_point)
