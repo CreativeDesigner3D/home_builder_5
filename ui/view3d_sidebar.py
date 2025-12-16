@@ -509,6 +509,15 @@ class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
             col.label(text="Edit Tools:")
             col.operator("home_builder_details.add_fillet", 
                         text="Add Fillet/Radius", icon='SPHERECURVE')
+            col.operator("home_builder_details.offset_curve", 
+                        text="Offset Curve", icon='MOD_OFFSET')
+        
+        # Object mode curve tools
+        elif context.mode == 'OBJECT' and context.active_object and context.active_object.type == 'CURVE':
+            col.separator()
+            col.label(text="Curve Tools:")
+            col.operator("home_builder_details.offset_curve", 
+                        text="Offset Curve", icon='MOD_OFFSET')
 
 
 # -----------------------------------------------------------------------------
