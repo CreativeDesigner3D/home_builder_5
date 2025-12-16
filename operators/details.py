@@ -134,7 +134,7 @@ class home_builder_details_OT_delete_detail(bpy.types.Operator):
 class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_details.draw_line"
     bl_label = "Draw Line"
-    bl_description = "Draw a 2D polyline. Click to place points, type for exact length. Snaps to existing vertices."
+    bl_description = "Draw a 2D polyline. Click to place points, type for exact length. Snaps to vertices and perpendicular points."
     bl_options = {'UNDO'}
     
     # Polyline state
@@ -146,16 +146,35 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     ortho_mode: bool = True
     ortho_angle: float = 0.0
     
+    # Angle lock state
+    angle_locked: bool = False  # When True, line angle is locked
+    locked_angle: float = 0.0  # The locked angle value
+    
+    # Tracking state (extend line to align with snap point's X or Y)
+    tracking_point: Vector = None  # The reference point we're tracking to
+    is_tracking: bool = False  # True when extending to align with a tracked point
+    
     # Snap state
     is_snapped: bool = False
+    is_perp_snap: bool = False  # True when snapped to perpendicular foot
     snap_screen_pos: tuple = None
     
     # Draw handler
     _handle = None
     
     def get_curve_vertices(self, context) -> list:
-        """Get all curve vertices in the scene as world coordinates."""
+        """Get all curve vertices in the scene as world coordinates, including current line's confirmed points."""
         vertices = []
+        
+        # Add confirmed points from current polyline (excluding preview point)
+        if self.polyline and self.polyline.obj and self.point_count > 0:
+            spline = self.polyline.obj.data.splines[0]
+            for i in range(self.point_count):
+                if i < len(spline.points):
+                    pt = spline.points[i]
+                    vertices.append(Vector((pt.co[0], pt.co[1], pt.co[2])))
+        
+        # Add vertices from other curves
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -168,16 +187,162 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
                         vertices.append(world_co)
         return vertices
     
-    def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+    def get_curve_segments(self, context) -> list:
+        """Get all curve segments as (start, end) tuples, including current line's confirmed segments."""
+        segments = []
+        
+        # Add confirmed segments from current polyline
+        if self.polyline and self.polyline.obj and self.point_count > 1:
+            spline = self.polyline.obj.data.splines[0]
+            for i in range(self.point_count - 1):
+                if i + 1 < len(spline.points):
+                    p1 = Vector((spline.points[i].co[0], spline.points[i].co[1], 0))
+                    p2 = Vector((spline.points[i+1].co[0], spline.points[i+1].co[1], 0))
+                    segments.append((p1, p2))
+        
+        # Add segments from other curves
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    points = spline.points
+                    num_pts = len(points)
+                    for i in range(num_pts - 1):
+                        p1 = matrix @ Vector((points[i].co[0], points[i].co[1], points[i].co[2]))
+                        p2 = matrix @ Vector((points[i+1].co[0], points[i+1].co[1], points[i+1].co[2]))
+                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                    
+                    # If cyclic, add closing segment
+                    if spline.use_cyclic_u and num_pts > 1:
+                        p1 = matrix @ Vector((points[-1].co[0], points[-1].co[1], points[-1].co[2]))
+                        p2 = matrix @ Vector((points[0].co[0], points[0].co[1], points[0].co[2]))
+                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+        
+        return segments
+    
+    def get_perpendicular_foot(self, point: Vector, seg_start: Vector, seg_end: Vector) -> tuple:
+        """
+        Calculate the perpendicular foot from a point to a line segment.
+        Returns (foot_point, distance, t) where t is the parameter along the segment (0-1).
+        Returns None if the foot is outside the segment.
+        """
+        seg_vec = seg_end - seg_start
+        seg_len_sq = seg_vec.length_squared
+        
+        if seg_len_sq < 0.00001:
+            return None
+        
+        # Calculate parameter t
+        t = (point - seg_start).dot(seg_vec) / seg_len_sq
+        
+        # Check if foot is within segment (with small tolerance)
+        if t < -0.01 or t > 1.01:
+            return None
+        
+        # Clamp t to segment
+        t = max(0, min(1, t))
+        
+        # Calculate foot point
+        foot = seg_start + seg_vec * t
+        distance = (point - foot).length
+        
+        return (foot, distance, t)
+    
+    def find_nearest_perp_snap(self, context, point: Vector) -> tuple:
+        """
+        Find the nearest perpendicular foot point on any segment.
+        Returns (foot_point, segment) or (None, None) if none found within snap radius.
+        """
+        from bpy_extras import view3d_utils
+        
+        segments = self.get_curve_segments(context)
+        if not segments:
+            return (None, None)
+        
+        best_foot = None
+        best_segment = None
+        best_screen_dist = SNAP_RADIUS
+        
+        for seg_start, seg_end in segments:
+            result = self.get_perpendicular_foot(point, seg_start, seg_end)
+            if result:
+                foot, _, t = result
+                
+                # Skip if foot is at the segment endpoints (we snap to vertices for those)
+                if t < 0.05 or t > 0.95:
+                    continue
+                
+                # Check screen distance
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, foot)
+                if foot_2d:
+                    screen_dist = (foot_2d - self.mouse_pos).length
+                    if screen_dist < best_screen_dist:
+                        best_screen_dist = screen_dist
+                        best_foot = foot
+                        best_segment = (seg_start, seg_end)
+        
+        return (best_foot, best_segment)
+    
+    def find_nearest_segment_angle(self, context) -> float:
+        """
+        Find the angle of the nearest line segment for perpendicular constraint.
+        Returns the perpendicular angle (segment angle + 90 degrees).
+        """
+        from bpy_extras import view3d_utils
+        
+        if not self.hit_location:
+            return 0.0
+        
+        point = Vector((self.hit_location.x, self.hit_location.y, 0))
+        segments = self.get_curve_segments(context)
+        
+        if not segments:
+            return 0.0
+        
+        best_segment = None
+        best_dist = float('inf')
+        
+        for seg_start, seg_end in segments:
+            # Get distance from point to segment
+            result = self.get_perpendicular_foot(point, seg_start, seg_end)
+            if result:
+                _, dist, _ = result
+                if dist < best_dist:
+                    best_dist = dist
+                    best_segment = (seg_start, seg_end)
+            else:
+                # Point is outside segment, use distance to nearest endpoint
+                dist1 = (point - seg_start).length
+                dist2 = (point - seg_end).length
+                dist = min(dist1, dist2)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_segment = (seg_start, seg_end)
+        
+        if best_segment:
+            seg_vec = best_segment[1] - best_segment[0]
+            seg_angle = math.atan2(seg_vec.y, seg_vec.x)
+            # Return perpendicular angle
+            return seg_angle + math.pi / 2
+        
+        return 0.0
+    
+    def find_tracking_point(self, context) -> Vector:
+        """
+        Find the nearest vertex for tracking (extension alignment).
+        Returns the point or None if none nearby.
+        """
         from bpy_extras import view3d_utils
         
         vertices = self.get_curve_vertices(context)
         if not vertices:
             return None
         
+        # Use a larger radius for tracking detection
+        TRACKING_RADIUS = SNAP_RADIUS * 2
+        
         best_vertex = None
-        best_distance = SNAP_RADIUS
+        best_distance = TRACKING_RADIUS
         
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
@@ -188,6 +353,140 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
                     best_distance = distance
         
         return best_vertex
+    
+    def calculate_tracking_intersection(self, ref_point: Vector) -> Vector:
+        """
+        Calculate where the current line (at ortho_angle from current_point) 
+        intersects with a horizontal or vertical line through ref_point.
+        Returns the intersection point.
+        """
+        if not self.current_point:
+            return None
+        
+        cos_a = math.cos(self.ortho_angle)
+        sin_a = math.sin(self.ortho_angle)
+        
+        x0, y0 = self.current_point.x, self.current_point.y
+        rx, ry = ref_point.x, ref_point.y
+        
+        # Determine which alignment to use based on angle
+        # Horizontal-ish angles (0°, 180°) -> align X
+        # Vertical-ish angles (90°, 270°) -> align Y
+        # Diagonal angles -> choose based on which gives forward progress
+        
+        angle_deg = math.degrees(self.ortho_angle) % 360
+        
+        t_x = None  # Parameter for X alignment
+        t_y = None  # Parameter for Y alignment
+        
+        # Calculate t for X alignment (vertical line through ref_point)
+        if abs(cos_a) > 0.001:
+            t_x = (rx - x0) / cos_a
+        
+        # Calculate t for Y alignment (horizontal line through ref_point)
+        if abs(sin_a) > 0.001:
+            t_y = (ry - y0) / sin_a
+        
+        # Choose the appropriate t based on angle
+        t = None
+        
+        if t_x is not None and t_y is not None:
+            # Both are valid - choose based on angle
+            # For mostly horizontal (within 45° of horizontal), prefer X alignment
+            # For mostly vertical (within 45° of vertical), prefer Y alignment
+            if abs(cos_a) > abs(sin_a):
+                t = t_x if t_x > 0 else t_y
+            else:
+                t = t_y if t_y > 0 else t_x
+        elif t_x is not None:
+            t = t_x
+        elif t_y is not None:
+            t = t_y
+        
+        if t is not None and t > 0:
+            # Calculate intersection point
+            ix = x0 + t * cos_a
+            iy = y0 + t * sin_a
+            return Vector((ix, iy, 0))
+        
+        return None
+    
+    def project_to_snap_point(self, snap_point: Vector) -> Vector:
+        """
+        Project along locked angle to align with snap point's X or Y coordinate.
+        Returns the projected point on the locked angle line.
+        """
+        if not self.current_point:
+            return None
+        
+        cos_a = math.cos(self.locked_angle)
+        sin_a = math.sin(self.locked_angle)
+        
+        x0, y0 = self.current_point.x, self.current_point.y
+        sx, sy = snap_point.x, snap_point.y
+        
+        # Calculate t for X alignment (where line crosses x = sx)
+        t_x = None
+        if abs(cos_a) > 0.001:
+            t_x = (sx - x0) / cos_a
+        
+        # Calculate t for Y alignment (where line crosses y = sy)
+        t_y = None
+        if abs(sin_a) > 0.001:
+            t_y = (sy - y0) / sin_a
+        
+        # Choose which alignment based on angle
+        # Mostly horizontal -> use X alignment
+        # Mostly vertical -> use Y alignment
+        t = None
+        if abs(cos_a) > abs(sin_a):
+            # Mostly horizontal - align X
+            t = t_x
+        else:
+            # Mostly vertical - align Y
+            t = t_y
+        
+        if t is not None:
+            ix = x0 + t * cos_a
+            iy = y0 + t * sin_a
+            return Vector((ix, iy, 0))
+        
+        return None
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        best_point = None
+        best_distance = SNAP_RADIUS
+        self.is_perp_snap = False
+        
+        # First check vertex snaps (higher priority)
+        vertices = self.get_curve_vertices(context)
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_point = co.copy()
+                    best_distance = distance
+                    self.is_perp_snap = False
+        
+        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
+        if self.hit_location:
+            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
+            
+            if perp_foot:
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
+                if foot_2d:
+                    distance = (foot_2d - self.mouse_pos).length
+                    if distance < best_distance:
+                        best_point = perp_foot.copy()
+                        best_distance = distance
+                        self.is_perp_snap = True
+        
+        return best_point
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
@@ -202,6 +501,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             return Vector((snap.x, snap.y, 0))
         
         self.is_snapped = False
+        self.is_perp_snap = False
         if self.hit_location:
             # Store screen position for visual indicator
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
@@ -274,15 +574,57 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         if self.point_count == 0 or not self.hit_location:
             return
         
-        # Check for snap first
+        # Reset tracking state
+        self.is_tracking = False
+        self.tracking_point = None
+        
+        # When angle is locked, check for snap points and project along locked angle
+        if self.angle_locked and self.current_point:
+            snap = self.snap_to_curves(bpy.context)
+            if snap:
+                # Project along locked angle to align with snap point
+                snap_point = Vector((snap.x, snap.y, 0))
+                projected = self.project_to_snap_point(snap_point)
+                if projected:
+                    self.is_snapped = True
+                    self.is_tracking = True
+                    self.tracking_point = snap_point.copy()
+                    screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, projected)
+                    self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+                    self._set_preview_point(projected)
+                    return
+            
+            # No snap - just extend along locked angle based on mouse distance
+            self.is_snapped = False
+            end_point = Vector(self.hit_location)
+            end_point.z = 0
+            
+            dx = end_point.x - self.current_point.x
+            dy = end_point.y - self.current_point.y
+            
+            # Project mouse position onto locked angle direction
+            cos_a = math.cos(self.locked_angle)
+            sin_a = math.sin(self.locked_angle)
+            
+            # Dot product gives length along locked direction
+            length = dx * cos_a + dy * sin_a
+            
+            end_point.x = self.current_point.x + cos_a * length
+            end_point.y = self.current_point.y + sin_a * length
+            
+            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, end_point)
+            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
+            self._set_preview_point(end_point)
+            return
+        
+        # Normal behavior (not locked)
+        # Check for direct vertex snap first (highest priority)
         snap = self.snap_to_curves(bpy.context)
         if snap:
             self.is_snapped = True
             end_point = Vector((snap.x, snap.y, 0))
-            # Store screen position for visual indicator
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            # When snapped, skip ortho calculation
             if self.current_point:
                 dx = end_point.x - self.current_point.x
                 dy = end_point.y - self.current_point.y
@@ -291,43 +633,35 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             return
         
         self.is_snapped = False
+        self.is_perp_snap = False
         end_point = Vector(self.hit_location)
-        end_point.z = 0  # Keep in XY plane
+        end_point.z = 0
         
-        # Store screen position for visual indicator (unsnapped)
-        screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, end_point)
-        self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-        
-        if self.ortho_mode and self.current_point:
-            # Calculate angle from last point to mouse
+        if self.current_point:
             dx = end_point.x - self.current_point.x
             dy = end_point.y - self.current_point.y
             
             if abs(dx) < 0.0001 and abs(dy) < 0.0001:
                 return
             
-            angle = math.atan2(dy, dx)
-            
-            # Snap to nearest 45 degrees
-            snap_angle = round(math.degrees(angle) / 45) * 45
-            self.ortho_angle = math.radians(snap_angle)
-            
-            # Calculate length
             length = math.sqrt(dx * dx + dy * dy)
             
-            # Recalculate end point on snapped angle
-            end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
-            end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
+            if self.ortho_mode:
+                # Snap to nearest 45 degrees
+                angle = math.atan2(dy, dx)
+                snap_angle = round(math.degrees(angle) / 45) * 45
+                self.ortho_angle = math.radians(snap_angle)
+                
+                # Recalculate end point on snapped angle
+                end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
+                end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
+            else:
+                # Free angle
+                self.ortho_angle = math.atan2(dy, dx)
             
-            # Update screen position after ortho adjustment
+            # Update screen position
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, end_point)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-        else:
-            # Free angle
-            if self.current_point:
-                dx = end_point.x - self.current_point.x
-                dy = end_point.y - self.current_point.y
-                self.ortho_angle = math.atan2(dy, dx)
         
         self._set_preview_point(end_point)
     
@@ -337,6 +671,9 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             # The current preview point becomes confirmed
             self.current_point = self._get_preview_point().copy()
             self.point_count += 1
+            
+            # Unlock angle after placing point
+            self.angle_locked = False
             
             # Add a new point for the next preview (starts at same position)
             self.polyline.add_point(self.current_point)
@@ -371,16 +708,35 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             self._handle = None
     
     def update_header(self, context):
-        snap_text = " [SNAP]" if self.is_snapped else ""
+        # Build snap indicator text
+        if self.is_tracking and self.angle_locked:
+            snap_text = " [LOCK+SNAP]"
+        elif self.angle_locked:
+            snap_text = " [LOCK]"
+        elif self.is_perp_snap:
+            snap_text = " [PERP]"
+        elif self.is_snapped:
+            snap_text = " [SNAP]"
+        else:
+            snap_text = ""
+        
         if self.placement_state == hb_placement.PlacementState.TYPING:
             text = f"Segment Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
         elif self.point_count > 0:
             length = self._get_segment_length()
             length_str = units.unit_to_string(context.scene.unit_settings, length)
-            angle_deg = round(math.degrees(self.ortho_angle))
+            
+            # Show locked angle or current angle
+            if self.angle_locked:
+                angle_deg = round(math.degrees(self.locked_angle))
+            else:
+                angle_deg = round(math.degrees(self.ortho_angle))
+            
             mode = "Ortho" if self.ortho_mode else "Free"
+            
             close_text = " | C: close" if self.point_count >= 2 else ""
-            text = f"Length: {length_str} | {angle_deg}° | {mode}{snap_text} | Alt: ortho{close_text} | Right-click: finish"
+            lock_hint = "L: unlock" if self.angle_locked else "L: lock"
+            text = f"Length: {length_str} | {angle_deg}° | {mode}{snap_text} | {lock_hint}{close_text} | Right-click: finish"
         else:
             text = f"Click to place first point{snap_text} | Right-click/Esc to cancel"
         
@@ -396,7 +752,12 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.point_count = 0
         self.ortho_mode = True
         self.ortho_angle = 0.0
+        self.angle_locked = False
+        self.locked_angle = 0.0
+        self.tracking_point = None
+        self.is_tracking = False
         self.is_snapped = False
+        self.is_perp_snap = False
         self.snap_screen_pos = None
         
         # Add draw handler for snap indicator
@@ -499,7 +860,21 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         # Alt - toggle ortho mode
         if event.type == 'LEFT_ALT' and event.value == 'PRESS':
             self.ortho_mode = not self.ortho_mode
+            self.angle_locked = False  # Unlock when toggling ortho
             self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # L - lock/unlock angle
+        if event.type == 'L' and event.value == 'PRESS':
+            if self.point_count > 0:
+                if self.angle_locked:
+                    # Unlock
+                    self.angle_locked = False
+                else:
+                    # Lock current angle
+                    self.locked_angle = self.ortho_angle
+                    self.angle_locked = True
+                self.update_header(context)
             return {'RUNNING_MODAL'}
         
         # Pass through navigation
@@ -542,8 +917,18 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
     _handle = None
     
     def get_curve_vertices(self, context) -> list:
-        """Get all curve vertices in the scene as world coordinates."""
+        """Get all curve vertices in the scene as world coordinates, including current line's confirmed points."""
         vertices = []
+        
+        # Add confirmed points from current polyline (excluding preview point)
+        if self.polyline and self.polyline.obj and self.point_count > 0:
+            spline = self.polyline.obj.data.splines[0]
+            for i in range(self.point_count):
+                if i < len(spline.points):
+                    pt = spline.points[i]
+                    vertices.append(Vector((pt.co[0], pt.co[1], pt.co[2])))
+        
+        # Add vertices from other curves
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -556,16 +941,162 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
                         vertices.append(world_co)
         return vertices
     
-    def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+    def get_curve_segments(self, context) -> list:
+        """Get all curve segments as (start, end) tuples, including current line's confirmed segments."""
+        segments = []
+        
+        # Add confirmed segments from current polyline
+        if self.polyline and self.polyline.obj and self.point_count > 1:
+            spline = self.polyline.obj.data.splines[0]
+            for i in range(self.point_count - 1):
+                if i + 1 < len(spline.points):
+                    p1 = Vector((spline.points[i].co[0], spline.points[i].co[1], 0))
+                    p2 = Vector((spline.points[i+1].co[0], spline.points[i+1].co[1], 0))
+                    segments.append((p1, p2))
+        
+        # Add segments from other curves
+        for obj in context.scene.objects:
+            if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
+                matrix = obj.matrix_world
+                for spline in obj.data.splines:
+                    points = spline.points
+                    num_pts = len(points)
+                    for i in range(num_pts - 1):
+                        p1 = matrix @ Vector((points[i].co[0], points[i].co[1], points[i].co[2]))
+                        p2 = matrix @ Vector((points[i+1].co[0], points[i+1].co[1], points[i+1].co[2]))
+                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                    
+                    # If cyclic, add closing segment
+                    if spline.use_cyclic_u and num_pts > 1:
+                        p1 = matrix @ Vector((points[-1].co[0], points[-1].co[1], points[-1].co[2]))
+                        p2 = matrix @ Vector((points[0].co[0], points[0].co[1], points[0].co[2]))
+                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+        
+        return segments
+    
+    def get_perpendicular_foot(self, point: Vector, seg_start: Vector, seg_end: Vector) -> tuple:
+        """
+        Calculate the perpendicular foot from a point to a line segment.
+        Returns (foot_point, distance, t) where t is the parameter along the segment (0-1).
+        Returns None if the foot is outside the segment.
+        """
+        seg_vec = seg_end - seg_start
+        seg_len_sq = seg_vec.length_squared
+        
+        if seg_len_sq < 0.00001:
+            return None
+        
+        # Calculate parameter t
+        t = (point - seg_start).dot(seg_vec) / seg_len_sq
+        
+        # Check if foot is within segment (with small tolerance)
+        if t < -0.01 or t > 1.01:
+            return None
+        
+        # Clamp t to segment
+        t = max(0, min(1, t))
+        
+        # Calculate foot point
+        foot = seg_start + seg_vec * t
+        distance = (point - foot).length
+        
+        return (foot, distance, t)
+    
+    def find_nearest_perp_snap(self, context, point: Vector) -> tuple:
+        """
+        Find the nearest perpendicular foot point on any segment.
+        Returns (foot_point, segment) or (None, None) if none found within snap radius.
+        """
+        from bpy_extras import view3d_utils
+        
+        segments = self.get_curve_segments(context)
+        if not segments:
+            return (None, None)
+        
+        best_foot = None
+        best_segment = None
+        best_screen_dist = SNAP_RADIUS
+        
+        for seg_start, seg_end in segments:
+            result = self.get_perpendicular_foot(point, seg_start, seg_end)
+            if result:
+                foot, _, t = result
+                
+                # Skip if foot is at the segment endpoints (we snap to vertices for those)
+                if t < 0.05 or t > 0.95:
+                    continue
+                
+                # Check screen distance
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, foot)
+                if foot_2d:
+                    screen_dist = (foot_2d - self.mouse_pos).length
+                    if screen_dist < best_screen_dist:
+                        best_screen_dist = screen_dist
+                        best_foot = foot
+                        best_segment = (seg_start, seg_end)
+        
+        return (best_foot, best_segment)
+    
+    def find_nearest_segment_angle(self, context) -> float:
+        """
+        Find the angle of the nearest line segment for perpendicular constraint.
+        Returns the perpendicular angle (segment angle + 90 degrees).
+        """
+        from bpy_extras import view3d_utils
+        
+        if not self.hit_location:
+            return 0.0
+        
+        point = Vector((self.hit_location.x, self.hit_location.y, 0))
+        segments = self.get_curve_segments(context)
+        
+        if not segments:
+            return 0.0
+        
+        best_segment = None
+        best_dist = float('inf')
+        
+        for seg_start, seg_end in segments:
+            # Get distance from point to segment
+            result = self.get_perpendicular_foot(point, seg_start, seg_end)
+            if result:
+                _, dist, _ = result
+                if dist < best_dist:
+                    best_dist = dist
+                    best_segment = (seg_start, seg_end)
+            else:
+                # Point is outside segment, use distance to nearest endpoint
+                dist1 = (point - seg_start).length
+                dist2 = (point - seg_end).length
+                dist = min(dist1, dist2)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_segment = (seg_start, seg_end)
+        
+        if best_segment:
+            seg_vec = best_segment[1] - best_segment[0]
+            seg_angle = math.atan2(seg_vec.y, seg_vec.x)
+            # Return perpendicular angle
+            return seg_angle + math.pi / 2
+        
+        return 0.0
+    
+    def find_tracking_point(self, context) -> Vector:
+        """
+        Find the nearest vertex for tracking (extension alignment).
+        Returns the point or None if none nearby.
+        """
         from bpy_extras import view3d_utils
         
         vertices = self.get_curve_vertices(context)
         if not vertices:
             return None
         
+        # Use a larger radius for tracking detection
+        TRACKING_RADIUS = SNAP_RADIUS * 2
+        
         best_vertex = None
-        best_distance = SNAP_RADIUS
+        best_distance = TRACKING_RADIUS
         
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
@@ -576,6 +1107,140 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
                     best_distance = distance
         
         return best_vertex
+    
+    def calculate_tracking_intersection(self, ref_point: Vector) -> Vector:
+        """
+        Calculate where the current line (at ortho_angle from current_point) 
+        intersects with a horizontal or vertical line through ref_point.
+        Returns the intersection point.
+        """
+        if not self.current_point:
+            return None
+        
+        cos_a = math.cos(self.ortho_angle)
+        sin_a = math.sin(self.ortho_angle)
+        
+        x0, y0 = self.current_point.x, self.current_point.y
+        rx, ry = ref_point.x, ref_point.y
+        
+        # Determine which alignment to use based on angle
+        # Horizontal-ish angles (0°, 180°) -> align X
+        # Vertical-ish angles (90°, 270°) -> align Y
+        # Diagonal angles -> choose based on which gives forward progress
+        
+        angle_deg = math.degrees(self.ortho_angle) % 360
+        
+        t_x = None  # Parameter for X alignment
+        t_y = None  # Parameter for Y alignment
+        
+        # Calculate t for X alignment (vertical line through ref_point)
+        if abs(cos_a) > 0.001:
+            t_x = (rx - x0) / cos_a
+        
+        # Calculate t for Y alignment (horizontal line through ref_point)
+        if abs(sin_a) > 0.001:
+            t_y = (ry - y0) / sin_a
+        
+        # Choose the appropriate t based on angle
+        t = None
+        
+        if t_x is not None and t_y is not None:
+            # Both are valid - choose based on angle
+            # For mostly horizontal (within 45° of horizontal), prefer X alignment
+            # For mostly vertical (within 45° of vertical), prefer Y alignment
+            if abs(cos_a) > abs(sin_a):
+                t = t_x if t_x > 0 else t_y
+            else:
+                t = t_y if t_y > 0 else t_x
+        elif t_x is not None:
+            t = t_x
+        elif t_y is not None:
+            t = t_y
+        
+        if t is not None and t > 0:
+            # Calculate intersection point
+            ix = x0 + t * cos_a
+            iy = y0 + t * sin_a
+            return Vector((ix, iy, 0))
+        
+        return None
+    
+    def project_to_snap_point(self, snap_point: Vector) -> Vector:
+        """
+        Project along locked angle to align with snap point's X or Y coordinate.
+        Returns the projected point on the locked angle line.
+        """
+        if not self.current_point:
+            return None
+        
+        cos_a = math.cos(self.locked_angle)
+        sin_a = math.sin(self.locked_angle)
+        
+        x0, y0 = self.current_point.x, self.current_point.y
+        sx, sy = snap_point.x, snap_point.y
+        
+        # Calculate t for X alignment (where line crosses x = sx)
+        t_x = None
+        if abs(cos_a) > 0.001:
+            t_x = (sx - x0) / cos_a
+        
+        # Calculate t for Y alignment (where line crosses y = sy)
+        t_y = None
+        if abs(sin_a) > 0.001:
+            t_y = (sy - y0) / sin_a
+        
+        # Choose which alignment based on angle
+        # Mostly horizontal -> use X alignment
+        # Mostly vertical -> use Y alignment
+        t = None
+        if abs(cos_a) > abs(sin_a):
+            # Mostly horizontal - align X
+            t = t_x
+        else:
+            # Mostly vertical - align Y
+            t = t_y
+        
+        if t is not None:
+            ix = x0 + t * cos_a
+            iy = y0 + t * sin_a
+            return Vector((ix, iy, 0))
+        
+        return None
+    
+    def snap_to_curves(self, context) -> Vector:
+        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
+        from bpy_extras import view3d_utils
+        
+        best_point = None
+        best_distance = SNAP_RADIUS
+        self.is_perp_snap = False
+        
+        # First check vertex snaps (higher priority)
+        vertices = self.get_curve_vertices(context)
+        for co in vertices:
+            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
+            if co2D is not None:
+                distance = (co2D - self.mouse_pos).length
+                if distance < best_distance:
+                    best_point = co.copy()
+                    best_distance = distance
+                    self.is_perp_snap = False
+        
+        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
+        if self.hit_location:
+            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
+            
+            if perp_foot:
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
+                if foot_2d:
+                    distance = (foot_2d - self.mouse_pos).length
+                    if distance < best_distance:
+                        best_point = perp_foot.copy()
+                        best_distance = distance
+                        self.is_perp_snap = True
+        
+        return best_point
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
@@ -922,25 +1587,39 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         return vertices
     
     def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
         from bpy_extras import view3d_utils
         
-        vertices = self.get_curve_vertices(context)
-        if not vertices:
-            return None
-        
-        best_vertex = None
+        best_point = None
         best_distance = SNAP_RADIUS
+        self.is_perp_snap = False
         
+        # First check vertex snaps (higher priority)
+        vertices = self.get_curve_vertices(context)
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
             if co2D is not None:
                 distance = (co2D - self.mouse_pos).length
                 if distance < best_distance:
-                    best_vertex = co.copy()
+                    best_point = co.copy()
                     best_distance = distance
+                    self.is_perp_snap = False
         
-        return best_vertex
+        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
+        if self.hit_location:
+            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
+            
+            if perp_foot:
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
+                if foot_2d:
+                    distance = (foot_2d - self.mouse_pos).length
+                    if distance < best_distance:
+                        best_point = perp_foot.copy()
+                        best_distance = distance
+                        self.is_perp_snap = True
+        
+        return best_point
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
@@ -1197,25 +1876,39 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
         return vertices
     
     def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
         from bpy_extras import view3d_utils
         
-        vertices = self.get_curve_vertices(context)
-        if not vertices:
-            return None
-        
-        best_vertex = None
+        best_point = None
         best_distance = SNAP_RADIUS
+        self.is_perp_snap = False
         
+        # First check vertex snaps (higher priority)
+        vertices = self.get_curve_vertices(context)
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
             if co2D is not None:
                 distance = (co2D - self.mouse_pos).length
                 if distance < best_distance:
-                    best_vertex = co.copy()
+                    best_point = co.copy()
                     best_distance = distance
+                    self.is_perp_snap = False
         
-        return best_vertex
+        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
+        if self.hit_location:
+            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
+            
+            if perp_foot:
+                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
+                if foot_2d:
+                    distance = (foot_2d - self.mouse_pos).length
+                    if distance < best_distance:
+                        best_point = perp_foot.copy()
+                        best_distance = distance
+                        self.is_perp_snap = True
+        
+        return best_point
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
