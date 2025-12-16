@@ -502,6 +502,13 @@ class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
         # Dimension
         col.operator("home_builder_details.add_dimension", 
                     text="Add Dimension", icon='DRIVER_DISTANCE')
+        
+        # Edit mode tools
+        if context.mode == 'EDIT_CURVE':
+            col.separator()
+            col.label(text="Edit Tools:")
+            col.operator("home_builder_details.add_fillet", 
+                        text="Add Fillet/Radius", icon='SPHERECURVE')
 
 
 # -----------------------------------------------------------------------------

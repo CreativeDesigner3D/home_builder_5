@@ -1309,6 +1309,233 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
 
 
 # =============================================================================
+# FILLET/RADIUS OPERATOR
+# =============================================================================
+
+class home_builder_details_OT_add_fillet(bpy.types.Operator):
+    bl_idname = "home_builder_details.add_fillet"
+    bl_label = "Add Fillet"
+    bl_description = "Add a radius/fillet to the selected corner point"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    radius: bpy.props.FloatProperty(
+        name="Radius",
+        description="Fillet radius",
+        default=0.0254,  # 1 inch
+        min=0.001,
+        unit='LENGTH',
+    )
+    
+    segments: bpy.props.IntProperty(
+        name="Segments",
+        description="Number of segments in the fillet arc",
+        default=8,
+        min=2,
+        max=32,
+    )
+    
+    @classmethod
+    def poll(cls, context):
+        # Must be in edit mode on a curve
+        if context.mode != 'EDIT_CURVE':
+            return False
+        obj = context.active_object
+        if not obj or obj.type != 'CURVE':
+            return False
+        return True
+    
+    def get_selected_point_info(self, context):
+        """
+        Find the selected point and verify it has neighbors.
+        Returns (spline, point_index) or (None, None) if invalid.
+        """
+        obj = context.active_object
+        curve = obj.data
+        
+        for spline in curve.splines:
+            if spline.type != 'POLY':
+                continue
+            
+            points = spline.points
+            num_points = len(points)
+            is_cyclic = spline.use_cyclic_u
+            
+            selected_indices = []
+            for i, point in enumerate(points):
+                if point.select:
+                    selected_indices.append(i)
+            
+            # Must have exactly one point selected
+            if len(selected_indices) != 1:
+                continue
+            
+            idx = selected_indices[0]
+            
+            # Check if point has neighbors
+            if is_cyclic:
+                # Cyclic spline - all points have neighbors
+                return (spline, idx)
+            else:
+                # Non-cyclic - endpoints don't have both neighbors
+                if idx == 0 or idx == num_points - 1:
+                    continue
+                return (spline, idx)
+        
+        return (None, None)
+    
+    def invoke(self, context, event):
+        spline, idx = self.get_selected_point_info(context)
+        if spline is None:
+            self.report({'WARNING'}, "Select a single corner point (not an endpoint)")
+            return {'CANCELLED'}
+        
+        return context.window_manager.invoke_props_dialog(self)
+    
+    def execute(self, context):
+        import math
+        
+        obj = context.active_object
+        curve = obj.data
+        
+        # Get info while in edit mode
+        spline, point_idx = self.get_selected_point_info(context)
+        if spline is None:
+            self.report({'WARNING'}, "Select a single corner point (not an endpoint)")
+            return {'CANCELLED'}
+        
+        # Find spline index
+        spline_idx = None
+        for i, s in enumerate(curve.splines):
+            if s == spline:
+                spline_idx = i
+                break
+        
+        if spline_idx is None:
+            self.report({'ERROR'}, "Could not find spline")
+            return {'CANCELLED'}
+        
+        # Get point data while still in edit mode
+        points = spline.points
+        num_points = len(points)
+        is_cyclic = spline.use_cyclic_u
+        
+        # Get the three point indices: prev, current (corner), next
+        if is_cyclic:
+            prev_idx = (point_idx - 1) % num_points
+            next_idx = (point_idx + 1) % num_points
+        else:
+            prev_idx = point_idx - 1
+            next_idx = point_idx + 1
+        
+        # Get coordinates (in object space)
+        p_prev = Vector((points[prev_idx].co[0], points[prev_idx].co[1], 0))
+        p_corner = Vector((points[point_idx].co[0], points[point_idx].co[1], 0))
+        p_next = Vector((points[next_idx].co[0], points[next_idx].co[1], 0))
+        
+        # Store all point coordinates before leaving edit mode
+        all_points_data = [(pt.co[0], pt.co[1], pt.co[2], pt.co[3]) for pt in points]
+        
+        # Calculate direction vectors
+        dir_in = (p_corner - p_prev).normalized()
+        dir_out = (p_next - p_corner).normalized()
+        
+        # Calculate the angle between the two edges
+        dot = dir_in.dot(dir_out)
+        dot = max(-1, min(1, dot))  # Clamp for numerical stability
+        angle = math.acos(dot)
+        
+        if angle < 0.01 or angle > math.pi - 0.01:
+            self.report({'WARNING'}, "Cannot fillet: edges are nearly parallel")
+            return {'CANCELLED'}
+        
+        # Calculate the half angle
+        half_angle = (math.pi - angle) / 2
+        
+        # Distance from corner to tangent points
+        tan_dist = self.radius / math.tan(half_angle)
+        
+        # Check if radius is too large
+        dist_to_prev = (p_corner - p_prev).length
+        dist_to_next = (p_next - p_corner).length
+        
+        if tan_dist > dist_to_prev * 0.9 or tan_dist > dist_to_next * 0.9:
+            self.report({'WARNING'}, "Radius too large for this corner")
+            return {'CANCELLED'}
+        
+        # Calculate tangent points
+        tangent_in = p_corner - dir_in * tan_dist
+        tangent_out = p_corner + dir_out * tan_dist
+        
+        # Calculate arc center
+        bisector = ((-dir_in + dir_out) / 2).normalized()
+        center_dist = self.radius / math.sin(half_angle)
+        arc_center = p_corner + bisector * center_dist
+        
+        # Generate arc points
+        arc_points = []
+        
+        start_vec = (tangent_in - arc_center).normalized()
+        end_vec = (tangent_out - arc_center).normalized()
+        
+        cross = start_vec.x * end_vec.y - start_vec.y * end_vec.x
+        
+        start_angle = math.atan2(start_vec.y, start_vec.x)
+        end_angle = math.atan2(end_vec.y, end_vec.x)
+        
+        if cross > 0:
+            if end_angle <= start_angle:
+                end_angle += 2 * math.pi
+        else:
+            if end_angle >= start_angle:
+                end_angle -= 2 * math.pi
+        
+        for i in range(self.segments + 1):
+            t = i / self.segments
+            current_angle = start_angle + t * (end_angle - start_angle)
+            x = arc_center.x + self.radius * math.cos(current_angle)
+            y = arc_center.y + self.radius * math.sin(current_angle)
+            arc_points.append((x, y, 0, 1))
+        
+        # Exit edit mode to modify curve data
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        # Get fresh references after mode change
+        curve = obj.data
+        spline = curve.splines[spline_idx]
+        
+        # Build new points list
+        new_points = []
+        for i, pt_data in enumerate(all_points_data):
+            if i == point_idx:
+                # Replace corner with arc points
+                for arc_pt in arc_points:
+                    new_points.append(arc_pt)
+            else:
+                new_points.append(pt_data)
+        
+        # Clear and recreate spline
+        curve.splines.remove(spline)
+        
+        new_spline = curve.splines.new('POLY')
+        new_spline.points.add(len(new_points) - 1)
+        
+        for i, pt in enumerate(new_points):
+            new_spline.points[i].co = pt
+        
+        new_spline.use_cyclic_u = is_cyclic
+        
+        # Return to edit mode
+        bpy.ops.object.mode_set(mode='EDIT')
+        
+        return {'FINISHED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "radius")
+        layout.prop(self, "segments")
+
+
+# =============================================================================
 # DIMENSION OPERATOR (2D Detail specific)
 # =============================================================================
 
@@ -1543,6 +1770,7 @@ classes = (
     home_builder_details_OT_draw_rectangle,
     home_builder_details_OT_draw_circle,
     home_builder_details_OT_add_text,
+    home_builder_details_OT_add_fillet,
     home_builder_details_OT_add_dimension,
 )
 
