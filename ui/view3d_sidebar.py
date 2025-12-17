@@ -178,7 +178,85 @@ class HOME_BUILDER_PT_room_layout_obstacles(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        layout.label(text="TODO: Obstacle tools")
+        
+        # Check if hb_obstacles property exists
+        if not hasattr(context.scene, 'hb_obstacles'):
+            layout.label(text="Obstacles module not loaded", icon='ERROR')
+            return
+        
+        hb_obs = context.scene.hb_obstacles
+        
+        # Obstacle type selection
+        col = layout.column(align=True)
+        col.label(text="Obstacle Type:", icon='OBJECT_DATA')
+        col.prop(hb_obs, "obstacle_type", text="")
+        
+        # Don't show controls for header items
+        if hb_obs.obstacle_type.startswith('HEADER_'):
+            col.label(text="Select an obstacle type above", icon='INFO')
+            return
+        
+        col.separator()
+        
+        # Place button
+        row = col.row(align=True)
+        row.scale_y = 1.5
+        row.operator("home_builder_obstacles.place_obstacle", 
+                    text="Place Obstacle", icon='ADD')
+        
+        # Dimensions section
+        box = layout.box()
+        row = box.row()
+        row.label(text="Dimensions", icon='ARROW_LEFTRIGHT')
+        
+        col = box.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        
+        col.prop(hb_obs, "obstacle_width", text="Width")
+        col.prop(hb_obs, "obstacle_height", text="Height")
+        col.prop(hb_obs, "obstacle_depth", text="Depth")
+        col.prop(hb_obs, "obstacle_height_from_floor", text="From Floor")
+        
+        # Scene obstacles section
+        obstacles_in_scene = [obj for obj in context.scene.objects if obj.get('IS_OBSTACLE')]
+        
+        if obstacles_in_scene:
+            box = layout.box()
+            row = box.row()
+            row.label(text=f"Obstacles in Scene ({len(obstacles_in_scene)})", icon='OUTLINER_OB_MESH')
+            row.operator("home_builder_obstacles.select_all", text="", icon='RESTRICT_SELECT_OFF')
+            
+            col = box.column(align=True)
+            for obj in obstacles_in_scene[:10]:  # Show first 10
+                row = col.row(align=True)
+                
+                # Select button
+                is_selected = obj.select_get()
+                icon = 'CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT'
+                op = row.operator("home_builder_obstacles.select_obstacle", text="", icon=icon)
+                op.object_name = obj.name
+                
+                # Obstacle name with type icon
+                obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
+                if 'OUTLET' in obs_type or 'SWITCH' in obs_type:
+                    type_icon = 'PLUGIN'
+                elif 'VENT' in obs_type:
+                    type_icon = 'MESH_GRID'
+                elif 'LIGHT' in obs_type or 'FAN' in obs_type:
+                    type_icon = 'LIGHT'
+                elif 'FIRE' in obs_type or 'SMOKE' in obs_type or 'SPRINKLER' in obs_type:
+                    type_icon = 'ERROR'
+                else:
+                    type_icon = 'OBJECT_DATA'
+                row.label(text=obj.name, icon=type_icon)
+                
+                # Delete button
+                op = row.operator("home_builder_obstacles.delete_obstacle", text="", icon='X')
+                op.object_name = obj.name
+            
+            if len(obstacles_in_scene) > 10:
+                col.label(text=f"... and {len(obstacles_in_scene) - 10} more")
 
 
 # -----------------------------------------------------------------------------

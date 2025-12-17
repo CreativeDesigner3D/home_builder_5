@@ -12,6 +12,7 @@ from .operators import details
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
+from .product_libraries import obstacles
 from . import hb_layouts
 
 from bpy.app.handlers import persistent
@@ -99,6 +100,14 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                             default=(1.000000, 1.000000, 0.000000, 1.000000),
                             subtype="COLOR") # type: ignore  
     
+    obstacle_color: bpy.props.FloatVectorProperty(name="Obstacle Color",
+                            description="The default color of obstacles",
+                            size=4,
+                            min=0,
+                            max=1,
+                            default=(0.900000, 0.700000, 0.400000, 0.800000),
+                            subtype="COLOR") # type: ignore  
+    
     designer_name: bpy.props.StringProperty(
 		name="Designer name",
         description="Enter the designer name you want to have appear on reports"
@@ -122,7 +131,8 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "cabinet_color")
         layout.prop(self, "door_window_color")
         layout.prop(self, "annotation_color")
-        layout.prop(self, "annotation_highlight_color")              
+        layout.prop(self, "annotation_highlight_color")
+        layout.prop(self, "obstacle_color")              
 
 def register():
     bpy.utils.register_class(Home_Builder_AddonPreferences)
@@ -140,6 +150,7 @@ def register():
     closets.register()
     face_frame.register()
     frameless.register()
+    obstacles.register()
 
     bpy.app.handlers.load_post.append(load_driver_functions)
 
@@ -159,6 +170,7 @@ def unregister():
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()
+    obstacles.unregister()
 
     bpy.app.handlers.load_post.remove(load_driver_functions)
 
