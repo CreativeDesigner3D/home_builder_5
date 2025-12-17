@@ -2802,6 +2802,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
                 if self.dim.obj in self.placement_objects:
                     self.placement_objects.remove(self.dim.obj)
                 hb_placement.clear_header_text(context)
+                self.dim.set_decimal()
                 return {'FINISHED'}
             return {'RUNNING_MODAL'}
         

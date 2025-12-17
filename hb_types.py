@@ -1,5 +1,6 @@
 import bpy
 import os
+import math
 from typing import Optional, Any
 from . import units
 from . import hb_utils
@@ -440,6 +441,18 @@ class GeoNodeDimension(GeoNodeObject):
         self.set_input("Extend Line",props.annotation_dimension_extend_line)
         self.set_input("Text Size",props.annotation_dimension_text_size)
 
+    def set_decimal(self):
+        p1 = self.obj.data.splines[0].points[0].co
+        p2 = self.obj.data.splines[0].points[1].co 
+
+        dist = math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2 + (p1[2] - p2[2]) ** 2)   
+
+        text = str(round(units.meter_to_inch(math.fabs(dist)),4))
+        inch_value, decimal_value = text.split(".")
+        if decimal_value == "0":
+            self.set_input("Decimals",0)
+        else:
+            self.set_input("Decimals",len(decimal_value))
 
 class CabinetPartModifier(GeoNodeObject):
 

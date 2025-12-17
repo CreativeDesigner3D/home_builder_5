@@ -1199,6 +1199,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         hb_scene = context.scene.home_builder
         dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
         dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
+        dim.set_decimal()
         
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
@@ -1773,6 +1774,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
             dim.obj.data.splines[0].points[1].co = (dim_length, 0, 0, 1)
         
         dim.set_input("Leader Length", leader_length)
+        dim.set_decimal()
         
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
