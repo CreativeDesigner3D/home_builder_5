@@ -1,5 +1,6 @@
 import bpy
 from . import hb_props
+from . import hb_project
 from . import ops
 from .ui import view3d_sidebar
 from .ui import menu_apend
@@ -31,13 +32,19 @@ bl_info = {
 
 @persistent
 def load_driver_functions(scene):
-    """ Load Default Drivers
+    """ Load Default Drivers and ensure project data exists
     """
     import inspect
     from . import hb_driver_functions
+    from . import hb_project
+    
+    # Load driver functions
     for name, obj in inspect.getmembers(hb_driver_functions):
         if name not in bpy.app.driver_namespace:
             bpy.app.driver_namespace[name] = obj
+    
+    # Ensure a main scene is tagged for project data
+    hb_project.ensure_main_scene()
     # for obj in bpy.data.objects:
     #     if obj.type in {'EMPTY','MESH'}:
     #         drivers = []
@@ -138,6 +145,7 @@ def register():
     bpy.utils.register_class(Home_Builder_AddonPreferences)
 
     hb_props.register()
+    hb_project.register()
     walls.register()
     layouts.register()
     rooms.register()
@@ -158,6 +166,7 @@ def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 
     hb_props.unregister()
+    hb_project.unregister()
     walls.unregister()
     layouts.unregister()
     rooms.unregister()

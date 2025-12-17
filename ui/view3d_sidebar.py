@@ -1,4 +1,5 @@
 import bpy
+from .. import hb_project
 from .. import hb_layouts
 from .. import hb_details
 
@@ -10,21 +11,93 @@ from .. import hb_details
 # -----------------------------------------------------------------------------
 # PANEL 1: ROOMS
 # -----------------------------------------------------------------------------
-class HOME_BUILDER_PT_rooms(bpy.types.Panel):
-    bl_label = "Rooms"
-    bl_idname = "HOME_BUILDER_PT_rooms"
+class HOME_BUILDER_PT_project(bpy.types.Panel):
+    bl_label = "Project"
+    bl_idname = "HOME_BUILDER_PT_project"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Home Builder'
     bl_order = 0
+    
+    def draw(self, context):
+        layout = self.layout
+        project = hb_project.get_project_props(context)
+        
+        # Project name prominently displayed
+        row = layout.row()
+        row.scale_y = 1.2
+        row.prop(project, "project_name", text="")
+
+
+class HOME_BUILDER_PT_project_info(bpy.types.Panel):
+    bl_label = "Project Info"
+    bl_idname = "HOME_BUILDER_PT_project_info"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_project"
     bl_options = {'DEFAULT_CLOSED'}
     
     def draw(self, context):
         layout = self.layout
+        project = hb_project.get_project_props(context)
         
-        # Get all room scenes (non-layout and non-detail scenes)
-        room_scenes = [s for s in bpy.data.scenes 
-                      if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
+        col = layout.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        
+        # Project info
+        col.prop(project, "project_number")
+        col.prop(project, "project_date")
+        
+        col.separator()
+        
+        # Designer
+        box = layout.box()
+        box.label(text="Designer", icon='USER')
+        col = box.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(project, "designer_name", text="Name")
+        col.prop(project, "designer_phone", text="Phone")
+        col.prop(project, "designer_email", text="Email")
+        
+        # Client info
+        box = layout.box()
+        box.label(text="Client", icon='COMMUNITY')
+        col = box.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(project, "client_name", text="Name")
+        col.prop(project, "client_address")
+        col.prop(project, "client_city")
+        
+        row = col.row(align=True)
+        row.prop(project, "client_state", text="State")
+        row.prop(project, "client_zip", text="Zip")
+        
+        col.prop(project, "client_phone", text="Phone")
+        col.prop(project, "client_email", text="Email")
+        
+        # Notes
+        box = layout.box()
+        box.label(text="Notes", icon='TEXT')
+        box.prop(project, "project_notes", text="")
+
+
+class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
+    bl_label = "Rooms"
+    bl_idname = "HOME_BUILDER_PT_project_rooms"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_project"
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Get all room scenes using hb_project helper
+        room_scenes = hb_project.get_room_scenes()
         
         col = layout.column(align=True)
         for scene in room_scenes:
@@ -794,7 +867,9 @@ class HOME_BUILDER_PT_settings(bpy.types.Panel):
 # =============================================================================
 
 classes = (
-    HOME_BUILDER_PT_rooms,
+    HOME_BUILDER_PT_project,
+    HOME_BUILDER_PT_project_info,
+    HOME_BUILDER_PT_project_rooms,
     HOME_BUILDER_PT_room_layout,
     HOME_BUILDER_PT_room_layout_walls,
     HOME_BUILDER_PT_room_layout_doors_windows,
