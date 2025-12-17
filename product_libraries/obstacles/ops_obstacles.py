@@ -6,46 +6,35 @@ from . import props_obstacles
 
 
 # =============================================================================
-# OBSTACLE CREATION
+# OBSTACLE CREATION UTILITIES
 # =============================================================================
 
 def create_obstacle_mesh(name, width, height, depth, obstacle_type):
     """Create a simple box mesh for the obstacle."""
     import bmesh
     
-    # Create mesh
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
     
-    # Create box geometry
     bm = bmesh.new()
     
-    # Check if circular obstacle
-    if 'CIRCLE' in obstacle_type or 'RECESSED' in obstacle_type or 'SPRINKLER' in obstacle_type or 'DETECTOR' in obstacle_type or 'FAN' in obstacle_type:
-        # Create cylinder for circular obstacles
+    # Circular obstacles
+    if any(x in obstacle_type for x in ['CIRCLE', 'RECESSED', 'SPRINKLER', 'DETECTOR', 'FAN', 'DRAIN']):
         bmesh.ops.create_cone(
-            bm,
-            segments=16,
-            radius1=width / 2,
-            radius2=width / 2,
-            depth=depth,
-            cap_ends=True
+            bm, segments=16,
+            radius1=width / 2, radius2=width / 2,
+            depth=depth, cap_ends=True
         )
+    # Pipes/columns (vertical cylinder)
     elif 'PIPE' in obstacle_type or 'COLUMN' in obstacle_type:
-        # Create cylinder for pipes/columns
         bmesh.ops.create_cone(
-            bm,
-            segments=12,
-            radius1=width / 2,
-            radius2=width / 2,
-            depth=height,
-            cap_ends=True
+            bm, segments=12,
+            radius1=width / 2, radius2=width / 2,
+            depth=height, cap_ends=True
         )
+    # Default box
     else:
-        # Create box for rectangular obstacles
         bmesh.ops.create_cube(bm, size=1.0)
-        
-        # Scale to dimensions
         for v in bm.verts:
             v.co.x *= width
             v.co.y *= depth
@@ -84,117 +73,153 @@ def get_obstacle_color(obstacle_type):
 class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_obstacles.place_obstacle"
     bl_label = "Place Obstacle"
-    bl_description = "Place an obstacle on a wall or floor. Click to place, type for exact position."
+    bl_description = "Place an obstacle on a wall, floor, or ceiling"
     bl_options = {'UNDO'}
     
-    # Obstacle being placed
+    # Obstacle object being placed
     obstacle_obj = None
     
-    # Target surface
+    # Target wall (if placing on wall)
     target_wall = None
-    target_type = None  # 'WALL', 'FLOOR', 'CEILING'
+    target_type: str = 'FLOOR'  # 'WALL', 'FLOOR', 'CEILING'
     
-    # Position along wall (0 = left edge)
-    wall_position_x: float = 0
+    # Wall placement state
     wall_length: float = 0
-    
-    # Height from floor (for wall obstacles)
+    wall_position_x: float = 0  # Position along wall
     height_from_floor: float = 0
     
-    # Obstacle dimensions
+    # Obstacle dimensions (from scene props)
     obs_width: float = 0
     obs_height: float = 0
     obs_depth: float = 0
+    obs_surface_type: str = 'ANY'
     
-    # Offset mode
-    offset_from_right: bool = False
+    def get_default_typing_target(self):
+        """Default to offset from left when typing."""
+        return hb_placement.TypingTarget.OFFSET_X
     
-    # Draw handler
-    _handle = None
+    def get_next_typing_target(self):
+        """Cycle between offset and height."""
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            return hb_placement.TypingTarget.HEIGHT
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            return hb_placement.TypingTarget.HEIGHT
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            return hb_placement.TypingTarget.OFFSET_X
+        return hb_placement.TypingTarget.NONE
+    
+    def on_typed_value_changed(self):
+        """Update position when typed value changes."""
+        parsed = self.parse_typed_distance()
+        if parsed is None:
+            return
+        
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            self.wall_position_x = parsed + self.obs_width / 2
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            self.wall_position_x = self.wall_length - parsed - self.obs_width / 2
+        elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
+            self.height_from_floor = parsed
+    
+    def apply_typed_value(self):
+        """Apply typed value and exit typing mode."""
+        self.on_typed_value_changed()
+        self.stop_typing()
+    
+    # -------------------------------------------------------------------------
+    # Wall utilities
+    # -------------------------------------------------------------------------
     
     def get_walls_in_scene(self, context):
-        """Get all wall objects in the scene."""
+        """Get all wall objects in the current scene."""
         return [obj for obj in context.scene.objects if obj.get('IS_WALL_BP')]
     
-    def find_wall_at_location(self, context, location):
-        """Find the wall closest to the given location."""
+    def get_wall_length(self, wall):
+        """Get wall length from obj_x child or geometry node input."""
+        for child in wall.children:
+            if child.get('obj_x'):
+                return child.location.x
+        
+        for mod in wall.modifiers:
+            if mod.type == 'NODES' and mod.node_group:
+                try:
+                    return mod["Input_2"]
+                except:
+                    pass
+        return 3.0
+    
+    def get_wall_thickness(self, wall):
+        """Get wall thickness from geometry node input."""
+        for mod in wall.modifiers:
+            if mod.type == 'NODES' and mod.node_group:
+                try:
+                    return mod["Input_3"]
+                except:
+                    pass
+        return units.inch(4.5)
+    
+    def find_nearest_wall(self, context, location):
+        """
+        Find the nearest wall to a 3D location.
+        Returns (wall, position_along_wall, distance_to_wall).
+        """
+        if location is None:
+            return None, 0, float('inf')
+        
         walls = self.get_walls_in_scene(context)
         if not walls:
-            return None, 0
+            return None, 0, float('inf')
+        
+        loc_2d = Vector((location.x, location.y))
         
         best_wall = None
-        best_distance = float('inf')
         best_position = 0
+        best_distance = float('inf')
         
         for wall in walls:
-            # Get wall start and end points
+            # Get wall world position and rotation
             wall_start = wall.matrix_world.translation.copy()
+            wall_start_2d = Vector((wall_start.x, wall_start.y))
             
-            # Get wall length from geometry node input or child curve
-            wall_length = 0
-            for mod in wall.modifiers:
-                if mod.type == 'NODES' and mod.node_group:
-                    try:
-                        wall_length = mod["Socket_2"]  # Length input
-                        break
-                    except:
-                        pass
+            wall_length = self.get_wall_length(wall)
+            wall_rot = wall.matrix_world.to_euler()
+            wall_angle = wall_rot.z
             
-            if wall_length == 0:
-                continue
+            # Calculate wall direction and end point
+            wall_dir = Vector((math.cos(wall_angle), math.sin(wall_angle)))
+            wall_end_2d = wall_start_2d + wall_dir * wall_length
             
-            # Calculate wall direction
-            wall_angle = wall.rotation_euler.z
-            wall_dir = Vector((math.cos(wall_angle), math.sin(wall_angle), 0))
-            wall_end = wall_start + wall_dir * wall_length
+            # Project point onto wall line
+            wall_vec = wall_end_2d - wall_start_2d
+            to_point = loc_2d - wall_start_2d
             
-            # Project location onto wall line
-            wall_vec = wall_end - wall_start
-            to_point = Vector((location.x, location.y, 0)) - Vector((wall_start.x, wall_start.y, 0))
+            wall_len_sq = wall_vec.length_squared
+            if wall_len_sq > 0.0001:
+                t = to_point.dot(wall_vec) / wall_len_sq
+                t = max(0, min(1, t))
+            else:
+                t = 0
             
-            # Calculate projection parameter
-            t = to_point.dot(wall_vec.xy.to_3d()) / (wall_vec.length ** 2) if wall_vec.length > 0 else 0
-            t = max(0, min(1, t))  # Clamp to wall length
-            
-            # Calculate closest point on wall
-            closest = wall_start + wall_vec * t
-            
-            # Calculate distance
-            dist = (Vector((location.x, location.y, 0)) - Vector((closest.x, closest.y, 0))).length
+            # Closest point on wall
+            closest = wall_start_2d + wall_vec * t
+            dist = (loc_2d - closest).length
             
             if dist < best_distance:
                 best_distance = dist
                 best_wall = wall
                 best_position = t * wall_length
         
-        return best_wall, best_position
+        return best_wall, best_position, best_distance
     
-    def get_wall_thickness(self, wall):
-        """Get wall thickness from geometry node modifier."""
-        for mod in wall.modifiers:
-            if mod.type == 'NODES' and mod.node_group:
-                try:
-                    return mod["Socket_4"]  # Thickness input
-                except:
-                    pass
-        return units.inch(4.5)  # Default
-    
-    def get_wall_length(self, wall):
-        """Get wall length from geometry node modifier."""
-        for mod in wall.modifiers:
-            if mod.type == 'NODES' and mod.node_group:
-                try:
-                    return mod["Socket_2"]  # Length input
-                except:
-                    pass
-        return 1.0
+    # -------------------------------------------------------------------------
+    # Obstacle creation
+    # -------------------------------------------------------------------------
     
     def create_obstacle(self, context):
-        """Create the obstacle object."""
+        """Create the obstacle mesh object."""
         hb_obs = context.scene.hb_obstacles
-        
-        # Get obstacle data
         obs_data = props_obstacles.get_obstacle_data(hb_obs.obstacle_type)
+        
         if not obs_data:
             return None
         
@@ -203,28 +228,29 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         self.obs_height = hb_obs.obstacle_height
         self.obs_depth = hb_obs.obstacle_depth
         self.height_from_floor = hb_obs.obstacle_height_from_floor
+        self.obs_surface_type = obs_data[8]
         
-        # Create obstacle mesh
+        # Create mesh
         self.obstacle_obj = create_obstacle_mesh(
-            obs_data[1],  # Name
+            obs_data[1],
             self.obs_width,
             self.obs_height,
             self.obs_depth,
             hb_obs.obstacle_type
         )
         
-        # Set custom properties
+        # Set properties
         self.obstacle_obj['IS_OBSTACLE'] = True
         self.obstacle_obj['OBSTACLE_TYPE'] = hb_obs.obstacle_type
-        self.obstacle_obj['OBSTACLE_SURFACE'] = obs_data[8]
+        self.obstacle_obj['OBSTACLE_SURFACE'] = self.obs_surface_type
         
-        # Set display color
-        self.obstacle_obj.color = get_obstacle_color(hb_obs.obstacle_type)
+        # Set color
+        color = get_obstacle_color(hb_obs.obstacle_type)
+        self.obstacle_obj.color = color
         
         # Create material
         mat = bpy.data.materials.new(f"{obs_data[1]}_Mat")
         mat.use_nodes = True
-        color = get_obstacle_color(hb_obs.obstacle_type)
         mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
         mat.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.8
         mat.blend_method = 'BLEND'
@@ -232,181 +258,97 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         
         # Link to scene
         context.scene.collection.objects.link(self.obstacle_obj)
-        
         self.register_placement_object(self.obstacle_obj)
         
         return self.obstacle_obj
     
     def update_obstacle_position(self, context):
-        """Update obstacle position based on target and mouse."""
+        """Update obstacle position based on current target."""
         if not self.obstacle_obj:
             return
         
-        if self.target_wall and self.target_type == 'WALL':
-            # Position on wall
+        if self.target_type == 'WALL' and self.target_wall:
+            # Get wall transform
             wall_start = self.target_wall.matrix_world.translation.copy()
-            wall_angle = self.target_wall.rotation_euler.z
+            wall_rot = self.target_wall.matrix_world.to_euler()
+            wall_angle = wall_rot.z
             wall_thickness = self.get_wall_thickness(self.target_wall)
             
-            # Calculate position along wall
+            # Direction vectors
             wall_dir = Vector((math.cos(wall_angle), math.sin(wall_angle), 0))
-            
-            # Offset perpendicular to wall (place on front face)
             perp_dir = Vector((-math.sin(wall_angle), math.cos(wall_angle), 0))
             
-            # Calculate X position (along wall)
-            pos_x = self.wall_position_x
-            
-            # Clamp to wall bounds
+            # Clamp position to wall bounds
             half_width = self.obs_width / 2
-            pos_x = max(half_width, min(self.wall_length - half_width, pos_x))
+            pos_x = max(half_width, min(self.wall_length - half_width, self.wall_position_x))
             
-            # Calculate final position
-            pos = wall_start + wall_dir * pos_x
+            # Calculate position on wall surface
+            pos = wall_start.copy()
+            pos += wall_dir * pos_x
             pos += perp_dir * (wall_thickness / 2 + self.obs_depth / 2)
             pos.z = self.height_from_floor
             
             self.obstacle_obj.location = pos
             self.obstacle_obj.rotation_euler.z = wall_angle
             
-        elif self.target_type == 'FLOOR':
-            # Position on floor
-            if self.hit_location:
-                pos = Vector((self.hit_location.x, self.hit_location.y, self.obs_height / 2))
-                self.obstacle_obj.location = pos
-                
         elif self.target_type == 'CEILING':
-            # Position on ceiling
-            ceiling_height = context.scene.home_builder.ceiling_height
             if self.hit_location:
-                pos = Vector((self.hit_location.x, self.hit_location.y, 
-                             ceiling_height - self.obs_depth / 2))
-                self.obstacle_obj.location = pos
+                ceiling_height = context.scene.home_builder.ceiling_height
+                self.obstacle_obj.location = Vector((
+                    self.hit_location.x,
+                    self.hit_location.y,
+                    ceiling_height - self.obs_depth / 2
+                ))
+            self.obstacle_obj.rotation_euler.z = 0
+            
+        else:  # FLOOR
+            if self.hit_location:
+                self.obstacle_obj.location = Vector((
+                    self.hit_location.x,
+                    self.hit_location.y,
+                    self.obs_height / 2
+                ))
+            self.obstacle_obj.rotation_euler.z = 0
     
     def update_header(self, context):
-        """Update header text."""
+        """Update header text display."""
         hb_obs = context.scene.hb_obstacles
         obs_data = props_obstacles.get_obstacle_data(hb_obs.obstacle_type)
         obs_name = obs_data[1] if obs_data else "Obstacle"
         
         if self.placement_state == hb_placement.PlacementState.TYPING:
-            if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
-                text = f"Left offset: {self.typed_value}_ | Enter to confirm"
-            elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
-                text = f"Right offset: {self.typed_value}_ | Enter to confirm"
-            elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
-                text = f"Height from floor: {self.typed_value}_ | Enter to confirm"
-            else:
-                text = f"Value: {self.typed_value}_ | Enter to confirm"
-        elif self.target_wall:
+            display = self.get_typed_display_string()
+            text = f"{display}_ | Enter to confirm | Esc to cancel"
+        elif self.target_type == 'WALL' and self.target_wall:
             pos_str = units.unit_to_string(context.scene.unit_settings, self.wall_position_x)
+            len_str = units.unit_to_string(context.scene.unit_settings, self.wall_length)
             height_str = units.unit_to_string(context.scene.unit_settings, self.height_from_floor)
-            text = f"Placing {obs_name} | Position: {pos_str} | Height: {height_str} | ←/→ type offset | H height | Click to place"
+            text = f"{obs_name} | {self.target_wall.name} | Pos: {pos_str}/{len_str} | H: {height_str} | ← → H Tab | Click to place"
         else:
-            text = f"Placing {obs_name} | Move over a wall or floor | Click to place | Esc to cancel"
+            text = f"{obs_name} ({self.target_type}) | Click to place | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
     
-    def handle_typing_event(self, event) -> bool:
-        """Handle typing for position input."""
-        if event.value != 'PRESS':
-            return False
-        
-        # Arrow keys for offset
-        if event.type == 'LEFT_ARROW':
-            self.offset_from_right = False
-            if self.placement_state == hb_placement.PlacementState.TYPING:
-                if self.typed_value:
-                    self.apply_typed_value()
-                self.typed_value = ""
-            self.start_typing(hb_placement.TypingTarget.OFFSET_X)
-            return True
-        
-        if event.type == 'RIGHT_ARROW':
-            self.offset_from_right = True
-            if self.placement_state == hb_placement.PlacementState.TYPING:
-                if self.typed_value:
-                    self.apply_typed_value()
-                self.typed_value = ""
-            self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
-            return True
-        
-        # H for height
-        if event.type == 'H':
-            if self.placement_state == hb_placement.PlacementState.TYPING:
-                if self.typed_value:
-                    self.apply_typed_value()
-                self.typed_value = ""
-            self.start_typing(hb_placement.TypingTarget.HEIGHT)
-            return True
-        
-        # Number input
-        if event.type in hb_placement.NUMBER_KEYS:
-            if self.placement_state != hb_placement.PlacementState.TYPING:
-                self.start_typing(hb_placement.TypingTarget.OFFSET_X)
-            self.typed_value += hb_placement.NUMBER_KEYS[event.type]
-            self.on_typed_value_changed()
-            return True
-        
-        if self.placement_state != hb_placement.PlacementState.TYPING:
-            return False
-        
-        # Backspace
-        if event.type == 'BACK_SPACE':
-            if self.typed_value:
-                self.typed_value = self.typed_value[:-1]
-                self.on_typed_value_changed()
-            else:
-                self.stop_typing()
-            return True
-        
-        # Enter - apply value
-        if event.type in {'RET', 'NUMPAD_ENTER'}:
-            self.apply_typed_value()
-            self.stop_typing()
-            return True
-        
-        # Escape - cancel typing
-        if event.type == 'ESC':
-            self.stop_typing()
-            return True
-        
-        return False
-    
-    def on_typed_value_changed(self):
-        """Called when typed value changes."""
-        parsed = self.parse_typed_distance()
-        if parsed is not None:
-            if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
-                self.wall_position_x = parsed + self.obs_width / 2
-            elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
-                self.wall_position_x = self.wall_length - parsed - self.obs_width / 2
-            elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
-                self.height_from_floor = parsed
-            
-            self.update_obstacle_position(bpy.context)
-    
-    def apply_typed_value(self):
-        """Apply the current typed value."""
-        self.on_typed_value_changed()
+    # -------------------------------------------------------------------------
+    # Operator methods
+    # -------------------------------------------------------------------------
     
     def execute(self, context):
-        # Check for valid obstacle type
         hb_obs = context.scene.hb_obstacles
+        
         if hb_obs.obstacle_type.startswith('HEADER_'):
             self.report({'WARNING'}, "Please select an obstacle type first")
             return {'CANCELLED'}
         
-        # Initialize placement
+        # Initialize placement mixin
         self.init_placement(context)
         
         # Reset state
         self.obstacle_obj = None
         self.target_wall = None
-        self.target_type = None
-        self.wall_position_x = 0
+        self.target_type = 'FLOOR'
         self.wall_length = 0
-        self.offset_from_right = False
+        self.wall_position_x = 0
         
         # Create obstacle
         if not self.create_obstacle(context):
@@ -419,49 +361,82 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def modal(self, context, event):
         context.area.tag_redraw()
         
+        # Ignore intermediate mouse moves
         if event.type == 'INBETWEEN_MOUSEMOVE':
             return {'RUNNING_MODAL'}
         
-        # Handle typing
+        # Handle arrow keys for typing targets
+        if event.value == 'PRESS':
+            if event.type == 'LEFT_ARROW':
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.OFFSET_X)
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+            
+            if event.type == 'RIGHT_ARROW':
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+            
+            if event.type == 'H':
+                if self.placement_state == hb_placement.PlacementState.TYPING:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.HEIGHT)
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+        
+        # Handle typing events (numbers, backspace, enter)
         if self.handle_typing_event(event):
+            self.update_obstacle_position(context)
             self.update_header(context)
             return {'RUNNING_MODAL'}
         
-        # Update snap (hide obstacle during raycast)
+        # Update snap - hide obstacle during raycast
         if self.obstacle_obj:
             self.obstacle_obj.hide_set(True)
         self.update_snap(context, event)
         if self.obstacle_obj:
             self.obstacle_obj.hide_set(False)
         
-        # Find target surface
-        if self.hit_location:
-            # Check if over a wall
-            wall, pos = self.find_wall_at_location(context, self.hit_location)
-            
-            hb_obs = context.scene.hb_obstacles
-            obs_data = props_obstacles.get_obstacle_data(hb_obs.obstacle_type)
-            surface_type = obs_data[8] if obs_data else 'ANY'
-            
-            if wall and surface_type in ('WALL', 'ANY'):
-                self.target_wall = wall
-                self.target_type = 'WALL'
-                self.wall_length = self.get_wall_length(wall)
+        # Determine target based on surface type and hit location
+        if self.placement_state != hb_placement.PlacementState.TYPING:
+            if self.hit_location:
+                wall, wall_pos, wall_dist = self.find_nearest_wall(context, self.hit_location)
                 
-                if self.placement_state != hb_placement.PlacementState.TYPING:
-                    self.wall_position_x = pos
-            elif surface_type in ('FLOOR', 'ANY'):
-                self.target_wall = None
-                self.target_type = 'FLOOR'
-            elif surface_type == 'CEILING':
-                self.target_wall = None
-                self.target_type = 'CEILING'
+                # Wall snap threshold (1 meter)
+                snap_threshold = 1.0
+                
+                if self.obs_surface_type == 'WALL':
+                    # WALL-only: always snap to nearest wall
+                    if wall:
+                        self.target_wall = wall
+                        self.target_type = 'WALL'
+                        self.wall_length = self.get_wall_length(wall)
+                        self.wall_position_x = wall_pos
+                elif self.obs_surface_type == 'CEILING':
+                    self.target_wall = None
+                    self.target_type = 'CEILING'
+                elif self.obs_surface_type == 'FLOOR':
+                    self.target_wall = None
+                    self.target_type = 'FLOOR'
+                else:  # ANY
+                    if wall and wall_dist < snap_threshold:
+                        self.target_wall = wall
+                        self.target_type = 'WALL'
+                        self.wall_length = self.get_wall_length(wall)
+                        self.wall_position_x = wall_pos
+                    else:
+                        self.target_wall = None
+                        self.target_type = 'FLOOR'
         
-        # Update position
+        # Update obstacle position
         self.update_obstacle_position(context)
         self.update_header(context)
         
-        # Left click - place obstacle
+        # Left click - place
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.obstacle_obj:
                 # Parent to wall if on wall
@@ -469,24 +444,24 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                     self.obstacle_obj.parent = self.target_wall
                     self.obstacle_obj.matrix_parent_inverse = self.target_wall.matrix_world.inverted()
                 
-                # Remove from placement objects (keep it)
+                # Keep the obstacle (remove from cleanup list)
                 if self.obstacle_obj in self.placement_objects:
                     self.placement_objects.remove(self.obstacle_obj)
                 
-                # Select the placed obstacle
+                # Select
                 bpy.ops.object.select_all(action='DESELECT')
                 self.obstacle_obj.select_set(True)
                 context.view_layer.objects.active = self.obstacle_obj
                 
                 hb_placement.clear_header_text(context)
-                self.report({'INFO'}, f"Placed obstacle")
+                self.report({'INFO'}, f"Placed {self.obstacle_obj.name}")
                 return {'FINISHED'}
-            return {'RUNNING_MODAL'}
         
-        # Right click / Escape - cancel
+        # Cancel
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
             if self.placement_state == hb_placement.PlacementState.TYPING:
                 self.stop_typing()
+                self.update_header(context)
                 return {'RUNNING_MODAL'}
             
             self.cancel_placement(context)
@@ -501,7 +476,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
 
 
 # =============================================================================
-# DELETE OBSTACLE OPERATOR
+# DELETE OBSTACLE
 # =============================================================================
 
 class home_builder_obstacles_OT_delete_obstacle(bpy.types.Operator):
@@ -510,18 +485,9 @@ class home_builder_obstacles_OT_delete_obstacle(bpy.types.Operator):
     bl_description = "Delete the selected obstacle"
     bl_options = {'UNDO'}
     
-    object_name: bpy.props.StringProperty(
-        name="Object Name",
-        description="Name of obstacle to delete (optional, uses active object if empty)",
-        default=""
-    )  # type: ignore
-    
-    @classmethod
-    def poll(cls, context):
-        return True
+    object_name: bpy.props.StringProperty(name="Object Name", default="")  # type: ignore
     
     def execute(self, context):
-        # Get object by name or use active object
         if self.object_name and self.object_name in bpy.data.objects:
             obj = bpy.data.objects[self.object_name]
         elif context.active_object and context.active_object.get('IS_OBSTACLE'):
@@ -536,12 +502,12 @@ class home_builder_obstacles_OT_delete_obstacle(bpy.types.Operator):
         
         name = obj.name
         bpy.data.objects.remove(obj, do_unlink=True)
-        self.report({'INFO'}, f"Deleted obstacle: {name}")
+        self.report({'INFO'}, f"Deleted: {name}")
         return {'FINISHED'}
 
 
 # =============================================================================
-# LIST OBSTACLES OPERATOR
+# SELECT ALL OBSTACLES
 # =============================================================================
 
 class home_builder_obstacles_OT_select_obstacles(bpy.types.Operator):
@@ -558,15 +524,12 @@ class home_builder_obstacles_OT_select_obstacles(bpy.types.Operator):
                 obj.select_set(True)
                 count += 1
         
-        if count > 0:
-            self.report({'INFO'}, f"Selected {count} obstacles")
-        else:
-            self.report({'INFO'}, "No obstacles in scene")
+        self.report({'INFO'}, f"Selected {count} obstacles" if count else "No obstacles in scene")
         return {'FINISHED'}
 
 
 # =============================================================================
-# SELECT SINGLE OBSTACLE OPERATOR
+# SELECT SINGLE OBSTACLE
 # =============================================================================
 
 class home_builder_obstacles_OT_select_obstacle(bpy.types.Operator):
@@ -575,11 +538,7 @@ class home_builder_obstacles_OT_select_obstacle(bpy.types.Operator):
     bl_description = "Select or deselect this obstacle"
     bl_options = {'UNDO'}
     
-    object_name: bpy.props.StringProperty(
-        name="Object Name",
-        description="Name of obstacle to select",
-        default=""
-    )  # type: ignore
+    object_name: bpy.props.StringProperty(name="Object Name", default="")  # type: ignore
     
     def execute(self, context):
         if not self.object_name or self.object_name not in bpy.data.objects:
@@ -588,7 +547,6 @@ class home_builder_obstacles_OT_select_obstacle(bpy.types.Operator):
         
         obj = bpy.data.objects[self.object_name]
         
-        # Toggle selection
         if obj.select_get():
             obj.select_set(False)
         else:
@@ -599,38 +557,18 @@ class home_builder_obstacles_OT_select_obstacle(bpy.types.Operator):
 
 
 # =============================================================================
-# EDIT OBSTACLE OPERATOR
+# EDIT OBSTACLE
 # =============================================================================
 
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     bl_idname = "home_builder_obstacles.edit_obstacle"
     bl_label = "Edit Obstacle"
-    bl_description = "Edit the selected obstacle dimensions"
+    bl_description = "Edit obstacle dimensions"
     bl_options = {'REGISTER', 'UNDO'}
     
-    width: bpy.props.FloatProperty(
-        name="Width",
-        description="Obstacle width",
-        default=0.07,
-        min=0.01,
-        unit='LENGTH'
-    )  # type: ignore
-    
-    height: bpy.props.FloatProperty(
-        name="Height",
-        description="Obstacle height",
-        default=0.1143,
-        min=0.01,
-        unit='LENGTH'
-    )  # type: ignore
-    
-    depth: bpy.props.FloatProperty(
-        name="Depth",
-        description="Obstacle depth",
-        default=0.05,
-        min=0.01,
-        unit='LENGTH'
-    )  # type: ignore
+    width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.01, unit='LENGTH')  # type: ignore
+    height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.01, unit='LENGTH')  # type: ignore
+    depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.01, unit='LENGTH')  # type: ignore
     
     @classmethod
     def poll(cls, context):
@@ -638,42 +576,26 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     
     def invoke(self, context, event):
         obj = context.active_object
-        
-        # Get current dimensions from mesh bounds
         if obj.type == 'MESH':
-            from mathutils import Vector as Vec
-            bounds = [obj.matrix_world @ Vec(corner) for corner in obj.bound_box]
+            from mathutils import Vector
+            bounds = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
             self.width = max(v.x for v in bounds) - min(v.x for v in bounds)
             self.height = max(v.z for v in bounds) - min(v.z for v in bounds)
             self.depth = max(v.y for v in bounds) - min(v.y for v in bounds)
-        
         return context.window_manager.invoke_props_dialog(self)
     
     def execute(self, context):
         obj = context.active_object
-        
-        # Store location and rotation
-        loc = obj.location.copy()
-        rot = obj.rotation_euler.copy()
-        parent = obj.parent
-        
-        # Get obstacle type
+        loc, rot, parent = obj.location.copy(), obj.rotation_euler.copy(), obj.parent
         obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
-        
-        # Remove old mesh
         old_mesh = obj.data
         
-        # Create new mesh with updated dimensions
         import bmesh
         mesh = bpy.data.meshes.new(obj.name)
         bm = bmesh.new()
         
         if 'CIRCLE' in obs_type or 'RECESSED' in obs_type:
-            bmesh.ops.create_cone(
-                bm, segments=16,
-                radius1=self.width / 2, radius2=self.width / 2,
-                depth=self.depth, cap_ends=True
-            )
+            bmesh.ops.create_cone(bm, segments=16, radius1=self.width/2, radius2=self.width/2, depth=self.depth, cap_ends=True)
         else:
             bmesh.ops.create_cube(bm, size=1.0)
             for v in bm.verts:
@@ -684,15 +606,9 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         bm.to_mesh(mesh)
         bm.free()
         
-        # Assign new mesh
         obj.data = mesh
-        
-        # Remove old mesh
         bpy.data.meshes.remove(old_mesh)
-        
-        # Restore transform
-        obj.location = loc
-        obj.rotation_euler = rot
+        obj.location, obj.rotation_euler = loc, rot
         if parent:
             obj.parent = parent
         
@@ -700,10 +616,9 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     
     def draw(self, context):
         layout = self.layout
-        col = layout.column()
-        col.prop(self, "width")
-        col.prop(self, "height")
-        col.prop(self, "depth")
+        layout.prop(self, "width")
+        layout.prop(self, "height")
+        layout.prop(self, "depth")
 
 
 # =============================================================================
@@ -718,11 +633,9 @@ classes = (
     home_builder_obstacles_OT_edit_obstacle,
 )
 
-
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-
 
 def unregister():
     for cls in reversed(classes):
