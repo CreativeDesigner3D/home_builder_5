@@ -745,8 +745,11 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
                     text="Add Text", icon='FONT_DATA')
         
         # Dimension - use appropriate operator based on view type
-        if is_layout_view or is_detail_view:
+        if is_detail_view:
             col.operator("home_builder_details.add_dimension", 
+                        text="Add Dimension", icon='DRIVER_DISTANCE')
+        elif is_layout_view:
+            col.operator("home_builder_layouts.add_dimension", 
                         text="Add Dimension", icon='DRIVER_DISTANCE')
         else:
             col.operator("home_builder_layouts.add_dimension_3d", 
