@@ -429,13 +429,16 @@ class GeoNodeHardware(GeoNodeObject):
 class GeoNodeDimension(GeoNodeObject):  
 
     def create(self,name):
+        props = bpy.context.scene.home_builder
+
         super().create_curve('GeoNodeDimension',name)
         self.obj['IS_2D_ANNOTATION'] = True  
-        self.set_input("Tick Length",units.inch(1.4))
-        self.set_input("Tick Thickness",units.inch(.1))
-        self.set_input("Line Thickness",units.inch(.1))
-        self.set_input("Extend Line",units.inch(1))
-        self.set_input("Text Size",units.inch(3))
+        self.obj['IS_DIMENSION'] = True  
+        self.set_input("Tick Length",props.annotation_dimension_tick_length)
+        self.set_input("Tick Thickness",props.annotation_dimension_tick_thickness)
+        self.set_input("Line Thickness",props.annotation_dimension_line_thickness)
+        self.set_input("Extend Line",props.annotation_dimension_extend_line)
+        self.set_input("Text Size",props.annotation_dimension_text_size)
 
 
 class CabinetPartModifier(GeoNodeObject):

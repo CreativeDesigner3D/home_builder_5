@@ -1687,9 +1687,6 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     
     def _create_dimension(self, context):
         """Create dimension based on detected view plane."""
-        from mathutils import Vector
-        from .. import units
-        import math
         
         p1 = Vector(self.first_point)
         p2 = Vector(self.second_point)

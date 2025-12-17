@@ -17,7 +17,7 @@ from bpy.props import (
         CollectionProperty,
         EnumProperty,
         )
-from . import hb_utils
+from . import hb_utils, hb_types
 from .units import inch
 from .hb_types import Variable
 
@@ -83,39 +83,25 @@ def update_text_color(self, context):
 def update_dimension_text_size(self, context):
     """Update all dimension text sizes in the scene."""
     for obj in context.scene.objects:
-        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
-            # Find the geometry node modifier
-            for mod in obj.modifiers:
-                if mod.type == 'NODES' and mod.node_group:
-                    # Try to set Text Size input
-                    try:
-                        mod["Socket_3"] = self.annotation_dimension_text_size
-                    except:
-                        pass
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Text Size", self.annotation_dimension_text_size)
 
 
-def update_dimension_arrow_size(self, context):
+def update_dimension_tick_length(self, context):
     """Update all dimension arrow sizes in the scene."""
     for obj in context.scene.objects:
-        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
-            for mod in obj.modifiers:
-                if mod.type == 'NODES' and mod.node_group:
-                    try:
-                        mod["Socket_4"] = self.annotation_dimension_tick_length
-                    except:
-                        pass
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Tick Length", self.annotation_dimension_tick_length)
 
 
 def update_dimension_line_thickness(self, context):
     """Update all dimension line thicknesses in the scene."""
     for obj in context.scene.objects:
-        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
-            for mod in obj.modifiers:
-                if mod.type == 'NODES' and mod.node_group:
-                    try:
-                        mod["Socket_5"] = self.annotation_dimension_line_thickness
-                    except:
-                        pass
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Line Thickness", self.annotation_dimension_line_thickness)
 
 
 def update_font(self, context):
@@ -354,7 +340,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_line_thickness: FloatProperty(
         name="Line Thickness",
         description="Thickness of annotation lines",
-        default=0.002,
+        default=inch(.1),
         min=0.0005,
         max=0.02,
         precision=4,
@@ -383,7 +369,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_text_size: FloatProperty(
         name="Text Size",
         description="Size of text annotations",
-        default=0.0127,  # 1/2 inch
+        default=0.05,
         min=0.001,
         max=0.5,
         precision=4,
@@ -405,7 +391,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dimension_text_size: FloatProperty(
         name="Dimension Text Size",
         description="Size of dimension text",
-        default=0.0127,  # 1/2 inch
+        default=inch(2),
         min=0.001,
         max=0.5,
         precision=4,
@@ -416,23 +402,45 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dimension_tick_length: FloatProperty(
         name="Tick Length",
         description="Size of dimension ticks",
-        default=0.00635,  # 1/4 inch
+        default=inch(1),
         min=0.001,
         max=0.1,
         precision=4,
         unit='LENGTH',
-        update=update_dimension_arrow_size
+        update=update_dimension_tick_length
     )# type: ignore
     
     annotation_dimension_line_thickness: FloatProperty(
         name="Dimension Line Thickness",
         description="Thickness of dimension lines",
-        default=0.001,
+        default=inch(.05),
         min=0.0001,
         max=0.01,
         precision=4,
         unit='LENGTH',
         update=update_dimension_line_thickness
+    )# type: ignore
+
+    annotation_dimension_tick_thickness: FloatProperty(
+        name="Dimension Tick Thickness",
+        description="Thickness of dimension ticks",
+        default=inch(.05),
+        min=0.0001,
+        max=0.01,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_line_thickness
+    )# type: ignore
+
+    annotation_dimension_extend_line: FloatProperty(
+        name="Extend Line",
+        description="Size of dimension extend line",
+        default=inch(1),
+        min=0.001,
+        max=0.1,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_tick_length
     )# type: ignore
 
     @classmethod
