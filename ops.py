@@ -183,7 +183,7 @@ class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
                         except:
                             pass
                         try:
-                            mod["Socket_4"] = hb_scene.annotation_dimension_arrow_size
+                            mod["Socket_4"] = hb_scene.annotation_dimension_tick_length
                         except:
                             pass
                         try:

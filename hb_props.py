@@ -101,7 +101,7 @@ def update_dimension_arrow_size(self, context):
             for mod in obj.modifiers:
                 if mod.type == 'NODES' and mod.node_group:
                     try:
-                        mod["Socket_4"] = self.annotation_dimension_arrow_size
+                        mod["Socket_4"] = self.annotation_dimension_tick_length
                     except:
                         pass
 
@@ -413,9 +413,9 @@ class Home_Builder_Scene_Props(PropertyGroup):
         update=update_dimension_text_size
     )# type: ignore
     
-    annotation_dimension_arrow_size: FloatProperty(
-        name="Arrow Size",
-        description="Size of dimension arrows/ticks",
+    annotation_dimension_tick_length: FloatProperty(
+        name="Tick Length",
+        description="Size of dimension ticks",
         default=0.00635,  # 1/4 inch
         min=0.001,
         max=0.1,

@@ -1,7 +1,15 @@
 import bpy
 import os
+import gpu
+import blf
+import math
+from gpu_extras.batch import batch_for_shader
+from mathutils import Vector, Matrix, Euler
+from bpy_extras.view3d_utils import location_3d_to_region_2d
+from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
 from .. import hb_layouts
 from .. import hb_types
+from .. import units
 
 # =============================================================================
 # SCALE CALCULATION
@@ -625,13 +633,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
     @staticmethod
     def draw_callback(self, context):
         """Draw visual feedback for snapping and dimension preview."""
-        import gpu
-        from gpu_extras.batch import batch_for_shader
-        import blf
-        from mathutils import Vector
-        from bpy_extras.view3d_utils import location_3d_to_region_2d
-        from .. import units
-        
+
         region = context.region
         rv3d = context.region_data
         
@@ -699,7 +701,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             
             if is_elevation:
                 # Elevation view: work in wall's local coordinate system
-                from mathutils import Matrix
                 
                 # Get wall rotation
                 wall_rotation_z = 0
@@ -914,8 +915,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
     
     def get_snapped_point_with_screen(self, context, coord):
         """Get 3D point with snapping and return screen position too."""
-        from bpy_extras.view3d_utils import location_3d_to_region_2d
-        from mathutils import Vector
         
         region = context.region
         rv3d = context.region_data
@@ -991,9 +990,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
     
     def _check_collection_vertices_with_dist(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist, is_elevation=False):
         """Check vertices in a collection instance and return best point with distance."""
-        from bpy_extras.view3d_utils import location_3d_to_region_2d
-        from mathutils import Vector
-        
+
         if not instance_obj.instance_collection:
             return None, float('inf')
         
@@ -1037,8 +1034,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         For plan views: projects to Z=0 (XY plane)
         For elevation views: projects to wall's plane (vertical plane aligned with wall)
         """
-        from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
-        from mathutils import Vector, Matrix
         
         region = context.region
         rv3d = context.region_data
@@ -1084,9 +1079,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
     
     def create_dimension(self, context):
         """Create a linear dimension annotation between the two clicked points."""
-        from mathutils import Vector, Matrix
-        from .. import units
-        import math
         
         p1 = Vector(self.first_point)
         p2 = Vector(self.second_point)
@@ -1149,7 +1141,6 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
             start_point = rot_matrix_inv @ start_local
             
             # Combine local rotation with wall rotation
-            from mathutils import Euler
             local_euler = Euler(local_rotation, 'XYZ')
             wall_euler = Euler((0, 0, wall_rotation_z), 'XYZ')
             
@@ -1207,7 +1198,7 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         # Apply dimension settings from scene
         hb_scene = context.scene.home_builder
         dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
-        dim.set_input("Arrow Size", hb_scene.annotation_dimension_arrow_size)
+        dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
         
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
@@ -1283,8 +1274,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     
     def _detect_view_plane(self, context):
         """Detect which plane the user is most aligned with based on view direction."""
-        from mathutils import Vector
-        
+
         rv3d = context.region_data
         if not rv3d:
             self.view_plane = 'XY'
@@ -1359,9 +1349,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     
     def _get_plane_point(self, context, coord):
         """Get point on the detected view plane, passing through first_point if set."""
-        from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
-        from mathutils import Vector
-        
+
         region = context.region
         rv3d = context.region_data
         
@@ -1389,9 +1377,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     
     def _get_snapped_point(self, context, coord):
         """Get 3D point with snapping to nearest vertex."""
-        from bpy_extras.view3d_utils import location_3d_to_region_2d
-        from mathutils import Vector
-        
+
         region = context.region
         rv3d = context.region_data
         
@@ -1447,8 +1433,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     
     def _project_to_plane(self, point):
         """Project a 3D point onto the view plane."""
-        from mathutils import Vector
-        
+
         p = Vector(point)
         
         # Project onto plane passing through first_point (or origin if not set)
@@ -1468,14 +1453,7 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
     @staticmethod
     def draw_callback_3d(self, context):
         """Draw visual feedback for snapping and dimension preview."""
-        import gpu
-        from gpu_extras.batch import batch_for_shader
-        import blf
-        from mathutils import Vector
-        from bpy_extras.view3d_utils import location_3d_to_region_2d
-        from .. import units
-        import math
-        
+
         region = context.region
         rv3d = context.region_data
         

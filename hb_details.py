@@ -5,26 +5,11 @@ from . import hb_types
 from . import units
 
 # =============================================================================
-# PAPER SIZE DEFINITIONS (shared with hb_layouts)
-# =============================================================================
-
-PAPER_SIZES = {
-    'LETTER': (8.5, 11.0),
-    'LEGAL': (8.5, 14.0),
-    'TABLOID': (11.0, 17.0),
-    'A4': (8.27, 11.69),
-    'A3': (11.69, 16.54),
-}
-
-DEFAULT_DPI = 150
-
-
-# =============================================================================
 # DETAIL VIEW CLASS
 # =============================================================================
 
 class DetailView:
-    """Class for 2D detail drawings - like AutoCAD detail views."""
+    """Class for 2D detail drawings - CAD detail views."""
     
     scene: bpy.types.Scene = None
     
@@ -95,11 +80,6 @@ class DetailView:
                         space.region_3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
                         space.shading.type = 'SOLID'
                         space.shading.color_type = 'OBJECT'
-                        space.shading.light = 'FLAT'
-                        space.overlay.show_floor = False
-                        space.overlay.show_axis_x = True
-                        space.overlay.show_axis_y = True
-                        space.overlay.show_axis_z = False
                         break
 
 

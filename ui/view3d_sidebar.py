@@ -18,6 +18,7 @@ class HOME_BUILDER_PT_project(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'Home Builder'
     bl_order = 0
+    bl_options = {'DEFAULT_CLOSED'}
     
     def draw(self, context):
         layout = self.layout
@@ -546,28 +547,29 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
         col.prop(context.scene, "name", text="Name")
         
         # View type info
-        if context.scene.get('IS_ELEVATION_VIEW'):
-            source_wall = context.scene.get('SOURCE_WALL', 'Unknown')
-            col.label(text=f"Type: Elevation ({source_wall})")
-        elif context.scene.get('IS_PLAN_VIEW'):
-            col.label(text="Type: Floor Plan")
-        elif context.scene.get('IS_3D_VIEW'):
-            col.label(text="Type: 3D View")
-        elif context.scene.get('IS_MULTI_VIEW'):
-            col.label(text="Type: Multi-View")
+        # if context.scene.get('IS_ELEVATION_VIEW'):
+        #     source_wall = context.scene.get('SOURCE_WALL', 'Unknown')
+        #     col.label(text=f"Type: Elevation ({source_wall})")
+        # elif context.scene.get('IS_PLAN_VIEW'):
+        #     col.label(text="Type: Floor Plan")
+        # elif context.scene.get('IS_3D_VIEW'):
+        #     col.label(text="Type: 3D View")
+        # elif context.scene.get('IS_MULTI_VIEW'):
+        #     col.label(text="Type: Multi-View")
         
         col.separator()
         
         # Paper settings
         col.prop(context.scene, "hb_paper_size", text="Paper")
-        col.prop(context.scene, "hb_paper_landscape", text="Landscape")
+        # col.prop(context.scene, "hb_paper_landscape", text="Landscape")
         col.prop(context.scene, "hb_layout_scale", text="Scale")
         
         col.separator()
         
         row = col.row(align=True)
-        row.operator("home_builder_layouts.fit_view_to_content", 
-                    text="Fit to Content", icon='FULLSCREEN_ENTER')
+        row.scale_y = 1.5
+        # row.operator("home_builder_layouts.fit_view_to_content", 
+        #             text="Fit to Content", icon='FULLSCREEN_ENTER')
         row.operator("home_builder_layouts.render_layout", 
                     text="Render", icon='RENDER_STILL')
 
@@ -830,7 +832,7 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(hb_scene, "annotation_dimension_text_size", text="Text Size")
-        col.prop(hb_scene, "annotation_dimension_arrow_size", text="Arrow Size")
+        col.prop(hb_scene, "annotation_dimension_tick_length", text="Tick Length")
         col.prop(hb_scene, "annotation_dimension_line_thickness", text="Line Thickness")
         
         # Apply to All button

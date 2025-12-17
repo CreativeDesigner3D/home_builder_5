@@ -2621,7 +2621,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         
         # Apply dimension settings from scene
         self.dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
-        self.dim.set_input("Arrow Size", hb_scene.annotation_dimension_arrow_size)
+        self.dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
         
         self.register_placement_object(self.dim.obj)
     

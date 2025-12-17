@@ -41,10 +41,6 @@ def get_paper_resolution(paper_size: str, landscape: bool = True, dpi: int = DEF
     
     return (int(width_in * dpi), int(height_in * dpi))
 
-
-
-
-
 # =============================================================================
 # TITLE BLOCK
 # =============================================================================
