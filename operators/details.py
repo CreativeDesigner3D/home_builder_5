@@ -164,18 +164,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     _handle = None
     
     def get_curve_vertices(self, context) -> list:
-        """Get all curve vertices in the scene as world coordinates, including current line's confirmed points."""
+        """Get all curve vertices in the scene as world coordinates."""
         vertices = []
         
-        # Add confirmed points from current polyline (excluding preview point)
-        if self.polyline and self.polyline.obj and self.point_count > 0:
-            spline = self.polyline.obj.data.splines[0]
-            for i in range(self.point_count):
-                if i < len(spline.points):
-                    pt = spline.points[i]
-                    vertices.append(Vector((pt.co[0], pt.co[1], pt.co[2])))
-        
-        # Add vertices from other curves
+        # Add vertices from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -189,19 +181,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         return vertices
     
     def get_curve_segments(self, context) -> list:
-        """Get all curve segments as (start, end) tuples, including current line's confirmed segments."""
+        """Get all curve segments as (start, end) tuples."""
         segments = []
         
-        # Add confirmed segments from current polyline
-        if self.polyline and self.polyline.obj and self.point_count > 1:
-            spline = self.polyline.obj.data.splines[0]
-            for i in range(self.point_count - 1):
-                if i + 1 < len(spline.points):
-                    p1 = Vector((spline.points[i].co[0], spline.points[i].co[1], 0))
-                    p2 = Vector((spline.points[i+1].co[0], spline.points[i+1].co[1], 0))
-                    segments.append((p1, p2))
-        
-        # Add segments from other curves
+        # Add segments from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -564,6 +547,19 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         """Create a new polyline object."""
         self.polyline = hb_details.GeoNodePolyline()
         self.polyline.create("Line")
+        
+        # Apply annotation settings from scene
+        hb_scene = context.scene.home_builder
+        self.polyline.obj.data.bevel_depth = hb_scene.annotation_line_thickness
+        color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        self.polyline.obj.color = color
+        if self.polyline.obj.data.materials:
+            mat = self.polyline.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = color
+        
         self.register_placement_object(self.polyline.obj)
         self.point_count = 0
         self.current_point = None
@@ -918,18 +914,10 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
     _handle = None
     
     def get_curve_vertices(self, context) -> list:
-        """Get all curve vertices in the scene as world coordinates, including current line's confirmed points."""
+        """Get all curve vertices in the scene as world coordinates."""
         vertices = []
         
-        # Add confirmed points from current polyline (excluding preview point)
-        if self.polyline and self.polyline.obj and self.point_count > 0:
-            spline = self.polyline.obj.data.splines[0]
-            for i in range(self.point_count):
-                if i < len(spline.points):
-                    pt = spline.points[i]
-                    vertices.append(Vector((pt.co[0], pt.co[1], pt.co[2])))
-        
-        # Add vertices from other curves
+        # Add vertices from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -943,19 +931,10 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         return vertices
     
     def get_curve_segments(self, context) -> list:
-        """Get all curve segments as (start, end) tuples, including current line's confirmed segments."""
+        """Get all curve segments as (start, end) tuples."""
         segments = []
         
-        # Add confirmed segments from current polyline
-        if self.polyline and self.polyline.obj and self.point_count > 1:
-            spline = self.polyline.obj.data.splines[0]
-            for i in range(self.point_count - 1):
-                if i + 1 < len(spline.points):
-                    p1 = Vector((spline.points[i].co[0], spline.points[i].co[1], 0))
-                    p2 = Vector((spline.points[i+1].co[0], spline.points[i+1].co[1], 0))
-                    segments.append((p1, p2))
-        
-        # Add segments from other curves
+        # Add segments from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
             if obj.type == 'CURVE' and (not self.polyline or obj != self.polyline.obj):
                 matrix = obj.matrix_world
@@ -1267,6 +1246,19 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         """Create a new rectangle polyline object."""
         self.polyline = hb_details.GeoNodePolyline()
         self.polyline.create("Rectangle")
+        
+        # Apply annotation settings from scene
+        hb_scene = context.scene.home_builder
+        self.polyline.obj.data.bevel_depth = hb_scene.annotation_line_thickness
+        color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        self.polyline.obj.color = color
+        if self.polyline.obj.data.materials:
+            mat = self.polyline.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = color
+        
         self.register_placement_object(self.polyline.obj)
         
         # Add 3 more points (total 4 for rectangle)
@@ -1588,14 +1580,12 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         return vertices
     
     def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
         from bpy_extras import view3d_utils
         
         best_point = None
         best_distance = SNAP_RADIUS
-        self.is_perp_snap = False
         
-        # First check vertex snaps (higher priority)
         vertices = self.get_curve_vertices(context)
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
@@ -1604,21 +1594,6 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
                 if distance < best_distance:
                     best_point = co.copy()
                     best_distance = distance
-                    self.is_perp_snap = False
-        
-        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
-        if self.hit_location:
-            point = Vector((self.hit_location.x, self.hit_location.y, 0))
-            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
-            
-            if perp_foot:
-                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
-                if foot_2d:
-                    distance = (foot_2d - self.mouse_pos).length
-                    if distance < best_distance:
-                        best_point = perp_foot.copy()
-                        best_distance = distance
-                        self.is_perp_snap = True
         
         return best_point
     
@@ -1646,7 +1621,19 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         """Create a new circle object."""
         self.circle = hb_details.GeoNodeCircle()
         self.circle.create("Circle")
-        self.circle.obj.color = (0, 0, 0, 1)  # Ensure black color
+        
+        # Apply annotation settings from scene
+        hb_scene = context.scene.home_builder
+        self.circle.obj.data.bevel_depth = hb_scene.annotation_line_thickness
+        color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        self.circle.obj.color = color
+        if self.circle.obj.data.materials:
+            mat = self.circle.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = color
+        
         self.circle.set_radius(0.001)  # Start very small
         self.register_placement_object(self.circle.obj)
     
@@ -1851,9 +1838,6 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
     # Text state
     text_obj: hb_details.GeoNodeText = None
     
-    # Text size (default 1/2" for cabinet drawings)
-    text_size: float = 0.0127  # 1/2 inch in meters
-    
     # Snap state
     is_snapped: bool = False
     snap_screen_pos: tuple = None
@@ -1877,14 +1861,12 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
         return vertices
     
     def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
+        """Try to snap to nearby curve vertices. Returns snapped point or None."""
         from bpy_extras import view3d_utils
         
         best_point = None
         best_distance = SNAP_RADIUS
-        self.is_perp_snap = False
         
-        # First check vertex snaps (higher priority)
         vertices = self.get_curve_vertices(context)
         for co in vertices:
             co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
@@ -1893,21 +1875,6 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
                 if distance < best_distance:
                     best_point = co.copy()
                     best_distance = distance
-                    self.is_perp_snap = False
-        
-        # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
-        if self.hit_location:
-            point = Vector((self.hit_location.x, self.hit_location.y, 0))
-            perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
-            
-            if perp_foot:
-                foot_2d = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, perp_foot)
-                if foot_2d:
-                    distance = (foot_2d - self.mouse_pos).length
-                    if distance < best_distance:
-                        best_point = perp_foot.copy()
-                        best_distance = distance
-                        self.is_perp_snap = True
         
         return best_point
     
@@ -1933,8 +1900,25 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
     
     def create_text(self, context):
         """Create a new text object."""
+        hb_scene = context.scene.home_builder
+        
         self.text_obj = hb_details.GeoNodeText()
-        self.text_obj.create("Text", "TEXT", self.text_size)
+        self.text_obj.create("Text", "TEXT", hb_scene.annotation_text_size)
+        
+        # Apply font if set
+        if hb_scene.annotation_font:
+            self.text_obj.obj.data.font = hb_scene.annotation_font
+        
+        # Apply text color
+        color = tuple(hb_scene.annotation_text_color) + (1.0,)
+        self.text_obj.obj.color = color
+        if self.text_obj.obj.data.materials:
+            mat = self.text_obj.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = color
+        
         self.register_placement_object(self.text_obj.obj)
     
     def _remove_draw_handler(self):
@@ -2629,9 +2613,16 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     
     def create_dimension(self, context):
         """Create dimension object."""
+        hb_scene = context.scene.home_builder
+        
         self.dim = hb_types.GeoNodeDimension()
         self.dim.create("Dimension")
         self.dim.obj['IS_2D_ANNOTATION'] = True
+        
+        # Apply dimension settings from scene
+        self.dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
+        self.dim.set_input("Arrow Size", hb_scene.annotation_dimension_arrow_size)
+        
         self.register_placement_object(self.dim.obj)
     
     def get_curve_vertices(self, context) -> list:

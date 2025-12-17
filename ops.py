@@ -122,10 +122,87 @@ class home_builder_OT_reload_addon(bpy.types.Operator):
         self.report({'INFO'}, f"Reloaded Home Builder (cleared {len(modules_to_remove)} modules)")
         return {'FINISHED'}
 
+class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
+    bl_idname = "home_builder_annotations.apply_settings_to_all"
+    bl_label = "Apply Settings to All"
+    bl_description = "Apply annotation settings to all annotations in the current scene"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        hb_scene = context.scene.home_builder
+        
+        lines_updated = 0
+        texts_updated = 0
+        dimensions_updated = 0
+        
+        for obj in context.scene.objects:
+            # Update lines, polylines, circles
+            if obj.type == 'CURVE' and (obj.get('IS_DETAIL_LINE') or obj.get('IS_DETAIL_POLYLINE') or obj.get('IS_DETAIL_CIRCLE')):
+                # Line thickness
+                obj.data.bevel_depth = hb_scene.annotation_line_thickness
+                
+                # Line color
+                color = tuple(hb_scene.annotation_line_color) + (1.0,)
+                obj.color = color
+                if obj.data.materials:
+                    mat = obj.data.materials[0]
+                    if mat and mat.use_nodes:
+                        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                        if bsdf:
+                            bsdf.inputs["Base Color"].default_value = color
+                
+                lines_updated += 1
+            
+            # Update text annotations
+            elif obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+                # Font
+                if hb_scene.annotation_font:
+                    obj.data.font = hb_scene.annotation_font
+                
+                # Text size
+                obj.data.size = hb_scene.annotation_text_size
+                
+                # Text color
+                color = tuple(hb_scene.annotation_text_color) + (1.0,)
+                obj.color = color
+                if obj.data.materials:
+                    mat = obj.data.materials[0]
+                    if mat and mat.use_nodes:
+                        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                        if bsdf:
+                            bsdf.inputs["Base Color"].default_value = color
+                
+                texts_updated += 1
+            
+            # Update dimensions
+            elif obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
+                for mod in obj.modifiers:
+                    if mod.type == 'NODES' and mod.node_group:
+                        try:
+                            mod["Socket_3"] = hb_scene.annotation_dimension_text_size
+                        except:
+                            pass
+                        try:
+                            mod["Socket_4"] = hb_scene.annotation_dimension_arrow_size
+                        except:
+                            pass
+                        try:
+                            mod["Socket_5"] = hb_scene.annotation_dimension_line_thickness
+                        except:
+                            pass
+                
+                dimensions_updated += 1
+        
+        total = lines_updated + texts_updated + dimensions_updated
+        self.report({'INFO'}, f"Updated {total} annotations ({lines_updated} lines, {texts_updated} texts, {dimensions_updated} dimensions)")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_OT_reload_addon,
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
+    home_builder_annotations_OT_apply_settings_to_all,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)             

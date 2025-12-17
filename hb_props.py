@@ -31,6 +31,102 @@ def update_product_tab(self,context):
     print("update_product_tab")
 
 
+def update_line_thickness(self, context):
+    """Update all curve line thicknesses in the scene."""
+    for obj in context.scene.objects:
+        if obj.type == 'CURVE':
+            # Skip dimensions (they have their own thickness via geometry nodes)
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            # Update detail lines, polylines, circles, rectangles
+            if obj.get('IS_DETAIL_LINE') or obj.get('IS_DETAIL_POLYLINE') or obj.get('IS_DETAIL_CIRCLE'):
+                obj.data.bevel_depth = self.annotation_line_thickness
+
+
+def update_line_color(self, context):
+    """Update all annotation line colors in the scene."""
+    color = tuple(self.annotation_line_color) + (1.0,)  # Add alpha
+    for obj in context.scene.objects:
+        if obj.type == 'CURVE':
+            if obj.get('IS_DETAIL_LINE') or obj.get('IS_DETAIL_POLYLINE') or obj.get('IS_DETAIL_CIRCLE'):
+                obj.color = color
+                # Update material if exists
+                if obj.data.materials:
+                    mat = obj.data.materials[0]
+                    if mat and mat.use_nodes:
+                        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                        if bsdf:
+                            bsdf.inputs["Base Color"].default_value = color
+
+
+def update_text_size(self, context):
+    """Update all text annotation sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.data.size = self.annotation_text_size
+
+
+def update_text_color(self, context):
+    """Update all text annotation colors in the scene."""
+    color = tuple(self.annotation_text_color) + (1.0,)  # Add alpha
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.color = color
+            if obj.data.materials:
+                mat = obj.data.materials[0]
+                if mat and mat.use_nodes:
+                    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                    if bsdf:
+                        bsdf.inputs["Base Color"].default_value = color
+
+
+def update_dimension_text_size(self, context):
+    """Update all dimension text sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
+            # Find the geometry node modifier
+            for mod in obj.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    # Try to set Text Size input
+                    try:
+                        mod["Socket_3"] = self.annotation_dimension_text_size
+                    except:
+                        pass
+
+
+def update_dimension_arrow_size(self, context):
+    """Update all dimension arrow sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
+            for mod in obj.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    try:
+                        mod["Socket_4"] = self.annotation_dimension_arrow_size
+                    except:
+                        pass
+
+
+def update_dimension_line_thickness(self, context):
+    """Update all dimension line thicknesses in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
+            for mod in obj.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    try:
+                        mod["Socket_5"] = self.annotation_dimension_line_thickness
+                    except:
+                        pass
+
+
+def update_font(self, context):
+    """Update all text annotations to use the selected font."""
+    if not self.annotation_font:
+        return
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.data.font = self.annotation_font
+
+
 class Calculator_Prompt(PropertyGroup):
     distance_value: FloatProperty(name="Distance Value",subtype='DISTANCE',precision=5)# type: ignore
     equal: BoolProperty(name="Equal",default=True)# type: ignore
@@ -249,6 +345,95 @@ class Home_Builder_Scene_Props(PropertyGroup):
     show_materials: BoolProperty(name="Show Materials", default=False)
     show_room_settings: BoolProperty(name="Show Room Settings", default=False)
     show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)
+
+    # ==========================================================================
+    # ANNOTATION PROPERTIES
+    # ==========================================================================
+    
+    # Line properties
+    annotation_line_thickness: FloatProperty(
+        name="Line Thickness",
+        description="Thickness of annotation lines",
+        default=0.002,
+        min=0.0005,
+        max=0.02,
+        precision=4,
+        unit='LENGTH',
+        update=update_line_thickness
+    )# type: ignore
+    
+    annotation_line_color: FloatVectorProperty(
+        name="Line Color",
+        description="Color for annotation lines",
+        subtype='COLOR',
+        default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0,
+        update=update_line_color
+    )# type: ignore
+    
+    # Text properties
+    annotation_font: PointerProperty(
+        name="Font",
+        description="Font for text annotations",
+        type=bpy.types.VectorFont,
+        update=update_font
+    )# type: ignore
+    
+    annotation_text_size: FloatProperty(
+        name="Text Size",
+        description="Size of text annotations",
+        default=0.0127,  # 1/2 inch
+        min=0.001,
+        max=0.5,
+        precision=4,
+        unit='LENGTH',
+        update=update_text_size
+    )# type: ignore
+    
+    annotation_text_color: FloatVectorProperty(
+        name="Text Color",
+        description="Color for text annotations",
+        subtype='COLOR',
+        default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0,
+        update=update_text_color
+    )# type: ignore
+    
+    # Dimension properties
+    annotation_dimension_text_size: FloatProperty(
+        name="Dimension Text Size",
+        description="Size of dimension text",
+        default=0.0127,  # 1/2 inch
+        min=0.001,
+        max=0.5,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_text_size
+    )# type: ignore
+    
+    annotation_dimension_arrow_size: FloatProperty(
+        name="Arrow Size",
+        description="Size of dimension arrows/ticks",
+        default=0.00635,  # 1/4 inch
+        min=0.001,
+        max=0.1,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_arrow_size
+    )# type: ignore
+    
+    annotation_dimension_line_thickness: FloatProperty(
+        name="Dimension Line Thickness",
+        description="Thickness of dimension lines",
+        default=0.001,
+        min=0.0001,
+        max=0.01,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_line_thickness
+    )# type: ignore
 
     @classmethod
     def register(cls):

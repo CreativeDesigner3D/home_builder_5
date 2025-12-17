@@ -1204,6 +1204,11 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         # Set leader length
         dim.set_input("Leader Length", leader_length)
         
+        # Apply dimension settings from scene
+        hb_scene = context.scene.home_builder
+        dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
+        dim.set_input("Arrow Size", hb_scene.annotation_dimension_arrow_size)
+        
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
         context.view_layer.objects.active = dim.obj

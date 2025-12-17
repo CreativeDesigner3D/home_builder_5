@@ -479,62 +479,8 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
                     col.menu("HOME_BUILDER_MT_room_list", text="Go Back to Room", icon='LOOP_BACK')
 
 
-# SUBPANEL: Drawing Tools (only visible in detail view)
-class HOME_BUILDER_PT_2d_details_tools(bpy.types.Panel):
-    bl_label = "Drawing Tools"
-    bl_idname = "HOME_BUILDER_PT_2d_details_tools"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Home Builder'
-    bl_parent_id = "HOME_BUILDER_PT_2d_details"
-    
-    @classmethod
-    def poll(cls, context):
-        return context.scene.get('IS_DETAIL_VIEW', False)
-    
-    def draw(self, context):
-        layout = self.layout
-        
-        col = layout.column(align=True)
-        col.scale_y = 1.2
-        
-        # Line drawing
-        col.operator("home_builder_details.draw_line", 
-                    text="Draw Line", icon='IPO_LINEAR')
-        
-        # Rectangle drawing
-        col.operator("home_builder_details.draw_rectangle", 
-                    text="Draw Rectangle", icon='MESH_PLANE')
-        
-        # Circle drawing
-        col.operator("home_builder_details.draw_circle", 
-                    text="Draw Circle", icon='MESH_CIRCLE')
-        
-        col.separator()
-        
-        # Text annotation
-        col.operator("home_builder_details.add_text", 
-                    text="Add Text", icon='FONT_DATA')
-        
-        # Dimension
-        col.operator("home_builder_details.add_dimension", 
-                    text="Add Dimension", icon='DRIVER_DISTANCE')
-        
-        # Edit mode tools
-        if context.mode == 'EDIT_CURVE':
-            col.separator()
-            col.label(text="Edit Tools:")
-            col.operator("home_builder_details.add_fillet", 
-                        text="Add Fillet/Radius", icon='SPHERECURVE')
-            col.operator("home_builder_details.offset_curve", 
-                        text="Offset Curve", icon='MOD_OFFSET')
-        
-        # Object mode curve tools
-        elif context.mode == 'OBJECT' and context.active_object and context.active_object.type == 'CURVE':
-            col.separator()
-            col.label(text="Curve Tools:")
-            col.operator("home_builder_details.offset_curve", 
-                        text="Offset Curve", icon='MOD_OFFSET')
+# SUBPANEL: Drawing Tools - REMOVED (moved to Annotations panel)
+# Drawing tools are now available in the Annotations panel for all scene types
 
 
 # SUBPANEL: Detail Library (only visible in detail view)
@@ -608,16 +554,138 @@ class HOME_BUILDER_PT_annotations(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+
+
+# SUBPANEL: Drawing Tools
+class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
+    bl_label = "Drawing Tools"
+    bl_idname = "HOME_BUILDER_PT_annotations_drawing"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_annotations"
+    
+    def draw(self, context):
+        layout = self.layout
         is_layout_view = context.scene.get('IS_LAYOUT_VIEW', False)
+        is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
         
         col = layout.column(align=True)
+        col.scale_y = 1.2
         
-        if is_layout_view:
-            col.operator("home_builder_layouts.add_dimension", 
+        # Line drawing
+        col.operator("home_builder_details.draw_line", 
+                    text="Draw Line", icon='IPO_LINEAR')
+        
+        # Rectangle drawing
+        col.operator("home_builder_details.draw_rectangle", 
+                    text="Draw Rectangle", icon='MESH_PLANE')
+        
+        # Circle drawing
+        col.operator("home_builder_details.draw_circle", 
+                    text="Draw Circle", icon='MESH_CIRCLE')
+        
+        col.separator()
+        
+        # Text annotation
+        col.operator("home_builder_details.add_text", 
+                    text="Add Text", icon='FONT_DATA')
+        
+        # Dimension - use appropriate operator based on view type
+        if is_layout_view or is_detail_view:
+            col.operator("home_builder_details.add_dimension", 
                         text="Add Dimension", icon='DRIVER_DISTANCE')
         else:
             col.operator("home_builder_layouts.add_dimension_3d", 
                         text="Add Dimension", icon='DRIVER_DISTANCE')
+
+
+# SUBPANEL: Edit Tools (for curves)
+class HOME_BUILDER_PT_annotations_edit(bpy.types.Panel):
+    bl_label = "Edit Tools"
+    bl_idname = "HOME_BUILDER_PT_annotations_edit"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_annotations"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    @classmethod
+    def poll(cls, context):
+        # Show when a curve is selected or in edit mode on a curve
+        if context.mode == 'EDIT_CURVE':
+            return True
+        if context.active_object and context.active_object.type == 'CURVE':
+            return True
+        return False
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        col = layout.column(align=True)
+        col.scale_y = 1.2
+        
+        # Edit mode tools
+        if context.mode == 'EDIT_CURVE':
+            col.operator("home_builder_details.add_fillet", 
+                        text="Add Fillet/Radius", icon='SPHERECURVE')
+        
+        # Object mode curve tools
+        col.operator("home_builder_details.offset_curve", 
+                    text="Offset Curve", icon='MOD_OFFSET')
+
+
+# SUBPANEL: Annotation Settings
+class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
+    bl_label = "Annotation Settings"
+    bl_idname = "HOME_BUILDER_PT_annotations_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Home Builder'
+    bl_parent_id = "HOME_BUILDER_PT_annotations"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        hb_scene = context.scene.home_builder
+        
+        col = layout.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        
+        # Line Settings
+        box = layout.box()
+        box.label(text="Lines", icon='IPO_LINEAR')
+        col = box.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(hb_scene, "annotation_line_thickness", text="Thickness")
+        col.prop(hb_scene, "annotation_line_color", text="Color")
+        
+        # Text Settings
+        box = layout.box()
+        box.label(text="Text", icon='FONT_DATA')
+        col = box.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(hb_scene, "annotation_font", text="Font")
+        col.prop(hb_scene, "annotation_text_size", text="Size")
+        col.prop(hb_scene, "annotation_text_color", text="Color")
+        
+        # Dimension Settings
+        box = layout.box()
+        box.label(text="Dimensions", icon='DRIVER_DISTANCE')
+        col = box.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(hb_scene, "annotation_dimension_text_size", text="Text Size")
+        col.prop(hb_scene, "annotation_dimension_arrow_size", text="Arrow Size")
+        col.prop(hb_scene, "annotation_dimension_line_thickness", text="Line Thickness")
+        
+        # Apply to All button
+        layout.separator()
+        layout.operator("home_builder_annotations.apply_settings_to_all", 
+                       text="Apply to All Annotations", icon='FILE_REFRESH')
 
 
 # -----------------------------------------------------------------------------
@@ -662,9 +730,11 @@ classes = (
     # HOME_BUILDER_PT_layout_views_create,
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_2d_details,
-    HOME_BUILDER_PT_2d_details_tools,
     HOME_BUILDER_PT_2d_details_library,
     HOME_BUILDER_PT_annotations,
+    HOME_BUILDER_PT_annotations_drawing,
+    HOME_BUILDER_PT_annotations_edit,
+    HOME_BUILDER_PT_annotations_settings,
     HOME_BUILDER_PT_settings,
 )
 
