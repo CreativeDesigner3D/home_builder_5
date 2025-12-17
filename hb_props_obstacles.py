@@ -9,7 +9,7 @@ from bpy.props import (
     CollectionProperty,
     EnumProperty,
 )
-from ... import units
+from . import units
 
 
 # =============================================================================
@@ -207,6 +207,15 @@ class Obstacles_Scene_Props(PropertyGroup):
         default=True
     )  # type: ignore
     
+    
+    def get_obstacle_data(self):
+        """Get obstacle data tuple"""
+        all_obstacles = WALL_OBSTACLES + FLOOR_OBSTACLES + CEILING_OBSTACLES + MISC_OBSTACLES
+        for obs in all_obstacles:
+            if obs[0] == self.obstacle_type:
+                return obs
+        return None
+
     def draw_obstacle_ui(self, layout, context):
         """Draw the obstacle selection UI."""
         col = layout.column(align=True)

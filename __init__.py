@@ -1,6 +1,7 @@
 import bpy
 from . import hb_props
 from . import hb_project
+from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
 from .ui import menu_apend
@@ -10,10 +11,10 @@ from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
 from .operators import details
+from .operators import ops_obstacles
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
-from .product_libraries import obstacles
 from . import hb_layouts
 
 from bpy.app.handlers import persistent
@@ -31,7 +32,7 @@ bl_info = {
 }
 
 @persistent
-def load_driver_functions(scene):
+def load_file_post(scene):
     """ Load Default Drivers and ensure project data exists
     """
     import inspect
@@ -146,6 +147,8 @@ def register():
 
     hb_props.register()
     hb_project.register()
+    hb_props_obstacles.register()
+    ops_obstacles.register()
     walls.register()
     layouts.register()
     rooms.register()
@@ -158,15 +161,16 @@ def register():
     closets.register()
     face_frame.register()
     frameless.register()
-    obstacles.register()
 
-    bpy.app.handlers.load_post.append(load_driver_functions)
+    bpy.app.handlers.load_post.append(load_file_post)
 
 def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 
     hb_props.unregister()
     hb_project.unregister()
+    hb_props_obstacles.unregister()
+    ops_obstacles.unregister()
     walls.unregister()
     layouts.unregister()
     rooms.unregister()
@@ -179,9 +183,8 @@ def unregister():
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()
-    obstacles.unregister()
 
-    bpy.app.handlers.load_post.remove(load_driver_functions)
+    bpy.app.handlers.load_post.remove(load_file_post)
 
 if __name__ == '__main__':
     register()    

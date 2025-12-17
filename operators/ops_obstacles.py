@@ -1,8 +1,7 @@
 import bpy
 import math
 from mathutils import Vector, Matrix
-from ... import hb_utils, hb_snap, hb_placement, hb_types, units
-from . import props_obstacles
+from .. import hb_utils, hb_snap, hb_placement, hb_types, units
 
 
 # =============================================================================
@@ -218,7 +217,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def create_obstacle(self, context):
         """Create the obstacle mesh object."""
         hb_obs = context.scene.hb_obstacles
-        obs_data = props_obstacles.get_obstacle_data(hb_obs.obstacle_type)
+        obs_data = hb_obs.get_obstacle_data()
         
         if not obs_data:
             return None
@@ -313,7 +312,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def update_header(self, context):
         """Update header text display."""
         hb_obs = context.scene.hb_obstacles
-        obs_data = props_obstacles.get_obstacle_data(hb_obs.obstacle_type)
+        obs_data = hb_obs.get_obstacle_data()
         obs_name = obs_data[1] if obs_data else "Obstacle"
         
         if self.placement_state == hb_placement.PlacementState.TYPING:
