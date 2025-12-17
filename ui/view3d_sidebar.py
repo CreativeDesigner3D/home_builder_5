@@ -3,6 +3,7 @@ from .. import hb_project
 from .. import hb_layouts
 from .. import hb_details
 
+CATEGORY_NAME = "Home Builder"
 # =============================================================================
 # HOME BUILDER UI PANELS
 # All panels in the "Home Builder" category tab
@@ -16,7 +17,7 @@ class HOME_BUILDER_PT_project(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_project"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 0
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -35,7 +36,7 @@ class HOME_BUILDER_PT_project_info(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_project_info"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_project"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -91,7 +92,7 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_project_rooms"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_project"
     
     def draw(self, context):
@@ -136,7 +137,7 @@ class HOME_BUILDER_PT_room_layout(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 1
     
     @classmethod
@@ -155,7 +156,7 @@ class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout_walls"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_room_layout"
     
     def draw(self, context):
@@ -197,7 +198,7 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout_doors_windows"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_room_layout"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -216,7 +217,7 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout_floor"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_room_layout"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -231,7 +232,7 @@ class HOME_BUILDER_PT_room_layout_lighting(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout_lighting"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_room_layout"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -246,7 +247,7 @@ class HOME_BUILDER_PT_room_layout_obstacles(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_room_layout_obstacles"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_room_layout"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -341,7 +342,7 @@ class HOME_BUILDER_PT_product_library(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_product_library"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 2
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -375,7 +376,7 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_layout_views"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 3
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -475,7 +476,7 @@ class HOME_BUILDER_PT_layout_views_create(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_layout_views_create"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_layout_views"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -530,7 +531,7 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_layout_views_settings"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_layout_views"
     
     @classmethod
@@ -583,7 +584,7 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_2d_details"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 4
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -642,7 +643,7 @@ class HOME_BUILDER_PT_2d_details_library(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_2d_details_library"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_2d_details"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -701,7 +702,7 @@ class HOME_BUILDER_PT_annotations(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_annotations"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 5
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -715,7 +716,7 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_annotations_drawing"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_annotations"
     
     def draw(self, context):
@@ -762,7 +763,7 @@ class HOME_BUILDER_PT_annotations_edit(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_annotations_edit"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_annotations"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -797,7 +798,7 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_annotations_settings"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_parent_id = "HOME_BUILDER_PT_annotations"
     bl_options = {'DEFAULT_CLOSED'}
     
@@ -852,7 +853,7 @@ class HOME_BUILDER_PT_settings(bpy.types.Panel):
     bl_idname = "HOME_BUILDER_PT_settings"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Home Builder'
+    bl_category = CATEGORY_NAME
     bl_order = 6
     bl_options = {'DEFAULT_CLOSED'}
     
