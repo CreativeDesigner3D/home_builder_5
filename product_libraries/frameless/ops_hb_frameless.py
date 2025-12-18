@@ -2234,6 +2234,51 @@ class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
+    """Update all cabinets in the scene that use the active cabinet style"""
+    bl_idname = "hb_frameless.update_cabinets_from_style"
+    bl_label = "Update Cabinets from Style"
+    bl_description = "Update all cabinets in the scene that use the active cabinet style with current style settings"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.cabinet_styles) > 0
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if not props.cabinet_styles:
+            self.report({'WARNING'}, "No cabinet styles defined")
+            return {'CANCELLED'}
+        
+        style_index = props.active_cabinet_style_index
+        style = props.cabinet_styles[style_index]
+        
+        count = 0
+        # Iterate through all scenes (rooms) to find cabinets with this style
+        for scene in bpy.data.scenes:
+            for obj in scene.objects:
+                if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                    cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
+                    if cab_style_index == style_index:
+                        # Re-apply the style to update materials
+                        style.assign_style_to_cabinet(obj)
+                        obj['CABINET_STYLE_NAME'] = style.name  # Update name in case it changed
+                        count += 1
+        
+        if count > 0:
+            self.report({'INFO'}, f"Updated {count} cabinet(s) with style '{style.name}'")
+        else:
+            self.report({'INFO'}, f"No cabinets found using style '{style.name}'")
+        
+        return {'FINISHED'}
+
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_load_cabinet_group_from_library,
@@ -2256,6 +2301,7 @@ classes = (
     hb_frameless_OT_duplicate_cabinet_style,
     hb_frameless_OT_assign_cabinet_style_to_selected_cabinets,
     hb_frameless_OT_assign_cabinet_style,
+    hb_frameless_OT_update_cabinets_from_style,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

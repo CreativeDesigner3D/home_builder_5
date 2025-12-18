@@ -290,7 +290,12 @@ class Frameless_Cabinet_Style(PropertyGroup):
         # Assign to selected button
         row = box.row()
         row.scale_y = 1.3
-        row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", icon='CHECKMARK')        
+        row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", icon='CHECKMARK')
+        
+        # Update cabinets button
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')        
 
 
 class HB_UL_cabinet_styles(UIList):
