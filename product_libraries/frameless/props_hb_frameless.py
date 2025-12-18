@@ -633,6 +633,22 @@ class Frameless_Scene_Props(PropertyGroup):
             style = props.cabinet_styles[props.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
 
+    def draw_door_styles_ui(self, layout, context):
+        row = layout.row()
+        row.operator('hb_frameless.add_door_style',text="Add Door Style",icon='ADD')                
+        for index, door_style in enumerate(self.door_styles):
+            door_box = layout.box()
+            row = door_box.row()
+            row.alignment = 'LEFT'        
+            row.prop(door_style,'show_options',text=door_style.name,icon='TRIA_DOWN' if door_style.show_options else 'TRIA_RIGHT',emboss=False) 
+            row.operator('hb_frameless.update_door_and_drawer_front_style',text="",icon='FILE_REFRESH').selected_index = index                                       
+            if door_style.show_options:
+                door_box.prop(door_style,'name',text="Name")
+                door_box.prop(door_style,'stile_width',text="Stile Width")
+                door_box.prop(door_style,'rail_width',text="Rail Width")
+                door_box.prop(door_style,'panel_thickness',text="Panel Thickness")
+                door_box.prop(door_style,'panel_inset',text="Panel Inset")   
+
     def draw_cabinet_sizes_ui(self,layout,context):
         unit_settings = context.scene.unit_settings      
         row = layout.row()
@@ -781,7 +797,57 @@ class Frameless_Scene_Props(PropertyGroup):
             op = box.operator('hb_frameless.draw_cabinet', text=display_name)
             op.cabinet_name = cabinet_name
 
-          
+    def draw_cabinet_options_general(self,layout,context):
+        unit_settings = context.scene.unit_settings
+        size_box = layout.box()
+        row = size_box.row()
+        row.prop(self,'show_machining',text="Show Machining")
+        row = size_box.row()
+        row.label(text="Toe Kick:")
+        row.operator('hb_frameless.update_toe_kick_prompts',text="",icon='FILE_REFRESH')
+        row = size_box.row()
+        row.prop(self,'default_toe_kick_height',text="Height")
+        row.prop(self,'default_toe_kick_setback',text="Setback")
+        row = size_box.row()
+        row.prop(self,'default_toe_kick_type',text="Type")
+        size_box = layout.box()
+        row = size_box.row()
+        row.label(text="Base Top Construction:")
+        row.prop(self,'base_top_construction',text="")
+        row.operator('hb_frameless.update_base_top_construction_prompts',text="",icon='FILE_REFRESH')        
+        size_box = layout.box()            
+        row = size_box.row()
+        row.label(text="Drawers:")
+        row.operator('hb_frameless.update_drawer_front_height_prompts',text="",icon='FILE_REFRESH')
+        row = size_box.row()
+        row.prop(self,'equal_drawer_stack_heights')
+        if not self.equal_drawer_stack_heights:
+            row = size_box.row()
+            row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
+
+    def draw_cabinet_options_handles(self,layout,context):
+        size_box = layout.box()
+        row = size_box.row()
+        row.label(text="Door Pulls:")
+        row = size_box.row()
+        row.label(text="Door Pull:")
+        row.prop(self,'current_door_pull_object',text="")
+        row = size_box.row()
+        row.label(text="Drawer Front Pull:")
+        row.prop(self,'current_drawer_front_pull_object',text="")
+        row = size_box.row()
+        row.prop(self,'pull_dim_from_edge',text="Pull Distance From Edge")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_base',text="Pull Vertical Location Base")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_tall',text="Pull Vertical Location Tall")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_upper',text="Pull Vertical Location Upper")
+        row = size_box.row()
+        row.prop(self,'pull_vertical_location_drawers',text="Pull Vertical Location Drawers")
+        row = size_box.row()
+        row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
+
     def draw_library_ui(self,layout,context):
         selection_mod_box = layout.box()
         selection_mod_box.label(text="Selection Mode")
@@ -911,9 +977,9 @@ class Frameless_Scene_Props(PropertyGroup):
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'        
-            row.prop(self,'show_general_options',text="General",icon='TRIA_DOWN' if self.show_general_options else 'TRIA_RIGHT',emboss=False)
-            if self.show_general_options:
-                self.draw_cabinet_options_general(box,context)
+            row.prop(self,'show_front_options',text="Door and Drawer Front Styles",icon='TRIA_DOWN' if self.show_front_options else 'TRIA_RIGHT',emboss=False)
+            if self.show_front_options:
+                self.draw_door_styles_ui(box,context)
 
             box = col.box()
             row = box.row()
@@ -926,29 +992,16 @@ class Frameless_Scene_Props(PropertyGroup):
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'        
-            row.prop(self,'show_drawer_options',text="Drawer Boxes",icon='TRIA_DOWN' if self.show_drawer_options else 'TRIA_RIGHT',emboss=False)
-            if self.show_drawer_options:
-                size_box = box.box()
+            row.prop(self,'show_general_options',text="General Construction",icon='TRIA_DOWN' if self.show_general_options else 'TRIA_RIGHT',emboss=False)
+            if self.show_general_options:
+                self.draw_cabinet_options_general(box,context)
 
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'        
-            row.prop(self,'show_front_options',text="Door and Drawer Front Styles",icon='TRIA_DOWN' if self.show_front_options else 'TRIA_RIGHT',emboss=False)
-            if self.show_front_options:
-                row = box.row()
-                row.operator('hb_frameless.add_door_style',text="Add Door Style",icon='ADD')                
-                for index, door_style in enumerate(self.door_styles):
-                    door_box = box.box()
-                    row = door_box.row()
-                    row.alignment = 'LEFT'        
-                    row.prop(door_style,'show_options',text=door_style.name,icon='TRIA_DOWN' if door_style.show_options else 'TRIA_RIGHT',emboss=False) 
-                    row.operator('hb_frameless.update_door_and_drawer_front_style',text="",icon='FILE_REFRESH').selected_index = index                                       
-                    if door_style.show_options:
-                        door_box.prop(door_style,'name',text="Name")
-                        door_box.prop(door_style,'stile_width',text="Stile Width")
-                        door_box.prop(door_style,'rail_width',text="Rail Width")
-                        door_box.prop(door_style,'panel_thickness',text="Panel Thickness")
-                        door_box.prop(door_style,'panel_inset',text="Panel Inset")                
+            row.prop(self,'show_drawer_options',text="Drawer Boxes",icon='TRIA_DOWN' if self.show_drawer_options else 'TRIA_RIGHT',emboss=False)
+            if self.show_drawer_options:
+                size_box = box.box()             
                 
             box = col.box()
             row = box.row()
@@ -956,58 +1009,6 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_molding_options',text="Moldings",icon='TRIA_DOWN' if self.show_molding_options else 'TRIA_RIGHT',emboss=False)
             if self.show_molding_options:
                 size_box = box.box()
-
-
-    def draw_cabinet_options_general(self,layout,context):
-        unit_settings = context.scene.unit_settings
-        size_box = layout.box()
-        row = size_box.row()
-        row.prop(self,'show_machining',text="Show Machining")
-        row = size_box.row()
-        row.label(text="Toe Kick:")
-        row.operator('hb_frameless.update_toe_kick_prompts',text="",icon='FILE_REFRESH')
-        row = size_box.row()
-        row.prop(self,'default_toe_kick_height',text="Height")
-        row.prop(self,'default_toe_kick_setback',text="Setback")
-        row = size_box.row()
-        row.prop(self,'default_toe_kick_type',text="Type")
-        size_box = layout.box()
-        row = size_box.row()
-        row.label(text="Base Top Construction:")
-        row.prop(self,'base_top_construction',text="")
-        row.operator('hb_frameless.update_base_top_construction_prompts',text="",icon='FILE_REFRESH')        
-        size_box = layout.box()            
-        row = size_box.row()
-        row.label(text="Drawers:")
-        row.operator('hb_frameless.update_drawer_front_height_prompts',text="",icon='FILE_REFRESH')
-        row = size_box.row()
-        row.prop(self,'equal_drawer_stack_heights')
-        if not self.equal_drawer_stack_heights:
-            row = size_box.row()
-            row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
-
-    def draw_cabinet_options_handles(self,layout,context):
-        size_box = layout.box()
-        row = size_box.row()
-        row.label(text="Door Pulls:")
-        row = size_box.row()
-        row.label(text="Door Pull:")
-        row.prop(self,'current_door_pull_object',text="")
-        row = size_box.row()
-        row.label(text="Drawer Front Pull:")
-        row.prop(self,'current_drawer_front_pull_object',text="")
-        row = size_box.row()
-        row.prop(self,'pull_dim_from_edge',text="Pull Distance From Edge")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_base',text="Pull Vertical Location Base")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_tall',text="Pull Vertical Location Tall")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_upper',text="Pull Vertical Location Upper")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_drawers',text="Pull Vertical Location Drawers")
-        row = size_box.row()
-        row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
 
     @classmethod
     def register(cls):
