@@ -45,25 +45,11 @@ def load_file_post(scene):
             bpy.app.driver_namespace[name] = obj
     
     # Ensure a main scene is tagged for project data
-    hb_project.ensure_main_scene()
-    # for obj in bpy.data.objects:
-    #     if obj.type in {'EMPTY','MESH'}:
-    #         drivers = []
-    #         if obj.animation_data:
-    #             for driver in obj.animation_data.drivers:
-    #                 drivers.append(driver)
+    main_scene = hb_project.ensure_main_scene()
 
-    #         if obj.data and hasattr(obj.data,'animation_data') and obj.data.animation_data:
-    #             for driver in obj.data.animation_data.drivers:
-    #                 drivers.append(driver)
+    # Ensure a default frameless style is created
+    main_scene.hb_frameless.ensure_default_style()
 
-    #         if hasattr(obj.data,'shape_keys'):
-    #             if obj.data and obj.data.shape_keys and obj.data.shape_keys.animation_data:
-    #                 for driver in obj.data.shape_keys.animation_data.drivers:
-    #                     drivers.append(driver)
-     
-    #         for DR in drivers:  
-    #             DR.driver.expression = DR.driver.expression
 
 class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__

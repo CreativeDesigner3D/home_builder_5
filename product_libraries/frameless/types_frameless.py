@@ -451,6 +451,7 @@ class CabinetPart(GeoNodeCutpart):
 
     def create(self,name):
         super().create(name)
+        self.obj['CABINET_PART'] = True
         self.set_input('Length', inch(24))
         self.set_input('Width', inch(18))
         self.set_input('Thickness', inch(.75))  

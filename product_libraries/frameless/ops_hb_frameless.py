@@ -2,7 +2,7 @@ import bpy
 import math
 from mathutils import Vector, Matrix
 from . import types_frameless
-from ... import hb_utils, hb_snap, hb_placement, hb_types, units
+from ... import hb_utils, hb_project, hb_snap, hb_placement, hb_types, units
 
 def has_child_item_type(obj,item_type):
     for child in obj.children_recursive:
@@ -1132,9 +1132,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     cabinet.obj.location.y = wall_thickness
                     cabinet.obj.rotation_euler = (0, 0, math.pi)
                 
-                # Apply toggle mode for display
-                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
-                
                 cabinets.append(cabinet)
                 current_x += self.individual_cabinet_width
         else:
@@ -1171,9 +1168,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     cabinet.obj.location.z = self.get_cabinet_z_location(context)
                 else:
                     cabinet.obj.location.z = start_loc.z
-                
-                # Apply toggle mode for display
-                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
                 
                 cabinets.append(cabinet)
         
@@ -1346,8 +1340,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.apply_typed_value()
             
             # Create the real cabinets (on wall or floor)
-            self.create_final_cabinets(context)
-            
+            cabinets = self.create_final_cabinets(context)
+            for cabinet in cabinets:
+                # Assign the active cabinet style to the cabinet
+                bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet.obj.name)
+                # Apply toggle mode for display
+                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)            
             # Remove preview cage and dimensions
             self.cleanup_placement_objects()
             
@@ -2173,10 +2171,10 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
+class hb_frameless_OT_assign_cabinet_style_to_selected_cabinets(bpy.types.Operator):
     """Assign the active cabinet style to selected cabinets"""
-    bl_idname = "hb_frameless.assign_cabinet_style"
-    bl_label = "Assign Style to Selected"
+    bl_idname = "hb_frameless.assign_cabinet_style_to_selected_cabinets"
+    bl_label = "Assign Style to Selected Cabinets"
     bl_description = "Assign the active cabinet style to all selected cabinets"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -2189,8 +2187,8 @@ class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
         return False
 
     def execute(self, context):
-        props = context.scene.hb_frameless
-        props.ensure_default_style()
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         
         style_index = props.active_cabinet_style_index
         style = props.cabinet_styles[style_index]
@@ -2200,12 +2198,38 @@ class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
             if obj.get('IS_FRAMELESS_CABINET_CAGE'):
                 obj['CABINET_STYLE_INDEX'] = style_index
                 obj['CABINET_STYLE_NAME'] = style.name  # Store name for reference
+                style.assign_style_to_cabinet(obj)
                 count += 1
         
         if count > 0:
             self.report({'INFO'}, f"Assigned '{style.name}' to {count} cabinet(s)")
         else:
             self.report({'WARNING'}, "No cabinets selected")
+        
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
+    """Assign the active cabinet style to a cabinet"""
+    bl_idname = "hb_frameless.assign_cabinet_style"
+    bl_label = "Assign Style to Cabinet"
+    bl_description = "Assign the active cabinet style to a cabinet"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(name="Cabinet Name",default="")# type: ignore
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        style_index = props.active_cabinet_style_index
+        style = props.cabinet_styles[style_index]
+        
+        cabinet_obj = bpy.data.objects.get(self.cabinet_name)
+        if cabinet_obj:
+            cabinet_obj['CABINET_STYLE_INDEX'] = style_index
+            cabinet_obj['CABINET_STYLE_NAME'] = style.name  # Store name for reference
+            style.assign_style_to_cabinet(cabinet_obj)
         
         return {'FINISHED'}
 
@@ -2230,6 +2254,7 @@ classes = (
     hb_frameless_OT_add_cabinet_style,
     hb_frameless_OT_remove_cabinet_style,
     hb_frameless_OT_duplicate_cabinet_style,
+    hb_frameless_OT_assign_cabinet_style_to_selected_cabinets,
     hb_frameless_OT_assign_cabinet_style,
 )
 

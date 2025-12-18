@@ -353,7 +353,8 @@ class HOME_BUILDER_PT_product_library(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        hb_scene = context.scene.home_builder
+        scene = context.scene
+        hb_scene = scene.home_builder
         
         # Product type selector
         row = layout.row(align=True)
@@ -361,12 +362,11 @@ class HOME_BUILDER_PT_product_library(bpy.types.Panel):
         row.prop(hb_scene, "product_tab",text="")
 
         if hb_scene.product_tab == 'FRAMELESS':
-            context.scene.hb_frameless.draw_library_ui(layout, context)
+            scene.hb_frameless.draw_library_ui(layout, context)
         elif hb_scene.product_tab == 'FACE FRAME':
-            context.scene.hb_face_frame.draw_library_ui(layout, context)
+            scene.hb_face_frame.draw_library_ui(layout, context)
         else:
-            context.scene.hb_closets.draw_library_ui(layout, context)
-
+            scene.hb_closets.draw_library_ui(layout, context)
 
 # -----------------------------------------------------------------------------
 # PANEL 4: LAYOUT VIEWS

@@ -18,6 +18,9 @@ from bpy.props import (
         EnumProperty,
         )
 from ... import units
+from ... import hb_types
+from ... import hb_project
+from . import wood_materials
 import bpy.utils.previews
 
 # Preview collection for library thumbnails
@@ -119,30 +122,42 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('BIRCH', "Birch", "Birch wood"),
             ('HICKORY', "Hickory", "Hickory wood"),
             ('ALDER', "Alder", "Alder wood"),
-            ('MDF', "MDF", "Medium density fiberboard"),
-            ('MELAMINE', "Melamine", "Melamine laminate"),
-            ('THERMOFOIL', "Thermofoil", "Thermofoil wrapped"),
+            ('PAINT_GRADE', "Paint Grade", "Paint Grade"),
         ],
         default='MAPLE'
     )  # type: ignore
     
     # Finish/Stain
-    finish_type: EnumProperty(
-        name="Finish Type",
+    stain_color: EnumProperty(
+        name="Stain Color",
         description="Type of finish applied",
         items=[
-            ('NATURAL', "Natural", "Clear coat, natural wood color"),
-            ('STAINED', "Stained", "Stained wood finish"),
-            ('PAINTED', "Painted", "Painted finish"),
-            ('UNFINISHED', "Unfinished", "No finish applied"),
+            ('White', "White", "White"),
+            ('Black', "Black", "Black"),
+            ('Blue', "Blue", "Blue"),
+            ('Green', "Green", "Green"),
+            ('Red', "Red", "Red"),
+            ('Yellow', "Yellow", "Yellow"),
+            ('Brown', "Brown", "Brown"),
+            ('Grey', "Grey", "Grey"),
         ],
-        default='NATURAL'
+        default='White'
     )  # type: ignore
     
-    finish_color: StringProperty(
-        name="Finish Color",
-        description="Color name or code for stain/paint",
-        default="Natural"
+    paint_color: EnumProperty(
+        name="Paint Color",
+        description="Type of finish applied",
+        items=[
+            ('White', "White", "White"),
+            ('Black', "Black", "Black"),
+            ('Blue', "Blue", "Blue"),
+            ('Green', "Green", "Green"),
+            ('Red', "Red", "Red"),
+            ('Yellow', "Yellow", "Yellow"),
+            ('Brown', "Brown", "Brown"),
+            ('Grey', "Grey", "Grey"),
+        ],
+        default='White'
     )  # type: ignore
     
     # Interior material
@@ -173,24 +188,6 @@ class Frameless_Cabinet_Style(PropertyGroup):
         default='FULL'
     )  # type: ignore
     
-    door_overlay_amount: FloatProperty(
-        name="Overlay Amount",
-        description="Door overlay dimension",
-        default=units.inch(0.75),
-        min=0.0,
-        unit='LENGTH',
-        precision=4
-    )  # type: ignore
-    
-    door_gap: FloatProperty(
-        name="Door Gap",
-        description="Gap between doors",
-        default=units.inch(0.125),
-        min=0.0,
-        unit='LENGTH',
-        precision=4
-    )  # type: ignore
-    
     # Additional style options
     edge_banding: EnumProperty(
         name="Edge Banding",
@@ -204,6 +201,64 @@ class Frameless_Cabinet_Style(PropertyGroup):
         default='MATCHING'
     )  # type: ignore
 
+    material: bpy.props.PointerProperty(name="Material",type=bpy.types.Material)# type: ignore
+    material_rotated: bpy.props.PointerProperty(name="Material Rotated",type=bpy.types.Material)# type: ignore
+    interior_material: bpy.props.PointerProperty(name="Interior Material",type=bpy.types.Material)# type: ignore
+    interior_material_rotated: bpy.props.PointerProperty(name="Interior Material Rotated",type=bpy.types.Material)# type: ignore
+
+    def get_finish_material(self):
+        if self.material and self.material_rotated:
+            wood_materials.update_finish_material(self)
+            return self.material,self.material_rotated
+        else:
+            library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
+            with bpy.data.libraries.load(library_path) as (data_from, data_to):
+                data_to.materials = ["Wood"]  
+            
+            material = data_to.materials[0]            
+            material.name = self.name + " Finish"
+            self.material = material
+            rotated_mat = material.copy()
+            rotated_mat.name = material.name + " ROTATED"
+            self.material_rotated = rotated_mat
+            wood_materials.update_finish_material(self)
+            return self.material,self.material_rotated
+
+    def get_interior_material(self):
+        if self.interior_material and self.interior_material_rotated:
+            return self.interior_material,self.interior_material_rotated
+        else:
+            library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
+            with bpy.data.libraries.load(library_path) as (data_from, data_to):
+                data_to.materials = ["Wood"]  
+            
+            material = data_to.materials[0]            
+            material.name = self.name + " Interior"
+            self.interior_material = material
+            rotated_mat = material.copy()
+            rotated_mat.name = material.name + " ROTATED"
+            self.interior_material_rotated = rotated_mat
+            return self.interior_material,self.interior_material_rotated
+
+    def assign_style_to_cabinet(self, cabinet_obj):
+        #Assign Properties to Cabinet done in ops_hb_frameless.py
+
+        #Update all cabinet parts with correct materials
+        self.get_finish_material()
+        self.get_interior_material()
+        for child in cabinet_obj.children_recursive:
+            if 'CABINET_PART' in child:
+                part = hb_types.GeoNodeObject(child)
+                part.set_input("Top Surface",self.material)
+                part.set_input("Bottom Surface",self.material)
+                part.set_input("Edge W1",self.material_rotated)
+                part.set_input("Edge W2",self.material_rotated)
+                part.set_input("Edge L1",self.material_rotated)
+                part.set_input("Edge L2",self.material_rotated)
+            # part.set_input('Material',self.material) 
+
+        #Update cabinet door and drawer front overlays
+
     def draw_cabinet_style_ui(self, layout, context):
         box = layout.box()
         box.prop(self, "name", text="Style Name")
@@ -212,9 +267,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         col.label(text="Wood & Finish:")
         col.prop(self, "wood_species", text="Wood")
-        col.prop(self, "finish_type", text="Finish")
-        if self.finish_type in {'STAINED', 'PAINTED'}:
-            col.prop(self, "finish_color", text="Color")
+        if self.wood_species != 'PAINT_GRADE':
+            col.prop(self, "stain_color", text="Stain Color")
+        else:
+            col.prop(self, "paint_color", text="Paint Color")
         
         # Interior
         col = box.column(align=True)
@@ -225,9 +281,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         col.label(text="Door Overlay:")
         col.prop(self, "door_overlay_type", text="Type")
-        # col.prop(self, "door_overlay_amount", text="Amount")
-        # col.prop(self, "door_gap", text="Gap")
-        
+
         # Edge banding
         col = box.column(align=True)
         col.label(text="Edge Banding:")
@@ -236,7 +290,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
         # Assign to selected button
         row = box.row()
         row.scale_y = 1.3
-        row.operator("hb_frameless.assign_cabinet_style", icon='CHECKMARK')        
+        row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", icon='CHECKMARK')        
+
 
 class HB_UL_cabinet_styles(UIList):
     """UIList for displaying cabinet styles."""
@@ -283,7 +338,6 @@ class Frameless_Scene_Props(PropertyGroup):
     show_part_library: BoolProperty(name="Show Part Library",description="Show Part Library.",default=False)# type: ignore
     show_user_library: BoolProperty(name="Show User Library",description="Show User Library.",default=False)# type: ignore
     show_general_options: BoolProperty(name="Show General Options",description="Show General Options.",default=False)# type: ignore
-    show_material_options: BoolProperty(name="Show Material Options",description="Show Material Options.",default=False)# type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options",description="Show Handle Options.",default=False)# type: ignore
     show_front_options: BoolProperty(name="Show Front Options",description="Show Front Options.",default=False)# type: ignore
     show_drawer_options: BoolProperty(name="Show Drawer Options",description="Show Drawer Options.",default=False)# type: ignore
@@ -532,27 +586,38 @@ class Frameless_Scene_Props(PropertyGroup):
 
     def ensure_default_style(self):
         """Ensure at least one cabinet style exists."""
-        if len(self.cabinet_styles) == 0:
-            style = self.cabinet_styles.add()
+
+        # Get Cabinet Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if len(props.cabinet_styles) == 0:
+            style = props.cabinet_styles.add()
             style.name = "Default Style"
     
     def get_active_style(self):
         """Get the currently active cabinet style."""
-        self.ensure_default_style()
-        if self.active_cabinet_style_index < len(self.cabinet_styles):
-            return self.cabinet_styles[self.active_cabinet_style_index]
-        return self.cabinet_styles[0]
+
+        # Get Cabinet Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if props.active_cabinet_style_index < len(props.cabinet_styles):
+            return props.cabinet_styles[props.active_cabinet_style_index]
+        return props.cabinet_styles[0]
 
     def draw_cabinet_styles_ui(self, layout, context):
         """Draw the cabinet styles UI section."""
-        # self.ensure_default_style()
-        
+        # Get Cabinet Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
         # UIList for styles
         row = layout.row()
         row.template_list(
             "HB_UL_cabinet_styles", "",
-            self, "cabinet_styles",
-            self, "active_cabinet_style_index",
+            props, "cabinet_styles",
+            props, "active_cabinet_style_index",
             rows=3
         )
         
@@ -564,8 +629,8 @@ class Frameless_Scene_Props(PropertyGroup):
         col.operator("hb_frameless.duplicate_cabinet_style", icon='DUPLICATE', text="")
         
         # Active style properties
-        if self.cabinet_styles and self.active_cabinet_style_index < len(self.cabinet_styles):
-            style = self.cabinet_styles[self.active_cabinet_style_index]
+        if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[props.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
 
     def draw_cabinet_sizes_ui(self,layout,context):
@@ -849,14 +914,6 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_general_options',text="General",icon='TRIA_DOWN' if self.show_general_options else 'TRIA_RIGHT',emboss=False)
             if self.show_general_options:
                 self.draw_cabinet_options_general(box,context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'        
-            row.prop(self,'show_material_options',text="Materials",icon='TRIA_DOWN' if self.show_material_options else 'TRIA_RIGHT',emboss=False)
-            if self.show_material_options:
-                size_box = box.box()
-                # self.draw_cabinet_options_materials(size_box,context)
 
             box = col.box()
             row = box.row()
