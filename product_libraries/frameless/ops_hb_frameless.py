@@ -2052,6 +2052,164 @@ def get_user_library_items():
     return items
 
 
+
+
+# =============================================================================
+# CABINET STYLE OPERATORS
+# =============================================================================
+
+class hb_frameless_OT_add_cabinet_style(bpy.types.Operator):
+    """Add a new cabinet style"""
+    bl_idname = "hb_frameless.add_cabinet_style"
+    bl_label = "Add Cabinet Style"
+    bl_description = "Add a new cabinet style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.hb_frameless
+        
+        # Create new style
+        style = props.cabinet_styles.add()
+        
+        # Generate unique name
+        base_name = "Style"
+        existing_names = [s.name for s in props.cabinet_styles]
+        counter = len(props.cabinet_styles)
+        while f"{base_name} {counter}" in existing_names:
+            counter += 1
+        style.name = f"{base_name} {counter}"
+        
+        # Set as active
+        props.active_cabinet_style_index = len(props.cabinet_styles) - 1
+        
+        self.report({'INFO'}, f"Added cabinet style: {style.name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_cabinet_style(bpy.types.Operator):
+    """Remove the selected cabinet style"""
+    bl_idname = "hb_frameless.remove_cabinet_style"
+    bl_label = "Remove Cabinet Style"
+    bl_description = "Remove the selected cabinet style (at least one style must remain)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        props = context.scene.hb_frameless
+        # Must have more than 1 style to remove
+        return len(props.cabinet_styles) > 1
+
+    def execute(self, context):
+        props = context.scene.hb_frameless
+        
+        if len(props.cabinet_styles) <= 1:
+            self.report({'WARNING'}, "Cannot remove the last cabinet style")
+            return {'CANCELLED'}
+        
+        index = props.active_cabinet_style_index
+        style_name = props.cabinet_styles[index].name
+        
+        # Remove the style
+        props.cabinet_styles.remove(index)
+        
+        # Adjust active index
+        if props.active_cabinet_style_index >= len(props.cabinet_styles):
+            props.active_cabinet_style_index = len(props.cabinet_styles) - 1
+        
+        # Update any cabinets that referenced this style
+        # (shift indices for cabinets using styles after the removed one)
+        for obj in context.scene.objects:
+            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
+                if cab_style_index == index:
+                    # Reset to default style
+                    obj['CABINET_STYLE_INDEX'] = 0
+                elif cab_style_index > index:
+                    # Shift index down
+                    obj['CABINET_STYLE_INDEX'] = cab_style_index - 1
+        
+        self.report({'INFO'}, f"Removed cabinet style: {style_name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
+    """Duplicate the selected cabinet style"""
+    bl_idname = "hb_frameless.duplicate_cabinet_style"
+    bl_label = "Duplicate Cabinet Style"
+    bl_description = "Create a copy of the selected cabinet style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        props = context.scene.hb_frameless
+        return len(props.cabinet_styles) > 0
+
+    def execute(self, context):
+        props = context.scene.hb_frameless
+        
+        if not props.cabinet_styles:
+            return {'CANCELLED'}
+        
+        source = props.cabinet_styles[props.active_cabinet_style_index]
+        
+        # Create new style
+        new_style = props.cabinet_styles.add()
+        new_style.name = f"{source.name} Copy"
+        
+        # Copy all properties
+        new_style.wood_species = source.wood_species
+        new_style.finish_type = source.finish_type
+        new_style.finish_color = source.finish_color
+        new_style.interior_material = source.interior_material
+        new_style.door_overlay_type = source.door_overlay_type
+        new_style.door_overlay_amount = source.door_overlay_amount
+        new_style.door_gap = source.door_gap
+        new_style.edge_banding = source.edge_banding
+        
+        # Set as active
+        props.active_cabinet_style_index = len(props.cabinet_styles) - 1
+        
+        self.report({'INFO'}, f"Duplicated cabinet style: {new_style.name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
+    """Assign the active cabinet style to selected cabinets"""
+    bl_idname = "hb_frameless.assign_cabinet_style"
+    bl_label = "Assign Style to Selected"
+    bl_description = "Assign the active cabinet style to all selected cabinets"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Check if any cabinet is selected
+        for obj in context.selected_objects:
+            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                return True
+        return False
+
+    def execute(self, context):
+        props = context.scene.hb_frameless
+        props.ensure_default_style()
+        
+        style_index = props.active_cabinet_style_index
+        style = props.cabinet_styles[style_index]
+        
+        count = 0
+        for obj in context.selected_objects:
+            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                obj['CABINET_STYLE_INDEX'] = style_index
+                obj['CABINET_STYLE_NAME'] = style.name  # Store name for reference
+                count += 1
+        
+        if count > 0:
+            self.report({'INFO'}, f"Assigned '{style.name}' to {count} cabinet(s)")
+        else:
+            self.report({'WARNING'}, "No cabinets selected")
+        
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_load_cabinet_group_from_library,
@@ -2069,6 +2227,10 @@ classes = (
     hb_frameless_OT_create_cabinet_group,
     hb_frameless_OT_select_cabinet_group,
     hb_frameless_OT_save_cabinet_group_to_user_library,
+    hb_frameless_OT_add_cabinet_style,
+    hb_frameless_OT_remove_cabinet_style,
+    hb_frameless_OT_duplicate_cabinet_style,
+    hb_frameless_OT_assign_cabinet_style,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

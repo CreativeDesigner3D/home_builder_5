@@ -93,12 +93,171 @@ def update_show_machining(self,context):
 def update_frameless_selection_mode(self,context):
     bpy.ops.hb_frameless.toggle_mode(search_obj_name="")
 
+
+# =============================================================================
+# CABINET STYLE SYSTEM
+# =============================================================================
+
+class Frameless_Cabinet_Style(PropertyGroup):
+    """Cabinet style defining wood, finish, interior, and door overlay settings."""
+    
+    show_expanded: BoolProperty(
+        name="Show Expanded",
+        description="Show expanded style options",
+        default=False
+    )  # type: ignore
+    
+    # Wood/Material selection
+    wood_species: EnumProperty(
+        name="Wood Species",
+        description="Wood species for cabinet exterior",
+        items=[
+            ('MAPLE', "Maple", "Maple wood"),
+            ('OAK', "Oak", "Oak wood"),
+            ('CHERRY', "Cherry", "Cherry wood"),
+            ('WALNUT', "Walnut", "Walnut wood"),
+            ('BIRCH', "Birch", "Birch wood"),
+            ('HICKORY', "Hickory", "Hickory wood"),
+            ('ALDER', "Alder", "Alder wood"),
+            ('MDF', "MDF", "Medium density fiberboard"),
+            ('MELAMINE', "Melamine", "Melamine laminate"),
+            ('THERMOFOIL', "Thermofoil", "Thermofoil wrapped"),
+        ],
+        default='MAPLE'
+    )  # type: ignore
+    
+    # Finish/Stain
+    finish_type: EnumProperty(
+        name="Finish Type",
+        description="Type of finish applied",
+        items=[
+            ('NATURAL', "Natural", "Clear coat, natural wood color"),
+            ('STAINED', "Stained", "Stained wood finish"),
+            ('PAINTED', "Painted", "Painted finish"),
+            ('UNFINISHED', "Unfinished", "No finish applied"),
+        ],
+        default='NATURAL'
+    )  # type: ignore
+    
+    finish_color: StringProperty(
+        name="Finish Color",
+        description="Color name or code for stain/paint",
+        default="Natural"
+    )  # type: ignore
+    
+    # Interior material
+    interior_material: EnumProperty(
+        name="Interior Material",
+        description="Material for cabinet interior",
+        items=[
+            ('MATCHING', "Matching Exterior", "Same as exterior wood"),
+            ('MAPLE_PLY', "Maple Plywood", "Maple veneer plywood"),
+            ('BIRCH_PLY', "Birch Plywood", "Birch veneer plywood"),
+            ('WHITE_MELAMINE', "White Melamine", "White melamine"),
+            ('ALMOND_MELAMINE', "Almond Melamine", "Almond melamine"),
+            ('GREY_MELAMINE', "Grey Melamine", "Grey melamine"),
+            ('PRE_FINISHED', "Pre-Finished", "Pre-finished interior"),
+        ],
+        default='MAPLE_PLY'
+    )  # type: ignore
+    
+    # Door overlay
+    door_overlay_type: EnumProperty(
+        name="Door Overlay",
+        description="Door overlay style",
+        items=[
+            ('FULL', "Full Overlay", "Full overlay - doors cover frame completely"),
+            ('HALF', "Half Overlay", "Half overlay - partial frame reveal"),
+            ('INSET', "Inset", "Inset - doors sit inside frame"),
+        ],
+        default='FULL'
+    )  # type: ignore
+    
+    door_overlay_amount: FloatProperty(
+        name="Overlay Amount",
+        description="Door overlay dimension",
+        default=units.inch(0.75),
+        min=0.0,
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    door_gap: FloatProperty(
+        name="Door Gap",
+        description="Gap between doors",
+        default=units.inch(0.125),
+        min=0.0,
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    # Additional style options
+    edge_banding: EnumProperty(
+        name="Edge Banding",
+        description="Edge banding type",
+        items=[
+            ('MATCHING', "Matching Wood", "Matching wood edge banding"),
+            ('PVC', "PVC", "PVC edge banding"),
+            ('ABS', "ABS", "ABS edge banding"),
+            ('NONE', "None", "No edge banding"),
+        ],
+        default='MATCHING'
+    )  # type: ignore
+
+    def draw_cabinet_style_ui(self, layout, context):
+        box = layout.box()
+        box.prop(self, "name", text="Style Name")
+        
+        # Wood settings
+        col = box.column(align=True)
+        col.label(text="Wood & Finish:")
+        col.prop(self, "wood_species", text="Wood")
+        col.prop(self, "finish_type", text="Finish")
+        if self.finish_type in {'STAINED', 'PAINTED'}:
+            col.prop(self, "finish_color", text="Color")
+        
+        # Interior
+        col = box.column(align=True)
+        col.label(text="Interior:")
+        col.prop(self, "interior_material", text="Material")
+        
+        # Door overlay
+        col = box.column(align=True)
+        col.label(text="Door Overlay:")
+        col.prop(self, "door_overlay_type", text="Type")
+        # col.prop(self, "door_overlay_amount", text="Amount")
+        # col.prop(self, "door_gap", text="Gap")
+        
+        # Edge banding
+        col = box.column(align=True)
+        col.label(text="Edge Banding:")
+        col.prop(self, "edge_banding", text="Type")
+        
+        # Assign to selected button
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.assign_cabinet_style", icon='CHECKMARK')        
+
+class HB_UL_cabinet_styles(UIList):
+    """UIList for displaying cabinet styles."""
+    
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row.prop(item, "name", text="", emboss=False, icon='MATERIAL')
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text=item.name, icon='MATERIAL')
+
+
 class Frameless_Door_Style(PropertyGroup): 
     show_options: BoolProperty(name="Show Options",description="Show Options",default=False)# type: ignore
     stile_width: FloatProperty(name="Left Stile Width",description="Left Stile Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
     rail_width: FloatProperty(name="Top Rail Width",description="Top Rail Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
     panel_thickness: FloatProperty(name="Panel Thickness",description="Panel Thickness.",default=units.inch(.5),unit='LENGTH',precision=4)# type: ignore
     panel_inset: FloatProperty(name="Panel Inset",description="Panel Inset.",default=units.inch(.25),unit='LENGTH',precision=4)# type: ignore
+
+
 
 class Frameless_Scene_Props(PropertyGroup):   
     
@@ -130,6 +289,11 @@ class Frameless_Scene_Props(PropertyGroup):
     show_drawer_options: BoolProperty(name="Show Drawer Options",description="Show Drawer Options.",default=False)# type: ignore
     show_molding_options: BoolProperty(name="Show Molding Options",description="Show Molding Options.",default=False)# type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options",description="Show Countertop Options.",default=False)# type: ignore
+    show_cabinet_styles: BoolProperty(name="Show Cabinet Styles",description="Show Cabinet Styles.",default=True)# type: ignore
+
+    # CABINET STYLES
+    cabinet_styles: CollectionProperty(type=Frameless_Cabinet_Style, name="Cabinet Styles")# type: ignore
+    active_cabinet_style_index: IntProperty(name="Active Cabinet Style Index", default=0)# type: ignore
 
     #CABINET OPTIONS
     fill_cabinets: bpy.props.BoolProperty(name="Fill Cabinets",default = True)# type: ignore
@@ -365,6 +529,45 @@ class Frameless_Scene_Props(PropertyGroup):
                                                         description="Check this to center pulls on drawer fronts. Otherwise vertical location will be used.", 
                                                         default=True)# type: ignore
 
+
+    def ensure_default_style(self):
+        """Ensure at least one cabinet style exists."""
+        if len(self.cabinet_styles) == 0:
+            style = self.cabinet_styles.add()
+            style.name = "Default Style"
+    
+    def get_active_style(self):
+        """Get the currently active cabinet style."""
+        self.ensure_default_style()
+        if self.active_cabinet_style_index < len(self.cabinet_styles):
+            return self.cabinet_styles[self.active_cabinet_style_index]
+        return self.cabinet_styles[0]
+
+    def draw_cabinet_styles_ui(self, layout, context):
+        """Draw the cabinet styles UI section."""
+        # self.ensure_default_style()
+        
+        # UIList for styles
+        row = layout.row()
+        row.template_list(
+            "HB_UL_cabinet_styles", "",
+            self, "cabinet_styles",
+            self, "active_cabinet_style_index",
+            rows=3
+        )
+        
+        # Add/Remove buttons
+        col = row.column(align=True)
+        col.operator("hb_frameless.add_cabinet_style", icon='ADD', text="")
+        col.operator("hb_frameless.remove_cabinet_style", icon='REMOVE', text="")
+        col.separator()
+        col.operator("hb_frameless.duplicate_cabinet_style", icon='DUPLICATE', text="")
+        
+        # Active style properties
+        if self.cabinet_styles and self.active_cabinet_style_index < len(self.cabinet_styles):
+            style = self.cabinet_styles[self.active_cabinet_style_index]
+            style.draw_cabinet_style_ui(layout, context)
+
     def draw_cabinet_sizes_ui(self,layout,context):
         unit_settings = context.scene.unit_settings      
         row = layout.row()
@@ -481,8 +684,6 @@ class Frameless_Scene_Props(PropertyGroup):
             op = box.operator('hb_frameless.draw_cabinet', text=display_name)
             op.cabinet_name = cabinet_name
         
-        # layout.separator()
-        
         # Upper cabinets
         layout.label(text="Upper Cabinets:")
         flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
@@ -499,8 +700,6 @@ class Frameless_Scene_Props(PropertyGroup):
             op = box.operator('hb_frameless.draw_cabinet', text=display_name)
             op.cabinet_name = cabinet_name
         
-        # layout.separator()
-        
         # Tall cabinets
         layout.label(text="Tall Cabinets:")
         flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
@@ -516,6 +715,7 @@ class Frameless_Scene_Props(PropertyGroup):
             # Button
             op = box.operator('hb_frameless.draw_cabinet', text=display_name)
             op.cabinet_name = cabinet_name
+
           
     def draw_library_ui(self,layout,context):
         selection_mod_box = layout.box()
@@ -528,14 +728,12 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop_enum(self, "frameless_selection_mode", 'Interiors', icon='OBJECT_HIDDEN')    
         row.prop_enum(self, "frameless_selection_mode", 'Parts', icon='EDITMODE_HLT') 
 
-        # layout.separator()
-
         col = layout.column(align=True)
         row = col.row(align=True)
         row.scale_y = 1.3
         row.prop_enum(self, "frameless_tabs", 'LIBRARY', icon='ASSET_MANAGER')
         row.prop_enum(self, "frameless_tabs", 'OPTIONS', icon='PREFERENCES') 
-        # col.separator() 
+
         if self.frameless_tabs == 'LIBRARY':
             box = col.box()
             row = box.row()
@@ -637,12 +835,19 @@ class Frameless_Scene_Props(PropertyGroup):
                 self.draw_user_library_ui(box,context)
 
         if self.frameless_tabs == 'OPTIONS':
+            # CABINET STYLES - Show first in OPTIONS tab
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'        
+            row.prop(self,'show_cabinet_styles',text="Cabinet Styles",icon='TRIA_DOWN' if self.show_cabinet_styles else 'TRIA_RIGHT',emboss=False)
+            if self.show_cabinet_styles:
+                self.draw_cabinet_styles_ui(box, context)
+
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'        
             row.prop(self,'show_general_options',text="General",icon='TRIA_DOWN' if self.show_general_options else 'TRIA_RIGHT',emboss=False)
             if self.show_general_options:
-
                 self.draw_cabinet_options_general(box,context)
 
             box = col.box()
@@ -667,10 +872,6 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_drawer_options',text="Drawer Boxes",icon='TRIA_DOWN' if self.show_drawer_options else 'TRIA_RIGHT',emboss=False)
             if self.show_drawer_options:
                 size_box = box.box()
-                # row = size_box.row()
-                # row.operator('frameless.open_doors',text="Open Drawers").open_door = True
-                # row.operator('frameless.open_doors',text="Close Drawers").open_door = False  
-                # self.draw_cabinet_options_drawers(size_box,context)
 
             box = col.box()
             row = box.row()
@@ -679,7 +880,7 @@ class Frameless_Scene_Props(PropertyGroup):
             if self.show_front_options:
                 row = box.row()
                 row.operator('hb_frameless.add_door_style',text="Add Door Style",icon='ADD')                
-                for index, door_style in enumerate[Any](self.door_styles):
+                for index, door_style in enumerate(self.door_styles):
                     door_box = box.box()
                     row = door_box.row()
                     row.alignment = 'LEFT'        
@@ -698,7 +899,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_molding_options',text="Moldings",icon='TRIA_DOWN' if self.show_molding_options else 'TRIA_RIGHT',emboss=False)
             if self.show_molding_options:
                 size_box = box.box()
-                # self.draw_cabinet_options_molding(size_box,context)
+
 
     def draw_cabinet_options_general(self,layout,context):
         unit_settings = context.scene.unit_settings
@@ -728,29 +929,10 @@ class Frameless_Scene_Props(PropertyGroup):
             row = size_box.row()
             row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
 
-        # lib_col = layout.column(align=True)
-        # ctop_box = lib_col.box()
-        # row = ctop_box.row()
-        # row.label(text="Counter Tops:")
-        # row.operator('frameless.update_countertop_prompts',text="",icon='FILE_REFRESH')   
-        # row = ctop_box.row(align=True) 
-        # row.prop(self,'countertop_material',text="Material")  
-        # row = ctop_box.row(align=True)
-        # row.label(text="Thickness:")              
-        # row.prop(self,'countertop_thickness',text="")
-        # row = ctop_box.row(align=True) 
-        # row.label(text="Overhang:")
-        # row.prop(self,'countertop_overhang',text="")
-        # row = ctop_box.row(align=True)
-        # row.operator('frameless.add_countertop',text="Add",icon='ADD')
-        # row = ctop_box.row(align=True)
-        # row.operator('frameless.delete_countertop',text="Clear",icon='X')
-
     def draw_cabinet_options_handles(self,layout,context):
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Door Pulls:")
-        # row.operator('hb_frameless.update_door_pull_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.label(text="Door Pull:")
         row.prop(self,'current_door_pull_object',text="")
@@ -784,6 +966,8 @@ class Frameless_Scene_Props(PropertyGroup):
 
 
 classes = (
+    Frameless_Cabinet_Style,
+    HB_UL_cabinet_styles,
     Frameless_Door_Style,
     Frameless_Scene_Props,
 )
