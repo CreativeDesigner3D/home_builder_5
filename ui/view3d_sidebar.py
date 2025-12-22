@@ -223,7 +223,7 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        layout.label(text="TODO: Floor & Ceiling tools")
+        layout.operator("home_builder_walls.add_floor")
 
 
 # SUBPANEL: Lighting
@@ -238,7 +238,7 @@ class HOME_BUILDER_PT_room_layout_lighting(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        layout.label(text="TODO: Lighting tools")
+        layout.operator("home_builder_walls.add_room_lights")
 
 
 # SUBPANEL: Obstacles
