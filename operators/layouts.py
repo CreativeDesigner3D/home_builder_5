@@ -1791,6 +1791,84 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
         context.area.tag_redraw()
 
 
+
+
+# =============================================================================
+# ADD DETAIL TO LAYOUT OPERATOR
+# =============================================================================
+
+class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.add_detail_to_layout"
+    bl_label = "Add Detail to Layout"
+    bl_description = "Add a 2D detail to the current layout view"
+    bl_options = {'UNDO'}
+    
+    detail_scene_name: bpy.props.StringProperty(name="Detail Scene")  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_LAYOUT_VIEW')
+    
+    def execute(self, context):
+        if self.detail_scene_name not in bpy.data.scenes:
+            self.report({'ERROR'}, f"Detail scene '{self.detail_scene_name}' not found")
+            return {'CANCELLED'}
+        
+        detail_scene = bpy.data.scenes[self.detail_scene_name]
+        layout_scene = context.scene
+        camera = layout_scene.camera
+        
+        if not camera:
+            self.report({'ERROR'}, "Layout view has no camera")
+            return {'CANCELLED'}
+        
+        # Get or create a collection for the detail scene's objects
+        collection_name = f"{detail_scene.name}_Collection"
+        
+        if collection_name in bpy.data.collections:
+            detail_collection = bpy.data.collections[collection_name]
+        else:
+            # Create a new collection and link all detail objects to it
+            detail_collection = bpy.data.collections.new(collection_name)
+            detail_collection['IS_DETAIL_COLLECTION'] = True
+            detail_collection['SOURCE_DETAIL'] = detail_scene.name
+            
+            # Link objects from the detail scene to this collection
+            for obj in detail_scene.objects:
+                # Skip cameras and lights
+                if obj.type in {'CAMERA', 'LIGHT'}:
+                    continue
+                
+                # Link object to collection (object can be in multiple collections)
+                if obj.name not in detail_collection.objects:
+                    detail_collection.objects.link(obj)
+        
+        # Create collection instance in the layout scene
+        instance = bpy.data.objects.new(f"Detail_{detail_scene.name}", None)
+        instance.instance_type = 'COLLECTION'
+        instance.instance_collection = detail_collection
+        instance.empty_display_size = 0.01
+        instance['IS_DETAIL_INSTANCE'] = True
+        instance['SOURCE_DETAIL'] = detail_scene.name
+        
+        # Link instance to layout scene
+        layout_scene.collection.objects.link(instance)
+        
+        # Parent to camera
+        instance.parent = camera
+        
+        # Position at center of view
+        instance.location = (0, 0, -0.1)
+        
+        # Select the instance for easy repositioning
+        bpy.ops.object.select_all(action='DESELECT')
+        instance.select_set(True)
+        context.view_layer.objects.active = instance
+        
+        self.report({'INFO'}, f"Added detail '{detail_scene.name}' to layout. Move to reposition.")
+        return {'FINISHED'}
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -1808,6 +1886,7 @@ classes = (
     home_builder_layouts_OT_render_layout,
     home_builder_layouts_OT_add_dimension,
     home_builder_layouts_OT_add_dimension_3d,
+    home_builder_layouts_OT_add_detail_to_layout,
 )
 
 def register():

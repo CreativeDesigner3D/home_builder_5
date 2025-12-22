@@ -576,6 +576,40 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
 
 
 
+
+
+# SUBPANEL: Add Details to Layout (only in layout view)
+class HOME_BUILDER_PT_layout_views_details(bpy.types.Panel):
+    bl_label = "Insert 2D Details"
+    bl_idname = "HOME_BUILDER_PT_layout_views_details"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_layout_views"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    @classmethod
+    def poll(cls, context):
+        # Only show when in a layout view
+        return context.scene.get('IS_LAYOUT_VIEW')
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Get all detail views
+        detail_views = hb_details.DetailView.get_all_detail_views()
+        
+        if detail_views:
+            col = layout.column(align=True)
+            for scene in detail_views:
+                op = col.operator("home_builder_layouts.add_detail_to_layout",
+                                 text=scene.name, icon='IMPORT')
+                op.detail_scene_name = scene.name
+        else:
+            layout.label(text="No 2D details available", icon='INFO')
+            layout.label(text="Create details in the 2D Details panel")
+
+
 # -----------------------------------------------------------------------------
 # PANEL: 2D DETAILS
 # -----------------------------------------------------------------------------
@@ -888,6 +922,7 @@ classes = (
     HOME_BUILDER_MT_room_list,
     # HOME_BUILDER_PT_layout_views_create,
     HOME_BUILDER_PT_layout_views_settings,
+    HOME_BUILDER_PT_layout_views_details,
     HOME_BUILDER_PT_2d_details,
     HOME_BUILDER_PT_2d_details_library,
     HOME_BUILDER_PT_annotations,
