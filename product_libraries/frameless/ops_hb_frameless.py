@@ -1,7 +1,10 @@
 import bpy
 import math
+import os
 from mathutils import Vector, Matrix
+from bpy_extras import view3d_utils
 from . import types_frameless
+from . import props_hb_frameless
 from ... import hb_utils, hb_project, hb_snap, hb_placement, hb_types, units
 
 def has_child_item_type(obj,item_type):
@@ -565,8 +568,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     def get_dimension_rotation(self, context, base_rotation_z):
         """Calculate dimension rotation to face the camera based on view angle."""
-        import math
-        
+
         # Get the 3D view
         region_3d = None
         for area in context.screen.areas:
@@ -1096,7 +1098,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""
-        import math
         cabinets = []
         cabinet_depth = self.get_cabinet_depth(context)
         
@@ -1508,9 +1509,6 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
     bl_description = "This will create a cabinet group for all of the selected cabinets"
 
     def execute(self, context):
-        import math
-        from mathutils import Matrix
-        
         # Get Selected Cabinets
         selected_cabinets = []
         for obj in context.selected_objects:
@@ -1573,8 +1571,7 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         Returns (location, rotation, width, depth, height)
         Location is at back-left-bottom of the world-space bounding box.
         """
-        from mathutils import Vector as Vec
-        
+
         if not selected_cabinets:
             return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
         
@@ -1595,14 +1592,14 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
             # Define the 8 corners in cabinet's LOCAL space
             # Y is mirrored, so depth extends in -Y direction
             local_corners = [
-                Vec((0, 0, 0)),                    # back-left-bottom (origin)
-                Vec((cab_width, 0, 0)),            # back-right-bottom
-                Vec((0, -cab_depth, 0)),           # front-left-bottom
-                Vec((cab_width, -cab_depth, 0)),   # front-right-bottom
-                Vec((0, 0, cab_height)),           # back-left-top
-                Vec((cab_width, 0, cab_height)),   # back-right-top
-                Vec((0, -cab_depth, cab_height)),  # front-left-top
-                Vec((cab_width, -cab_depth, cab_height)),  # front-right-top
+                Vector((0, 0, 0)),                    # back-left-bottom (origin)
+                Vector((cab_width, 0, 0)),            # back-right-bottom
+                Vector((0, -cab_depth, 0)),           # front-left-bottom
+                Vector((cab_width, -cab_depth, 0)),   # front-right-bottom
+                Vector((0, 0, cab_height)),           # back-left-top
+                Vector((cab_width, 0, cab_height)),   # back-right-top
+                Vector((0, -cab_depth, cab_height)),  # front-left-top
+                Vector((cab_width, -cab_depth, cab_height)),  # front-right-top
             ]
             
             # Transform each corner to world space using cabinet's full matrix
@@ -1702,7 +1699,7 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
         self.cabinet_group_name = context.object.name
         
         # Set default save path to user documents
-        import os
+        
         default_path = os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
         self.save_path = default_path
         
@@ -1715,8 +1712,6 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
         layout.prop(self, "create_thumbnail")
     
     def execute(self, context):
-        import os
-        
         cabinet_group = context.object
         
         if not self.cabinet_group_name:
@@ -1798,8 +1793,7 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
     
     def _create_thumbnail(self, context, cabinet_group, save_path, name):
         """Create a thumbnail image for the cabinet group."""
-        import os
-        
+
         # Store current state
         original_camera = context.scene.camera
         original_render_x = context.scene.render.resolution_x
@@ -1885,8 +1879,6 @@ class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator):
         return True
     
     def execute(self, context):
-        import os
-        
         if not self.filepath or not os.path.exists(self.filepath):
             self.report({'ERROR'}, f"File not found: {self.filepath}")
             return {'CANCELLED'}
@@ -1932,7 +1924,6 @@ class hb_frameless_OT_refresh_user_library(bpy.types.Operator):
 
     def execute(self, context):
         # Clear cached previews so they get reloaded
-        from . import props_hb_frameless
         props_hb_frameless.clear_library_previews()
         
         # Force UI redraw
@@ -2172,41 +2163,184 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
 
 
 class hb_frameless_OT_assign_cabinet_style_to_selected_cabinets(bpy.types.Operator):
-    """Assign the active cabinet style to selected cabinets"""
+    """Paint cabinet style onto cabinets - click cabinets to assign the active style"""
     bl_idname = "hb_frameless.assign_cabinet_style_to_selected_cabinets"
-    bl_label = "Assign Style to Selected Cabinets"
-    bl_description = "Assign the active cabinet style to all selected cabinets"
+    bl_label = "Paint Cabinet Style"
+    bl_description = "Click on cabinets to assign the active cabinet style. Right-click or ESC to finish"
     bl_options = {'REGISTER', 'UNDO'}
+
+    # Track state
+    hovered_cabinet = None
+    assigned_count: int = 0
+    style_name: str = ""
+    style_index: int = 0
+    
+    # Store original object state for restoration
+    original_states = {}
 
     @classmethod
     def poll(cls, context):
-        # Check if any cabinet is selected
-        for obj in context.selected_objects:
-            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                return True
-        return False
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.cabinet_styles) > 0
 
-    def execute(self, context):
+    def get_cabinet_under_mouse(self, context, event):
+        """Ray cast to find cabinet under mouse cursor."""
+
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        # Get mouse coordinates
+        coord = (event.mouse_region_x, event.mouse_region_y)
+        
+        # Get ray from mouse position
+        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        
+        # Ray cast through scene
+        depsgraph = context.evaluated_depsgraph_get()
+        result, location, normal, index, obj, matrix = context.scene.ray_cast(
+            depsgraph, ray_origin, view_vector
+        )
+        
+        if result and obj:
+            # Check if hit object or any of its parents is a cabinet cage
+            current = obj
+            while current:
+                if current.get('IS_FRAMELESS_CABINET_CAGE'):
+                    return current
+                current = current.parent
+        
+        return None
+
+    def highlight_cabinet(self, obj, highlight=True):
+        """Highlight or unhighlight a cabinet cage by selecting it."""
+        if highlight:
+            # Store original state if not already stored
+            if obj.name not in self.original_states:
+                self.original_states[obj.name] = {
+                    'selected': obj.select_get(),
+                    'hide_viewport': obj.hide_viewport,
+                }
+            # Show cage as selected
+            obj.hide_viewport = False
+            obj.select_set(True)
+        else:
+            # Restore original state
+            if obj.name in self.original_states:
+                state = self.original_states[obj.name]
+                obj.select_set(state['selected'])
+                obj.hide_viewport = state['hide_viewport']
+
+    def update_header(self, context):
+        """Update header text with current status."""
+        text = f"Cabinet Style: '{self.style_name}' | LMB: Assign style | RMB/ESC: Finish | Assigned: {self.assigned_count}"
+        context.area.header_text_set(text)
+
+    def assign_style_to_cabinet(self, context, cabinet_obj):
+        """Assign the active style to a cabinet."""
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        style = props.cabinet_styles[self.style_index]
+        
+        cabinet_obj['CABINET_STYLE_INDEX'] = self.style_index
+        cabinet_obj['CABINET_STYLE_NAME'] = style.name
+        style.assign_style_to_cabinet(cabinet_obj)
+        
+        return True
+
+    def cleanup(self, context):
+        """Clean up modal state."""
+        # Restore all highlighted objects
+        for obj_name in list(self.original_states.keys()):
+            obj = bpy.data.objects.get(obj_name)
+            if obj:
+                self.highlight_cabinet(obj, highlight=False)
+        
+        self.original_states.clear()
+        self.hovered_cabinet = None
+        
+        # Clear header and restore cursor
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+
+    def invoke(self, context, event):
+        # Get style info for display
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
-        style_index = props.active_cabinet_style_index
-        style = props.cabinet_styles[style_index]
+        if not props.cabinet_styles:
+            self.report({'WARNING'}, "No cabinet styles defined")
+            return {'CANCELLED'}
         
-        count = 0
-        for obj in context.selected_objects:
-            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                obj['CABINET_STYLE_INDEX'] = style_index
-                obj['CABINET_STYLE_NAME'] = style.name  # Store name for reference
-                style.assign_style_to_cabinet(obj)
-                count += 1
+        self.style_index = props.active_cabinet_style_index
+        self.style_name = props.cabinet_styles[self.style_index].name
+        self.assigned_count = 0
+        self.hovered_cabinet = None
+        self.original_states = {}
         
-        if count > 0:
-            self.report({'INFO'}, f"Assigned '{style.name}' to {count} cabinet(s)")
-        else:
-            self.report({'WARNING'}, "No cabinets selected")
+        # Deselect all objects first
+        bpy.ops.object.select_all(action='DESELECT')
         
-        return {'FINISHED'}
+        # Set cursor to paint brush
+        context.window.cursor_set('PAINT_BRUSH')
+        
+        # Set up modal
+        self.update_header(context)
+        context.window_manager.modal_handler_add(self)
+        
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        # Always update the view
+        context.area.tag_redraw()
+        
+        # Handle cancel
+        if event.type in {'RIGHTMOUSE', 'ESC'}:
+            if event.value == 'PRESS':
+                self.cleanup(context)
+                if self.assigned_count > 0:
+                    self.report({'INFO'}, f"Assigned '{self.style_name}' to {self.assigned_count} cabinet(s)")
+                else:
+                    self.report({'INFO'}, "Style painting cancelled")
+                return {'FINISHED'}
+        
+        # Handle mouse move - update hover highlight
+        if event.type == 'MOUSEMOVE':
+            cabinet = self.get_cabinet_under_mouse(context, event)
+            
+            # Unhighlight previous
+            if self.hovered_cabinet and self.hovered_cabinet != cabinet:
+                self.highlight_cabinet(self.hovered_cabinet, highlight=False)
+            
+            # Highlight new
+            if cabinet and cabinet != self.hovered_cabinet:
+                self.highlight_cabinet(cabinet, highlight=True)
+            
+            self.hovered_cabinet = cabinet
+        
+        # Handle click - assign style
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.hovered_cabinet:
+                if self.assign_style_to_cabinet(context, self.hovered_cabinet):
+                    self.assigned_count += 1
+                    self.update_header(context)
+                return {'RUNNING_MODAL'}
+        
+        # Pass through navigation events
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        
+        # Pass through view manipulation
+        if event.type in {'NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4', 'NUMPAD_5', 
+                          'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9', 'NUMPAD_0'}:
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
 
 
 class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):

@@ -287,10 +287,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col.label(text="Edge Banding:")
         col.prop(self, "edge_banding", text="Type")
         
-        # Assign to selected button
+        # Paint style onto cabinets button
         row = box.row()
         row.scale_y = 1.3
-        row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", icon='CHECKMARK')
+        row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", text="Assign Style", icon='BRUSH_DATA')
         
         # Update cabinets button
         row = box.row()
