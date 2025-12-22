@@ -496,43 +496,115 @@ class home_builder_layouts_OT_render_layout(bpy.types.Operator):
         width = int(paper_w * dpi)
         height = int(paper_h * dpi)
         
+        # Store original settings
         orig_resolution_x = scene.render.resolution_x
         orig_resolution_y = scene.render.resolution_y
         orig_film_transparent = scene.render.film_transparent
-        orig_filepath = scene.render.filepath
+        orig_use_compositing = scene.render.use_compositing
+        orig_render_engine = scene.render.engine
         
+        # Use Eevee for proper compositor support
+        # Try BLENDER_EEVEE_NEXT first (Blender 4.2+), fall back to BLENDER_EEVEE
+        try:
+            scene.render.engine = 'BLENDER_EEVEE_NEXT'
+        except:
+            scene.render.engine = 'BLENDER_EEVEE'
+        
+        # Set render resolution
         scene.render.resolution_x = width
         scene.render.resolution_y = height
-        scene.render.film_transparent = False
+        scene.render.resolution_percentage = 100
         
-        blend_filepath = bpy.data.filepath
-        if blend_filepath:
-            output_dir = os.path.dirname(blend_filepath)
-        else:
-            output_dir = os.path.expanduser("~")
+        # Enable transparency for render
+        scene.render.film_transparent = True
         
-        output_path = os.path.join(output_dir, f"{scene.name}.png")
-        scene.render.filepath = output_path
-        scene.render.image_settings.file_format = 'PNG'
+        # Enable compositing
+        scene.render.use_compositing = True
         
-        if not scene.world:
-            scene.world = bpy.data.worlds.new(f"{scene.name}_World")
-        scene.world.use_nodes = True
-        bg_node = scene.world.node_tree.nodes.get('Background')
-        if bg_node:
-            bg_node.inputs['Color'].default_value = (1, 1, 1, 1)
+        # Set up compositor for white background
+        self._setup_compositor_white_background(scene)
         
-        bpy.ops.render.render(write_still=True)
+        # Render to Blender's internal image
+        bpy.ops.render.render()
         
+        # Get the render result and save to a named image
+        image_name = f"{scene.name}_Render"
+        
+        # Remove existing image with same name if it exists
+        if image_name in bpy.data.images:
+            bpy.data.images.remove(bpy.data.images[image_name])
+        
+        # Get the render result
+        render_result = bpy.data.images.get('Render Result')
+        if render_result:
+            # Create a new image from the render result
+            new_image = bpy.data.images.new(image_name, width, height)
+            new_image.pixels = render_result.pixels[:]
+            new_image.pack()
+            
+            # Open in Image Editor if available
+            for area in context.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.spaces.active.image = new_image
+                    break
+            else:
+                # No Image Editor open
+                self.report({'INFO'}, f"Rendered to image: {image_name} (open Image Editor to view)")
+        
+        # Restore original settings
         scene.render.resolution_x = orig_resolution_x
         scene.render.resolution_y = orig_resolution_y
         scene.render.film_transparent = orig_film_transparent
-        scene.render.filepath = orig_filepath
+        scene.render.use_compositing = orig_use_compositing
+        scene.render.engine = orig_render_engine
         
-        self.report({'INFO'}, f"Rendered to: {output_path}")
+        self.report({'INFO'}, f"Rendered: {image_name}")
         return {'FINISHED'}
-
-
+    
+    def _setup_compositor_white_background(self, scene):
+        """Set up compositor nodes to add white background to transparent render."""
+        # Enable compositing (Blender 5.0+ uses render.use_compositing)
+        scene.render.use_compositing = True
+        
+        # Get the compositor node tree
+        tree = scene.compositing_node_group
+        
+        if tree is None:
+            print(f"Warning: Could not access compositor node tree for scene '{scene.name}'")
+            return
+        
+        nodes = tree.nodes
+        links = tree.links
+        
+        # Clear existing nodes
+        for node in list(nodes):
+            nodes.remove(node)
+        
+        # Create nodes
+        render_layers = nodes.new('CompositorNodeRLayers')
+        render_layers.location = (0, 300)
+        
+        alpha_over = nodes.new('CompositorNodeAlphaOver')
+        alpha_over.location = (300, 300)
+        alpha_over.use_premultiply = False
+        
+        # White color input
+        white_color = nodes.new('CompositorNodeRGB')
+        white_color.location = (0, 100)
+        white_color.outputs[0].default_value = (1, 1, 1, 1)  # White
+        
+        composite = nodes.new('CompositorNodeComposite')
+        composite.location = (600, 300)
+        
+        # Also add viewer node for convenience
+        viewer = nodes.new('CompositorNodeViewer')
+        viewer.location = (600, 100)
+        
+        # Link nodes: White background under render
+        links.new(white_color.outputs[0], alpha_over.inputs[1])  # Background (white)
+        links.new(render_layers.outputs['Image'], alpha_over.inputs[2])  # Foreground (render)
+        links.new(alpha_over.outputs[0], composite.inputs[0])
+        links.new(alpha_over.outputs[0], viewer.inputs[0])
 
 
 # =============================================================================
