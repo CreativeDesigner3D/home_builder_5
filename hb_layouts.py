@@ -76,6 +76,9 @@ class TitleBlock:
         res_y = scene.render.resolution_y
         aspect_ratio = res_x / res_y
         
+        # Get the Freestyle Ignore collection for this scene
+        ignore_collection = bpy.data.collections.get(f"{scene.name}_Freestyle_Ignore")
+        
         # Create title block border that fits the bounds of the camera.
         # All text and other title block elements will be parented to this object.
         #
@@ -98,6 +101,10 @@ class TitleBlock:
         border.set_input("Dim X", 1.0)
         border.set_input("Dim Y", 1.0 / aspect_ratio)
         self.obj = border.obj
+        
+        # Add to Freestyle Ignore collection
+        if ignore_collection and border.obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(border.obj)
 
         dim_x = border.var_input("Dim X", "dim_x")
         dim_y = border.var_input("Dim Y", "dim_y")
@@ -109,9 +116,17 @@ class TitleBlock:
         left_rect.obj.scale = (1, 1, 1)
         left_rect.obj.rotation_euler = (0, 0, 0)
         left_rect.set_input("Dim X", .08)
-        left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])   
+        left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])
+        
+        # Add to Freestyle Ignore collection
+        if ignore_collection and left_rect.obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(left_rect.obj)
 
-        self._add_text_field(scene, left_rect.obj, "View Name", scene.name, (0, 0, 0))
+        text_obj = self._add_text_field(scene, left_rect.obj, "View Name", scene.name, (0, 0, 0))
+        
+        # Add text to Freestyle Ignore collection
+        if ignore_collection and text_obj and text_obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(text_obj)
 
         # TODO: Add text fields later
         
@@ -253,24 +268,121 @@ class LayoutView:
         # Enable Freestyle
         self.scene.render.use_freestyle = True
         
-        # Set up Freestyle line set on the view layer
-        # First, we need to get the view layer for this scene
-        if self.scene.view_layers:
-            view_layer = self.scene.view_layers[0]
-            
-            # Enable Freestyle on the view layer
-            view_layer.use_freestyle = True
-            
-            # Create a line set if none exists
-            if len(view_layer.freestyle_settings.linesets) == 0:
-                view_layer.freestyle_settings.linesets.new('LineSet')
-            
-            # Configure the line set
-            lineset = view_layer.freestyle_settings.linesets[0]
-            lineset.select_silhouette = True
-            lineset.select_border = True
-            lineset.select_crease = True
-            lineset.select_edge_mark = True
+        # Create Freestyle collections
+        self._create_freestyle_collections()
+        
+        # Set up Freestyle line sets
+        self._setup_freestyle_linesets()
+    
+    def _create_freestyle_collections(self):
+        """Create the three Freestyle control collections for this layout."""
+        if not self.scene:
+            return
+        
+        scene_name = self.scene.name
+        
+        # Create Freestyle Ignore collection (text, dimensions, details, title block)
+        ignore_name = f"{scene_name}_Freestyle_Ignore"
+        if ignore_name not in bpy.data.collections:
+            self.freestyle_ignore = bpy.data.collections.new(ignore_name)
+            self.freestyle_ignore['IS_FREESTYLE_IGNORE'] = True
+        else:
+            self.freestyle_ignore = bpy.data.collections[ignore_name]
+        
+        # Create Freestyle Dashed collection
+        dashed_name = f"{scene_name}_Freestyle_Dashed"
+        if dashed_name not in bpy.data.collections:
+            self.freestyle_dashed = bpy.data.collections.new(dashed_name)
+            self.freestyle_dashed['IS_FREESTYLE_DASHED'] = True
+        else:
+            self.freestyle_dashed = bpy.data.collections[dashed_name]
+        
+        # Create Freestyle Solid collection (cabinet and room geometry)
+        solid_name = f"{scene_name}_Freestyle_Solid"
+        if solid_name not in bpy.data.collections:
+            self.freestyle_solid = bpy.data.collections.new(solid_name)
+            self.freestyle_solid['IS_FREESTYLE_SOLID'] = True
+        else:
+            self.freestyle_solid = bpy.data.collections[solid_name]
+        
+        # Link collections to scene
+        if self.freestyle_ignore.name not in self.scene.collection.children:
+            self.scene.collection.children.link(self.freestyle_ignore)
+        if self.freestyle_dashed.name not in self.scene.collection.children:
+            self.scene.collection.children.link(self.freestyle_dashed)
+        if self.freestyle_solid.name not in self.scene.collection.children:
+            self.scene.collection.children.link(self.freestyle_solid)
+    
+    def _setup_freestyle_linesets(self):
+        """Configure Freestyle line sets for the three collection types."""
+        if not self.scene or not self.scene.view_layers:
+            return
+        
+        view_layer = self.scene.view_layers[0]
+        view_layer.use_freestyle = True
+        freestyle = view_layer.freestyle_settings
+        
+        # Clear existing linesets
+        while len(freestyle.linesets) > 0:
+            freestyle.linesets.remove(freestyle.linesets[0])
+        
+        # Create Solid lineset (for geometry)
+        solid_lineset = freestyle.linesets.new('Solid')
+        solid_lineset.select_silhouette = True
+        solid_lineset.select_border = True
+        solid_lineset.select_crease = True
+        solid_lineset.select_edge_mark = True
+        solid_lineset.select_by_collection = True
+        solid_lineset.collection = self.freestyle_solid
+        solid_lineset.collection_negation = 'INCLUSIVE'
+        
+        # Configure solid line style
+        if solid_lineset.linestyle:
+            solid_lineset.linestyle.color = (0, 0, 0)  # Black
+            solid_lineset.linestyle.thickness = 1.5
+        
+        # Create Dashed lineset
+        dashed_lineset = freestyle.linesets.new('Dashed')
+        dashed_lineset.select_silhouette = True
+        dashed_lineset.select_border = True
+        dashed_lineset.select_crease = True
+        dashed_lineset.select_edge_mark = True
+        dashed_lineset.select_by_collection = True
+        dashed_lineset.collection = self.freestyle_dashed
+        dashed_lineset.collection_negation = 'INCLUSIVE'
+        
+        # Configure dashed line style
+        if dashed_lineset.linestyle:
+            dashed_lineset.linestyle.color = (0, 0, 0)  # Black
+            dashed_lineset.linestyle.thickness = 1.0
+            dashed_lineset.linestyle.use_dashed_line = True
+            # Set dash pattern
+            dashed_lineset.linestyle.dash1 = 10
+            dashed_lineset.linestyle.gap1 = 5
+    
+    def get_freestyle_collection(self, collection_type: str):
+        """Get the Freestyle collection by type: 'IGNORE', 'DASHED', or 'SOLID'."""
+        if not self.scene:
+            return None
+        
+        scene_name = self.scene.name
+        
+        if collection_type == 'IGNORE':
+            name = f"{scene_name}_Freestyle_Ignore"
+        elif collection_type == 'DASHED':
+            name = f"{scene_name}_Freestyle_Dashed"
+        elif collection_type == 'SOLID':
+            name = f"{scene_name}_Freestyle_Solid"
+        else:
+            return None
+        
+        return bpy.data.collections.get(name)
+    
+    def add_to_freestyle_collection(self, obj, collection_type: str):
+        """Add an object to the specified Freestyle collection."""
+        collection = self.get_freestyle_collection(collection_type)
+        if collection and obj.name not in collection.objects:
+            collection.objects.link(obj)
     
     def create_camera(self, name: str, location: Vector, rotation: tuple) -> bpy.types.Object:
         """Create an orthographic camera for the view."""
@@ -416,6 +528,11 @@ class ElevationView(LayoutView):
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
+        
+        # Add collection instance to Freestyle Solid collection
+        solid_collection = self.get_freestyle_collection('SOLID')
+        if solid_collection and self.collection_instance.name not in solid_collection.objects:
+            solid_collection.objects.link(self.collection_instance)
         
         # Add title block
         self.title_block = TitleBlock()
@@ -574,6 +691,11 @@ class ElevationView(LayoutView):
         # Link to our elevation scene
         self.scene.collection.objects.link(dim.obj)
         
+        # Add to Freestyle Ignore collection
+        ignore_collection = self.get_freestyle_collection('IGNORE')
+        if ignore_collection and dim.obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(dim.obj)
+        
         # Position in wall local space, then convert to world
         local_pos = Vector((cabinet_info['x'], -units.inch(2), dim_z))
         dim.obj.location = wall_matrix @ local_pos
@@ -720,6 +842,11 @@ class PlanView(LayoutView):
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
+        
+        # Add collection instance to Freestyle Solid collection
+        solid_collection = self.get_freestyle_collection('SOLID')
+        if solid_collection and self.collection_instance.name not in solid_collection.objects:
+            solid_collection.objects.link(self.collection_instance)
         
         # Add title block
         self.title_block = TitleBlock()
@@ -891,6 +1018,11 @@ class View3D(LayoutView):
         self.collection_instance.instance_type = 'COLLECTION'
         self.collection_instance.instance_collection = self.content_collection
         self.scene.collection.objects.link(self.collection_instance)
+        
+        # Add collection instance to Freestyle Solid collection
+        solid_collection = self.get_freestyle_collection('SOLID')
+        if solid_collection and self.collection_instance.name not in solid_collection.objects:
+            solid_collection.objects.link(self.collection_instance)
         
         # Add title block
         self.title_block = TitleBlock()
@@ -1165,6 +1297,13 @@ class MultiView(LayoutView):
         # Position camera centered on layout, looking down
         self.camera.location = (center_x, center_y, 10)
         self.camera.rotation_euler = (0, 0, 0)
+        
+        # Add view instances to Freestyle Solid collection
+        solid_collection = self.get_freestyle_collection('SOLID')
+        if solid_collection:
+            for instance in self.view_instances:
+                if instance.name not in solid_collection.objects:
+                    solid_collection.objects.link(instance)
         
         # Add title block
         self.title_block = TitleBlock()

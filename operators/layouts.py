@@ -1201,6 +1201,11 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator):
         dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
         dim.set_decimal()
         
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and dim.obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(dim.obj)
+        
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
         context.view_layer.objects.active = dim.obj
@@ -1776,6 +1781,11 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator):
         dim.set_input("Leader Length", leader_length)
         dim.set_decimal()
         
+        # Add to Freestyle Ignore collection if in layout view
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and dim.obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(dim.obj)
+        
         bpy.ops.object.select_all(action='DESELECT')
         dim.obj.select_set(True)
         context.view_layer.objects.active = dim.obj
@@ -1859,6 +1869,11 @@ class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
         
         # Position at center of view
         instance.location = (0, 0, -0.1)
+        
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{layout_scene.name}_Freestyle_Ignore")
+        if ignore_collection and instance.name not in ignore_collection.objects:
+            ignore_collection.objects.link(instance)
         
         # Select the instance for easy repositioning
         bpy.ops.object.select_all(action='DESELECT')
