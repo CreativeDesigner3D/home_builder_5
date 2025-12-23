@@ -143,6 +143,12 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
     
     def create(self, name: str = "Polyline"):
         """Create a polyline as a curve with multiple points."""
+
+        # Get annotation settings from scene
+        hb_scene = bpy.context.scene.home_builder
+        line_thickness = hb_scene.annotation_line_thickness
+        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
+
         curve = bpy.data.curves.new(name, 'CURVE')
         curve.dimensions = '2D'
         
@@ -153,17 +159,17 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
         # Create object
         self.obj = bpy.data.objects.new(name, curve)
         self.obj['IS_DETAIL_POLYLINE'] = True
-        self.obj.color = (0, 0, 0, 1)
+        self.obj.color = line_color
         
         bpy.context.scene.collection.objects.link(self.obj)
         
         # Create material
         mat = bpy.data.materials.new(f"{name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
         curve.materials.append(mat)
         
-        curve.bevel_depth = 0.002
+        curve.bevel_depth = line_thickness
         
         return self.obj
     

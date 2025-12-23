@@ -2432,8 +2432,7 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     
     
     def execute(self, context):
-        from ... import hb_details
-        
+
         # Get main scene props
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
@@ -2463,98 +2462,57 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         return {'FINISHED'}
     
     def _draw_cabinet_side_detail(self, context, scene, props):
-        """Draw a cabinet side profile showing top, door face, and side edge."""
-        from ... import hb_details
-        from mathutils import Vector
-        
+        """Draw the top-front corner of cabinet side profile (4 inch section)."""
+
         # Make sure we're in the right scene
         original_scene = context.scene
         context.window.scene = scene
         
         # Get cabinet dimensions from props
-        cabinet_depth = props.upper_cabinet_depth
-        cabinet_height = props.upper_cabinet_height
         part_thickness = props.default_carcass_part_thickness
+        door_to_cab_gap = units.inch(0.125) # Standard door gap TODO: look to frameless props for this
+        door_overlay = part_thickness - units.inch(.0625) # Standard door overlay TODO: look to cabinet style door overlay
         door_thickness = units.inch(0.75)  # Standard door thickness
         
-        # We'll draw a simplified side section view of an upper cabinet
-        # Origin (0,0) is at the bottom-front corner of the cabinet side
+        # Only show 4" of the corner
+        corner_size = units.inch(4)
+        
+        # Position the detail so the top-front corner of the cabinet side is at origin
         # X axis goes toward the back (depth), Y axis goes up (height)
+        # Origin (0,0) is at the top-front corner of the cabinet side panel
         
         hb_scene = scene.home_builder
-        line_thickness = hb_scene.annotation_line_thickness
-        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
-        
-        # Draw cabinet side profile (front edge going up, then across top)
-        # This represents the side panel of the cabinet
+
+        # Draw cabinet side profile - L-shaped corner section
         side_profile = hb_details.GeoNodePolyline()
         side_profile.create("Cabinet Side")
+        # Start at bottom of visible section (4" down from top)
+        side_profile.set_point(0, Vector((0, -corner_size, 0)))
+        # Go up to top-front corner
+        side_profile.add_point(Vector((0, 0, 0)))
+        # Go back along top edge (4" toward back)
+        side_profile.add_point(Vector((-corner_size, 0, 0)))
         
-        # Side profile points - L-shaped profile showing front and top of side panel
-        # Start at bottom front of side
-        side_profile.set_point(0, Vector((0, 0, 0)))
-        # Go up the front edge of the side panel
-        side_profile.add_point(Vector((0, cabinet_height, 0)))
-        # Go back along the top of the side panel
-        side_profile.add_point(Vector((cabinet_depth, cabinet_height, 0)))
-        # Go down the back edge
-        side_profile.add_point(Vector((cabinet_depth, 0, 0)))
-        side_profile.close()
-        
-        # Apply styling
-        side_profile.obj.data.bevel_depth = line_thickness
-        side_profile.obj.color = line_color
-        if side_profile.obj.data.materials:
-            mat = side_profile.obj.data.materials[0]
-            if mat and mat.use_nodes:
-                bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                if bsdf:
-                    bsdf.inputs["Base Color"].default_value = line_color
-        
-        # Draw top panel (horizontal rectangle at top)
+        # Draw top panel - just the front portion visible in the corner
         top_panel = hb_details.GeoNodePolyline()
         top_panel.create("Cabinet Top")
+        # Draw single line to show the top panel
+        top_panel.set_point(0, Vector((0, -part_thickness, 0)))
+        top_panel.add_point(Vector((-corner_size, -part_thickness, 0)))
         
-        top_y = cabinet_height - part_thickness
-        top_panel.set_point(0, Vector((part_thickness, top_y, 0)))
-        top_panel.add_point(Vector((part_thickness, cabinet_height, 0)))
-        top_panel.add_point(Vector((cabinet_depth - part_thickness, cabinet_height, 0)))
-        top_panel.add_point(Vector((cabinet_depth - part_thickness, top_y, 0)))
-        top_panel.close()
-        
-        top_panel.obj.data.bevel_depth = line_thickness
-        top_panel.obj.color = line_color
-        if top_panel.obj.data.materials:
-            mat = top_panel.obj.data.materials[0]
-            if mat and mat.use_nodes:
-                bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                if bsdf:
-                    bsdf.inputs["Base Color"].default_value = line_color
-        
-        # Draw door profile (vertical rectangle at front)
+        # Draw door profile - just the top portion visible in the corner
         door_profile = hb_details.GeoNodePolyline()
         door_profile.create("Door Face")
-        
-        door_front = -door_thickness  # Door projects forward from cabinet
-        door_profile.set_point(0, Vector((door_front, 0, 0)))
-        door_profile.add_point(Vector((door_front, cabinet_height, 0)))
-        door_profile.add_point(Vector((0, cabinet_height, 0)))
-        door_profile.add_point(Vector((0, 0, 0)))
-        door_profile.close()
-        
-        door_profile.obj.data.bevel_depth = line_thickness
-        door_profile.obj.color = line_color
-        if door_profile.obj.data.materials:
-            mat = door_profile.obj.data.materials[0]
-            if mat and mat.use_nodes:
-                bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                if bsdf:
-                    bsdf.inputs["Base Color"].default_value = line_color
-        
+        # Draw U Shape Door Profile for the corner
+        door_profile.set_point(0, Vector((door_to_cab_gap, -corner_size, 0)))
+        door_profile.add_point(Vector((door_to_cab_gap, -part_thickness+door_overlay, 0)))
+        door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -part_thickness+door_overlay, 0)))
+        door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -corner_size, 0)))
+
         # Add a label/text annotation
         text = hb_details.GeoNodeText()
         text.create("Label", "CROWN DETAIL", hb_scene.annotation_text_size)
-        text.set_location(Vector((cabinet_depth / 2, -units.inch(2), 0)))
+        text.set_location(Vector((0, -corner_size - units.inch(1), 0)))
         text.set_alignment('CENTER', 'TOP')
         
         # Switch back to original scene

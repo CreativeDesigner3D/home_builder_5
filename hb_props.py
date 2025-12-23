@@ -393,7 +393,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_line_thickness: FloatProperty(
         name="Line Thickness",
         description="Thickness of annotation lines",
-        default=inch(.1),
+        default=inch(.05),
         min=0.0005,
         max=0.02,
         precision=4,
