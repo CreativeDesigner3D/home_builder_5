@@ -287,6 +287,45 @@ class Home_Builder_Object_Props(PropertyGroup):
         del bpy.types.Object.home_builder    
 
 
+
+def get_molding_categories(self, context):
+    """Get molding categories for enum dropdown."""
+    import os
+    addon_path = os.path.dirname(os.path.dirname(__file__))
+    # Correct path to moldings folder
+    moldings_path = os.path.join(os.path.dirname(__file__), "product_libraries", "frameless", "frameless_assets", "moldings")
+    
+    categories = []
+    if os.path.exists(moldings_path):
+        for folder in sorted(os.listdir(moldings_path)):
+            folder_path = os.path.join(moldings_path, folder)
+            if os.path.isdir(folder_path):
+                categories.append((folder, folder, folder))
+    
+    return categories if categories else [('NONE', "No Categories", "")]
+
+
+def get_molding_items(self, context):
+    """Get molding items in the selected category for enum dropdown."""
+    import os
+    moldings_path = os.path.join(os.path.dirname(__file__), "product_libraries", "frameless", "frameless_assets", "moldings")
+    
+    category = self.molding_category if hasattr(self, 'molding_category') else ''
+    if not category or category == 'NONE':
+        return [('NONE', "Select Category First", "")]
+    
+    category_path = os.path.join(moldings_path, category)
+    items = []
+    
+    if os.path.exists(category_path):
+        for f in sorted(os.listdir(category_path)):
+            if f.endswith('.blend'):
+                name = os.path.splitext(f)[0]
+                items.append((name, name, name))
+    
+    return items if items else [('NONE', "No Moldings", "")]
+
+
 class Home_Builder_Scene_Props(PropertyGroup):
     main_tab: EnumProperty(name="Library Tabs",
                           items=[('ROOM',"Room","Show the Room Library"),
@@ -331,6 +370,20 @@ class Home_Builder_Scene_Props(PropertyGroup):
     show_materials: BoolProperty(name="Show Materials", default=False)
     show_room_settings: BoolProperty(name="Show Room Settings", default=False)
     show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)
+
+    # Molding library selection
+    molding_category: EnumProperty(
+        name="Molding Category",
+        description="Select molding category",
+        items=get_molding_categories
+    )# type: ignore
+    
+    molding_selection: EnumProperty(
+        name="Molding",
+        description="Select molding profile",
+        items=get_molding_items
+    )# type: ignore
+
 
     # ==========================================================================
     # ANNOTATION PROPERTIES

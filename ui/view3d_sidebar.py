@@ -749,51 +749,56 @@ class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+        hb_scene = context.scene.home_builder
         
         # Import the molding functions
         from ..product_libraries.frameless import ops_hb_frameless
         
-        # Get available categories
-        categories = ops_hb_frameless.get_molding_categories()
+        # Category dropdown
+        row = layout.row(align=True)
+        row.label(text="Category:")
+        row.prop(hb_scene, "molding_category", text="")
         
-        if not categories or categories[0][0] == 'NONE':
-            layout.label(text="No molding profiles found", icon='INFO')
-            return
+        # Molding dropdown
+        row = layout.row(align=True)
+        row.label(text="Molding:")
+        row.prop(hb_scene, "molding_selection", text="")
         
-        # Show each category
-        for cat_id, cat_name, cat_desc in categories:
-            box = layout.box()
-            box.label(text=cat_name, icon='FILE_FOLDER')
+        # Get the selected molding info for thumbnail and filepath
+        category = hb_scene.molding_category
+        selection = hb_scene.molding_selection
+        
+        if category and category != 'NONE' and selection and selection != 'NONE':
+            # Get molding info
+            items = ops_hb_frameless.get_molding_items(category)
+            selected_item = None
+            for item in items:
+                if item['name'] == selection:
+                    selected_item = item
+                    break
             
-            # Get items in category
-            items = ops_hb_frameless.get_molding_items(cat_id)
-            
-            if items:
-                # Grid layout for moldings
-                flow = box.column_flow(columns=2, align=True)
-                
-                for item in items:
-                    item_col = flow.column(align=True)
-                    
-                    # Show thumbnail if available
-                    if item['thumbnail']:
-                        from ..product_libraries.frameless import props_hb_frameless
-                        icon_id = props_hb_frameless.load_library_thumbnail(
-                            item['thumbnail'], 
-                            f"molding_{item['name']}"
-                        )
-                        if icon_id:
-                            item_col.template_icon(icon_value=icon_id, scale=3.0)
-                    
-                    # Add button with name
-                    op = item_col.operator(
-                        "hb_frameless.add_molding_profile", 
-                        text=item['name']
+            if selected_item:
+                # Show thumbnail
+                if selected_item.get('thumbnail'):
+                    from ..product_libraries.frameless import props_hb_frameless
+                    icon_id = props_hb_frameless.load_library_thumbnail(
+                        selected_item['thumbnail'], 
+                        f"molding_{selected_item['name']}"
                     )
-                    op.filepath = item['filepath']
-                    op.molding_name = item['name']
-            else:
-                box.label(text="No moldings in category", icon='INFO')
+                    if icon_id:
+                        row = layout.row()
+                        row.template_icon(icon_value=icon_id, scale=5.0)
+                
+                # Add button
+                row = layout.row()
+                row.scale_y = 1.3
+                op = row.operator(
+                    "hb_frameless.add_molding_profile", 
+                    text="Add Molding Profile",
+                    icon='ADD'
+                )
+                op.filepath = selected_item['filepath']
+                op.molding_name = selected_item['name']
 
 
 # -----------------------------------------------------------------------------
