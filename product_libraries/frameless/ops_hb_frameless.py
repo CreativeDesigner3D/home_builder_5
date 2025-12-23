@@ -2765,6 +2765,101 @@ class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_add_solid_lumber(bpy.types.Operator):
+    """Add a custom solid lumber profile to the detail"""
+    bl_idname = "hb_frameless.add_solid_lumber"
+    bl_label = "Add Solid Lumber"
+    bl_description = "Add a custom solid lumber rectangle profile to the current detail"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    thickness: bpy.props.FloatProperty(
+        name="Thickness",
+        description="Thickness of the lumber",
+        default=0.01905,  # 0.75 inches
+        min=0.001,
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    width: bpy.props.FloatProperty(
+        name="Width",
+        description="Width of the lumber",
+        default=0.0381,  # 1.5 inches
+        min=0.001,
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    orientation: bpy.props.EnumProperty(
+        name="Orientation",
+        description="Orientation of the lumber profile",
+        items=[
+            ('HORIZONTAL', "Horizontal", "Add lumber as a horizontal part"),
+            ('VERTICAL', "Vertical", "Add lumber as a vertical part"),
+        ],
+        default='HORIZONTAL'
+    )  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        # Must be in a detail view scene
+        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=250)
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        layout.prop(self, "thickness")
+        layout.prop(self, "width")
+        
+        layout.separator()
+        layout.label(text="Orientation:")
+        layout.prop(self, "orientation", expand=True)
+    
+    def execute(self, context):
+        scene = context.scene
+        hb_scene = scene.home_builder
+        
+        # Determine dimensions based on orientation
+        if self.orientation == 'HORIZONTAL':
+            rect_width = self.width
+            rect_height = self.thickness
+        else:  # VERTICAL
+            rect_width = self.thickness
+            rect_height = self.width
+        
+        # Create a rectangle polyline for the lumber profile
+        lumber = hb_details.GeoNodePolyline()
+        lumber.create("Solid Lumber")
+        
+        # Draw rectangle starting at origin
+        lumber.set_point(0, Vector((0, 0, 0)))
+        lumber.add_point(Vector((-rect_width, 0, 0)))
+        lumber.add_point(Vector((-rect_width, rect_height, 0)))
+        lumber.add_point(Vector((0, rect_height, 0)))
+        lumber.close()
+        
+        # Mark as solid lumber
+        lumber.obj['IS_SOLID_LUMBER'] = True
+        lumber.obj['LUMBER_THICKNESS'] = self.thickness
+        lumber.obj['LUMBER_WIDTH'] = self.width
+        lumber.obj['LUMBER_ORIENTATION'] = self.orientation
+        
+        # Select the new object
+        bpy.ops.object.select_all(action='DESELECT')
+        lumber.obj.select_set(True)
+        context.view_layer.objects.active = lumber.obj
+        
+        # Report dimensions in inches for user feedback
+        thickness_in = self.thickness * 39.3701
+        width_in = self.width * 39.3701
+        self.report({'INFO'}, f"Added {thickness_in:.2f}\" x {width_in:.2f}\" solid lumber ({self.orientation.lower()})")
+        
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_browse_molding_library(bpy.types.Operator):
     """Browse and add molding profiles from the library"""
     bl_idname = "hb_frameless.browse_molding_library"
@@ -2854,6 +2949,7 @@ classes = (
     hb_frameless_OT_edit_crown_detail,
     hb_frameless_OT_assign_crown_to_cabinets,
     hb_frameless_OT_add_molding_profile,
+    hb_frameless_OT_add_solid_lumber,
     hb_frameless_OT_browse_molding_library,
 )
 

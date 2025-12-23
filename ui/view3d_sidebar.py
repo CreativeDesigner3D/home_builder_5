@@ -799,6 +799,12 @@ class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
                 )
                 op.filepath = selected_item['filepath']
                 op.molding_name = selected_item['name']
+        
+        # Separator and solid lumber button (always visible)
+        layout.separator()
+        row = layout.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.add_solid_lumber", text="Add Solid Lumber", icon='MESH_PLANE')
 
 
 # -----------------------------------------------------------------------------
