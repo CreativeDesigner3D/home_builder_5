@@ -2478,7 +2478,7 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         corner_size = units.inch(4)
         
         # Position the detail so the top-front corner of the cabinet side is at origin
-        # X axis goes toward the back (depth), Y axis goes up (height)
+        # -X axis goes toward the back (depth), +Y axis goes up (height)
         # Origin (0,0) is at the top-front corner of the cabinet side panel
         
         hb_scene = scene.home_builder
