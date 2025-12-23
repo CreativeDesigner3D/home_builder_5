@@ -2622,8 +2622,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return False
     
     def execute(self, context):
-        from mathutils import Vector
-        
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
@@ -2705,8 +2703,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
     
     def _create_crown_extrusion(self, context, cabinet, profile, width, depth, height, target_scene):
         """Create a crown molding extrusion path for a cabinet."""
-        from mathutils import Vector
-        
+
         # Copy the profile curve to the main scene as the bevel object
         profile_copy = profile.copy()
         profile_copy.data = profile.data.copy()
@@ -2790,6 +2787,23 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         # Mark as crown molding
         crown_obj['IS_CROWN_MOLDING'] = True
         crown_obj['CROWN_PROFILE_NAME'] = profile.name
+        
+        # Add Smooth by Angle modifier for better shading
+        smooth_mod = crown_obj.modifiers.new(name="Smooth by Angle", type='NODES')
+        # Load Smooth by Angle node group if not already present
+        if "Smooth by Angle" not in bpy.data.node_groups:
+            import os
+            essentials_path = os.path.join(
+                bpy.utils.resource_path('LOCAL'),
+                "datafiles", "assets", "nodes", "geometry_nodes_essentials.blend"
+            )
+            if os.path.exists(essentials_path):
+                with bpy.data.libraries.load(essentials_path) as (data_from, data_to):
+                    if "Smooth by Angle" in data_from.node_groups:
+                        data_to.node_groups = ["Smooth by Angle"]
+        # Assign the node group to the modifier
+        if "Smooth by Angle" in bpy.data.node_groups:
+            smooth_mod.node_group = bpy.data.node_groups["Smooth by Angle"]
         
         # Also parent the profile copy to the crown
         profile_copy.parent = crown_obj
