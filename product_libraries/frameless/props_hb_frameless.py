@@ -318,6 +318,70 @@ class Frameless_Door_Style(PropertyGroup):
     panel_inset: FloatProperty(name="Panel Inset",description="Panel Inset.",default=units.inch(.25),unit='LENGTH',precision=4)# type: ignore
 
 
+class Crown_Detail(PropertyGroup):
+    """Crown molding detail stored as a reference to a detail scene."""
+    
+    # Reference to the detail scene where the crown profile is drawn
+    detail_scene_name: StringProperty(
+        name="Detail Scene",
+        description="Name of the detail scene containing the crown profile"
+    )  # type: ignore
+    
+    description: StringProperty(
+        name="Description", 
+        description="Description of this crown molding detail",
+        default=""
+    )  # type: ignore
+    
+    # Crown molding dimensions
+    height: FloatProperty(
+        name="Height",
+        description="Height of the crown molding",
+        default=0.0762,  # 3 inches
+        min=0.0,
+        unit='LENGTH'
+    )  # type: ignore
+    
+    projection: FloatProperty(
+        name="Projection",
+        description="How far the crown projects from the cabinet face",
+        default=0.0508,  # 2 inches
+        min=0.0,
+        unit='LENGTH'
+    )  # type: ignore
+    
+    spring_angle: FloatProperty(
+        name="Spring Angle",
+        description="Angle of the crown molding (typically 38 or 45 degrees)",
+        default=38.0,
+        min=0.0,
+        max=90.0,
+        subtype='ANGLE'
+    )  # type: ignore
+    
+    def get_detail_scene(self):
+        """Get the detail scene object, if it exists."""
+        if self.detail_scene_name and self.detail_scene_name in bpy.data.scenes:
+            return bpy.data.scenes[self.detail_scene_name]
+        return None
+
+
+class HB_UL_crown_details(UIList):
+    """UIList for displaying crown details."""
+    
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row.prop(item, "name", text="", emboss=False, icon='MOD_SIMPLEDEFORM')
+            # Show if scene exists
+            if item.get_detail_scene():
+                row.label(text="", icon='CHECKMARK')
+            else:
+                row.label(text="", icon='ERROR')
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text=item.name, icon='MOD_SIMPLEDEFORM')
+
 
 class Frameless_Scene_Props(PropertyGroup):   
     
@@ -555,7 +619,11 @@ class Frameless_Scene_Props(PropertyGroup):
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
-    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore
+    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore    
+    # CROWN DETAILS
+    crown_details: CollectionProperty(type=Crown_Detail, name="Crown Details")# type: ignore
+    active_crown_detail_index: IntProperty(name="Active Crown Detail Index", default=0)# type: ignore
+
     
     #CABINET PULL OPTIONS
     current_door_pull_object: PointerProperty(type=bpy.types.Object)# type: ignore
@@ -855,12 +923,70 @@ class Frameless_Scene_Props(PropertyGroup):
         row = size_box.row()
         row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
 
-    def draw_crown_details_ui(self,layout,context):
-        # Add Operator to Create new Crown Detail.
-        #This will create a new detail scene
-        #The user will be able to add predefined or custom crown molding profiles to the detail scene
-        #After a user has created a crown detail they will see the list of crown details and the ability to assign them to cabinets
-        pass
+    def draw_crown_details_ui(self, layout, context):
+        """Draw the crown molding details UI section."""
+        from ... import hb_project
+        
+        # Get Crown Details from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Create new crown detail button
+        row = layout.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.create_crown_detail", text="Create Crown Detail", icon='ADD')
+        
+        layout.separator()
+        
+        # UIList for crown details
+        if len(props.crown_details) > 0:
+            row = layout.row()
+            row.template_list(
+                "HB_UL_crown_details", "",
+                props, "crown_details",
+                props, "active_crown_detail_index",
+                rows=3
+            )
+            
+            # Add/Remove buttons
+            col = row.column(align=True)
+            col.operator("hb_frameless.create_crown_detail", icon='ADD', text="")
+            col.operator("hb_frameless.delete_crown_detail", icon='REMOVE', text="")
+            col.separator()
+            col.operator("hb_frameless.edit_crown_detail", icon='GREASEPENCIL', text="")
+            
+            # Active crown detail properties
+            if props.crown_details and props.active_crown_detail_index < len(props.crown_details):
+                crown = props.crown_details[props.active_crown_detail_index]
+                
+                box = layout.box()
+                box.prop(crown, "name", text="Name")
+                box.prop(crown, "description", text="Description")
+                
+                col = box.column(align=True)
+                col.label(text="Dimensions:")
+                col.prop(crown, "height")
+                col.prop(crown, "projection")
+                col.prop(crown, "spring_angle")
+                
+                # Show detail scene status
+                detail_scene = crown.get_detail_scene()
+                if detail_scene:
+                    row = box.row()
+                    row.label(text=f"Profile Scene: {crown.detail_scene_name}", icon='CHECKMARK')
+                else:
+                    row = box.row()
+                    row.label(text="No profile scene", icon='ERROR')
+                
+                # Assign to cabinets button
+                layout.separator()
+                row = layout.row()
+                row.scale_y = 1.3
+                row.operator("hb_frameless.assign_crown_to_cabinets", text="Assign to Selected Cabinets", icon='BRUSH_DATA')
+        else:
+            box = layout.box()
+            box.label(text="No crown details defined", icon='INFO')
+            box.label(text="Create a crown detail to define crown molding profiles")
 
 
     def draw_toe_kick_details_ui(self,layout,context):
@@ -1062,6 +1188,8 @@ classes = (
     Frameless_Cabinet_Style,
     HB_UL_cabinet_styles,
     Frameless_Door_Style,
+    Crown_Detail,
+    HB_UL_crown_details,
     Frameless_Scene_Props,
 )
 

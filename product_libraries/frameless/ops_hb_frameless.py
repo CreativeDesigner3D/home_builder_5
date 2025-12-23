@@ -5,7 +5,7 @@ from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from . import types_frameless
 from . import props_hb_frameless
-from ... import hb_utils, hb_project, hb_snap, hb_placement, hb_types, units
+from ... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
 def has_child_item_type(obj,item_type):
     for child in obj.children_recursive:
@@ -2413,6 +2413,461 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
 
 
 
+# =============================================================================
+# CROWN DETAIL OPERATORS
+# =============================================================================
+
+class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
+    """Create a new crown molding detail"""
+    bl_idname = "hb_frameless.create_crown_detail"
+    bl_label = "Create Crown Detail"
+    bl_description = "Create a new crown molding detail with a 2D profile scene"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    name: bpy.props.StringProperty(
+        name="Name",
+        description="Name for the crown detail",
+        default="Crown Detail"
+    )  # type: ignore
+    
+    
+    def execute(self, context):
+        from ... import hb_details
+        
+        # Get main scene props
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Create a new crown detail entry
+        crown = props.crown_details.add()
+        crown.name = self.name
+
+        # Create a detail scene for the crown profile
+        detail = hb_details.DetailView()
+        scene = detail.create(f"Crown - {self.name}")
+        scene['IS_CROWN_DETAIL'] = True
+        
+        # Store the scene name reference
+        crown.detail_scene_name = scene.name
+        
+        # Set as active
+        props.active_crown_detail_index = len(props.crown_details) - 1
+        
+        # Draw a cabinet side detail as starting point to add crown molding details to
+        self._draw_cabinet_side_detail(context, scene, props)
+        
+        # Switch to the detail scene
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
+        
+        self.report({'INFO'}, f"Created crown detail: {self.name}")
+        return {'FINISHED'}
+    
+    def _draw_cabinet_side_detail(self, context, scene, props):
+        """Draw a cabinet side profile showing top, door face, and side edge."""
+        from ... import hb_details
+        from mathutils import Vector
+        
+        # Make sure we're in the right scene
+        original_scene = context.scene
+        context.window.scene = scene
+        
+        # Get cabinet dimensions from props
+        cabinet_depth = props.upper_cabinet_depth
+        cabinet_height = props.upper_cabinet_height
+        part_thickness = props.default_carcass_part_thickness
+        door_thickness = units.inch(0.75)  # Standard door thickness
+        
+        # We'll draw a simplified side section view of an upper cabinet
+        # Origin (0,0) is at the bottom-front corner of the cabinet side
+        # X axis goes toward the back (depth), Y axis goes up (height)
+        
+        hb_scene = scene.home_builder
+        line_thickness = hb_scene.annotation_line_thickness
+        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        
+        # Draw cabinet side profile (front edge going up, then across top)
+        # This represents the side panel of the cabinet
+        side_profile = hb_details.GeoNodePolyline()
+        side_profile.create("Cabinet Side")
+        
+        # Side profile points - L-shaped profile showing front and top of side panel
+        # Start at bottom front of side
+        side_profile.set_point(0, Vector((0, 0, 0)))
+        # Go up the front edge of the side panel
+        side_profile.add_point(Vector((0, cabinet_height, 0)))
+        # Go back along the top of the side panel
+        side_profile.add_point(Vector((cabinet_depth, cabinet_height, 0)))
+        # Go down the back edge
+        side_profile.add_point(Vector((cabinet_depth, 0, 0)))
+        side_profile.close()
+        
+        # Apply styling
+        side_profile.obj.data.bevel_depth = line_thickness
+        side_profile.obj.color = line_color
+        if side_profile.obj.data.materials:
+            mat = side_profile.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = line_color
+        
+        # Draw top panel (horizontal rectangle at top)
+        top_panel = hb_details.GeoNodePolyline()
+        top_panel.create("Cabinet Top")
+        
+        top_y = cabinet_height - part_thickness
+        top_panel.set_point(0, Vector((part_thickness, top_y, 0)))
+        top_panel.add_point(Vector((part_thickness, cabinet_height, 0)))
+        top_panel.add_point(Vector((cabinet_depth - part_thickness, cabinet_height, 0)))
+        top_panel.add_point(Vector((cabinet_depth - part_thickness, top_y, 0)))
+        top_panel.close()
+        
+        top_panel.obj.data.bevel_depth = line_thickness
+        top_panel.obj.color = line_color
+        if top_panel.obj.data.materials:
+            mat = top_panel.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = line_color
+        
+        # Draw door profile (vertical rectangle at front)
+        door_profile = hb_details.GeoNodePolyline()
+        door_profile.create("Door Face")
+        
+        door_front = -door_thickness  # Door projects forward from cabinet
+        door_profile.set_point(0, Vector((door_front, 0, 0)))
+        door_profile.add_point(Vector((door_front, cabinet_height, 0)))
+        door_profile.add_point(Vector((0, cabinet_height, 0)))
+        door_profile.add_point(Vector((0, 0, 0)))
+        door_profile.close()
+        
+        door_profile.obj.data.bevel_depth = line_thickness
+        door_profile.obj.color = line_color
+        if door_profile.obj.data.materials:
+            mat = door_profile.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = line_color
+        
+        # Add a label/text annotation
+        text = hb_details.GeoNodeText()
+        text.create("Label", "CROWN DETAIL", hb_scene.annotation_text_size)
+        text.set_location(Vector((cabinet_depth / 2, -units.inch(2), 0)))
+        text.set_alignment('CENTER', 'TOP')
+        
+        # Switch back to original scene
+        context.window.scene = original_scene
+
+
+class hb_frameless_OT_delete_crown_detail(bpy.types.Operator):
+    """Delete the selected crown detail"""
+    bl_idname = "hb_frameless.delete_crown_detail"
+    bl_label = "Delete Crown Detail"
+    bl_description = "Delete the selected crown molding detail and its profile scene"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.crown_details) > 0
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+    
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if not props.crown_details:
+            self.report({'WARNING'}, "No crown details to delete")
+            return {'CANCELLED'}
+        
+        index = props.active_crown_detail_index
+        crown = props.crown_details[index]
+        
+        # Delete the associated detail scene if it exists
+        detail_scene = crown.get_detail_scene()
+        if detail_scene:
+            # Make sure we're not deleting the current scene
+            if context.scene == detail_scene:
+                # Switch to main scene first
+                context.window.scene = main_scene
+            
+            bpy.data.scenes.remove(detail_scene)
+        
+        # Remove from collection
+        crown_name = crown.name
+        props.crown_details.remove(index)
+        
+        # Update active index
+        if props.active_crown_detail_index >= len(props.crown_details):
+            props.active_crown_detail_index = max(0, len(props.crown_details) - 1)
+        
+        self.report({'INFO'}, f"Deleted crown detail: {crown_name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_edit_crown_detail(bpy.types.Operator):
+    """Edit the selected crown detail profile"""
+    bl_idname = "hb_frameless.edit_crown_detail"
+    bl_label = "Edit Crown Detail"
+    bl_description = "Open the crown detail profile scene for editing"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if len(props.crown_details) == 0:
+            return False
+        crown = props.crown_details[props.active_crown_detail_index]
+        return crown.get_detail_scene() is not None
+    
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        crown = props.crown_details[props.active_crown_detail_index]
+        detail_scene = crown.get_detail_scene()
+        
+        if not detail_scene:
+            self.report({'ERROR'}, "Crown detail scene not found")
+            return {'CANCELLED'}
+        
+        # Switch to the detail scene
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=detail_scene.name)
+        
+        self.report({'INFO'}, f"Editing crown detail: {crown.name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
+    """Assign the selected crown detail to selected cabinets"""
+    bl_idname = "hb_frameless.assign_crown_to_cabinets"
+    bl_label = "Assign Crown to Cabinets"
+    bl_description = "Assign the active crown molding detail to selected upper and tall cabinets"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if len(props.crown_details) == 0:
+            return False
+        # Check if any cabinets are selected
+        for obj in context.selected_objects:
+            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                return True
+        return False
+    
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        crown = props.crown_details[props.active_crown_detail_index]
+        
+        count = 0
+        for obj in context.selected_objects:
+            # Find cabinet base points
+            cabinet_bp = None
+            if obj.get('IS_CABINET_BP'):
+                cabinet_bp = obj
+            elif obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                cabinet_bp = obj
+            elif obj.parent:
+                # Check if parent is a cabinet
+                if obj.parent.get('IS_CABINET_BP') or obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
+                    cabinet_bp = obj.parent
+            
+            if cabinet_bp:
+                # Store crown detail reference on the cabinet
+                cabinet_bp['CROWN_DETAIL_NAME'] = crown.name
+                cabinet_bp['CROWN_DETAIL_HEIGHT'] = crown.height
+                cabinet_bp['CROWN_DETAIL_PROJECTION'] = crown.projection
+                cabinet_bp['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
+                count += 1
+        
+        if count > 0:
+            self.report({'INFO'}, f"Assigned crown '{crown.name}' to {count} cabinet(s)")
+        else:
+            self.report({'WARNING'}, "No valid cabinets selected")
+            return {'CANCELLED'}
+        
+        return {'FINISHED'}
+
+
+
+
+def get_molding_library_path():
+    """Get the path to the molding library folder."""
+    import os
+    return os.path.join(os.path.dirname(__file__), "frameless_assets", "moldings")
+
+
+def get_molding_categories():
+    """Get list of molding categories (subfolders)."""
+    import os
+    library_path = get_molding_library_path()
+    categories = []
+    if os.path.exists(library_path):
+        for folder in sorted(os.listdir(library_path)):
+            folder_path = os.path.join(library_path, folder)
+            if os.path.isdir(folder_path):
+                categories.append((folder, folder, folder))
+    return categories if categories else [('NONE', "No Categories", "No molding categories found")]
+
+
+def get_molding_items(category):
+    """Get list of molding items in a category."""
+    import os
+    library_path = get_molding_library_path()
+    category_path = os.path.join(library_path, category)
+    items = []
+    if os.path.exists(category_path):
+        for f in sorted(os.listdir(category_path)):
+            if f.endswith('.blend'):
+                name = os.path.splitext(f)[0]
+                filepath = os.path.join(category_path, f)
+                # Check for thumbnail
+                thumb_path = os.path.join(category_path, name + '.png')
+                items.append({
+                    'name': name,
+                    'filepath': filepath,
+                    'thumbnail': thumb_path if os.path.exists(thumb_path) else None
+                })
+    return items
+
+
+class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
+    """Add a molding profile from the library to the current detail scene"""
+    bl_idname = "hb_frameless.add_molding_profile"
+    bl_label = "Add Molding Profile"
+    bl_description = "Add a molding profile from the library to the current crown detail"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filepath: bpy.props.StringProperty(
+        name="Filepath",
+        description="Path to the molding blend file"
+    )  # type: ignore
+    
+    molding_name: bpy.props.StringProperty(
+        name="Name",
+        description="Name of the molding"
+    )  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        # Must be in a crown detail scene
+        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def execute(self, context):
+        import os
+        
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"Molding file not found: {self.filepath}")
+            return {'CANCELLED'}
+        
+        # Load the molding profile from the blend file
+        with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
+            data_to.objects = data_from.objects
+        
+        # Link the loaded objects to the current scene
+        imported_objects = []
+        for obj in data_to.objects:
+            if obj is not None:
+                context.scene.collection.objects.link(obj)
+                imported_objects.append(obj)
+                
+                # Mark as molding profile
+                obj['IS_MOLDING_PROFILE'] = True
+                obj['MOLDING_NAME'] = self.molding_name
+                
+                # Apply scene annotation settings if it's a curve
+                if obj.type == 'CURVE':
+                    hb_scene = context.scene.home_builder
+                    obj.data.bevel_depth = hb_scene.annotation_line_thickness
+                    color = tuple(hb_scene.annotation_line_color) + (1.0,)
+                    obj.color = color
+        
+        # Select the imported objects
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in imported_objects:
+            obj.select_set(True)
+        
+        if imported_objects:
+            context.view_layer.objects.active = imported_objects[0]
+            # Position at origin for user to move
+            for obj in imported_objects:
+                obj.location = (0, 0, 0)
+        
+        self.report({'INFO'}, f"Added molding profile: {self.molding_name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_browse_molding_library(bpy.types.Operator):
+    """Browse and add molding profiles from the library"""
+    bl_idname = "hb_frameless.browse_molding_library"
+    bl_label = "Molding Library"
+    bl_description = "Browse molding profiles and add them to the current detail"
+    bl_options = {'REGISTER'}
+    
+    category: bpy.props.EnumProperty(
+        name="Category",
+        description="Molding category",
+        items=lambda self, context: get_molding_categories()
+    )  # type: ignore
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=400)
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Category selector
+        layout.prop(self, "category", text="Category")
+        
+        layout.separator()
+        
+        # Get items in selected category
+        items = get_molding_items(self.category)
+        
+        if not items:
+            layout.label(text="No moldings in this category", icon='INFO')
+            return
+        
+        # Display items in a grid
+        box = layout.box()
+        flow = box.column_flow(columns=2, align=True)
+        
+        for item in items:
+            item_box = flow.box()
+            item_box.label(text=item['name'])
+            
+            # Show thumbnail if available
+            if item['thumbnail']:
+                # Load thumbnail into preview collection
+                icon_id = props_hb_frameless.load_library_thumbnail(item['thumbnail'], item['name'])
+                if icon_id:
+                    item_box.template_icon(icon_value=icon_id, scale=4.0)
+            
+            # Add button
+            op = item_box.operator("hb_frameless.add_molding_profile", text="Add", icon='ADD')
+            op.filepath = item['filepath']
+            op.molding_name = item['name']
+    
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_load_cabinet_group_from_library,
@@ -2436,6 +2891,12 @@ classes = (
     hb_frameless_OT_assign_cabinet_style_to_selected_cabinets,
     hb_frameless_OT_assign_cabinet_style,
     hb_frameless_OT_update_cabinets_from_style,
+    hb_frameless_OT_create_crown_detail,
+    hb_frameless_OT_delete_crown_detail,
+    hb_frameless_OT_edit_crown_detail,
+    hb_frameless_OT_assign_crown_to_cabinets,
+    hb_frameless_OT_add_molding_profile,
+    hb_frameless_OT_browse_molding_library,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

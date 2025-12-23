@@ -730,6 +730,72 @@ class HOME_BUILDER_PT_2d_details_library(bpy.types.Panel):
                        text="Open Library Folder", icon='FILE_FOLDER')
 
 
+
+
+# SUBPANEL: Molding Library (only visible in crown detail view)
+class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
+    bl_label = "Molding Library"
+    bl_idname = "HOME_BUILDER_PT_molding_library"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_2d_details"
+    bl_options = set()  # Expanded by default for crown details
+    
+    @classmethod
+    def poll(cls, context):
+        # Show in crown detail scenes or regular detail views
+        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Import the molding functions
+        from ..product_libraries.frameless import ops_hb_frameless
+        
+        # Get available categories
+        categories = ops_hb_frameless.get_molding_categories()
+        
+        if not categories or categories[0][0] == 'NONE':
+            layout.label(text="No molding profiles found", icon='INFO')
+            return
+        
+        # Show each category
+        for cat_id, cat_name, cat_desc in categories:
+            box = layout.box()
+            box.label(text=cat_name, icon='FILE_FOLDER')
+            
+            # Get items in category
+            items = ops_hb_frameless.get_molding_items(cat_id)
+            
+            if items:
+                # Grid layout for moldings
+                flow = box.column_flow(columns=2, align=True)
+                
+                for item in items:
+                    item_col = flow.column(align=True)
+                    
+                    # Show thumbnail if available
+                    if item['thumbnail']:
+                        from ..product_libraries.frameless import props_hb_frameless
+                        icon_id = props_hb_frameless.load_library_thumbnail(
+                            item['thumbnail'], 
+                            f"molding_{item['name']}"
+                        )
+                        if icon_id:
+                            item_col.template_icon(icon_value=icon_id, scale=3.0)
+                    
+                    # Add button with name
+                    op = item_col.operator(
+                        "hb_frameless.add_molding_profile", 
+                        text=item['name']
+                    )
+                    op.filepath = item['filepath']
+                    op.molding_name = item['name']
+            else:
+                box.label(text="No moldings in category", icon='INFO')
+
+
 # -----------------------------------------------------------------------------
 # PANEL 5: ANNOTATIONS
 # -----------------------------------------------------------------------------
@@ -927,6 +993,7 @@ classes = (
     HOME_BUILDER_PT_layout_views_details,
     HOME_BUILDER_PT_2d_details,
     HOME_BUILDER_PT_2d_details_library,
+    HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_annotations_drawing,
     HOME_BUILDER_PT_annotations_edit,
