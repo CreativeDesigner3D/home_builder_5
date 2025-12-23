@@ -661,12 +661,16 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
         default="//layouts.pdf"
     )  # type: ignore
     
-    dpi: bpy.props.IntProperty(
+    dpi: bpy.props.EnumProperty(
         name="DPI",
-        description="Resolution for rendering",
-        default=150,
-        min=72,
-        max=600
+        description="Resolution for rendering (higher = better quality, larger file)",
+        items=[
+            ('150', '150 DPI (Draft)', 'Quick preview quality'),
+            ('200', '200 DPI (Good)', 'Good quality for screen viewing'),
+            ('300', '300 DPI (Print)', 'Standard print quality'),
+            ('600', '600 DPI (High)', 'High quality print'),
+        ],
+        default='300'
     )  # type: ignore
     
     filter_glob: bpy.props.StringProperty(
@@ -732,14 +736,26 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
                 if landscape:
                     paper_w, paper_h = paper_h, paper_w
                 
-                width = int(paper_w * self.dpi)
-                height = int(paper_h * self.dpi)
+                dpi = int(self.dpi)
+                width = int(paper_w * dpi)
+                height = int(paper_h * dpi)
+                
+                # Calculate Freestyle thickness scale (base DPI is 150)
+                thickness_scale = dpi / 150.0
                 
                 # Store original settings
                 orig_resolution_x = scene.render.resolution_x
                 orig_resolution_y = scene.render.resolution_y
                 orig_film_transparent = scene.render.film_transparent
                 orig_use_compositing = scene.render.use_compositing
+                
+                # Store and scale Freestyle line thicknesses
+                orig_lineset_thicknesses = {}
+                for view_layer in scene.view_layers:
+                    if view_layer.use_freestyle:
+                        for lineset in view_layer.freestyle_settings.linesets:
+                            orig_lineset_thicknesses[lineset.name] = lineset.linestyle.thickness
+                            lineset.linestyle.thickness = lineset.linestyle.thickness * thickness_scale
                 
                 # Set render resolution
                 scene.render.resolution_x = width
@@ -775,6 +791,13 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
                 scene.render.resolution_y = orig_resolution_y
                 scene.render.film_transparent = orig_film_transparent
                 scene.render.use_compositing = orig_use_compositing
+                
+                # Restore Freestyle line thicknesses
+                for view_layer in scene.view_layers:
+                    if view_layer.use_freestyle:
+                        for lineset in view_layer.freestyle_settings.linesets:
+                            if lineset.name in orig_lineset_thicknesses:
+                                lineset.linestyle.thickness = orig_lineset_thicknesses[lineset.name]
             
             # Save as PDF
             if pil_images:
@@ -784,12 +807,25 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
                 pil_images[0].save(
                     output_path,
                     "PDF",
-                    resolution=self.dpi,
+                    resolution=int(self.dpi),
                     save_all=True,
                     append_images=pil_images[1:] if len(pil_images) > 1 else []
                 )
                 
                 self.report({'INFO'}, f"Exported {len(pil_images)} layouts to: {output_path}")
+                
+                # Open the PDF automatically
+                import subprocess
+                import platform
+                try:
+                    if platform.system() == 'Windows':
+                        os.startfile(output_path)
+                    elif platform.system() == 'Darwin':  # macOS
+                        subprocess.run(['open', output_path])
+                    else:  # Linux
+                        subprocess.run(['xdg-open', output_path])
+                except Exception as e:
+                    self.report({'WARNING'}, f"Could not open PDF: {e}")
             else:
                 self.report({'WARNING'}, "No layouts were rendered")
                 return {'CANCELLED'}
