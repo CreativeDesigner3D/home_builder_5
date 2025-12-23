@@ -346,7 +346,9 @@ class Frameless_Scene_Props(PropertyGroup):
     show_handle_options: BoolProperty(name="Show Handle Options",description="Show Handle Options.",default=False)# type: ignore
     show_front_options: BoolProperty(name="Show Front Options",description="Show Front Options.",default=False)# type: ignore
     show_drawer_options: BoolProperty(name="Show Drawer Options",description="Show Drawer Options.",default=False)# type: ignore
-    show_molding_options: BoolProperty(name="Show Molding Options",description="Show Molding Options.",default=False)# type: ignore
+    show_crown_details: BoolProperty(name="Show Crown Details",description="Show Crown Details.",default=False)# type: ignore
+    show_toe_kick_details: BoolProperty(name="Show Toe Kick Details",description="Show Toe Kick Details.",default=False)# type: ignore
+    show_upper_bottom_details: BoolProperty(name="Show Upper Bottom Details",description="Show Upper Bottom Details.",default=False)# type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options",description="Show Countertop Options.",default=False)# type: ignore
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles",description="Show Cabinet Styles.",default=True)# type: ignore
 
@@ -853,6 +855,20 @@ class Frameless_Scene_Props(PropertyGroup):
         row = size_box.row()
         row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
 
+    def draw_crown_details_ui(self,layout,context):
+        # Add Operator to Create new Crown Detail.
+        #This will create a new detail scene
+        #The user will be able to add predefined or custom crown molding profiles to the detail scene
+        #After a user has created a crown detail they will see the list of crown details and the ability to assign them to cabinets
+        pass
+
+
+    def draw_toe_kick_details_ui(self,layout,context):
+        pass
+
+    def draw_upper_bottom_details_ui(self,layout,context):
+        pass
+
     def draw_library_ui(self,layout,context):
         selection_mod_box = layout.box()
         selection_mod_box.label(text="Selection Mode")
@@ -1011,9 +1027,23 @@ class Frameless_Scene_Props(PropertyGroup):
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'        
-            row.prop(self,'show_molding_options',text="Moldings",icon='TRIA_DOWN' if self.show_molding_options else 'TRIA_RIGHT',emboss=False)
-            if self.show_molding_options:
-                size_box = box.box()
+            row.prop(self,'show_crown_details',text="Crown Details",icon='TRIA_DOWN' if self.show_crown_details else 'TRIA_RIGHT',emboss=False)
+            if self.show_crown_details:
+                self.draw_crown_details_ui(box,context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'        
+            row.prop(self,'show_toe_kick_details',text="Toe Kick Details",icon='TRIA_DOWN' if self.show_toe_kick_details else 'TRIA_RIGHT',emboss=False)
+            if self.show_toe_kick_details:
+                self.draw_toe_kick_details_ui(box,context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'        
+            row.prop(self,'show_upper_bottom_details',text="Upper Bottom Details",icon='TRIA_DOWN' if self.show_upper_bottom_details else 'TRIA_RIGHT',emboss=False)
+            if self.show_upper_bottom_details:
+                self.draw_upper_bottom_details_ui(box,context)
 
     @classmethod
     def register(cls):
