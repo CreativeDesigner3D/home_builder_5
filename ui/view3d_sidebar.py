@@ -573,6 +573,8 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
         #             text="Fit to Content", icon='FULLSCREEN_ENTER')
         row.operator("home_builder_layouts.render_layout", 
                     text="Render", icon='RENDER_STILL')
+        row.operator("home_builder_layouts.export_all_to_pdf", 
+                    text="Export PDF", icon='FILE')
 
 
 

@@ -645,6 +645,228 @@ class home_builder_layouts_OT_render_layout(bpy.types.Operator):
 
 
 # =============================================================================
+# EXPORT ALL LAYOUTS TO PDF OPERATOR
+# =============================================================================
+
+class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.export_all_to_pdf"
+    bl_label = "Export All Layouts to PDF"
+    bl_description = "Render all layout views and export to a single PDF file"
+    bl_options = {'UNDO'}
+    
+    filepath: bpy.props.StringProperty(
+        name="File Path",
+        description="Path to save the PDF file",
+        subtype='FILE_PATH',
+        default="//layouts.pdf"
+    )  # type: ignore
+    
+    dpi: bpy.props.IntProperty(
+        name="DPI",
+        description="Resolution for rendering",
+        default=150,
+        min=72,
+        max=600
+    )  # type: ignore
+    
+    filter_glob: bpy.props.StringProperty(
+        default="*.pdf",
+        options={'HIDDEN'}
+    )  # type: ignore
+    
+    def invoke(self, context, event):
+        # Set default filename based on blend file
+        if bpy.data.filepath:
+            blend_name = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+            self.filepath = os.path.join(os.path.dirname(bpy.data.filepath), f"{blend_name}_layouts.pdf")
+        else:
+            self.filepath = "//layouts.pdf"
+        
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def execute(self, context):
+        try:
+            from PIL import Image
+        except ImportError:
+            # Auto-install Pillow
+            self.report({'INFO'}, "Installing Pillow...")
+            import subprocess
+            import sys
+            try:
+                subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'Pillow', '--break-system-packages'])
+                from PIL import Image
+            except Exception as e:
+                self.report({'ERROR'}, f"Failed to install Pillow: {e}")
+                return {'CANCELLED'}
+        
+        import tempfile
+        
+        # Get all layout view scenes
+        layout_scenes = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW')]
+        
+        if not layout_scenes:
+            self.report({'WARNING'}, "No layout views found")
+            return {'CANCELLED'}
+        
+        # Store original scene
+        original_scene = context.window.scene
+        
+        # Render each layout and collect images
+        temp_images = []
+        pil_images = []
+        
+        try:
+            for scene in layout_scenes:
+                # Switch to this scene
+                context.window.scene = scene
+                
+                if not scene.camera:
+                    continue
+                
+                # Get paper size and calculate render resolution
+                paper_size = scene.hb_paper_size
+                landscape = scene.hb_paper_landscape
+                
+                paper_w, paper_h = PAPER_SIZES_INCHES.get(paper_size, (8.5, 11.0))
+                if landscape:
+                    paper_w, paper_h = paper_h, paper_w
+                
+                width = int(paper_w * self.dpi)
+                height = int(paper_h * self.dpi)
+                
+                # Store original settings
+                orig_resolution_x = scene.render.resolution_x
+                orig_resolution_y = scene.render.resolution_y
+                orig_film_transparent = scene.render.film_transparent
+                orig_use_compositing = scene.render.use_compositing
+                
+                # Set render resolution
+                scene.render.resolution_x = width
+                scene.render.resolution_y = height
+                scene.render.resolution_percentage = 100
+                
+                # Enable transparency for render
+                scene.render.film_transparent = True
+                
+                # Enable compositing
+                scene.render.use_compositing = True
+                
+                # Set up compositor for white background
+                self._setup_compositor_white_background(context, scene)
+                
+                # Render
+                bpy.ops.render.render()
+                
+                # Save to temp file
+                temp_path = os.path.join(tempfile.gettempdir(), f"{scene.name}_temp.png")
+                temp_images.append(temp_path)
+                
+                render_result = bpy.data.images.get('Render Result')
+                if render_result:
+                    render_result.save_render(temp_path, scene=scene)
+                    
+                    # Load with PIL and convert to RGB (PDF doesn't support RGBA)
+                    pil_img = Image.open(temp_path).convert('RGB')
+                    pil_images.append(pil_img)
+                
+                # Restore settings
+                scene.render.resolution_x = orig_resolution_x
+                scene.render.resolution_y = orig_resolution_y
+                scene.render.film_transparent = orig_film_transparent
+                scene.render.use_compositing = orig_use_compositing
+            
+            # Save as PDF
+            if pil_images:
+                output_path = bpy.path.abspath(self.filepath)
+                
+                # First image saves, rest are appended
+                pil_images[0].save(
+                    output_path,
+                    "PDF",
+                    resolution=self.dpi,
+                    save_all=True,
+                    append_images=pil_images[1:] if len(pil_images) > 1 else []
+                )
+                
+                self.report({'INFO'}, f"Exported {len(pil_images)} layouts to: {output_path}")
+            else:
+                self.report({'WARNING'}, "No layouts were rendered")
+                return {'CANCELLED'}
+                
+        finally:
+            # Clean up temp files
+            for temp_path in temp_images:
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            
+            # Restore original scene
+            context.window.scene = original_scene
+        
+        return {'FINISHED'}
+    
+    def _setup_compositor_white_background(self, context, scene):
+        """Set up compositor nodes to add white background to transparent render."""
+        # Enable compositing
+        scene.render.use_compositing = True
+        
+        # Set color management to Standard for accurate colors
+        scene.view_settings.view_transform = 'Standard'
+        
+        # In Blender 5.0, compositor uses node group architecture
+        tree = scene.compositing_node_group
+        
+        if tree is None:
+            # Create a new compositor node tree
+            tree = bpy.data.node_groups.new(
+                name=f"{scene.name}_Compositor",
+                type='CompositorNodeTree'
+            )
+            scene.compositing_node_group = tree
+        
+        nodes = tree.nodes
+        links = tree.links
+        
+        # Clear existing nodes
+        for node in list(nodes):
+            nodes.remove(node)
+        
+        # Clear existing interface sockets
+        tree.interface.clear()
+        
+        # Create output socket on the node group interface
+        tree.interface.new_socket(name="Image", in_out='OUTPUT', socket_type='NodeSocketColor')
+        
+        # Create nodes
+        render_layers = nodes.new('CompositorNodeRLayers')
+        render_layers.location = (0, 300)
+        
+        # White color input
+        white_color = nodes.new('CompositorNodeRGB')
+        white_color.location = (0, 100)
+        white_color.outputs[0].default_value = (1, 1, 1, 1)  # White
+        
+        alpha_over = nodes.new('CompositorNodeAlphaOver')
+        alpha_over.location = (300, 300)
+        
+        # Group Output node
+        group_output = nodes.new('NodeGroupOutput')
+        group_output.location = (600, 300)
+        
+        # Viewer node for preview
+        viewer = nodes.new('CompositorNodeViewer')
+        viewer.location = (600, 100)
+        
+        # Link nodes: White background under render
+        links.new(white_color.outputs[0], alpha_over.inputs[0])  # Background (white)
+        links.new(render_layers.outputs['Image'], alpha_over.inputs[1])  # Foreground (render)
+        links.new(alpha_over.outputs[0], group_output.inputs[0])  # To output
+        links.new(alpha_over.outputs[0], viewer.inputs[0])  # To viewer
+
+
+# =============================================================================
 # DIMENSION ANNOTATION OPERATOR
 # =============================================================================
 
@@ -2008,6 +2230,7 @@ classes = (
     home_builder_layouts_OT_go_to_layout_view,
     home_builder_layouts_OT_fit_view_to_content,
     home_builder_layouts_OT_render_layout,
+    home_builder_layouts_OT_export_all_to_pdf,
     home_builder_layouts_OT_add_dimension,
     home_builder_layouts_OT_add_dimension_3d,
     home_builder_layouts_OT_add_detail_to_layout,
