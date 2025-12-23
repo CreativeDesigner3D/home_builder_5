@@ -2606,7 +2606,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
     """Assign the selected crown detail to selected cabinets"""
     bl_idname = "hb_frameless.assign_crown_to_cabinets"
     bl_label = "Assign Crown to Cabinets"
-    bl_description = "Assign the active crown molding detail to selected upper and tall cabinets"
+    bl_description = "Create crown molding extrusions on selected cabinets using the active crown detail"
     bl_options = {'REGISTER', 'UNDO'}
     
     @classmethod
@@ -2622,39 +2622,180 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return False
     
     def execute(self, context):
+        from mathutils import Vector
+        
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
         crown = props.crown_details[props.active_crown_detail_index]
+        detail_scene = crown.get_detail_scene()
         
-        count = 0
+        if not detail_scene:
+            self.report({'ERROR'}, "Crown detail scene not found")
+            return {'CANCELLED'}
+        
+        # Get all molding profiles and solid lumber from the detail scene
+        profiles = []
+        for obj in detail_scene.objects:
+            if obj.get('IS_MOLDING_PROFILE') or obj.get('IS_SOLID_LUMBER'):
+                profiles.append(obj)
+        
+        if not profiles:
+            self.report({'WARNING'}, "No molding profiles or solid lumber found in crown detail")
+            return {'CANCELLED'}
+        
+        # Collect unique cabinets from selection
+        cabinets = []
         for obj in context.selected_objects:
-            # Find cabinet base points
             cabinet_bp = None
-            if obj.get('IS_CABINET_BP'):
-                cabinet_bp = obj
-            elif obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
                 cabinet_bp = obj
             elif obj.parent:
-                # Check if parent is a cabinet
                 if obj.parent.get('IS_CABINET_BP') or obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
                     cabinet_bp = obj.parent
             
-            if cabinet_bp:
-                # Store crown detail reference on the cabinet
-                cabinet_bp['CROWN_DETAIL_NAME'] = crown.name
-                cabinet_bp['CROWN_DETAIL_HEIGHT'] = crown.height
-                cabinet_bp['CROWN_DETAIL_PROJECTION'] = crown.projection
-                cabinet_bp['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
-                count += 1
+            if cabinet_bp and cabinet_bp not in cabinets:
+                cabinets.append(cabinet_bp)
         
-        if count > 0:
-            self.report({'INFO'}, f"Assigned crown '{crown.name}' to {count} cabinet(s)")
-        else:
+        if not cabinets:
             self.report({'WARNING'}, "No valid cabinets selected")
             return {'CANCELLED'}
         
+        # Create crown molding for each cabinet
+        crown_count = 0
+        for cabinet in cabinets:
+            # Remove any existing crown molding on this cabinet
+            self._remove_existing_crown(cabinet)
+            
+            # Store crown detail reference
+            cabinet['CROWN_DETAIL_NAME'] = crown.name
+            cabinet['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
+            
+            # Get cabinet dimensions
+            cab_width = cabinet.dimensions.x
+            cab_depth = cabinet.dimensions.y
+            cab_height = cabinet.dimensions.z
+            
+            # Create crown path and extrusions for each profile
+            for profile in profiles:
+                self._create_crown_extrusion(
+                    context, 
+                    cabinet, 
+                    profile, 
+                    cab_width, 
+                    cab_depth, 
+                    cab_height,
+                    main_scene
+                )
+            
+            crown_count += 1
+        
+        self.report({'INFO'}, f"Created crown molding on {crown_count} cabinet(s) with {len(profiles)} profile(s)")
         return {'FINISHED'}
+    
+    def _remove_existing_crown(self, cabinet):
+        """Remove any existing crown molding children from the cabinet."""
+        children_to_remove = []
+        for child in cabinet.children:
+            if child.get('IS_CROWN_MOLDING'):
+                children_to_remove.append(child)
+        
+        for child in children_to_remove:
+            bpy.data.objects.remove(child, do_unlink=True)
+    
+    def _create_crown_extrusion(self, context, cabinet, profile, width, depth, height, target_scene):
+        """Create a crown molding extrusion path for a cabinet."""
+        from mathutils import Vector
+        
+        # Copy the profile curve to the main scene as the bevel object
+        profile_copy = profile.copy()
+        profile_copy.data = profile.data.copy()
+        target_scene.collection.objects.link(profile_copy)
+        
+        # Reset profile copy transforms for use as bevel
+        profile_copy.location = (0, 0, 0)
+        profile_copy.rotation_euler = (0, 0, 0)
+        profile_copy.scale = (1, 1, 1)
+        
+        # Make profile 2D for bevel use
+        profile_copy.data.dimensions = '2D'
+        profile_copy.data.bevel_depth = 0
+        profile_copy.data.fill_mode = 'NONE'
+        
+        # Hide the profile copy (it's just used as bevel object)
+        profile_copy.hide_viewport = True
+        profile_copy.hide_render = True
+        profile_copy.name = f"Crown_Profile_{profile.name}"
+        
+        # Get the profile's position offset from detail scene origin
+        # In the detail scene: X is depth (toward back), Y is height (up)
+        # The origin (0,0) in detail scene represents the top-front corner of the cabinet side
+        profile_offset_x = profile.location.x  # Depth offset (positive = toward back)
+        profile_offset_y = profile.location.y  # Height offset (positive = above cabinet top)
+        
+        # Create the extrusion path curve
+        curve_data = bpy.data.curves.new(name=f"Crown_Path_{profile.name}", type='CURVE')
+        curve_data.dimensions = '2D'
+        curve_data.bevel_mode = 'OBJECT'
+        curve_data.bevel_object = profile_copy
+        curve_data.use_fill_caps = True
+        
+        # Create the path spline - U-shape around cabinet top
+        spline = curve_data.splines.new('POLY')
+        
+        # Cabinet coordinate system:
+        # Back left corner: (0, 0, z)
+        # Front left corner: (0, -depth, z)
+        # Front right corner: (width, -depth, z)
+        # Back right corner: (width, 0, z)
+        
+        # Calculate path positions based on profile X offset
+        # Negative X = profile set back from front (inset path from all sides)
+        # Positive X = profile extends forward (extend path outward on all sides)
+        if profile_offset_x < 0:
+            # Profile returns to back - inset path from all sides
+            inset = abs(profile_offset_x)
+            left_x = inset
+            right_x = width - inset
+            front_y = -depth + inset
+        else:
+            # Profile extends forward - extend path outward on all sides
+            extend = profile_offset_x
+            left_x = -extend
+            right_x = width + extend
+            front_y = -depth - extend
+        
+        # Path points in X-Y plane (Z=0 for 2D curve, height set via object location)
+        # U-shape: back-left -> front-left -> front-right -> back-right
+        back_left = Vector((left_x, 0, 0))
+        front_left = Vector((left_x, front_y, 0))
+        front_right = Vector((right_x, front_y, 0))
+        back_right = Vector((right_x, 0, 0))
+        
+        # Add points to spline
+        spline.points.add(3)  # 4 total points
+        spline.points[0].co = (*back_left, 1)
+        spline.points[1].co = (*front_left, 1)
+        spline.points[2].co = (*front_right, 1)
+        spline.points[3].co = (*back_right, 1)
+        
+        # Create the curve object
+        crown_obj = bpy.data.objects.new(f"Crown_{profile.name}", curve_data)
+        target_scene.collection.objects.link(crown_obj)
+        
+        # Parent to cabinet and position at cabinet top + profile height offset
+        crown_obj.parent = cabinet
+        crown_obj.location = (0, 0, height + profile_offset_y)
+        
+        # Mark as crown molding
+        crown_obj['IS_CROWN_MOLDING'] = True
+        crown_obj['CROWN_PROFILE_NAME'] = profile.name
+        
+        # Also parent the profile copy to the crown
+        profile_copy.parent = crown_obj
+        profile_copy['IS_CROWN_PROFILE_COPY'] = True
+        
+        return crown_obj
 
 
 
@@ -2836,8 +2977,8 @@ class hb_frameless_OT_add_solid_lumber(bpy.types.Operator):
         
         # Draw rectangle starting at origin
         lumber.set_point(0, Vector((0, 0, 0)))
-        lumber.add_point(Vector((-rect_width, 0, 0)))
-        lumber.add_point(Vector((-rect_width, rect_height, 0)))
+        lumber.add_point(Vector((rect_width, 0, 0)))
+        lumber.add_point(Vector((rect_width, rect_height, 0)))
         lumber.add_point(Vector((0, rect_height, 0)))
         lumber.close()
         
