@@ -2974,9 +2974,52 @@ class home_builder_details_OT_open_library_folder(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_details_OT_create_detail_from_library(bpy.types.Operator):
+    bl_idname = "home_builder_details.create_from_library"
+    bl_label = "Create Detail from Library"
+    bl_description = "Create a new detail scene and load objects from a library file"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filepath: bpy.props.StringProperty(
+        name="Filepath",
+        description="Path to the library file",
+        default=""
+    )  # type: ignore
+    
+    name: bpy.props.StringProperty(
+        name="Name",
+        description="Name for the new detail",
+        default=""
+    )  # type: ignore
+    
+    def execute(self, context):
+        if not self.filepath:
+            self.report({'ERROR'}, "No file specified")
+            return {'CANCELLED'}
+        
+        # Create a new detail scene first
+        detail = hb_details.DetailView()
+        scene = detail.create(self.name if self.name else "Detail")
+        
+        # Now load objects from library into this scene
+        success, message, objects = hb_detail_library.load_detail_from_library(
+            bpy.context, self.filepath
+        )
+        
+        if success:
+            # Switch to the new detail scene with proper view
+            bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
+            self.report({'INFO'}, f"Created detail '{scene.name}' from library")
+        else:
+            self.report({'WARNING'}, f"Created detail but failed to load objects: {message}")
+        
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_details_OT_create_detail,
     home_builder_details_OT_delete_detail,
+    home_builder_details_OT_create_detail_from_library,
     home_builder_details_OT_draw_line,
     home_builder_details_OT_draw_rectangle,
     home_builder_details_OT_draw_circle,

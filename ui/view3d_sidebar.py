@@ -539,6 +539,45 @@ class HOME_BUILDER_MT_room_list(bpy.types.Menu):
             op.scene_name = scene.name
 
 
+class HOME_BUILDER_MT_detail_library(bpy.types.Menu):
+    bl_label = "Detail Library"
+    bl_idname = "HOME_BUILDER_MT_detail_library"
+    
+    def draw(self, context):
+        from .. import hb_detail_library
+        
+        layout = self.layout
+        is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
+        
+        # Save current detail option (only in detail view)
+        if is_detail_view:
+            layout.operator("home_builder_details.save_to_library", 
+                           text="Save Current Detail", icon='FILE_NEW')
+            layout.separator()
+        
+        # List saved details
+        details = hb_detail_library.get_library_details()
+        
+        if details:
+            layout.label(text="Create from Library:", icon='FILE_FOLDER')
+            for detail in details:
+                row = layout.row()
+                op = row.operator("home_builder_details.create_from_library",
+                                 text=detail.get("name", "Unnamed"), 
+                                 icon='IMPORT')
+                op.filepath = detail.get("filepath", "")
+                op.name = detail.get("name", "Detail")
+        else:
+            layout.label(text="No saved details", icon='INFO')
+        
+        layout.separator()
+        
+        # Open folder
+        layout.operator("home_builder_details.open_library_folder",
+                       text="Open Library Folder", icon='FILE_FOLDER')
+
+
+
 # SUBPANEL: Create Layout Views
 class HOME_BUILDER_PT_layout_views_create(bpy.types.Panel):
     bl_label = "Create Views"
@@ -697,11 +736,12 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
         layout = self.layout
         is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
         
-        # Create new detail button
+        # Create new detail button with library menu
         row = layout.row(align=True)
         row.scale_y = 1.3
         row.operator("home_builder_details.create_detail", 
                     text="New Detail", icon='ADD')
+        row.menu("HOME_BUILDER_MT_detail_library", text="", icon='DOWNARROW_HLT')
         
         # List existing details
         detail_views = hb_details.DetailView.get_all_detail_views()
@@ -742,61 +782,6 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
 # Drawing tools are now available in the Annotations panel for all scene types
 
 
-# SUBPANEL: Detail Library (only visible in detail view)
-class HOME_BUILDER_PT_2d_details_library(bpy.types.Panel):
-    bl_label = "Detail Library"
-    bl_idname = "HOME_BUILDER_PT_2d_details_library"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = CATEGORY_NAME
-    bl_parent_id = "HOME_BUILDER_PT_2d_details"
-    bl_options = {'DEFAULT_CLOSED'}
-    
-    @classmethod
-    def poll(cls, context):
-        return context.scene.get('IS_DETAIL_VIEW', False)
-    
-    def draw(self, context):
-        from .. import hb_detail_library
-        
-        layout = self.layout
-        
-        # Save current detail button
-        row = layout.row(align=True)
-        row.scale_y = 1.3
-        row.operator("home_builder_details.save_to_library", 
-                    text="Save Detail to Library", icon='FILE_NEW')
-        
-        layout.separator()
-        
-        # List saved details
-        details = hb_detail_library.get_library_details()
-        
-        if details:
-            box = layout.box()
-            box.label(text=f"Saved Details ({len(details)}):", icon='FILE_FOLDER')
-            
-            for detail in details:
-                row = box.row(align=True)
-                
-                # Load button
-                op = row.operator("home_builder_details.load_from_library",
-                                 text=detail.get("name", "Unnamed"), 
-                                 icon='IMPORT')
-                op.filepath = detail.get("filepath", "")
-                
-                # Delete button
-                op = row.operator("home_builder_details.delete_library_detail",
-                                 text="", icon='X')
-                op.filename = detail.get("filename", "")
-        else:
-            layout.label(text="No saved details", icon='INFO')
-        
-        layout.separator()
-        
-        # Open folder button
-        layout.operator("home_builder_details.open_library_folder",
-                       text="Open Library Folder", icon='FILE_FOLDER')
 
 
 
@@ -1069,11 +1054,10 @@ classes = (
     HOME_BUILDER_PT_layout_views,
     HOME_BUILDER_MT_layout_views_create,
     HOME_BUILDER_MT_room_list,
-    # HOME_BUILDER_PT_layout_views_create,
+    HOME_BUILDER_MT_detail_library,
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_layout_views_details,
     HOME_BUILDER_PT_2d_details,
-    HOME_BUILDER_PT_2d_details_library,
     HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_annotations_drawing,
