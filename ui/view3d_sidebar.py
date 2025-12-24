@@ -10,6 +10,57 @@ CATEGORY_NAME = "Home Builder"
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# PANEL 0: ROOMS
+# -----------------------------------------------------------------------------
+class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
+    bl_label = "Project"
+    bl_idname = "HOME_BUILDER_PT_hidden_header"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_order = 0
+    bl_options = {'HIDE_HEADER'}
+    
+    def draw(self, context):
+        layout = self.layout
+        in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
+        in_detail_view = context.scene.get('IS_DETAIL_VIEW')
+        
+        if in_layout_view:
+            box = layout.box()
+            box.alert = True
+            box.label(text="", icon='INFO')
+            box.label(text="You are in a layout view. Select a room below.")
+        if in_detail_view:
+            box = layout.box()
+            box.alert = True
+            box.label(text="", icon='INFO')
+            box.label(text="You are in a detail view. Select a room below.")
+
+        if not in_layout_view and not in_detail_view:
+            text = context.scene.name
+        else:
+            text = "Select a Room"
+
+        row = layout.row()
+        row.scale_y = 1.5
+        row.menu("HOME_BUILDER_MT_room_list", text=text, icon='LOOP_BACK')
+
+        hb_frameless = context.scene.hb_frameless
+
+        selection_mod_box = layout.box()
+        selection_mod_box.label(text="Frameless Selection Mode")
+        row = selection_mod_box.row(align=True)
+        row.scale_y = 1.5
+        row.prop_enum(hb_frameless, "frameless_selection_mode", 'Cabinets', icon='MESH_CUBE')
+        row.prop_enum(hb_frameless, "frameless_selection_mode", 'Bays', icon='MESH_CUBE')
+        row.prop_enum(hb_frameless, "frameless_selection_mode", 'Openings', icon='OBJECT_DATAMODE')
+        row.prop_enum(hb_frameless, "frameless_selection_mode", 'Interiors', icon='OBJECT_HIDDEN')    
+        row.prop_enum(hb_frameless, "frameless_selection_mode", 'Parts', icon='EDITMODE_HLT')  
+
+        #TODO: IMPLEMENT SELECTION MODE FOR OTHER PRODUCT TYPES   
+
+# -----------------------------------------------------------------------------
 # PANEL 1: ROOMS
 # -----------------------------------------------------------------------------
 class HOME_BUILDER_PT_project(bpy.types.Panel):
@@ -21,6 +72,13 @@ class HOME_BUILDER_PT_project(bpy.types.Panel):
     bl_order = 0
     bl_options = {'DEFAULT_CLOSED'}
     
+    @classmethod
+    def poll(cls, context):
+        # Only show when not in a layout view or detail view
+        if context.scene.get('IS_DETAIL_VIEW'):
+            return False
+        return not context.scene.get('IS_LAYOUT_VIEW')
+
     def draw(self, context):
         layout = self.layout
         project = hb_project.get_project_props(context)
@@ -142,7 +200,9 @@ class HOME_BUILDER_PT_room_layout(bpy.types.Panel):
     
     @classmethod
     def poll(cls, context):
-        # Only show when not in a layout view
+        # Only show when not in a layout view or detail view
+        if context.scene.get('IS_DETAIL_VIEW'):
+            return False        
         return not context.scene.get('IS_LAYOUT_VIEW')
     
     def draw(self, context):
@@ -348,7 +408,9 @@ class HOME_BUILDER_PT_product_library(bpy.types.Panel):
     
     @classmethod
     def poll(cls, context):
-        # Only show when not in a layout view
+        # Only show when not in a layout view or detail view
+        if context.scene.get('IS_DETAIL_VIEW'):
+            return False
         return not context.scene.get('IS_LAYOUT_VIEW')
     
     def draw(self, context):
@@ -380,6 +442,13 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
     bl_order = 3
     bl_options = {'DEFAULT_CLOSED'}
     
+    @classmethod
+    def poll(cls, context):
+        # Only show when not in a detail view
+        if context.scene.get('IS_DETAIL_VIEW'):
+            return False
+        return True
+
     def draw(self, context):
         layout = self.layout
 
@@ -986,6 +1055,7 @@ class HOME_BUILDER_PT_settings(bpy.types.Panel):
 # =============================================================================
 
 classes = (
+    HOME_BUILDER_PT_hidden_header,
     HOME_BUILDER_PT_project,
     HOME_BUILDER_PT_project_info,
     HOME_BUILDER_PT_project_rooms,

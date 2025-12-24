@@ -996,15 +996,6 @@ class Frameless_Scene_Props(PropertyGroup):
         pass
 
     def draw_library_ui(self,layout,context):
-        selection_mod_box = layout.box()
-        selection_mod_box.label(text="Selection Mode")
-        row = selection_mod_box.row(align=True)
-        row.scale_y = 1.5
-        row.prop_enum(self, "frameless_selection_mode", 'Cabinets', icon='MESH_CUBE')
-        row.prop_enum(self, "frameless_selection_mode", 'Bays', icon='MESH_CUBE')
-        row.prop_enum(self, "frameless_selection_mode", 'Openings', icon='OBJECT_DATAMODE')
-        row.prop_enum(self, "frameless_selection_mode", 'Interiors', icon='OBJECT_HIDDEN')    
-        row.prop_enum(self, "frameless_selection_mode", 'Parts', icon='EDITMODE_HLT') 
 
         col = layout.column(align=True)
         row = col.row(align=True)
