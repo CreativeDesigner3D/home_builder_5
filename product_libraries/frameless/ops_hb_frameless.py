@@ -2622,6 +2622,8 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return False
     
     def execute(self, context):
+        from mathutils import Vector
+        
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
@@ -2642,7 +2644,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             self.report({'WARNING'}, "No molding profiles or solid lumber found in crown detail")
             return {'CANCELLED'}
         
-        # Collect unique cabinets from selection
+        # Collect unique cabinets from selection (only UPPER and TALL get crown)
         cabinets = []
         for obj in context.selected_objects:
             cabinet_bp = None
@@ -2653,144 +2655,325 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
                     cabinet_bp = obj.parent
             
             if cabinet_bp and cabinet_bp not in cabinets:
-                cabinets.append(cabinet_bp)
+                cab_type = cabinet_bp.get('CABINET_TYPE', '')
+                if cab_type in ('UPPER', 'TALL'):
+                    cabinets.append(cabinet_bp)
         
         if not cabinets:
-            self.report({'WARNING'}, "No valid cabinets selected")
+            self.report({'WARNING'}, "No valid upper or tall cabinets selected")
             return {'CANCELLED'}
         
-        # Create crown molding for each cabinet
-        crown_count = 0
+        # Remove any existing crown molding on selected cabinets
         for cabinet in cabinets:
-            # Remove any existing crown molding on this cabinet
             self._remove_existing_crown(cabinet)
-            
-            # Store crown detail reference
             cabinet['CROWN_DETAIL_NAME'] = crown.name
             cabinet['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
-            
-            # Get cabinet dimensions
-            cab_width = cabinet.dimensions.x
-            cab_depth = cabinet.dimensions.y
-            cab_height = cabinet.dimensions.z
-            
-            # Create crown path and extrusions for each profile
-            for profile in profiles:
-                self._create_crown_extrusion(
-                    context, 
-                    cabinet, 
-                    profile, 
-                    cab_width, 
-                    cab_depth, 
-                    cab_height,
-                    main_scene
-                )
-            
-            crown_count += 1
         
-        self.report({'INFO'}, f"Created crown molding on {crown_count} cabinet(s) with {len(profiles)} profile(s)")
+        # Get all walls and all cabinets in scene for adjacency detection
+        all_walls = [o for o in main_scene.objects if o.get('IS_WALL_BP') or o.get('IS_WALL')]
+        all_cabinets = [o for o in main_scene.objects if o.get('IS_FRAMELESS_CABINET_CAGE')]
+        
+        # Analyze cabinet adjacency and group connected cabinets
+        cabinet_groups = self._group_adjacent_cabinets(cabinets, all_cabinets, all_walls)
+        
+        # Create crown molding for each group
+        for group in cabinet_groups:
+            for profile in profiles:
+                self._create_crown_for_group(context, group, profile, all_walls, all_cabinets, main_scene)
+        
+        total_cabs = sum(len(g['cabinets']) for g in cabinet_groups)
+        self.report({'INFO'}, f"Created crown molding on {total_cabs} cabinet(s) in {len(cabinet_groups)} group(s)")
         return {'FINISHED'}
     
     def _remove_existing_crown(self, cabinet):
         """Remove any existing crown molding children from the cabinet."""
         children_to_remove = []
         for child in cabinet.children:
-            if child.get('IS_CROWN_MOLDING'):
+            if child.get('IS_CROWN_MOLDING') or child.get('IS_CROWN_PROFILE_COPY'):
                 children_to_remove.append(child)
         
         for child in children_to_remove:
             bpy.data.objects.remove(child, do_unlink=True)
     
-    def _create_crown_extrusion(self, context, cabinet, profile, width, depth, height, target_scene):
-        """Create a crown molding extrusion path for a cabinet."""
-
-        # Copy the profile curve to the main scene as the bevel object
+    def _get_cabinet_bounds(self, cabinet):
+        """Get world-space bounds of a cabinet."""
+        world_loc = cabinet.matrix_world.translation
+        dims = cabinet.dimensions
+        return {
+            'left_x': world_loc.x,
+            'right_x': world_loc.x + dims.x,
+            'front_y': world_loc.y - dims.y,
+            'back_y': world_loc.y,
+            'bottom_z': world_loc.z,
+            'top_z': world_loc.z + dims.z,
+            'width': dims.x,
+            'depth': dims.y,
+            'height': dims.z,
+        }
+    
+    def _is_against_wall(self, cabinet, side, walls, tolerance=0.05):
+        """Check if cabinet side is against a wall."""
+        bounds = self._get_cabinet_bounds(cabinet)
+        
+        for wall in walls:
+            wall_loc = wall.matrix_world.translation
+            wall_dims = wall.dimensions
+            
+            # Wall bounds (walls are typically thin in Y)
+            wall_min_x = wall_loc.x
+            wall_max_x = wall_loc.x + wall_dims.x
+            wall_min_y = wall_loc.y - wall_dims.y
+            wall_max_y = wall_loc.y
+            
+            if side == 'left':
+                # Check if cabinet's left edge is near wall's right edge or within wall
+                if abs(bounds['left_x'] - wall_max_x) < tolerance or abs(bounds['left_x'] - wall_min_x) < tolerance:
+                    # Check Y overlap
+                    if bounds['back_y'] >= wall_min_y and bounds['front_y'] <= wall_max_y:
+                        return True
+            elif side == 'right':
+                # Check if cabinet's right edge is near wall's left edge
+                if abs(bounds['right_x'] - wall_min_x) < tolerance or abs(bounds['right_x'] - wall_max_x) < tolerance:
+                    if bounds['back_y'] >= wall_min_y and bounds['front_y'] <= wall_max_y:
+                        return True
+            elif side == 'back':
+                # Check if cabinet's back is against wall
+                if abs(bounds['back_y'] - wall_min_y) < tolerance:
+                    if bounds['left_x'] >= wall_min_x and bounds['right_x'] <= wall_max_x:
+                        return True
+        
+        return False
+    
+    def _find_adjacent_cabinet(self, cabinet, side, all_cabinets, tolerance=0.02):
+        """Find a cabinet adjacent to the given side."""
+        bounds = self._get_cabinet_bounds(cabinet)
+        cab_type = cabinet.get('CABINET_TYPE', '')
+        
+        for other in all_cabinets:
+            if other == cabinet:
+                continue
+            
+            other_bounds = self._get_cabinet_bounds(other)
+            other_type = other.get('CABINET_TYPE', '')
+            
+            # Only consider UPPER and TALL cabinets for crown
+            if other_type not in ('UPPER', 'TALL'):
+                continue
+            
+            # Check if tops are at same height (with tolerance)
+            if abs(bounds['top_z'] - other_bounds['top_z']) > tolerance:
+                continue
+            
+            if side == 'left':
+                # Check if other cabinet's right edge meets this cabinet's left edge
+                if abs(other_bounds['right_x'] - bounds['left_x']) < tolerance:
+                    return other
+            elif side == 'right':
+                # Check if other cabinet's left edge meets this cabinet's right edge
+                if abs(other_bounds['left_x'] - bounds['right_x']) < tolerance:
+                    return other
+        
+        return None
+    
+    def _group_adjacent_cabinets(self, selected_cabinets, all_cabinets, walls):
+        """Group selected cabinets that are adjacent to each other."""
+        # Sort cabinets by X position
+        sorted_cabs = sorted(selected_cabinets, key=lambda c: self._get_cabinet_bounds(c)['left_x'])
+        
+        groups = []
+        used = set()
+        
+        for cabinet in sorted_cabs:
+            if cabinet in used:
+                continue
+            
+            # Start a new group
+            group_cabs = [cabinet]
+            used.add(cabinet)
+            
+            # Find all connected cabinets to the right
+            current = cabinet
+            while True:
+                right_neighbor = self._find_adjacent_cabinet(current, 'right', all_cabinets)
+                if right_neighbor and right_neighbor in selected_cabinets and right_neighbor not in used:
+                    group_cabs.append(right_neighbor)
+                    used.add(right_neighbor)
+                    current = right_neighbor
+                else:
+                    break
+            
+            # Analyze group
+            first_cab = group_cabs[0]
+            last_cab = group_cabs[-1]
+            
+            # Check wall adjacency
+            left_against_wall = self._is_against_wall(first_cab, 'left', walls)
+            right_against_wall = self._is_against_wall(last_cab, 'right', walls)
+            
+            # Check if there's an unselected adjacent cabinet (for returns)
+            left_adjacent = self._find_adjacent_cabinet(first_cab, 'left', all_cabinets)
+            right_adjacent = self._find_adjacent_cabinet(last_cab, 'right', all_cabinets)
+            
+            groups.append({
+                'cabinets': group_cabs,
+                'left_wall': left_against_wall,
+                'right_wall': right_against_wall,
+                'left_adjacent': left_adjacent,
+                'right_adjacent': right_adjacent,
+            })
+        
+        return groups
+    
+    def _create_crown_for_group(self, context, group, profile, walls, all_cabinets, target_scene):
+        """Create crown molding extrusion for a group of cabinets."""
+        from mathutils import Vector
+        
+        cabinets = group['cabinets']
+        first_cab = cabinets[0]
+        last_cab = cabinets[-1]
+        
+        profile_offset_x = profile.location.x  # Depth offset (positive = forward)
+        profile_offset_y = profile.location.y  # Height offset
+        
+        # Copy the profile curve
         profile_copy = profile.copy()
         profile_copy.data = profile.data.copy()
         target_scene.collection.objects.link(profile_copy)
         
-        # Reset profile copy transforms for use as bevel
         profile_copy.location = (0, 0, 0)
         profile_copy.rotation_euler = (0, 0, 0)
         profile_copy.scale = (1, 1, 1)
-        
-        # Make profile 2D for bevel use
         profile_copy.data.dimensions = '2D'
         profile_copy.data.bevel_depth = 0
         profile_copy.data.fill_mode = 'NONE'
-        
-        # Hide the profile copy (it's just used as bevel object)
         profile_copy.hide_viewport = True
         profile_copy.hide_render = True
         profile_copy.name = f"Crown_Profile_{profile.name}"
+        profile_copy['IS_CROWN_PROFILE_COPY'] = True
         
-        # Get the profile's position offset from detail scene origin
-        # In the detail scene: X is depth (toward back), Y is height (up)
-        # The origin (0,0) in detail scene represents the top-front corner of the cabinet side
-        profile_offset_x = profile.location.x  # Depth offset (positive = toward back)
-        profile_offset_y = profile.location.y  # Height offset (positive = above cabinet top)
+        # Build path points in WORLD coordinates
+        world_points = []
         
-        # Create the extrusion path curve
+        first_bounds = self._get_cabinet_bounds(first_cab)
+        last_bounds = self._get_cabinet_bounds(last_cab)
+        
+        # Calculate profile adjustments
+        if profile_offset_x < 0:
+            # Profile is set back - inset from edges
+            inset = abs(profile_offset_x)
+            extend = 0
+        else:
+            # Profile extends forward
+            inset = 0
+            extend = profile_offset_x
+        
+        # === LEFT SIDE ===
+        if group['left_wall']:
+            # Against wall - start at front corner, no return
+            start_x = first_bounds['left_x'] + inset
+            # Start directly at the front
+            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+        elif group['left_adjacent']:
+            adj_bounds = self._get_cabinet_bounds(group['left_adjacent'])
+            adj_type = group['left_adjacent'].get('CABINET_TYPE', '')
+            
+            # Start at left edge
+            start_x = first_bounds['left_x'] + inset
+            
+            if adj_type == 'TALL' and first_cab.get('CABINET_TYPE') == 'UPPER':
+                # Tall to the left of upper - return to tall's depth
+                world_points.append(Vector((start_x, adj_bounds['front_y'] - extend + inset, 0)))
+            
+            # Add front point for this cabinet
+            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+        else:
+            # Open left side - add return to back
+            start_x = first_bounds['left_x'] + inset
+            world_points.append(Vector((start_x, first_bounds['back_y'], 0)))
+            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+        
+        # === MIDDLE - transitions between cabinets ===
+        for i in range(len(cabinets) - 1):
+            current_cab = cabinets[i]
+            next_cab = cabinets[i + 1]
+            current_bounds = self._get_cabinet_bounds(current_cab)
+            next_bounds = self._get_cabinet_bounds(next_cab)
+            
+            current_type = current_cab.get('CABINET_TYPE', '')
+            next_type = next_cab.get('CABINET_TYPE', '')
+            
+            # Transition X position (right edge of current = left edge of next)
+            trans_x = current_bounds['right_x']
+            
+            # Check for depth change
+            depth_diff = abs(current_bounds['depth'] - next_bounds['depth'])
+            
+            if depth_diff > 0.01:
+                # Depth transition - add step
+                if current_type == 'TALL' and next_type == 'UPPER':
+                    # Tall to Upper - step back to upper depth
+                    world_points.append(Vector((trans_x - inset, current_bounds['front_y'] - extend + inset, 0)))
+                    world_points.append(Vector((trans_x - inset, next_bounds['front_y'] - extend + inset, 0)))
+                elif current_type == 'UPPER' and next_type == 'TALL':
+                    # Upper to Tall - step forward to tall depth  
+                    world_points.append(Vector((trans_x + inset, current_bounds['front_y'] - extend + inset, 0)))
+                    world_points.append(Vector((trans_x + inset, next_bounds['front_y'] - extend + inset, 0)))
+            # If same depth, no intermediate points needed - path continues
+        
+        # === RIGHT SIDE ===
+        if group['right_wall']:
+            # Against wall - end at front corner, no return
+            end_x = last_bounds['right_x'] - inset
+            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
+        elif group['right_adjacent']:
+            adj_bounds = self._get_cabinet_bounds(group['right_adjacent'])
+            adj_type = group['right_adjacent'].get('CABINET_TYPE', '')
+            
+            end_x = last_bounds['right_x'] - inset
+            
+            # Add front point for last cabinet
+            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
+            
+            if adj_type == 'TALL' and last_cab.get('CABINET_TYPE') == 'UPPER':
+                # Upper transitioning to tall on right - return to tall's depth
+                world_points.append(Vector((end_x, adj_bounds['front_y'] - extend + inset, 0)))
+        else:
+            # Open right side - add return to back
+            end_x = last_bounds['right_x'] - inset
+            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
+            world_points.append(Vector((end_x, last_bounds['back_y'], 0)))
+        
+        # Convert world points to local coordinates relative to first cabinet
+        first_world = first_cab.matrix_world.translation
+        local_points = []
+        for pt in world_points:
+            local_pt = Vector((pt.x - first_world.x, pt.y - first_world.y, 0))
+            local_points.append(local_pt)
+        
+        # Create the curve
         curve_data = bpy.data.curves.new(name=f"Crown_Path_{profile.name}", type='CURVE')
         curve_data.dimensions = '2D'
         curve_data.bevel_mode = 'OBJECT'
         curve_data.bevel_object = profile_copy
         curve_data.use_fill_caps = True
         
-        # Create the path spline - U-shape around cabinet top
         spline = curve_data.splines.new('POLY')
+        spline.points.add(len(local_points) - 1)
         
-        # Cabinet coordinate system:
-        # Back left corner: (0, 0, z)
-        # Front left corner: (0, -depth, z)
-        # Front right corner: (width, -depth, z)
-        # Back right corner: (width, 0, z)
+        for i, pt in enumerate(local_points):
+            spline.points[i].co = (pt.x, pt.y, pt.z, 1)
         
-        # Calculate path positions based on profile X offset
-        # Negative X = profile set back from front (inset path from all sides)
-        # Positive X = profile extends forward (extend path outward on all sides)
-        if profile_offset_x < 0:
-            # Profile returns to back - inset path from all sides
-            inset = abs(profile_offset_x)
-            left_x = inset
-            right_x = width - inset
-            front_y = -depth + inset
-        else:
-            # Profile extends forward - extend path outward on all sides
-            extend = profile_offset_x
-            left_x = -extend
-            right_x = width + extend
-            front_y = -depth - extend
-        
-        # Path points in X-Y plane (Z=0 for 2D curve, height set via object location)
-        # U-shape: back-left -> front-left -> front-right -> back-right
-        back_left = Vector((left_x, 0, 0))
-        front_left = Vector((left_x, front_y, 0))
-        front_right = Vector((right_x, front_y, 0))
-        back_right = Vector((right_x, 0, 0))
-        
-        # Add points to spline
-        spline.points.add(3)  # 4 total points
-        spline.points[0].co = (*back_left, 1)
-        spline.points[1].co = (*front_left, 1)
-        spline.points[2].co = (*front_right, 1)
-        spline.points[3].co = (*back_right, 1)
-        
-        # Create the curve object
         crown_obj = bpy.data.objects.new(f"Crown_{profile.name}", curve_data)
         target_scene.collection.objects.link(crown_obj)
         
-        # Parent to cabinet and position at cabinet top + profile height offset
-        crown_obj.parent = cabinet
-        crown_obj.location = (0, 0, height + profile_offset_y)
-        
-        # Mark as crown molding
+        # Parent to first cabinet
+        crown_obj.parent = first_cab
+        crown_obj.location = (0, 0, first_bounds['height'] + profile_offset_y)
         crown_obj['IS_CROWN_MOLDING'] = True
         crown_obj['CROWN_PROFILE_NAME'] = profile.name
         
-        # Add Smooth by Angle modifier for better shading
+        # Add Smooth by Angle modifier
         smooth_mod = crown_obj.modifiers.new(name="Smooth by Angle", type='NODES')
-        # Load Smooth by Angle node group if not already present
         if "Smooth by Angle" not in bpy.data.node_groups:
             import os
             essentials_path = os.path.join(
@@ -2801,17 +2984,13 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
                 with bpy.data.libraries.load(essentials_path) as (data_from, data_to):
                     if "Smooth by Angle" in data_from.node_groups:
                         data_to.node_groups = ["Smooth by Angle"]
-        # Assign the node group to the modifier
         if "Smooth by Angle" in bpy.data.node_groups:
             smooth_mod.node_group = bpy.data.node_groups["Smooth by Angle"]
         
-        # Also parent the profile copy to the crown
         profile_copy.parent = crown_obj
         profile_copy['IS_CROWN_PROFILE_COPY'] = True
         
         return crown_obj
-
-
 
 
 def get_molding_library_path():
