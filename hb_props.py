@@ -247,6 +247,12 @@ class Home_Builder_Object_Props(PropertyGroup):
             pm = obj.id_properties_ui(name)
             pm.update(subtype='PERCENTAGE',min=0,max=100,description='HOME_BUILDER_PROP')
 
+        if type == 'QUANTITY':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(min=0,description='HOME_BUILDER_PROP')
+
         if type == 'COMBOBOX':
             obj[name] = value
             cb_list = []

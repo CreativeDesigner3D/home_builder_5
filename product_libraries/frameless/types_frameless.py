@@ -389,6 +389,53 @@ class CabinetOpening(GeoNodeCage):
         return self.overlay_prompts
 
 
+class CabinetInterior(GeoNodeCage):
+
+    def create(self,name):
+        super().create(name)
+        self.obj['IS_FRAMELESS_INTERIOR_CAGE'] = True
+        self.obj.display_type = 'WIRE'
+
+
+class CabinetShelves(CabinetInterior):
+
+    def create(self,name):
+        super().create(name)
+        props = bpy.context.scene.hb_frameless
+
+        self.add_property('Shelf Quantity', 'QUANTITY', 1)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
+        self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.125))
+        self.add_property('Shelf Setback', 'DISTANCE', inch(.25))
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+
+        mt = self.var_prop('Material Thickness', 'mt')
+        setback = self.var_prop('Shelf Setback', 'setback')
+        clip_gap = self.var_prop('Shelf Clip Gap', 'clip_gap')
+        qty = self.var_prop('Shelf Quantity', 'qty')
+
+        shelves = CabinetPart()
+        shelves.create('Shelf')
+        shelves.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        shelves.obj.parent = self.obj
+        # array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
+        # array_mod.count = 1   
+        # array_mod.use_relative_offset = False
+        # array_mod.use_constant_offset = True
+        # array_mod.constant_offset_displace = (0,0,0)        
+        shelves.driver_location('x', 'clip_gap',[clip_gap])
+        shelves.driver_location('y', 'setback',[setback])
+        shelves.driver_location('z', '(dim_z-(mt*qty))/(qty+1)',[dim_z,mt,qty])
+        shelves.driver_input("Length", 'dim_x-clip_gap*2', [dim_x,clip_gap])
+        shelves.driver_input("Width", 'dim_y-setback', [dim_y,setback])
+        shelves.driver_input("Thickness", 'mt', [mt])
+        # shelves.set_input("Mirror Y", True)
+        # shelves.set_input("Mirror Z", False)
+
+
 class Doors(CabinetOpening):
 
     door_pull_location = "Base"
@@ -444,7 +491,20 @@ class Doors(CabinetOpening):
         right_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
         right_door.driver_input("Thickness", 'ft', [ft]) 
         right_door.driver_hide('IF(ds==0,True,False)',[ds])  
-        right_door.set_input("Mirror Y", False)    
+        right_door.set_input("Mirror Y", False)  
+
+        self.add_interior(CabinetShelves())
+
+    def add_interior(self,interior):
+        x = self.var_input('Dim X', 'x')
+        y = self.var_input('Dim Y', 'y')
+        z = self.var_input('Dim Z', 'z')
+
+        interior.create('Interior')
+        interior.obj.parent = self.obj
+        interior.driver_input('Dim X','x',[x])
+        interior.driver_input('Dim Y','y',[y])
+        interior.driver_input('Dim Z','z',[z])         
 
 
 class CabinetPart(GeoNodeCutpart):
