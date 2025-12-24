@@ -1,11 +1,39 @@
 import bpy
 
-def run_calc_fix(context,obj=None):
+def run_calc_fix(context, obj=None):
+    """
+    Workaround for Blender bug #133392 - grandchild drivers not updating.
+    
+    This function forces all drivers in an object hierarchy to recalculate
+    by using frame change and touching driven properties.
+    
+    Args:
+        context: Blender context
+        obj: Optional object to update (updates all descendants)
+             If None, updates all objects in the scene
+    """
     if obj:
-        obj.location = obj.location                  
+        objects_to_update = [obj] + list(obj.children_recursive)
     else:
-        for obj in bpy.data.objects:
-            obj.location = obj.location                                 
+        objects_to_update = list(context.scene.objects)
+    
+    # Touch all objects and their modifiers
+    for o in objects_to_update:
+        # Touch location to mark transform dirty
+        o.location = o.location
+        
+        # Touch geometry node modifiers to force recalc
+        for mod in o.modifiers:
+            if mod.type == 'NODES':
+                mod.show_viewport = mod.show_viewport
+    
+    # Frame change forces complete driver reevaluation
+    scene = context.scene
+    current_frame = scene.frame_current
+    scene.frame_set(current_frame + 1)
+    scene.frame_set(current_frame)
+    
+    # Final view layer update
     context.view_layer.update()
 
 def add_driver_variables(driver,variables):

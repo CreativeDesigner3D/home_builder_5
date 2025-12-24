@@ -1346,7 +1346,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # Assign the active cabinet style to the cabinet
                 bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet.obj.name)
                 # Apply toggle mode for display
-                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)            
+                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
+                # Force driver update for grandchild objects (workaround for Blender bug #133392)
+                hb_utils.run_calc_fix(context, cabinet.obj)
             # Remove preview cage and dimensions
             self.cleanup_placement_objects()
             
