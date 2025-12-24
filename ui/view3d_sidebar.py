@@ -548,9 +548,10 @@ class HOME_BUILDER_MT_detail_library(bpy.types.Menu):
         
         layout = self.layout
         is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
+        is_crown_detail = context.scene.get('IS_CROWN_DETAIL', False)
         
-        # Save current detail option (only in detail view)
-        if is_detail_view:
+        # Save current detail option (in detail or crown detail view)
+        if is_detail_view or is_crown_detail:
             layout.operator("home_builder_details.save_to_library", 
                            text="Save Current Detail", icon='FILE_NEW')
             layout.separator()

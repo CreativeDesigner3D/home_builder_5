@@ -2860,7 +2860,8 @@ class home_builder_details_OT_save_detail_to_library(bpy.types.Operator):
     
     @classmethod
     def poll(cls, context):
-        return context.scene.get('IS_DETAIL_VIEW', False)
+        # Allow saving from both regular details and crown details
+        return context.scene.get('IS_DETAIL_VIEW', False) or context.scene.get('IS_CROWN_DETAIL', False)
     
     def invoke(self, context, event):
         # Default name from scene name
@@ -2902,7 +2903,8 @@ class home_builder_details_OT_load_detail_from_library(bpy.types.Operator):
     
     @classmethod
     def poll(cls, context):
-        return context.scene.get('IS_DETAIL_VIEW', False)
+        # Allow saving from both regular details and crown details
+        return context.scene.get('IS_DETAIL_VIEW', False) or context.scene.get('IS_CROWN_DETAIL', False)
     
     def execute(self, context):
         if not self.filepath:
@@ -2997,9 +2999,29 @@ class home_builder_details_OT_create_detail_from_library(bpy.types.Operator):
             self.report({'ERROR'}, "No file specified")
             return {'CANCELLED'}
         
+        # Get detail info to check if it's a crown detail
+        detail_info = hb_detail_library.get_detail_info(self.filepath)
+        is_crown_detail = detail_info.get('is_crown_detail', False)
+        
+        detail_name = self.name if self.name else "Detail"
+        
         # Create a new detail scene first
         detail = hb_details.DetailView()
-        scene = detail.create(self.name if self.name else "Detail")
+        
+        # For crown details, prefix with "Crown - " if not already
+        if is_crown_detail and not detail_name.startswith("Crown - "):
+            scene_name = f"Crown - {detail_name}"
+        else:
+            scene_name = detail_name
+        
+        scene = detail.create(scene_name)
+        
+        # Set crown detail flag if applicable
+        if is_crown_detail:
+            scene['IS_CROWN_DETAIL'] = True
+            
+            # Register in frameless crown details collection
+            self._register_crown_detail(detail_name, scene.name)
         
         # Now load objects from library into this scene
         success, message, objects = hb_detail_library.load_detail_from_library(
@@ -3009,11 +3031,32 @@ class home_builder_details_OT_create_detail_from_library(bpy.types.Operator):
         if success:
             # Switch to the new detail scene with proper view
             bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
-            self.report({'INFO'}, f"Created detail '{scene.name}' from library")
+            if is_crown_detail:
+                self.report({'INFO'}, f"Created crown detail '{detail_name}' from library")
+            else:
+                self.report({'INFO'}, f"Created detail '{scene.name}' from library")
         else:
             self.report({'WARNING'}, f"Created detail but failed to load objects: {message}")
         
         return {'FINISHED'}
+    
+    def _register_crown_detail(self, name, scene_name):
+        """Register a crown detail in the frameless props collection."""
+        from .. import hb_project
+        
+        main_scene = hb_project.get_main_scene()
+        if not main_scene:
+            return
+        
+        props = main_scene.hb_frameless
+        
+        # Create new crown detail entry
+        crown = props.crown_details.add()
+        crown.name = name
+        crown.detail_scene_name = scene_name
+        
+        # Set as active
+        props.active_crown_detail_index = len(props.crown_details) - 1
 
 
 classes = (

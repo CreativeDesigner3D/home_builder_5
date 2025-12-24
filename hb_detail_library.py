@@ -72,8 +72,11 @@ def save_detail_to_library(context, name: str, description: str = "") -> tuple:
     """
     scene = context.scene
     
-    # Verify we're in a detail view
-    if not scene.get('IS_DETAIL_VIEW'):
+    # Verify we're in a detail view (either regular or crown detail)
+    is_detail = scene.get('IS_DETAIL_VIEW', False)
+    is_crown_detail = scene.get('IS_CROWN_DETAIL', False)
+    
+    if not is_detail and not is_crown_detail:
         return (False, "Not in a detail view", "")
     
     # Get all detail objects in the scene
@@ -114,6 +117,9 @@ def save_detail_to_library(context, name: str, description: str = "") -> tuple:
     # Update library index
     index = load_library_index()
     
+    # Determine detail type
+    detail_type = "crown" if is_crown_detail else "detail"
+    
     detail_entry = {
         "name": name,
         "description": description,
@@ -121,6 +127,8 @@ def save_detail_to_library(context, name: str, description: str = "") -> tuple:
         "filepath": filepath,
         "date_created": datetime.now().isoformat(),
         "object_count": len(detail_objects),
+        "detail_type": detail_type,
+        "is_crown_detail": is_crown_detail,
     }
     
     index["details"].append(detail_entry)
@@ -129,8 +137,14 @@ def save_detail_to_library(context, name: str, description: str = "") -> tuple:
     return (True, f"Saved '{name}' to library", filepath)
 
 
-def get_library_details() -> list:
-    """Get list of all details in the library."""
+def get_library_details(detail_type: str = None) -> list:
+    """
+    Get list of all details in the library.
+    
+    Args:
+        detail_type: Optional filter - "crown" for crown details only, 
+                     "detail" for regular details only, None for all
+    """
     index = load_library_index()
     
     # Verify files still exist
@@ -141,6 +155,13 @@ def get_library_details() -> list:
         filepath = os.path.join(library_path, detail.get("filename", ""))
         if os.path.exists(filepath):
             detail["filepath"] = filepath  # Update path in case library moved
+            
+            # Filter by type if specified
+            if detail_type is not None:
+                stored_type = detail.get("detail_type", "detail")
+                if stored_type != detail_type:
+                    continue
+            
             valid_details.append(detail)
     
     return valid_details
@@ -155,7 +176,10 @@ def load_detail_from_library(context, filepath: str) -> tuple:
     scene = context.scene
     
     # Verify we're in a detail view
-    if not scene.get('IS_DETAIL_VIEW'):
+    is_detail = scene.get('IS_DETAIL_VIEW', False)
+    is_crown_detail = scene.get('IS_CROWN_DETAIL', False)
+    
+    if not is_detail and not is_crown_detail:
         return (False, "Not in a detail view", [])
     
     if not os.path.exists(filepath):
@@ -187,6 +211,23 @@ def load_detail_from_library(context, filepath: str) -> tuple:
         context.view_layer.objects.active = new_objects[0]
     
     return (True, f"Loaded {len(new_objects)} objects", new_objects)
+
+
+def get_detail_info(filepath: str) -> dict:
+    """
+    Get the stored info for a detail by its filepath.
+    
+    Returns the detail entry dict or empty dict if not found.
+    """
+    index = load_library_index()
+    library_path = get_user_library_path()
+    
+    for detail in index.get("details", []):
+        detail_filepath = os.path.join(library_path, detail.get("filename", ""))
+        if detail_filepath == filepath or detail.get("filepath") == filepath:
+            return detail
+    
+    return {}
 
 
 def delete_detail_from_library(filename: str) -> tuple:

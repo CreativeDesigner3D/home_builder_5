@@ -366,6 +366,42 @@ class Crown_Detail(PropertyGroup):
         return None
 
 
+class HB_MT_crown_detail_library(bpy.types.Menu):
+    """Menu for loading crown details from library."""
+    bl_label = "Crown Detail Library"
+    bl_idname = "HB_MT_crown_detail_library"
+    
+    def draw(self, context):
+        from ... import hb_detail_library
+        
+        layout = self.layout
+        
+        # Check if we're in a crown detail view - show save option
+        is_crown_detail = context.scene.get('IS_CROWN_DETAIL', False)
+        if is_crown_detail:
+            layout.operator("home_builder_details.save_to_library", 
+                           text="Save Current Crown Detail", icon='FILE_NEW')
+            layout.separator()
+        
+        # List saved crown details
+        crown_details = hb_detail_library.get_library_details(detail_type="crown")
+        
+        if crown_details:
+            layout.label(text="Load from Library:", icon='FILE_FOLDER')
+            for detail in crown_details:
+                op = layout.operator("home_builder_details.create_from_library",
+                                    text=detail.get("name", "Unnamed"), 
+                                    icon='IMPORT')
+                op.filepath = detail.get("filepath", "")
+                op.name = detail.get("name", "Crown Detail")
+        else:
+            layout.label(text="No saved crown details", icon='INFO')
+        
+        layout.separator()
+        layout.operator("home_builder_details.open_library_folder",
+                       text="Open Library Folder", icon='FILE_FOLDER')
+
+
 class HB_UL_crown_details(UIList):
     """UIList for displaying crown details."""
     
@@ -931,10 +967,11 @@ class Frameless_Scene_Props(PropertyGroup):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
-        # Create new crown detail button
-        row = layout.row()
+        # Create new crown detail button with library dropdown
+        row = layout.row(align=True)
         row.scale_y = 1.3
         row.operator("hb_frameless.create_crown_detail", text="Create Crown Detail", icon='ADD')
+        row.menu("HB_MT_crown_detail_library", text="", icon='DOWNARROW_HLT')
         
         layout.separator()
         
@@ -1180,6 +1217,7 @@ classes = (
     HB_UL_cabinet_styles,
     Frameless_Door_Style,
     Crown_Detail,
+    HB_MT_crown_detail_library,
     HB_UL_crown_details,
     Frameless_Scene_Props,
 )
