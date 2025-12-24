@@ -28,14 +28,12 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
         
         if in_layout_view:
             box = layout.box()
-            box.alert = True
-            box.label(text="", icon='INFO')
-            box.label(text="You are in a layout view. Select a room below.")
+            box.label(text="Current Layout View: " + context.scene.name, icon='INFO')
+            box.label(text="You are in a layout view. Select a room below.",icon='BLANK1')
         if in_detail_view:
             box = layout.box()
-            box.alert = True
-            box.label(text="", icon='INFO')
-            box.label(text="You are in a detail view. Select a room below.")
+            box.label(text="Current Detail View: " + context.scene.name, icon='INFO')
+            box.label(text="You are in a detail view. Select a room below.",icon='BLANK1')
 
         if not in_layout_view and not in_detail_view:
             text = context.scene.name
@@ -457,12 +455,14 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
         row.menu("HOME_BUILDER_MT_layout_views_create")
 
         is_layout_view = context.scene.get('IS_LAYOUT_VIEW', False)
-        
+
         # Layout Views List
         layout_views = hb_layouts.LayoutView.get_all_layout_views()
         
         if layout_views:
-            col = layout.column(align=True)
+            box = layout.box()
+            box.label(text="Available Layout Views", icon='VIEW_ORTHO')
+            col = box.column(align=True)
             for scene in layout_views:
                 row = col.row(align=True)
                 
@@ -481,20 +481,8 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
                 op = row.operator("home_builder_layouts.delete_layout_view",
                                  text="", icon='X')
                 op.scene_name = scene.name
-            
-            # Back to room button(s)
             if is_layout_view:
-                col.separator()
-                room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
-                
-                if len(room_scenes) == 1:
-                    # Single room - direct button
-                    op = col.operator("home_builder_layouts.go_to_layout_view",
-                                     text="Back to Room", icon='LOOP_BACK')
-                    op.scene_name = room_scenes[0].name
-                elif len(room_scenes) > 1:
-                    # Multiple rooms - show menu
-                    col.menu("HOME_BUILDER_MT_room_list", text="Go Back to Room", icon='LOOP_BACK')
+                box.prop(context.scene,'name',text="View Name")            
         else:
             layout.label(text="No layout views yet", icon='INFO')
 
@@ -748,7 +736,10 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
         detail_views = hb_details.DetailView.get_all_detail_views()
         
         if detail_views:
-            col = layout.column(align=True)
+            box = layout.box()
+            box.label(text="Available 2D Details", icon='VIEW_ORTHO')
+            col = box.column(align=True)
+
             for scene in detail_views:
                 row = col.row(align=True)
                 
@@ -763,103 +754,8 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
                 op = row.operator("home_builder_details.delete_detail",
                                  text="", icon='X')
                 op.scene_name = scene.name
-            
-            # Back to room button(s)
             if is_detail_view:
-                col.separator()
-                room_scenes = [s for s in bpy.data.scenes if not s.get('IS_LAYOUT_VIEW')]
-                
-                if len(room_scenes) == 1:
-                    # Single room - direct button
-                    op = col.operator("home_builder_layouts.go_to_layout_view",
-                                     text="Back to Room", icon='LOOP_BACK')
-                    op.scene_name = room_scenes[0].name
-                elif len(room_scenes) > 1:
-                    # Multiple rooms - show menu
-                    col.menu("HOME_BUILDER_MT_room_list", text="Go Back to Room", icon='LOOP_BACK')
-
-
-# SUBPANEL: Drawing Tools - REMOVED (moved to Annotations panel)
-# Drawing tools are now available in the Annotations panel for all scene types
-
-
-
-
-
-
-# SUBPANEL: Molding Library (only visible in crown detail view)
-class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
-    bl_label = "Molding Library"
-    bl_idname = "HOME_BUILDER_PT_molding_library"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = CATEGORY_NAME
-    bl_parent_id = "HOME_BUILDER_PT_2d_details"
-    bl_options = set()  # Expanded by default for crown details
-    
-    @classmethod
-    def poll(cls, context):
-        # Show in crown detail scenes or regular detail views
-        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
-    
-    def draw(self, context):
-        layout = self.layout
-        hb_scene = context.scene.home_builder
-        
-        # Import the molding functions
-        from ..product_libraries.frameless import ops_hb_frameless
-        
-        # Category dropdown
-        row = layout.row(align=True)
-        row.label(text="Category:")
-        row.prop(hb_scene, "molding_category", text="")
-        
-        # Molding dropdown
-        row = layout.row(align=True)
-        row.label(text="Molding:")
-        row.prop(hb_scene, "molding_selection", text="")
-        
-        # Get the selected molding info for thumbnail and filepath
-        category = hb_scene.molding_category
-        selection = hb_scene.molding_selection
-        
-        if category and category != 'NONE' and selection and selection != 'NONE':
-            # Get molding info
-            items = ops_hb_frameless.get_molding_items(category)
-            selected_item = None
-            for item in items:
-                if item['name'] == selection:
-                    selected_item = item
-                    break
-            
-            if selected_item:
-                # Show thumbnail
-                if selected_item.get('thumbnail'):
-                    from ..product_libraries.frameless import props_hb_frameless
-                    icon_id = props_hb_frameless.load_library_thumbnail(
-                        selected_item['thumbnail'], 
-                        f"molding_{selected_item['name']}"
-                    )
-                    if icon_id:
-                        row = layout.row()
-                        row.template_icon(icon_value=icon_id, scale=5.0)
-                
-                # Add button
-                row = layout.row()
-                row.scale_y = 1.3
-                op = row.operator(
-                    "hb_frameless.add_molding_profile", 
-                    text="Add Molding Profile",
-                    icon='ADD'
-                )
-                op.filepath = selected_item['filepath']
-                op.molding_name = selected_item['name']
-        
-        # Separator and solid lumber button (always visible)
-        layout.separator()
-        row = layout.row()
-        row.scale_y = 1.3
-        row.operator("hb_frameless.add_solid_lumber", text="Add Solid Lumber", icon='MESH_PLANE')
+                box.prop(context.scene,'name',text="Detail Name")
 
 
 # -----------------------------------------------------------------------------
@@ -924,6 +820,77 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
             col.operator("home_builder_layouts.add_dimension_3d", 
                         text="Add Dimension", icon='DRIVER_DISTANCE')
 
+# SUBPANEL: Molding Library
+class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
+    bl_label = "Molding Library"
+    bl_idname = "HOME_BUILDER_PT_molding_library"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_annotations"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    @classmethod
+    def poll(cls, context):
+        # Show in crown detail scenes or regular detail views
+        return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
+    
+    def draw(self, context):
+        layout = self.layout
+        hb_scene = context.scene.home_builder
+        
+        # Import the molding functions
+        from ..product_libraries.frameless import ops_hb_frameless
+        
+        # Category dropdown
+        row = layout.row(align=True)
+        row.label(text="Category:")
+        row.prop(hb_scene, "molding_category", text="")
+        
+        # Molding dropdown
+        row = layout.row(align=True)
+        row.label(text="Molding:")
+        row.prop(hb_scene, "molding_selection", text="")
+        
+        # Get the selected molding info for thumbnail and filepath
+        category = hb_scene.molding_category
+        selection = hb_scene.molding_selection
+        
+        if category and category != 'NONE' and selection and selection != 'NONE':
+            # Get molding info
+            items = ops_hb_frameless.get_molding_items(category)
+            selected_item = None
+            for item in items:
+                if item['name'] == selection:
+                    selected_item = item
+                    break
+            
+            if selected_item:
+                # Show thumbnail
+                if selected_item.get('thumbnail'):
+                    from ..product_libraries.frameless import props_hb_frameless
+                    icon_id = props_hb_frameless.load_library_thumbnail(
+                        selected_item['thumbnail'], 
+                        f"molding_{selected_item['name']}"
+                    )
+                    if icon_id:
+                        row = layout.row()
+                        row.template_icon(icon_value=icon_id, scale=5.0)
+                
+                # Add button
+                row = layout.row()
+                row.scale_y = 1.3
+                op = row.operator(
+                    "hb_frameless.add_molding_profile", 
+                    text="Add Molding Profile",
+                    icon='ADD'
+                )
+                op.filepath = selected_item['filepath']
+                op.molding_name = selected_item['name']
+        
+        row = layout.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.add_solid_lumber", text="Add Solid Lumber", icon='MESH_PLANE')
 
 # SUBPANEL: Edit Tools (for curves)
 class HOME_BUILDER_PT_annotations_edit(bpy.types.Panel):
@@ -1059,9 +1026,9 @@ classes = (
     HOME_BUILDER_PT_layout_views_settings,
     HOME_BUILDER_PT_layout_views_details,
     HOME_BUILDER_PT_2d_details,
-    HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations,
     HOME_BUILDER_PT_annotations_drawing,
+    HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations_edit,
     HOME_BUILDER_PT_annotations_settings,
     HOME_BUILDER_PT_settings,
