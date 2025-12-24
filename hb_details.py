@@ -48,6 +48,13 @@ class DetailView:
             base_name = f"{name} {counter}"
             counter += 1
         
+        from . import hb_utils
+        
+        # Save view state if currently in a room scene
+        original_scene = bpy.context.scene
+        if hb_utils.is_room_scene(original_scene):
+            hb_utils.save_view_state(original_scene)
+        
         # Create new scene
         self.scene = bpy.data.scenes.new(base_name)
         self.scene['IS_DETAIL_VIEW'] = True
@@ -71,13 +78,16 @@ class DetailView:
     
     def _setup_2d_view(self):
         """Configure viewport for 2D drawing."""
+        from . import hb_utils
+        
         # Set viewport to top-down orthographic
+        hb_utils.set_top_down_view()
+        
+        # Set shading options
         for area in bpy.context.screen.areas:
             if area.type == 'VIEW_3D':
                 for space in area.spaces:
                     if space.type == 'VIEW_3D':
-                        space.region_3d.view_perspective = 'ORTHO'
-                        space.region_3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
                         space.shading.type = 'SOLID'
                         space.shading.color_type = 'OBJECT'
                         break

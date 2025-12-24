@@ -1,4 +1,5 @@
 import bpy
+from .. import hb_utils
 
 # =============================================================================
 # ROOM MANAGEMENT OPERATORS
@@ -48,6 +49,10 @@ class home_builder_OT_create_room(bpy.types.Operator):
         new_scene = bpy.data.scenes.new(self.room_name)
         new_scene['IS_ROOM_SCENE'] = True
         
+        # Save view state of original scene if it's a room
+        if hb_utils.is_room_scene(original_scene):
+            hb_utils.save_view_state(original_scene)
+        
         # Switch to new scene
         context.window.scene = new_scene
         
@@ -83,7 +88,19 @@ class home_builder_OT_switch_room(bpy.types.Operator):
     
     def execute(self, context):
         if self.scene_name in bpy.data.scenes:
-            context.window.scene = bpy.data.scenes[self.scene_name]
+            # Save current view state if in a room scene
+            current_scene = context.scene
+            if hb_utils.is_room_scene(current_scene):
+                hb_utils.save_view_state(current_scene)
+            
+            # Switch to target scene
+            target_scene = bpy.data.scenes[self.scene_name]
+            context.window.scene = target_scene
+            
+            # Restore view state for the target room
+            if hb_utils.is_room_scene(target_scene):
+                hb_utils.restore_view_state(target_scene)
+            
             self.report({'INFO'}, f"Switched to: {self.scene_name}")
         else:
             self.report({'WARNING'}, f"Scene not found: {self.scene_name}")
@@ -188,6 +205,14 @@ class home_builder_OT_duplicate_room(bpy.types.Operator):
         new_scene = original_scene.copy()
         new_scene.name = self.new_name
         new_scene['IS_ROOM_SCENE'] = True
+        
+        # Save view state of original scene if it's a room
+        if hb_utils.is_room_scene(original_scene):
+            hb_utils.save_view_state(original_scene)
+        
+        # Save view state of original scene
+        if hb_utils.is_room_scene(original_scene):
+            hb_utils.save_view_state(original_scene)
         
         # Switch to new scene
         context.window.scene = new_scene

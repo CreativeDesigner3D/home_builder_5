@@ -7,6 +7,7 @@ from .. import hb_snap
 from .. import hb_placement
 from .. import hb_detail_library
 from .. import units
+from .. import hb_utils
 
 
 # Snap radius in pixels for vertex snapping
@@ -117,10 +118,22 @@ class home_builder_details_OT_delete_detail(bpy.types.Operator):
             
             # If we're deleting the current scene, switch to another first
             if context.scene == scene:
-                # Find another scene to switch to
+                # Find another scene to switch to (prefer room scenes)
+                room_scenes = [s for s in bpy.data.scenes if s != scene and hb_utils.is_room_scene(s)]
                 other_scenes = [s for s in bpy.data.scenes if s != scene]
-                if other_scenes:
-                    context.window.scene = other_scenes[0]
+                
+                if room_scenes:
+                    target_scene = room_scenes[0]
+                    context.window.scene = target_scene
+                    hb_utils.restore_view_state(target_scene)
+                elif other_scenes:
+                    target_scene = other_scenes[0]
+                    context.window.scene = target_scene
+                    if target_scene.get('IS_LAYOUT_VIEW'):
+                        hb_utils.set_camera_view()
+                    elif target_scene.get('IS_DETAIL_VIEW') or target_scene.get('IS_CROWN_DETAIL'):
+                        hb_utils.set_top_down_view()
+                        hb_utils.frame_all_objects()
             
             bpy.data.scenes.remove(scene)
             self.report({'INFO'}, f"Deleted detail: {self.scene_name}")

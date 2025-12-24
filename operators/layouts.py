@@ -10,6 +10,7 @@ from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_
 from .. import hb_layouts
 from .. import hb_types
 from .. import units
+from .. import hb_utils
 
 # =============================================================================
 # SCALE CALCULATION
@@ -395,9 +396,14 @@ class home_builder_layouts_OT_delete_layout_view(bpy.types.Operator):
             other_layouts = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW') and s != scene]
             
             if main_scenes:
-                context.window.scene = main_scenes[0]
+                target_scene = main_scenes[0]
+                context.window.scene = target_scene
+                # Restore view for room scenes
+                if hb_utils.is_room_scene(target_scene):
+                    hb_utils.restore_view_state(target_scene)
             elif other_layouts:
                 context.window.scene = other_layouts[0]
+                hb_utils.set_camera_view()
         
         bpy.data.scenes.remove(scene)
         
@@ -415,15 +421,25 @@ class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
     
     def execute(self, context):
         if self.scene_name in bpy.data.scenes:
-            context.window.scene = bpy.data.scenes[self.scene_name]
+            # Save current view state if in a room scene
+            current_scene = context.scene
+            if hb_utils.is_room_scene(current_scene):
+                hb_utils.save_view_state(current_scene)
             
-            if bpy.data.scenes[self.scene_name].get('IS_LAYOUT_VIEW'):
-                for area in context.screen.areas:
-                    if area.type == 'VIEW_3D':
-                        for space in area.spaces:
-                            if space.type == 'VIEW_3D':
-                                space.region_3d.view_perspective = 'CAMERA'
-                        break
+            target_scene = bpy.data.scenes[self.scene_name]
+            context.window.scene = target_scene
+            
+            # Set appropriate view for the scene type
+            if target_scene.get('IS_LAYOUT_VIEW'):
+                # Layout views use camera view
+                hb_utils.set_camera_view()
+            elif target_scene.get('IS_DETAIL_VIEW') or target_scene.get('IS_CROWN_DETAIL'):
+                # Detail views use top-down orthographic and frame all
+                hb_utils.set_top_down_view()
+                hb_utils.frame_all_objects()
+            elif hb_utils.is_room_scene(target_scene):
+                # Room scenes restore their saved view
+                hb_utils.restore_view_state(target_scene)
         
         return {'FINISHED'}
 
