@@ -115,34 +115,35 @@ class TitleBlock:
         left_rect.obj.location = (.005, .005, 0)
         left_rect.obj.scale = (1, 1, 1)
         left_rect.obj.rotation_euler = (0, 0, 0)
-        left_rect.set_input("Dim X", .08)
+        left_rect.set_input("Dim X", units.inch(2.75))
         left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])
         
         # Add to Freestyle Ignore collection
         if ignore_collection and left_rect.obj.name not in ignore_collection.objects:
             ignore_collection.objects.link(left_rect.obj)
 
-        text_obj = self._add_text_field(scene, left_rect.obj, "View Name", scene.name, (0, 0, 0))
+        text_objs = []
+        text_objs.append(self._add_text_field(scene, left_rect.obj, "Project Name", "PROJECT NAME", (0, units.inch(4), 0)))
+        text_objs.append(self._add_text_field(scene, left_rect.obj, "Designer Name", "DESIGNER NAME", (0, units.inch(12), 0)))
+        text_objs.append(self._add_text_field(scene, left_rect.obj, "Address", "ADDRESS", (0, units.inch(20), 0)))
         
         # Add text to Freestyle Ignore collection
-        if ignore_collection and text_obj and text_obj.name not in ignore_collection.objects:
-            ignore_collection.objects.link(text_obj)
+        for text_obj in text_objs:
+            if ignore_collection and text_obj and text_obj.name not in ignore_collection.objects:
+                ignore_collection.objects.link(text_obj)
 
-        # TODO: Add text fields later
-        
         return self.obj
     
-    def _add_text_field(self, scene, parent, field_name, text, location, size=0.03):
+    def _add_text_field(self, scene, parent, field_name, text, location, size=0.015):
         """Add a text object to the title block, rotated 90 degrees for vertical reading."""
         text_curve = bpy.data.curves.new(f"{scene.name}_{field_name}", 'FONT')
         text_curve.body = text
         
         text_curve.size = size
-        text_curve.align_x = 'LEFT'
+        text_curve.align_x = 'CENTER'
         text_curve.align_y = 'TOP'
         
         text_obj = bpy.data.objects.new(f"{scene.name}_{field_name}", text_curve)
-        scene.collection.objects.link(text_obj)
         
         # Parent to camera
         text_obj.parent = parent
