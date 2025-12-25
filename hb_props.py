@@ -112,6 +112,14 @@ def update_font(self, context):
         if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
             obj.data.font = self.annotation_font
 
+def update_show_entry_door_and_window_cages(self, context):
+    for obj in context.scene.objects:
+        if obj.get('IS_ENTRY_DOOR_BP'):
+            obj.display_type = 'TEXTURED' if self.show_entry_door_and_window_cages else 'WIRE'
+            obj.show_in_front = True if self.show_entry_door_and_window_cages else False
+        if obj.get('IS_WINDOW_BP'):
+            obj.display_type = 'TEXTURED' if self.show_entry_door_and_window_cages else 'WIRE'
+            obj.show_in_front = True if self.show_entry_door_and_window_cages else False
 
 class Calculator_Prompt(PropertyGroup):
     distance_value: FloatProperty(name="Distance Value",subtype='DISTANCE',precision=5)# type: ignore
@@ -382,6 +390,8 @@ class Home_Builder_Scene_Props(PropertyGroup):
     show_materials: BoolProperty(name="Show Materials", default=False)
     show_room_settings: BoolProperty(name="Show Room Settings", default=False)
     show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)
+
+    show_entry_door_and_window_cages: BoolProperty(name="Show Entry Door and Window Cages", default=True,update=update_show_entry_door_and_window_cages)
 
     # Molding library selection
     molding_category: EnumProperty(

@@ -427,6 +427,15 @@ class GeoNodeHardware(GeoNodeObject):
         super().create('GeoNodeHardware',name)  
 
 
+class GeoNodeDoorSwing(GeoNodeObject):  
+
+    def create(self,name):
+        super().create('GeoNodeDoorSwing',name)  
+        self.obj['IS_2D_ANNOTATION'] = True
+        self.obj.color = (0,0,0,1)
+        self.set_input("Door Thickness",units.inch(1.5))
+
+
 class GeoNodeDimension(GeoNodeObject):  
 
     def create(self,name):

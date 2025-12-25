@@ -262,6 +262,10 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+        hb_scene = context.scene.home_builder
+        
+        box = layout.box()
+        box.prop(hb_scene, 'show_entry_door_and_window_cages', text="Show Entry Door and Window Cages")
         
         row = layout.row(align=True)
         row.scale_y = 1.2

@@ -75,7 +75,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                                    size=4,
                                    min=0,
                                    max=1,
-                                   default=(0.000000,0.500000,0.700000,0.300000),
+                                   default=(0.000000,0.500000,0.700000,0.100000),
                                    subtype="COLOR") # type: ignore  
                                    
     annotation_color: bpy.props.FloatVectorProperty(name="Text Color",

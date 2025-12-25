@@ -328,7 +328,7 @@ class GeoNodeText(hb_types.GeoNodeObject):
     def set_alignment(self, align_x: str = 'LEFT', align_y: str = 'BOTTOM'):
         """Set text alignment. 
         align_x: 'LEFT', 'CENTER', 'RIGHT', 'JUSTIFY', 'FLUSH'
-        align_y: 'TOP', 'TOP_BASELINE', 'MIDDLE', 'BOTTOM_BASELINE', 'BOTTOM'
+        align_y: 'TOP', 'TOP_BASELINE', 'CENTER', 'BOTTOM_BASELINE', 'BOTTOM'
         """
         if self.obj and self.obj.type == 'FONT':
             self.obj.data.align_x = align_x

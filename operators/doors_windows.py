@@ -2,7 +2,7 @@ import bpy
 from .. import hb_types, hb_snap, hb_placement, units
 import math
 from mathutils import Vector
-
+from ..hb_details import GeoNodeText
 
 class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     """
@@ -192,7 +192,6 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         
         # Hide the cutting object from render
         cutting_obj.hide_render = True
-        cutting_obj.display_type = 'WIRE'
         
         return mod
 
@@ -224,13 +223,40 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
     def create_door(self, context):
         """Create the door object."""
         props = context.scene.home_builder
+        hb_wm = bpy.context.window_manager.home_builder
+        add_on_prefs = hb_wm.get_user_preferences(bpy.context)  
+
         self.door = hb_types.GeoNodeCage()
         self.door.create("Door")
         self.door.obj['IS_ENTRY_DOOR_BP'] = True
         self.door.set_input('Dim X', props.door_single_width)
         self.door.set_input('Dim Y', props.wall_thickness)
         self.door.set_input('Dim Z', props.door_height)
-        self.door.obj.display_type = 'WIRE'
+        self.door.obj.color = add_on_prefs.door_window_color
+        if props.show_entry_door_and_window_cages:
+            self.door.obj.display_type = 'TEXTURED'
+            self.door.obj.show_in_front = True
+        else:
+            self.door.obj.display_type = 'WIRE'
+
+        dim_x = self.door.var_input('Dim X', 'dim_x')
+        dim_y = self.door.var_input('Dim Y', 'dim_y')
+        dim_z = self.door.var_input('Dim Z', 'dim_z')
+
+        door_swing = hb_types.GeoNodeDoorSwing()
+        door_swing.create('Door Swing Annotation')
+        door_swing.obj.parent = self.door.obj
+        door_swing.driver_input("Dim X", 'dim_x', [dim_x])
+        door_swing.driver_input("Dim Y", 'dim_y', [dim_y])
+
+        door_text = GeoNodeText()
+        door_text.create('Door Text', 'DOOR', props.annotation_text_size)
+        door_text.obj.parent = self.door.obj
+        door_text.obj.rotation_euler.x = math.radians(90)
+        door_text.driver_location("x", 'dim_x/2', [dim_x])
+        door_text.driver_location("y", 'dim_y/2', [dim_y])
+        door_text.driver_location("z", 'dim_z/2', [dim_z])
+        door_text.set_alignment('CENTER', 'CENTER')
         
         self.register_placement_object(self.door.obj)
 
@@ -401,14 +427,35 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
     def create_window(self, context):
         """Create the window object."""
         props = context.scene.home_builder
+        hb_wm = bpy.context.window_manager.home_builder
+        add_on_prefs = hb_wm.get_user_preferences(bpy.context)  
+
         self.window = hb_types.GeoNodeCage()
         self.window.create("Window")
         self.window.obj['IS_WINDOW_BP'] = True
         self.window.set_input('Dim X', props.window_width)
         self.window.set_input('Dim Y', props.wall_thickness)
         self.window.set_input('Dim Z', props.window_height)
-        self.window.obj.display_type = 'WIRE'
-        
+        self.window.obj.color = add_on_prefs.door_window_color
+        if props.show_entry_door_and_window_cages:
+            self.window.obj.display_type = 'TEXTURED'
+            self.window.obj.show_in_front = True
+        else:
+            self.window.obj.display_type = 'WIRE'
+
+        dim_x = self.window.var_input('Dim X', 'dim_x')
+        dim_y = self.window.var_input('Dim Y', 'dim_y')
+        dim_z = self.window.var_input('Dim Z', 'dim_z')
+
+        window_text = GeoNodeText()
+        window_text.create('Window Text', 'WINDOW', props.annotation_text_size)
+        window_text.obj.parent = self.window.obj
+        window_text.obj.rotation_euler.x = math.radians(90)
+        window_text.driver_location("x", 'dim_x/2', [dim_x])
+        window_text.driver_location("y", 'dim_y/2', [dim_y])
+        window_text.driver_location("z", 'dim_z/2', [dim_z])
+        window_text.set_alignment('CENTER', 'CENTER')
+
         self.register_placement_object(self.window.obj)
 
     def set_position_on_wall(self):
