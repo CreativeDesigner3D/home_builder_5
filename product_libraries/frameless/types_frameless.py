@@ -272,13 +272,20 @@ class BaseCabinet(Cabinet):
     
     def add_drawer_stack(self, count):
         """Add a stack of drawers."""
+        props = bpy.context.scene.hb_frameless
+        equal_drawer_stack_heights = props.equal_drawer_stack_heights
+        if equal_drawer_stack_heights:
+            top_drawer_height = 0 # 0 means equal height
+        else:
+            top_drawer_height = props.top_drawer_front_height
+
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = count - 1
         for i in range(count):
             drawer = Drawer()
             if i == 0:
                 drawer.half_overlay_bottom = True
-                door_drawer.opening_sizes.append(inch(5))
+                door_drawer.opening_sizes.append(top_drawer_height)
             elif i == count - 1:
                 drawer.half_overlay_top = True
                 door_drawer.opening_sizes.append(0)
