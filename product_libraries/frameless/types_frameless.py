@@ -360,6 +360,12 @@ class SplitterVertical(GeoNodeCage):
     opening_sizes = []
     opening_inserts = []
 
+    def __init__(self, obj=None):
+        super().__init__(obj)
+        self.splitter_qty = 1 # Default Splitter Quantity. Opening Qty = Splitter Qty + 1
+        self.opening_sizes = [] # Default Opening Sizes top to bottom 0 is equal
+        self.opening_inserts = [] # Default Opening Inserts top to bottom
+
     def add_insert_into_opening(self,opening,insert):
         dim_x = opening.var_input('Dim X', 'dim_x')
         dim_y = opening.var_input('Dim Y', 'dim_y')
@@ -397,7 +403,7 @@ class SplitterVertical(GeoNodeCage):
         
         previous_splitter = None
 
-        # Add Shelf Splitters
+        # Add Shelf Splitters Adding from Top to Bottom
         for i in range(1,self.splitter_qty+2):
             opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
             oh = opening_prompt.get_var('Opening Calculator','oh')
@@ -776,8 +782,8 @@ class CabinetDrawerFront(CabinetFront):
 
     def get_pull_object(self):
         props = bpy.context.scene.hb_frameless
-        if props.current_door_pull_object:
-            return props.current_door_pull_object
+        if props.current_drawer_front_pull_object:
+            return props.current_drawer_front_pull_object
         else:
             pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
 
@@ -786,7 +792,7 @@ class CabinetDrawerFront(CabinetFront):
             
             for obj in data_to.objects:
                 pull_obj = obj   
-                props.current_door_pull_object = pull_obj
+                props.current_drawer_front_pull_object = pull_obj
                 return pull_obj
     
     def create(self,name):
