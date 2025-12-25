@@ -312,8 +312,19 @@ class HB_UL_cabinet_styles(UIList):
 
 class Frameless_Door_Style(PropertyGroup): 
     show_options: BoolProperty(name="Show Options",description="Show Options",default=False)# type: ignore
+    door_type: EnumProperty(name="Door Type",description="Door Type.",items=[('Slab','Slab','Slab'),
+                                                                             ('5 Piece','5 Piece','5 Piece')],default='Slab')# type: ignore
+    panel_material: EnumProperty(name="Panel Material",description="Panel Material.",items=[('Match Cabinet','Match Cabinet','Match Cabinet'),
+                                                                                            ('Glass','Glass','Glass')],default='Match Cabinet')# type: ignore                                                                             
+    outside_profile: PointerProperty(name="Outside Profile",type=bpy.types.Object)# type: ignore
+    
+    #5 Piece Door Options
     stile_width: FloatProperty(name="Left Stile Width",description="Left Stile Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
     rail_width: FloatProperty(name="Top Rail Width",description="Top Rail Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
+    add_mid_rail: BoolProperty(name="Add Mid Rail",description="Add Mid Rail.",default=False)# type: ignore
+    center_mid_rail: BoolProperty(name="Center Mid Rail",description="Center Mid Rail.",default=False)# type: ignore
+    mid_rail_width: FloatProperty(name="Mid Rail Width",description="Mid Rail Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
+    mid_rail_location: FloatProperty(name="Mid Rail Location",description="Mid Rail Location.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
     panel_thickness: FloatProperty(name="Panel Thickness",description="Panel Thickness.",default=units.inch(.5),unit='LENGTH',precision=4)# type: ignore
     panel_inset: FloatProperty(name="Panel Inset",description="Panel Inset.",default=units.inch(.25),unit='LENGTH',precision=4)# type: ignore
 
@@ -655,7 +666,8 @@ class Frameless_Scene_Props(PropertyGroup):
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
-    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore    
+    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore 
+
     # CROWN DETAILS
     crown_details: CollectionProperty(type=Crown_Detail, name="Crown Details")# type: ignore
     active_crown_detail_index: IntProperty(name="Active Crown Detail Index", default=0)# type: ignore
