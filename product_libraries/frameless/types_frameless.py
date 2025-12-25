@@ -239,7 +239,6 @@ class BaseCabinet(Cabinet):
     
     def add_exterior(self):
         """Add doors/drawers based on exterior type."""
-        print(self.default_exterior)
         if self.default_exterior == 'Doors':
             self.add_doors()
         elif self.default_exterior == 'Door Drawer':
