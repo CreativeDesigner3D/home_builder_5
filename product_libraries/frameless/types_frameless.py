@@ -243,7 +243,7 @@ class BaseCabinet(Cabinet):
         if self.default_exterior == 'Doors':
             self.add_doors()
         elif self.default_exterior == 'Door Drawer':
-            self.add_door_drawer()
+            self.add_drawer_door()
         elif self.default_exterior == '2 Drawers':
             self.add_drawer_stack(2)
         elif self.default_exterior == '3 Drawers':
@@ -258,7 +258,7 @@ class BaseCabinet(Cabinet):
         doors.door_pull_location = "Base"
         self.add_cage_to_bay(doors)
     
-    def add_door_drawer(self):
+    def add_drawer_door(self):
         """Add a drawer on top and doors below."""
         drawer = Drawer()
         drawer.half_overlay_bottom = True
@@ -640,7 +640,7 @@ class Doors(CabinetOpening):
 class Drawer(CabinetOpening):
 
     def create(self):
-        super().create("Doors")
+        super().create("Drawers")
 
         self.add_property('Front Thickness', 'DISTANCE', inch(.75))
         self.add_properties_opening_thickness()
@@ -718,24 +718,31 @@ class CabinetFront(CabinetPart):
         super().create(name)
         self.obj['IS_CABINET_FRONT'] = True
 
+    def get_pull_object(self, pull_type='door'):
+        props = bpy.context.scene.hb_frameless
+        if pull_type == 'drawer':
+            cached = props.current_drawer_front_pull_object
+        else:
+            cached = props.current_door_pull_object
+            
+        if cached:
+            return cached
+        
+        pull_path = os.path.join(os.path.dirname(__file__),
+                                 'frameless_assets', 'cabinet_pulls', 'Mushroom Knob.blend')
+        with bpy.data.libraries.load(pull_path) as (data_from, data_to):
+            data_to.objects = data_from.objects
+        
+        for obj in data_to.objects:
+            if pull_type == 'drawer':
+                props.current_drawer_front_pull_object = obj
+            else:
+                props.current_door_pull_object = obj
+            return obj
+
 class CabinetDoor(CabinetFront):
 
     door_pull_location = "Base"
-
-    def get_pull_object(self):
-        props = bpy.context.scene.hb_frameless
-        if props.current_door_pull_object:
-            return props.current_door_pull_object
-        else:
-            pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
-
-            with bpy.data.libraries.load(pull_path) as (data_from, data_to):
-                data_to.objects = data_from.objects 
-            
-            for obj in data_to.objects:
-                pull_obj = obj   
-                props.current_door_pull_object = pull_obj
-                return pull_obj
     
     def create(self,name):
         super().create(name)
@@ -779,21 +786,6 @@ class CabinetDoor(CabinetFront):
 class CabinetDrawerFront(CabinetFront):
 
     door_pull_location = "Base"
-
-    def get_pull_object(self):
-        props = bpy.context.scene.hb_frameless
-        if props.current_drawer_front_pull_object:
-            return props.current_drawer_front_pull_object
-        else:
-            pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
-
-            with bpy.data.libraries.load(pull_path) as (data_from, data_to):
-                data_to.objects = data_from.objects 
-            
-            for obj in data_to.objects:
-                pull_obj = obj   
-                props.current_drawer_front_pull_object = pull_obj
-                return pull_obj
     
     def create(self,name):
         super().create(name)
@@ -803,16 +795,20 @@ class CabinetDrawerFront(CabinetFront):
         self.add_property("Center Pull",'CHECKBOX',props.center_pulls_on_drawer_front)
         self.add_property('Handle Horizontal Location', 'DISTANCE', inch(2.0)) #TODO: LINK TO PROPERTY
 
+        #Length is height of the drawer front
         length = self.var_input('Length', 'length')
+        #Width is width of the drawer front
         width = self.var_input('Width', 'width')
         thickness = self.var_input('Thickness', 'thickness')
+        center_pull = self.var_prop('Center Pull', 'center_pull')
+        hhl = self.var_prop('Handle Horizontal Location', 'hhl')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
-        pull.set_input("Object",self.get_pull_object())
-        pull.driver_location('x', 'length/2',[length])
+        pull.set_input("Object",self.get_pull_object(pull_type='drawer'))
+        pull.driver_location('x', 'IF(center_pull,length/2,length-hhl)',[center_pull,length,hhl])
         pull.driver_location('y', '-width/2',[width])
         pull.driver_location('z', 'thickness',[thickness])
 
