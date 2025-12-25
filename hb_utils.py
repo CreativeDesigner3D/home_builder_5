@@ -16,17 +16,23 @@ def run_calc_fix(context, obj=None):
         objects_to_update = [obj] + list(obj.children_recursive)
     else:
         objects_to_update = list(context.scene.objects)
-    
+
+    home_builder_calculators = []
+
     # Touch all objects and their modifiers
     for o in objects_to_update:
         # Touch location to mark transform dirty
         o.location = o.location
-        
+        for calculator in o.home_builder.calculators:
+            home_builder_calculators.append(calculator)
         # Touch geometry node modifiers to force recalc
         for mod in o.modifiers:
             if mod.type == 'NODES':
                 mod.show_viewport = mod.show_viewport
     
+    for calculator in home_builder_calculators:
+        calculator.calculate()
+
     # Frame change forces complete driver reevaluation
     scene = context.scene
     current_frame = scene.frame_current

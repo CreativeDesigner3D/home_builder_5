@@ -6,6 +6,8 @@ from ...units import inch
 
 class Cabinet(GeoNodeCage):
 
+    default_exterior = "Doors"
+
     width = inch(18)
     height = inch(34)
     depth = inch(24)
@@ -130,7 +132,7 @@ class Cabinet(GeoNodeCage):
         opening.driver_location('y', '-dim_y',[dim_y])
         opening.driver_location('z', 'tkh+mt',[tkh,mt])
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
-        opening.driver_input("Dim Y", 'dim_y', [dim_y])
+        opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
         opening.driver_input("Dim Z", 'dim_z-tkh-(mt*2)', [dim_z,tkh,mt])
 
     def create_upper_carcass(self,name):
@@ -210,7 +212,7 @@ class Cabinet(GeoNodeCage):
         opening.driver_location('y', '-dim_y', [dim_y])
         opening.driver_location('z', 'mt', [mt])
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x, mt])
-        opening.driver_input("Dim Y", 'dim_y', [dim_y])
+        opening.driver_input("Dim Y", 'dim_y-mt', [dim_y, mt])
         opening.driver_input("Dim Z", 'dim_z-(mt*2)', [dim_z, mt])
 
 # =============================================================================
@@ -233,22 +235,21 @@ class BaseCabinet(Cabinet):
         
         # Add exterior based on base_exterior property
         props = bpy.context.scene.hb_frameless
-        self.add_exterior(props.base_exterior)
+        self.add_exterior()
     
-    def add_exterior(self, exterior_type):
+    def add_exterior(self):
         """Add doors/drawers based on exterior type."""
-        self.add_doors()
-        #TODO: IMPLEMENT OTHER EXTERIOR TYPES
-        # if exterior_type == 'Doors':
-        #     self.add_doors()
-        # elif exterior_type == 'Door Drawer':
-        #     self.add_door_drawer()
-        # elif exterior_type == '2 Drawers':
-        #     self.add_drawer_stack(2)
-        # elif exterior_type == '3 Drawers':
-        #     self.add_drawer_stack(3)
-        # elif exterior_type == '4 Drawers':
-        #     self.add_drawer_stack(4)
+        print(self.default_exterior)
+        if self.default_exterior == 'Doors':
+            self.add_doors()
+        elif self.default_exterior == 'Door Drawer':
+            self.add_door_drawer()
+        elif self.default_exterior == '2 Drawers':
+            self.add_drawer_stack(2)
+        elif self.default_exterior == '3 Drawers':
+            self.add_drawer_stack(3)
+        elif self.default_exterior == '4 Drawers':
+            self.add_drawer_stack(4)
         # 'Open' = no exterior
     
     def add_doors(self):
@@ -259,13 +260,35 @@ class BaseCabinet(Cabinet):
     
     def add_door_drawer(self):
         """Add a drawer on top and doors below."""
-        # TODO: Implement door + drawer configuration
-        pass
+        drawer = Drawer()
+        drawer.half_overlay_bottom = True
+        door = Doors()
+        door.half_overlay_top = True
+
+        door_drawer = SplitterVertical()
+        door_drawer.splitter_qty = 1
+        door_drawer.opening_sizes = [inch(5),0]
+        door_drawer.opening_inserts = [drawer,door]
+        self.add_cage_to_bay(door_drawer)
     
     def add_drawer_stack(self, count):
         """Add a stack of drawers."""
-        # TODO: Implement drawer stack
-        pass
+        door_drawer = SplitterVertical()
+        door_drawer.splitter_qty = count - 1
+        for i in range(count):
+            drawer = Drawer()
+            if i == 0:
+                drawer.half_overlay_bottom = True
+                door_drawer.opening_sizes.append(inch(5))
+            elif i == count - 1:
+                drawer.half_overlay_top = True
+                door_drawer.opening_sizes.append(0)
+            else:
+                drawer.half_overlay_top = True
+                drawer.half_overlay_bottom = True
+                door_drawer.opening_sizes.append(0)
+            door_drawer.opening_inserts.append(drawer)
+        self.add_cage_to_bay(door_drawer)
 
 
 class TallCabinet(Cabinet):
@@ -331,7 +354,108 @@ class CabinetBay(GeoNodeCage):
         self.obj.display_type = 'WIRE'
 
 
+class SplitterVertical(GeoNodeCage):
+
+    splitter_qty = 1
+    opening_sizes = []
+    opening_inserts = []
+
+    def add_insert_into_opening(self,opening,insert):
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+
+        insert.obj.parent = opening.obj
+        insert.driver_input("Dim X", 'dim_x', [dim_x])
+        insert.driver_input("Dim Y", 'dim_y', [dim_y])
+        insert.driver_input("Dim Z", 'dim_z', [dim_z])
+        
+    def create(self):
+        super().create('Splitter Vertical')
+        props = bpy.context.scene.hb_frameless
+
+        self.obj['IS_FRAMELESS_SPLITTER_VERTICAL_CAGE'] = True
+        self.obj.display_type = 'WIRE'
+
+        self.add_property('Shelf Quantity', 'QUANTITY', 1)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
+
+        # Add calculator for opening heights
+        empty_obj = self.add_empty("Calc Object")
+        empty_obj.empty_display_size = .001
+        opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
+        for i in range(1,self.splitter_qty+2):
+            opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Height')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+
+        # Total distance is height minus material thickness for all splitters
+        opening_calculator.set_total_distance('dim_z-mt*' + str(self.splitter_qty),[dim_z,mt])
+        
+        previous_splitter = None
+
+        # Add Shelf Splitters
+        for i in range(1,self.splitter_qty+2):
+            opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
+            oh = opening_prompt.get_var('Opening Calculator','oh')
+
+            # Add Shelf
+            if i < self.splitter_qty+1:
+                shelf = CabinetPart()
+                shelf.create('Vertical Splitter ' + str(i))
+                shelf.obj.parent = self.obj      
+                if previous_splitter:
+                    loc_z = previous_splitter.var_location('loc_z','z')
+                    shelf.driver_location('z', 'loc_z-oh-mt',[loc_z,oh,mt])
+                else:
+                    shelf.driver_location('z', 'dim_z-oh-mt',[dim_z,oh,mt])   
+                shelf.driver_input("Length", 'dim_x', [dim_x])
+                shelf.driver_input("Width", 'dim_y', [dim_y])
+                shelf.driver_input("Thickness", 'mt', [mt])
+
+            previous_splitter = shelf
+
+            loc_z = previous_splitter.var_location('loc_z','z')
+
+            # Add Opening
+            opening = CabinetOpening()
+            opening.create('Opening ' + str(i))
+            opening.obj.parent = self.obj
+            if i < self.splitter_qty+1:
+                opening.driver_location('z', 'loc_z+mt',[loc_z,mt])
+            else:
+                opening.obj.location.z = 0
+            
+            opening.driver_input("Dim X", 'dim_x', [dim_x])
+            opening.driver_input("Dim Y", 'dim_y', [dim_y])
+            opening.driver_input("Dim Z", 'oh', [oh])
+
+            # Add Insert into Opening
+            if len(self.opening_inserts) > i - 1:
+                insert = self.opening_inserts[i-1]
+                if insert:
+                    insert.create()
+                    self.add_insert_into_opening(opening,insert)
+
+        # Set Opening Sizes
+        for i in range(1,self.splitter_qty+2):
+            if self.opening_sizes[i-1] != 0:
+                oh = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
+                oh.equal = False
+                oh.distance_value = self.opening_sizes[i-1]
+
+        opening_calculator.calculate() 
+
+
 class CabinetOpening(GeoNodeCage):
+
+    half_overlay_top = False
+    half_overlay_bottom = False
+    half_overlay_left = False
+    half_overlay_right = False
 
     def create(self,name):
         super().create(name)
@@ -341,10 +465,10 @@ class CabinetOpening(GeoNodeCage):
     def add_properties_front_overlays(self):
         self.add_property("Inset Front",'CHECKBOX',False)
         self.add_property("Door to Cabinet Gap",'DISTANCE',inch(.125))    
-        self.add_property("Half Overlay Top",'CHECKBOX',False)
-        self.add_property("Half Overlay Bottom",'CHECKBOX',False)
-        self.add_property("Half Overlay Left",'CHECKBOX',False)
-        self.add_property("Half Overlay Right",'CHECKBOX',False)
+        self.add_property("Half Overlay Top",'CHECKBOX',self.half_overlay_top)
+        self.add_property("Half Overlay Bottom",'CHECKBOX',self.half_overlay_bottom)
+        self.add_property("Half Overlay Left",'CHECKBOX',self.half_overlay_left)
+        self.add_property("Half Overlay Right",'CHECKBOX',self.half_overlay_right)
         self.add_property("Inset Reveal",'DISTANCE',inch(.125))
         self.add_property("Top Reveal",'DISTANCE',inch(.0625))
         self.add_property("Bottom Reveal",'DISTANCE',inch(0))
@@ -507,6 +631,56 @@ class Doors(CabinetOpening):
         interior.driver_input('Dim Z','z',[z])         
 
 
+class Drawer(CabinetOpening):
+
+    def create(self):
+        super().create("Doors")
+
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_properties_opening_thickness()
+        self.add_properties_front_overlays()
+        overlay_prompts = self.add_properties_front_overlay_calculations()
+
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        ft = self.var_prop('Front Thickness', 'ft')
+        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
+
+        drawer_front = CabinetDrawerFront()
+        drawer_front.create('Drawer Front')
+        drawer_front.obj.parent = self.obj
+        drawer_front.obj.rotation_euler.x = math.radians(90)
+        drawer_front.obj.rotation_euler.y = math.radians(-90)
+        drawer_front.driver_location('x', '-lo',[lo])
+        drawer_front.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        drawer_front.driver_location('z', '-bo',[bo])
+        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
+        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
+        drawer_front.driver_input("Thickness", 'ft', [ft])   
+        drawer_front.set_input("Mirror Y", True)
+
+        self.add_drawer_box()
+
+    def add_drawer_box(self):
+        pass
+        #TODO:ADD Drawer BOX
+        # x = self.var_input('Dim X', 'x')
+        # y = self.var_input('Dim Y', 'y')
+        # z = self.var_input('Dim Z', 'z')
+
+        # interior.create('Interior')
+        # interior.obj.parent = self.obj
+        # interior.driver_input('Dim X','x',[x])
+        # interior.driver_input('Dim Y','y',[y])
+        # interior.driver_input('Dim Z','z',[z])   
+
+
 class CabinetPart(GeoNodeCutpart):
 
     def create(self,name):
@@ -532,7 +706,13 @@ class CabinetSideNotched(CabinetPart):
         notch.set_input('Flip Y',True)
 
 
-class CabinetDoor(CabinetPart):
+class CabinetFront(CabinetPart):
+
+    def create(self,name):
+        super().create(name)
+        self.obj['IS_CABINET_FRONT'] = True
+
+class CabinetDoor(CabinetFront):
 
     door_pull_location = "Base"
 
@@ -587,6 +767,47 @@ class CabinetDoor(CabinetPart):
         pull.set_input("Object",self.get_pull_object())
         pull.driver_location('x', 'IF(pl==0,length-pvl_base,IF(pl==1,pvl_tall,pvl_upper))',[length,pl,pvl_base,pvl_tall,pvl_upper])
         pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
+        pull.driver_location('z', 'thickness',[thickness])
+
+
+class CabinetDrawerFront(CabinetFront):
+
+    door_pull_location = "Base"
+
+    def get_pull_object(self):
+        props = bpy.context.scene.hb_frameless
+        if props.current_door_pull_object:
+            return props.current_door_pull_object
+        else:
+            pull_path = os.path.join(os.path.dirname(__file__),'frameless_assets','cabinet_pulls','Mushroom Knob.blend')
+
+            with bpy.data.libraries.load(pull_path) as (data_from, data_to):
+                data_to.objects = data_from.objects 
+            
+            for obj in data_to.objects:
+                pull_obj = obj   
+                props.current_door_pull_object = pull_obj
+                return pull_obj
+    
+    def create(self,name):
+        super().create(name)
+        self.obj['IS_DRAWER_FRONT'] = True
+        props = bpy.context.scene.hb_frameless
+
+        self.add_property("Center Pull",'CHECKBOX',props.center_pulls_on_drawer_front)
+        self.add_property('Handle Horizontal Location', 'DISTANCE', inch(2.0)) #TODO: LINK TO PROPERTY
+
+        length = self.var_input('Length', 'length')
+        width = self.var_input('Width', 'width')
+        thickness = self.var_input('Thickness', 'thickness')
+
+        pull = GeoNodeHardware()
+        pull.create('Pull')
+        pull.obj.parent = self.obj
+        pull.obj.rotation_euler.x = math.radians(-90)
+        pull.set_input("Object",self.get_pull_object())
+        pull.driver_location('x', 'length/2',[length])
+        pull.driver_location('y', '-width/2',[width])
         pull.driver_location('z', 'thickness',[thickness])
 
 # =============================================================================

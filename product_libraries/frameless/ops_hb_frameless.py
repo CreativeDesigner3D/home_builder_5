@@ -259,6 +259,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     bl_description = "Place a cabinet on a wall. Arrow keys for offset, W for width, F to fill gap, Escape to cancel"
     bl_options = {'UNDO'}
 
+    cabinet_name: bpy.props.StringProperty(name="Cabinet Name",default="")# type: ignore
+
     # Cabinet type to place
     cabinet_type: bpy.props.EnumProperty(
         name="Cabinet Type",
@@ -1088,6 +1090,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     def get_cabinet_class(self):
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
+            if self.cabinet_name == 'Base Door':
+                cabinet.default_exterior = "Doors"
+            elif self.cabinet_name == 'Base Door Drw':
+                cabinet.default_exterior = "Door Drawer"
+            elif self.cabinet_name == 'Base Drawer':
+                cabinet.default_exterior = "3 Drawers"
         elif self.cabinet_type == 'TALL':
             cabinet = types_frameless.TallCabinet()
         elif self.cabinet_type == 'UPPER':
@@ -1427,7 +1435,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
             'Upper': 'UPPER',
         }
         cabinet_type = type_map.get(self.cabinet_name, 'BASE')
-        bpy.ops.hb_frameless.place_cabinet('INVOKE_DEFAULT', cabinet_type=cabinet_type)
+        bpy.ops.hb_frameless.place_cabinet('INVOKE_DEFAULT', cabinet_type=cabinet_type, cabinet_name=self.cabinet_name)
         return {'FINISHED'}
 
 

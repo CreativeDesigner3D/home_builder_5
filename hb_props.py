@@ -262,6 +262,12 @@ class Home_Builder_Object_Props(PropertyGroup):
             pm = obj.id_properties_ui(name)
             pm.update(description='HOME_BUILDER_PROP',items=cb_list)    
 
+    def add_calculator(self,calculator_name,calculator_object):
+        calculator = self.calculators.add()
+        calculator.distance_obj = calculator_object
+        calculator.name = calculator_name
+        return calculator
+
     def driver_prop(self, prop_name, expression, variables=[]):
         """Add driver to Blender Property
         
