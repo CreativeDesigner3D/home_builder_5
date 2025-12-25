@@ -272,6 +272,9 @@ class BaseCabinet(Cabinet):
     
     def add_drawer_stack(self, count):
         """Add a stack of drawers."""
+        #TODO: Implement DrawerStack Class to handle equal drawer heights
+        # SplitterVertical keeps opening height equal but does not account 
+        # for drawer front overlay
         props = bpy.context.scene.hb_frameless
         equal_drawer_stack_heights = props.equal_drawer_stack_heights
         if equal_drawer_stack_heights:
