@@ -1473,34 +1473,30 @@ class hb_frameless_OT_update_drawer_front_height_prompts(bpy.types.Operator):
 
 
 class hb_frameless_OT_update_door_and_drawer_front_style(bpy.types.Operator):
+    """Update all door and drawer fronts with the selected door style"""
     bl_idname = "hb_frameless.update_door_and_drawer_front_style"
     bl_label = "Update Door and Drawer Front Style"
+    bl_options = {'REGISTER', 'UNDO'}
 
-    selected_index: bpy.props.IntProperty(name="Selected Index",default=-1)# type: ignore
+    selected_index: bpy.props.IntProperty(name="Selected Index", default=-1)# type: ignore
 
     def execute(self, context):
-        door_fronts = []
-        drawer_fronts = []
-        frameless_props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        frameless_props = main_scene.hb_frameless
+
+        if self.selected_index < 0 or self.selected_index >= len(frameless_props.door_styles):
+            self.report({'WARNING'}, "Invalid door style index")
+            return {'CANCELLED'}
 
         selected_door_style = frameless_props.door_styles[self.selected_index]
+        count = 0
 
         for obj in context.scene.objects:
-            if 'IS_DOOR_FRONT' in obj:
-                door_fronts.append(obj)
-            if 'IS_DRAWER_FRONT' in obj:
-                drawer_fronts.append(obj)
+            if 'IS_DOOR_FRONT' in obj or 'IS_DRAWER_FRONT' in obj:
+                selected_door_style.assign_style_to_front(obj)
+                count += 1
 
-        for door_front_obj in door_fronts:
-            door_front = types_frameless.CabinetDoor(door_front_obj)
-            door_style = door_front.add_part_modifier('CPM_5PIECEDOOR','Door Style')
-            door_style.set_input("Left Stile Width",selected_door_style.stile_width)
-            door_style.set_input("Right Stile Width",selected_door_style.stile_width)
-            door_style.set_input("Top Rail Width",selected_door_style.rail_width)
-            door_style.set_input("Bottom Rail Width",selected_door_style.rail_width)
-            door_style.set_input("Panel Thickness",selected_door_style.panel_thickness)
-            door_style.set_input("Panel Inset",selected_door_style.panel_inset)
-
+        self.report({'INFO'}, f"Updated {count} front(s) with style '{selected_door_style.name}'")
         return {'FINISHED'}
 
 

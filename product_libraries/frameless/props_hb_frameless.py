@@ -454,6 +454,7 @@ class Frameless_Door_Style(PropertyGroup):
     def assign_style_to_front(self, front_obj):
         """Assign this door style to a door or drawer front object."""
         from . import types_frameless
+        from ... import hb_types
         
         # Store style reference on the object
         front_obj['DOOR_STYLE_NAME'] = self.name
@@ -473,8 +474,22 @@ class Frameless_Door_Style(PropertyGroup):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
         else:
-            # Add or update 5-piece door modifier
-            door_style_mod = front.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
+            # Check if door style modifier already exists
+            existing_mod = None
+            for mod in front_obj.modifiers:
+                if mod.type == 'NODES' and 'Door Style' in mod.name:
+                    existing_mod = mod
+                    break
+            
+            if existing_mod:
+                # Wrap existing modifier with CabinetPartModifier
+                door_style_mod = hb_types.CabinetPartModifier()
+                door_style_mod.obj = front_obj
+                door_style_mod.mod = existing_mod
+            else:
+                # Add new modifier
+                door_style_mod = front.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
+            
             door_style_mod.set_input("Left Stile Width", self.stile_width)
             door_style_mod.set_input("Right Stile Width", self.stile_width)
             door_style_mod.set_input("Top Rail Width", self.rail_width)
@@ -492,6 +507,12 @@ class Frameless_Door_Style(PropertyGroup):
                         door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
                 except:
                     pass  # Input may not exist on all door style modifiers
+            else:
+                # Disable mid rail if it was previously enabled
+                try:
+                    door_style_mod.set_input("Add Mid Rail", False)
+                except:
+                    pass
         
         return True
 
