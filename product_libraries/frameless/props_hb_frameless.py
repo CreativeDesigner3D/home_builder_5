@@ -33,6 +33,124 @@ def get_pull_enum_items(self, context):
         items.append(('NONE', "No Pulls Found", "No pull files in cabinet_pulls folder"))
     return items
 
+# ============================================
+# PULL FINISH DEFINITIONS
+# ============================================
+
+PULL_FINISHES = {
+    'CHROME': {
+        'name': 'Chrome',
+        'color': (0.8, 0.8, 0.8, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.1,
+    },
+    'BRUSHED_NICKEL': {
+        'name': 'Brushed Nickel',
+        'color': (0.6, 0.58, 0.55, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.35,
+    },
+    'MATTE_BLACK': {
+        'name': 'Matte Black',
+        'color': (0.02, 0.02, 0.02, 1.0),
+        'metallic': 0.9,
+        'roughness': 0.5,
+    },
+    'OIL_RUBBED_BRONZE': {
+        'name': 'Oil Rubbed Bronze',
+        'color': (0.15, 0.08, 0.05, 1.0),
+        'metallic': 0.8,
+        'roughness': 0.4,
+    },
+    'POLISHED_BRASS': {
+        'name': 'Polished Brass',
+        'color': (0.85, 0.65, 0.2, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.15,
+    },
+    'SATIN_BRASS': {
+        'name': 'Satin Brass',
+        'color': (0.75, 0.6, 0.25, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.35,
+    },
+    'ANTIQUE_BRASS': {
+        'name': 'Antique Brass',
+        'color': (0.5, 0.38, 0.15, 1.0),
+        'metallic': 0.85,
+        'roughness': 0.45,
+    },
+    'STAINLESS_STEEL': {
+        'name': 'Stainless Steel',
+        'color': (0.55, 0.55, 0.55, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.25,
+    },
+    'PEWTER': {
+        'name': 'Pewter',
+        'color': (0.4, 0.4, 0.42, 1.0),
+        'metallic': 0.9,
+        'roughness': 0.4,
+    },
+    'COPPER': {
+        'name': 'Copper',
+        'color': (0.72, 0.45, 0.2, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.2,
+    },
+    'MATTE_GOLD': {
+        'name': 'Matte Gold',
+        'color': (0.83, 0.69, 0.22, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.4,
+    },
+    'POLISHED_GOLD': {
+        'name': 'Polished Gold',
+        'color': (1.0, 0.84, 0.0, 1.0),
+        'metallic': 1.0,
+        'roughness': 0.1,
+    },
+}
+
+
+def get_pull_finish_enum_items(self, context):
+    """Generate enum items for pull finish dropdown"""
+    items = []
+    for key, data in PULL_FINISHES.items():
+        items.append((key, data['name'], f"Apply {data['name']} finish to pulls"))
+    return items
+
+
+def get_or_create_pull_finish_material(finish_key):
+    """Get or create a material for the specified pull finish"""
+    import bpy
+    
+    if finish_key not in PULL_FINISHES:
+        return None
+    
+    finish_data = PULL_FINISHES[finish_key]
+    mat_name = f"Pull Finish - {finish_data['name']}"
+    
+    # Check if material already exists
+    if mat_name in bpy.data.materials:
+        return bpy.data.materials[mat_name]
+    
+    # Create new material
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    
+    # Get the Principled BSDF node
+    nodes = mat.node_tree.nodes
+    principled = nodes.get('Principled BSDF')
+    
+    if principled:
+        principled.inputs['Base Color'].default_value = finish_data['color']
+        principled.inputs['Metallic'].default_value = finish_data['metallic']
+        principled.inputs['Roughness'].default_value = finish_data['roughness']
+    
+    return mat
+
+
 def load_pull_object(pull_filename):
     """Load a pull object from a .blend file."""
     if not pull_filename or pull_filename == 'NONE':
@@ -1095,6 +1213,12 @@ class Frameless_Scene_Props(PropertyGroup):
         description="Select pull style for drawers",
         items=get_pull_enum_items,
     )# type: ignore
+    
+    pull_finish: EnumProperty(
+        name="Pull Finish",
+        description="Select finish for cabinet pulls",
+        items=get_pull_finish_enum_items,
+    )# type: ignore
 
 
     def ensure_default_style(self):
@@ -1448,6 +1572,18 @@ class Frameless_Scene_Props(PropertyGroup):
         row = loc_box.row()
         row.scale_y = 1.3
         row.operator('hb_frameless.update_pull_locations', text="Update All Pull Locations", icon='FILE_REFRESH')
+        
+        # Pull Finish Section
+        finish_box = layout.box()
+        finish_box.label(text="Pull Finish:", icon='MATERIAL')
+        
+        col = finish_box.column(align=True)
+        col.prop(props, 'pull_finish', text="")
+        
+        # Update finish button
+        row = finish_box.row()
+        row.scale_y = 1.3
+        row.operator('hb_frameless.update_pull_finish', text="Update All Pull Finishes", icon='FILE_REFRESH')
 
     def draw_crown_details_ui(self, layout, context):
         """Draw the crown molding details UI section."""

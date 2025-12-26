@@ -2909,6 +2909,60 @@ class hb_frameless_OT_update_pull_locations(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
+    """Update finish on all cabinet pulls"""
+    bl_idname = "hb_frameless.update_pull_finish"
+    bl_label = "Update Pull Finish"
+    bl_description = "Apply the selected finish to all cabinet pulls"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        from .props_hb_frameless import get_or_create_pull_finish_material
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Get or create the finish material
+        finish_mat = get_or_create_pull_finish_material(props.pull_finish)
+        if not finish_mat:
+            self.report({'ERROR'}, "Could not create finish material")
+            return {'CANCELLED'}
+        
+        pull_count = 0
+        updated_sources = set()
+        
+        # Find all pull objects and their source objects
+        for obj in context.scene.objects:
+            # Check for door/drawer fronts and get their pull children
+            if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
+                for child in obj.children:
+                    if 'Pull' in child.name:
+                        # Find the geometry node modifier
+                        for mod in child.modifiers:
+                            if mod.type == 'NODES' and mod.node_group:
+                                # Get the source object from the modifier
+                                for key in mod.keys():
+                                    val = mod[key]
+                                    if hasattr(val, 'material_slots'):
+                                        # This is the source pull object
+                                        source_obj = val
+                                        if source_obj.name not in updated_sources:
+                                            # Apply material to source object
+                                            if len(source_obj.material_slots) == 0:
+                                                source_obj.data.materials.append(finish_mat)
+                                            else:
+                                                source_obj.material_slots[0].material = finish_mat
+                                            updated_sources.add(source_obj.name)
+                        pull_count += 1
+        
+        # Force viewport update
+        context.view_layer.update()
+        
+        self.report({'INFO'}, f"Applied finish to {len(updated_sources)} pull type(s) ({pull_count} total pulls)")
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     """Create a new crown molding detail"""
     bl_idname = "hb_frameless.create_crown_detail"
@@ -3776,6 +3830,7 @@ classes = (
     hb_frameless_OT_update_cabinets_from_style,
     hb_frameless_OT_update_cabinet_pulls,
     hb_frameless_OT_update_pull_locations,
+    hb_frameless_OT_update_pull_finish,
     hb_frameless_OT_create_crown_detail,
     hb_frameless_OT_delete_crown_detail,
     hb_frameless_OT_edit_crown_detail,
