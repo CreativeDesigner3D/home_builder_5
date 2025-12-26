@@ -489,8 +489,9 @@ class Frameless_Door_Style(PropertyGroup):
             min_width = self.stile_width * 2  # Left + Right stiles
             min_height = self.rail_width * 2  # Top + Bottom rails
             
-            # Add mid rail height if enabled
-            if self.add_mid_rail:
+            # Add mid rail height if enabled in style OR if door is tall enough to auto-add
+            auto_mid_rail_height = units.inch(45.5)
+            if self.add_mid_rail or front_height > auto_mid_rail_height:
                 min_height += self.mid_rail_width
             
             # Check if front is large enough
@@ -523,18 +524,28 @@ class Frameless_Door_Style(PropertyGroup):
             door_style_mod.set_input("Panel Thickness", self.panel_thickness)
             door_style_mod.set_input("Panel Inset", self.panel_inset)
             
-            # Mid rail settings if supported
-            if self.add_mid_rail:
+            # Automatically add centered mid rail for doors taller than 45.5"
+            auto_mid_rail_height = units.inch(45.5)
+            needs_auto_mid_rail = front_height > auto_mid_rail_height
+            
+            # Mid rail: auto-add for tall doors, or use style setting
+            if needs_auto_mid_rail or self.add_mid_rail:
                 try:
                     door_style_mod.set_input("Add Mid Rail", True)
-                    door_style_mod.set_input("Center Mid Rail", self.center_mid_rail)
                     door_style_mod.set_input("Mid Rail Width", self.mid_rail_width)
-                    if not self.center_mid_rail:
-                        door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
+                    
+                    if needs_auto_mid_rail:
+                        # Tall doors always get centered mid rail
+                        door_style_mod.set_input("Center Mid Rail", True)
+                    else:
+                        # Use style settings for shorter doors
+                        door_style_mod.set_input("Center Mid Rail", self.center_mid_rail)
+                        if not self.center_mid_rail:
+                            door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
                 except:
                     pass  # Input may not exist on all door style modifiers
             else:
-                # Disable mid rail if it was previously enabled
+                # Disable mid rail if not needed
                 try:
                     door_style_mod.set_input("Add Mid Rail", False)
                 except:
