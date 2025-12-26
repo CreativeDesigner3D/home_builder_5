@@ -1489,14 +1489,21 @@ class hb_frameless_OT_update_door_and_drawer_front_style(bpy.types.Operator):
             return {'CANCELLED'}
 
         selected_door_style = frameless_props.door_styles[self.selected_index]
-        count = 0
+        success_count = 0
+        skip_count = 0
 
         for obj in context.scene.objects:
             if 'IS_DOOR_FRONT' in obj or 'IS_DRAWER_FRONT' in obj:
-                selected_door_style.assign_style_to_front(obj)
-                count += 1
+                result = selected_door_style.assign_style_to_front(obj)
+                if result == True:
+                    success_count += 1
+                else:
+                    skip_count += 1
 
-        self.report({'INFO'}, f"Updated {count} front(s) with style '{selected_door_style.name}'")
+        if skip_count > 0:
+            self.report({'WARNING'}, f"Updated {success_count} front(s), skipped {skip_count} (too small for style)")
+        else:
+            self.report({'INFO'}, f"Updated {success_count} front(s) with style '{selected_door_style.name}'")
         return {'FINISHED'}
 
 
@@ -1828,11 +1835,17 @@ class hb_frameless_OT_assign_door_style_to_selected_fronts(bpy.types.Operator):
         props = main_scene.hb_frameless
         style = props.door_styles[self.style_index]
         
-        front_obj['DOOR_STYLE_INDEX'] = self.style_index
-        front_obj['DOOR_STYLE_NAME'] = style.name
-        style.assign_style_to_front(front_obj)
+        result = style.assign_style_to_front(front_obj)
         
-        return True
+        if result == True:
+            front_obj['DOOR_STYLE_INDEX'] = self.style_index
+            return True
+        elif isinstance(result, str):
+            # Validation error - show message
+            self.report({'WARNING'}, result)
+            return False
+        else:
+            return False
 
     def cleanup(self, context):
         """Clean up modal state."""
@@ -1931,16 +1944,23 @@ class hb_frameless_OT_update_fronts_from_style(bpy.types.Operator):
         style_index = props.active_door_style_index
         style = props.door_styles[style_index]
         
-        count = 0
+        success_count = 0
+        skip_count = 0
         for scene in bpy.data.scenes:
             for obj in scene.objects:
                 if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
                     front_style_index = obj.get('DOOR_STYLE_INDEX', 0)
                     if front_style_index == style_index:
-                        style.assign_style_to_front(obj)
-                        count += 1
+                        result = style.assign_style_to_front(obj)
+                        if result == True:
+                            success_count += 1
+                        else:
+                            skip_count += 1
         
-        self.report({'INFO'}, f"Updated {count} front(s) with style '{style.name}'")
+        if skip_count > 0:
+            self.report({'WARNING'}, f"Updated {success_count} front(s), skipped {skip_count} (too small for style)")
+        else:
+            self.report({'INFO'}, f"Updated {success_count} front(s) with style '{style.name}'")
         return {'FINISHED'}
 
 

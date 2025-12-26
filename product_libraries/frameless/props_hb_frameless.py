@@ -452,12 +452,15 @@ class Frameless_Door_Style(PropertyGroup):
     )  # type: ignore
 
     def assign_style_to_front(self, front_obj):
-        """Assign this door style to a door or drawer front object."""
+        """Assign this door style to a door or drawer front object.
+        
+        Returns:
+            True if style was applied successfully
+            False if style could not be applied (e.g., front too small)
+            String with error message if validation failed
+        """
         from . import types_frameless
         from ... import hb_types
-        
-        # Store style reference on the object
-        front_obj['DOOR_STYLE_NAME'] = self.name
         
         # Get the front wrapper
         if 'IS_DOOR_FRONT' in front_obj:
@@ -474,6 +477,29 @@ class Frameless_Door_Style(PropertyGroup):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
         else:
+            # For 5-piece doors, validate dimensions first
+            # Length = height, Width = width (due to rotation)
+            try:
+                front_height = front.get_input("Length")
+                front_width = front.get_input("Width")
+            except:
+                return "Could not read front dimensions"
+            
+            # Calculate minimum dimensions needed
+            min_width = self.stile_width * 2  # Left + Right stiles
+            min_height = self.rail_width * 2  # Top + Bottom rails
+            
+            # Add mid rail height if enabled
+            if self.add_mid_rail:
+                min_height += self.mid_rail_width
+            
+            # Check if front is large enough
+            if front_width < min_width:
+                return f"Front too narrow ({front_width:.3f}m) for stile widths ({min_width:.3f}m minimum)"
+            
+            if front_height < min_height:
+                return f"Front too short ({front_height:.3f}m) for rail widths ({min_height:.3f}m minimum)"
+            
             # Check if door style modifier already exists
             existing_mod = None
             for mod in front_obj.modifiers:
@@ -514,6 +540,8 @@ class Frameless_Door_Style(PropertyGroup):
                 except:
                     pass
         
+        # Store style reference on the object (only after successful application)
+        front_obj['DOOR_STYLE_NAME'] = self.name
         return True
 
     def draw_door_style_ui(self, layout, context):
