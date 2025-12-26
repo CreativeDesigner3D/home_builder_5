@@ -827,6 +827,11 @@ class CabinetDoor(CabinetFront):
         self.add_property('Base Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_base)
         self.add_property('Tall Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_tall)
         self.add_property('Upper Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
+        
+        # Get pull object and its length for positioning calculations
+        pull_obj = self.get_pull_object()
+        pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
+        self.add_property('Pull Length', 'DISTANCE', pull_length)
 
         length = self.var_input('Length', 'length')
         width = self.var_input('Width', 'width')
@@ -837,13 +842,16 @@ class CabinetDoor(CabinetFront):
         pvl_base = self.var_prop('Base Pull Vertical Location', 'pvl_base')
         pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
         pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
+        pull_len = self.var_prop('Pull Length', 'pull_len')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
-        pull.set_input("Object",self.get_pull_object())
-        pull.driver_location('x', 'IF(pl==0,length-pvl_base,IF(pl==1,pvl_tall,pvl_upper))',[length,pl,pvl_base,pvl_tall,pvl_upper])
+        pull.set_input("Object",pull_obj)
+        # Base: measure from top of door to TOP of pull (subtract half pull length)
+        # Tall/Upper: measure from bottom of door to BOTTOM of pull (add half pull length)
+        pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))',[length,pl,pvl_base,pvl_tall,pvl_upper,pull_len])
         pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
         pull.driver_location('z', 'thickness',[thickness])
 
@@ -858,7 +866,12 @@ class CabinetDrawerFront(CabinetFront):
         props = bpy.context.scene.hb_frameless
 
         self.add_property("Center Pull",'CHECKBOX',props.center_pulls_on_drawer_front)
-        self.add_property('Handle Horizontal Location', 'DISTANCE', inch(2.0)) #TODO: LINK TO PROPERTY
+        self.add_property('Handle Horizontal Location', 'DISTANCE', props.pull_vertical_location_drawers)
+        
+        # Get pull object and its length for positioning calculations
+        pull_obj = self.get_pull_object(pull_type='drawer')
+        pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
+        self.add_property('Pull Length', 'DISTANCE', pull_length)
 
         #Length is height of the drawer front
         length = self.var_input('Length', 'length')
@@ -867,13 +880,16 @@ class CabinetDrawerFront(CabinetFront):
         thickness = self.var_input('Thickness', 'thickness')
         center_pull = self.var_prop('Center Pull', 'center_pull')
         hhl = self.var_prop('Handle Horizontal Location', 'hhl')
+        pull_len = self.var_prop('Pull Length', 'pull_len')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
-        pull.set_input("Object",self.get_pull_object(pull_type='drawer'))
-        pull.driver_location('x', 'IF(center_pull,length/2,length-hhl)',[center_pull,length,hhl])
+        pull.obj.rotation_euler.z = math.radians(90)
+        pull.set_input("Object",pull_obj)
+        # When not centered: measure from top of drawer front to TOP of pull
+        pull.driver_location('x', 'IF(center_pull,length/2,length-hhl-pull_len/2)',[center_pull,length,hhl,pull_len])
         pull.driver_location('y', '-width/2',[width])
         pull.driver_location('z', 'thickness',[thickness])
 

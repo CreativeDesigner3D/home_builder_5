@@ -2818,6 +2818,8 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
         
         # Update all existing pulls in the current scene
         updated_count = 0
+        updated_fronts = []
+        
         for obj in context.scene.objects:
             # Find pull hardware objects (children of door/drawer fronts)
             if obj.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL') and door_pull_obj:
@@ -2826,6 +2828,9 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                         try:
                             pull_hw = hb_types.GeoNodeHardware(child)
                             pull_hw.set_input("Object", door_pull_obj)
+                            # Update Pull Length property on the front
+                            obj['Pull Length'] = door_pull_obj.dimensions.x
+                            updated_fronts.append(obj)
                             updated_count += 1
                         except:
                             pass
@@ -2836,9 +2841,21 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                         try:
                             pull_hw = hb_types.GeoNodeHardware(child)
                             pull_hw.set_input("Object", drawer_pull_obj)
+                            # Update Pull Length property on the front
+                            obj['Pull Length'] = drawer_pull_obj.dimensions.x
+                            updated_fronts.append(obj)
                             updated_count += 1
                         except:
                             pass
+        
+        # Force driver recalculation
+        for obj in updated_fronts:
+            obj.update_tag()
+            for child in obj.children:
+                if 'Pull' in child.name:
+                    child.update_tag()
+        
+        hb_utils.run_calc_fix(context)
         
         self.report({'INFO'}, f"Updated {updated_count} pull(s)")
         return {'FINISHED'}
