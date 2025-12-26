@@ -2816,9 +2816,9 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
             if drawer_pull_obj:
                 props.current_drawer_front_pull_object = drawer_pull_obj
         
-        # Update all existing pulls
+        # Update all existing pulls in the current scene
         updated_count = 0
-        for obj in bpy.data.objects:
+        for obj in context.scene.objects:
             # Find pull hardware objects (children of door/drawer fronts)
             if obj.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL') and door_pull_obj:
                 for child in obj.children:
@@ -2841,6 +2841,71 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                             pass
         
         self.report({'INFO'}, f"Updated {updated_count} pull(s)")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_update_pull_locations(bpy.types.Operator):
+    bl_idname = "hb_frameless.update_pull_locations"
+    bl_label = "Update Pull Locations"
+    bl_description = "Update pull locations on all fronts to match current global settings"
+    bl_options = {'UNDO'}
+    
+    update_type: bpy.props.EnumProperty(
+        name="Update Type",
+        items=[
+            ('DOOR', "Door Fronts", "Update door pull locations"),
+            ('DRAWER', "Drawer Fronts", "Update drawer pull locations"),
+            ('ALL', "All Fronts", "Update all pull locations"),
+        ],
+        default='ALL'
+    )# type: ignore
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        door_count = 0
+        drawer_count = 0
+        updated_fronts = []
+        
+        # Only update objects in the current scene
+        for obj in context.scene.objects:
+            # Update door fronts
+            if obj.get('IS_DOOR_FRONT') and self.update_type in ('DOOR', 'ALL'):
+                try:
+                    # Update properties using obj['Prop Name'] syntax
+                    obj['Handle Horizontal Location'] = props.pull_dim_from_edge
+                    obj['Base Pull Vertical Location'] = props.pull_vertical_location_base
+                    obj['Tall Pull Vertical Location'] = props.pull_vertical_location_tall
+                    obj['Upper Pull Vertical Location'] = props.pull_vertical_location_upper
+                    updated_fronts.append(obj)
+                    door_count += 1
+                except Exception as e:
+                    print(f"Error updating door front {obj.name}: {e}")
+            
+            # Update drawer fronts
+            elif obj.get('IS_DRAWER_FRONT') and self.update_type in ('DRAWER', 'ALL'):
+                try:
+                    obj['Center Pull'] = 1 if props.center_pulls_on_drawer_front else 0
+                    obj['Handle Horizontal Location'] = props.pull_vertical_location_drawers
+                    updated_fronts.append(obj)
+                    drawer_count += 1
+                except Exception as e:
+                    print(f"Error updating drawer front {obj.name}: {e}")
+        
+        # Force driver recalculation (workaround for Blender bug #133392)
+        # Touch location on all pull objects to mark transforms dirty
+        for obj in updated_fronts:
+            hb_utils.run_calc_fix(context,obj)
+        
+        # Report results
+        if self.update_type == 'DOOR':
+            self.report({'INFO'}, f"Updated {door_count} door front(s)")
+        elif self.update_type == 'DRAWER':
+            self.report({'INFO'}, f"Updated {drawer_count} drawer front(s)")
+        else:
+            self.report({'INFO'}, f"Updated {door_count} door(s) and {drawer_count} drawer(s)")
+        
         return {'FINISHED'}
 
 
@@ -3710,6 +3775,7 @@ classes = (
     hb_frameless_OT_assign_cabinet_style,
     hb_frameless_OT_update_cabinets_from_style,
     hb_frameless_OT_update_cabinet_pulls,
+    hb_frameless_OT_update_pull_locations,
     hb_frameless_OT_create_crown_detail,
     hb_frameless_OT_delete_crown_detail,
     hb_frameless_OT_edit_crown_detail,

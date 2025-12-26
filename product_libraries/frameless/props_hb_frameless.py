@@ -1443,6 +1443,11 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
         if not props.center_pulls_on_drawer_front:
             col.prop(props,'pull_vertical_location_drawers',text="Vertical Location")
+        
+        # Update locations button
+        row = loc_box.row()
+        row.scale_y = 1.3
+        row.operator('hb_frameless.update_pull_locations', text="Update All Pull Locations", icon='FILE_REFRESH')
 
     def draw_crown_details_ui(self, layout, context):
         """Draw the crown molding details UI section."""
