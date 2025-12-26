@@ -2,6 +2,8 @@ import bpy
 import math
 import os
 from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart, GeoNodeHardware
+from ... import hb_project
+from ... import units
 from ...units import inch
 
 class Cabinet(GeoNodeCage):
@@ -615,7 +617,7 @@ class Doors(CabinetOpening):
         left_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
         left_door.driver_input("Thickness", 'ft', [ft])   
         left_door.driver_hide('IF(ds==1,True,False)',[ds])
-        left_door.set_input("Mirror Y", True)     
+        left_door.set_input("Mirror Y", True)  
 
         right_door = CabinetDoor()
         right_door.door_pull_location = self.door_pull_location
@@ -630,7 +632,7 @@ class Doors(CabinetOpening):
         right_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
         right_door.driver_input("Thickness", 'ft', [ft]) 
         right_door.driver_hide('IF(ds==0,True,False)',[ds])  
-        right_door.set_input("Mirror Y", False)  
+        right_door.set_input("Mirror Y", False) 
 
         self.add_interior(CabinetShelves())
 
@@ -727,16 +729,70 @@ class CabinetFront(CabinetPart):
         super().create(name)
         self.obj['IS_CABINET_FRONT'] = True
 
+    def assign_door_style(self):
+        """Assign the active door style to this front.
+        
+        If no door styles exist, creates a default Slab style first.
+        Should be called after the front object is fully created and parented.
+        """
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Ensure at least one door style exists
+        if len(props.door_styles) == 0:
+            # Create default Slab door style
+            new_style = props.door_styles.add()
+            new_style.name = "Slab"
+            new_style.door_type = 'SLAB'
+            props.active_door_style_index = 0
+        
+        # Get active door style and assign it
+        style_index = props.active_door_style_index
+        if style_index < len(props.door_styles):
+            style = props.door_styles[style_index]
+            self.obj['DOOR_STYLE_INDEX'] = style_index
+            result = style.assign_style_to_front(self.obj)
+            # If assignment failed (e.g., front too small), still store the index
+            # so it can be updated later when the style changes
+            if result != True:
+                self.obj['DOOR_STYLE_NAME'] = style.name
+
     def get_pull_object(self, pull_type='door'):
-        props = bpy.context.scene.hb_frameless
+        """Get the pull object for doors or drawers based on current selection."""
+        from . import props_hb_frameless
+        from ... import hb_project
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Get the selected pull filename
         if pull_type == 'drawer':
+            pull_filename = props.drawer_pull_selection
             cached = props.current_drawer_front_pull_object
         else:
+            pull_filename = props.door_pull_selection
             cached = props.current_door_pull_object
-            
-        if cached:
-            return cached
         
+        # Check if cached object matches current selection
+        if cached:
+            # Check if the cached object name contains the pull name (without .blend)
+            pull_name = os.path.splitext(pull_filename)[0] if pull_filename else ""
+            if pull_name and pull_name in cached.name:
+                return cached
+            # Selection changed, need to load new pull
+        
+        # Load the selected pull
+        pull_obj = props_hb_frameless.load_pull_object(pull_filename)
+        
+        if pull_obj:
+            if pull_type == 'drawer':
+                props.current_drawer_front_pull_object = pull_obj
+            else:
+                props.current_door_pull_object = pull_obj
+            return pull_obj
+        
+        # Fallback to default if load failed
         pull_path = os.path.join(os.path.dirname(__file__),
                                  'frameless_assets', 'cabinet_pulls', 'Mushroom Knob.blend')
         with bpy.data.libraries.load(pull_path) as (data_from, data_to):

@@ -8,6 +8,52 @@ from bpy.types import (
         UIList,
         AddonPreferences,
         )
+def get_available_pulls():
+    """Get list of available pull .blend files from the cabinet_pulls folder."""
+    pulls_folder = os.path.join(os.path.dirname(__file__), 
+                                'frameless_assets', 'cabinet_pulls')
+    pulls = []
+    if os.path.exists(pulls_folder):
+        for f in os.listdir(pulls_folder):
+            if f.endswith('.blend'):
+                name = os.path.splitext(f)[0]
+                pulls.append((name, f))
+    return pulls
+
+def get_pull_enum_items(self, context):
+    """Dynamic enum items for pull selection."""
+    items = []
+    for name, filename in get_available_pulls():
+        # Check for matching thumbnail
+        thumb_path = os.path.join(os.path.dirname(__file__), 
+                                  'frameless_assets', 'cabinet_pulls', 
+                                  name + '.png')
+        items.append((filename, name, f"Use {name}", 'OBJECT_DATA', len(items)))
+    if not items:
+        items.append(('NONE', "No Pulls Found", "No pull files in cabinet_pulls folder"))
+    return items
+
+def load_pull_object(pull_filename):
+    """Load a pull object from a .blend file."""
+    if not pull_filename or pull_filename == 'NONE':
+        return None
+    
+    pulls_folder = os.path.join(os.path.dirname(__file__), 
+                                'frameless_assets', 'cabinet_pulls')
+    pull_path = os.path.join(pulls_folder, pull_filename)
+    
+    if not os.path.exists(pull_path):
+        return None
+    
+    with bpy.data.libraries.load(pull_path) as (data_from, data_to):
+        data_to.objects = data_from.objects
+    
+    # Return the first object loaded
+    for obj in data_to.objects:
+        return obj
+    return None
+
+
 from bpy.props import (
         BoolProperty,
         FloatProperty,
@@ -519,9 +565,10 @@ class Frameless_Door_Style(PropertyGroup):
             except:
                 return "Could not read front dimensions"
             
+            print(f"Front height: {units.meter_to_inch(front_height)}, Front width: {units.meter_to_inch(front_width)}")
             # Calculate minimum dimensions needed
-            min_width = self.stile_width * 2  # Left + Right stiles
-            min_height = self.rail_width * 2  # Top + Bottom rails
+            min_width = self.stile_width * 2 + units.inch(1) # Left + Right stiles
+            min_height = self.rail_width * 2 + units.inch(1) # Top + Bottom rails
             
             # Add mid rail height if enabled in style OR if door is tall enough to auto-add
             auto_mid_rail_height = units.inch(45.5)
@@ -1036,6 +1083,19 @@ class Frameless_Scene_Props(PropertyGroup):
                                                         description="Check this to center pulls on drawer fronts. Otherwise vertical location will be used.", 
                                                         default=True)# type: ignore
 
+    # Pull selection from library
+    door_pull_selection: EnumProperty(
+        name="Door Pull",
+        description="Select pull style for doors",
+        items=get_pull_enum_items,
+    )# type: ignore
+    
+    drawer_pull_selection: EnumProperty(
+        name="Drawer Pull", 
+        description="Select pull style for drawers",
+        items=get_pull_enum_items,
+    )# type: ignore
+
 
     def ensure_default_style(self):
         """Ensure at least one cabinet style exists."""
@@ -1312,27 +1372,77 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'top_drawer_front_height',text="Top Drawer Front Height")
 
     def draw_cabinet_options_handles(self,layout,context):
-        size_box = layout.box()
-        row = size_box.row()
-        row.label(text="Door Pulls:")
-        row = size_box.row()
+        from ... import hb_project
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Pull Selection Section
+        pull_box = layout.box()
+        pull_box.label(text="Pull Selection:", icon='OBJECT_DATA')
+        
+        # Door Pull Selection with thumbnail
+        col = pull_box.column(align=True)
+        row = col.row()
         row.label(text="Door Pull:")
-        row.prop(self,'current_door_pull_object',text="")
-        row = size_box.row()
-        row.label(text="Drawer Front Pull:")
-        row.prop(self,'current_drawer_front_pull_object',text="")
-        row = size_box.row()
-        row.prop(self,'pull_dim_from_edge',text="Pull Distance From Edge")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_base',text="Pull Vertical Location Base")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_tall',text="Pull Vertical Location Tall")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_upper',text="Pull Vertical Location Upper")
-        row = size_box.row()
-        row.prop(self,'pull_vertical_location_drawers',text="Pull Vertical Location Drawers")
-        row = size_box.row()
-        row.prop(self,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
+        row = col.row(align=True)
+        row.prop(props, 'door_pull_selection', text="")
+        
+        # Show door pull thumbnail
+        door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
+        if door_pull_name:
+            thumb_path = os.path.join(os.path.dirname(__file__), 
+                                      'frameless_assets', 'cabinet_pulls', 
+                                      door_pull_name + '.png')
+            if os.path.exists(thumb_path):
+                icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
+                if icon_id:
+                    row = col.row()
+                    row.template_icon(icon_value=icon_id, scale=5.0)
+        
+        col.separator()
+        
+        # Drawer Pull Selection with thumbnail
+        col = pull_box.column(align=True)
+        row = col.row()
+        row.label(text="Drawer Pull:")
+        row = col.row(align=True)
+        row.prop(props, 'drawer_pull_selection', text="")
+        
+        # Show drawer pull thumbnail
+        drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
+        if drawer_pull_name:
+            thumb_path = os.path.join(os.path.dirname(__file__), 
+                                      'frameless_assets', 'cabinet_pulls', 
+                                      drawer_pull_name + '.png')
+            if os.path.exists(thumb_path):
+                icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
+                if icon_id:
+                    row = col.row()
+                    row.template_icon(icon_value=icon_id, scale=5.0)
+        
+        # Update pulls button
+        row = pull_box.row()
+        row.scale_y = 1.3
+        row.operator('hb_frameless.update_cabinet_pulls', text="Update All Pulls", icon='FILE_REFRESH')
+        
+        # Pull Location Settings
+        loc_box = layout.box()
+        loc_box.label(text="Pull Locations:", icon='ORIENTATION_LOCAL')
+        
+        col = loc_box.column(align=True)
+        col.prop(props,'pull_dim_from_edge',text="Distance From Edge")
+        
+        col.separator()
+        col.label(text="Door Pull Vertical Position:")
+        col.prop(props,'pull_vertical_location_base',text="Base Cabinets")
+        col.prop(props,'pull_vertical_location_tall',text="Tall Cabinets")
+        col.prop(props,'pull_vertical_location_upper',text="Upper Cabinets")
+        
+        col.separator()
+        col.label(text="Drawer Pull Position:")
+        col.prop(props,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
+        if not props.center_pulls_on_drawer_front:
+            col.prop(props,'pull_vertical_location_drawers',text="Vertical Location")
 
     def draw_crown_details_ui(self, layout, context):
         """Draw the crown molding details UI section."""

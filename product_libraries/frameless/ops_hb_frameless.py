@@ -1087,6 +1087,36 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.preview_cage.obj.rotation_euler = self.snap_cabinet.rotation_euler
 
+    def assign_door_styles_to_cabinet(self, cabinet_obj):
+        """Assign the active door style to all fronts in a cabinet.
+        
+        Should be called after drivers have calculated final sizes.
+        """
+        from . import props_hb_frameless
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Ensure at least one door style exists
+        if len(props.door_styles) == 0:
+            # Create default Slab door style
+            new_style = props.door_styles.add()
+            new_style.name = "Slab"
+            new_style.door_type = 'SLAB'
+            props.active_door_style_index = 0
+        
+        # Get active door style
+        style_index = props.active_door_style_index
+        if style_index >= len(props.door_styles):
+            style_index = 0
+        style = props.door_styles[style_index]
+        
+        # Find all fronts in the cabinet hierarchy and assign style
+        for obj in cabinet_obj.children_recursive:
+            if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
+                obj['DOOR_STYLE_INDEX'] = style_index
+                style.assign_style_to_front(obj)
+
     def get_cabinet_class(self):
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
@@ -1357,6 +1387,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
                 # Force driver update for grandchild objects (workaround for Blender bug #133392)
                 hb_utils.run_calc_fix(context, cabinet.obj)
+                # Assign door styles to all fronts (after drivers have calculated sizes)
+                self.assign_door_styles_to_cabinet(cabinet.obj)
             # Remove preview cage and dimensions
             self.cleanup_placement_objects()
             
@@ -2742,6 +2774,76 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
 # CROWN DETAIL OPERATORS
 # =============================================================================
 
+class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
+    bl_idname = "hb_frameless.update_cabinet_pulls"
+    bl_label = "Update Cabinet Pulls"
+    bl_description = "Update pulls on all cabinets to match current selection"
+    bl_options = {'UNDO'}
+    
+    pull_type: bpy.props.EnumProperty(
+        name="Pull Type",
+        items=[
+            ('DOOR', "Door Pulls", "Update door pulls"),
+            ('DRAWER', "Drawer Pulls", "Update drawer pulls"),
+            ('ALL', "All Pulls", "Update all pulls"),
+        ],
+        default='ALL'
+    )# type: ignore
+
+    def execute(self, context):
+        from . import props_hb_frameless
+        
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Clear cached pull objects to force reload
+        if self.pull_type in ('DOOR', 'ALL'):
+            props.current_door_pull_object = None
+        if self.pull_type in ('DRAWER', 'ALL'):
+            props.current_drawer_front_pull_object = None
+        
+        # Load new pull objects
+        door_pull_obj = None
+        drawer_pull_obj = None
+        
+        if self.pull_type in ('DOOR', 'ALL'):
+            door_pull_obj = props_hb_frameless.load_pull_object(props.door_pull_selection)
+            if door_pull_obj:
+                props.current_door_pull_object = door_pull_obj
+        
+        if self.pull_type in ('DRAWER', 'ALL'):
+            drawer_pull_obj = props_hb_frameless.load_pull_object(props.drawer_pull_selection)
+            if drawer_pull_obj:
+                props.current_drawer_front_pull_object = drawer_pull_obj
+        
+        # Update all existing pulls
+        updated_count = 0
+        for obj in bpy.data.objects:
+            # Find pull hardware objects (children of door/drawer fronts)
+            if obj.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL') and door_pull_obj:
+                for child in obj.children:
+                    if 'Pull' in child.name and child.home_builder.mod_name:
+                        try:
+                            pull_hw = hb_types.GeoNodeHardware(child)
+                            pull_hw.set_input("Object", door_pull_obj)
+                            updated_count += 1
+                        except:
+                            pass
+            
+            elif obj.get('IS_DRAWER_FRONT') and self.pull_type in ('DRAWER', 'ALL') and drawer_pull_obj:
+                for child in obj.children:
+                    if 'Pull' in child.name and child.home_builder.mod_name:
+                        try:
+                            pull_hw = hb_types.GeoNodeHardware(child)
+                            pull_hw.set_input("Object", drawer_pull_obj)
+                            updated_count += 1
+                        except:
+                            pass
+        
+        self.report({'INFO'}, f"Updated {updated_count} pull(s)")
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     """Create a new crown molding detail"""
     bl_idname = "hb_frameless.create_crown_detail"
@@ -3607,6 +3709,7 @@ classes = (
     hb_frameless_OT_assign_cabinet_style_to_selected_cabinets,
     hb_frameless_OT_assign_cabinet_style,
     hb_frameless_OT_update_cabinets_from_style,
+    hb_frameless_OT_update_cabinet_pulls,
     hb_frameless_OT_create_crown_detail,
     hb_frameless_OT_delete_crown_detail,
     hb_frameless_OT_edit_crown_detail,
