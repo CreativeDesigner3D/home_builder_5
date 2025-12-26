@@ -451,6 +451,40 @@ class Frameless_Door_Style(PropertyGroup):
         default='SQUARE'
     )  # type: ignore
 
+    def get_parent_cabinet_style(self, front_obj):
+        """Find the parent cabinet and return its cabinet style.
+        
+        Walks up the object hierarchy to find the cabinet cage,
+        then returns the cabinet style associated with it.
+        """
+        from ... import hb_project
+        
+        # Walk up the hierarchy to find the cabinet
+        current = front_obj
+        cabinet_obj = None
+        while current:
+            if current.get('IS_FRAMELESS_CABINET_CAGE'):
+                cabinet_obj = current
+                break
+            current = current.parent
+        
+        if not cabinet_obj:
+            return None
+        
+        # Get the cabinet style index
+        style_index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)
+        
+        # Get cabinet styles from main scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if style_index < len(props.cabinet_styles):
+            return props.cabinet_styles[style_index]
+        elif len(props.cabinet_styles) > 0:
+            return props.cabinet_styles[0]
+        
+        return None
+
     def assign_style_to_front(self, front_obj):
         """Assign this door style to a door or drawer front object.
         
@@ -550,6 +584,20 @@ class Frameless_Door_Style(PropertyGroup):
                     door_style_mod.set_input("Add Mid Rail", False)
                 except:
                     pass
+            
+            # Inherit materials from parent cabinet's style
+            cabinet_style = self.get_parent_cabinet_style(front_obj)
+            if cabinet_style:
+                material, material_rotated = cabinet_style.get_finish_material()
+                try:
+                    # Stiles use regular material (vertical grain)
+                    door_style_mod.set_input("Stile Material", material)
+                    # Rails use rotated material (horizontal grain)
+                    door_style_mod.set_input("Rail Material", material_rotated)
+                    # Panel uses regular material
+                    door_style_mod.set_input("Panel Material", material)
+                except:
+                    pass  # Material inputs may not exist
         
         # Store style reference on the object (only after successful application)
         front_obj['DOOR_STYLE_NAME'] = self.name
