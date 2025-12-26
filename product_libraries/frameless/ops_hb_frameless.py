@@ -1639,13 +1639,312 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
 
 
 class hb_frameless_OT_add_door_style(bpy.types.Operator):
+    """Add a new door style"""
     bl_idname = "hb_frameless.add_door_style"
     bl_label = "Add Door Style"
+    bl_description = "Add a new door style"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        frameless_props = context.scene.hb_frameless
-        door_style = frameless_props.door_styles.add()
-        door_style.name = "New Door Style"
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Create new style
+        style = props.door_styles.add()
+        
+        # Generate unique name
+        base_name = "Door Style"
+        existing_names = [s.name for s in props.door_styles]
+        counter = len(props.door_styles)
+        while f"{base_name} {counter}" in existing_names:
+            counter += 1
+        style.name = f"{base_name} {counter}"
+        
+        # Set as active
+        props.active_door_style_index = len(props.door_styles) - 1
+        
+        self.report({'INFO'}, f"Added door style: {style.name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_door_style(bpy.types.Operator):
+    """Remove the selected door style"""
+    bl_idname = "hb_frameless.remove_door_style"
+    bl_label = "Remove Door Style"
+    bl_description = "Remove the selected door style (at least one style must remain)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.door_styles) > 1
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if len(props.door_styles) <= 1:
+            self.report({'WARNING'}, "Cannot remove the last door style")
+            return {'CANCELLED'}
+        
+        index = props.active_door_style_index
+        style_name = props.door_styles[index].name
+        
+        # Remove the style
+        props.door_styles.remove(index)
+        
+        # Adjust active index
+        if props.active_door_style_index >= len(props.door_styles):
+            props.active_door_style_index = len(props.door_styles) - 1
+        
+        # Update any fronts that referenced this style
+        for scene in bpy.data.scenes:
+            for obj in scene.objects:
+                if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
+                    front_style_index = obj.get('DOOR_STYLE_INDEX', 0)
+                    if front_style_index == index:
+                        obj['DOOR_STYLE_INDEX'] = 0
+                    elif front_style_index > index:
+                        obj['DOOR_STYLE_INDEX'] = front_style_index - 1
+        
+        self.report({'INFO'}, f"Removed door style: {style_name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_duplicate_door_style(bpy.types.Operator):
+    """Duplicate the selected door style"""
+    bl_idname = "hb_frameless.duplicate_door_style"
+    bl_label = "Duplicate Door Style"
+    bl_description = "Create a copy of the selected door style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.door_styles) > 0
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if not props.door_styles:
+            return {'CANCELLED'}
+        
+        source = props.door_styles[props.active_door_style_index]
+        
+        # Create new style
+        new_style = props.door_styles.add()
+        new_style.name = f"{source.name} Copy"
+        
+        # Copy all properties
+        new_style.door_type = source.door_type
+        new_style.panel_material = source.panel_material
+        new_style.stile_width = source.stile_width
+        new_style.rail_width = source.rail_width
+        new_style.add_mid_rail = source.add_mid_rail
+        new_style.center_mid_rail = source.center_mid_rail
+        new_style.mid_rail_width = source.mid_rail_width
+        new_style.mid_rail_location = source.mid_rail_location
+        new_style.panel_thickness = source.panel_thickness
+        new_style.panel_inset = source.panel_inset
+        new_style.edge_profile_type = source.edge_profile_type
+        new_style.outside_profile = source.outside_profile
+        new_style.inside_profile = source.inside_profile
+        
+        # Set as active
+        props.active_door_style_index = len(props.door_styles) - 1
+        
+        self.report({'INFO'}, f"Duplicated door style: {new_style.name}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_assign_door_style_to_selected_fronts(bpy.types.Operator):
+    """Paint door style onto fronts - click doors/drawers to assign the active style"""
+    bl_idname = "hb_frameless.assign_door_style_to_selected_fronts"
+    bl_label = "Paint Door Style"
+    bl_description = "Click on door or drawer fronts to assign the active door style. Right-click or ESC to finish"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # Track state
+    hovered_front = None
+    assigned_count: int = 0
+    style_name: str = ""
+    style_index: int = 0
+    
+    # Store original object state for restoration
+    original_states = {}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.door_styles) > 0
+
+    def get_front_under_mouse(self, context, event):
+        """Ray cast to find door/drawer front under mouse cursor."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        coord = (event.mouse_region_x, event.mouse_region_y)
+        view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        
+        depsgraph = context.evaluated_depsgraph_get()
+        result, location, normal, index, obj, matrix = context.scene.ray_cast(
+            depsgraph, ray_origin, view_vector
+        )
+        
+        if result and obj:
+            current = obj
+            while current:
+                if current.get('IS_DOOR_FRONT') or current.get('IS_DRAWER_FRONT'):
+                    return current
+                current = current.parent
+        
+        return None
+
+    def highlight_front(self, obj, highlight=True):
+        """Highlight or unhighlight a front by selecting it."""
+        if highlight:
+            if obj.name not in self.original_states:
+                self.original_states[obj.name] = {
+                    'selected': obj.select_get(),
+                }
+            obj.select_set(True)
+        else:
+            if obj.name in self.original_states:
+                state = self.original_states[obj.name]
+                obj.select_set(state['selected'])
+
+    def update_header(self, context):
+        """Update header text with current status."""
+        text = f"Door Style: '{self.style_name}' | LMB: Assign style | RMB/ESC: Finish | Assigned: {self.assigned_count}"
+        context.area.header_text_set(text)
+
+    def assign_style_to_front(self, context, front_obj):
+        """Assign the active style to a front."""
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        style = props.door_styles[self.style_index]
+        
+        front_obj['DOOR_STYLE_INDEX'] = self.style_index
+        front_obj['DOOR_STYLE_NAME'] = style.name
+        style.assign_style_to_front(front_obj)
+        
+        return True
+
+    def cleanup(self, context):
+        """Clean up modal state."""
+        for obj_name in list(self.original_states.keys()):
+            obj = bpy.data.objects.get(obj_name)
+            if obj:
+                self.highlight_front(obj, highlight=False)
+        
+        self.original_states.clear()
+        self.hovered_front = None
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+
+    def invoke(self, context, event):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if not props.door_styles:
+            self.report({'WARNING'}, "No door styles defined")
+            return {'CANCELLED'}
+        
+        self.style_index = props.active_door_style_index
+        self.style_name = props.door_styles[self.style_index].name
+        self.assigned_count = 0
+        self.hovered_front = None
+        self.original_states = {}
+        
+        bpy.ops.object.select_all(action='DESELECT')
+        context.window.cursor_set('PAINT_BRUSH')
+        self.update_header(context)
+        context.window_manager.modal_handler_add(self)
+        
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        context.area.tag_redraw()
+        
+        if event.type in {'RIGHTMOUSE', 'ESC'}:
+            if event.value == 'PRESS':
+                self.cleanup(context)
+                if self.assigned_count > 0:
+                    self.report({'INFO'}, f"Assigned '{self.style_name}' to {self.assigned_count} front(s)")
+                else:
+                    self.report({'INFO'}, "Style painting cancelled")
+                return {'FINISHED'}
+        
+        if event.type == 'MOUSEMOVE':
+            front = self.get_front_under_mouse(context, event)
+            
+            if self.hovered_front and self.hovered_front != front:
+                self.highlight_front(self.hovered_front, highlight=False)
+            
+            if front and front != self.hovered_front:
+                self.highlight_front(front, highlight=True)
+            
+            self.hovered_front = front
+        
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.hovered_front:
+                if self.assign_style_to_front(context, self.hovered_front):
+                    self.assigned_count += 1
+                    self.update_header(context)
+                return {'RUNNING_MODAL'}
+        
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        
+        if event.type in {'NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4', 'NUMPAD_5', 
+                          'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9', 'NUMPAD_0'}:
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
+class hb_frameless_OT_update_fronts_from_style(bpy.types.Operator):
+    """Update all fronts that use the active door style"""
+    bl_idname = "hb_frameless.update_fronts_from_style"
+    bl_label = "Update Fronts from Style"
+    bl_description = "Update all door and drawer fronts that use the active door style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.door_styles) > 0
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        if not props.door_styles:
+            self.report({'WARNING'}, "No door styles defined")
+            return {'CANCELLED'}
+        
+        style_index = props.active_door_style_index
+        style = props.door_styles[style_index]
+        
+        count = 0
+        for scene in bpy.data.scenes:
+            for obj in scene.objects:
+                if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
+                    front_style_index = obj.get('DOOR_STYLE_INDEX', 0)
+                    if front_style_index == style_index:
+                        style.assign_style_to_front(obj)
+                        count += 1
+        
+        self.report({'INFO'}, f"Updated {count} front(s) with style '{style.name}'")
         return {'FINISHED'}
 
 
@@ -3279,6 +3578,10 @@ classes = (
     hb_frameless_OT_update_drawer_front_height_prompts,
     hb_frameless_OT_update_door_and_drawer_front_style,
     hb_frameless_OT_add_door_style,
+    hb_frameless_OT_remove_door_style,
+    hb_frameless_OT_duplicate_door_style,
+    hb_frameless_OT_assign_door_style_to_selected_fronts,
+    hb_frameless_OT_update_fronts_from_style,
     hb_frameless_OT_create_cabinet_group,
     hb_frameless_OT_select_cabinet_group,
     hb_frameless_OT_save_cabinet_group_to_user_library,

@@ -310,23 +310,244 @@ class HB_UL_cabinet_styles(UIList):
             layout.label(text=item.name, icon='MATERIAL')
 
 
-class Frameless_Door_Style(PropertyGroup): 
-    show_options: BoolProperty(name="Show Options",description="Show Options",default=False)# type: ignore
-    door_type: EnumProperty(name="Door Type",description="Door Type.",items=[('Slab','Slab','Slab'),
-                                                                             ('5 Piece','5 Piece','5 Piece')],default='Slab')# type: ignore
-    panel_material: EnumProperty(name="Panel Material",description="Panel Material.",items=[('Match Cabinet','Match Cabinet','Match Cabinet'),
-                                                                                            ('Glass','Glass','Glass')],default='Match Cabinet')# type: ignore                                                                             
-    outside_profile: PointerProperty(name="Outside Profile",type=bpy.types.Object)# type: ignore
+class HB_UL_door_styles(UIList):
+    """UIList for displaying door styles."""
     
-    #5 Piece Door Options
-    stile_width: FloatProperty(name="Left Stile Width",description="Left Stile Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
-    rail_width: FloatProperty(name="Top Rail Width",description="Top Rail Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
-    add_mid_rail: BoolProperty(name="Add Mid Rail",description="Add Mid Rail.",default=False)# type: ignore
-    center_mid_rail: BoolProperty(name="Center Mid Rail",description="Center Mid Rail.",default=False)# type: ignore
-    mid_rail_width: FloatProperty(name="Mid Rail Width",description="Mid Rail Width.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
-    mid_rail_location: FloatProperty(name="Mid Rail Location",description="Mid Rail Location.",default=units.inch(2.0),unit='LENGTH',precision=4)# type: ignore
-    panel_thickness: FloatProperty(name="Panel Thickness",description="Panel Thickness.",default=units.inch(.5),unit='LENGTH',precision=4)# type: ignore
-    panel_inset: FloatProperty(name="Panel Inset",description="Panel Inset.",default=units.inch(.25),unit='LENGTH',precision=4)# type: ignore
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row.prop(item, "name", text="", emboss=False, icon='MOD_LATTICE')
+            # Show door type indicator
+            if item.door_type == 'SLAB':
+                row.label(text="", icon='MESH_PLANE')
+            else:
+                row.label(text="", icon='MOD_LATTICE')
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text=item.name, icon='MOD_LATTICE')
+
+
+class Frameless_Door_Style(PropertyGroup):
+    """Door/Drawer Front style defining construction type, dimensions, and materials."""
+    
+    show_expanded: BoolProperty(
+        name="Show Expanded",
+        description="Show expanded style options",
+        default=False
+    )  # type: ignore
+    
+    # Door construction type
+    door_type: EnumProperty(
+        name="Door Type",
+        description="Door construction type",
+        items=[
+            ('SLAB', "Slab", "Solid slab door"),
+            ('5_PIECE', "5 Piece", "5-piece frame and panel door"),
+            ('SHAKER', "Shaker", "Shaker style door"),
+            ('RAISED_PANEL', "Raised Panel", "Raised panel door"),
+        ],
+        default='SLAB'
+    )  # type: ignore
+    
+    # Panel/Center material
+    panel_material: EnumProperty(
+        name="Panel Material",
+        description="Material for door panel center",
+        items=[
+            ('MATCH_CABINET', "Match Cabinet", "Match cabinet style material"),
+            ('GLASS', "Glass", "Glass panel"),
+            ('ACRYLIC', "Acrylic", "Acrylic panel"),
+            ('METAL', "Metal", "Metal panel insert"),
+        ],
+        default='MATCH_CABINET'
+    )  # type: ignore
+    
+    # Outside profile object (for routing/edge detail)
+    outside_profile: PointerProperty(
+        name="Outside Profile",
+        type=bpy.types.Object
+    )  # type: ignore
+    
+    # Inside profile object (for frame inner edge)
+    inside_profile: PointerProperty(
+        name="Inside Profile", 
+        type=bpy.types.Object
+    )  # type: ignore
+    
+    # 5 Piece Door Dimensions
+    stile_width: FloatProperty(
+        name="Stile Width",
+        description="Width of left and right stiles",
+        default=units.inch(2.0),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    rail_width: FloatProperty(
+        name="Rail Width",
+        description="Width of top and bottom rails",
+        default=units.inch(2.0),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    # Mid Rail Options
+    add_mid_rail: BoolProperty(
+        name="Add Mid Rail",
+        description="Add a horizontal mid rail",
+        default=False
+    )  # type: ignore
+    
+    center_mid_rail: BoolProperty(
+        name="Center Mid Rail",
+        description="Center the mid rail vertically",
+        default=True
+    )  # type: ignore
+    
+    mid_rail_width: FloatProperty(
+        name="Mid Rail Width",
+        description="Width of the mid rail",
+        default=units.inch(2.0),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    mid_rail_location: FloatProperty(
+        name="Mid Rail Location",
+        description="Distance from bottom of door to mid rail (if not centered)",
+        default=units.inch(12.0),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    # Panel Options
+    panel_thickness: FloatProperty(
+        name="Panel Thickness",
+        description="Thickness of the center panel",
+        default=units.inch(0.5),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    panel_inset: FloatProperty(
+        name="Panel Inset",
+        description="How far panel is inset from frame face",
+        default=units.inch(0.25),
+        unit='LENGTH',
+        precision=4
+    )  # type: ignore
+    
+    # Edge Profile
+    edge_profile_type: EnumProperty(
+        name="Edge Profile",
+        description="Edge profile for slab doors",
+        items=[
+            ('SQUARE', "Square", "Square edge"),
+            ('EASED', "Eased", "Slightly rounded edge"),
+            ('OGEE', "Ogee", "Ogee profile"),
+            ('BEVEL', "Bevel", "Beveled edge"),
+            ('ROUNDOVER', "Roundover", "Rounded edge"),
+        ],
+        default='SQUARE'
+    )  # type: ignore
+
+    def assign_style_to_front(self, front_obj):
+        """Assign this door style to a door or drawer front object."""
+        from . import types_frameless
+        
+        # Store style reference on the object
+        front_obj['DOOR_STYLE_NAME'] = self.name
+        
+        # Get the front wrapper
+        if 'IS_DOOR_FRONT' in front_obj:
+            front = types_frameless.CabinetDoor(front_obj)
+        elif 'IS_DRAWER_FRONT' in front_obj:
+            front = types_frameless.CabinetDrawerFront(front_obj)
+        else:
+            return False
+        
+        # Apply style based on door type
+        if self.door_type == 'SLAB':
+            # Remove any existing door style modifier
+            for mod in front_obj.modifiers:
+                if mod.type == 'NODES' and 'Door Style' in mod.name:
+                    front_obj.modifiers.remove(mod)
+        else:
+            # Add or update 5-piece door modifier
+            door_style_mod = front.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
+            door_style_mod.set_input("Left Stile Width", self.stile_width)
+            door_style_mod.set_input("Right Stile Width", self.stile_width)
+            door_style_mod.set_input("Top Rail Width", self.rail_width)
+            door_style_mod.set_input("Bottom Rail Width", self.rail_width)
+            door_style_mod.set_input("Panel Thickness", self.panel_thickness)
+            door_style_mod.set_input("Panel Inset", self.panel_inset)
+            
+            # Mid rail settings if supported
+            if self.add_mid_rail:
+                try:
+                    door_style_mod.set_input("Add Mid Rail", True)
+                    door_style_mod.set_input("Center Mid Rail", self.center_mid_rail)
+                    door_style_mod.set_input("Mid Rail Width", self.mid_rail_width)
+                    if not self.center_mid_rail:
+                        door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
+                except:
+                    pass  # Input may not exist on all door style modifiers
+        
+        return True
+
+    def draw_door_style_ui(self, layout, context):
+        """Draw the UI for this door style."""
+        box = layout.box()
+        box.prop(self, "name", text="Style Name")
+        
+        # Door type
+        col = box.column(align=True)
+        col.label(text="Construction:")
+        col.prop(self, "door_type", text="Type")
+        
+        # Show relevant options based on door type
+        if self.door_type == 'SLAB':
+            col = box.column(align=True)
+            col.label(text="Edge Profile:")
+            col.prop(self, "edge_profile_type", text="")
+        else:
+            # 5-piece options
+            col = box.column(align=True)
+            col.label(text="Frame Dimensions:")
+            col.prop(self, "stile_width", text="Stile Width")
+            col.prop(self, "rail_width", text="Rail Width")
+            
+            col = box.column(align=True)
+            col.label(text="Panel:")
+            col.prop(self, "panel_material", text="Material")
+            col.prop(self, "panel_thickness", text="Thickness")
+            col.prop(self, "panel_inset", text="Inset")
+            
+            # Mid rail
+            col = box.column(align=True)
+            col.prop(self, "add_mid_rail")
+            if self.add_mid_rail:
+                col.prop(self, "mid_rail_width", text="Mid Rail Width")
+                col.prop(self, "center_mid_rail")
+                if not self.center_mid_rail:
+                    col.prop(self, "mid_rail_location", text="Location from Bottom")
+        
+        # Profile objects
+        col = box.column(align=True)
+        col.label(text="Profiles:")
+        col.prop(self, "outside_profile", text="Outside")
+        if self.door_type != 'SLAB':
+            col.prop(self, "inside_profile", text="Inside")
+        
+        # Assign button
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.assign_door_style_to_selected_fronts", text="Assign Style", icon='BRUSH_DATA')
+        
+        # Update fronts button
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator("hb_frameless.update_fronts_from_style", text="Update Fronts", icon='FILE_REFRESH')
 
 
 class Crown_Detail(PropertyGroup):
@@ -666,7 +887,8 @@ class Frameless_Scene_Props(PropertyGroup):
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
-    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore 
+    door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore
+    active_door_style_index: IntProperty(name="Active Door Style Index", default=0)# type: ignore
 
     # CROWN DETAILS
     crown_details: CollectionProperty(type=Crown_Detail, name="Crown Details")# type: ignore
@@ -756,21 +978,54 @@ class Frameless_Scene_Props(PropertyGroup):
             style = props.cabinet_styles[props.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
 
+    def ensure_default_door_style(self):
+        """Ensure at least one door style exists."""
+        # Get Door Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if len(props.door_styles) == 0:
+            style = props.door_styles.add()
+            style.name = "Default Door Style"
+    
+    def get_active_door_style(self):
+        """Get the currently active door style."""
+        # Get Door Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if props.active_door_style_index < len(props.door_styles):
+            return props.door_styles[props.active_door_style_index]
+        if len(props.door_styles) > 0:
+            return props.door_styles[0]
+        return None
+
     def draw_door_styles_ui(self, layout, context):
+        """Draw the door styles UI section."""
+        # Get Door Styles from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # UIList for styles
         row = layout.row()
-        row.operator('hb_frameless.add_door_style',text="Add Door Style",icon='ADD')                
-        for index, door_style in enumerate(self.door_styles):
-            door_box = layout.box()
-            row = door_box.row()
-            row.alignment = 'LEFT'        
-            row.prop(door_style,'show_options',text=door_style.name,icon='TRIA_DOWN' if door_style.show_options else 'TRIA_RIGHT',emboss=False) 
-            row.operator('hb_frameless.update_door_and_drawer_front_style',text="",icon='FILE_REFRESH').selected_index = index                                       
-            if door_style.show_options:
-                door_box.prop(door_style,'name',text="Name")
-                door_box.prop(door_style,'stile_width',text="Stile Width")
-                door_box.prop(door_style,'rail_width',text="Rail Width")
-                door_box.prop(door_style,'panel_thickness',text="Panel Thickness")
-                door_box.prop(door_style,'panel_inset',text="Panel Inset")   
+        row.template_list(
+            "HB_UL_door_styles", "",
+            props, "door_styles",
+            props, "active_door_style_index",
+            rows=3
+        )
+        
+        # Add/Remove buttons
+        col = row.column(align=True)
+        col.operator("hb_frameless.add_door_style", icon='ADD', text="")
+        col.operator("hb_frameless.remove_door_style", icon='REMOVE', text="")
+        col.separator()
+        col.operator("hb_frameless.duplicate_door_style", icon='DUPLICATE', text="")
+        
+        # Active style properties
+        if props.door_styles and props.active_door_style_index < len(props.door_styles):
+            style = props.door_styles[props.active_door_style_index]
+            style.draw_door_style_ui(layout, context)   
 
     def draw_cabinet_sizes_ui(self,layout,context):
         unit_settings = context.scene.unit_settings      
@@ -1228,6 +1483,7 @@ classes = (
     Frameless_Cabinet_Style,
     HB_UL_cabinet_styles,
     Frameless_Door_Style,
+    HB_UL_door_styles,
     Crown_Detail,
     HB_MT_crown_detail_library,
     HB_UL_crown_details,
