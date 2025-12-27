@@ -1168,7 +1168,7 @@ class Frameless_Scene_Props(PropertyGroup):
 
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
-                                                        default=True)# type: ignore
+                                                        default=False)# type: ignore
     
     top_drawer_front_height: FloatProperty(name="Top Drawer Front Height",
                                            description="Default top drawer front height.",

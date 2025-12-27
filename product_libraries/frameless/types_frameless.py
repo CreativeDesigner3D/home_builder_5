@@ -261,6 +261,8 @@ class BaseCabinet(Cabinet):
     
     def add_drawer_door(self):
         """Add a drawer on top and doors below."""
+        props = bpy.context.scene.hb_frameless
+
         drawer = Drawer()
         drawer.half_overlay_bottom = True
         door = Doors()
@@ -268,7 +270,7 @@ class BaseCabinet(Cabinet):
 
         door_drawer = SplitterVertical()
         door_drawer.splitter_qty = 1
-        door_drawer.opening_sizes = [inch(5),0]
+        door_drawer.opening_sizes = [props.top_drawer_front_height,0]
         door_drawer.opening_inserts = [drawer,door]
         self.add_cage_to_bay(door_drawer)
     
