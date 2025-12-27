@@ -310,6 +310,7 @@ class TallCabinet(Cabinet):
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
+        self.is_stacked = False
         self.width = props.default_cabinet_width
         self.height = props.tall_cabinet_height
         self.depth = props.tall_cabinet_depth
@@ -321,8 +322,21 @@ class TallCabinet(Cabinet):
     
     def add_doors(self):
         """Add door fronts to the cabinet bay."""
+        props = bpy.context.scene.hb_frameless
+
         if self.is_stacked:
-            pass #TODO: IMPELMENT STATCKED DOOR OPENINGS
+            top_doors = Doors()
+            top_doors.half_overlay_bottom = True
+            top_doors.door_pull_location = "Upper"
+            bottom_doors = Doors()
+            bottom_doors.half_overlay_top = True
+            bottom_doors.door_pull_location = "Tall"
+
+            door_drawer = SplitterVertical()
+            door_drawer.splitter_qty = 1
+            door_drawer.opening_sizes = [0,props.tall_cabinet_split_height]
+            door_drawer.opening_inserts = [top_doors,bottom_doors]
+            self.add_cage_to_bay(door_drawer)
         else:
             doors = Doors()
             doors.door_pull_location = "Tall"
@@ -337,6 +351,7 @@ class UpperCabinet(Cabinet):
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
+        self.is_stacked = False
         self.width = props.default_cabinet_width
         self.height = props.upper_cabinet_height
         self.depth = props.upper_cabinet_depth
@@ -349,8 +364,21 @@ class UpperCabinet(Cabinet):
     
     def add_doors(self):
         """Add door fronts to the cabinet bay."""
+        props = bpy.context.scene.hb_frameless
+
         if self.is_stacked:
-            pass #TODO: IMPELMENT STATCKED DOOR OPENINGS
+            top_doors = Doors()
+            top_doors.half_overlay_bottom = True
+            top_doors.door_pull_location = "Upper"
+            bottom_doors = Doors()
+            bottom_doors.half_overlay_top = True
+            bottom_doors.door_pull_location = "Upper"
+
+            door_drawer = SplitterVertical()
+            door_drawer.splitter_qty = 1
+            door_drawer.opening_sizes = [props.upper_top_stacked_cabinet_height,0]
+            door_drawer.opening_inserts = [top_doors,bottom_doors]
+            self.add_cage_to_bay(door_drawer)
         else:
             doors = Doors()
             doors.door_pull_location = "Upper"

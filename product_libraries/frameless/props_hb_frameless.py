@@ -1115,8 +1115,14 @@ class Frameless_Scene_Props(PropertyGroup):
                                                 unit='LENGTH',
                                                 precision=4)# type: ignore
     
-    top_stacked_cabinet_height: FloatProperty(name="Oven Cabinet Width",
-                                    description="Default face frame Refrigerator cabinet width",
+    tall_cabinet_split_height: FloatProperty(name="Tall Cabinet Split Height",
+                                                  description="Default height for the bottom opening of the tall split cabinet",
+                                                  default=units.inch(54),
+                                                  unit='LENGTH',
+                                                  precision=4)# type: ignore
+
+    upper_top_stacked_cabinet_height: FloatProperty(name="Upper Cabinet Top Stacked Height",
+                                    description="Default height for the top opening of the upper cabinet stacked",
                                     default=units.inch(15),
                                     unit='LENGTH',
                                     precision=4)# type: ignore
@@ -1346,7 +1352,10 @@ class Frameless_Scene_Props(PropertyGroup):
         row.label(text=units.unit_to_string(unit_settings,self.upper_cabinet_height))
         row = layout.row()
         row.label(text="Stacked Top Cabinet Height:") 
-        row.prop(self,'top_stacked_cabinet_height',text="")
+        row.prop(self,'upper_top_stacked_cabinet_height',text="")
+        row = layout.row()
+        row.label(text="Tall Split Height:") 
+        row.prop(self,'tall_cabinet_split_height',text="")
 
     def draw_user_library_ui(self,layout,context):
         from . import ops_hb_frameless

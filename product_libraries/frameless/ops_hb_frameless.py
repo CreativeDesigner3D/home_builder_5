@@ -1128,8 +1128,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.default_exterior = "3 Drawers"
         elif self.cabinet_type == 'TALL':
             cabinet = types_frameless.TallCabinet()
+            if self.cabinet_name == 'Tall Stacked':
+                cabinet.is_stacked = True
         elif self.cabinet_type == 'UPPER':
             cabinet = types_frameless.UpperCabinet()
+            if self.cabinet_name == 'Upper Stacked':
+                cabinet.is_stacked = True
         else:
             cabinet = types_frameless.Cabinet()    
         return cabinet    
@@ -1461,12 +1465,14 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
 
     def execute(self, context):
         # Map cabinet names to types
-        type_map = {
-            'Base': 'BASE',
-            'Tall': 'TALL',
-            'Upper': 'UPPER',
-        }
-        cabinet_type = type_map.get(self.cabinet_name, 'BASE')
+        if 'Base' in self.cabinet_name:
+            cabinet_type = 'BASE'
+        elif 'Tall' in self.cabinet_name:
+            cabinet_type = 'TALL'
+        elif 'Upper' in self.cabinet_name:
+            cabinet_type = 'UPPER'
+        else:
+            cabinet_type = 'BASE'
         bpy.ops.hb_frameless.place_cabinet('INVOKE_DEFAULT', cabinet_type=cabinet_type, cabinet_name=self.cabinet_name)
         return {'FINISHED'}
 
