@@ -246,10 +246,19 @@ def clear_library_previews():
         pcoll = preview_collections["library_previews"]
         pcoll.clear()
 
-def update_top_cabinet_clearance(self,context):
-    hb_props = context.scene.home_builder
-    self.tall_cabinet_height = hb_props.wall_height-self.default_top_cabinet_clearance
-    self.upper_cabinet_height = hb_props.wall_height-self.default_top_cabinet_clearance-self.default_wall_cabinet_location
+def update_top_cabinet_clearance(self, context):
+    from ... import hb_project
+    
+    # Get ceiling height from main scene
+    main_scene = hb_project.get_main_scene()
+    hb_props = main_scene.home_builder
+    
+    # Calculate heights based on clearance settings
+    # Tall cabinet: goes from floor to ceiling minus clearance
+    self.tall_cabinet_height = hb_props.ceiling_height - self.default_top_cabinet_clearance
+    
+    # Upper cabinet: fits between wall_cabinet_location and ceiling minus clearance
+    self.upper_cabinet_height = hb_props.ceiling_height - self.default_top_cabinet_clearance - self.default_wall_cabinet_location
 
 def update_include_drawer_boxes(self,context):
     print('UPDATE INCLUDE DRAWER BOXES',self.include_drawer_boxes)

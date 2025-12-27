@@ -1548,9 +1548,54 @@ class hb_frameless_OT_update_door_and_drawer_front_style(bpy.types.Operator):
 class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
     bl_idname = "hb_frameless.update_cabinet_sizes"
     bl_label = "Update Cabinet Sizes"
+    bl_description = "Update all cabinet depths and heights to match the current size settings"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        props = context.scene.hb_frameless
+        from ... import hb_project
+        from ... import hb_types
+        
+        # Get props from main scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        updated_count = 0
+        
+        # Find all cabinets in the current scene
+        for obj in context.scene.objects:
+            if not obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                continue
+            
+            cabinet_type = obj.get('CABINET_TYPE', '')
+            cabinet = hb_types.GeoNodeObject(obj)
+            
+            # Get the appropriate depth and height based on cabinet type
+            if cabinet_type == 'BASE':
+                new_depth = props.base_cabinet_depth
+                new_height = props.base_cabinet_height
+            elif cabinet_type == 'TALL':
+                new_depth = props.tall_cabinet_depth
+                new_height = props.tall_cabinet_height
+            elif cabinet_type == 'UPPER':
+                new_depth = props.upper_cabinet_depth
+                new_height = props.upper_cabinet_height
+            else:
+                # Unknown type, skip
+                continue
+            
+            # Update depth (Dim Y) and height (Dim Z)
+            try:
+                cabinet.set_input('Dim Y', new_depth)
+                cabinet.set_input('Dim Z', new_height)
+                updated_count += 1
+            except Exception as e:
+                self.report({'WARNING'}, f"Could not update cabinet {obj.name}: {str(e)}")
+        
+        if updated_count > 0:
+            self.report({'INFO'}, f"Updated {updated_count} cabinet(s)")
+        else:
+            self.report({'INFO'}, "No cabinets found to update")
+        
         return {'FINISHED'}
 
 
