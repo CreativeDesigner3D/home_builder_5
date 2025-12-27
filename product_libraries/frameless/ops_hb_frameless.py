@@ -271,6 +271,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         ],
         default='BASE'
     )  # type: ignore
+    
+    # Appliance placement
+    is_appliance: bpy.props.BoolProperty(name="Is Appliance", default=False)  # type: ignore
+    appliance_type: bpy.props.StringProperty(name="Appliance Type", default="")  # type: ignore
 
     # Preview cage (lightweight, with array modifier)
     preview_cage = None
@@ -517,10 +521,29 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.preview_cage = hb_types.GeoNodeCage()
         self.preview_cage.create('Preview')
         
-        self.individual_cabinet_width = props.default_cabinet_width
-        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
-        self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
-        self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
+        # Use appliance dimensions if placing an appliance
+        if self.is_appliance:
+            appliance_class = self.get_appliance_class()
+            if appliance_class:
+                self.individual_cabinet_width = appliance_class.width
+                self.preview_cage.set_input('Dim X', appliance_class.width)
+                self.preview_cage.set_input('Dim Y', appliance_class.depth)
+                self.preview_cage.set_input('Dim Z', appliance_class.height)
+            else:
+                self.individual_cabinet_width = props.default_cabinet_width
+                self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+                self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
+                self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
+            # Appliances don't fill gaps and are always quantity 1
+            self.fill_mode = False
+            self.cabinet_quantity = 1
+            self.auto_quantity = False
+        else:
+            self.individual_cabinet_width = props.default_cabinet_width
+            self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+            self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
+            self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
+        
         self.preview_cage.set_input('Mirror Y', True)
         
         # Add array modifier for quantity preview
@@ -1117,7 +1140,34 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 obj['DOOR_STYLE_INDEX'] = style_index
                 style.assign_style_to_front(obj)
 
+    def get_appliance_class(self):
+        """Get the appliance class based on appliance_type."""
+        from ..common import types_appliances
+        
+        appliance_map = {
+            'RANGE': types_appliances.Range,
+            'DISHWASHER': types_appliances.Dishwasher,
+            'REFRIGERATOR': types_appliances.Refrigerator,
+            'HOOD': types_appliances.Hood,
+            'COOKTOP': types_appliances.Cooktop,
+            'WALL_OVEN': types_appliances.WallOven,
+            'MICROWAVE': types_appliances.Microwave,
+            'SINK': types_appliances.Sink,
+        }
+        
+        if self.appliance_type in appliance_map:
+            return appliance_map[self.appliance_type]
+        return None
+    
     def get_cabinet_class(self):
+        # Handle appliances
+        if self.is_appliance:
+            appliance_class = self.get_appliance_class()
+            if appliance_class:
+                return appliance_class()
+            return types_frameless.Cabinet()
+        
+        # Handle cabinets
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
             if self.cabinet_name == 'Base Door':
@@ -1152,14 +1202,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             for i in range(self.cabinet_quantity):
                 cabinet = self.get_cabinet_class()
-                cabinet.width = self.individual_cabinet_width
-                cabinet.height = self.get_cabinet_height(context)
-                cabinet.depth = cabinet_depth
-                cabinet.create(f'Cabinet')
                 
-                # Add doors
-                # doors = types_frameless.Doors()
-                # cabinet.add_cage_to_bay(doors)
+                if self.is_appliance:
+                    # Appliances use their own dimensions but allow width override
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.create(self.cabinet_name or 'Appliance')
+                else:
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.height = self.get_cabinet_height(context)
+                    cabinet.depth = cabinet_depth
+                    cabinet.create(f'Cabinet')
                 
                 # Position based on which side of wall
                 cabinet.obj.parent = self.selected_wall
@@ -1186,14 +1238,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             for i in range(self.cabinet_quantity):
                 cabinet = self.get_cabinet_class()
-                cabinet.width = self.individual_cabinet_width
-                cabinet.height = self.get_cabinet_height(context)
-                cabinet.depth = cabinet_depth
-                cabinet.create(f'Cabinet')
                 
-                # Add doors
-                # doors = types_frameless.Doors()
-                # cabinet.add_cage_to_bay(doors)
+                if self.is_appliance:
+                    # Appliances use their own dimensions but allow width override
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.create(self.cabinet_name or 'Appliance')
+                else:
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.height = self.get_cabinet_height(context)
+                    cabinet.depth = cabinet_depth
+                    cabinet.create(f'Cabinet')
                 
                 # Calculate offset for this cabinet in the row
                 # Offset in local X direction based on rotation
@@ -1385,15 +1439,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Create the real cabinets (on wall or floor)
             cabinets = self.create_final_cabinets(context)
             for cabinet in cabinets:
-                # Assign the active cabinet style to the cabinet
-                bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet.obj.name)
-                # Apply toggle mode for display
-                bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
-                # Force driver update for grandchild objects (workaround for Blender bug #133392)
-                hb_utils.run_calc_fix(context, cabinet.obj)
-                hb_utils.run_calc_fix(context, cabinet.obj)
-                # Assign door styles to all fronts (after drivers have calculated sizes)
-                self.assign_door_styles_to_cabinet(cabinet.obj)
+                if not self.is_appliance:
+                    # Cabinet-specific operations (skip for appliances)
+                    # Assign the active cabinet style to the cabinet
+                    bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet.obj.name)
+                    # Apply toggle mode for display
+                    bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
+                    # Force driver update for grandchild objects (workaround for Blender bug #133392)
+                    hb_utils.run_calc_fix(context, cabinet.obj)
+                    hb_utils.run_calc_fix(context, cabinet.obj)
+                    # Assign door styles to all fronts (after drivers have calculated sizes)
+                    self.assign_door_styles_to_cabinet(cabinet.obj)
             # Remove preview cage and dimensions
             self.cleanup_placement_objects()
             
@@ -1465,16 +1521,47 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
     cabinet_name: bpy.props.StringProperty(name="Cabinet Name")  # type: ignore
 
     def execute(self, context):
-        # Map cabinet names to types
-        if 'Base' in self.cabinet_name:
-            cabinet_type = 'BASE'
-        elif 'Tall' in self.cabinet_name:
-            cabinet_type = 'TALL'
-        elif 'Upper' in self.cabinet_name:
-            cabinet_type = 'UPPER'
+        # Map appliance names to types
+        appliance_map = {
+            'Range': 'RANGE',
+            'Dishwasher': 'DISHWASHER',
+            'Refrigerator': 'REFRIGERATOR',
+            'Hood': 'HOOD',
+            'Wood Hood': 'HOOD',
+        }
+        
+        # Check if this is an appliance
+        is_appliance = False
+        appliance_type = ""
+        for name, app_type in appliance_map.items():
+            if name in self.cabinet_name:
+                is_appliance = True
+                appliance_type = app_type
+                break
+        
+        if is_appliance:
+            bpy.ops.hb_frameless.place_cabinet(
+                'INVOKE_DEFAULT', 
+                cabinet_type='BASE',
+                cabinet_name=self.cabinet_name,
+                is_appliance=True,
+                appliance_type=appliance_type
+            )
         else:
-            cabinet_type = 'BASE'
-        bpy.ops.hb_frameless.place_cabinet('INVOKE_DEFAULT', cabinet_type=cabinet_type, cabinet_name=self.cabinet_name)
+            # Map cabinet names to types
+            if 'Base' in self.cabinet_name:
+                cabinet_type = 'BASE'
+            elif 'Tall' in self.cabinet_name:
+                cabinet_type = 'TALL'
+            elif 'Upper' in self.cabinet_name:
+                cabinet_type = 'UPPER'
+            else:
+                cabinet_type = 'BASE'
+            bpy.ops.hb_frameless.place_cabinet(
+                'INVOKE_DEFAULT', 
+                cabinet_type=cabinet_type, 
+                cabinet_name=self.cabinet_name
+            )
         return {'FINISHED'}
 
 
