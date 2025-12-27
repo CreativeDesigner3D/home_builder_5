@@ -960,6 +960,7 @@ class CabinetDrawerFront(CabinetFront):
         
         drawer_box = GeoNodeDrawerBox()
         drawer_box.create('Drawer Box')
+        drawer_box.obj['IS_FRAMELESS_INTERIOR_PART'] = True
         drawer_box.obj.parent = self.obj
         drawer_box.obj.rotation_euler.x = math.radians(-90)
         drawer_box.obj.rotation_euler.z = math.radians(-90)
