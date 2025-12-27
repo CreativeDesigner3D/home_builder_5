@@ -432,6 +432,9 @@ class GeoNodeDrawerBox(GeoNodeObject):
     def create(self,name):
         super().create('GeoNodeDrawerBox',name)  
         self.obj['IS_DRAWER_BOX'] = True
+        self.set_input("Material Thickness",units.inch(0.5))
+        self.set_input("Bottom Thickness",units.inch(0.25))
+        self.set_input("Drawer Bottom Z Location",units.inch(0.5))
 
 
 class GeoNodeDoorSwing(GeoNodeObject):  

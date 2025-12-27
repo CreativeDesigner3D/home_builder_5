@@ -1,7 +1,7 @@
 import bpy
 import math
 import os
-from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart, GeoNodeHardware
+from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart, GeoNodeHardware, GeoNodeDrawerBox
 from ... import hb_project
 from ... import units
 from ...units import inch
@@ -709,23 +709,14 @@ class Drawer(CabinetOpening):
         drawer_front.driver_location('z', '-bo',[bo])
         drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
         drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
-        drawer_front.driver_input("Thickness", 'ft', [ft])   
+        drawer_front.driver_input("Thickness", 'ft', [ft]) 
+        drawer_front.driver_prop("Top Overlay", 'to', [to])
+        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
+        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
+        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
         drawer_front.set_input("Mirror Y", True)
+        drawer_front.add_drawer_box()
 
-        self.add_drawer_box()
-
-    def add_drawer_box(self):
-        pass
-        #TODO:ADD Drawer BOX
-        # x = self.var_input('Dim X', 'x')
-        # y = self.var_input('Dim Y', 'y')
-        # z = self.var_input('Dim Z', 'z')
-
-        # interior.create('Interior')
-        # interior.obj.parent = self.obj
-        # interior.driver_input('Dim X','x',[x])
-        # interior.driver_input('Dim Y','y',[y])
-        # interior.driver_input('Dim Z','z',[z])   
 
 
 class CabinetPart(GeoNodeCutpart):
@@ -758,6 +749,13 @@ class CabinetFront(CabinetPart):
     def create(self,name):
         super().create(name)
         self.obj['IS_CABINET_FRONT'] = True
+        self.add_overlay_properties()
+
+    def add_overlay_properties(self):
+        self.add_property('Top Overlay', 'DISTANCE', 0.0)
+        self.add_property('Bottom Overlay', 'DISTANCE', 0.0)
+        self.add_property('Left Overlay', 'DISTANCE', 0.0)
+        self.add_property('Right Overlay', 'DISTANCE', 0.0)
 
     def assign_door_style(self):
         """Assign the active door style to this front.
@@ -922,6 +920,58 @@ class CabinetDrawerFront(CabinetFront):
         pull.driver_location('x', 'IF(center_pull,length/2,length-hhl-pull_len/2)',[center_pull,length,hhl,pull_len])
         pull.driver_location('y', '-width/2',[width])
         pull.driver_location('z', 'thickness',[thickness])
+
+    def add_drawer_box(self):
+        """Add a drawer box to this drawer front.
+        """
+        props = bpy.context.scene.hb_frameless
+        
+        if not props.include_drawer_boxes:
+            return
+
+        # Check if drawer box already exists
+        for child in self.obj.children:
+            if child.get('IS_DRAWER_BOX'):
+                return  # Already has a drawer box
+        
+        # Get drawer opening depth from parent
+        drawer_opening = GeoNodeCage(self.obj.parent)
+        opening_depth = drawer_opening.var_input('Dim Y', 'opening_depth')
+
+        # Get drawer front variables
+        df_height = self.var_input('Length', 'df_height')
+        df_width = self.var_input('Width', 'df_width')
+        lo = self.var_prop('Left Overlay', 'lo')
+        ro = self.var_prop('Right Overlay', 'ro')
+        to = self.var_prop('Top Overlay', 'to')
+        bo = self.var_prop('Bottom Overlay', 'bo')
+        
+        # Add drawer box properties if not present
+        if 'Drawer Box Side Clearance' not in self.obj:
+            self.add_property('Drawer Box Side Clearance', 'DISTANCE', inch(0.5))
+            self.add_property('Drawer Box Top Clearance', 'DISTANCE', inch(0.75))
+            self.add_property('Drawer Box Rear Clearance', 'DISTANCE', inch(1.0))
+            self.add_property('Drawer Box Bottom Clearance', 'DISTANCE', inch(.5))
+        
+        side_clr = self.var_prop('Drawer Box Side Clearance', 'side_clr')
+        top_clr = self.var_prop('Drawer Box Top Clearance', 'top_clr')
+        rear_clr = self.var_prop('Drawer Box Rear Clearance', 'rear_clr')
+        bottom_clr = self.var_prop('Drawer Box Bottom Clearance', 'bottom_clr')
+        
+        drawer_box = GeoNodeDrawerBox()
+        drawer_box.create('Drawer Box')
+        drawer_box.obj.parent = self.obj
+        drawer_box.obj.rotation_euler.x = math.radians(-90)
+        drawer_box.obj.rotation_euler.z = math.radians(-90)
+        # Drawer box dimensions with clearances
+        drawer_box.driver_input('Dim X', 'df_width - lo - ro - (side_clr * 2)', [df_width,lo,ro,side_clr])
+        drawer_box.driver_input('Dim Y', 'opening_depth - rear_clr', [opening_depth, rear_clr])
+        drawer_box.driver_input('Dim Z', 'df_height - to - bo - top_clr - bottom_clr', [df_height,to,bo,top_clr,bottom_clr])
+        # X is vertical location
+        drawer_box.driver_location('x', 'bo + bottom_clr', [bo,bottom_clr])
+        # Y is horizontal Location
+        drawer_box.driver_location('y', '-lo - side_clr', [lo,side_clr])      
+
 
 # =============================================================================
 # CORNER CABINETS

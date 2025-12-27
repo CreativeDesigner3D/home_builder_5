@@ -8,6 +8,8 @@ from bpy.types import (
         UIList,
         AddonPreferences,
         )
+from . import types_frameless
+
 def get_available_pulls():
     """Get list of available pull .blend files from the cabinet_pulls folder."""
     pulls_folder = os.path.join(os.path.dirname(__file__), 
@@ -261,7 +263,20 @@ def update_top_cabinet_clearance(self, context):
     self.upper_cabinet_height = hb_props.ceiling_height - self.default_top_cabinet_clearance - self.default_wall_cabinet_location
 
 def update_include_drawer_boxes(self,context):
-    print('UPDATE INCLUDE DRAWER BOXES',self.include_drawer_boxes)
+    if self.include_drawer_boxes:
+        # Find all drawer fronts in the scene
+        for obj in context.scene.objects:
+            if obj.get("IS_DRAWER_FRONT"):
+                # Check if drawer box already exists
+                found_drawer_box = any(child.get('IS_DRAWER_BOX')for child in obj.children)
+                if not found_drawer_box:
+                    drawer_front = types_frameless.CabinetDrawerFront(obj)
+                    drawer_front.add_drawer_box()
+    else:
+        # Find and remove all drawer boxes
+        drawer_boxes = [obj for obj in context.scene.objects if obj.get('IS_DRAWER_BOX')]
+        for db in drawer_boxes:
+            bpy.data.objects.remove(db, do_unlink=True)
 
 def update_show_machining(self,context):
     print('UPDATE SHOW MACHINING',self.show_machining)
@@ -982,7 +997,7 @@ class Frameless_Scene_Props(PropertyGroup):
                                       ('Open','Open','Open')],
                                default='Door Drawer')# type: ignore
 
-    include_drawer_boxes: bpy.props.BoolProperty(name="Include Drawer Boxes",default = False,update=update_include_drawer_boxes)# type: ignore
+    include_drawer_boxes: bpy.props.BoolProperty(name="Include Drawer Boxes",default = True,update=update_include_drawer_boxes)# type: ignore
 
     base_corner_type: EnumProperty(name="Base Corner Type",
                                items=[('Diagonal Corner','Diagonal Corner','Diagonal Corner'),
@@ -1676,6 +1691,18 @@ class Frameless_Scene_Props(PropertyGroup):
     def draw_upper_bottom_details_ui(self,layout,context):
         pass
 
+    def draw_drawer_box_ui(self, layout, context):
+        """Draw the drawer box options UI section."""
+        from ... import hb_project
+        
+        # Get props from main scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Include drawer boxes toggle
+        row = layout.row()
+        row.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes in New Cabinets")
+
     def draw_library_ui(self,layout,context):
 
         col = layout.column(align=True)
@@ -1820,7 +1847,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.alignment = 'LEFT'        
             row.prop(self,'show_drawer_options',text="Drawer Boxes",icon='TRIA_DOWN' if self.show_drawer_options else 'TRIA_RIGHT',emboss=False)
             if self.show_drawer_options:
-                size_box = box.box()             
+                self.draw_drawer_box_ui(box, context)
                 
             box = col.box()
             row = box.row()
