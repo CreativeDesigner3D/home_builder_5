@@ -427,6 +427,13 @@ class GeoNodeHardware(GeoNodeObject):
         super().create('GeoNodeHardware',name)  
 
 
+class GeoNodeDrawerBox(GeoNodeObject):  
+
+    def create(self,name):
+        super().create('GeoNodeDrawerBox',name)  
+        self.obj['IS_DRAWER_BOX'] = True
+
+
 class GeoNodeDoorSwing(GeoNodeObject):  
 
     def create(self,name):
