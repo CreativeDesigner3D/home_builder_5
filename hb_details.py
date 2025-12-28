@@ -115,6 +115,7 @@ class GeoNodeLine(hb_types.GeoNodeObject):
         # Create object
         self.obj = bpy.data.objects.new(name, curve)
         self.obj['IS_DETAIL_LINE'] = True
+        self.obj['IS_2D_ANNOTATION'] = True
         self.obj.color = (0, 0, 0, 1)  # Black line
         
         # Link to scene
@@ -169,6 +170,7 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
         # Create object
         self.obj = bpy.data.objects.new(name, curve)
         self.obj['IS_DETAIL_POLYLINE'] = True
+        self.obj['IS_2D_ANNOTATION'] = True
         self.obj.color = line_color
         
         bpy.context.scene.collection.objects.link(self.obj)
@@ -220,6 +222,7 @@ class GeoNodeCircle(hb_types.GeoNodeObject):
         # Create object
         self.obj = bpy.data.objects.new(name, curve_data)
         self.obj['IS_DETAIL_CIRCLE'] = True
+        self.obj['IS_2D_ANNOTATION'] = True
         self.obj.color = (0, 0, 0, 1)
         
         bpy.context.scene.collection.objects.link(self.obj)
@@ -289,6 +292,7 @@ class GeoNodeText(hb_types.GeoNodeObject):
         # Create object
         self.obj = bpy.data.objects.new(name, text_data)
         self.obj['IS_DETAIL_TEXT'] = True
+        self.obj['IS_2D_ANNOTATION'] = True
         self.obj.color = (0, 0, 0, 1)
         
         bpy.context.scene.collection.objects.link(self.obj)
