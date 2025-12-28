@@ -1022,12 +1022,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.update_dimensions(context)
 
     def find_cabinet_bp(self, obj):
-        """Find the cabinet base point (cage) from any child object."""
+        """Find the cabinet or appliance base point (cage) from any child object."""
         if obj is None:
             return None
         
         # Check the object itself
-        if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+        if 'IS_FRAMELESS_CABINET_CAGE' in obj or 'IS_APPLIANCE' in obj:
             return obj
         
         # Walk up parent hierarchy (but stop at walls)
@@ -1035,7 +1035,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         while current:
             if 'IS_WALL_BP' in current:
                 return None  # Don't snap to wall-parented cabinets from floor mode
-            if 'IS_FRAMELESS_CABINET_CAGE' in current:
+            if 'IS_FRAMELESS_CABINET_CAGE' in current or 'IS_APPLIANCE' in current:
                 return current
             current = current.parent
         
@@ -1512,14 +1512,32 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     search_obj_name: bpy.props.StringProperty(name="Search Object Name",default="")# type: ignore
     toggle_type: bpy.props.StringProperty(name="Toggle Type",default="")# type: ignore
     toggle_on: bpy.props.BoolProperty(name="Toggle On",default=False)# type: ignore
+    
+    # Markers that should be treated like cabinets for selection purposes
+    CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_APPLIANCE']
 
-    def toggle_obj(self,obj):
+    def is_cabinet_like(self, obj):
+        """Check if object has any cabinet-like marker."""
+        for marker in self.CABINET_LIKE_MARKERS:
+            if marker in obj:
+                return True
+        return False
+
+    def toggle_obj(self, obj):
         if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj:
-            return        
-        if self.toggle_type in obj:
-            toggle_cabinet_color(obj,True,type_name=self.toggle_type)
+            return
+        
+        # Special handling for cabinet-like objects (cabinets, appliances, etc.)
+        if self.toggle_type == "IS_FRAMELESS_CABINET_CAGE":
+            if self.is_cabinet_like(obj):
+                toggle_cabinet_color(obj, True, type_name=self.toggle_type)
+            else:
+                toggle_cabinet_color(obj, False, type_name=self.toggle_type)
         else:
-            toggle_cabinet_color(obj,False,type_name=self.toggle_type)
+            if self.toggle_type in obj:
+                toggle_cabinet_color(obj, True, type_name=self.toggle_type)
+            else:
+                toggle_cabinet_color(obj, False, type_name=self.toggle_type)
 
     def execute(self, context):
         props = context.scene.hb_frameless
