@@ -1,6 +1,7 @@
 import bpy
 import math
 from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart
+from ...hb_details import GeoNodeText
 from ... import units
 from ...units import inch
 
@@ -28,6 +29,21 @@ class Appliance(GeoNodeCage):
         self.set_input('Dim Y', self.depth)
         self.set_input('Dim Z', self.height)
         self.set_input('Mirror Y', True)
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+
+        props = bpy.context.scene.home_builder
+
+        appliance_text = GeoNodeText()
+        appliance_text.create('Appliance Text', appliance_type, props.annotation_text_size)
+        appliance_text.obj.parent = self.obj
+        appliance_text.obj.rotation_euler.x = math.radians(90)
+        appliance_text.driver_location("x", 'dim_x/2', [dim_x])
+        appliance_text.driver_location("y", '-dim_y', [dim_y])
+        appliance_text.driver_location("z", 'dim_z/2', [dim_z])
+        appliance_text.set_alignment('CENTER', 'CENTER')
 
 
 class Range(Appliance):

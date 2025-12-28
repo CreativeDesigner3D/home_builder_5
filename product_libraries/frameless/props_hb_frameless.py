@@ -1772,16 +1772,20 @@ class Frameless_Scene_Props(PropertyGroup):
                 row.prop(self,'dishwasher_width',text="Dishwasher")
                 row.prop(self,'range_width',text="Range")       
 
+                # APPLIANCE CABINETS
                 row = box.row()
-                row.scale_y = 1.5                   
+                row.scale_y = 1.5  
+                row.operator('hb_frameless.draw_cabinet',text="Refrigerator").cabinet_name = 'Refrigerator Cabinet'                 
                 row.operator('hb_frameless.draw_cabinet',text="Base Built-In").cabinet_name = 'Base Built-In'
                 row.operator('hb_frameless.draw_cabinet',text="Tall Built-In").cabinet_name = 'Tall Built-In'
-                row.operator('hb_frameless.draw_cabinet',text="Dishwasher").cabinet_name = 'Dishwasher'
+                
+                # STAND ALONE APPLIANCES
                 row = box.row()
                 row.scale_y = 1.5   
-                row.operator('hb_frameless.draw_cabinet',text="Range").cabinet_name = 'Range'
+                row.operator('hb_frameless.draw_cabinet',text="Dishwasher").cabinet_name = 'Dishwasher'
                 row.operator('hb_frameless.draw_cabinet',text="Refrigerator").cabinet_name = 'Refrigerator'
-                row.operator('hb_frameless.draw_cabinet',text="Upper Blind").cabinet_name = 'Upper Blind'  
+                row.operator('hb_frameless.draw_cabinet',text="Range").cabinet_name = 'Range'
+                row.operator('hb_frameless.draw_cabinet',text="Range Hood").cabinet_name = 'Range Hood'  
 
             box = col.box()
             row = box.row()

@@ -1526,15 +1526,14 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
             'Range': 'RANGE',
             'Dishwasher': 'DISHWASHER',
             'Refrigerator': 'REFRIGERATOR',
-            'Hood': 'HOOD',
-            'Wood Hood': 'HOOD',
+            'Range Hood': 'HOOD',
         }
         
         # Check if this is an appliance
         is_appliance = False
         appliance_type = ""
         for name, app_type in appliance_map.items():
-            if name in self.cabinet_name:
+            if name == self.cabinet_name:
                 is_appliance = True
                 appliance_type = app_type
                 break
