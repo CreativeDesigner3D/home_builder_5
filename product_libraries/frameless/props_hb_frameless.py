@@ -504,7 +504,7 @@ class HB_UL_door_styles(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
-            row.prop(item, "name", text="", emboss=False, icon='MOD_LATTICE')
+            row.prop(item, "name", text="", emboss=False)
             # Show door type indicator
             if item.door_type == 'SLAB':
                 row.label(text="", icon='MESH_PLANE')
@@ -531,8 +531,6 @@ class Frameless_Door_Style(PropertyGroup):
         items=[
             ('SLAB', "Slab", "Solid slab door"),
             ('5_PIECE', "5 Piece", "5-piece frame and panel door"),
-            ('SHAKER', "Shaker", "Shaker style door"),
-            ('RAISED_PANEL', "Raised Panel", "Raised panel door"),
         ],
         default='SLAB'
     )  # type: ignore
@@ -544,8 +542,6 @@ class Frameless_Door_Style(PropertyGroup):
         items=[
             ('MATCH_CABINET', "Match Cabinet", "Match cabinet style material"),
             ('GLASS', "Glass", "Glass panel"),
-            ('ACRYLIC', "Acrylic", "Acrylic panel"),
-            ('METAL', "Metal", "Metal panel insert"),
         ],
         default='MATCH_CABINET'
     )  # type: ignore
@@ -813,21 +809,13 @@ class Frameless_Door_Style(PropertyGroup):
             col.label(text="Frame Dimensions:")
             col.prop(self, "stile_width", text="Stile Width")
             col.prop(self, "rail_width", text="Rail Width")
+            col.prop(self, "mid_rail_width", text="Mid Rail Width")
             
             col = box.column(align=True)
             col.label(text="Panel:")
             col.prop(self, "panel_material", text="Material")
             col.prop(self, "panel_thickness", text="Thickness")
             col.prop(self, "panel_inset", text="Inset")
-            
-            # Mid rail
-            col = box.column(align=True)
-            col.prop(self, "add_mid_rail")
-            if self.add_mid_rail:
-                col.prop(self, "mid_rail_width", text="Mid Rail Width")
-                col.prop(self, "center_mid_rail")
-                if not self.center_mid_rail:
-                    col.prop(self, "mid_rail_location", text="Location from Bottom")
         
         # Profile objects
         col = box.column(align=True)
