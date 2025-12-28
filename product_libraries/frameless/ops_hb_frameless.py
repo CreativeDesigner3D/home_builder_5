@@ -438,10 +438,36 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return props.base_cabinet_height
 
     def get_cabinet_z_location(self, context) -> float:
+        from ... import hb_project
         props = context.scene.hb_frameless
+        
         if self.cabinet_type == 'UPPER':
             return props.default_wall_cabinet_location
+        
+        # Hood is placed above the range
+        if self.is_appliance and self.appliance_type == 'HOOD':
+            # Place hood at range height (36") + clearance (typically 24-30" above cooktop)
+            return units.inch(54)  # 36" range + 18" clearance
+        
         return 0
+    
+    def get_appliance_height(self, context) -> float:
+        """Get the height for an appliance, handling special cases like hoods."""
+        from ... import hb_project
+        
+        if self.appliance_type == 'HOOD':
+            # Hood extends from its Z location to the ceiling
+            main_scene = hb_project.get_main_scene()
+            hb_props = main_scene.home_builder
+            ceiling_height = hb_props.ceiling_height
+            hood_z = self.get_cabinet_z_location(context)
+            return ceiling_height - hood_z
+        
+        # For other appliances, use the class default
+        appliance_class = self.get_appliance_class()
+        if appliance_class:
+            return appliance_class.height
+        return units.inch(36)
     
     def get_cage_center_snap(self, cursor_x: float, cabinet_width: float) -> float:
         """
@@ -528,7 +554,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.individual_cabinet_width = appliance_class.width
                 self.preview_cage.set_input('Dim X', appliance_class.width)
                 self.preview_cage.set_input('Dim Y', appliance_class.depth)
-                self.preview_cage.set_input('Dim Z', appliance_class.height)
+                # Use get_appliance_height for special cases like hoods
+                self.preview_cage.set_input('Dim Z', self.get_appliance_height(context))
             else:
                 self.individual_cabinet_width = props.default_cabinet_width
                 self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
@@ -1055,7 +1082,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Free placement on floor
             self.preview_cage.obj.parent = None
             self.preview_cage.obj.location = Vector(self.hit_location)
-            if self.cabinet_type == 'UPPER':
+            # Set Z location based on cabinet/appliance type
+            if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
                 self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
             else:
                 self.preview_cage.obj.location.z = 0
@@ -1103,7 +1131,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.preview_cage.obj.parent = None
         self.preview_cage.obj.location = self.snap_cabinet.location + world_offset
         
-        if self.cabinet_type == 'UPPER':
+        # Set Z location based on cabinet/appliance type
+        if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
             self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
         else:
             self.preview_cage.obj.location.z = self.snap_cabinet.location.z
@@ -1206,6 +1235,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 if self.is_appliance:
                     # Appliances use their own dimensions but allow width override
                     cabinet.width = self.individual_cabinet_width
+                    # Set height for appliances that need custom height (like hoods)
+                    cabinet.height = self.get_appliance_height(context)
                     cabinet.create(self.cabinet_name or 'Appliance')
                 else:
                     cabinet.width = self.individual_cabinet_width
@@ -1242,6 +1273,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 if self.is_appliance:
                     # Appliances use their own dimensions but allow width override
                     cabinet.width = self.individual_cabinet_width
+                    # Set height for appliances that need custom height (like hoods)
+                    cabinet.height = self.get_appliance_height(context)
                     cabinet.create(self.cabinet_name or 'Appliance')
                 else:
                     cabinet.width = self.individual_cabinet_width
@@ -1260,8 +1293,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.obj.location = start_loc + world_offset
                 cabinet.obj.rotation_euler = rotation
                 
-                # Base cabinets on floor
-                if self.cabinet_type == 'UPPER':
+                # Set Z location based on cabinet/appliance type
+                if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
                     cabinet.obj.location.z = self.get_cabinet_z_location(context)
                 else:
                     cabinet.obj.location.z = start_loc.z
