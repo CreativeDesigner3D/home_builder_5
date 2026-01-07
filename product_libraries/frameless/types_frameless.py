@@ -39,6 +39,7 @@ class Cabinet(GeoNodeCage):
     def create_cabinet(self,name):
         super().create(name)
         self.obj['IS_FRAMELESS_CABINET_CAGE'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
         self.obj.display_type = 'WIRE'
         
         self.set_input('Dim X', self.width)
@@ -392,6 +393,7 @@ class CabinetBay(GeoNodeCage):
     def create(self,name):
         super().create(name)
         self.obj['IS_FRAMELESS_BAY_CAGE'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_bay_commands'
         self.obj.display_type = 'WIRE'
 
 
@@ -507,6 +509,7 @@ class CabinetOpening(GeoNodeCage):
     def create(self,name):
         super().create(name)
         self.obj['IS_FRAMELESS_OPENING_CAGE'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_opening_commands'
         self.obj.display_type = 'WIRE'
 
     def add_properties_front_overlays(self):
@@ -565,6 +568,7 @@ class CabinetInterior(GeoNodeCage):
     def create(self,name):
         super().create(name)
         self.obj['IS_FRAMELESS_INTERIOR_CAGE'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_commands'
         self.obj.display_type = 'WIRE'
 
 
@@ -749,6 +753,7 @@ class CabinetFront(CabinetPart):
     def create(self,name):
         super().create(name)
         self.obj['IS_CABINET_FRONT'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_door_front_commands'
         self.add_overlay_properties()
 
     def add_overlay_properties(self):

@@ -4007,6 +4007,688 @@ class hb_frameless_OT_browse_molding_library(bpy.types.Operator):
 
 
 
+
+# =============================================================================
+# RIGHT-CLICK MENU OPERATORS
+# =============================================================================
+
+class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
+    bl_idname = "hb_frameless.cabinet_prompts"
+    bl_label = "Cabinet Prompts"
+    bl_description = "Edit cabinet properties"
+    bl_options = {'UNDO'}
+
+    cabinet_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5) # type: ignore
+    cabinet_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5) # type: ignore
+    cabinet_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
+
+    cabinet = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        self.cabinet = hb_types.GeoNodeCage(cabinet_bp)
+        self.cabinet_width = self.cabinet.get_input('Dim X')
+        self.cabinet_height = self.cabinet.get_input('Dim Z')
+        self.cabinet_depth = self.cabinet.get_input('Dim Y')
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        self.cabinet.set_input('Dim X', self.cabinet_width)
+        self.cabinet.set_input('Dim Z', self.cabinet_height)
+        self.cabinet.set_input('Dim Y', self.cabinet_depth)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        
+        row = col.row(align=True)
+        row.label(text="Width:")
+        row.prop(self, 'cabinet_width', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Height:")
+        row.prop(self, 'cabinet_height', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Depth:")
+        row.prop(self, 'cabinet_depth', text="")
+
+
+class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
+    bl_idname = "hb_frameless.drop_cabinet_to_countertop"
+    bl_label = "Drop to Countertop"
+    bl_description = "Lower cabinet height to standard countertop height (36 inches)"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp and 'CABINET_TYPE' in cabinet_bp:
+                return cabinet_bp['CABINET_TYPE'] in ['TALL', 'UPPER']
+        return False
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        cabinet = hb_types.GeoNodeCage(cabinet_bp)
+        countertop_height = units.inch(36)
+        
+        if cabinet_bp['CABINET_TYPE'] == 'UPPER':
+            # For uppers, move the bottom of the cabinet to countertop height
+            current_z = cabinet_bp.location.z
+            current_height = cabinet.get_input('Dim Z')
+            new_z = countertop_height
+            cabinet_bp.location.z = new_z
+        elif cabinet_bp['CABINET_TYPE'] == 'TALL':
+            # For talls, reduce height so top is at countertop height
+            cabinet.set_input('Dim Z', countertop_height)
+        
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_drop_cabinet_height(bpy.types.Operator):
+    bl_idname = "hb_frameless.drop_cabinet_height"
+    bl_label = "Drop Height"
+    bl_description = "Lower the cabinet by a specified amount"
+    bl_options = {'UNDO'}
+
+    drop_amount: bpy.props.FloatProperty(
+        name="Drop Amount",
+        unit='LENGTH',
+        precision=5,
+        default=0.0762  # 3 inches
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=250)
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        cabinet = hb_types.GeoNodeCage(cabinet_bp)
+        current_height = cabinet.get_input('Dim Z')
+        cabinet.set_input('Dim Z', current_height - self.drop_amount)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'drop_amount')
+
+
+class hb_frameless_OT_raise_cabinet_bottom(bpy.types.Operator):
+    bl_idname = "hb_frameless.raise_cabinet_bottom"
+    bl_label = "Raise Bottom"
+    bl_description = "Raise the bottom of the cabinet by a specified amount"
+    bl_options = {'UNDO'}
+
+    raise_amount: bpy.props.FloatProperty(
+        name="Raise Amount",
+        unit='LENGTH',
+        precision=5,
+        default=0.0762  # 3 inches
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=250)
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        cabinet = hb_types.GeoNodeCage(cabinet_bp)
+        current_height = cabinet.get_input('Dim Z')
+        cabinet.set_input('Dim Z', current_height - self.raise_amount)
+        cabinet_bp.location.z += self.raise_amount
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'raise_amount')
+
+
+class hb_frameless_OT_add_applied_end(bpy.types.Operator):
+    bl_idname = "hb_frameless.add_applied_end"
+    bl_label = "Add Applied End"
+    bl_description = "Add an applied finished end panel to the cabinet"
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side",
+        items=[
+            ('LEFT', "Left", "Add to left side"),
+            ('RIGHT', "Right", "Add to right side"),
+            ('BOTH', "Both", "Add to both sides"),
+        ],
+        default='LEFT'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=200)
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        # TODO: Implement applied end panel creation
+        self.report({'INFO'}, f"Applied end will be added to {self.side} side")
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'side', expand=True)
+
+
+class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
+    bl_idname = "hb_frameless.delete_cabinet"
+    bl_label = "Delete Cabinet"
+    bl_description = "Delete the selected cabinet and all its parts"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        hb_utils.delete_obj_and_children(cabinet_bp)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
+    bl_idname = "hb_frameless.change_bay_opening"
+    bl_label = "Change Bay Opening"
+    bl_description = "Change the type of opening in this bay"
+    bl_options = {'UNDO'}
+
+    opening_type: bpy.props.EnumProperty(
+        name="Opening Type",
+        items=[
+            ('DOOR_DRAWER', "Door/Drawer", "Standard door with drawer option"),
+            ('LEFT_DOOR', "Left Door", "Single left swing door"),
+            ('RIGHT_DOOR', "Right Door", "Single right swing door"),
+            ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
+            ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
+            ('3_DRAWER_STACK', "3 Drawer Stack", "Three equal drawers"),
+            ('4_DRAWER_STACK', "4 Drawer Stack", "Four equal drawers"),
+            ('OPEN', "Open", "Open with no front"),
+        ],
+        default='DOOR_DRAWER'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            # Check if we clicked on a bay or something inside a bay
+            if 'IS_FRAMELESS_BAY_CAGE' in obj:
+                return True
+            # Walk up to find bay
+            bay_bp = hb_utils.get_bay_bp(obj)
+            return bay_bp is not None
+        return False
+
+    def execute(self, context):
+        bay_bp = context.object if 'IS_FRAMELESS_BAY_CAGE' in context.object else hb_utils.get_bay_bp(context.object)
+        if not bay_bp:
+            self.report({'ERROR'}, "Could not find bay")
+            return {'CANCELLED'}
+        
+        # TODO: Implement bay opening change logic
+        # This will need to:
+        # 1. Delete existing opening children
+        # 2. Create new opening based on type
+        # 3. Re-link dimensions
+        
+        self.report({'INFO'}, f"Bay will be changed to {self.opening_type}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_opening_prompts(bpy.types.Operator):
+    bl_idname = "hb_frameless.opening_prompts"
+    bl_label = "Opening Prompts"
+    bl_description = "Edit opening properties"
+    bl_options = {'UNDO'}
+
+    door_swing: bpy.props.EnumProperty(
+        name="Door Swing",
+        items=[
+            ('0', "Left", "Left swing"),
+            ('1', "Right", "Right swing"),
+            ('2', "Double", "Double doors"),
+        ],
+        default='2'
+    ) # type: ignore
+
+    inset_front: bpy.props.BoolProperty(name="Inset Front", default=False) # type: ignore
+
+    opening = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            if 'IS_FRAMELESS_OPENING_CAGE' in obj:
+                return True
+            opening_bp = hb_utils.get_opening_bp(obj)
+            return opening_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        opening_bp = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
+        self.opening = hb_types.GeoNodeCage(opening_bp)
+        
+        if 'Door Swing' in opening_bp:
+            self.door_swing = str(opening_bp['Door Swing'])
+        if 'Inset Front' in opening_bp:
+            self.inset_front = opening_bp['Inset Front']
+        
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=250)
+
+    def check(self, context):
+        if 'Door Swing' in self.opening.obj:
+            self.opening.obj['Door Swing'] = int(self.door_swing)
+        if 'Inset Front' in self.opening.obj:
+            self.opening.obj['Inset Front'] = self.inset_front
+        hb_utils.run_calc_fix(context, self.opening.obj)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        
+        if 'Door Swing' in self.opening.obj:
+            row = box.row()
+            row.label(text="Door Swing:")
+            row.prop(self, 'door_swing', text="")
+        
+        if 'Inset Front' in self.opening.obj:
+            row = box.row()
+            row.prop(self, 'inset_front')
+
+
+class hb_frameless_OT_change_opening_type(bpy.types.Operator):
+    bl_idname = "hb_frameless.change_opening_type"
+    bl_label = "Change Opening Type"
+    bl_description = "Change this opening to a different type"
+    bl_options = {'UNDO'}
+
+    opening_type: bpy.props.EnumProperty(
+        name="Opening Type",
+        items=[
+            ('DOORS', "Doors", "Door opening"),
+            ('DRAWER', "Drawer", "Drawer opening"),
+            ('OPEN', "Open", "Open (no front)"),
+        ],
+        default='DOORS'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            if 'IS_FRAMELESS_OPENING_CAGE' in obj:
+                return True
+            opening_bp = hb_utils.get_opening_bp(obj)
+            return opening_bp is not None
+        return False
+
+    def execute(self, context):
+        opening_bp = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
+        # TODO: Implement opening type change
+        self.report({'INFO'}, f"Opening will be changed to {self.opening_type}")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
+    bl_idname = "hb_frameless.door_front_prompts"
+    bl_label = "Front Prompts"
+    bl_description = "Edit door/drawer front properties"
+    bl_options = {'UNDO'}
+
+    top_overlay: bpy.props.FloatProperty(name="Top Overlay", unit='LENGTH', precision=5) # type: ignore
+    bottom_overlay: bpy.props.FloatProperty(name="Bottom Overlay", unit='LENGTH', precision=5) # type: ignore
+    left_overlay: bpy.props.FloatProperty(name="Left Overlay", unit='LENGTH', precision=5) # type: ignore
+    right_overlay: bpy.props.FloatProperty(name="Right Overlay", unit='LENGTH', precision=5) # type: ignore
+
+    front = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj and 'IS_CABINET_FRONT' in obj
+
+    def invoke(self, context, event):
+        self.front = context.object
+        self.top_overlay = self.front.get('Top Overlay', 0)
+        self.bottom_overlay = self.front.get('Bottom Overlay', 0)
+        self.left_overlay = self.front.get('Left Overlay', 0)
+        self.right_overlay = self.front.get('Right Overlay', 0)
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        # Note: These are usually driven, so direct setting may not work
+        # This is a starting point - may need to modify overlay prompt obj instead
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        
+        row = col.row(align=True)
+        row.label(text="Top Overlay:")
+        row.prop(self, 'top_overlay', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Bottom Overlay:")
+        row.prop(self, 'bottom_overlay', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Left Overlay:")
+        row.prop(self, 'left_overlay', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Right Overlay:")
+        row.prop(self, 'right_overlay', text="")
+
+
+class hb_frameless_OT_delete_front(bpy.types.Operator):
+    bl_idname = "hb_frameless.delete_front"
+    bl_label = "Delete Front"
+    bl_description = "Delete this door or drawer front"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj and 'IS_CABINET_FRONT' in obj
+
+    def execute(self, context):
+        front = context.object
+        hb_utils.delete_obj_and_children(front)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_appliance_prompts(bpy.types.Operator):
+    bl_idname = "hb_frameless.appliance_prompts"
+    bl_label = "Appliance Prompts"
+    bl_description = "Edit appliance properties"
+    bl_options = {'UNDO'}
+
+    appliance_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5) # type: ignore
+    appliance_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5) # type: ignore
+    appliance_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
+
+    appliance = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            appliance_bp = hb_utils.get_appliance_bp(obj)
+            return appliance_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        appliance_bp = hb_utils.get_appliance_bp(context.object)
+        self.appliance = hb_types.GeoNodeCage(appliance_bp)
+        self.appliance_width = self.appliance.get_input('Dim X')
+        self.appliance_height = self.appliance.get_input('Dim Z')
+        self.appliance_depth = self.appliance.get_input('Dim Y')
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        self.appliance.set_input('Dim X', self.appliance_width)
+        self.appliance.set_input('Dim Z', self.appliance_height)
+        self.appliance.set_input('Dim Y', self.appliance_depth)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        
+        row = col.row(align=True)
+        row.label(text="Width:")
+        row.prop(self, 'appliance_width', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Height:")
+        row.prop(self, 'appliance_height', text="")
+        
+        row = col.row(align=True)
+        row.label(text="Depth:")
+        row.prop(self, 'appliance_depth', text="")
+
+
+class hb_frameless_OT_toggle_panel_ready(bpy.types.Operator):
+    bl_idname = "hb_frameless.toggle_panel_ready"
+    bl_label = "Toggle Panel Ready"
+    bl_description = "Toggle panel ready option for this appliance"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            appliance_bp = hb_utils.get_appliance_bp(obj)
+            return appliance_bp is not None and 'Panel Ready' in appliance_bp
+        return False
+
+    def execute(self, context):
+        appliance_bp = hb_utils.get_appliance_bp(context.object)
+        appliance_bp['Panel Ready'] = not appliance_bp.get('Panel Ready', False)
+        hb_utils.run_calc_fix(context, appliance_bp)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_add_appliance_door_panel(bpy.types.Operator):
+    bl_idname = "hb_frameless.add_appliance_door_panel"
+    bl_label = "Add Appliance Door Panel"
+    bl_description = "Add a door panel to this appliance"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            appliance_bp = hb_utils.get_appliance_bp(obj)
+            return appliance_bp is not None
+        return False
+
+    def execute(self, context):
+        appliance_bp = hb_utils.get_appliance_bp(context.object)
+        # TODO: Implement appliance door panel creation
+        self.report({'INFO'}, "Appliance door panel will be added")
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_delete_appliance(bpy.types.Operator):
+    bl_idname = "hb_frameless.delete_appliance"
+    bl_label = "Delete Appliance"
+    bl_description = "Delete the selected appliance"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            appliance_bp = hb_utils.get_appliance_bp(obj)
+            return appliance_bp is not None
+        return False
+
+    def execute(self, context):
+        appliance_bp = hb_utils.get_appliance_bp(context.object)
+        hb_utils.delete_obj_and_children(appliance_bp)
+        return {'FINISHED'}
+
+
+
+
+class hb_frameless_OT_interior_prompts(bpy.types.Operator):
+    bl_idname = "hb_frameless.interior_prompts"
+    bl_label = "Interior Prompts"
+    bl_description = "Edit interior properties"
+    bl_options = {'UNDO'}
+
+    shelf_quantity: bpy.props.IntProperty(name="Shelf Quantity", min=0, max=10, default=1) # type: ignore
+    shelf_setback: bpy.props.FloatProperty(name="Shelf Setback", unit='LENGTH', precision=5) # type: ignore
+    shelf_clip_gap: bpy.props.FloatProperty(name="Shelf Clip Gap", unit='LENGTH', precision=5) # type: ignore
+
+    interior = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            interior_bp = hb_utils.get_interior_bp(obj)
+            return interior_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        interior_bp = hb_utils.get_interior_bp(context.object)
+        self.interior = hb_types.GeoNodeCage(interior_bp)
+        
+        if 'Shelf Quantity' in interior_bp:
+            self.shelf_quantity = interior_bp['Shelf Quantity']
+        if 'Shelf Setback' in interior_bp:
+            self.shelf_setback = interior_bp['Shelf Setback']
+        if 'Shelf Clip Gap' in interior_bp:
+            self.shelf_clip_gap = interior_bp['Shelf Clip Gap']
+        
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        if 'Shelf Quantity' in self.interior.obj:
+            self.interior.obj['Shelf Quantity'] = self.shelf_quantity
+        if 'Shelf Setback' in self.interior.obj:
+            self.interior.obj['Shelf Setback'] = self.shelf_setback
+        if 'Shelf Clip Gap' in self.interior.obj:
+            self.interior.obj['Shelf Clip Gap'] = self.shelf_clip_gap
+        hb_utils.run_calc_fix(context, self.interior.obj)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        
+        if 'Shelf Quantity' in self.interior.obj:
+            row = col.row(align=True)
+            row.label(text="Shelf Quantity:")
+            row.prop(self, 'shelf_quantity', text="")
+        
+        if 'Shelf Setback' in self.interior.obj:
+            row = col.row(align=True)
+            row.label(text="Shelf Setback:")
+            row.prop(self, 'shelf_setback', text="")
+        
+        if 'Shelf Clip Gap' in self.interior.obj:
+            row = col.row(align=True)
+            row.label(text="Shelf Clip Gap:")
+            row.prop(self, 'shelf_clip_gap', text="")
+
+
+class hb_frameless_OT_change_interior_type(bpy.types.Operator):
+    bl_idname = "hb_frameless.change_interior_type"
+    bl_label = "Change Interior Type"
+    bl_description = "Change the interior configuration"
+    bl_options = {'UNDO'}
+
+    interior_type: bpy.props.EnumProperty(
+        name="Interior Type",
+        items=[
+            ('SHELVES', "Shelves", "Standard adjustable shelves"),
+            ('ROLLOUTS', "Rollouts", "Pull-out rollout trays"),
+            ('TRAY_DIVIDERS', "Tray Dividers", "Vertical tray dividers"),
+            ('EMPTY', "Empty", "No interior parts"),
+        ],
+        default='SHELVES'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            interior_bp = hb_utils.get_interior_bp(obj)
+            return interior_bp is not None
+        return False
+
+    def execute(self, context):
+        interior_bp = hb_utils.get_interior_bp(context.object)
+        if not interior_bp:
+            self.report({'ERROR'}, "Could not find interior")
+            return {'CANCELLED'}
+        
+        # TODO: Implement interior type change logic
+        # This will need to:
+        # 1. Delete existing interior children
+        # 2. Create new interior based on type
+        # 3. Re-link dimensions from parent opening
+        
+        self.report({'INFO'}, f"Interior will be changed to {self.interior_type}")
+        return {'FINISHED'}
+
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_load_cabinet_group_from_library,
@@ -4044,6 +4726,25 @@ classes = (
     hb_frameless_OT_add_molding_profile,
     hb_frameless_OT_add_solid_lumber,
     hb_frameless_OT_browse_molding_library,
+    # Right-click menu operators
+    hb_frameless_OT_cabinet_prompts,
+    hb_frameless_OT_drop_cabinet_to_countertop,
+    hb_frameless_OT_drop_cabinet_height,
+    hb_frameless_OT_raise_cabinet_bottom,
+    hb_frameless_OT_add_applied_end,
+    hb_frameless_OT_delete_cabinet,
+    hb_frameless_OT_change_bay_opening,
+    hb_frameless_OT_opening_prompts,
+    hb_frameless_OT_change_opening_type,
+    hb_frameless_OT_door_front_prompts,
+    hb_frameless_OT_delete_front,
+    hb_frameless_OT_appliance_prompts,
+    hb_frameless_OT_toggle_panel_ready,
+    hb_frameless_OT_add_appliance_door_panel,
+    hb_frameless_OT_delete_appliance,
+    # Interior menu operators
+    hb_frameless_OT_interior_prompts,
+    hb_frameless_OT_change_interior_type,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

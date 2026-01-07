@@ -1,5 +1,99 @@
 import bpy
 
+
+# =============================================================================
+# BASE POINT HELPER FUNCTIONS
+# =============================================================================
+
+def get_cabinet_bp(obj):
+    """Walk up the parent hierarchy to find the cabinet base point object."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+        return obj
+    if obj.parent:
+        return get_cabinet_bp(obj.parent)
+    return None
+
+
+def get_bay_bp(obj):
+    """Walk up the parent hierarchy to find the bay base point object."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_BAY_CAGE' in obj:
+        return obj
+    if obj.parent:
+        return get_bay_bp(obj.parent)
+    return None
+
+
+def get_opening_bp(obj):
+    """Walk up the parent hierarchy to find the opening base point object."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_OPENING_CAGE' in obj:
+        return obj
+    if obj.parent:
+        return get_opening_bp(obj.parent)
+    return None
+
+
+
+
+def get_interior_bp(obj):
+    """Walk up the parent hierarchy to find the interior base point object."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_INTERIOR_CAGE' in obj:
+        return obj
+    if obj.parent:
+        return get_interior_bp(obj.parent)
+    return None
+
+def get_appliance_bp(obj):
+    """Walk up the parent hierarchy to find the appliance base point object."""
+    if obj is None:
+        return None
+    if 'IS_APPLIANCE' in obj:
+        return obj
+    if obj.parent:
+        return get_appliance_bp(obj.parent)
+    return None
+
+
+def get_wall_bp(obj):
+    """Walk up the parent hierarchy to find the wall base point object."""
+    if obj is None:
+        return None
+    if 'IS_WALL_BP' in obj:
+        return obj
+    if obj.parent:
+        return get_wall_bp(obj.parent)
+    return None
+
+
+def delete_obj_and_children(obj):
+    """Delete an object and all of its children recursively."""
+    import bpy
+    
+    if obj is None:
+        return
+    
+    # Collect all objects to delete (children first)
+    objects_to_delete = []
+    
+    def collect_children(o):
+        for child in o.children:
+            collect_children(child)
+        objects_to_delete.append(o)
+    
+    collect_children(obj)
+    
+    # Delete all collected objects
+    for o in objects_to_delete:
+        bpy.data.objects.remove(o, do_unlink=True)
+
+
 def run_calc_fix(context, obj=None):
     """
     Workaround for Blender bug #133392 - grandchild drivers not updating.

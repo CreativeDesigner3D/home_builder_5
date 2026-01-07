@@ -23,6 +23,7 @@ class Appliance(GeoNodeCage):
         super().create(name)
         self.obj['IS_APPLIANCE'] = True
         self.obj['APPLIANCE_TYPE'] = appliance_type
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_appliance_commands'
         self.obj.display_type = 'WIRE'
         
         self.set_input('Dim X', self.width)
