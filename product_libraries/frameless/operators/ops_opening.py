@@ -368,12 +368,13 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         return splitter.obj
 
     def invoke(self, context, event):
-        # Find parent bay or opening
+        # Find parent opening or bay (prioritize opening so user can keep splitting)
         obj = context.object
-        bay_bp = hb_utils.get_bay_bp(obj)
         opening_bp = hb_utils.get_opening_bp(obj)
+        bay_bp = hb_utils.get_bay_bp(obj)
         
-        parent_obj = bay_bp if bay_bp else opening_bp
+        # Prioritize opening over bay
+        parent_obj = opening_bp if opening_bp else bay_bp
         if not parent_obj:
             self.report({'ERROR'}, "Could not find bay or opening")
             return {'CANCELLED'}
@@ -637,12 +638,13 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         return splitter.obj
 
     def invoke(self, context, event):
-        # Find parent bay or opening
+        # Find parent opening or bay (prioritize opening so user can keep splitting)
         obj = context.object
-        bay_bp = hb_utils.get_bay_bp(obj)
         opening_bp = hb_utils.get_opening_bp(obj)
+        bay_bp = hb_utils.get_bay_bp(obj)
         
-        parent_obj = bay_bp if bay_bp else opening_bp
+        # Prioritize opening over bay
+        parent_obj = opening_bp if opening_bp else bay_bp
         if not parent_obj:
             self.report({'ERROR'}, "Could not find bay or opening")
             return {'CANCELLED'}
