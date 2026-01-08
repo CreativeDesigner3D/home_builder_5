@@ -220,22 +220,24 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         return cabinet_obj.get('CABINET_TYPE', 'BASE')
 
     def create_applied_end(self, context, cabinet_obj, side):
-        """Create an applied end panel on the specified side."""
+        """Create an applied end panel on the specified side.
+        
+        Panel covers full cabinet height (including toe kick area) and
+        extends past the front to be flush with doors/drawers.
+        """
         props = bpy.context.scene.hb_frameless
         cabinet = hb_types.GeoNodeCage(cabinet_obj)
-        cabinet_type = self.get_cabinet_type(cabinet_obj)
         
         # Get cabinet dimensions
         dim_x = cabinet.var_input('Dim X', 'dim_x')
         dim_y = cabinet.var_input('Dim Y', 'dim_y')
         dim_z = cabinet.var_input('Dim Z', 'dim_z')
         
-        # Get toe kick properties if base/tall cabinet
-        has_toe_kick = 'Toe Kick Height' in cabinet_obj and 'Toe Kick Setback' in cabinet_obj
-        
-        if has_toe_kick:
-            tkh = cabinet.var_prop('Toe Kick Height', 'tkh')
-            tks = cabinet.var_prop('Toe Kick Setback', 'tks')
+        # Extension to be flush with door front:
+        # door_to_cabinet_gap (0.125") + front_thickness (0.75") = 0.875"
+        door_to_cab_gap = units.inch(0.125)
+        front_thickness = units.inch(0.75)
+        front_extension = door_to_cab_gap + front_thickness
         
         # Create the applied end panel
         panel = types_frameless.CabinetPart()
@@ -244,35 +246,31 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
         panel.obj.parent = cabinet_obj
         
-        # Rotate and position based on side
+        # Rotate panel to vertical orientation
         panel.obj.rotation_euler.y = math.radians(-90)
         
+        # Position at floor level (Z=0) for full height coverage
+        panel.obj.location.z = 0
+        
         if side == 'LEFT':
-            # Position at left side, outside the cabinet
+            # Position at left side of cabinet
             panel.obj.location.x = 0
-            if has_toe_kick:
-                panel.driver_location('z', 'tkh', [tkh])
-                panel.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
-                panel.driver_input("Width", 'dim_y-tks', [dim_y, tks])
-            else:
-                panel.obj.location.z = 0
-                panel.driver_input("Length", 'dim_z', [dim_z])
-                panel.driver_input("Width", 'dim_y', [dim_y])
+            panel.set_input("Mirror Y", True)
+            panel.set_input("Mirror Z", False)
         else:  # RIGHT
-            # Position at right side, outside the cabinet
+            # Position at right side of cabinet
             panel.driver_location('x', 'dim_x', [dim_x])
-            if has_toe_kick:
-                panel.driver_location('z', 'tkh', [tkh])
-                panel.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
-                panel.driver_input("Width", 'dim_y-tks', [dim_y, tks])
-            else:
-                panel.obj.location.z = 0
-                panel.driver_input("Length", 'dim_z', [dim_z])
-                panel.driver_input("Width", 'dim_y', [dim_y])
+            panel.set_input("Mirror Y", True)
+            panel.set_input("Mirror Z", True)
+        
+        # Full cabinet height
+        panel.driver_input("Length", 'dim_z', [dim_z])
+        
+        # Depth extends past front to be flush with door/drawer fronts
+        panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
         
         # Set thickness
-        panel.set_input("Thickness", props.default_front_thickness)
-        panel.set_input("Mirror Y", True)
+        panel.set_input("Thickness", props.default_carcass_part_thickness)
         
         return panel.obj
 
