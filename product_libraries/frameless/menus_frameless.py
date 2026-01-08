@@ -1,6 +1,20 @@
 import bpy
 
 
+class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
+    bl_label = "Applied Ends"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.add_applied_end", text="Add Left").side = 'LEFT'
+        layout.operator("hb_frameless.add_applied_end", text="Add Right").side = 'RIGHT'
+        layout.operator("hb_frameless.add_applied_end", text="Add Both").side = 'BOTH'
+        layout.separator()
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Left").side = 'LEFT'
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Right").side = 'RIGHT'
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Both").side = 'BOTH'
+
+
 class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
     bl_label = "Cabinet Commands"
 
@@ -12,7 +26,7 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_frameless.drop_cabinet_height", text="Drop Height")
         layout.operator("hb_frameless.raise_cabinet_bottom", text="Raise Bottom")
         layout.separator()
-        layout.operator("hb_frameless.add_applied_end", text="Add Applied End")
+        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
         layout.separator()
         layout.operator("hb_frameless.delete_cabinet", text="Delete Cabinet")
 
@@ -107,8 +121,6 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.change_interior_type", text="Shelves").interior_type = 'SHELVES'
-        layout.operator("hb_frameless.change_interior_type", text="Rollouts").interior_type = 'ROLLOUTS'
-        layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         layout.separator()
         layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
@@ -142,6 +154,7 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
 
 classes = (
+    HOME_BUILDER_MT_applied_ends,
     HOME_BUILDER_MT_cabinet_commands,
     HOME_BUILDER_MT_bay_commands,
     HOME_BUILDER_MT_bay_change_configuration,

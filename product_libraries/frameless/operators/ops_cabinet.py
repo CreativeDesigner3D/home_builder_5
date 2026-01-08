@@ -1,4 +1,5 @@
 import bpy
+import math
 from .. import types_frameless
 from .. import props_hb_frameless
 import os
@@ -197,10 +198,167 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=200)
 
+    def has_applied_end(self, cabinet_obj, side):
+        """Check if cabinet already has an applied end on the specified side."""
+        for child in cabinet_obj.children:
+            if side == 'LEFT' and child.get('IS_APPLIED_END_LEFT'):
+                return True
+            if side == 'RIGHT' and child.get('IS_APPLIED_END_RIGHT'):
+                return True
+        return False
+
+    def remove_applied_end(self, cabinet_obj, side):
+        """Remove existing applied end from specified side."""
+        for child in list(cabinet_obj.children):
+            if side == 'LEFT' and child.get('IS_APPLIED_END_LEFT'):
+                hb_utils.delete_obj_and_children(child)
+            if side == 'RIGHT' and child.get('IS_APPLIED_END_RIGHT'):
+                hb_utils.delete_obj_and_children(child)
+
+    def get_cabinet_type(self, cabinet_obj):
+        """Get the cabinet type."""
+        return cabinet_obj.get('CABINET_TYPE', 'BASE')
+
+    def create_applied_end(self, context, cabinet_obj, side):
+        """Create an applied end panel on the specified side."""
+        props = bpy.context.scene.hb_frameless
+        cabinet = hb_types.GeoNodeCage(cabinet_obj)
+        cabinet_type = self.get_cabinet_type(cabinet_obj)
+        
+        # Get cabinet dimensions
+        dim_x = cabinet.var_input('Dim X', 'dim_x')
+        dim_y = cabinet.var_input('Dim Y', 'dim_y')
+        dim_z = cabinet.var_input('Dim Z', 'dim_z')
+        
+        # Get toe kick properties if base/tall cabinet
+        has_toe_kick = 'Toe Kick Height' in cabinet_obj and 'Toe Kick Setback' in cabinet_obj
+        
+        if has_toe_kick:
+            tkh = cabinet.var_prop('Toe Kick Height', 'tkh')
+            tks = cabinet.var_prop('Toe Kick Setback', 'tks')
+        
+        # Create the applied end panel
+        panel = types_frameless.CabinetPart()
+        panel.create(f'Applied End {side.title()}')
+        panel.obj['IS_APPLIED_END_' + side] = True
+        panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
+        panel.obj.parent = cabinet_obj
+        
+        # Rotate and position based on side
+        panel.obj.rotation_euler.y = math.radians(-90)
+        
+        if side == 'LEFT':
+            # Position at left side, outside the cabinet
+            panel.obj.location.x = 0
+            if has_toe_kick:
+                panel.driver_location('z', 'tkh', [tkh])
+                panel.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+                panel.driver_input("Width", 'dim_y-tks', [dim_y, tks])
+            else:
+                panel.obj.location.z = 0
+                panel.driver_input("Length", 'dim_z', [dim_z])
+                panel.driver_input("Width", 'dim_y', [dim_y])
+        else:  # RIGHT
+            # Position at right side, outside the cabinet
+            panel.driver_location('x', 'dim_x', [dim_x])
+            if has_toe_kick:
+                panel.driver_location('z', 'tkh', [tkh])
+                panel.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+                panel.driver_input("Width", 'dim_y-tks', [dim_y, tks])
+            else:
+                panel.obj.location.z = 0
+                panel.driver_input("Length", 'dim_z', [dim_z])
+                panel.driver_input("Width", 'dim_y', [dim_y])
+        
+        # Set thickness
+        panel.set_input("Thickness", props.default_front_thickness)
+        panel.set_input("Mirror Y", True)
+        
+        return panel.obj
+
     def execute(self, context):
         cabinet_bp = hb_utils.get_cabinet_bp(context.object)
-        # TODO: Implement applied end panel creation
-        self.report({'INFO'}, f"Applied end will be added to {self.side} side")
+        if not cabinet_bp:
+            self.report({'ERROR'}, "Could not find cabinet")
+            return {'CANCELLED'}
+        
+        sides_to_add = []
+        if self.side == 'LEFT':
+            sides_to_add = ['LEFT']
+        elif self.side == 'RIGHT':
+            sides_to_add = ['RIGHT']
+        else:  # BOTH
+            sides_to_add = ['LEFT', 'RIGHT']
+        
+        for side in sides_to_add:
+            # Remove existing applied end if present
+            if self.has_applied_end(cabinet_bp, side):
+                self.remove_applied_end(cabinet_bp, side)
+            
+            # Create new applied end
+            self.create_applied_end(context, cabinet_bp, side)
+        
+        # Run calc fix
+        hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'side', expand=True)
+
+
+class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
+    bl_idname = "hb_frameless.remove_applied_end"
+    bl_label = "Remove Applied End"
+    bl_description = "Remove an applied finished end panel from the cabinet"
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side",
+        items=[
+            ('LEFT', "Left", "Remove from left side"),
+            ('RIGHT', "Right", "Remove from right side"),
+            ('BOTH', "Both", "Remove from both sides"),
+        ],
+        default='LEFT'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp:
+                # Check if cabinet has any applied ends
+                for child in cabinet_bp.children:
+                    if child.get('IS_APPLIED_END_LEFT') or child.get('IS_APPLIED_END_RIGHT'):
+                        return True
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=200)
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        if not cabinet_bp:
+            self.report({'ERROR'}, "Could not find cabinet")
+            return {'CANCELLED'}
+        
+        sides_to_remove = []
+        if self.side == 'LEFT':
+            sides_to_remove = ['LEFT']
+        elif self.side == 'RIGHT':
+            sides_to_remove = ['RIGHT']
+        else:  # BOTH
+            sides_to_remove = ['LEFT', 'RIGHT']
+        
+        for side in sides_to_remove:
+            for child in list(cabinet_bp.children):
+                if child.get('IS_APPLIED_END_' + side):
+                    hb_utils.delete_obj_and_children(child)
+        
         return {'FINISHED'}
 
     def draw(self, context):
@@ -381,6 +539,7 @@ classes = (
     hb_frameless_OT_drop_cabinet_height,
     hb_frameless_OT_raise_cabinet_bottom,
     hb_frameless_OT_add_applied_end,
+    hb_frameless_OT_remove_applied_end,
     hb_frameless_OT_delete_cabinet,
     hb_frameless_OT_create_cabinet_group,
     hb_frameless_OT_select_cabinet_group,
