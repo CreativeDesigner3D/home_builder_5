@@ -8,11 +8,13 @@ class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.add_applied_end", text="Add Left").side = 'LEFT'
         layout.operator("hb_frameless.add_applied_end", text="Add Right").side = 'RIGHT'
-        layout.operator("hb_frameless.add_applied_end", text="Add Both").side = 'BOTH'
+        layout.operator("hb_frameless.add_applied_end", text="Add Back").side = 'BACK'
+        layout.operator("hb_frameless.add_applied_end", text="Add Both Sides").side = 'BOTH'
         layout.separator()
         layout.operator("hb_frameless.remove_applied_end", text="Remove Left").side = 'LEFT'
         layout.operator("hb_frameless.remove_applied_end", text="Remove Right").side = 'RIGHT'
-        layout.operator("hb_frameless.remove_applied_end", text="Remove Both").side = 'BOTH'
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Back").side = 'BACK'
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Both Sides").side = 'BOTH'
 
 
 class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):

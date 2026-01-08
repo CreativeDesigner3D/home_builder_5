@@ -181,7 +181,8 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         items=[
             ('LEFT', "Left", "Add to left side"),
             ('RIGHT', "Right", "Add to right side"),
-            ('BOTH', "Both", "Add to both sides"),
+            ('BACK', "Back", "Add to back"),
+            ('BOTH', "Both", "Add to both left and right sides"),
         ],
         default='LEFT'
     ) # type: ignore
@@ -194,30 +195,18 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             return cabinet_bp is not None
         return False
 
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=200)
-
     def has_applied_end(self, cabinet_obj, side):
         """Check if cabinet already has an applied end on the specified side."""
         for child in cabinet_obj.children:
-            if side == 'LEFT' and child.get('IS_APPLIED_END_LEFT'):
-                return True
-            if side == 'RIGHT' and child.get('IS_APPLIED_END_RIGHT'):
+            if child.get('IS_APPLIED_END_' + side):
                 return True
         return False
 
     def remove_applied_end(self, cabinet_obj, side):
         """Remove existing applied end from specified side."""
         for child in list(cabinet_obj.children):
-            if side == 'LEFT' and child.get('IS_APPLIED_END_LEFT'):
+            if child.get('IS_APPLIED_END_' + side):
                 hb_utils.delete_obj_and_children(child)
-            if side == 'RIGHT' and child.get('IS_APPLIED_END_RIGHT'):
-                hb_utils.delete_obj_and_children(child)
-
-    def get_cabinet_type(self, cabinet_obj):
-        """Get the cabinet type."""
-        return cabinet_obj.get('CABINET_TYPE', 'BASE')
 
     def create_applied_end(self, context, cabinet_obj, side):
         """Create an applied end panel on the specified side.
@@ -246,28 +235,41 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
         panel.obj.parent = cabinet_obj
         
-        # Rotate panel to vertical orientation
-        panel.obj.rotation_euler.y = math.radians(-90)
-        
         # Position at floor level (Z=0) for full height coverage
         panel.obj.location.z = 0
         
         if side == 'LEFT':
-            # Position at left side of cabinet
+            # Rotate panel to vertical orientation (side panel)
+            panel.obj.rotation_euler.y = math.radians(-90)
             panel.obj.location.x = 0
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", False)
-        else:  # RIGHT
-            # Position at right side of cabinet
+            # Full cabinet height
+            panel.driver_input("Length", 'dim_z', [dim_z])
+            # Depth extends past front to be flush with door/drawer fronts
+            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
+            
+        elif side == 'RIGHT':
+            # Rotate panel to vertical orientation (side panel)
+            panel.obj.rotation_euler.y = math.radians(-90)
             panel.driver_location('x', 'dim_x', [dim_x])
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", True)
-        
-        # Full cabinet height
-        panel.driver_input("Length", 'dim_z', [dim_z])
-        
-        # Depth extends past front to be flush with door/drawer fronts
-        panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
+            # Full cabinet height
+            panel.driver_input("Length", 'dim_z', [dim_z])
+            # Depth extends past front to be flush with door/drawer fronts
+            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
+            
+        elif side == 'BACK':
+            # Back panel - at back of cabinet
+            panel.obj.rotation_euler.x = math.radians(90)
+            panel.obj.location.y = 0
+            panel.set_input("Mirror Y", False)
+            panel.set_input("Mirror Z", True)
+            # Width matches cabinet width
+            panel.driver_input("Length", 'dim_x', [dim_x])
+            # Height is full cabinet height
+            panel.driver_input("Width", 'dim_z', [dim_z])
         
         # Set thickness
         panel.set_input("Thickness", props.default_carcass_part_thickness)
@@ -285,6 +287,8 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             sides_to_add = ['LEFT']
         elif self.side == 'RIGHT':
             sides_to_add = ['RIGHT']
+        elif self.side == 'BACK':
+            sides_to_add = ['BACK']
         else:  # BOTH
             sides_to_add = ['LEFT', 'RIGHT']
         
@@ -301,10 +305,6 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         
         return {'FINISHED'}
 
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, 'side', expand=True)
-
 
 class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
     bl_idname = "hb_frameless.remove_applied_end"
@@ -317,7 +317,8 @@ class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
         items=[
             ('LEFT', "Left", "Remove from left side"),
             ('RIGHT', "Right", "Remove from right side"),
-            ('BOTH', "Both", "Remove from both sides"),
+            ('BACK', "Back", "Remove from back"),
+            ('BOTH', "Both", "Remove from both left and right sides"),
         ],
         default='LEFT'
     ) # type: ignore
@@ -330,13 +331,9 @@ class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
             if cabinet_bp:
                 # Check if cabinet has any applied ends
                 for child in cabinet_bp.children:
-                    if child.get('IS_APPLIED_END_LEFT') or child.get('IS_APPLIED_END_RIGHT'):
+                    if child.get('IS_APPLIED_END_LEFT') or child.get('IS_APPLIED_END_RIGHT') or child.get('IS_APPLIED_END_BACK'):
                         return True
         return False
-
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=200)
 
     def execute(self, context):
         cabinet_bp = hb_utils.get_cabinet_bp(context.object)
@@ -349,6 +346,8 @@ class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
             sides_to_remove = ['LEFT']
         elif self.side == 'RIGHT':
             sides_to_remove = ['RIGHT']
+        elif self.side == 'BACK':
+            sides_to_remove = ['BACK']
         else:  # BOTH
             sides_to_remove = ['LEFT', 'RIGHT']
         
@@ -358,10 +357,6 @@ class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
                     hb_utils.delete_obj_and_children(child)
         
         return {'FINISHED'}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, 'side', expand=True)
 
 
 class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
