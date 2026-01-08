@@ -569,6 +569,7 @@ class SplitterHorizontal(GeoNodeCage):
                 divider.driver_input("Length", 'dim_z', [dim_z])
                 divider.driver_input("Width", 'dim_y', [dim_y])
                 divider.driver_input("Thickness", 'mt', [mt])
+                divider.set_input("Mirror Z",True)
 
                 previous_splitter = divider
 

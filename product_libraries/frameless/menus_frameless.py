@@ -24,6 +24,7 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
         layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical Openings")
+        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal Openings")
         layout.separator()
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
 

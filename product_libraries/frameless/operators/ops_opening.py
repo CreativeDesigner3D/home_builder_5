@@ -547,13 +547,10 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         min=2, max=10,
         default=2
     ) # type: ignore
-
-    # Opening widths (0 = equal distribution)
-    opening_1_width: bpy.props.FloatProperty(name="Opening 1 Width", unit='LENGTH', default=0) # type: ignore
-    opening_2_width: bpy.props.FloatProperty(name="Opening 2 Width", unit='LENGTH', default=0) # type: ignore
-    opening_3_width: bpy.props.FloatProperty(name="Opening 3 Width", unit='LENGTH', default=0) # type: ignore
-    opening_4_width: bpy.props.FloatProperty(name="Opening 4 Width", unit='LENGTH', default=0) # type: ignore
-    opening_5_width: bpy.props.FloatProperty(name="Opening 5 Width", unit='LENGTH', default=0) # type: ignore
+    
+    previous_opening_count: bpy.props.IntProperty(default=0) # type: ignore
+    splitter_obj_name: bpy.props.StringProperty(name="Splitter Object") # type: ignore
+    parent_obj_name: bpy.props.StringProperty(name="Parent Object") # type: ignore
 
     # Opening inserts
     opening_1_insert: bpy.props.EnumProperty(name="Opening 1", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
@@ -561,6 +558,11 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
     opening_3_insert: bpy.props.EnumProperty(name="Opening 3", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
     opening_4_insert: bpy.props.EnumProperty(name="Opening 4", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
     opening_5_insert: bpy.props.EnumProperty(name="Opening 5", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_6_insert: bpy.props.EnumProperty(name="Opening 6", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_7_insert: bpy.props.EnumProperty(name="Opening 7", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_8_insert: bpy.props.EnumProperty(name="Opening 8", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_9_insert: bpy.props.EnumProperty(name="Opening 9", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_10_insert: bpy.props.EnumProperty(name="Opening 10", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -571,17 +573,197 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
             return bay_bp is not None or opening_bp is not None
         return False
 
+    def delete_children(self, obj):
+        """Delete all children of the object."""
+        children = list(obj.children)
+        for child in children:
+            self.delete_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def get_cabinet_type(self, obj):
+        """Get the cabinet type from the cabinet parent."""
+        cabinet_bp = hb_utils.get_cabinet_bp(obj)
+        if cabinet_bp:
+            return cabinet_bp.get('CABINET_TYPE', 'BASE')
+        return 'BASE'
+
+    def get_splitter_obj(self):
+        """Get the splitter object by name."""
+        if self.splitter_obj_name and self.splitter_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.splitter_obj_name]
+        return None
+
+    def get_parent_obj(self):
+        """Get the parent object by name."""
+        if self.parent_obj_name and self.parent_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.parent_obj_name]
+        return None
+
+    def create_splitter(self, context, parent_obj):
+        """Create or recreate the splitter with current settings."""
+        # Delete existing children of parent
+        self.delete_children(parent_obj)
+        
+        # Create empty splitter (no inserts yet - just for sizing)
+        splitter = types_frameless.SplitterHorizontal()
+        splitter.splitter_qty = self.opening_count - 1
+        splitter.opening_sizes = [0] * self.opening_count  # All equal initially
+        splitter.opening_inserts = [None] * self.opening_count  # No inserts yet
+        splitter.create()
+        
+        # Parent to bay/opening and set up dimension drivers
+        splitter.obj.parent = parent_obj
+        
+        if 'IS_FRAMELESS_BAY_CAGE' in parent_obj:
+            bay = types_frameless.CabinetBay(parent_obj)
+        else:
+            bay = types_frameless.CabinetOpening(parent_obj)
+            
+        dim_x = bay.var_input('Dim X', 'dim_x')
+        dim_y = bay.var_input('Dim Y', 'dim_y')
+        dim_z = bay.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        self.splitter_obj_name = splitter.obj.name
+        self.previous_opening_count = self.opening_count
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return splitter.obj
+
     def invoke(self, context, event):
+        # Find parent bay or opening
+        obj = context.object
+        bay_bp = hb_utils.get_bay_bp(obj)
+        opening_bp = hb_utils.get_opening_bp(obj)
+        
+        parent_obj = bay_bp if bay_bp else opening_bp
+        if not parent_obj:
+            self.report({'ERROR'}, "Could not find bay or opening")
+            return {'CANCELLED'}
+        
+        self.parent_obj_name = parent_obj.name
+        
+        # Create initial splitter
+        self.create_splitter(context, parent_obj)
+        
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=350)
+        return wm.invoke_props_dialog(self, width=400)
+
+    def check(self, context):
+        parent_obj = self.get_parent_obj()
+        if not parent_obj:
+            return False
+        
+        # If opening count changed, recreate the splitter
+        if self.opening_count != self.previous_opening_count:
+            self.create_splitter(context, parent_obj)
+            return True
+        
+        # Otherwise just recalculate
+        splitter_obj = self.get_splitter_obj()
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                calculator.calculate()
+            
+            cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
+            if cabinet_bp:
+                hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return True
+
+    def create_insert(self, insert_type, cabinet_type, is_left, is_right):
+        """Create an insert based on the type."""
+        if insert_type == 'DOORS':
+            doors = types_frameless.Doors()
+            if cabinet_type == 'UPPER':
+                doors.door_pull_location = "Upper"
+            else:
+                doors.door_pull_location = "Base"
+            # Set half overlays for side-by-side openings
+            if not is_left:
+                doors.half_overlay_left = True
+            if not is_right:
+                doors.half_overlay_right = True
+            return doors
+        elif insert_type == 'DRAWER':
+            drawer = types_frameless.Drawer()
+            if not is_left:
+                drawer.half_overlay_left = True
+            if not is_right:
+                drawer.half_overlay_right = True
+            return drawer
+        else:  # OPEN
+            return None
 
     def execute(self, context):
-        # TODO: Implement the actual splitter creation
-        # 1. Find parent bay or opening
-        # 2. Delete existing children
-        # 3. Create SplitterHorizontal with settings
+        parent_obj = self.get_parent_obj()
+        splitter_obj = self.get_splitter_obj()
         
-        self.report({'INFO'}, f"Will create {self.opening_count} horizontal openings")
+        if not parent_obj or not splitter_obj:
+            self.report({'ERROR'}, "Could not find objects")
+            return {'CANCELLED'}
+        
+        # Get the current calculator values before recreating
+        opening_sizes = []
+        for calculator in splitter_obj.home_builder.calculators:
+            for prompt in calculator.prompts:
+                if prompt.equal:
+                    opening_sizes.append(0)
+                else:
+                    opening_sizes.append(prompt.distance_value)
+        
+        # Delete existing and create final splitter with inserts
+        self.delete_children(parent_obj)
+        
+        cabinet_type = self.get_cabinet_type(parent_obj)
+        
+        insert_props = [
+            self.opening_1_insert, self.opening_2_insert, self.opening_3_insert,
+            self.opening_4_insert, self.opening_5_insert, self.opening_6_insert,
+            self.opening_7_insert, self.opening_8_insert, self.opening_9_insert,
+            self.opening_10_insert
+        ]
+        
+        opening_inserts = []
+        for i in range(self.opening_count):
+            is_left = (i == 0)
+            is_right = (i == self.opening_count - 1)
+            insert = self.create_insert(insert_props[i], cabinet_type, is_left, is_right)
+            opening_inserts.append(insert)
+        
+        # Create final splitter with inserts
+        splitter = types_frameless.SplitterHorizontal()
+        splitter.splitter_qty = self.opening_count - 1
+        splitter.opening_sizes = opening_sizes
+        splitter.opening_inserts = opening_inserts
+        splitter.create()
+        
+        # Parent and set up drivers
+        splitter.obj.parent = parent_obj
+        
+        if 'IS_FRAMELESS_BAY_CAGE' in parent_obj:
+            bay = types_frameless.CabinetBay(parent_obj)
+        else:
+            bay = types_frameless.CabinetOpening(parent_obj)
+            
+        dim_x = bay.var_input('Dim X', 'dim_x')
+        dim_y = bay.var_input('Dim Y', 'dim_y')
+        dim_z = bay.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
         return {'FINISHED'}
 
     def draw(self, context):
@@ -590,19 +772,37 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         box = layout.box()
         box.prop(self, 'opening_count')
         
+        splitter_obj = self.get_splitter_obj()
+        
+        # Opening widths from calculator
         box = layout.box()
-        box.label(text="Opening Configuration (0 = Equal):")
+        box.label(text="Opening Widths:", icon='SNAP_GRID')
         
-        width_props = ['opening_1_width', 'opening_2_width', 'opening_3_width',
-                       'opening_4_width', 'opening_5_width']
-        inserts = ['opening_1_insert', 'opening_2_insert', 'opening_3_insert',
-                   'opening_4_insert', 'opening_5_insert']
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                col = box.column(align=True)
+                for prompt in calculator.prompts:
+                    row = col.row(align=True)
+                    row.active = not prompt.equal
+                    row.prop(prompt, 'distance_value', text=prompt.name)
+                    row.prop(prompt, 'equal', text="", icon='LINKED' if prompt.equal else 'UNLINKED')
         
-        for i in range(min(self.opening_count, 5)):
-            row = box.row(align=True)
+        # Insert types
+        box = layout.box()
+        box.label(text="Opening Types:", icon='MESH_PLANE')
+        
+        insert_props = [
+            'opening_1_insert', 'opening_2_insert', 'opening_3_insert',
+            'opening_4_insert', 'opening_5_insert', 'opening_6_insert',
+            'opening_7_insert', 'opening_8_insert', 'opening_9_insert',
+            'opening_10_insert'
+        ]
+        
+        col = box.column(align=True)
+        for i in range(self.opening_count):
+            row = col.row(align=True)
             row.label(text=f"Opening {i+1}:")
-            row.prop(self, width_props[i], text="Width")
-            row.prop(self, inserts[i], text="")
+            row.prop(self, insert_props[i], text="")
 
 
 
