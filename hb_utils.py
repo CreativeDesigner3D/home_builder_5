@@ -111,7 +111,7 @@ def delete_obj_and_children(obj):
         bpy.data.objects.remove(o, do_unlink=True)
 
 
-def run_calc_fix(context, obj=None):
+def run_calc_fix(context, obj=None, passes=2):
     """
     Workaround for Blender bug #133392 - grandchild drivers not updating.
     
@@ -122,6 +122,7 @@ def run_calc_fix(context, obj=None):
         context: Blender context
         obj: Optional object to update (updates all descendants)
              If None, updates all objects in the scene
+        passes: Number of calculation passes (default 2 for reliability)
     """
     if obj:
         objects_to_update = [obj] + list(obj.children_recursive)
@@ -130,28 +131,94 @@ def run_calc_fix(context, obj=None):
 
     home_builder_calculators = []
 
-    # Touch all objects and their modifiers
+    # Collect all calculators
     for o in objects_to_update:
-        # Touch location to mark transform dirty
-        o.location = o.location
         for calculator in o.home_builder.calculators:
             home_builder_calculators.append(calculator)
-        # Touch geometry node modifiers to force recalc
-        for mod in o.modifiers:
-            if mod.type == 'NODES':
-                mod.show_viewport = mod.show_viewport
-    
-    for calculator in home_builder_calculators:
-        calculator.calculate()
 
-    # Frame change forces complete driver reevaluation
-    scene = context.scene
-    current_frame = scene.frame_current
-    scene.frame_set(current_frame + 1)
-    scene.frame_set(current_frame)
+    # Run multiple passes to ensure all dependencies resolve
+    for _ in range(passes):
+        # Touch all objects and their modifiers
+        for o in objects_to_update:
+            # Touch location to mark transform dirty
+            o.location = o.location
+            # Touch geometry node modifiers to force recalc
+            for mod in o.modifiers:
+                if mod.type == 'NODES':
+                    mod.show_viewport = mod.show_viewport
+        
+        # Calculate all calculators
+        for calculator in home_builder_calculators:
+            calculator.calculate()
+
+        # Frame change forces complete driver reevaluation
+        scene = context.scene
+        current_frame = scene.frame_current
+        scene.frame_set(current_frame + 1)
+        scene.frame_set(current_frame)
+        
+        # Update depsgraph
+        context.view_layer.update()
     
-    # Final view layer update
-    context.view_layer.update()
+    # Force evaluated mesh read to ensure geometry nodes have processed
+    depsgraph = context.evaluated_depsgraph_get()
+    for o in objects_to_update:
+        if o.type == 'MESH':
+            try:
+                o.evaluated_get(depsgraph)
+            except:
+                pass
+
+
+def run_calc_fix_until_stable(context, obj=None, max_passes=5, tolerance=0.0001):
+    """
+    Run calc fix until dimensions stabilize or max passes reached.
+    
+    Args:
+        context: Blender context
+        obj: Optional object to update
+        max_passes: Maximum number of passes before giving up
+        tolerance: Tolerance for dimension comparison (in meters)
+    
+    Returns:
+        Number of passes needed, or -1 if didn't stabilize
+    """
+    if obj:
+        objects_to_update = [obj] + list(obj.children_recursive)
+    else:
+        objects_to_update = list(context.scene.objects)
+    
+    def get_dimensions_hash():
+        """Get a hash of all object dimensions for comparison."""
+        dims = []
+        for o in objects_to_update:
+            if o.type == 'MESH':
+                dims.append((o.name, tuple(o.dimensions)))
+        return dims
+    
+    previous_dims = None
+    
+    for pass_num in range(max_passes):
+        run_calc_fix(context, obj, passes=1)
+        current_dims = get_dimensions_hash()
+        
+        if previous_dims is not None:
+            # Check if dimensions have stabilized
+            stable = True
+            for (name1, d1), (name2, d2) in zip(previous_dims, current_dims):
+                for v1, v2 in zip(d1, d2):
+                    if abs(v1 - v2) > tolerance:
+                        stable = False
+                        break
+                if not stable:
+                    break
+            
+            if stable:
+                return pass_num + 1
+        
+        previous_dims = current_dims
+    
+    return -1  # Didn't stabilize
 
 def add_driver_variables(driver,variables):
     for var in variables:
