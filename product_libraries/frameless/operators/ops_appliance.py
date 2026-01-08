@@ -1,7 +1,7 @@
 import bpy
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, units
+from .... import hb_utils, hb_types, units
 
 class hb_frameless_OT_appliance_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.appliance_prompts"

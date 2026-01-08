@@ -1,7 +1,9 @@
 import bpy
+import os
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, units
+from ..props_hb_frameless import get_or_create_pull_finish_material
+from .... import hb_utils, hb_project, hb_types, units
 
 class hb_frameless_OT_add_door_style(bpy.types.Operator):
     """Add a new door style"""
@@ -714,7 +716,6 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
     )# type: ignore
 
     def execute(self, context):
-        from . import props_hb_frameless
         
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
@@ -857,7 +858,6 @@ class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
-        from .props_hb_frameless import get_or_create_pull_finish_material
         
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless

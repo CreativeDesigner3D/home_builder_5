@@ -1,8 +1,10 @@
 import bpy
 import math
+import os
+from mathutils import Vector
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, hb_details, units
+from .... import hb_utils, hb_project, hb_details, units
 
 class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     """Create a new crown molding detail"""
@@ -209,7 +211,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return False
     
     def execute(self, context):
-        from mathutils import Vector
         
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
@@ -413,7 +414,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
     
     def _create_crown_for_group(self, context, group, profile, walls, all_cabinets, target_scene):
         """Create crown molding extrusion for a group of cabinets."""
-        from mathutils import Vector
         
         cabinets = group['cabinets']
         first_cab = cabinets[0]
@@ -562,7 +562,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         # Add Smooth by Angle modifier
         smooth_mod = crown_obj.modifiers.new(name="Smooth by Angle", type='NODES')
         if "Smooth by Angle" not in bpy.data.node_groups:
-            import os
             essentials_path = os.path.join(
                 bpy.utils.resource_path('LOCAL'),
                 "datafiles", "assets", "nodes", "geometry_nodes_essentials.blend"
@@ -582,13 +581,11 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
 
 def get_molding_library_path():
     """Get the path to the molding library folder."""
-    import os
     return os.path.join(os.path.dirname(__file__), "frameless_assets", "moldings")
 
 
 def get_molding_categories():
     """Get list of molding categories (subfolders)."""
-    import os
     library_path = get_molding_library_path()
     categories = []
     if os.path.exists(library_path):
@@ -601,7 +598,6 @@ def get_molding_categories():
 
 def get_molding_items(category):
     """Get list of molding items in a category."""
-    import os
     library_path = get_molding_library_path()
     category_path = os.path.join(library_path, category)
     items = []
@@ -643,7 +639,6 @@ class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
         return context.scene.get('IS_CROWN_DETAIL', False) or context.scene.get('IS_DETAIL_VIEW', False)
     
     def execute(self, context):
-        import os
         
         if not self.filepath or not os.path.exists(self.filepath):
             self.report({'ERROR'}, f"Molding file not found: {self.filepath}")

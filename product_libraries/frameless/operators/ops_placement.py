@@ -5,6 +5,7 @@ from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from .. import types_frameless
 from .. import props_hb_frameless
+from ...common import types_appliances
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
 def has_child_item_type(obj,item_type):
@@ -393,8 +394,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """Update preview cage position without recalculating gap."""
         if not self.preview_cage or not self.selected_wall:
             return
-        
-        import math
         wall = hb_types.GeoNodeWall(self.selected_wall)
         wall_thickness = wall.get_input('Thickness')
         cabinet_depth = self.get_cabinet_depth(bpy.context)
@@ -437,7 +436,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return props.base_cabinet_height
 
     def get_cabinet_z_location(self, context) -> float:
-        from ... import hb_project
         props = context.scene.hb_frameless
         
         if self.cabinet_type == 'UPPER':
@@ -452,7 +450,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     def get_appliance_height(self, context) -> float:
         """Get the height for an appliance, handling special cases like hoods."""
-        from ... import hb_project
         
         if self.appliance_type == 'HOOD':
             # Hood extends from its Z location to the ceiling
@@ -524,7 +521,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         # No height collision - calculate centered position
         # Get cage X position (handle rotation for back side placement)
-        import math
         is_rotated = abs(cage_obj.rotation_euler.z - math.pi) < 0.1 or abs(cage_obj.rotation_euler.z + math.pi) < 0.1
         
         if is_rotated:
@@ -855,7 +851,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             # Get object horizontal bounds
             # Check if object is rotated 180° (back side placement)
-            import math
             is_rotated = abs(child.rotation_euler.z - math.pi) < 0.1 or abs(child.rotation_euler.z + math.pi) < 0.1
             
             if is_rotated:
@@ -911,7 +906,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return 1
         if gap_width <= self.max_single_cabinet_width:
             return 1
-        import math
         return math.ceil(gap_width / self.max_single_cabinet_width)
 
     def update_cabinet_quantity(self, context, new_quantity: int):
@@ -1012,7 +1006,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Cabinet origin is back-left, so when rotated 180°:
             # - Need to offset X by width (since it rotates around origin)
             # - Y at wall_thickness (cabinet back against wall back)
-            import math
             self.preview_cage.obj.location.x = snap_x + total_width
             self.preview_cage.obj.location.y = wall_thickness
             self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
@@ -1044,8 +1037,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """Position cabinet(s) on the floor, snapping to nearby cabinets."""
         if not self.preview_cage or not self.hit_location:
             return
-        
-        import math
         
         # Reset snap state
         self.snap_cabinet = None
@@ -1143,7 +1134,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         Should be called after drivers have calculated final sizes.
         """
-        from . import props_hb_frameless
         
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
@@ -1170,7 +1160,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def get_appliance_class(self):
         """Get the appliance class based on appliance_type."""
-        from ..common import types_appliances
         
         appliance_map = {
             'RANGE': types_appliances.Range,

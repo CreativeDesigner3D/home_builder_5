@@ -1,5 +1,9 @@
 import bpy
+import math
 import os
+import platform
+import subprocess
+from mathutils import Vector
 from .. import types_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, units
@@ -159,7 +163,6 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
             context.scene.collection.objects.link(cam_obj)
             
             # Position camera for isometric-ish view
-            import math
             center = cabinet_group.matrix_world @ Vector((width/2, -depth/2, height/2))
             
             # Camera distance based on largest dimension
@@ -285,9 +288,6 @@ class hb_frameless_OT_open_user_library_folder(bpy.types.Operator):
     bl_description = "Open the user library folder in file explorer"
 
     def execute(self, context):
-        import os
-        import subprocess
-        import platform
         
         library_path = get_user_library_path()
         
@@ -324,7 +324,6 @@ class hb_frameless_OT_delete_library_item(bpy.types.Operator):
         return context.window_manager.invoke_confirm(self, event)
     
     def execute(self, context):
-        import os
         
         if not self.filepath or not os.path.exists(self.filepath):
             self.report({'ERROR'}, f"File not found: {self.filepath}")
@@ -339,7 +338,6 @@ class hb_frameless_OT_delete_library_item(bpy.types.Operator):
             os.remove(thumbnail_path)
         
         # Clear preview cache so it doesn't show deleted item
-        from . import props_hb_frameless
         props_hb_frameless.clear_library_previews()
         
         self.report({'INFO'}, f"Deleted: {self.item_name}")
@@ -353,13 +351,11 @@ class hb_frameless_OT_delete_library_item(bpy.types.Operator):
 
 def get_user_library_path():
     """Get the default user library path for cabinet groups."""
-    import os
     return os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
 
 
 def get_user_library_items():
     """Get list of cabinet group files in the user library."""
-    import os
     
     library_path = get_user_library_path()
     items = []

@@ -1,7 +1,7 @@
 import bpy
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, units
+from .... import hb_utils, hb_project, hb_types, units
 
 class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_toe_kick_prompts"
@@ -78,8 +78,6 @@ class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        from ... import hb_project
-        from ... import hb_types
         
         # Get props from main scene
         main_scene = hb_project.get_main_scene()
