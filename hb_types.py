@@ -123,6 +123,10 @@ class GeoNodeObject:
         data_path = 'rotation_euler.' + axis
         return Variable(self.obj.id_data,data_path,name)
 
+    def var_hide(self,name):
+        data_path = 'hide_viewport'
+        return Variable(self.obj.id_data,data_path,name)
+
     def driver_location(self,axis,expression,variables=[]):
         if axis == 'x':
             index = 0

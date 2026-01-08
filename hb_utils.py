@@ -1,5 +1,5 @@
 import bpy
-
+from mathutils import Quaternion, Euler
 
 # =============================================================================
 # BASE POINT HELPER FUNCTIONS
@@ -38,8 +38,6 @@ def get_opening_bp(obj):
     return None
 
 
-
-
 def get_interior_bp(obj):
     """Walk up the parent hierarchy to find the interior base point object."""
     if obj is None:
@@ -49,7 +47,6 @@ def get_interior_bp(obj):
     if obj.parent:
         return get_interior_bp(obj.parent)
     return None
-
 
 
 def get_interior_part_bp(obj):
@@ -95,8 +92,7 @@ def get_wall_bp(obj):
 
 def delete_obj_and_children(obj):
     """Delete an object and all of its children recursively."""
-    import bpy
-    
+
     if obj is None:
         return
     
@@ -216,7 +212,7 @@ def restore_view_state(scene):
                     r3d.view_location.z = scene.get('VIEW_LOCATION_Z', 0)
                     
                     # Restore view rotation
-                    from mathutils import Quaternion
+                    
                     r3d.view_rotation = Quaternion((
                         scene.get('VIEW_ROTATION_W', 1),
                         scene.get('VIEW_ROTATION_X', 0),
@@ -247,7 +243,6 @@ def set_camera_view():
 
 def set_top_down_view():
     """Set the 3D viewport to top-down orthographic view."""
-    from mathutils import Euler
     
     for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':

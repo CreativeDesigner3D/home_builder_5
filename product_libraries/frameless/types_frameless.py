@@ -981,6 +981,7 @@ class CabinetDoor(CabinetFront):
         pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
         pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
         pull_len = self.var_prop('Pull Length', 'pull_len')
+        hide_door = self.var_hide('hide_door')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
@@ -992,6 +993,7 @@ class CabinetDoor(CabinetFront):
         pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))',[length,pl,pvl_base,pvl_tall,pvl_upper,pull_len])
         pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
         pull.driver_location('z', 'thickness',[thickness])
+        pull.driver_hide('hide_door',[hide_door])
 
 
 class CabinetDrawerFront(CabinetFront):
