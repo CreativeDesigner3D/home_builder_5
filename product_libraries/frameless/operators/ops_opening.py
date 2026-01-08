@@ -29,27 +29,140 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     def poll(cls, context):
         obj = context.object
         if obj:
-            # Check if we clicked on a bay or something inside a bay
             if 'IS_FRAMELESS_BAY_CAGE' in obj:
                 return True
-            # Walk up to find bay
             bay_bp = hb_utils.get_bay_bp(obj)
             return bay_bp is not None
         return False
 
+    def delete_bay_children(self, bay_obj):
+        """Delete all children of the bay."""
+        children = list(bay_obj.children)
+        for child in children:
+            self.delete_bay_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def add_cage_to_bay(self, bay, cage):
+        """Add a cage to the bay with proper dimension drivers."""
+        cage.create()
+        cage.obj.parent = bay.obj
+        dim_x = bay.var_input('Dim X', 'dim_x')
+        dim_y = bay.var_input('Dim Y', 'dim_y')
+        dim_z = bay.var_input('Dim Z', 'dim_z')
+        cage.driver_input('Dim X', 'dim_x', [dim_x])
+        cage.driver_input('Dim Y', 'dim_y', [dim_y])
+        cage.driver_input('Dim Z', 'dim_z', [dim_z])
+
+    def get_cabinet_type(self, bay_obj):
+        """Get the cabinet type from the cabinet parent."""
+        cabinet_bp = hb_utils.get_cabinet_bp(bay_obj)
+        if cabinet_bp:
+            return cabinet_bp.get('CABINET_TYPE', 'BASE')
+        return 'BASE'
+
+    def create_doors(self, bay, door_swing):
+        """Create doors opening with specified swing direction."""
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
+        doors = types_frameless.Doors()
+        if cabinet_type == 'UPPER':
+            doors.door_pull_location = "Upper"
+        else:
+            doors.door_pull_location = "Base"
+        
+        self.add_cage_to_bay(bay, doors)
+        
+        # Set door swing: 0=Left, 1=Right, 2=Double
+        doors.obj['Door Swing'] = door_swing
+
+    def create_drawer(self, bay):
+        """Create single drawer opening."""
+        drawer = types_frameless.Drawer()
+        self.add_cage_to_bay(bay, drawer)
+
+    def create_door_drawer(self, bay):
+        """Create door/drawer combo (drawer on top, doors below)."""
+        props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
+        drawer = types_frameless.Drawer()
+        drawer.half_overlay_bottom = True
+        
+        door = types_frameless.Doors()
+        door.half_overlay_top = True
+        if cabinet_type == 'UPPER':
+            door.door_pull_location = "Upper"
+        else:
+            door.door_pull_location = "Base"
+
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_inserts = [drawer, door]
+        self.add_cage_to_bay(bay, splitter)
+
+    def create_drawer_stack(self, bay, count):
+        """Create a stack of drawers."""
+        props = bpy.context.scene.hb_frameless
+        equal_drawer_stack_heights = props.equal_drawer_stack_heights
+        
+        if equal_drawer_stack_heights:
+            top_drawer_height = 0
+        else:
+            top_drawer_height = props.top_drawer_front_height
+
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = count - 1
+        
+        for i in range(count):
+            drawer = types_frameless.Drawer()
+            if i == 0:
+                drawer.half_overlay_bottom = True
+                splitter.opening_sizes.append(top_drawer_height)
+            elif i == count - 1:
+                drawer.half_overlay_top = True
+                splitter.opening_sizes.append(0)
+            else:
+                drawer.half_overlay_top = True
+                drawer.half_overlay_bottom = True
+                splitter.opening_sizes.append(0)
+            splitter.opening_inserts.append(drawer)
+        
+        self.add_cage_to_bay(bay, splitter)
+
     def execute(self, context):
-        bay_bp = context.object if 'IS_FRAMELESS_BAY_CAGE' in context.object else hb_utils.get_bay_bp(context.object)
-        if not bay_bp:
+        bay_obj = context.object if 'IS_FRAMELESS_BAY_CAGE' in context.object else hb_utils.get_bay_bp(context.object)
+        if not bay_obj:
             self.report({'ERROR'}, "Could not find bay")
             return {'CANCELLED'}
         
-        # TODO: Implement bay opening change logic
-        # This will need to:
-        # 1. Delete existing opening children
-        # 2. Create new opening based on type
-        # 3. Re-link dimensions
+        bay = types_frameless.CabinetBay(bay_obj)
         
-        self.report({'INFO'}, f"Bay will be changed to {self.opening_type}")
+        # Delete existing bay children
+        self.delete_bay_children(bay_obj)
+        
+        # Create new opening based on type
+        if self.opening_type == 'DOOR_DRAWER':
+            self.create_door_drawer(bay)
+        elif self.opening_type == 'LEFT_DOOR':
+            self.create_doors(bay, door_swing=0)
+        elif self.opening_type == 'RIGHT_DOOR':
+            self.create_doors(bay, door_swing=1)
+        elif self.opening_type == 'DOUBLE_DOORS':
+            self.create_doors(bay, door_swing=2)
+        elif self.opening_type == 'SINGLE_DRAWER':
+            self.create_drawer(bay)
+        elif self.opening_type == '2_DRAWER_STACK':
+            self.create_drawer_stack(bay, 2)
+        elif self.opening_type == '3_DRAWER_STACK':
+            self.create_drawer_stack(bay, 3)
+        elif self.opening_type == '4_DRAWER_STACK':
+            self.create_drawer_stack(bay, 4)
+        elif self.opening_type == 'OPEN':
+            pass  # No children needed for open
+        
+        hb_utils.run_calc_fix(context, bay.obj)
+        hb_utils.run_calc_fix(context, bay.obj)
         return {'FINISHED'}
 
 
