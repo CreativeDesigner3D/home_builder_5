@@ -1,7 +1,9 @@
 import bpy
+import math
 from .. import types_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, hb_types, units
+
 
 class hb_frameless_OT_interior_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.interior_prompts"
@@ -81,8 +83,6 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
         name="Interior Type",
         items=[
             ('SHELVES', "Shelves", "Standard adjustable shelves"),
-            ('ROLLOUTS', "Rollouts", "Pull-out rollout trays"),
-            ('TRAY_DIVIDERS', "Tray Dividers", "Vertical tray dividers"),
             ('EMPTY', "Empty", "No interior parts"),
         ],
         default='SHELVES'
@@ -96,19 +96,67 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             return interior_bp is not None
         return False
 
+    def delete_interior_children(self, interior_obj):
+        """Delete all children of the interior."""
+        children = list(interior_obj.children)
+        for child in children:
+            self.delete_interior_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def get_parent_opening(self, interior_obj):
+        """Get the parent opening of the interior."""
+        parent = interior_obj.parent
+        while parent:
+            if 'IS_FRAMELESS_OPENING_CAGE' in parent or 'IS_FRAMELESS_BAY_CAGE' in parent:
+                return parent
+            parent = parent.parent
+        return None
+
+    def add_interior_to_opening(self, opening_obj, interior):
+        """Add an interior to an opening with proper drivers."""
+        interior.create()
+        interior.obj.parent = opening_obj
+        
+        if 'IS_FRAMELESS_OPENING_CAGE' in opening_obj:
+            opening = types_frameless.CabinetOpening(opening_obj)
+        else:
+            opening = types_frameless.CabinetBay(opening_obj)
+        
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        interior.driver_input('Dim X', 'dim_x', [dim_x])
+        interior.driver_input('Dim Y', 'dim_y', [dim_y])
+        interior.driver_input('Dim Z', 'dim_z', [dim_z])
+
     def execute(self, context):
         interior_bp = hb_utils.get_interior_bp(context.object)
         if not interior_bp:
             self.report({'ERROR'}, "Could not find interior")
             return {'CANCELLED'}
         
-        # TODO: Implement interior type change logic
-        # This will need to:
-        # 1. Delete existing interior children
-        # 2. Create new interior based on type
-        # 3. Re-link dimensions from parent opening
+        # Get parent opening before deleting
+        parent_opening = self.get_parent_opening(interior_bp)
+        if not parent_opening:
+            self.report({'ERROR'}, "Could not find parent opening")
+            return {'CANCELLED'}
         
-        self.report({'INFO'}, f"Interior will be changed to {self.interior_type}")
+        # Delete the old interior
+        self.delete_interior_children(interior_bp)
+        bpy.data.objects.remove(interior_bp, do_unlink=True)
+        
+        # Create new interior based on type
+        if self.interior_type == 'SHELVES':
+            interior = types_frameless.CabinetShelves()
+            self.add_interior_to_opening(parent_opening, interior)
+        elif self.interior_type == 'EMPTY':
+            pass  # No interior needed
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_opening)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
         return {'FINISHED'}
 
 
@@ -172,53 +220,234 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
 
     section_count: bpy.props.IntProperty(
         name="Number of Sections",
-        min=2, max=6,
+        min=2, max=10,
         default=2
     ) # type: ignore
-
-    # Section heights (0 = equal distribution)
-    section_1_height: bpy.props.FloatProperty(name="Section 1 Height", unit='LENGTH', default=0) # type: ignore
-    section_2_height: bpy.props.FloatProperty(name="Section 2 Height", unit='LENGTH', default=0) # type: ignore
-    section_3_height: bpy.props.FloatProperty(name="Section 3 Height", unit='LENGTH', default=0) # type: ignore
-    section_4_height: bpy.props.FloatProperty(name="Section 4 Height", unit='LENGTH', default=0) # type: ignore
+    
+    previous_section_count: bpy.props.IntProperty(default=0) # type: ignore
+    splitter_obj_name: bpy.props.StringProperty(name="Splitter Object") # type: ignore
+    parent_obj_name: bpy.props.StringProperty(name="Parent Object") # type: ignore
 
     # Section types
-    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_5_type: bpy.props.EnumProperty(name="Section 5", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_6_type: bpy.props.EnumProperty(name="Section 6", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_7_type: bpy.props.EnumProperty(name="Section 7", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_8_type: bpy.props.EnumProperty(name="Section 8", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_9_type: bpy.props.EnumProperty(name="Section 9", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_10_type: bpy.props.EnumProperty(name="Section 10", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.object
         if obj:
             interior_bp = hb_utils.get_interior_bp(obj)
-            interior_part = hb_utils.get_interior_part_bp(obj)
-            return interior_bp is not None or interior_part is not None
+            return interior_bp is not None
         return False
 
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=400)
+    def delete_children(self, obj):
+        """Delete all children of the object."""
+        children = list(obj.children)
+        for child in children:
+            self.delete_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
 
-    def execute(self, context):
-        # Find the interior cage
-        interior_bp = hb_utils.get_interior_bp(context.object)
-        if not interior_bp:
-            # Try to find from interior part
-            if 'IS_FRAMELESS_INTERIOR_PART' in context.object:
-                interior_bp = hb_utils.get_interior_bp(context.object.parent)
+    def get_splitter_obj(self):
+        """Get the splitter object by name."""
+        if self.splitter_obj_name and self.splitter_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.splitter_obj_name]
+        return None
+
+    def get_parent_obj(self):
+        """Get the parent object by name."""
+        if self.parent_obj_name and self.parent_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.parent_obj_name]
+        return None
+
+    def get_parent_opening(self, interior_obj):
+        """Get the parent opening of the interior."""
+        parent = interior_obj.parent
+        while parent:
+            if 'IS_FRAMELESS_OPENING_CAGE' in parent or 'IS_FRAMELESS_BAY_CAGE' in parent:
+                return parent
+            parent = parent.parent
+        return None
+
+    def create_splitter(self, context, parent_obj):
+        """Create or recreate the splitter with current settings."""
+        # Delete existing children of parent interior
+        self.delete_children(parent_obj)
         
+        # Remove the old interior object
+        parent_opening = self.get_parent_opening(parent_obj)
+        if parent_obj and parent_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(parent_obj, do_unlink=True)
+        
+        if not parent_opening:
+            return None
+        
+        # Create empty splitter (no section types yet - just for sizing)
+        splitter = types_frameless.InteriorSplitterVertical()
+        splitter.splitter_qty = self.section_count - 1
+        splitter.section_sizes = [0] * self.section_count
+        splitter.section_types = ['EMPTY'] * self.section_count  # Empty for preview
+        splitter.create()
+        
+        # Parent to opening and set up dimension drivers
+        splitter.obj.parent = parent_opening
+        
+        if 'IS_FRAMELESS_OPENING_CAGE' in parent_opening:
+            opening = types_frameless.CabinetOpening(parent_opening)
+        else:
+            opening = types_frameless.CabinetBay(parent_opening)
+            
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        self.splitter_obj_name = splitter.obj.name
+        self.parent_obj_name = parent_opening.name
+        self.previous_section_count = self.section_count
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_opening)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return splitter.obj
+
+    def invoke(self, context, event):
+        # Find interior
+        interior_bp = hb_utils.get_interior_bp(context.object)
         if not interior_bp:
             self.report({'ERROR'}, "Could not find interior")
             return {'CANCELLED'}
         
-        # TODO: Implement the actual interior splitter creation
-        # 1. Get parent opening dimensions
-        # 2. Delete existing interior children
-        # 3. Create InteriorSplitterVertical with settings
+        # Create initial splitter (replaces old interior)
+        self.create_splitter(context, interior_bp)
         
-        self.report({'INFO'}, f"Will create {self.section_count} vertical interior sections")
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=400)
+
+    def check(self, context):
+        parent_obj = self.get_parent_obj()
+        if not parent_obj:
+            return False
+        
+        # If section count changed, recreate the splitter
+        if self.section_count != self.previous_section_count:
+            # Get current splitter and delete it
+            splitter_obj = self.get_splitter_obj()
+            if splitter_obj:
+                self.delete_children(splitter_obj)
+                bpy.data.objects.remove(splitter_obj, do_unlink=True)
+            
+            # Create new splitter directly in the opening
+            splitter = types_frameless.InteriorSplitterVertical()
+            splitter.splitter_qty = self.section_count - 1
+            splitter.section_sizes = [0] * self.section_count
+            splitter.section_types = ['EMPTY'] * self.section_count
+            splitter.create()
+            
+            splitter.obj.parent = parent_obj
+            
+            if 'IS_FRAMELESS_OPENING_CAGE' in parent_obj:
+                opening = types_frameless.CabinetOpening(parent_obj)
+            else:
+                opening = types_frameless.CabinetBay(parent_obj)
+                
+            dim_x = opening.var_input('Dim X', 'dim_x')
+            dim_y = opening.var_input('Dim Y', 'dim_y')
+            dim_z = opening.var_input('Dim Z', 'dim_z')
+            splitter.driver_input('Dim X', 'dim_x', [dim_x])
+            splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+            splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+            
+            self.splitter_obj_name = splitter.obj.name
+            self.previous_section_count = self.section_count
+            
+            cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+            if cabinet_bp:
+                hb_utils.run_calc_fix(context, cabinet_bp)
+            return True
+        
+        # Otherwise just recalculate
+        splitter_obj = self.get_splitter_obj()
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                calculator.calculate()
+            
+            cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
+            if cabinet_bp:
+                hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return True
+
+    def execute(self, context):
+        parent_obj = self.get_parent_obj()
+        splitter_obj = self.get_splitter_obj()
+        
+        if not parent_obj or not splitter_obj:
+            self.report({'ERROR'}, "Could not find objects")
+            return {'CANCELLED'}
+        
+        # Get the current calculator values before recreating
+        section_sizes = []
+        for calculator in splitter_obj.home_builder.calculators:
+            for prompt in calculator.prompts:
+                if prompt.equal:
+                    section_sizes.append(0)
+                else:
+                    section_sizes.append(prompt.distance_value)
+        
+        # Delete existing splitter and create final one with section types
+        self.delete_children(splitter_obj)
+        bpy.data.objects.remove(splitter_obj, do_unlink=True)
+        
+        type_props = [
+            self.section_1_type, self.section_2_type, self.section_3_type,
+            self.section_4_type, self.section_5_type, self.section_6_type,
+            self.section_7_type, self.section_8_type, self.section_9_type,
+            self.section_10_type
+        ]
+        
+        section_types = []
+        for i in range(self.section_count):
+            section_types.append(type_props[i])
+        
+        # Create final splitter with section types
+        splitter = types_frameless.InteriorSplitterVertical()
+        splitter.splitter_qty = self.section_count - 1
+        splitter.section_sizes = section_sizes
+        splitter.section_types = section_types
+        splitter.create()
+        
+        # Parent and set up drivers
+        splitter.obj.parent = parent_obj
+        
+        if 'IS_FRAMELESS_OPENING_CAGE' in parent_obj:
+            opening = types_frameless.CabinetOpening(parent_obj)
+        else:
+            opening = types_frameless.CabinetBay(parent_obj)
+            
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
         return {'FINISHED'}
 
     def draw(self, context):
@@ -227,16 +456,36 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
         box = layout.box()
         box.prop(self, 'section_count')
         
+        splitter_obj = self.get_splitter_obj()
+        
+        # Section heights from calculator
         box = layout.box()
-        box.label(text="Section Configuration (0 = Equal):")
+        box.label(text="Section Heights:", icon='SNAP_GRID')
         
-        height_props = ['section_1_height', 'section_2_height', 'section_3_height', 'section_4_height']
-        type_props = ['section_1_type', 'section_2_type', 'section_3_type', 'section_4_type']
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                col = box.column(align=True)
+                for prompt in calculator.prompts:
+                    row = col.row(align=True)
+                    row.active = not prompt.equal
+                    row.prop(prompt, 'distance_value', text=prompt.name)
+                    row.prop(prompt, 'equal', text="", icon='LINKED' if prompt.equal else 'UNLINKED')
         
-        for i in range(min(self.section_count, 4)):
-            row = box.row(align=True)
+        # Section types
+        box = layout.box()
+        box.label(text="Section Types:", icon='MESH_PLANE')
+        
+        type_props = [
+            'section_1_type', 'section_2_type', 'section_3_type',
+            'section_4_type', 'section_5_type', 'section_6_type',
+            'section_7_type', 'section_8_type', 'section_9_type',
+            'section_10_type'
+        ]
+        
+        col = box.column(align=True)
+        for i in range(self.section_count):
+            row = col.row(align=True)
             row.label(text=f"Section {i+1}:")
-            row.prop(self, height_props[i], text="Height")
             row.prop(self, type_props[i], text="")
 
 
@@ -248,49 +497,232 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
 
     section_count: bpy.props.IntProperty(
         name="Number of Sections",
-        min=2, max=6,
+        min=2, max=10,
         default=2
     ) # type: ignore
-
-    # Section widths (0 = equal distribution)
-    section_1_width: bpy.props.FloatProperty(name="Section 1 Width", unit='LENGTH', default=0) # type: ignore
-    section_2_width: bpy.props.FloatProperty(name="Section 2 Width", unit='LENGTH', default=0) # type: ignore
-    section_3_width: bpy.props.FloatProperty(name="Section 3 Width", unit='LENGTH', default=0) # type: ignore
-    section_4_width: bpy.props.FloatProperty(name="Section 4 Width", unit='LENGTH', default=0) # type: ignore
+    
+    previous_section_count: bpy.props.IntProperty(default=0) # type: ignore
+    splitter_obj_name: bpy.props.StringProperty(name="Splitter Object") # type: ignore
+    parent_obj_name: bpy.props.StringProperty(name="Parent Object") # type: ignore
 
     # Section types
-    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('ROLLOUTS', "Rollouts", ""), ('TRAY_DIVIDERS', "Tray Dividers", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_5_type: bpy.props.EnumProperty(name="Section 5", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_6_type: bpy.props.EnumProperty(name="Section 6", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_7_type: bpy.props.EnumProperty(name="Section 7", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_8_type: bpy.props.EnumProperty(name="Section 8", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_9_type: bpy.props.EnumProperty(name="Section 9", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_10_type: bpy.props.EnumProperty(name="Section 10", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.object
         if obj:
             interior_bp = hb_utils.get_interior_bp(obj)
-            interior_part = hb_utils.get_interior_part_bp(obj)
-            return interior_bp is not None or interior_part is not None
+            return interior_bp is not None
         return False
 
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=400)
+    def delete_children(self, obj):
+        """Delete all children of the object."""
+        children = list(obj.children)
+        for child in children:
+            self.delete_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
 
-    def execute(self, context):
-        # Find the interior cage
-        interior_bp = hb_utils.get_interior_bp(context.object)
-        if not interior_bp:
-            if 'IS_FRAMELESS_INTERIOR_PART' in context.object:
-                interior_bp = hb_utils.get_interior_bp(context.object.parent)
+    def get_splitter_obj(self):
+        """Get the splitter object by name."""
+        if self.splitter_obj_name and self.splitter_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.splitter_obj_name]
+        return None
+
+    def get_parent_obj(self):
+        """Get the parent object by name."""
+        if self.parent_obj_name and self.parent_obj_name in bpy.data.objects:
+            return bpy.data.objects[self.parent_obj_name]
+        return None
+
+    def get_parent_opening(self, interior_obj):
+        """Get the parent opening of the interior."""
+        parent = interior_obj.parent
+        while parent:
+            if 'IS_FRAMELESS_OPENING_CAGE' in parent or 'IS_FRAMELESS_BAY_CAGE' in parent:
+                return parent
+            parent = parent.parent
+        return None
+
+    def create_splitter(self, context, parent_obj):
+        """Create or recreate the splitter with current settings."""
+        # Delete existing children of parent interior
+        self.delete_children(parent_obj)
         
+        # Remove the old interior object
+        parent_opening = self.get_parent_opening(parent_obj)
+        if parent_obj and parent_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(parent_obj, do_unlink=True)
+        
+        if not parent_opening:
+            return None
+        
+        # Create empty splitter
+        splitter = types_frameless.InteriorSplitterHorizontal()
+        splitter.splitter_qty = self.section_count - 1
+        splitter.section_sizes = [0] * self.section_count
+        splitter.section_types = ['EMPTY'] * self.section_count
+        splitter.create()
+        
+        # Parent to opening and set up dimension drivers
+        splitter.obj.parent = parent_opening
+        
+        if 'IS_FRAMELESS_OPENING_CAGE' in parent_opening:
+            opening = types_frameless.CabinetOpening(parent_opening)
+        else:
+            opening = types_frameless.CabinetBay(parent_opening)
+            
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        self.splitter_obj_name = splitter.obj.name
+        self.parent_obj_name = parent_opening.name
+        self.previous_section_count = self.section_count
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_opening)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return splitter.obj
+
+    def invoke(self, context, event):
+        # Find interior
+        interior_bp = hb_utils.get_interior_bp(context.object)
         if not interior_bp:
             self.report({'ERROR'}, "Could not find interior")
             return {'CANCELLED'}
         
-        # TODO: Implement the actual interior splitter creation
+        # Create initial splitter (replaces old interior)
+        self.create_splitter(context, interior_bp)
         
-        self.report({'INFO'}, f"Will create {self.section_count} horizontal interior sections")
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=400)
+
+    def check(self, context):
+        parent_obj = self.get_parent_obj()
+        if not parent_obj:
+            return False
+        
+        # If section count changed, recreate the splitter
+        if self.section_count != self.previous_section_count:
+            splitter_obj = self.get_splitter_obj()
+            if splitter_obj:
+                self.delete_children(splitter_obj)
+                bpy.data.objects.remove(splitter_obj, do_unlink=True)
+            
+            splitter = types_frameless.InteriorSplitterHorizontal()
+            splitter.splitter_qty = self.section_count - 1
+            splitter.section_sizes = [0] * self.section_count
+            splitter.section_types = ['EMPTY'] * self.section_count
+            splitter.create()
+            
+            splitter.obj.parent = parent_obj
+            
+            if 'IS_FRAMELESS_OPENING_CAGE' in parent_obj:
+                opening = types_frameless.CabinetOpening(parent_obj)
+            else:
+                opening = types_frameless.CabinetBay(parent_obj)
+                
+            dim_x = opening.var_input('Dim X', 'dim_x')
+            dim_y = opening.var_input('Dim Y', 'dim_y')
+            dim_z = opening.var_input('Dim Z', 'dim_z')
+            splitter.driver_input('Dim X', 'dim_x', [dim_x])
+            splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+            splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+            
+            self.splitter_obj_name = splitter.obj.name
+            self.previous_section_count = self.section_count
+            
+            cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+            if cabinet_bp:
+                hb_utils.run_calc_fix(context, cabinet_bp)
+            return True
+        
+        # Otherwise just recalculate
+        splitter_obj = self.get_splitter_obj()
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                calculator.calculate()
+            
+            cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
+            if cabinet_bp:
+                hb_utils.run_calc_fix(context, cabinet_bp)
+        
+        return True
+
+    def execute(self, context):
+        parent_obj = self.get_parent_obj()
+        splitter_obj = self.get_splitter_obj()
+        
+        if not parent_obj or not splitter_obj:
+            self.report({'ERROR'}, "Could not find objects")
+            return {'CANCELLED'}
+        
+        # Get the current calculator values before recreating
+        section_sizes = []
+        for calculator in splitter_obj.home_builder.calculators:
+            for prompt in calculator.prompts:
+                if prompt.equal:
+                    section_sizes.append(0)
+                else:
+                    section_sizes.append(prompt.distance_value)
+        
+        # Delete existing splitter and create final one with section types
+        self.delete_children(splitter_obj)
+        bpy.data.objects.remove(splitter_obj, do_unlink=True)
+        
+        type_props = [
+            self.section_1_type, self.section_2_type, self.section_3_type,
+            self.section_4_type, self.section_5_type, self.section_6_type,
+            self.section_7_type, self.section_8_type, self.section_9_type,
+            self.section_10_type
+        ]
+        
+        section_types = []
+        for i in range(self.section_count):
+            section_types.append(type_props[i])
+        
+        # Create final splitter with section types
+        splitter = types_frameless.InteriorSplitterHorizontal()
+        splitter.splitter_qty = self.section_count - 1
+        splitter.section_sizes = section_sizes
+        splitter.section_types = section_types
+        splitter.create()
+        
+        # Parent and set up drivers
+        splitter.obj.parent = parent_obj
+        
+        if 'IS_FRAMELESS_OPENING_CAGE' in parent_obj:
+            opening = types_frameless.CabinetOpening(parent_obj)
+        else:
+            opening = types_frameless.CabinetBay(parent_obj)
+            
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        splitter.driver_input('Dim X', 'dim_x', [dim_x])
+        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
+        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        
+        # Run calc fix
+        cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
         return {'FINISHED'}
 
     def draw(self, context):
@@ -299,16 +731,36 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
         box = layout.box()
         box.prop(self, 'section_count')
         
+        splitter_obj = self.get_splitter_obj()
+        
+        # Section widths from calculator
         box = layout.box()
-        box.label(text="Section Configuration (0 = Equal):")
+        box.label(text="Section Widths:", icon='SNAP_GRID')
         
-        width_props = ['section_1_width', 'section_2_width', 'section_3_width', 'section_4_width']
-        type_props = ['section_1_type', 'section_2_type', 'section_3_type', 'section_4_type']
+        if splitter_obj:
+            for calculator in splitter_obj.home_builder.calculators:
+                col = box.column(align=True)
+                for prompt in calculator.prompts:
+                    row = col.row(align=True)
+                    row.active = not prompt.equal
+                    row.prop(prompt, 'distance_value', text=prompt.name)
+                    row.prop(prompt, 'equal', text="", icon='LINKED' if prompt.equal else 'UNLINKED')
         
-        for i in range(min(self.section_count, 4)):
-            row = box.row(align=True)
+        # Section types
+        box = layout.box()
+        box.label(text="Section Types:", icon='MESH_PLANE')
+        
+        type_props = [
+            'section_1_type', 'section_2_type', 'section_3_type',
+            'section_4_type', 'section_5_type', 'section_6_type',
+            'section_7_type', 'section_8_type', 'section_9_type',
+            'section_10_type'
+        ]
+        
+        col = box.column(align=True)
+        for i in range(self.section_count):
+            row = col.row(align=True)
             row.label(text=f"Section {i+1}:")
-            row.prop(self, width_props[i], text="Width")
             row.prop(self, type_props[i], text="")
 
 
