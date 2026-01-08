@@ -4689,6 +4689,148 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
 
 
 
+
+class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
+    bl_idname = "hb_frameless.custom_vertical_splitter"
+    bl_label = "Custom Vertical Openings"
+    bl_description = "Create custom vertical openings with adjustable sizes"
+    bl_options = {'UNDO'}
+
+    opening_count: bpy.props.IntProperty(
+        name="Number of Openings",
+        min=2, max=10,
+        default=2
+    ) # type: ignore
+
+    # Opening heights (0 = equal distribution)
+    opening_1_height: bpy.props.FloatProperty(name="Opening 1 Height", unit='LENGTH', default=0) # type: ignore
+    opening_2_height: bpy.props.FloatProperty(name="Opening 2 Height", unit='LENGTH', default=0) # type: ignore
+    opening_3_height: bpy.props.FloatProperty(name="Opening 3 Height", unit='LENGTH', default=0) # type: ignore
+    opening_4_height: bpy.props.FloatProperty(name="Opening 4 Height", unit='LENGTH', default=0) # type: ignore
+    opening_5_height: bpy.props.FloatProperty(name="Opening 5 Height", unit='LENGTH', default=0) # type: ignore
+
+    # Opening inserts
+    opening_1_insert: bpy.props.EnumProperty(name="Opening 1", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_2_insert: bpy.props.EnumProperty(name="Opening 2", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_3_insert: bpy.props.EnumProperty(name="Opening 3", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_4_insert: bpy.props.EnumProperty(name="Opening 4", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_5_insert: bpy.props.EnumProperty(name="Opening 5", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            bay_bp = hb_utils.get_bay_bp(obj)
+            opening_bp = hb_utils.get_opening_bp(obj)
+            return bay_bp is not None or opening_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def execute(self, context):
+        # TODO: Implement the actual splitter creation
+        # 1. Find parent bay or opening
+        # 2. Delete existing children
+        # 3. Create SplitterVertical with settings
+        
+        self.report({'INFO'}, f"Will create {self.opening_count} vertical openings")
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        
+        box = layout.box()
+        box.prop(self, 'opening_count')
+        
+        box = layout.box()
+        box.label(text="Opening Configuration (0 = Equal):")
+        
+        heights = [self.opening_1_height, self.opening_2_height, self.opening_3_height, 
+                   self.opening_4_height, self.opening_5_height]
+        inserts = ['opening_1_insert', 'opening_2_insert', 'opening_3_insert',
+                   'opening_4_insert', 'opening_5_insert']
+        height_props = ['opening_1_height', 'opening_2_height', 'opening_3_height',
+                        'opening_4_height', 'opening_5_height']
+        
+        for i in range(min(self.opening_count, 5)):
+            row = box.row(align=True)
+            row.label(text=f"Opening {i+1}:")
+            row.prop(self, height_props[i], text="Height")
+            row.prop(self, inserts[i], text="")
+
+
+class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
+    bl_idname = "hb_frameless.custom_horizontal_splitter"
+    bl_label = "Custom Horizontal Openings"
+    bl_description = "Create custom horizontal openings with adjustable sizes"
+    bl_options = {'UNDO'}
+
+    opening_count: bpy.props.IntProperty(
+        name="Number of Openings",
+        min=2, max=10,
+        default=2
+    ) # type: ignore
+
+    # Opening widths (0 = equal distribution)
+    opening_1_width: bpy.props.FloatProperty(name="Opening 1 Width", unit='LENGTH', default=0) # type: ignore
+    opening_2_width: bpy.props.FloatProperty(name="Opening 2 Width", unit='LENGTH', default=0) # type: ignore
+    opening_3_width: bpy.props.FloatProperty(name="Opening 3 Width", unit='LENGTH', default=0) # type: ignore
+    opening_4_width: bpy.props.FloatProperty(name="Opening 4 Width", unit='LENGTH', default=0) # type: ignore
+    opening_5_width: bpy.props.FloatProperty(name="Opening 5 Width", unit='LENGTH', default=0) # type: ignore
+
+    # Opening inserts
+    opening_1_insert: bpy.props.EnumProperty(name="Opening 1", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_2_insert: bpy.props.EnumProperty(name="Opening 2", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_3_insert: bpy.props.EnumProperty(name="Opening 3", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_4_insert: bpy.props.EnumProperty(name="Opening 4", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+    opening_5_insert: bpy.props.EnumProperty(name="Opening 5", items=[('DOORS', "Doors", ""), ('DRAWER', "Drawer", ""), ('OPEN', "Open", "")], default='DOORS') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            bay_bp = hb_utils.get_bay_bp(obj)
+            opening_bp = hb_utils.get_opening_bp(obj)
+            return bay_bp is not None or opening_bp is not None
+        return False
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def execute(self, context):
+        # TODO: Implement the actual splitter creation
+        # 1. Find parent bay or opening
+        # 2. Delete existing children
+        # 3. Create SplitterHorizontal with settings
+        
+        self.report({'INFO'}, f"Will create {self.opening_count} horizontal openings")
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        
+        box = layout.box()
+        box.prop(self, 'opening_count')
+        
+        box = layout.box()
+        box.label(text="Opening Configuration (0 = Equal):")
+        
+        width_props = ['opening_1_width', 'opening_2_width', 'opening_3_width',
+                       'opening_4_width', 'opening_5_width']
+        inserts = ['opening_1_insert', 'opening_2_insert', 'opening_3_insert',
+                   'opening_4_insert', 'opening_5_insert']
+        
+        for i in range(min(self.opening_count, 5)):
+            row = box.row(align=True)
+            row.label(text=f"Opening {i+1}:")
+            row.prop(self, width_props[i], text="Width")
+            row.prop(self, inserts[i], text="")
+
+
+
 classes = (
     hb_frameless_OT_place_cabinet,
     hb_frameless_OT_load_cabinet_group_from_library,
@@ -4745,6 +4887,9 @@ classes = (
     # Interior menu operators
     hb_frameless_OT_interior_prompts,
     hb_frameless_OT_change_interior_type,
+    # Custom splitter operators
+    hb_frameless_OT_custom_vertical_splitter,
+    hb_frameless_OT_custom_horizontal_splitter,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

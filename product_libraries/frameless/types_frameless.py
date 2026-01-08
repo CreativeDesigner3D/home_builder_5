@@ -499,6 +499,110 @@ class SplitterVertical(GeoNodeCage):
         opening_calculator.calculate() 
 
 
+
+
+class SplitterHorizontal(GeoNodeCage):
+
+    splitter_qty = 1
+    opening_sizes = []
+    opening_inserts = []
+
+    def __init__(self, obj=None):
+        super().__init__(obj)
+        self.splitter_qty = 1 # Default Splitter Quantity. Opening Qty = Splitter Qty + 1
+        self.opening_sizes = [] # Default Opening Sizes left to right 0 is equal
+        self.opening_inserts = [] # Default Opening Inserts left to right
+
+    def add_insert_into_opening(self,opening,insert):
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+
+        insert.obj.parent = opening.obj
+        insert.driver_input("Dim X", 'dim_x', [dim_x])
+        insert.driver_input("Dim Y", 'dim_y', [dim_y])
+        insert.driver_input("Dim Z", 'dim_z', [dim_z])
+        
+    def create(self):
+        super().create('Splitter Horizontal')
+        props = bpy.context.scene.hb_frameless
+
+        self.obj['IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE'] = True
+        self.obj.display_type = 'WIRE'
+
+        self.add_property('Divider Quantity', 'QUANTITY', 1)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
+
+        # Add calculator for opening widths
+        empty_obj = self.add_empty("Calc Object")
+        empty_obj.empty_display_size = .001
+        opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
+        for i in range(1,self.splitter_qty+2):
+            opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Width')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+
+        # Total distance is width minus material thickness for all splitters
+        opening_calculator.set_total_distance('dim_x-mt*' + str(self.splitter_qty),[dim_x,mt])
+        
+        previous_splitter = None
+
+        # Add Vertical Dividers Adding from Left to Right
+        for i in range(1,self.splitter_qty+2):
+            opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Width')
+            ow = opening_prompt.get_var('Opening Calculator','ow')
+
+            # Add Divider
+            if i < self.splitter_qty+1:
+                divider = CabinetPart()
+                divider.create('Horizontal Splitter ' + str(i))
+                divider.obj.parent = self.obj
+                divider.obj.rotation_euler.y = math.radians(-90)
+                if previous_splitter:
+                    loc_x = previous_splitter.var_location('loc_x','x')
+                    divider.driver_location('x', 'loc_x+ow+mt',[loc_x,ow,mt])
+                else:
+                    divider.driver_location('x', 'ow',[ow])
+                divider.driver_input("Length", 'dim_z', [dim_z])
+                divider.driver_input("Width", 'dim_y', [dim_y])
+                divider.driver_input("Thickness", 'mt', [mt])
+
+                previous_splitter = divider
+
+            # Add Opening
+            opening = CabinetOpening()
+            opening.create('Opening ' + str(i))
+            opening.obj.parent = self.obj
+            if i == 1:
+                opening.obj.location.x = 0
+            else:
+                loc_x = previous_splitter.var_location('loc_x','x')
+                opening.driver_location('x', 'loc_x+mt',[loc_x,mt])
+            
+            opening.driver_input("Dim X", 'ow', [ow])
+            opening.driver_input("Dim Y", 'dim_y', [dim_y])
+            opening.driver_input("Dim Z", 'dim_z', [dim_z])
+
+            # Add Insert into Opening
+            if len(self.opening_inserts) > i - 1:
+                insert = self.opening_inserts[i-1]
+                if insert:
+                    insert.create()
+                    self.add_insert_into_opening(opening,insert)
+
+        # Set Opening Sizes
+        for i in range(1,self.splitter_qty+2):
+            if len(self.opening_sizes) > i - 1 and self.opening_sizes[i-1] != 0:
+                ow = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Width')
+                ow.equal = False
+                ow.distance_value = self.opening_sizes[i-1]
+
+        opening_calculator.calculate() 
+
+
 class CabinetOpening(GeoNodeCage):
 
     half_overlay_top = False

@@ -30,8 +30,14 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="Change Opening To:")
-        layout.separator()
+        layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
+
+
+class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
+    bl_label = "Change Bay Configuration"
+
+    def draw(self, context):
+        layout = self.layout
         layout.operator("hb_frameless.change_bay_opening", text="Door/Drawer").opening_type = 'DOOR_DRAWER'
         layout.operator("hb_frameless.change_bay_opening", text="Left Swing Door").opening_type = 'LEFT_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text="Right Swing Door").opening_type = 'RIGHT_DOOR'
@@ -43,6 +49,9 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
         layout.operator("hb_frameless.change_bay_opening", text="4 Drawer Stack").opening_type = '4_DRAWER_STACK'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Open (No Front)").opening_type = 'OPEN'
+        layout.separator()
+        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
+        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")
 
 
 class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
@@ -52,10 +61,20 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
         layout.separator()
-        layout.label(text="Change To:")
+        layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
+
+
+class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
+    bl_label = "Change Opening"
+
+    def draw(self, context):
+        layout = self.layout
         layout.operator("hb_frameless.change_opening_type", text="Doors").opening_type = 'DOORS'
         layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'DRAWER'
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
+        layout.separator()
+        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
+        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")
 
 
 class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
@@ -68,6 +87,27 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
         layout.operator("hb_frameless.assign_door_style_to_selected_fronts", text="Assign Door Style")
         layout.separator()
         layout.operator("hb_frameless.delete_front", text="Delete Front")
+
+
+class HOME_BUILDER_MT_interior_commands(bpy.types.Menu):
+    bl_label = "Interior Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.interior_prompts", text="Interior Prompts")
+        layout.separator()
+        layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
+
+
+class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
+    bl_label = "Change Interior"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.change_interior_type", text="Shelves").interior_type = 'SHELVES'
+        layout.operator("hb_frameless.change_interior_type", text="Rollouts").interior_type = 'ROLLOUTS'
+        layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
+        layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
 
 
 class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
@@ -83,29 +123,16 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
         layout.operator("hb_frameless.delete_appliance", text="Delete Appliance")
 
 
-
-
-class HOME_BUILDER_MT_interior_commands(bpy.types.Menu):
-    bl_label = "Interior Commands"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("hb_frameless.interior_prompts", text="Interior Prompts")
-        layout.separator()
-        layout.label(text="Change To:")
-        layout.operator("hb_frameless.change_interior_type", text="Shelves").interior_type = 'SHELVES'
-        layout.operator("hb_frameless.change_interior_type", text="Rollouts").interior_type = 'ROLLOUTS'
-        layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
-        layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
-
-
 classes = (
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_cabinet_commands,
     HOME_BUILDER_MT_bay_commands,
+    HOME_BUILDER_MT_bay_change_configuration,
     HOME_BUILDER_MT_opening_commands,
+    HOME_BUILDER_MT_opening_change,
     HOME_BUILDER_MT_door_front_commands,
     HOME_BUILDER_MT_interior_commands,
+    HOME_BUILDER_MT_interior_change,
     HOME_BUILDER_MT_appliance_commands,
 )
 
