@@ -699,6 +699,7 @@ class CabinetShelves(CabinetInterior):
         shelves = CabinetPart()
         shelves.create('Shelf')
         shelves.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        shelves.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
         shelves.obj.parent = self.obj
         # array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
         # array_mod.count = 1   
@@ -1070,6 +1071,7 @@ class CabinetDrawerFront(CabinetFront):
         drawer_box = GeoNodeDrawerBox()
         drawer_box.create('Drawer Box')
         drawer_box.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        drawer_box.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
         drawer_box.obj.parent = self.obj
         drawer_box.obj.rotation_euler.x = math.radians(-90)
         drawer_box.obj.rotation_euler.z = math.radians(-90)
@@ -1086,6 +1088,248 @@ class CabinetDrawerFront(CabinetFront):
 # =============================================================================
 # CORNER CABINETS
 # =============================================================================
+
+
+
+class InteriorSection(GeoNodeCage):
+    """A section within an interior that can contain shelves, rollouts, etc."""
+
+    def create(self, name):
+        super().create(name)
+        self.obj['IS_FRAMELESS_INTERIOR_SECTION'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_commands'
+        self.obj.display_type = 'WIRE'
+
+
+class InteriorSplitterVertical(CabinetInterior):
+    """Splits interior vertically into sections (top to bottom)."""
+
+    splitter_qty = 1
+    section_sizes = []
+    section_types = []  # 'SHELVES', 'ROLLOUTS', 'TRAY_DIVIDERS', 'EMPTY'
+
+    def __init__(self, obj=None):
+        super().__init__(obj)
+        self.splitter_qty = 1
+        self.section_sizes = []
+        self.section_types = []
+
+    def create(self):
+        super().create('Interior Splitter Vertical')
+        props = bpy.context.scene.hb_frameless
+
+        self.obj['IS_FRAMELESS_INTERIOR_SPLITTER_VERTICAL'] = True
+
+        self.add_property('Divider Quantity', 'QUANTITY', self.splitter_qty)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
+
+        # Add calculator for section heights
+        empty_obj = self.add_empty("Calc Object")
+        empty_obj.empty_display_size = .001
+        section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
+        for i in range(1, self.splitter_qty + 2):
+            section_calculator.add_calculator_prompt('Section ' + str(i) + ' Height')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+
+        # Total distance is height minus material thickness for all dividers
+        section_calculator.set_total_distance('dim_z-mt*' + str(self.splitter_qty), [dim_z, mt])
+
+        previous_divider = None
+
+        # Add horizontal dividers from top to bottom
+        for i in range(1, self.splitter_qty + 2):
+            section_prompt = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Height')
+            sh = section_prompt.get_var('Section Calculator', 'sh')
+
+            # Add divider (horizontal shelf acting as divider)
+            if i < self.splitter_qty + 1:
+                divider = CabinetPart()
+                divider.create('Interior Divider ' + str(i))
+                divider.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+                divider.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+                divider.obj.parent = self.obj
+                if previous_divider:
+                    loc_z = previous_divider.var_location('loc_z', 'z')
+                    divider.driver_location('z', 'loc_z-sh-mt', [loc_z, sh, mt])
+                else:
+                    divider.driver_location('z', 'dim_z-sh-mt', [dim_z, sh, mt])
+                divider.driver_input("Length", 'dim_x', [dim_x])
+                divider.driver_input("Width", 'dim_y', [dim_y])
+                divider.driver_input("Thickness", 'mt', [mt])
+
+                previous_divider = divider
+
+            # Add interior section
+            section = InteriorSection()
+            section.create('Section ' + str(i))
+            section.obj.parent = self.obj
+            if i < self.splitter_qty + 1:
+                loc_z = previous_divider.var_location('loc_z', 'z')
+                section.driver_location('z', 'loc_z+mt', [loc_z, mt])
+            else:
+                section.obj.location.z = 0
+
+            section.driver_input("Dim X", 'dim_x', [dim_x])
+            section.driver_input("Dim Y", 'dim_y', [dim_y])
+            section.driver_input("Dim Z", 'sh', [sh])
+
+            # Add interior type to section based on section_types
+            if len(self.section_types) > i - 1:
+                section_type = self.section_types[i - 1]
+                if section_type == 'SHELVES':
+                    self._add_shelves_to_section(section)
+                elif section_type == 'ROLLOUTS':
+                    self._add_rollouts_to_section(section)
+                # TRAY_DIVIDERS and EMPTY don't add anything for now
+
+        # Set section sizes
+        for i in range(1, self.splitter_qty + 2):
+            if len(self.section_sizes) > i - 1 and self.section_sizes[i - 1] != 0:
+                sh = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Height')
+                sh.equal = False
+                sh.distance_value = self.section_sizes[i - 1]
+
+        section_calculator.calculate()
+
+    def _add_shelves_to_section(self, section):
+        props = bpy.context.scene.hb_frameless
+        dim_x = section.var_input('Dim X', 'dim_x')
+        dim_y = section.var_input('Dim Y', 'dim_y')
+        dim_z = section.var_input('Dim Z', 'dim_z')
+
+        shelf = CabinetPart()
+        shelf.create('Shelf')
+        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+        shelf.obj.parent = section.obj
+        shelf.driver_location('z', 'dim_z/2', [dim_z])
+        shelf.driver_input("Length", 'dim_x', [dim_x])
+        shelf.driver_input("Width", 'dim_y-.025', [dim_y])  # Small setback
+        shelf.set_input("Thickness", props.default_carcass_part_thickness)
+
+    def _add_rollouts_to_section(self, section):
+        # TODO: Implement rollout creation
+        pass
+
+
+class InteriorSplitterHorizontal(CabinetInterior):
+    """Splits interior horizontally into sections (left to right)."""
+
+    splitter_qty = 1
+    section_sizes = []
+    section_types = []
+
+    def __init__(self, obj=None):
+        super().__init__(obj)
+        self.splitter_qty = 1
+        self.section_sizes = []
+        self.section_types = []
+
+    def create(self):
+        super().create('Interior Splitter Horizontal')
+        props = bpy.context.scene.hb_frameless
+
+        self.obj['IS_FRAMELESS_INTERIOR_SPLITTER_HORIZONTAL'] = True
+
+        self.add_property('Divider Quantity', 'QUANTITY', self.splitter_qty)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
+
+        # Add calculator for section widths
+        empty_obj = self.add_empty("Calc Object")
+        empty_obj.empty_display_size = .001
+        section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
+        for i in range(1, self.splitter_qty + 2):
+            section_calculator.add_calculator_prompt('Section ' + str(i) + ' Width')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+
+        # Total distance is width minus material thickness for all dividers
+        section_calculator.set_total_distance('dim_x-mt*' + str(self.splitter_qty), [dim_x, mt])
+
+        previous_divider = None
+
+        # Add vertical dividers from left to right
+        for i in range(1, self.splitter_qty + 2):
+            section_prompt = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Width')
+            sw = section_prompt.get_var('Section Calculator', 'sw')
+
+            # Add divider (vertical panel)
+            if i < self.splitter_qty + 1:
+                divider = CabinetPart()
+                divider.create('Interior Divider ' + str(i))
+                divider.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+                divider.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+                divider.obj.parent = self.obj
+                divider.obj.rotation_euler.y = math.radians(-90)
+                if previous_divider:
+                    loc_x = previous_divider.var_location('loc_x', 'x')
+                    divider.driver_location('x', 'loc_x+sw+mt', [loc_x, sw, mt])
+                else:
+                    divider.driver_location('x', 'sw', [sw])
+                divider.driver_input("Length", 'dim_z', [dim_z])
+                divider.driver_input("Width", 'dim_y', [dim_y])
+                divider.driver_input("Thickness", 'mt', [mt])
+
+                previous_divider = divider
+
+            # Add interior section
+            section = InteriorSection()
+            section.create('Section ' + str(i))
+            section.obj.parent = self.obj
+            if i == 1:
+                section.obj.location.x = 0
+            else:
+                loc_x = previous_divider.var_location('loc_x', 'x')
+                section.driver_location('x', 'loc_x+mt', [loc_x, mt])
+
+            section.driver_input("Dim X", 'sw', [sw])
+            section.driver_input("Dim Y", 'dim_y', [dim_y])
+            section.driver_input("Dim Z", 'dim_z', [dim_z])
+
+            # Add interior type to section
+            if len(self.section_types) > i - 1:
+                section_type = self.section_types[i - 1]
+                if section_type == 'SHELVES':
+                    self._add_shelves_to_section(section)
+                elif section_type == 'ROLLOUTS':
+                    self._add_rollouts_to_section(section)
+
+        # Set section sizes
+        for i in range(1, self.splitter_qty + 2):
+            if len(self.section_sizes) > i - 1 and self.section_sizes[i - 1] != 0:
+                sw = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Width')
+                sw.equal = False
+                sw.distance_value = self.section_sizes[i - 1]
+
+        section_calculator.calculate()
+
+    def _add_shelves_to_section(self, section):
+        props = bpy.context.scene.hb_frameless
+        dim_x = section.var_input('Dim X', 'dim_x')
+        dim_y = section.var_input('Dim Y', 'dim_y')
+        dim_z = section.var_input('Dim Z', 'dim_z')
+
+        shelf = CabinetPart()
+        shelf.create('Shelf')
+        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+        shelf.obj.parent = section.obj
+        shelf.driver_location('z', 'dim_z/2', [dim_z])
+        shelf.driver_input("Length", 'dim_x', [dim_x])
+        shelf.driver_input("Width", 'dim_y-.025', [dim_y])
+        shelf.set_input("Thickness", props.default_carcass_part_thickness)
+
+    def _add_rollouts_to_section(self, section):
+        # TODO: Implement rollout creation
+        pass
+
 
 class CornerCabinet(Cabinet):
     """Base class for corner cabinets."""

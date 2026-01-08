@@ -108,6 +108,9 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_interior_type", text="Rollouts").interior_type = 'ROLLOUTS'
         layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
+        layout.separator()
+        layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
+        layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Horizontal Division...")
 
 
 class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
@@ -123,6 +126,21 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
         layout.operator("hb_frameless.delete_appliance", text="Delete Appliance")
 
 
+
+
+class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
+    bl_label = "Interior Part Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.interior_part_prompts", text="Part Prompts")
+        layout.separator()
+        layout.operator("hb_frameless.interior_prompts", text="Edit Interior...")
+        layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior Configuration")
+        layout.separator()
+        layout.operator("hb_frameless.delete_interior_part", text="Delete Part")
+
+
 classes = (
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_cabinet_commands,
@@ -133,6 +151,7 @@ classes = (
     HOME_BUILDER_MT_door_front_commands,
     HOME_BUILDER_MT_interior_commands,
     HOME_BUILDER_MT_interior_change,
+    HOME_BUILDER_MT_interior_part_commands,
     HOME_BUILDER_MT_appliance_commands,
 )
 

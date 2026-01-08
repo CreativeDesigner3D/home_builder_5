@@ -50,6 +50,27 @@ def get_interior_bp(obj):
         return get_interior_bp(obj.parent)
     return None
 
+
+
+def get_interior_part_bp(obj):
+    """Check if object is an interior part."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_INTERIOR_PART' in obj:
+        return obj
+    return None
+
+
+def get_interior_section_bp(obj):
+    """Walk up the parent hierarchy to find the interior section base point object."""
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_INTERIOR_SECTION' in obj:
+        return obj
+    if obj.parent:
+        return get_interior_section_bp(obj.parent)
+    return None
+
 def get_appliance_bp(obj):
     """Walk up the parent hierarchy to find the appliance base point object."""
     if obj is None:
