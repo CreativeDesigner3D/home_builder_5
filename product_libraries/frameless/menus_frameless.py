@@ -58,6 +58,8 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
+        layout.separator()
+        layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
 
 
 class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
@@ -65,8 +67,12 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.change_opening_type", text="Doors").opening_type = 'DOORS'
-        layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'DRAWER'
+        layout.operator("hb_frameless.change_opening_type", text="Left Door").opening_type = 'LEFT_DOOR'
+        layout.operator("hb_frameless.change_opening_type", text="Right Door").opening_type = 'RIGHT_DOOR'
+        layout.operator("hb_frameless.change_opening_type", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.separator()
+        layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'SINGLE_DRAWER'
+        layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
         layout.separator()
         layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")

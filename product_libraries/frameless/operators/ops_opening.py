@@ -242,11 +242,13 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
     opening_type: bpy.props.EnumProperty(
         name="Opening Type",
         items=[
-            ('DOORS', "Doors", "Door opening"),
-            ('DRAWER', "Drawer", "Drawer opening"),
+            ('LEFT_DOOR', "Left Door", "Single left swing door"),
+            ('RIGHT_DOOR', "Right Door", "Single right swing door"),
+            ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('OPEN', "Open", "Open (no front)"),
         ],
-        default='DOORS'
+        default='LEFT_DOOR'
     ) # type: ignore
 
     @classmethod
@@ -259,11 +261,142 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             return opening_bp is not None
         return False
 
+    def delete_opening_children(self, opening_obj):
+        """Delete all children of the opening."""
+        children = list(opening_obj.children)
+        for child in children:
+            self.delete_opening_children(child)
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def get_cabinet_type(self, opening_obj):
+        """Get the cabinet type from the cabinet parent."""
+        cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)
+        if cabinet_bp:
+            return cabinet_bp.get('CABINET_TYPE', 'BASE')
+        return 'BASE'
+
+    def get_half_overlay_from_parent(self, opening_obj):
+        """
+        Determine half overlay settings based on opening's position in splitter.
+        Returns (half_overlay_top, half_overlay_bottom, half_overlay_left, half_overlay_right)
+        """
+        half_top = False
+        half_bottom = False
+        half_left = False
+        half_right = False
+        
+        # Check if parent is a vertical or horizontal splitter
+        parent = opening_obj.parent
+        if parent:
+            if 'IS_FRAMELESS_SPLITTER_VERTICAL_CAGE' in parent:
+                # Find all sibling openings to determine position
+                siblings = [c for c in parent.children if 'IS_FRAMELESS_OPENING_CAGE' in c]
+                siblings.sort(key=lambda o: o.location.z)  # Sort by Z for vertical splitter
+                
+                if len(siblings) > 1:
+                    idx = siblings.index(opening_obj) if opening_obj in siblings else -1
+                    if idx >= 0:
+                        if idx > 0:  # Not the bottom opening
+                            half_bottom = True
+                        if idx < len(siblings) - 1:  # Not the top opening
+                            half_top = True
+                            
+            elif 'IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE' in parent:
+                # Find all sibling openings to determine position
+                siblings = [c for c in parent.children if 'IS_FRAMELESS_OPENING_CAGE' in c]
+                siblings.sort(key=lambda o: o.location.x)  # Sort by X for horizontal splitter
+                
+                if len(siblings) > 1:
+                    idx = siblings.index(opening_obj) if opening_obj in siblings else -1
+                    if idx >= 0:
+                        if idx > 0:  # Not the leftmost opening
+                            half_left = True
+                        if idx < len(siblings) - 1:  # Not the rightmost opening
+                            half_right = True
+        
+        return half_top, half_bottom, half_left, half_right
+
+    def add_insert_to_opening(self, opening, insert):
+        """Add an insert to the opening with proper dimension drivers."""
+        insert.create()
+        insert.obj.parent = opening.obj
+        dim_x = opening.var_input('Dim X', 'dim_x')
+        dim_y = opening.var_input('Dim Y', 'dim_y')
+        dim_z = opening.var_input('Dim Z', 'dim_z')
+        insert.driver_input('Dim X', 'dim_x', [dim_x])
+        insert.driver_input('Dim Y', 'dim_y', [dim_y])
+        insert.driver_input('Dim Z', 'dim_z', [dim_z])
+
+    def create_doors(self, opening, door_swing, half_top, half_bottom, half_left, half_right):
+        """Create doors with specified swing direction."""
+        cabinet_type = self.get_cabinet_type(opening.obj)
+        
+        doors = types_frameless.Doors()
+        if cabinet_type == 'UPPER':
+            doors.door_pull_location = "Upper"
+        else:
+            doors.door_pull_location = "Base"
+        
+        # Apply half overlays based on position in splitter
+        doors.half_overlay_top = half_top
+        doors.half_overlay_bottom = half_bottom
+        doors.half_overlay_left = half_left
+        doors.half_overlay_right = half_right
+        
+        self.add_insert_to_opening(opening, doors)
+        
+        # Set door swing: 0=Left, 1=Right, 2=Double
+        doors.obj['Door Swing'] = door_swing
+
+    def create_drawer(self, opening, half_top, half_bottom, half_left, half_right):
+        """Create single drawer."""
+        drawer = types_frameless.Drawer()
+        
+        # Apply half overlays based on position in splitter
+        drawer.half_overlay_top = half_top
+        drawer.half_overlay_bottom = half_bottom
+        drawer.half_overlay_left = half_left
+        drawer.half_overlay_right = half_right
+        
+        self.add_insert_to_opening(opening, drawer)
+
     def execute(self, context):
-        opening_bp = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
-        # TODO: Implement opening type change
-        self.report({'INFO'}, f"Opening will be changed to {self.opening_type}")
+        opening_obj = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
+        if not opening_obj:
+            self.report({'ERROR'}, "Could not find opening")
+            return {'CANCELLED'}
+        
+        opening = types_frameless.CabinetOpening(opening_obj)
+        
+        # Get half overlay settings based on position in splitter
+        half_top, half_bottom, half_left, half_right = self.get_half_overlay_from_parent(opening_obj)
+        
+        # Delete existing opening children
+        self.delete_opening_children(opening_obj)
+        
+        # Create new insert based on type
+        if self.opening_type == 'LEFT_DOOR':
+            self.create_doors(opening, door_swing=0, half_top=half_top, half_bottom=half_bottom, 
+                            half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'RIGHT_DOOR':
+            self.create_doors(opening, door_swing=1, half_top=half_top, half_bottom=half_bottom,
+                            half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'DOUBLE_DOORS':
+            self.create_doors(opening, door_swing=2, half_top=half_top, half_bottom=half_bottom,
+                            half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'SINGLE_DRAWER':
+            self.create_drawer(opening, half_top=half_top, half_bottom=half_bottom,
+                             half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'OPEN':
+            pass  # No children needed for open
+        
+        # Run calc fix to update
+        cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)
+        if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+        
         return {'FINISHED'}
+
 
 
 class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
