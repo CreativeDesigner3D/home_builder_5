@@ -656,6 +656,8 @@ class CabinetOpening(GeoNodeCage):
         rr = self.var_prop('Right Reveal', 'rr')
         tr = self.var_prop('Top Reveal', 'tr')
         br = self.var_prop('Bottom Reveal', 'br')
+        inset = self.var_prop('Inset Front', 'inset')
+        ir = self.var_prop('Inset Reveal', 'ir')
 
         # Overlay Prompts Stored in Separate Empty Object to Avoid Circular Dependency Graph Issues
         self.overlay_prompts = self.add_empty('Overlay Prompt Obj')
@@ -664,10 +666,13 @@ class CabinetOpening(GeoNodeCage):
         self.overlay_prompts.home_builder.add_property("Overlay Left",'DISTANCE',0.0)
         self.overlay_prompts.home_builder.add_property("Overlay Right",'DISTANCE',0.0)
 
-        self.overlay_prompts.home_builder.driver_prop("Overlay Top", "IF(hot,(tt-vg)/2,tt-tr)", [hot,tt,vg,tr])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Bottom", "IF(hob,(bt-vg)/2,bt-br)", [hob,bt,vg,br])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Left", "IF(hol,(lt-vg)/2,lt-lr)", [hol,lt,vg,lr])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Right", "IF(hor,(rt-vg)/2,rt-rr)", [hor,rt,vg,rr])
+        # Inset: negative overlay (door smaller than opening by inset reveal)
+        # Half Overlay: (thickness - gap) / 2
+        # Full Overlay: thickness - reveal
+        self.overlay_prompts.home_builder.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(tt-vg)/2,tt-tr))", [inset,ir,hot,tt,vg,tr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(bt-vg)/2,bt-br))", [inset,ir,hob,bt,vg,br])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Left", "IF(inset,-ir,IF(hol,(lt-vg)/2,lt-lr))", [inset,ir,hol,lt,vg,lr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Right", "IF(inset,-ir,IF(hor,(rt-vg)/2,rt-rr))", [inset,ir,hor,rt,vg,rr])
 
         return self.overlay_prompts
 
@@ -748,6 +753,8 @@ class Doors(CabinetOpening):
         ds = self.var_prop('Door Swing', 'ds')
         door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
+        inset = self.var_prop('Inset Front', 'inset')
+
         left_door = CabinetDoor()
         left_door.door_pull_location = self.door_pull_location
         left_door.create('Left Door')
@@ -755,7 +762,8 @@ class Doors(CabinetOpening):
         left_door.obj.rotation_euler.x = math.radians(90)
         left_door.obj.rotation_euler.y = math.radians(-90)
         left_door.driver_location('x', '-lo',[lo])
-        left_door.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        # Inset: door sits inside opening (Y=0), Overlay: door projects forward
+        left_door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
         left_door.driver_location('z', '-bo',[bo])
         left_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
         left_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
@@ -770,7 +778,8 @@ class Doors(CabinetOpening):
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
         right_door.driver_location('x', 'dim_x+ro',[dim_x,ro])
-        right_door.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        # Inset: door sits inside opening (Y=0), Overlay: door projects forward
+        right_door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
         right_door.driver_location('z', '-bo',[bo])
         right_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
         right_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
@@ -784,11 +793,14 @@ class Doors(CabinetOpening):
         x = self.var_input('Dim X', 'x')
         y = self.var_input('Dim Y', 'y')
         z = self.var_input('Dim Z', 'z')
+        inset = self.var_prop('Inset Front', 'inset')
+        ft = self.var_prop('Front Thickness', 'ft')
 
         interior.create('Interior')
         interior.obj.parent = self.obj
+        interior.driver_location('y', 'IF(inset,ft,0)',[inset,ft])
         interior.driver_input('Dim X','x',[x])
-        interior.driver_input('Dim Y','y',[y])
+        interior.driver_input('Dim Y','y-IF(inset,ft,0)',[y,inset,ft])
         interior.driver_input('Dim Z','z',[z])         
 
 
@@ -813,13 +825,16 @@ class Drawer(CabinetOpening):
         ft = self.var_prop('Front Thickness', 'ft')
         door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
+        inset = self.var_prop('Inset Front', 'inset')
+
         drawer_front = CabinetDrawerFront()
         drawer_front.create('Drawer Front')
         drawer_front.obj.parent = self.obj
         drawer_front.obj.rotation_euler.x = math.radians(90)
         drawer_front.obj.rotation_euler.y = math.radians(-90)
         drawer_front.driver_location('x', '-lo',[lo])
-        drawer_front.driver_location('y', '-door_to_cab_gap',[door_to_cab_gap])
+        # Inset: drawer front sits inside opening (Y=0), Overlay: projects forward
+        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
         drawer_front.driver_location('z', '-bo',[bo])
         drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
         drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
