@@ -83,6 +83,27 @@ class GeoNodeObject:
     def add_property(self,name,type,value,combobox_items=[]):
         self.obj.home_builder.add_property(name,type,value,combobox_items)
 
+    def set_property(self, prop_name, value):
+        """Set a property value.
+        
+        Args:
+            prop_name: Name of the property
+            value: Value to set
+        """
+        self.obj[prop_name] = value
+
+    def get_property(self, prop_name, default=None):
+        """Get a property value.
+        
+        Args:
+            prop_name: Name of the property
+            default: Default value if property doesn't exist
+            
+        Returns:
+            The property value or default
+        """
+        return self.obj.get(prop_name, default)
+
     def var_prop(self, prop_name, name):
         """Get a variable from a property"""
         return Variable(self.obj,'["' + prop_name + '"]',name)

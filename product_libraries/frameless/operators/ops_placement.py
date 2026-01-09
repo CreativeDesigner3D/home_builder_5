@@ -1194,9 +1194,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             elif self.cabinet_name == 'Base Drawer':
                 cabinet.default_exterior = "3 Drawers"
         elif self.cabinet_type == 'TALL':
-            cabinet = types_frameless.TallCabinet()
-            if self.cabinet_name == 'Tall Stacked':
-                cabinet.is_stacked = True
+            if self.cabinet_name == 'Refrigerator Cabinet':
+                cabinet = types_frameless.RefrigeratorCabinet()
+            else:
+                cabinet = types_frameless.TallCabinet()
+                if self.cabinet_name == 'Tall Stacked':
+                    cabinet.is_stacked = True
         elif self.cabinet_type == 'UPPER':
             cabinet = types_frameless.UpperCabinet()
             if self.cabinet_name == 'Upper Stacked':
@@ -1589,7 +1592,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
             # Map cabinet names to types
             if 'Base' in self.cabinet_name:
                 cabinet_type = 'BASE'
-            elif 'Tall' in self.cabinet_name:
+            elif 'Tall' in self.cabinet_name or self.cabinet_name == 'Refrigerator Cabinet':
                 cabinet_type = 'TALL'
             elif 'Upper' in self.cabinet_name:
                 cabinet_type = 'UPPER'

@@ -137,10 +137,10 @@ class Cabinet(GeoNodeCage):
         opening.obj.parent = self.obj
         opening.driver_location('x', 'mt',[mt])
         opening.driver_location('y', '-dim_y',[dim_y])
-        opening.driver_location('z', 'tkh+mt',[tkh,mt])
+        opening.driver_location('z', 'tkh+IF(rb,0,mt)',[tkh,mt,rb])
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
         opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
-        opening.driver_input("Dim Z", 'dim_z-tkh-(mt*2)', [dim_z,tkh,mt])
+        opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,mt,(mt*2))', [dim_z,tkh,mt,rb])
 
     def create_upper_carcass(self,name):
         self.create_cabinet(name)
@@ -348,6 +348,52 @@ class TallCabinet(Cabinet):
             doors = Doors()
             doors.door_pull_location = "Tall"
             self.add_cage_to_bay(doors)
+
+
+
+class RefrigeratorCabinet(Cabinet):
+    """Refrigerator cabinet - tall cabinet with bottom removed and split opening.
+    Bottom section is empty for the refrigerator, top section has doors for storage.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = props.refrigerator_cabinet_width
+        self.height = props.tall_cabinet_height
+        self.depth = props.tall_cabinet_depth
+    
+    def create(self, name="Refrigerator Cabinet"):
+        self.create_base_tall_carcass(name)
+        self.obj['CABINET_TYPE'] = 'TALL'
+        self.obj['IS_REFRIGERATOR_CABINET'] = True
+        
+        # Remove the bottom panel for the refrigerator
+        self.set_property('Remove Bottom', True)
+        self.set_property('Toe Kick Height', 0)
+        
+        self.add_openings()
+    
+    def add_openings(self):
+        """Add split openings - empty bottom for fridge, doors on top."""
+        props = bpy.context.scene.hb_frameless
+        
+        # Top section gets doors
+        top_doors = Doors()
+        top_doors.half_overlay_bottom = True
+        top_doors.door_pull_location = "Upper"
+        
+        # Bottom section is empty (None = no insert, just an opening)
+        # The refrigerator appliance can be placed here separately
+        
+        # Create vertical splitter with 2 openings
+        # opening_sizes: [top_height, bottom_height]
+        # Using 0 for top means it takes remaining space after bottom is set
+        door_drawer = SplitterVertical()
+        door_drawer.splitter_qty = 1
+        door_drawer.opening_sizes = [0, props.refrigerator_height]  # Top flexible, bottom = fridge height
+        door_drawer.opening_inserts = [top_doors, None]  # Doors on top, empty on bottom
+        self.add_cage_to_bay(door_drawer)
 
 
 class UpperCabinet(Cabinet):
