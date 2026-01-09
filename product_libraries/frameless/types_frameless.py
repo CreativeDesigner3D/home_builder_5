@@ -538,6 +538,15 @@ class SplitterVertical(GeoNodeCage):
                 if insert:
                     insert.create()
                     self.add_insert_into_opening(opening,insert)
+                    
+                    # Set FORCE_HALF_OVERLAY flags for split openings
+                    # Top opening (i=1) needs half overlay on bottom where it meets splitter
+                    # Bottom opening (i=splitter_qty+1) needs half overlay on top
+                    # Middle openings need both
+                    if i > 1:  # Not the top opening - force half overlay on top
+                        insert.obj['FORCE_HALF_OVERLAY_TOP'] = True
+                    if i <= self.splitter_qty:  # Not the bottom opening - force half overlay on bottom
+                        insert.obj['FORCE_HALF_OVERLAY_BOTTOM'] = True
 
         # Set Opening Sizes
         for i in range(1,self.splitter_qty+2):
@@ -625,6 +634,15 @@ class SplitterHorizontal(GeoNodeCage):
                 if insert:
                     insert.create()
                     self.add_insert_into_opening(opening,insert)
+                    
+                    # Set FORCE_HALF_OVERLAY flags for split openings
+                    # Left opening (i=1) needs half overlay on right where it meets divider
+                    # Right opening (i=splitter_qty+1) needs half overlay on left
+                    # Middle openings need both
+                    if i > 1:  # Not the left opening - force half overlay on left
+                        insert.obj['FORCE_HALF_OVERLAY_LEFT'] = True
+                    if i <= self.splitter_qty:  # Not the right opening - force half overlay on right
+                        insert.obj['FORCE_HALF_OVERLAY_RIGHT'] = True
 
             # Add Divider AFTER the opening (to its right)
             if i < self.splitter_qty+1:
