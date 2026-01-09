@@ -682,6 +682,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
                     if cab_style_index == style_index:
                         # Re-apply the style to update materials
                         style.assign_style_to_cabinet(obj)
+                        hb_utils.run_calc_fix(context, obj)
                         obj['CABINET_STYLE_NAME'] = style.name  # Update name in case it changed
                         count += 1
         

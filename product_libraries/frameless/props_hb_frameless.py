@@ -446,6 +446,35 @@ class Frameless_Cabinet_Style(PropertyGroup):
             # part.set_input('Material',self.material) 
 
         #Update cabinet door and drawer front overlays
+        for child in cabinet_obj.children_recursive:
+            if child.get('IS_FRAMELESS_OPENING_CAGE'):
+                # Set Inset Front based on overlay type
+                if 'Inset Front' in child:
+                    child['Inset Front'] = (self.door_overlay_type == 'INSET')
+                
+                # Set Half Overlay properties based on overlay type
+                # FULL: all half overlays False
+                # HALF: all half overlays True (except where adjacent to cabinet edge)
+                # INSET: half overlay doesn't matter, but set False for consistency
+                is_half = (self.door_overlay_type == 'HALF')
+                
+                if 'Half Overlay Top' in child:
+                    # Only set to half if not already overridden (e.g., stacked cabinets)
+                    # Check if this is at the top of the cabinet
+                    if not child.get('FORCE_HALF_OVERLAY_TOP', False):
+                        child['Half Overlay Top'] = is_half
+                        
+                if 'Half Overlay Bottom' in child:
+                    if not child.get('FORCE_HALF_OVERLAY_BOTTOM', False):
+                        child['Half Overlay Bottom'] = is_half
+                        
+                if 'Half Overlay Left' in child:
+                    if not child.get('FORCE_HALF_OVERLAY_LEFT', False):
+                        child['Half Overlay Left'] = is_half
+                        
+                if 'Half Overlay Right' in child:
+                    if not child.get('FORCE_HALF_OVERLAY_RIGHT', False):
+                        child['Half Overlay Right'] = is_half
 
     def draw_cabinet_style_ui(self, layout, context):
         box = layout.box()
