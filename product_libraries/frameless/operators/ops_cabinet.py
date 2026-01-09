@@ -15,6 +15,8 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     cabinet_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5) # type: ignore
     cabinet_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5) # type: ignore
     cabinet_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
+    toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
+    toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
 
     cabinet = None
@@ -34,7 +36,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
         
-        # Get Remove Bottom property if it exists (BASE and TALL cabinets)
+        # Get toe kick properties if they exist (BASE and TALL cabinets)
+        if 'Toe Kick Height' in cabinet_bp:
+            self.toe_kick_height = cabinet_bp['Toe Kick Height']
+        if 'Toe Kick Setback' in cabinet_bp:
+            self.toe_kick_setback = cabinet_bp['Toe Kick Setback']
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         
@@ -46,7 +52,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
         
-        # Set Remove Bottom property if it exists
+        # Set toe kick properties if they exist
+        if 'Toe Kick Height' in self.cabinet.obj:
+            self.cabinet.obj['Toe Kick Height'] = self.toe_kick_height
+        if 'Toe Kick Setback' in self.cabinet.obj:
+            self.cabinet.obj['Toe Kick Setback'] = self.toe_kick_setback
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
         
@@ -73,10 +83,21 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         row.label(text="Depth:")
         row.prop(self, 'cabinet_depth', text="")
         
-        # Show Remove Bottom option for BASE and TALL cabinets
-        if 'Remove Bottom' in self.cabinet.obj:
+        # Show toe kick options for BASE and TALL cabinets
+        if 'Toe Kick Height' in self.cabinet.obj:
             box = layout.box()
-            row = box.row()
+            box.label(text="Toe Kick")
+            col = box.column(align=True)
+            
+            row = col.row(align=True)
+            row.label(text="Height:")
+            row.prop(self, 'toe_kick_height', text="")
+            
+            row = col.row(align=True)
+            row.label(text="Setback:")
+            row.prop(self, 'toe_kick_setback', text="")
+            
+            row = col.row()
             row.prop(self, 'remove_bottom')
 
 
