@@ -4,7 +4,7 @@ from .. import types_frameless
 from .. import props_hb_frameless
 import os
 from mathutils import Vector
-from .... import hb_utils, hb_types, units
+from .... import hb_utils, hb_types, hb_project, units
 
 class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.cabinet_prompts"
@@ -312,6 +312,28 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         
         # Set thickness
         panel.set_input("Thickness", props.default_carcass_part_thickness)
+        
+        # Assign cabinet style material to the applied end
+        style_index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)
+        main_scene = hb_project.get_main_scene()
+        main_props = main_scene.hb_frameless
+        if main_props.cabinet_styles and style_index < len(main_props.cabinet_styles):
+            style = main_props.cabinet_styles[style_index]
+            material, material_rotated = style.get_finish_material()
+            if material:
+                panel.set_input("Top Surface", material)
+                panel.set_input("Bottom Surface", material)
+                panel.set_input("Edge W1", material_rotated)
+                panel.set_input("Edge W2", material_rotated)
+                panel.set_input("Edge L1", material_rotated)
+                panel.set_input("Edge L2", material_rotated)
+                
+                # Also set Material input on any cabinet part modifiers
+                for mod in panel.obj.modifiers:
+                    if mod.type == 'NODES' and mod.node_group:
+                        if 'Material' in mod.node_group.interface.items_tree:
+                            node_input = mod.node_group.interface.items_tree['Material']
+                            mod[node_input.identifier] = material
         
         return panel.obj
 

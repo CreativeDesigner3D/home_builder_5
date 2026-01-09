@@ -512,7 +512,13 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 part.set_input("Edge W2",self.material_rotated)
                 part.set_input("Edge L1",self.material_rotated)
                 part.set_input("Edge L2",self.material_rotated)
-            # part.set_input('Material',self.material) 
+                
+                # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
+                for mod in child.modifiers:
+                    if mod.type == 'NODES' and mod.node_group:
+                        if 'Material' in mod.node_group.interface.items_tree:
+                            node_input = mod.node_group.interface.items_tree['Material']
+                            mod[node_input.identifier] = self.material
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:
