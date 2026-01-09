@@ -554,30 +554,12 @@ class SplitterHorizontal(GeoNodeCage):
         
         previous_splitter = None
 
-        # Add Vertical Dividers Adding from Left to Right
+        # Add Openings and Dividers from Left to Right
         for i in range(1,self.splitter_qty+2):
             opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Width')
             ow = opening_prompt.get_var('Opening Calculator','ow')
 
-            # Add Divider
-            if i < self.splitter_qty+1:
-                divider = CabinetPart()
-                divider.create('Horizontal Splitter ' + str(i))
-                divider.obj.parent = self.obj
-                divider.obj.rotation_euler.y = math.radians(-90)
-                if previous_splitter:
-                    loc_x = previous_splitter.var_location('loc_x','x')
-                    divider.driver_location('x', 'loc_x+ow+mt',[loc_x,ow,mt])
-                else:
-                    divider.driver_location('x', 'ow',[ow])
-                divider.driver_input("Length", 'dim_z', [dim_z])
-                divider.driver_input("Width", 'dim_y', [dim_y])
-                divider.driver_input("Thickness", 'mt', [mt])
-                divider.set_input("Mirror Z",True)
-
-                previous_splitter = divider
-
-            # Add Opening
+            # Add Opening FIRST (before divider, so it references the correct previous_splitter)
             opening = CabinetOpening()
             opening.create('Opening ' + str(i))
             opening.obj.parent = self.obj
@@ -597,6 +579,24 @@ class SplitterHorizontal(GeoNodeCage):
                 if insert:
                     insert.create()
                     self.add_insert_into_opening(opening,insert)
+
+            # Add Divider AFTER the opening (to its right)
+            if i < self.splitter_qty+1:
+                divider = CabinetPart()
+                divider.create('Horizontal Splitter ' + str(i))
+                divider.obj.parent = self.obj
+                divider.obj.rotation_euler.y = math.radians(-90)
+                if previous_splitter:
+                    loc_x = previous_splitter.var_location('loc_x','x')
+                    divider.driver_location('x', 'loc_x+ow+mt',[loc_x,ow,mt])
+                else:
+                    divider.driver_location('x', 'ow',[ow])
+                divider.driver_input("Length", 'dim_z', [dim_z])
+                divider.driver_input("Width", 'dim_y', [dim_y])
+                divider.driver_input("Thickness", 'mt', [mt])
+                divider.set_input("Mirror Z",True)
+
+                previous_splitter = divider
 
         # Set Opening Sizes
         for i in range(1,self.splitter_qty+2):

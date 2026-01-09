@@ -814,6 +814,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         splitter.driver_input('Dim X', 'dim_x', [dim_x])
         splitter.driver_input('Dim Y', 'dim_y', [dim_y])
         splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        hb_utils.run_calc_fix(context, splitter.obj, passes=3)
         
         self.splitter_obj_name = splitter.obj.name
         self.previous_opening_count = self.opening_count
@@ -821,7 +822,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         # Run calc fix
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
-            hb_utils.run_calc_fix(context, cabinet_bp)
+            hb_utils.run_calc_fix(context, cabinet_bp, passes=3)
         
         return splitter.obj
 
@@ -948,6 +949,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         splitter.driver_input('Dim X', 'dim_x', [dim_x])
         splitter.driver_input('Dim Y', 'dim_y', [dim_y])
         splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        hb_utils.run_calc_fix(context, splitter.obj, passes=3)
         
         # Run calc fix
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
