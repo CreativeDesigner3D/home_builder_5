@@ -576,12 +576,27 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         profile_copy.parent = crown_obj
         profile_copy['IS_CROWN_PROFILE_COPY'] = True
         
+        # Assign cabinet style material to crown
+        style_index = first_cab.get('CABINET_STYLE_INDEX', 0)
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if props.cabinet_styles and style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[style_index]
+            material, _ = style.get_finish_material()
+            if material:
+                if len(crown_obj.data.materials) == 0:
+                    crown_obj.data.materials.append(material)
+                else:
+                    crown_obj.data.materials[0] = material
+        
         return crown_obj
 
 
 def get_molding_library_path():
     """Get the path to the molding library folder."""
-    return os.path.join(os.path.dirname(__file__), "frameless_assets", "moldings")
+    # Go up one level from operators/ to frameless/
+    frameless_dir = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(frameless_dir, "frameless_assets", "moldings")
 
 
 def get_molding_categories():

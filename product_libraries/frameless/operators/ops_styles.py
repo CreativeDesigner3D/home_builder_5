@@ -1,5 +1,6 @@
 import bpy
 import os
+from bpy_extras import view3d_utils
 from .. import types_frameless
 from .. import props_hb_frameless
 from ..props_hb_frameless import get_or_create_pull_finish_material
@@ -428,12 +429,9 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
         
         # Copy all properties
         new_style.wood_species = source.wood_species
-        new_style.finish_type = source.finish_type
-        new_style.finish_color = source.finish_color
-        new_style.interior_material = source.interior_material
+        new_style.stain_color = source.stain_color
+        new_style.paint_color = source.paint_color
         new_style.door_overlay_type = source.door_overlay_type
-        new_style.door_overlay_amount = source.door_overlay_amount
-        new_style.door_gap = source.door_gap
         new_style.edge_banding = source.edge_banding
         
         # Set as active

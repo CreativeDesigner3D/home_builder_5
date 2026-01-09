@@ -844,7 +844,7 @@ class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
         hb_scene = context.scene.home_builder
         
         # Import the molding functions
-        from ..product_libraries.frameless import ops_hb_frameless
+        from ..product_libraries.frameless.operators import ops_crown
         
         # Category dropdown
         row = layout.row(align=True)
@@ -862,7 +862,7 @@ class HOME_BUILDER_PT_molding_library(bpy.types.Panel):
         
         if category and category != 'NONE' and selection and selection != 'NONE':
             # Get molding info
-            items = ops_hb_frameless.get_molding_items(category)
+            items = ops_crown.get_molding_items(category)
             selected_item = None
             for item in items:
                 if item['name'] == selection:
