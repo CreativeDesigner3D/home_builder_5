@@ -153,6 +153,75 @@ def get_or_create_pull_finish_material(finish_key):
     return mat
 
 
+def get_or_create_glass_material():
+    """Get or create a glass material for cabinet door panels.
+    
+    Creates a glass material using Glass BSDF mixed with Transparent BSDF
+    for better EEVEE viewport display.
+    """
+
+    mat_name = "Cabinet_Door_Panel_Glass"
+    
+    # Check if material already exists and has correct setup
+    if mat_name in bpy.data.materials:
+        mat = bpy.data.materials[mat_name]
+        # Verify it has a Glass BSDF node - if not, delete and recreate
+        has_glass_node = False
+        if mat.use_nodes:
+            for node in mat.node_tree.nodes:
+                if node.type == 'BSDF_GLASS':
+                    has_glass_node = True
+                    break
+        if has_glass_node:
+            return mat
+        else:
+            # Remove incorrect material
+            bpy.data.materials.remove(mat)
+    
+    # Create new glass material
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    
+    # Enable transparency settings for EEVEE
+    mat.blend_method = 'BLEND'
+    mat.use_backface_culling = False
+    
+    # Get the node tree
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    
+    # Clear default nodes
+    nodes.clear()
+    
+    # Create output node
+    output = nodes.new('ShaderNodeOutputMaterial')
+    output.location = (400, 0)
+    
+    # Create Mix Shader to blend Glass and Transparent
+    mix_shader = nodes.new('ShaderNodeMixShader')
+    mix_shader.location = (200, 0)
+    mix_shader.inputs['Fac'].default_value = 0.2  # 20% transparent, 80% glass
+    
+    # Create Glass BSDF
+    glass = nodes.new('ShaderNodeBsdfGlass')
+    glass.location = (0, 100)
+    glass.inputs['Color'].default_value = (0.85, 0.92, 0.95, 1.0)  # Slight blue tint
+    glass.inputs['Roughness'].default_value = 0.0
+    glass.inputs['IOR'].default_value = 1.45
+    
+    # Create Transparent BSDF
+    transparent = nodes.new('ShaderNodeBsdfTransparent')
+    transparent.location = (0, -100)
+    transparent.inputs['Color'].default_value = (1.0, 1.0, 1.0, 1.0)
+    
+    # Connect nodes
+    links.new(glass.outputs['BSDF'], mix_shader.inputs[1])
+    links.new(transparent.outputs['BSDF'], mix_shader.inputs[2])
+    links.new(mix_shader.outputs['Shader'], output.inputs['Surface'])
+    
+    return mat
+
+
 def load_pull_object(pull_filename):
     """Load a pull object from a .blend file."""
     if not pull_filename or pull_filename == 'NONE':
@@ -803,15 +872,16 @@ class Frameless_Door_Style(PropertyGroup):
             cabinet_style = self.get_parent_cabinet_style(front_obj)
             if cabinet_style:
                 material, material_rotated = cabinet_style.get_finish_material()
-                try:
-                    # Stiles use regular material (vertical grain)
-                    door_style_mod.set_input("Stile Material", material)
-                    # Rails use rotated material (horizontal grain)
-                    door_style_mod.set_input("Rail Material", material_rotated)
-                    # Panel uses regular material
+                # Stiles use regular material (vertical grain)
+                door_style_mod.set_input("Stile Material", material)
+                # Rails use rotated material (horizontal grain)
+                door_style_mod.set_input("Rail Material", material_rotated)
+                # Panel material depends on panel_material setting
+                if self.panel_material == 'GLASS':
+                    glass_mat = get_or_create_glass_material()
+                    door_style_mod.set_input("Panel Material", glass_mat)
+                else:
                     door_style_mod.set_input("Panel Material", material)
-                except:
-                    pass  # Material inputs may not exist
         
         # Store style reference on the object (only after successful application)
         front_obj['DOOR_STYLE_NAME'] = self.name
