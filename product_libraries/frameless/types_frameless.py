@@ -22,6 +22,7 @@ class Cabinet(GeoNodeCage):
         props = bpy.context.scene.hb_frameless
         self.add_property('Toe Kick Height', 'DISTANCE', props.default_toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
+        self.add_property('Remove Bottom', 'CHECKBOX', False)
     
     def add_cage_to_bay(self,cage):
         cage.create()
@@ -60,6 +61,7 @@ class Cabinet(GeoNodeCage):
         mt = self.var_prop('Material Thickness', 'mt')
         tkh = self.var_prop('Toe Kick Height', 'tkh')
         tks = self.var_prop('Toe Kick Setback', 'tks')
+        rb = self.var_prop('Remove Bottom', 'rb')
 
         left_side = CabinetSideNotched()
         left_side.create('Left Side',tkh,tks,mt)
@@ -92,6 +94,7 @@ class Cabinet(GeoNodeCage):
         bottom.driver_input("Thickness", 'mt', [mt])
         bottom.set_input("Mirror Y", True)
         bottom.set_input("Mirror Z", False)
+        bottom.driver_hide('IF(rb==1,True,False)', [rb])
 
         back = CabinetPart()
         back.create('Back')
@@ -99,8 +102,8 @@ class Cabinet(GeoNodeCage):
         back.obj.rotation_euler.x = math.radians(90)
         back.obj.rotation_euler.y = math.radians(-90)
         back.driver_location('x', 'mt',[mt])
-        back.driver_location('z', 'tkh+mt',[tkh,mt])
-        back.driver_input("Length", 'dim_z-tkh-(mt*2)', [dim_z,tkh,mt])
+        back.driver_location('z', 'IF(rb==1,0,tkh+mt)',[rb,tkh,mt])
+        back.driver_input("Length", 'IF(rb==1,dim_z-mt,dim_z-tkh-(mt*2))', [rb,dim_z,tkh,mt])
         back.driver_input("Width", 'dim_x-(mt*2)', [dim_x,mt])
         back.driver_input("Thickness", 'mt', [mt])
         back.set_input("Mirror Y", True)
@@ -116,6 +119,7 @@ class Cabinet(GeoNodeCage):
         toe_kick.driver_input("Thickness", 'mt', [mt])
         toe_kick.set_input("Mirror Y", True)
         toe_kick.set_input("Mirror Z", False)
+        toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
 
         top = CabinetPart()
         top.create('Top')

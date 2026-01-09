@@ -15,6 +15,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     cabinet_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5) # type: ignore
     cabinet_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5) # type: ignore
     cabinet_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
+    remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
 
     cabinet = None
 
@@ -32,6 +33,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_width = self.cabinet.get_input('Dim X')
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
+        
+        # Get Remove Bottom property if it exists (BASE and TALL cabinets)
+        if 'Remove Bottom' in cabinet_bp:
+            self.remove_bottom = cabinet_bp['Remove Bottom']
+        
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
@@ -39,6 +45,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
+        
+        # Set Remove Bottom property if it exists
+        if 'Remove Bottom' in self.cabinet.obj:
+            self.cabinet.obj['Remove Bottom'] = self.remove_bottom
+        
+        hb_utils.run_calc_fix(context, self.cabinet.obj)
         return True
 
     def execute(self, context):
@@ -60,6 +72,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.label(text="Depth:")
         row.prop(self, 'cabinet_depth', text="")
+        
+        # Show Remove Bottom option for BASE and TALL cabinets
+        if 'Remove Bottom' in self.cabinet.obj:
+            box = layout.box()
+            row = box.row()
+            row.prop(self, 'remove_bottom')
 
 
 class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
@@ -357,7 +375,6 @@ class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
                     hb_utils.delete_obj_and_children(child)
         
         return {'FINISHED'}
-
 
 class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
     bl_idname = "hb_frameless.delete_cabinet"
