@@ -542,11 +542,25 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         
         return True
 
-    def create_insert(self, insert_type, cabinet_type, is_top, is_bottom):
-        """Create an insert based on the type."""
+    def create_insert(self, insert_type, cabinet_type, is_top, is_bottom, opening_bottom_z=0):
+        """Create an insert based on the type.
+        
+        Args:
+            insert_type: Type of insert ('DOORS', 'DRAWER', 'OPEN')
+            cabinet_type: Cabinet type ('BASE', 'TALL', 'UPPER')
+            is_top: Whether this is the topmost opening
+            is_bottom: Whether this is the bottommost opening
+            opening_bottom_z: Z position of opening bottom from floor (meters)
+        """
+        # Threshold for "upper" pull location - 48 inches from floor
+        UPPER_PULL_THRESHOLD = units.inch(48)
+        
         if insert_type == 'DOORS':
             doors = types_frameless.Doors()
             if cabinet_type == 'UPPER':
+                doors.door_pull_location = "Upper"
+            elif cabinet_type == 'TALL' and opening_bottom_z > UPPER_PULL_THRESHOLD:
+                # For tall cabinets, use Upper pull location for openings far from floor
                 doors.door_pull_location = "Upper"
             else:
                 doors.door_pull_location = "Base"
@@ -587,6 +601,46 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         
         cabinet_type = self.get_cabinet_type(parent_obj)
         
+        # Calculate opening Z positions for pull location logic
+        # Get parent bay/opening dimensions
+        if 'IS_FRAMELESS_BAY_CAGE' in parent_obj:
+            parent_cage = types_frameless.CabinetBay(parent_obj)
+        else:
+            parent_cage = types_frameless.CabinetOpening(parent_obj)
+        
+        parent_dim_z = parent_cage.get_input('Dim Z')
+        
+        # Get parent's world Z position (bottom of the bay/opening)
+        parent_world_z = parent_obj.matrix_world.translation.z
+        
+        # Calculate actual opening sizes (resolve equal-sized openings)
+        props = bpy.context.scene.hb_frameless
+        divider_thickness = props.default_carcass_part_thickness
+        total_dividers = (self.opening_count - 1) * divider_thickness
+        available_height = parent_dim_z - total_dividers
+        
+        # Count equal-sized openings and sum of fixed sizes
+        equal_count = opening_sizes.count(0)
+        fixed_sum = sum(s for s in opening_sizes if s > 0)
+        
+        if equal_count > 0:
+            equal_size = (available_height - fixed_sum) / equal_count
+        else:
+            equal_size = 0
+        
+        # Calculate actual sizes
+        actual_sizes = [s if s > 0 else equal_size for s in opening_sizes]
+        
+        # Calculate bottom Z position for each opening (from floor)
+        # Openings are ordered top to bottom, so opening 0 is at top
+        opening_bottom_z_positions = []
+        for i in range(self.opening_count):
+            # Sum heights of openings below this one (i+1 to end) plus dividers
+            height_below = sum(actual_sizes[i+1:])
+            dividers_below = (self.opening_count - 1 - i) * divider_thickness
+            bottom_z = parent_world_z + height_below + dividers_below
+            opening_bottom_z_positions.append(bottom_z)
+        
         insert_props = [
             self.opening_1_insert, self.opening_2_insert, self.opening_3_insert,
             self.opening_4_insert, self.opening_5_insert, self.opening_6_insert,
@@ -598,7 +652,8 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         for i in range(self.opening_count):
             is_top = (i == 0)
             is_bottom = (i == self.opening_count - 1)
-            insert = self.create_insert(insert_props[i], cabinet_type, is_top, is_bottom)
+            opening_bottom_z = opening_bottom_z_positions[i]
+            insert = self.create_insert(insert_props[i], cabinet_type, is_top, is_bottom, opening_bottom_z)
             opening_inserts.append(insert)
         
         # Create final splitter with inserts
