@@ -183,6 +183,10 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
     ) # type: ignore
 
     inset_front: bpy.props.BoolProperty(name="Inset Front", default=False) # type: ignore
+    half_overlay_top: bpy.props.BoolProperty(name="Half Overlay Top", default=False) # type: ignore
+    half_overlay_bottom: bpy.props.BoolProperty(name="Half Overlay Bottom", default=False) # type: ignore
+    half_overlay_left: bpy.props.BoolProperty(name="Half Overlay Left", default=False) # type: ignore
+    half_overlay_right: bpy.props.BoolProperty(name="Half Overlay Right", default=False) # type: ignore
 
     opening = None
 
@@ -204,6 +208,14 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             self.door_swing = str(opening_bp['Door Swing'])
         if 'Inset Front' in opening_bp:
             self.inset_front = opening_bp['Inset Front']
+        if 'Half Overlay Top' in opening_bp:
+            self.half_overlay_top = opening_bp['Half Overlay Top']
+        if 'Half Overlay Bottom' in opening_bp:
+            self.half_overlay_bottom = opening_bp['Half Overlay Bottom']
+        if 'Half Overlay Left' in opening_bp:
+            self.half_overlay_left = opening_bp['Half Overlay Left']
+        if 'Half Overlay Right' in opening_bp:
+            self.half_overlay_right = opening_bp['Half Overlay Right']
         
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=250)
@@ -213,6 +225,14 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             self.opening.obj['Door Swing'] = int(self.door_swing)
         if 'Inset Front' in self.opening.obj:
             self.opening.obj['Inset Front'] = self.inset_front
+        if 'Half Overlay Top' in self.opening.obj:
+            self.opening.obj['Half Overlay Top'] = self.half_overlay_top
+        if 'Half Overlay Bottom' in self.opening.obj:
+            self.opening.obj['Half Overlay Bottom'] = self.half_overlay_bottom
+        if 'Half Overlay Left' in self.opening.obj:
+            self.opening.obj['Half Overlay Left'] = self.half_overlay_left
+        if 'Half Overlay Right' in self.opening.obj:
+            self.opening.obj['Half Overlay Right'] = self.half_overlay_right
         hb_utils.run_calc_fix(context, self.opening.obj)
         return True
 
@@ -231,6 +251,22 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         if 'Inset Front' in self.opening.obj:
             row = box.row()
             row.prop(self, 'inset_front')
+        
+        # Half Overlay Properties
+        has_half_overlay = any(prop in self.opening.obj for prop in ['Half Overlay Top', 'Half Overlay Bottom', 'Half Overlay Left', 'Half Overlay Right'])
+        if has_half_overlay:
+            box = layout.box()
+            box.label(text="Half Overlay")
+            col = box.column(align=True)
+            
+            if 'Half Overlay Top' in self.opening.obj:
+                col.prop(self, 'half_overlay_top')
+            if 'Half Overlay Bottom' in self.opening.obj:
+                col.prop(self, 'half_overlay_bottom')
+            if 'Half Overlay Left' in self.opening.obj:
+                col.prop(self, 'half_overlay_left')
+            if 'Half Overlay Right' in self.opening.obj:
+                col.prop(self, 'half_overlay_right')
 
 
 class hb_frameless_OT_change_opening_type(bpy.types.Operator):
