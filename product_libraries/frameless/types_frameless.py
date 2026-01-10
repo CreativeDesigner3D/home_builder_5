@@ -24,6 +24,17 @@ class Cabinet(GeoNodeCage):
         self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
         self.add_property('Remove Bottom', 'CHECKBOX', False)
     
+    def add_properties_base_top(self):
+        """Add base top construction properties."""
+        props = bpy.context.scene.hb_frameless
+        if props.base_top_construction == "Full Top":
+            base_top_construction_index = 0
+        elif props.base_top_construction == "Stretchers":
+            base_top_construction_index = 1
+        self.add_property('Base Top Construction', 'COMBOBOX', base_top_construction_index, combobox_items=["Full Top", "Stretchers", "Sink"])
+        self.add_property('Stretcher Width', 'DISTANCE', inch(4))
+        self.add_property('Sink Apron Width', 'DISTANCE', inch(7))
+    
     def add_cage_to_bay(self,cage):
         cage.create()
         for child in self.obj.children_recursive:
@@ -53,6 +64,7 @@ class Cabinet(GeoNodeCage):
 
         self.add_properties_common()
         self.add_properties_toe_kick()
+        self.add_properties_base_top()
 
         dim_x = self.var_input('Dim X', 'dim_x')
         dim_y = self.var_input('Dim Y', 'dim_y')
@@ -62,6 +74,9 @@ class Cabinet(GeoNodeCage):
         tkh = self.var_prop('Toe Kick Height', 'tkh')
         tks = self.var_prop('Toe Kick Setback', 'tks')
         rb = self.var_prop('Remove Bottom', 'rb')
+        btc = self.var_prop('Base Top Construction', 'btc')  # 0=Full Top, 1=Stretchers, 2=Sink
+        sw = self.var_prop('Stretcher Width', 'sw')
+        saw = self.var_prop('Sink Apron Width', 'saw')
 
         left_side = CabinetSideNotched()
         left_side.create('Left Side',tkh,tks,mt)
@@ -103,7 +118,7 @@ class Cabinet(GeoNodeCage):
         back.obj.rotation_euler.y = math.radians(-90)
         back.driver_location('x', 'mt',[mt])
         back.driver_location('z', 'IF(rb==1,0,tkh+mt)',[rb,tkh,mt])
-        back.driver_input("Length", 'IF(rb==1,dim_z-mt,dim_z-tkh-(mt*2))', [rb,dim_z,tkh,mt])
+        back.driver_input("Length", 'IF(rb==1,dim_z,dim_z-tkh-mt)-IF(btc==2,0,mt)', [rb,dim_z,tkh,mt,btc])
         back.driver_input("Width", 'dim_x-(mt*2)', [dim_x,mt])
         back.driver_input("Thickness", 'mt', [mt])
         back.set_input("Mirror Y", True)
@@ -121,6 +136,7 @@ class Cabinet(GeoNodeCage):
         toe_kick.set_input("Mirror Z", False)
         toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
 
+        # Full Top - shown when btc==0
         top = CabinetPart()
         top.create('Top')
         top.obj.parent = self.obj
@@ -131,7 +147,51 @@ class Cabinet(GeoNodeCage):
         top.driver_input("Thickness", 'mt', [mt])
         top.set_input("Mirror Y", True)
         top.set_input("Mirror Z", True)
+        top.driver_hide('IF(btc!=0,True,False)', [btc])
 
+        # Front Stretcher - shown when btc==1 (Stretchers)
+        front_stretcher = CabinetPart()
+        front_stretcher.create('Front Stretcher')
+        front_stretcher.obj.parent = self.obj
+        front_stretcher.driver_location('x', 'mt', [mt])
+        front_stretcher.driver_location('y', '-dim_y', [dim_y])
+        front_stretcher.driver_location('z', 'dim_z', [dim_z])
+        front_stretcher.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        front_stretcher.driver_input("Width", 'sw', [sw])
+        front_stretcher.driver_input("Thickness", 'mt', [mt])
+        front_stretcher.set_input("Mirror Z", True)
+        front_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+
+        # Back Stretcher - shown when btc==1 (Stretchers)
+        back_stretcher = CabinetPart()
+        back_stretcher.create('Back Stretcher')
+        back_stretcher.obj.parent = self.obj
+        back_stretcher.driver_location('x', 'mt', [mt])
+        back_stretcher.driver_location('y', '-sw', [sw])
+        back_stretcher.driver_location('z', 'dim_z', [dim_z])
+        back_stretcher.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        back_stretcher.driver_input("Width", 'sw', [sw])
+        back_stretcher.driver_input("Thickness", 'mt', [mt])
+        back_stretcher.set_input("Mirror Z", True)
+        back_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+
+        # Sink Apron Front - shown when btc==2 (Sink)
+        sink_apron = CabinetPart()
+        sink_apron.create('Sink Apron')
+        sink_apron.obj.parent = self.obj
+        sink_apron.obj.rotation_euler.x = math.radians(-90)
+        sink_apron.driver_location('x', 'mt', [mt])
+        sink_apron.driver_location('y', '-dim_y', [dim_y])
+        sink_apron.driver_location('z', 'dim_z', [dim_z])
+        sink_apron.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        sink_apron.driver_input("Width", 'saw', [saw])
+        sink_apron.driver_input("Thickness", 'mt', [mt])
+        sink_apron.driver_hide('IF(btc!=2,True,False)', [btc])
+
+        # Bay opening - height adjusted based on top construction
+        # Full Top: dim_z - tkh - mt*2
+        # Stretchers: dim_z - tkh - mt (no top panel thickness)
+        # Sink: dim_z - tkh - sw - mt (apron height instead of top)
         opening = CabinetBay()
         opening.create("Bay")
         opening.obj.parent = self.obj
@@ -140,7 +200,7 @@ class Cabinet(GeoNodeCage):
         opening.driver_location('z', 'tkh+IF(rb,0,mt)',[tkh,mt,rb])
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
         opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
-        opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,mt,(mt*2))', [dim_z,tkh,mt,rb])
+        opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z,tkh,mt,rb])
 
     def create_upper_carcass(self,name):
         self.create_cabinet(name)

@@ -1269,10 +1269,9 @@ class Frameless_Scene_Props(PropertyGroup):
                        default='Ladder Style')# type: ignore
 
     base_top_construction: EnumProperty(name="Base Top Construction",
-                       items=[('Cutout',"Cutout","Cutout"),
-                              ('Full Top',"Full Top","Full Top"),
-                              ('Stretchers',"Stretchers","Stretchers")],
-                       default='Cutout')# type: ignore
+                       items=[('Stretchers',"Stretchers","Stretchers"),
+                              ('Full Top',"Full Top","Full Top")],
+                       default='Stretchers')# type: ignore
 
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
