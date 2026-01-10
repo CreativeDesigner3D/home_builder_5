@@ -188,10 +188,6 @@ class Cabinet(GeoNodeCage):
         sink_apron.driver_input("Thickness", 'mt', [mt])
         sink_apron.driver_hide('IF(btc!=2,True,False)', [btc])
 
-        # Bay opening - height adjusted based on top construction
-        # Full Top: dim_z - tkh - mt*2
-        # Stretchers: dim_z - tkh - mt (no top panel thickness)
-        # Sink: dim_z - tkh - sw - mt (apron height instead of top)
         opening = CabinetBay()
         opening.create("Bay")
         opening.obj.parent = self.obj
