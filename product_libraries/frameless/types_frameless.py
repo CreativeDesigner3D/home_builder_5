@@ -830,6 +830,9 @@ class CabinetShelves(CabinetInterior):
         shelves.create('Shelf')
         shelves.obj['IS_FRAMELESS_INTERIOR_PART'] = True
         shelves.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+        # Interior parts get interior material on both sides
+        shelves.obj['Finish Top'] = False
+        shelves.obj['Finish Bottom'] = False
         shelves.obj.parent = self.obj
         # array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
         # array_mod.count = 1   
@@ -1128,6 +1131,8 @@ class CabinetPart(GeoNodeCutpart):
     def create(self,name):
         super().create(name)
         self.obj['CABINET_PART'] = True
+        self.obj['Finish Top'] = False
+        self.obj['Finish Bottom'] = True
         self.set_input('Length', inch(24))
         self.set_input('Width', inch(18))
         self.set_input('Thickness', inch(.75))  
@@ -1154,6 +1159,9 @@ class CabinetFront(CabinetPart):
         super().create(name)
         self.obj['IS_CABINET_FRONT'] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_door_front_commands'
+        # Fronts get finish material on both sides
+        self.obj['Finish Top'] = True
+        self.obj['Finish Bottom'] = True
         self.add_overlay_properties()
 
     def add_overlay_properties(self):

@@ -506,12 +506,20 @@ class Frameless_Cabinet_Style(PropertyGroup):
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' in child:
                 part = hb_types.GeoNodeObject(child)
-                part.set_input("Top Surface",self.material)
-                part.set_input("Bottom Surface",self.material)
-                part.set_input("Edge W1",self.material_rotated)
-                part.set_input("Edge W2",self.material_rotated)
-                part.set_input("Edge L1",self.material_rotated)
-                part.set_input("Edge L2",self.material_rotated)
+                
+                # Determine material based on Finish Top/Bottom properties
+                finish_top = child.get('Finish Top', False)
+                finish_bottom = child.get('Finish Bottom', True)
+                
+                top_mat = self.material if finish_top else self.interior_material
+                bottom_mat = self.material if finish_bottom else self.interior_material
+                
+                part.set_input("Top Surface", top_mat)
+                part.set_input("Bottom Surface", bottom_mat)
+                part.set_input("Edge W1", self.material_rotated)
+                part.set_input("Edge W2", self.material_rotated)
+                part.set_input("Edge L1", self.material_rotated)
+                part.set_input("Edge L2", self.material_rotated)
                 
                 # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
                 for mod in child.modifiers:
