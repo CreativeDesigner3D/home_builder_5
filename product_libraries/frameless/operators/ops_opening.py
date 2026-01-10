@@ -16,6 +16,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             ('LEFT_DOOR', "Left Door", "Single left swing door"),
             ('RIGHT_DOOR', "Right Door", "Single right swing door"),
             ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
@@ -85,6 +86,11 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Create pullout opening (drawer with pull at top)."""
         pullout = types_frameless.Pullout()
         self.add_cage_to_bay(bay, pullout)
+
+    def create_flip_up_door(self, bay):
+        """Create flip up door opening (hinged at top, swings up)."""
+        flip_up = types_frameless.FlipUpDoor()
+        self.add_cage_to_bay(bay, flip_up)
 
     def create_door_drawer(self, bay):
         """Create door/drawer combo (drawer on top, doors below)."""
@@ -156,6 +162,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             self.create_doors(bay, door_swing=1)
         elif self.opening_type == 'DOUBLE_DOORS':
             self.create_doors(bay, door_swing=2)
+        elif self.opening_type == 'FLIP_UP_DOOR':
+            self.create_flip_up_door(bay)
         elif self.opening_type == 'SINGLE_DRAWER':
             self.create_drawer(bay)
         elif self.opening_type == 'PULLOUT':
@@ -289,6 +297,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('LEFT_DOOR', "Left Door", "Single left swing door"),
             ('RIGHT_DOOR', "Right Door", "Single right swing door"),
             ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
+            ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('OPEN', "Open", "Open (no front)"),
@@ -417,6 +426,18 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         
         self.add_insert_to_opening(opening, pullout)
 
+    def create_flip_up_door(self, opening, half_top, half_bottom, half_left, half_right):
+        """Create flip up door (hinged at top, swings up)."""
+        flip_up = types_frameless.FlipUpDoor()
+        
+        # Apply half overlays based on position in splitter
+        flip_up.half_overlay_top = half_top
+        flip_up.half_overlay_bottom = half_bottom
+        flip_up.half_overlay_left = half_left
+        flip_up.half_overlay_right = half_right
+        
+        self.add_insert_to_opening(opening, flip_up)
+
     def execute(self, context):
         opening_obj = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
         if not opening_obj:
@@ -441,6 +462,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         elif self.opening_type == 'DOUBLE_DOORS':
             self.create_doors(opening, door_swing=2, half_top=half_top, half_bottom=half_bottom,
                             half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'FLIP_UP_DOOR':
+            self.create_flip_up_door(opening, half_top=half_top, half_bottom=half_bottom,
+                                    half_left=half_left, half_right=half_right)
         elif self.opening_type == 'SINGLE_DRAWER':
             self.create_drawer(opening, half_top=half_top, half_bottom=half_bottom,
                              half_left=half_left, half_right=half_right)

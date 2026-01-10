@@ -55,6 +55,7 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
         layout.operator("hb_frameless.change_bay_opening", text="Left Swing Door").opening_type = 'LEFT_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text="Right Swing Door").opening_type = 'RIGHT_DOOR'
         layout.operator("hb_frameless.change_bay_opening", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_bay_opening", text="Flip Up Door").opening_type = 'FLIP_UP_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Single Drawer").opening_type = 'SINGLE_DRAWER'
         layout.operator("hb_frameless.change_bay_opening", text="Pullout").opening_type = 'PULLOUT'
@@ -88,6 +89,7 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_opening_type", text="Left Door").opening_type = 'LEFT_DOOR'
         layout.operator("hb_frameless.change_opening_type", text="Right Door").opening_type = 'RIGHT_DOOR'
         layout.operator("hb_frameless.change_opening_type", text="Double Doors").opening_type = 'DOUBLE_DOORS'
+        layout.operator("hb_frameless.change_opening_type", text="Flip Up Door").opening_type = 'FLIP_UP_DOOR'
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'SINGLE_DRAWER'
         layout.operator("hb_frameless.change_opening_type", text="Pullout").opening_type = 'PULLOUT'

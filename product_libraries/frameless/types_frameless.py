@@ -868,6 +868,64 @@ class Doors(CabinetOpening):
         interior.driver_input('Dim Z','z',[z])         
 
 
+class FlipUpDoor(CabinetOpening):
+    """A flip-up door hinges at the top and swings upward.
+    Commonly used on upper cabinets for easy access.
+    Pull is rotated 90 degrees and centered on the door.
+    """
+
+    def create(self):
+        super().create("Flip Up Door")
+
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_properties_opening_thickness()
+        self.add_properties_front_overlays()
+        overlay_prompts = self.add_properties_front_overlay_calculations()
+
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        ft = self.var_prop('Front Thickness', 'ft')
+        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
+
+        inset = self.var_prop('Inset Front', 'inset')
+
+        # Single door covering entire opening with centered, rotated pull
+        door = CabinetFlipUpDoor()
+        door.create('Flip Up Door')
+        door.obj.parent = self.obj
+        door.obj.rotation_euler.x = math.radians(90)
+        door.obj.rotation_euler.y = math.radians(-90)
+        door.driver_location('x', '-lo', [lo])
+        door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)', [inset, ft, door_to_cab_gap])
+        door.driver_location('z', '-bo', [bo])
+        door.driver_input("Length", 'dim_z+to+bo', [dim_z, to, bo])
+        door.driver_input("Width", 'dim_x+lo+ro', [dim_x, lo, ro])
+        door.driver_input("Thickness", 'ft', [ft])
+        door.set_input("Mirror Y", True)
+
+        self.add_interior(CabinetShelves())
+
+    def add_interior(self, interior):
+        x = self.var_input('Dim X', 'x')
+        y = self.var_input('Dim Y', 'y')
+        z = self.var_input('Dim Z', 'z')
+        inset = self.var_prop('Inset Front', 'inset')
+        ft = self.var_prop('Front Thickness', 'ft')
+
+        interior.create('Interior')
+        interior.obj.parent = self.obj
+        interior.driver_location('y', 'IF(inset,ft,0)', [inset, ft])
+        interior.driver_input('Dim X', 'x', [x])
+        interior.driver_input('Dim Y', 'y-IF(inset,ft,0)', [y, inset, ft])
+        interior.driver_input('Dim Z', 'z', [z])
+
+
 class Drawer(CabinetOpening):
 
     def create(self):
@@ -1127,6 +1185,43 @@ class CabinetDoor(CabinetFront):
         pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
         pull.driver_location('z', 'thickness',[thickness])
         pull.driver_hide('hide_door',[hide_door])
+
+
+class CabinetFlipUpDoor(CabinetFront):
+    """A flip-up door front with the pull rotated 90 degrees, centered horizontally, 
+    and positioned at the bottom like an upper cabinet pull."""
+    
+    def create(self, name):
+        super().create(name)
+        self.obj['IS_DOOR_FRONT'] = True
+        self.obj['IS_FLIP_UP_DOOR'] = True
+        props = bpy.context.scene.hb_frameless
+        
+        # Get pull object and its length for positioning calculations
+        pull_obj = self.get_pull_object()
+        pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
+        self.add_property('Pull Length', 'DISTANCE', pull_length)
+        self.add_property('Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
+
+        length = self.var_input('Length', 'length')
+        width = self.var_input('Width', 'width')
+        thickness = self.var_input('Thickness', 'thickness')
+        pull_len = self.var_prop('Pull Length', 'pull_len')
+        pvl = self.var_prop('Pull Vertical Location', 'pvl')
+        hide_door = self.var_hide('hide_door')
+
+        pull = GeoNodeHardware()
+        pull.create('Pull')
+        pull.obj.parent = self.obj
+        # Rotate pull 90 degrees for horizontal orientation
+        pull.obj.rotation_euler.x = math.radians(-90)
+        pull.obj.rotation_euler.z = math.radians(90)
+        pull.set_input("Object", pull_obj)
+        # Position at bottom (like upper pull) but centered horizontally
+        pull.driver_location('x', 'pvl', [pvl])
+        pull.driver_location('y', '-width/2', [width])
+        pull.driver_location('z', 'thickness', [thickness])
+        pull.driver_hide('hide_door', [hide_door])
 
 
 class CabinetDrawerFront(CabinetFront):
