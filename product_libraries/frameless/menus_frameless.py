@@ -23,6 +23,7 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
+        layout.operator("hb_frameless.adjust_multiple_cabinet_widths", text="Adjust Cabinet Sizes")
         layout.separator()
         layout.operator("hb_frameless.drop_cabinet_to_countertop", text="Drop to Countertop")
         layout.operator("hb_frameless.drop_cabinet_height", text="Drop Height")

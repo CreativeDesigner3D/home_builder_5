@@ -948,6 +948,13 @@ class Frameless_Door_Style(PropertyGroup):
         row.operator("hb_frameless.update_fronts_from_style", text="Update Fronts", icon='FILE_REFRESH')
 
 
+class CalculatorCabinet(PropertyGroup):
+    """Property group for calculator cabinet data used in Adjust Cabinet Sizes."""
+    cabinet_obj: PointerProperty(name="Cabinet Object", type=bpy.types.Object) # type: ignore
+    is_equal: BoolProperty(name="Equal Width", default=True) # type: ignore
+    cabinet_width: FloatProperty(name="Width", subtype='DISTANCE', unit='LENGTH') # type: ignore
+
+
 class Crown_Detail(PropertyGroup):
     """Crown molding detail stored as a reference to a detail scene."""
     
@@ -1079,6 +1086,9 @@ class Frameless_Scene_Props(PropertyGroup):
     show_crown_details: BoolProperty(name="Show Crown Details",description="Show Crown Details.",default=False)# type: ignore
     show_toe_kick_details: BoolProperty(name="Show Toe Kick Details",description="Show Toe Kick Details.",default=False)# type: ignore
     show_upper_bottom_details: BoolProperty(name="Show Upper Bottom Details",description="Show Upper Bottom Details.",default=False)# type: ignore
+
+    # Calculator cabinets for Adjust Cabinet Sizes operator
+    calculator_cabinets: CollectionProperty(name="Calculator Cabinets", type=CalculatorCabinet) # type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options",description="Show Countertop Options.",default=False)# type: ignore
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles",description="Show Cabinet Styles.",default=True)# type: ignore
 
@@ -1970,6 +1980,7 @@ classes = (
     HB_UL_cabinet_styles,
     Frameless_Door_Style,
     HB_UL_door_styles,
+    CalculatorCabinet,
     Crown_Detail,
     HB_MT_crown_detail_library,
     HB_UL_crown_details,

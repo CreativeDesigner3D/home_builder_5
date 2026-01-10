@@ -587,7 +587,122 @@ class hb_frameless_OT_select_cabinet_group(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
+    """Adjust widths of multiple selected cabinets like a calculator"""
+    bl_idname = "hb_frameless.adjust_multiple_cabinet_widths"
+    bl_label = "Adjust Cabinet Sizes"
+    bl_description = "Adjust the widths of multiple selected cabinets"
+    bl_options = {'UNDO'}
+
+    total_number_of_cabinets = 0
+    number_of_equal_cabinets = 0
+    total_width = 0.0
+    equal_cabinet_width = 0.0
+    non_equal_cabinet_widths = 0.0
+    start_x = 0.0
+
+    @classmethod
+    def poll(cls, context):
+        # Check if at least one cabinet is selected
+        for obj in context.selected_objects:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp:
+                return True
+        return False
+
+    def check(self, context):
+        props = context.scene.hb_frameless
+        
+        # Calculate Non Equal Cabinet Widths and Number of Equal Cabinets
+        self.number_of_equal_cabinets = 0
+        self.non_equal_cabinet_widths = 0.0
+        for cabinet in props.calculator_cabinets:
+            if cabinet.is_equal:
+                self.number_of_equal_cabinets += 1
+            else:
+                self.non_equal_cabinet_widths += cabinet.cabinet_width
+        
+        # Calculate Width for All Equal Cabinets
+        if self.number_of_equal_cabinets > 0:
+            self.equal_cabinet_width = (self.total_width - self.non_equal_cabinet_widths) / self.number_of_equal_cabinets
+        
+        # For Each Cabinet Set the X Location and Width Value
+        cabinet_x_loc = self.start_x
+        for cabinet in props.calculator_cabinets:
+            if cabinet.cabinet_obj:
+                cabinet_cage = hb_types.GeoNodeCage(cabinet.cabinet_obj)
+                cabinet_cage.obj.location.x = cabinet_x_loc
+                if cabinet.is_equal:
+                    cabinet.cabinet_width = self.equal_cabinet_width
+                    cabinet_cage.set_input("Dim X", self.equal_cabinet_width)
+                else:
+                    cabinet_cage.set_input("Dim X", cabinet.cabinet_width)
+                cabinet_x_loc += cabinet.cabinet_width
+                hb_utils.run_calc_fix(context, cabinet_cage.obj)
+        return True
+
+    def invoke(self, context, event):
+        props = context.scene.hb_frameless
+        
+        # Clear Collection
+        props.calculator_cabinets.clear()
+        
+        # Collect and Sort Cabinet Objects
+        objs = []
+        for obj in context.selected_objects:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp and cabinet_bp not in objs:
+                objs.append(cabinet_bp)
+        objs.sort(key=lambda obj: obj.location.x, reverse=False)
+        
+        if len(objs) < 2:
+            self.report({'WARNING'}, "Select at least 2 cabinets to adjust sizes")
+            return {'CANCELLED'}
+        
+        # Populate Collection and Set Properties
+        self.total_width = 0.0
+        for index, obj in enumerate(objs):
+            cabinet = hb_types.GeoNodeCage(obj)
+            if index == 0:
+                self.start_x = cabinet.obj.location.x
+            cab = props.calculator_cabinets.add()
+            cab.cabinet_obj = cabinet.obj
+            cab.is_equal = True
+            cab.cabinet_width = cabinet.get_input('Dim X')
+            self.total_width += cabinet.get_input('Dim X')
+        self.total_number_of_cabinets = len(props.calculator_cabinets)
+        
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=400)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        props = context.scene.hb_frameless
+        unit_settings = context.scene.unit_settings
+        
+        layout = self.layout
+        box = layout.box()
+        row = box.row()
+        row.label(text="Number of Cabinets:")
+        row.label(text=str(self.total_number_of_cabinets))
+        row = box.row()
+        row.label(text="Total Width:")
+        row.label(text=units.unit_to_string(unit_settings, self.total_width))
+        
+        for index, cabinet in enumerate(props.calculator_cabinets):
+            row = box.row()
+            row.label(text='Cabinet ' + str(index + 1))
+            row.prop(cabinet, 'is_equal', text="")
+            if cabinet.is_equal:
+                row.label(text="Width: " + units.unit_to_string(unit_settings, cabinet.cabinet_width))
+            else:
+                row.prop(cabinet, 'cabinet_width', text="Width:")
+
 classes = (
+    hb_frameless_OT_adjust_multiple_cabinet_widths,
     hb_frameless_OT_cabinet_prompts,
     hb_frameless_OT_drop_cabinet_to_countertop,
     hb_frameless_OT_drop_cabinet_height,
