@@ -1625,18 +1625,13 @@ class Frameless_Scene_Props(PropertyGroup):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
-        # Pull Selection Section
-        pull_box = layout.box()
-        pull_box.label(text="Pull Selection:", icon='OBJECT_DATA')
+        # Pull Selection - Side by side thumbnails
+        row = layout.row(align=True)
         
-        # Door Pull Selection with thumbnail
-        col = pull_box.column(align=True)
-        row = col.row()
-        row.label(text="Door Pull:")
-        row = col.row(align=True)
-        row.prop(props, 'door_pull_selection', text="")
-        
-        # Show door pull thumbnail
+        # Door Pull column
+        col = row.column(align=True)
+        col.label(text="Door Pull:")
+        col.prop(props, 'door_pull_selection', text="")
         door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
         if door_pull_name:
             thumb_path = os.path.join(os.path.dirname(__file__), 
@@ -1645,19 +1640,12 @@ class Frameless_Scene_Props(PropertyGroup):
             if os.path.exists(thumb_path):
                 icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
                 if icon_id:
-                    row = col.row()
-                    row.template_icon(icon_value=icon_id, scale=5.0)
+                    col.template_icon(icon_value=icon_id, scale=4.0)
         
-        col.separator()
-        
-        # Drawer Pull Selection with thumbnail
-        col = pull_box.column(align=True)
-        row = col.row()
-        row.label(text="Drawer Pull:")
-        row = col.row(align=True)
-        row.prop(props, 'drawer_pull_selection', text="")
-        
-        # Show drawer pull thumbnail
+        # Drawer Pull column
+        col = row.column(align=True)
+        col.label(text="Drawer Pull:")
+        col.prop(props, 'drawer_pull_selection', text="")
         drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
         if drawer_pull_name:
             thumb_path = os.path.join(os.path.dirname(__file__), 
@@ -1666,49 +1654,39 @@ class Frameless_Scene_Props(PropertyGroup):
             if os.path.exists(thumb_path):
                 icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
                 if icon_id:
-                    row = col.row()
-                    row.template_icon(icon_value=icon_id, scale=5.0)
+                    col.template_icon(icon_value=icon_id, scale=4.0)
         
-        # Update pulls button
-        row = pull_box.row()
-        row.scale_y = 1.3
-        row.operator('hb_frameless.update_cabinet_pulls', text="Update All Pulls", icon='FILE_REFRESH')
+        # Finish dropdown inline
+        row = layout.row(align=True)
+        row.label(text="Finish:")
+        row.prop(props, 'pull_finish', text="")
         
-        # Pull Location Settings
-        loc_box = layout.box()
-        loc_box.label(text="Pull Locations:", icon='ORIENTATION_LOCAL')
+        layout.separator()
         
-        col = loc_box.column(align=True)
-        col.prop(props,'pull_dim_from_edge',text="Distance From Edge")
+        # Pull Locations - compact grid
+        col = layout.column(align=True)
+        col.prop(props, 'pull_dim_from_edge', text="Edge Distance")
         
         col.separator()
-        col.label(text="Door Pull Vertical Position:")
-        col.prop(props,'pull_vertical_location_base',text="Base Cabinets")
-        col.prop(props,'pull_vertical_location_tall',text="Tall Cabinets")
-        col.prop(props,'pull_vertical_location_upper',text="Upper Cabinets")
+        col.label(text="Door Pull Height:")
+        row = col.row(align=True)
+        row.prop(props, 'pull_vertical_location_base', text="Base")
+        row.prop(props, 'pull_vertical_location_tall', text="Tall")
+        row.prop(props, 'pull_vertical_location_upper', text="Upper")
         
         col.separator()
-        col.label(text="Drawer Pull Position:")
-        col.prop(props,'center_pulls_on_drawer_front',text="Center Pulls on Drawer Front")
+        row = col.row(align=True)
+        row.prop(props, 'center_pulls_on_drawer_front', text="Center Drawer Pulls")
         if not props.center_pulls_on_drawer_front:
-            col.prop(props,'pull_vertical_location_drawers',text="Vertical Location")
+            col.prop(props, 'pull_vertical_location_drawers', text="Drawer Pull Height")
         
-        # Update locations button
-        row = loc_box.row()
-        row.scale_y = 1.3
-        row.operator('hb_frameless.update_pull_locations', text="Update All Pull Locations", icon='FILE_REFRESH')
+        layout.separator()
         
-        # Pull Finish Section
-        finish_box = layout.box()
-        finish_box.label(text="Pull Finish:", icon='MATERIAL')
-        
-        col = finish_box.column(align=True)
-        col.prop(props, 'pull_finish', text="")
-        
-        # Update finish button
-        row = finish_box.row()
-        row.scale_y = 1.3
-        row.operator('hb_frameless.update_pull_finish', text="Update All Pull Finishes", icon='FILE_REFRESH')
+        # Update buttons - single row
+        row = layout.row(align=True)
+        row.operator('hb_frameless.update_cabinet_pulls', text="Pulls", icon='FILE_REFRESH')
+        row.operator('hb_frameless.update_pull_locations', text="Locations", icon='FILE_REFRESH')
+        row.operator('hb_frameless.update_pull_finish', text="Finish", icon='FILE_REFRESH')
 
     def draw_crown_details_ui(self, layout, context):
         """Draw the crown molding details UI section."""
