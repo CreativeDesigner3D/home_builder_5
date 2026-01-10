@@ -17,6 +17,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             ('RIGHT_DOOR', "Right Door", "Single right swing door"),
             ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
+            ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
             ('3_DRAWER_STACK', "3 Drawer Stack", "Three equal drawers"),
             ('4_DRAWER_STACK', "4 Drawer Stack", "Four equal drawers"),
@@ -79,6 +80,11 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Create single drawer opening."""
         drawer = types_frameless.Drawer()
         self.add_cage_to_bay(bay, drawer)
+
+    def create_pullout(self, bay):
+        """Create pullout opening (drawer with pull at top)."""
+        pullout = types_frameless.Pullout()
+        self.add_cage_to_bay(bay, pullout)
 
     def create_door_drawer(self, bay):
         """Create door/drawer combo (drawer on top, doors below)."""
@@ -152,6 +158,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             self.create_doors(bay, door_swing=2)
         elif self.opening_type == 'SINGLE_DRAWER':
             self.create_drawer(bay)
+        elif self.opening_type == 'PULLOUT':
+            self.create_pullout(bay)
         elif self.opening_type == '2_DRAWER_STACK':
             self.create_drawer_stack(bay, 2)
         elif self.opening_type == '3_DRAWER_STACK':
@@ -282,6 +290,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('RIGHT_DOOR', "Right Door", "Single right swing door"),
             ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
+            ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('OPEN', "Open", "Open (no front)"),
         ],
         default='LEFT_DOOR'
@@ -396,6 +405,18 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         
         self.add_insert_to_opening(opening, drawer)
 
+    def create_pullout(self, opening, half_top, half_bottom, half_left, half_right):
+        """Create pullout (drawer with pull at top)."""
+        pullout = types_frameless.Pullout()
+        
+        # Apply half overlays based on position in splitter
+        pullout.half_overlay_top = half_top
+        pullout.half_overlay_bottom = half_bottom
+        pullout.half_overlay_left = half_left
+        pullout.half_overlay_right = half_right
+        
+        self.add_insert_to_opening(opening, pullout)
+
     def execute(self, context):
         opening_obj = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
         if not opening_obj:
@@ -423,6 +444,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         elif self.opening_type == 'SINGLE_DRAWER':
             self.create_drawer(opening, half_top=half_top, half_bottom=half_bottom,
                              half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'PULLOUT':
+            self.create_pullout(opening, half_top=half_top, half_bottom=half_bottom,
+                              half_left=half_left, half_right=half_right)
         elif self.opening_type == 'OPEN':
             pass  # No children needed for open
         

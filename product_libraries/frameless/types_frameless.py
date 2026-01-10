@@ -911,6 +911,55 @@ class Drawer(CabinetOpening):
         drawer_front.add_drawer_box()
 
 
+class Pullout(CabinetOpening):
+    """A pullout is similar to a drawer but with the pull at the top instead of centered.
+    Default interior is a Drawer Box, but different accessories can be added.
+    """
+
+    def create(self):
+        super().create("Pullout")
+
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_properties_opening_thickness()
+        self.add_properties_front_overlays()
+        overlay_prompts = self.add_properties_front_overlay_calculations()
+
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        ft = self.var_prop('Front Thickness', 'ft')
+        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
+
+        inset = self.var_prop('Inset Front', 'inset')
+
+        drawer_front = CabinetDrawerFront()
+        drawer_front.create('Pullout Front')
+        drawer_front.obj.parent = self.obj
+        drawer_front.obj.rotation_euler.x = math.radians(90)
+        drawer_front.obj.rotation_euler.y = math.radians(-90)
+        drawer_front.driver_location('x', '-lo',[lo])
+        # Inset: drawer front sits inside opening (Y=0), Overlay: projects forward
+        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
+        drawer_front.driver_location('z', '-bo',[bo])
+        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
+        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
+        drawer_front.driver_input("Thickness", 'ft', [ft]) 
+        drawer_front.driver_prop("Top Overlay", 'to', [to])
+        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
+        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
+        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
+        drawer_front.set_input("Mirror Y", True)
+        
+        # Set Center Pull to False - pull will be at top
+        drawer_front.set_property("Center Pull", False)
+        
+        drawer_front.add_drawer_box()
+
 
 class CabinetPart(GeoNodeCutpart):
 
