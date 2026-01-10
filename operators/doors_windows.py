@@ -229,6 +229,7 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
         self.door = hb_types.GeoNodeCage()
         self.door.create("Door")
         self.door.obj['IS_ENTRY_DOOR_BP'] = True
+        self.door.obj['MENU_ID'] = 'HOME_BUILDER_MT_door_commands'
         self.door.set_input('Dim X', props.door_single_width)
         self.door.set_input('Dim Y', props.wall_thickness)
         self.door.set_input('Dim Z', props.door_height)
@@ -433,6 +434,7 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         self.window = hb_types.GeoNodeCage()
         self.window.create("Window")
         self.window.obj['IS_WINDOW_BP'] = True
+        self.window.obj['MENU_ID'] = 'HOME_BUILDER_MT_window_commands'
         self.window.set_input('Dim X', props.window_width)
         self.window.set_input('Dim Y', props.wall_thickness)
         self.window.set_input('Dim Z', props.window_height)
@@ -598,9 +600,235 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         return {'RUNNING_MODAL'}
 
 
+
+
+class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.door_prompts"
+    bl_label = "Door Prompts"
+    bl_description = "Edit door properties"
+    bl_options = {'UNDO'}
+
+    door_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
+    door_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
+
+    door = None
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+
+    def check(self, context):
+        self.door.set_input('Dim X', self.door_width)
+        self.door.set_input('Dim Z', self.door_height)
+        return True
+
+    def invoke(self, context, event):
+        self.door = hb_types.GeoNodeCage(context.object)
+        self.door_width = self.door.get_input('Dim X')
+        self.door_height = self.door.get_input('Dim Z')
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        
+        row = box.row()
+        row.label(text="Width:")
+        row.prop(self, 'door_width', text="")
+        
+        row = box.row()
+        row.label(text="Height:")
+        row.prop(self, 'door_height', text="")
+        
+        row = box.row()
+        row.label(text="Location X:")
+        row.prop(self.door.obj, 'location', index=0, text="")
+
+
+class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.window_prompts"
+    bl_label = "Window Prompts"
+    bl_description = "Edit window properties"
+    bl_options = {'UNDO'}
+
+    window_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
+    window_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
+    height_from_floor: bpy.props.FloatProperty(name="Height From Floor", unit='LENGTH', precision=5)  # type: ignore
+
+    window = None
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.get('IS_WINDOW_BP')
+
+    def check(self, context):
+        self.window.set_input('Dim X', self.window_width)
+        self.window.set_input('Dim Z', self.window_height)
+        self.window.obj.location.z = self.height_from_floor
+        return True
+
+    def invoke(self, context, event):
+        self.window = hb_types.GeoNodeCage(context.object)
+        self.window_width = self.window.get_input('Dim X')
+        self.window_height = self.window.get_input('Dim Z')
+        self.height_from_floor = self.window.obj.location.z
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        
+        row = box.row()
+        row.label(text="Width:")
+        row.prop(self, 'window_width', text="")
+        
+        row = box.row()
+        row.label(text="Height:")
+        row.prop(self, 'window_height', text="")
+        
+        row = box.row()
+        row.label(text="Height From Floor:")
+        row.prop(self, 'height_from_floor', text="")
+        
+        row = box.row()
+        row.label(text="Location X:")
+        row.prop(self.window.obj, 'location', index=0, text="")
+
+
+class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.flip_door_swing"
+    bl_label = "Flip Door Swing"
+    bl_description = "Flip the door swing direction (swings inside/outside)"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+
+    def execute(self, context):
+        door_obj = context.object
+        # Find the door swing child
+        for child in door_obj.children:
+            if 'Door Swing' in child.name:
+                door_swing = hb_types.GeoNodeObject(child)
+                try:
+                    current = door_swing.get_input('Swing Inside')
+                    door_swing.set_input('Swing Inside', not current)
+                    self.report({'INFO'}, "Door swing flipped")
+                except:
+                    self.report({'WARNING'}, "Could not find Swing Inside input")
+                break
+        return {'FINISHED'}
+
+
+class home_builder_doors_windows_OT_flip_door_hand(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.flip_door_hand"
+    bl_label = "Flip Door Hand"
+    bl_description = "Flip the door hand (left/right hinge)"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+
+    def execute(self, context):
+        door_obj = context.object
+        # Find the door swing child
+        for child in door_obj.children:
+            if 'Door Swing' in child.name:
+                door_swing = hb_types.GeoNodeObject(child)
+                try:
+                    current = door_swing.get_input('Is Left')
+                    door_swing.set_input('Is Left', not current)
+                    self.report({'INFO'}, "Door hand flipped")
+                except:
+                    self.report({'WARNING'}, "Could not find Is Left input")
+                break
+        return {'FINISHED'}
+
+
+class home_builder_doors_windows_OT_toggle_double_door(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.toggle_double_door"
+    bl_label = "Toggle Double Door"
+    bl_description = "Toggle between single and double door"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+
+    def execute(self, context):
+        door_obj = context.object
+        # Find the door swing child
+        for child in door_obj.children:
+            if 'Door Swing' in child.name:
+                door_swing = hb_types.GeoNodeObject(child)
+                try:
+                    current = door_swing.get_input('Is Double')
+                    door_swing.set_input('Is Double', not current)
+                    status = "double" if not current else "single"
+                    self.report({'INFO'}, f"Door set to {status}")
+                except:
+                    self.report({'WARNING'}, "Could not find Is Double input")
+                break
+        return {'FINISHED'}
+
+
+class home_builder_doors_windows_OT_delete_door_window(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.delete_door_window"
+    bl_label = "Delete Door/Window"
+    bl_description = "Delete the selected door or window"
+    bl_options = {'UNDO'}
+
+    object_type: bpy.props.StringProperty(name="Object Type", default='DOOR')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        if not context.object:
+            return False
+        return context.object.get('IS_ENTRY_DOOR_BP') or context.object.get('IS_WINDOW_BP')
+
+    def execute(self, context):
+        obj = context.object
+        wall = obj.parent
+        
+        # Remove the boolean modifier from the wall if present
+        if wall and 'IS_WALL_BP' in wall:
+            # Find and remove the boolean modifier for this door/window
+            for mod in wall.modifiers:
+                if mod.type == 'BOOLEAN' and mod.object == obj:
+                    wall.modifiers.remove(mod)
+                    break
+        
+        # Delete all children first
+        children_to_delete = list(obj.children)
+        for child in children_to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+        
+        # Delete the door/window object
+        bpy.data.objects.remove(obj, do_unlink=True)
+        
+        self.report({'INFO'}, f"{self.object_type.title()} deleted")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_doors_windows_OT_place_door,
     home_builder_doors_windows_OT_place_window,
+    home_builder_doors_windows_OT_door_prompts,
+    home_builder_doors_windows_OT_window_prompts,
+    home_builder_doors_windows_OT_flip_door_swing,
+    home_builder_doors_windows_OT_flip_door_hand,
+    home_builder_doors_windows_OT_toggle_double_door,
+    home_builder_doors_windows_OT_delete_door_window,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
