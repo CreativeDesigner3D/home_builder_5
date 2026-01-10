@@ -1482,7 +1482,7 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'tall_cabinet_split_height',text="")
 
     def draw_user_library_ui(self,layout,context):
-        from . import ops_hb_frameless
+        from .operators import ops_library
         
         # Header row with refresh and folder buttons
         row = layout.row()
@@ -1498,7 +1498,7 @@ class Frameless_Scene_Props(PropertyGroup):
         layout.separator()
         
         # Get library items
-        library_items = ops_hb_frameless.get_user_library_items()
+        library_items = ops_library.get_user_library_items()
         
         if not library_items:
             box = layout.box()

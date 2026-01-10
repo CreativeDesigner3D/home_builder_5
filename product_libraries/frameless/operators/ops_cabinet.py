@@ -2,6 +2,7 @@ import bpy
 import math
 from .. import types_frameless
 from .. import props_hb_frameless
+from . import ops_placement
 import os
 from mathutils import Vector
 from .... import hb_utils, hb_types, hb_project, units
@@ -577,7 +578,7 @@ class hb_frameless_OT_select_cabinet_group(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.object.select_all(action='DESELECT')
         cabinet_group = bpy.data.objects[self.cabinet_group_name]
-        toggle_cabinet_color(cabinet_group,True,type_name="IS_FRAMELESS_CABINET_CAGE",dont_show_parent=False)
+        ops_placement.toggle_cabinet_color(cabinet_group,True,type_name="IS_FRAMELESS_CABINET_CAGE",dont_show_parent=False)
         cabinet_group.select_set(True)
         context.view_layer.objects.active = cabinet_group
         for obj in cabinet_group.children_recursive:
