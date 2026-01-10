@@ -1075,6 +1075,54 @@ class Pullout(CabinetOpening):
         drawer_front.add_drawer_box()
 
 
+class FalseFront(CabinetOpening):
+    """A false front is a decorative panel with no drawer box or handle.
+    Used for sink cabinet fronts, filler panels, or decorative purposes.
+    """
+
+    def create(self):
+        super().create("False Front")
+
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_properties_opening_thickness()
+        self.add_properties_front_overlays()
+        overlay_prompts = self.add_properties_front_overlay_calculations()
+
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        ft = self.var_prop('Front Thickness', 'ft')
+        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
+
+        inset = self.var_prop('Inset Front', 'inset')
+
+        drawer_front = CabinetDrawerFront()
+        drawer_front.create('False Front')
+        drawer_front.obj.parent = self.obj
+        drawer_front.obj.rotation_euler.x = math.radians(90)
+        drawer_front.obj.rotation_euler.y = math.radians(-90)
+        drawer_front.driver_location('x', '-lo', [lo])
+        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)', [inset, ft, door_to_cab_gap])
+        drawer_front.driver_location('z', '-bo', [bo])
+        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z, to, bo])
+        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x, lo, ro])
+        drawer_front.driver_input("Thickness", 'ft', [ft])
+        drawer_front.driver_prop("Top Overlay", 'to', [to])
+        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
+        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
+        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
+        drawer_front.set_input("Mirror Y", True)
+        
+        # Set False Front to True - no drawer box or handle
+        drawer_front.set_property("False Front", True)
+        # No drawer box added for false front
+
+
 class CabinetPart(GeoNodeCutpart):
 
     def create(self,name):
@@ -1289,6 +1337,7 @@ class CabinetDrawerFront(CabinetFront):
         self.obj['IS_DRAWER_FRONT'] = True
         props = bpy.context.scene.hb_frameless
 
+        self.add_property("False Front",'CHECKBOX', False)
         self.add_property("Center Pull",'CHECKBOX',props.center_pulls_on_drawer_front)
         self.add_property('Handle Horizontal Location', 'DISTANCE', props.pull_vertical_location_drawers)
         
@@ -1302,6 +1351,7 @@ class CabinetDrawerFront(CabinetFront):
         #Width is width of the drawer front
         width = self.var_input('Width', 'width')
         thickness = self.var_input('Thickness', 'thickness')
+        false_front = self.var_prop('False Front', 'false_front')
         center_pull = self.var_prop('Center Pull', 'center_pull')
         hhl = self.var_prop('Handle Horizontal Location', 'hhl')
         pull_len = self.var_prop('Pull Length', 'pull_len')
@@ -1316,13 +1366,20 @@ class CabinetDrawerFront(CabinetFront):
         pull.driver_location('x', 'IF(center_pull,length/2,length-hhl-pull_len/2)',[center_pull,length,hhl,pull_len])
         pull.driver_location('y', '-width/2',[width])
         pull.driver_location('z', 'thickness',[thickness])
+        # Hide pull when False Front is enabled
+        pull.driver_hide('false_front', [false_front])
 
     def add_drawer_box(self):
         """Add a drawer box to this drawer front.
+        Does not add drawer box if False Front is enabled.
         """
         props = bpy.context.scene.hb_frameless
         
         if not props.include_drawer_boxes:
+            return
+        
+        # Don't add drawer box if False Front
+        if self.obj.get('False Front', False):
             return
 
         # Check if drawer box already exists
@@ -1368,7 +1425,10 @@ class CabinetDrawerFront(CabinetFront):
         # X is vertical location
         drawer_box.driver_location('x', 'bo + bottom_clr', [bo,bottom_clr])
         # Y is horizontal Location
-        drawer_box.driver_location('y', '-lo - side_clr', [lo,side_clr])      
+        drawer_box.driver_location('y', '-lo - side_clr', [lo,side_clr])
+        # Hide drawer box when False Front is enabled
+        false_front = self.var_prop('False Front', 'false_front')
+        drawer_box.driver_hide('false_front', [false_front])
 
 
 # =============================================================================

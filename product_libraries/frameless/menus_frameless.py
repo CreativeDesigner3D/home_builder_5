@@ -59,6 +59,7 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Single Drawer").opening_type = 'SINGLE_DRAWER'
         layout.operator("hb_frameless.change_bay_opening", text="Pullout").opening_type = 'PULLOUT'
+        layout.operator("hb_frameless.change_bay_opening", text="False Front").opening_type = 'FALSE_FRONT'
         layout.operator("hb_frameless.change_bay_opening", text="2 Drawer Stack").opening_type = '2_DRAWER_STACK'
         layout.operator("hb_frameless.change_bay_opening", text="3 Drawer Stack").opening_type = '3_DRAWER_STACK'
         layout.operator("hb_frameless.change_bay_opening", text="4 Drawer Stack").opening_type = '4_DRAWER_STACK'
@@ -93,6 +94,7 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Drawer").opening_type = 'SINGLE_DRAWER'
         layout.operator("hb_frameless.change_opening_type", text="Pullout").opening_type = 'PULLOUT'
+        layout.operator("hb_frameless.change_opening_type", text="False Front").opening_type = 'FALSE_FRONT'
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
         layout.separator()

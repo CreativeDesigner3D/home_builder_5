@@ -19,6 +19,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
+            ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
             ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
             ('3_DRAWER_STACK', "3 Drawer Stack", "Three equal drawers"),
             ('4_DRAWER_STACK', "4 Drawer Stack", "Four equal drawers"),
@@ -91,6 +92,11 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Create flip up door opening (hinged at top, swings up)."""
         flip_up = types_frameless.FlipUpDoor()
         self.add_cage_to_bay(bay, flip_up)
+
+    def create_false_front(self, bay):
+        """Create false front (decorative panel with no hardware)."""
+        false_front = types_frameless.FalseFront()
+        self.add_cage_to_bay(bay, false_front)
 
     def create_door_drawer(self, bay):
         """Create door/drawer combo (drawer on top, doors below)."""
@@ -168,6 +174,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             self.create_drawer(bay)
         elif self.opening_type == 'PULLOUT':
             self.create_pullout(bay)
+        elif self.opening_type == 'FALSE_FRONT':
+            self.create_false_front(bay)
         elif self.opening_type == '2_DRAWER_STACK':
             self.create_drawer_stack(bay, 2)
         elif self.opening_type == '3_DRAWER_STACK':
@@ -300,6 +308,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
+            ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
             ('OPEN', "Open", "Open (no front)"),
         ],
         default='LEFT_DOOR'
@@ -438,6 +447,18 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         
         self.add_insert_to_opening(opening, flip_up)
 
+    def create_false_front(self, opening, half_top, half_bottom, half_left, half_right):
+        """Create false front (decorative panel with no hardware)."""
+        false_front = types_frameless.FalseFront()
+        
+        # Apply half overlays based on position in splitter
+        false_front.half_overlay_top = half_top
+        false_front.half_overlay_bottom = half_bottom
+        false_front.half_overlay_left = half_left
+        false_front.half_overlay_right = half_right
+        
+        self.add_insert_to_opening(opening, false_front)
+
     def execute(self, context):
         opening_obj = context.object if 'IS_FRAMELESS_OPENING_CAGE' in context.object else hb_utils.get_opening_bp(context.object)
         if not opening_obj:
@@ -471,6 +492,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         elif self.opening_type == 'PULLOUT':
             self.create_pullout(opening, half_top=half_top, half_bottom=half_bottom,
                               half_left=half_left, half_right=half_right)
+        elif self.opening_type == 'FALSE_FRONT':
+            self.create_false_front(opening, half_top=half_top, half_bottom=half_bottom,
+                                   half_left=half_left, half_right=half_right)
         elif self.opening_type == 'OPEN':
             pass  # No children needed for open
         
