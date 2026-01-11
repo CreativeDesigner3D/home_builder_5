@@ -592,10 +592,16 @@ class Frameless_Cabinet_Style(PropertyGroup):
         row.scale_y = 1.3
         row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", text="Assign Style", icon='BRUSH_DATA')
         
-        # Update cabinets button
+        # Update cabinets button with progress bar
         row = box.row()
         row.scale_y = 1.3
-        row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')        
+        if context.window_manager.home_builder.progress < 1.0:
+            row.progress(
+                text=str(int(context.window_manager.home_builder.progress * 100)) + "%",
+                factor=context.window_manager.home_builder.progress
+            )
+        else:
+            row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')        
 
 
 class HB_UL_cabinet_styles(UIList):

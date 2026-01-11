@@ -660,7 +660,6 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
     _total_count = 0
     _style = None
     _style_name = ""
-    _cancelled = False
 
     @classmethod
     def poll(cls, context):
@@ -669,8 +668,9 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         return len(props.cabinet_styles) > 0
 
     def modal(self, context, event):
+        wm = context.window_manager
+        
         if event.type == 'ESC':
-            self._cancelled = True
             self.finish(context)
             self.report({'WARNING'}, f"Cancelled. Updated {self._current_index} of {self._total_count} cabinets.")
             return {'CANCELLED'}
@@ -686,12 +686,12 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
                 
                 self._current_index += 1
                 
-                # Update progress in header
-                progress = self._current_index / self._total_count
-                context.area.header_text_set(f"Updating Cabinets: {self._current_index}/{self._total_count} ({progress*100:.0f}%)")
+                # Update progress bar (keep below 1.0 to show progress bar)
+                wm.home_builder.progress = min(0.99, self._current_index / self._total_count)
                 
-                # Force redraw
-                context.area.tag_redraw()
+                # Force redraw to update progress bar
+                for area in context.screen.areas:
+                    area.tag_redraw()
             else:
                 # Finished
                 self.finish(context)
@@ -701,10 +701,20 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
     def finish(self, context):
-        # Remove timer and restore header
+        wm = context.window_manager
+        
+        # Remove timer
         if self._timer:
-            context.window_manager.event_timer_remove(self._timer)
-        context.area.header_text_set(None)
+            wm.event_timer_remove(self._timer)
+        
+        # Reset progress to 1.0 (hides progress bar)
+        wm.home_builder.progress = 1.0
+        
+        # Force immediate UI redraw
+        for window in wm.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
         
         # Clear class variables
         self._cabinets = []
@@ -715,6 +725,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
     def invoke(self, context, event):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
+        wm = context.window_manager
         
         if not props.cabinet_styles:
             self.report({'WARNING'}, "No cabinet styles defined")
@@ -735,18 +746,17 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         
         self._total_count = len(self._cabinets)
         self._current_index = 0
-        self._cancelled = False
         
         if self._total_count == 0:
             self.report({'INFO'}, f"No cabinets found using style '{self._style_name}'")
             return {'CANCELLED'}
         
-        # Add timer for modal operation
-        self._timer = context.window_manager.event_timer_add(0.01, window=context.window)
-        context.window_manager.modal_handler_add(self)
+        # Set initial progress to 0
+        wm.home_builder.progress = 0.0
         
-        # Initial header text
-        context.area.header_text_set(f"Updating Cabinets: 0/{self._total_count} (0%)")
+        # Add timer for modal operation
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
         
         return {'RUNNING_MODAL'}
 
