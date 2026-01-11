@@ -654,13 +654,65 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
     bl_description = "Update all cabinets in the scene that use the active cabinet style with current style settings"
     bl_options = {'REGISTER', 'UNDO'}
 
+    _timer = None
+    _cabinets = []
+    _current_index = 0
+    _total_count = 0
+    _style = None
+    _style_name = ""
+    _cancelled = False
+
     @classmethod
     def poll(cls, context):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         return len(props.cabinet_styles) > 0
 
-    def execute(self, context):
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._cancelled = True
+            self.finish(context)
+            self.report({'WARNING'}, f"Cancelled. Updated {self._current_index} of {self._total_count} cabinets.")
+            return {'CANCELLED'}
+
+        if event.type == 'TIMER':
+            if self._current_index < self._total_count:
+                # Process one cabinet
+                obj = self._cabinets[self._current_index]
+                if obj and self._style:
+                    self._style.assign_style_to_cabinet(obj)
+                    hb_utils.run_calc_fix(context, obj)
+                    obj['CABINET_STYLE_NAME'] = self._style_name
+                
+                self._current_index += 1
+                
+                # Update progress in header
+                progress = self._current_index / self._total_count
+                context.area.header_text_set(f"Updating Cabinets: {self._current_index}/{self._total_count} ({progress*100:.0f}%)")
+                
+                # Force redraw
+                context.area.tag_redraw()
+            else:
+                # Finished
+                self.finish(context)
+                self.report({'INFO'}, f"Updated {self._total_count} cabinet(s) with style '{self._style_name}'")
+                return {'FINISHED'}
+
+        return {'PASS_THROUGH'}
+
+    def finish(self, context):
+        # Remove timer and restore header
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+        context.area.header_text_set(None)
+        
+        # Clear class variables
+        self._cabinets = []
+        self._current_index = 0
+        self._total_count = 0
+        self._style = None
+
+    def invoke(self, context, event):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
@@ -669,27 +721,38 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
             return {'CANCELLED'}
         
         style_index = props.active_cabinet_style_index
-        style = props.cabinet_styles[style_index]
+        self._style = props.cabinet_styles[style_index]
+        self._style_name = self._style.name
         
-        count = 0
-        # Iterate through all scenes (rooms) to find cabinets with this style
+        # Collect all cabinets that need updating
+        self._cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
                 if obj.get('IS_FRAMELESS_CABINET_CAGE'):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
-                        # Re-apply the style to update materials
-                        style.assign_style_to_cabinet(obj)
-                        hb_utils.run_calc_fix(context, obj)
-                        obj['CABINET_STYLE_NAME'] = style.name  # Update name in case it changed
-                        count += 1
+                        self._cabinets.append(obj)
         
-        if count > 0:
-            self.report({'INFO'}, f"Updated {count} cabinet(s) with style '{style.name}'")
-        else:
-            self.report({'INFO'}, f"No cabinets found using style '{style.name}'")
+        self._total_count = len(self._cabinets)
+        self._current_index = 0
+        self._cancelled = False
         
-        return {'FINISHED'}
+        if self._total_count == 0:
+            self.report({'INFO'}, f"No cabinets found using style '{self._style_name}'")
+            return {'CANCELLED'}
+        
+        # Add timer for modal operation
+        self._timer = context.window_manager.event_timer_add(0.01, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        
+        # Initial header text
+        context.area.header_text_set(f"Updating Cabinets: 0/{self._total_count} (0%)")
+        
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        # Fallback for non-invoke calls
+        return self.invoke(context, None)
 
 
 
