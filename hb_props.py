@@ -362,6 +362,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
 
     room_name: StringProperty(name="Room Name", default="")
     room_type: StringProperty(name="Room Type", default="")
+    sort_order: IntProperty(name="Sort Order", default=0, description="Order for sorting scenes") # type: ignore
 
     wall_type: EnumProperty(name="Wall Type",
                           items=[('Exterior',"Exterior","Exterior Wall"),

@@ -221,6 +221,65 @@ class home_builder_OT_duplicate_room(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_OT_move_room_scene(bpy.types.Operator):
+    """Move room scene up or down in the list"""
+    bl_idname = "home_builder.move_room_scene"
+    bl_label = "Move Room Scene"
+    bl_description = "Move room scene up or down in the list"
+    bl_options = {'UNDO'}
+    
+    move_up: bpy.props.BoolProperty(name="Move Up") # type: ignore
+
+    def ensure_sort_orders_initialized(self, room_scenes):
+        """Make sure all scenes have unique sort_order values."""
+        orders = [s.home_builder.sort_order for s in room_scenes]
+        if len(set(orders)) <= 1:
+            # Initialize based on name order
+            sorted_by_name = sorted(room_scenes, key=lambda s: s.name)
+            for i, scene in enumerate(sorted_by_name):
+                scene.home_builder.sort_order = i
+
+    def execute(self, context):
+        # Get room scenes (not layout or detail views)
+        room_scenes = [s for s in bpy.data.scenes 
+                      if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
+        
+        if len(room_scenes) < 2:
+            return {'CANCELLED'}
+        
+        # Ensure sort orders are initialized
+        self.ensure_sort_orders_initialized(room_scenes)
+        
+        # Sort by sort_order
+        room_scenes = sorted(room_scenes, key=lambda s: s.home_builder.sort_order)
+        
+        scene = context.scene
+        
+        # Check if current scene is a room scene
+        if scene not in room_scenes:
+            return {'CANCELLED'}
+        
+        idx = room_scenes.index(scene)
+        
+        # Check boundaries
+        if idx == 0 and self.move_up:
+            return {'CANCELLED'}
+        if idx == len(room_scenes) - 1 and not self.move_up:
+            return {'CANCELLED'}
+        
+        # Get neighbor scene
+        if self.move_up:
+            neighbor = room_scenes[idx - 1]
+        else:
+            neighbor = room_scenes[idx + 1]
+        
+        # Swap sort_order values
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
+        
+        return {'FINISHED'}
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -231,6 +290,7 @@ classes = (
     home_builder_OT_delete_room,
     home_builder_OT_rename_room,
     home_builder_OT_duplicate_room,
+    home_builder_OT_move_room_scene,
 )
 
 def register():

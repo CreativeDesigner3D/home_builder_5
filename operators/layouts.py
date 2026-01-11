@@ -2271,6 +2271,55 @@ class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
 # REGISTRATION
 # =============================================================================
 
+class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
+    """Move layout view up or down in the list"""
+    bl_idname = "home_builder_layouts.move_layout_view"
+    bl_label = "Move Layout View"
+    bl_description = "Move layout view up or down in the list"
+    bl_options = {'UNDO'}
+    
+    move_up: bpy.props.BoolProperty(name="Move Up") # type: ignore
+
+    def ensure_sort_orders_initialized(self, layout_views):
+        """Make sure all scenes have unique sort_order values."""
+        orders = [s.home_builder.sort_order for s in layout_views]
+        if len(set(orders)) <= 1:
+            sorted_by_name = sorted(layout_views, key=lambda s: s.name)
+            for i, scene in enumerate(sorted_by_name):
+                scene.home_builder.sort_order = i
+
+    def execute(self, context):
+        layout_views = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW')]
+        
+        if len(layout_views) < 2:
+            return {'CANCELLED'}
+        
+        self.ensure_sort_orders_initialized(layout_views)
+        layout_views = sorted(layout_views, key=lambda s: s.home_builder.sort_order)
+        
+        scene = context.scene
+        
+        if scene not in layout_views:
+            return {'CANCELLED'}
+        
+        idx = layout_views.index(scene)
+        
+        if idx == 0 and self.move_up:
+            return {'CANCELLED'}
+        if idx == len(layout_views) - 1 and not self.move_up:
+            return {'CANCELLED'}
+        
+        if self.move_up:
+            neighbor = layout_views[idx - 1]
+        else:
+            neighbor = layout_views[idx + 1]
+        
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
+        
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_create_plan_view,
@@ -2286,6 +2335,7 @@ classes = (
     home_builder_layouts_OT_add_dimension,
     home_builder_layouts_OT_add_dimension_3d,
     home_builder_layouts_OT_add_detail_to_layout,
+    home_builder_layouts_OT_move_layout_view,
 )
 
 def register():

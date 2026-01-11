@@ -230,8 +230,10 @@ def is_room_scene(scene):
 
 
 def get_room_scenes():
-    """Get all room scenes (excluding layout and detail scenes)."""
-    return [s for s in bpy.data.scenes if is_room_scene(s)]
+    """Get all room scenes (excluding layout and detail scenes), sorted by sort_order."""
+    rooms = [s for s in bpy.data.scenes if is_room_scene(s)]
+    rooms.sort(key=lambda s: s.home_builder.sort_order)
+    return rooms
 
 
 # =============================================================================

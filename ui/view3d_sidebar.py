@@ -157,9 +157,21 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
         # Get all room scenes using hb_project helper
         room_scenes = hb_project.get_room_scenes()
         
-        col = layout.column(align=True)
+        # Sort by sort_order
+        room_scenes.sort(key=lambda s: s.home_builder.sort_order)
+        
+        # Main row with list and buttons
+        main_row = layout.row(align=False)
+        list_col = main_row.column(align=True)
+        
+        # Up/Down buttons column (only show if more than one room)
+        if len(room_scenes) > 1:
+            button_col = main_row.column(align=True)
+            button_col.operator("home_builder.move_room_scene", text="", icon='TRIA_UP').move_up = True
+            button_col.operator("home_builder.move_room_scene", text="", icon='TRIA_DOWN').move_up = False
+        
         for scene in room_scenes:
-            row = col.row(align=True)
+            row = list_col.row(align=True)
             
             # Use checkbox icon for selection state
             is_selected = scene == context.scene
@@ -175,8 +187,8 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
                 op.scene_name = scene.name
         
         # Room management buttons
-        col.separator()
-        row = col.row(align=True)
+        list_col.separator()
+        row = list_col.row(align=True)
         row.operator("home_builder.create_room", text="Add", icon='ADD')
         
         # Only show these if not in a layout view
@@ -463,9 +475,19 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
         # Layout Views List
         layout_views = hb_layouts.LayoutView.get_all_layout_views()
         
+        # Sort by sort_order
+        layout_views.sort(key=lambda s: s.home_builder.sort_order)
+        
         if layout_views:
             box = layout.box()
-            box.label(text="Available Layout Views", icon='VIEW_ORTHO')
+            header_row = box.row()
+            header_row.label(text="Available Layout Views", icon='VIEW_ORTHO')
+            
+            # Up/Down buttons (only show if more than one view and in layout view)
+            if len(layout_views) > 1 and is_layout_view:
+                header_row.operator("home_builder_layouts.move_layout_view", text="", icon='TRIA_UP').move_up = True
+                header_row.operator("home_builder_layouts.move_layout_view", text="", icon='TRIA_DOWN').move_up = False
+            
             col = box.column(align=True)
             for scene in layout_views:
                 row = col.row(align=True)
@@ -739,9 +761,19 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
         # List existing details
         detail_views = hb_details.DetailView.get_all_detail_views()
         
+        # Sort by sort_order
+        detail_views.sort(key=lambda s: s.home_builder.sort_order)
+        
         if detail_views:
             box = layout.box()
-            box.label(text="Available 2D Details", icon='VIEW_ORTHO')
+            header_row = box.row()
+            header_row.label(text="Available 2D Details", icon='VIEW_ORTHO')
+            
+            # Up/Down buttons (only show if more than one detail and in detail view)
+            if len(detail_views) > 1 and is_detail_view:
+                header_row.operator("home_builder_details.move_detail_view", text="", icon='TRIA_UP').move_up = True
+                header_row.operator("home_builder_details.move_detail_view", text="", icon='TRIA_DOWN').move_up = False
+            
             col = box.column(align=True)
 
             for scene in detail_views:

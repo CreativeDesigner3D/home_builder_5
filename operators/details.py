@@ -3059,6 +3059,55 @@ class home_builder_details_OT_create_detail_from_library(bpy.types.Operator):
         props.active_crown_detail_index = len(props.crown_details) - 1
 
 
+class home_builder_details_OT_move_detail_view(bpy.types.Operator):
+    """Move detail view up or down in the list"""
+    bl_idname = "home_builder_details.move_detail_view"
+    bl_label = "Move Detail View"
+    bl_description = "Move detail view up or down in the list"
+    bl_options = {'UNDO'}
+    
+    move_up: bpy.props.BoolProperty(name="Move Up") # type: ignore
+
+    def ensure_sort_orders_initialized(self, detail_views):
+        """Make sure all scenes have unique sort_order values."""
+        orders = [s.home_builder.sort_order for s in detail_views]
+        if len(set(orders)) <= 1:
+            sorted_by_name = sorted(detail_views, key=lambda s: s.name)
+            for i, scene in enumerate(sorted_by_name):
+                scene.home_builder.sort_order = i
+
+    def execute(self, context):
+        detail_views = [s for s in bpy.data.scenes if s.get('IS_DETAIL_VIEW')]
+        
+        if len(detail_views) < 2:
+            return {'CANCELLED'}
+        
+        self.ensure_sort_orders_initialized(detail_views)
+        detail_views = sorted(detail_views, key=lambda s: s.home_builder.sort_order)
+        
+        scene = context.scene
+        
+        if scene not in detail_views:
+            return {'CANCELLED'}
+        
+        idx = detail_views.index(scene)
+        
+        if idx == 0 and self.move_up:
+            return {'CANCELLED'}
+        if idx == len(detail_views) - 1 and not self.move_up:
+            return {'CANCELLED'}
+        
+        if self.move_up:
+            neighbor = detail_views[idx - 1]
+        else:
+            neighbor = detail_views[idx + 1]
+        
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
+        
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_details_OT_create_detail,
     home_builder_details_OT_delete_detail,
@@ -3074,6 +3123,7 @@ classes = (
     home_builder_details_OT_load_detail_from_library,
     home_builder_details_OT_delete_library_detail,
     home_builder_details_OT_open_library_folder,
+    home_builder_details_OT_move_detail_view,
 )
 
 
