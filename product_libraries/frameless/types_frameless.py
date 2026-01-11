@@ -59,7 +59,7 @@ class Cabinet(GeoNodeCage):
         self.set_input('Dim Z', self.height)
         self.set_input('Mirror Y', True)
 
-    def create_base_tall_carcass(self,name):
+    def create_base_carcass(self,name):
         self.create_cabinet(name)
 
         self.add_properties_common()
@@ -198,6 +198,103 @@ class Cabinet(GeoNodeCage):
         opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
         opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z,tkh,mt,rb])
 
+    def create_tall_carcass(self,name):
+        """Create tall cabinet carcass - always uses full top, no stretcher options."""
+        self.create_cabinet(name)
+
+        self.add_properties_common()
+        self.add_properties_toe_kick()
+        # Note: No add_properties_base_top() - tall cabinets always have full top
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+
+        mt = self.var_prop('Material Thickness', 'mt')
+        tkh = self.var_prop('Toe Kick Height', 'tkh')
+        tks = self.var_prop('Toe Kick Setback', 'tks')
+        rb = self.var_prop('Remove Bottom', 'rb')
+
+        left_side = CabinetSideNotched()
+        left_side.create('Left Side',tkh,tks,mt)
+        left_side.obj.parent = self.obj
+        left_side.obj.rotation_euler.y = math.radians(-90)
+        left_side.driver_input("Length", 'dim_z', [dim_z])
+        left_side.driver_input("Width", 'dim_y', [dim_y])
+        left_side.driver_input("Thickness", 'mt', [mt])
+        left_side.set_input("Mirror Y", True)
+        left_side.set_input("Mirror Z", True)
+
+        right_side = CabinetSideNotched()
+        right_side.create('Right Side',tkh,tks,mt)
+        right_side.obj.parent = self.obj
+        right_side.driver_location('x', 'dim_x',[dim_x])
+        right_side.obj.rotation_euler.y = math.radians(-90)
+        right_side.driver_input("Length", 'dim_z', [dim_z])
+        right_side.driver_input("Width", 'dim_y', [dim_y])
+        right_side.driver_input("Thickness", 'mt', [mt])
+        right_side.set_input("Mirror Y", True)
+        right_side.set_input("Mirror Z", False)
+
+        bottom = CabinetPart()
+        bottom.create('Bottom')
+        bottom.obj.parent = self.obj
+        bottom.driver_location('x', 'mt',[mt])
+        bottom.driver_location('z', 'tkh',[tkh])
+        bottom.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
+        bottom.driver_input("Width", 'dim_y', [dim_y])
+        bottom.driver_input("Thickness", 'mt', [mt])
+        bottom.set_input("Mirror Y", True)
+        bottom.set_input("Mirror Z", False)
+        bottom.driver_hide('IF(rb==1,True,False)', [rb])
+
+        back = CabinetPart()
+        back.create('Back')
+        back.obj.parent = self.obj
+        back.obj.rotation_euler.x = math.radians(90)
+        back.obj.rotation_euler.y = math.radians(-90)
+        back.driver_location('x', 'mt',[mt])
+        back.driver_location('z', 'IF(rb==1,0,tkh+mt)',[rb,tkh,mt])
+        back.driver_input("Length", 'IF(rb==1,dim_z,dim_z-tkh-mt)-mt', [rb,dim_z,tkh,mt])
+        back.driver_input("Width", 'dim_x-(mt*2)', [dim_x,mt])
+        back.driver_input("Thickness", 'mt', [mt])
+        back.set_input("Mirror Y", True)
+
+        toe_kick = CabinetPart()
+        toe_kick.create('Toe Kick')
+        toe_kick.obj.parent = self.obj
+        toe_kick.obj.rotation_euler.x = math.radians(-90)
+        toe_kick.driver_location('x', 'mt',[mt])
+        toe_kick.driver_location('y', '-dim_y+tks',[dim_y,tks])
+        toe_kick.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
+        toe_kick.driver_input("Width", 'tkh', [tkh])
+        toe_kick.driver_input("Thickness", 'mt', [mt])
+        toe_kick.set_input("Mirror Y", True)
+        toe_kick.set_input("Mirror Z", False)
+        toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
+
+        # Full Top - always present for tall cabinets
+        top = CabinetPart()
+        top.create('Top')
+        top.obj.parent = self.obj
+        top.driver_location('x', 'mt',[mt])
+        top.driver_location('z', 'dim_z',[dim_z])
+        top.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
+        top.driver_input("Width", 'dim_y', [dim_y])
+        top.driver_input("Thickness", 'mt', [mt])
+        top.set_input("Mirror Y", True)
+        top.set_input("Mirror Z", True)
+
+        opening = CabinetBay()
+        opening.create("Bay")
+        opening.obj.parent = self.obj
+        opening.driver_location('x', 'mt',[mt])
+        opening.driver_location('y', '-dim_y',[dim_y])
+        opening.driver_location('z', 'tkh+IF(rb,0,mt)',[tkh,mt,rb])
+        opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
+        opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
+        opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z,tkh,mt,rb])
+
     def create_upper_carcass(self,name):
         self.create_cabinet(name)
 
@@ -293,7 +390,7 @@ class BaseCabinet(Cabinet):
         self.depth = props.base_cabinet_depth
     
     def create(self, name="Base Cabinet"):
-        self.create_base_tall_carcass(name)
+        self.create_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'BASE'
         
         # Add exterior based on base_exterior property
@@ -379,7 +476,7 @@ class TallCabinet(Cabinet):
         self.depth = props.tall_cabinet_depth
     
     def create(self, name="Tall Cabinet"):
-        self.create_base_tall_carcass(name)
+        self.create_tall_carcass(name)
         self.obj['CABINET_TYPE'] = 'TALL'
         self.add_doors()
     
@@ -420,7 +517,7 @@ class RefrigeratorCabinet(Cabinet):
         self.depth = props.tall_cabinet_depth
     
     def create(self, name="Refrigerator Cabinet"):
-        self.create_base_tall_carcass(name)
+        self.create_tall_carcass(name)
         self.obj['CABINET_TYPE'] = 'TALL'
         self.obj['IS_REFRIGERATOR_CABINET'] = True
         
