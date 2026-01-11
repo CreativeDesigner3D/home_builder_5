@@ -1309,6 +1309,12 @@ class Frameless_Scene_Props(PropertyGroup):
     door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore
     active_door_style_index: IntProperty(name="Active Door Style Index", default=0)# type: ignore
 
+    selected_template: StringProperty(
+        name="Selected Template",
+        description="Currently selected elevation template",
+        default=""
+    )  # type: ignore
+
     # CROWN DETAILS
     crown_details: CollectionProperty(type=Crown_Detail, name="Crown Details")# type: ignore
     active_crown_detail_index: IntProperty(name="Active Crown Detail Index", default=0)# type: ignore
