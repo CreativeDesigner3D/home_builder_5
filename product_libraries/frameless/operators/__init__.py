@@ -8,6 +8,7 @@ from . import ops_styles
 from . import ops_crown
 from . import ops_library
 from . import ops_defaults
+from . import ops_finished_ends
 
 
 def register():
@@ -21,6 +22,7 @@ def register():
     ops_crown.register()
     ops_library.register()
     ops_defaults.register()
+    ops_finished_ends.register()
 
 
 def unregister():
@@ -34,3 +36,4 @@ def unregister():
     ops_crown.unregister()
     ops_library.unregister()
     ops_defaults.unregister()
+    ops_finished_ends.unregister()

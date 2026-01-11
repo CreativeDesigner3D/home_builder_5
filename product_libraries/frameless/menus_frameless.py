@@ -6,15 +6,44 @@ class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.add_applied_end", text="Add Left").side = 'LEFT'
-        layout.operator("hb_frameless.add_applied_end", text="Add Right").side = 'RIGHT'
-        layout.operator("hb_frameless.add_applied_end", text="Add Back").side = 'BACK'
-        layout.operator("hb_frameless.add_applied_end", text="Add Both Sides").side = 'BOTH'
+        layout.label(text="Slab Panels:")
+        layout.operator("hb_frameless.add_applied_end", text="Add Left Slab").side = 'LEFT'
+        layout.operator("hb_frameless.add_applied_end", text="Add Right Slab").side = 'RIGHT'
+        layout.operator("hb_frameless.add_applied_end", text="Add Back Slab").side = 'BACK'
+        layout.operator("hb_frameless.add_applied_end", text="Add Both Sides Slab").side = 'BOTH'
         layout.separator()
+        layout.label(text="5-Piece Panels:")
+        op = layout.operator("hb_frameless.update_finished_end", text="Left 5-Piece...")
+        op.side = 'LEFT'
+        op.finished_end_type = '5PIECE'
+        op = layout.operator("hb_frameless.update_finished_end", text="Right 5-Piece...")
+        op.side = 'RIGHT'
+        op.finished_end_type = '5PIECE'
+        op = layout.operator("hb_frameless.update_finished_end", text="Back 5-Piece...")
+        op.side = 'BACK'
+        op.finished_end_type = '5PIECE'
+        layout.separator()
+        layout.label(text="Remove:")
         layout.operator("hb_frameless.remove_applied_end", text="Remove Left").side = 'LEFT'
         layout.operator("hb_frameless.remove_applied_end", text="Remove Right").side = 'RIGHT'
         layout.operator("hb_frameless.remove_applied_end", text="Remove Back").side = 'BACK'
         layout.operator("hb_frameless.remove_applied_end", text="Remove Both Sides").side = 'BOTH'
+
+
+class HOME_BUILDER_MT_applied_end_commands(bpy.types.Menu):
+    bl_label = "Applied End Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        
+        if obj and obj.get('IS_APPLIED_PANEL_5PIECE'):
+            layout.operator("hb_frameless.applied_panel_prompts", text="Panel Prompts")
+            layout.separator()
+        
+        layout.operator("hb_frameless.update_finished_end", text="Change Finished End Type")
+        layout.separator()
+        layout.operator("hb_frameless.remove_applied_end", text="Remove Applied End")
 
 
 class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
