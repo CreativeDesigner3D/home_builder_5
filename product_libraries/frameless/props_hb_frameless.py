@@ -1085,6 +1085,7 @@ class Frameless_Scene_Props(PropertyGroup):
     show_appliance_library: BoolProperty(name="Show Appliance Library",description="Show Appliance Library.",default=False)# type: ignore
     show_part_library: BoolProperty(name="Show Part Library",description="Show Part Library.",default=False)# type: ignore
     show_user_library: BoolProperty(name="Show User Library",description="Show User Library.",default=False)# type: ignore
+    show_elevation_templates: BoolProperty(name="Show Elevation Templates",description="Show Elevation Templates.",default=False)# type: ignore
     show_general_options: BoolProperty(name="Show General Options",description="Show General Options.",default=False)# type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options",description="Show Handle Options.",default=False)# type: ignore
     show_front_options: BoolProperty(name="Show Front Options",description="Show Front Options.",default=False)# type: ignore
@@ -1765,6 +1766,10 @@ class Frameless_Scene_Props(PropertyGroup):
             box.label(text="No crown details defined", icon='INFO')
             box.label(text="Create a crown detail to define crown molding profiles")
 
+    def draw_elevation_templates_ui(self,layout,context):
+        """Draw the elevation templates UI section."""
+        from .props_elevation_templates import draw_elevation_template_ui
+        draw_elevation_template_ui(context, layout)
 
     def draw_toe_kick_details_ui(self,layout,context):
         pass
@@ -1918,6 +1923,13 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_user_library',text="User",icon='TRIA_DOWN' if self.show_user_library else 'TRIA_RIGHT',emboss=False)
             if self.show_user_library:
                 self.draw_user_library_ui(box,context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'        
+            row.prop(self,'show_elevation_templates',text="Elevation Templates",icon='TRIA_DOWN' if self.show_elevation_templates else 'TRIA_RIGHT',emboss=False)
+            if self.show_elevation_templates:
+                self.draw_elevation_templates_ui(box,context)
 
         if self.frameless_tabs == 'OPTIONS':
             # CABINET STYLES - Show first in OPTIONS tab

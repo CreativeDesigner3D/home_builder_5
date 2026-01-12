@@ -7,8 +7,6 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
-        layout.separator()
-        layout.menu("HOME_BUILDER_MT_elevation_templates", text="Elevation Templates", icon='PRESET')
 
 
 class HOME_BUILDER_MT_door_commands(bpy.types.Menu):

@@ -1045,41 +1045,11 @@ class HOME_BUILDER_PT_settings(bpy.types.Panel):
 
 
 
-# -----------------------------------------------------------------------------
-# PANEL: ELEVATION TEMPLATES
-# -----------------------------------------------------------------------------
-class HOME_BUILDER_PT_elevation_templates(bpy.types.Panel):
-    bl_label = "Elevation Templates"
-    bl_idname = "HOME_BUILDER_PT_elevation_templates"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = CATEGORY_NAME
-    bl_order = 2
-    bl_options = {'DEFAULT_CLOSED'}
-    
-    @classmethod
-    def poll(cls, context):
-        # Only show when not in a layout view or detail view
-        if context.scene.get('IS_DETAIL_VIEW'):
-            return False
-        if context.scene.get('IS_LAYOUT_VIEW'):
-            return False
-        # Check if a wall is selected
-        if context.active_object and 'IS_WALL_BP' in context.active_object:
-            return True
-        return False
 
-    def draw(self, context):
-        layout = self.layout
-        
-        # Import the template UI function
-        from ..product_libraries.frameless.props_elevation_templates import draw_elevation_template_ui
-        draw_elevation_template_ui(context, layout)
 
 
 classes = (
     HOME_BUILDER_PT_hidden_header,
-    HOME_BUILDER_PT_elevation_templates,
     HOME_BUILDER_PT_project,
     HOME_BUILDER_PT_project_info,
     HOME_BUILDER_PT_project_rooms,
