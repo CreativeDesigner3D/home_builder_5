@@ -1564,12 +1564,9 @@ class Frameless_Scene_Props(PropertyGroup):
             ("Lap Drawer", "Lap Drawer", "Lap Drw"),
         ]
         
-        upper_cabinets = [
+        upper_and_tall_cabinets = [
             ("Upper", "Upper", "Upper"),
             ("Upper Stacked", "Upper Stacked", "Upper Stacked"),
-        ]
-        
-        tall_cabinets = [
             ("Tall", "Tall", "Tall"),
             ("Tall Stacked", "Tall Stacked", "Tall Stacked"),
         ]
@@ -1590,26 +1587,10 @@ class Frameless_Scene_Props(PropertyGroup):
             op = box.operator('hb_frameless.draw_cabinet', text=display_name)
             op.cabinet_name = cabinet_name
         
-        # Upper cabinets
-        layout.label(text="Upper Cabinets:")
+        # Upper and Tall cabinets combined on one line
+        layout.label(text="Upper & Tall Cabinets:")
         flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in upper_cabinets:
-            box = flow.box()
-            box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
-        
-        # Tall cabinets
-        layout.label(text="Tall Cabinets:")
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in tall_cabinets:
+        for display_name, cabinet_name, thumb_name in upper_and_tall_cabinets:
             box = flow.box()
             box.scale_y = 0.9
             
