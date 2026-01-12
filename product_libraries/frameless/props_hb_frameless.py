@@ -1887,21 +1887,30 @@ class Frameless_Scene_Props(PropertyGroup):
             row.alignment = 'LEFT'        
             row.prop(self,'show_part_library',text="Parts & Miscellaneous",icon='TRIA_DOWN' if self.show_part_library else 'TRIA_RIGHT',emboss=False)
             if self.show_part_library:
-                row = box.row()
-                row.scale_y = 1.5                   
-                row.operator('hb_frameless.draw_cabinet',text="Misc Part").cabinet_name = 'Misc Part'
-                row.operator('hb_frameless.draw_cabinet',text="Countertop").cabinet_name = 'Countertop'
-                row.operator('hb_frameless.draw_cabinet',text="Half Wall").cabinet_name = 'Half Wall'
-                row = box.row()
-                row.scale_y = 1.5   
-                row.operator('hb_frameless.draw_cabinet',text="Floating Shelves").cabinet_name = 'Floating Shelves'
-                row.operator('hb_frameless.draw_cabinet',text="Leg").cabinet_name = 'Leg'
-                row.operator('hb_frameless.draw_cabinet',text="Support Frame").cabinet_name = 'Support Frame'  
-                row = box.row()
-                row.scale_y = 1.5   
-                row.operator('hb_frameless.draw_cabinet',text="Floating Shelves").cabinet_name = 'Floating Shelves'
-                row.operator('hb_frameless.draw_cabinet',text="Leg Column").cabinet_name = 'Leg Column'
-                row.operator('hb_frameless.draw_cabinet',text="Valance").cabinet_name = 'Valance'                 
+                # Parts definitions: (display_name, cabinet_name, thumbnail_name)
+                parts = [
+                    ("Floating Shelves", "Floating Shelves", "Floating Shelves"),
+                    ("Valance", "Valance", "Valance"),
+                    ("Support Frame", "Support Frame", "Support Frame"),
+                    ("Half Wall", "Half Wall", "Half Wall"),
+                    ("Misc Part", "Misc Part", "Misc Part"),
+                    ("Leg", "Leg", "Leg"),
+                    ("Panel", "Panel", "Panel"),
+                ]
+                
+                flow = box.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
+                for display_name, cabinet_name, thumb_name in parts:
+                    part_box = flow.box()
+                    part_box.scale_y = 0.9
+                    
+                    # Show thumbnail
+                    icon_id = load_cabinet_thumbnail(thumb_name)
+                    if icon_id:
+                        part_box.template_icon(icon_value=icon_id, scale=4.0)
+                    
+                    # Button
+                    op = part_box.operator('hb_frameless.draw_cabinet', text=display_name)
+                    op.cabinet_name = cabinet_name
 
             box = col.box()
             row = box.row()
