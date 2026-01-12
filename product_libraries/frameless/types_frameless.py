@@ -161,6 +161,8 @@ class Cabinet(GeoNodeCage):
         front_stretcher.driver_input("Thickness", 'mt', [mt])
         front_stretcher.set_input("Mirror Z", True)
         front_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+        front_stretcher.obj['Finish Top'] = False
+        front_stretcher.obj['Finish Bottom'] = False
 
         # Back Stretcher - shown when btc==1 (Stretchers)
         back_stretcher = CabinetPart()
@@ -174,6 +176,8 @@ class Cabinet(GeoNodeCage):
         back_stretcher.driver_input("Thickness", 'mt', [mt])
         back_stretcher.set_input("Mirror Z", True)
         back_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+        back_stretcher.obj['Finish Top'] = False
+        back_stretcher.obj['Finish Bottom'] = False
 
         # Sink Apron Front - shown when btc==2 (Sink)
         sink_apron = CabinetPart()
