@@ -976,32 +976,6 @@ class Crown_Detail(PropertyGroup):
         default=""
     )  # type: ignore
     
-    # Crown molding dimensions
-    height: FloatProperty(
-        name="Height",
-        description="Height of the crown molding",
-        default=0.0762,  # 3 inches
-        min=0.0,
-        unit='LENGTH'
-    )  # type: ignore
-    
-    projection: FloatProperty(
-        name="Projection",
-        description="How far the crown projects from the cabinet face",
-        default=0.0508,  # 2 inches
-        min=0.0,
-        unit='LENGTH'
-    )  # type: ignore
-    
-    spring_angle: FloatProperty(
-        name="Spring Angle",
-        description="Angle of the crown molding (typically 38 or 45 degrees)",
-        default=38.0,
-        min=0.0,
-        max=90.0,
-        subtype='ANGLE'
-    )  # type: ignore
-    
     def get_detail_scene(self):
         """Get the detail scene object, if it exists."""
         if self.detail_scene_name and self.detail_scene_name in bpy.data.scenes:
@@ -1741,12 +1715,6 @@ class Frameless_Scene_Props(PropertyGroup):
                 box.prop(crown, "name", text="Name")
                 box.prop(crown, "description", text="Description")
                 
-                col = box.column(align=True)
-                col.label(text="Dimensions:")
-                col.prop(crown, "height")
-                col.prop(crown, "projection")
-                col.prop(crown, "spring_angle")
-                
                 # Show detail scene status
                 detail_scene = crown.get_detail_scene()
                 if detail_scene:
@@ -1757,7 +1725,6 @@ class Frameless_Scene_Props(PropertyGroup):
                     row.label(text="No profile scene", icon='ERROR')
                 
                 # Assign to cabinets button
-                layout.separator()
                 row = layout.row()
                 row.scale_y = 1.3
                 row.operator("hb_frameless.assign_crown_to_cabinets", text="Assign to Selected Cabinets", icon='BRUSH_DATA')
