@@ -1819,23 +1819,20 @@ class Frameless_Scene_Props(PropertyGroup):
                 row.prop(self,'base_inside_corner_size',text="Base")
                 row.prop(self,'tall_inside_corner_size',text="Tall")
                 row.prop(self,'upper_inside_corner_size',text="Upper")
-                row = box.row()
-                row.label(text="Base Cabinet Type")
-                row.prop(self,'base_corner_type',text="")
-                row = box.row()
-                row.label(text="Upper and Tall Cabinet Type")
-                row.prop(self,'upper_and_tall_corner_type',text="")                
+                
+                #TODO: IMPLEMENT DIFFERENT CORNER CABINET TYPES
+                # row = box.row()
+                # row.label(text="Base Cabinet Type")
+                # row.prop(self,'base_corner_type',text="")
+                # row = box.row()
+                # row.label(text="Upper and Tall Cabinet Type")
+                # row.prop(self,'upper_and_tall_corner_type',text="")                
 
                 row = box.row()
                 row.scale_y = 1.5                   
                 row.operator('hb_frameless.draw_cabinet',text="Base").cabinet_name = 'Base'
                 row.operator('hb_frameless.draw_cabinet',text="Tall").cabinet_name = 'Tall'
                 row.operator('hb_frameless.draw_cabinet',text="Upper").cabinet_name = 'Upper'
-                row = box.row()
-                row.scale_y = 1.5   
-                row.operator('hb_frameless.draw_cabinet',text="Base Blind").cabinet_name = 'Base Blind'
-                row.operator('hb_frameless.draw_cabinet',text="Tall Blind").cabinet_name = 'Tall Blind'
-                row.operator('hb_frameless.draw_cabinet',text="Upper Blind").cabinet_name = 'Upper Blind'  
 
             box = col.box()
             row = box.row()
