@@ -1184,7 +1184,24 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 return appliance_class()
             return types_frameless.Cabinet()
         
-        # Handle cabinets
+        # Handle corner cabinets first
+        if 'Diagonal Corner' in self.cabinet_name:
+            if 'Base' in self.cabinet_name:
+                return types_frameless.DiagonalCornerBaseCabinet()
+            elif 'Tall' in self.cabinet_name:
+                return types_frameless.DiagonalCornerTallCabinet()
+            elif 'Upper' in self.cabinet_name:
+                return types_frameless.DiagonalCornerUpperCabinet()
+        
+        if 'Pie Cut Corner' in self.cabinet_name or 'L-Shape Corner' in self.cabinet_name:
+            if 'Base' in self.cabinet_name:
+                return types_frameless.PieCutCornerBaseCabinet()
+            elif 'Tall' in self.cabinet_name:
+                return types_frameless.PieCutCornerTallCabinet()
+            elif 'Upper' in self.cabinet_name:
+                return types_frameless.PieCutCornerUpperCabinet()
+        
+        # Handle regular cabinets
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
             if self.cabinet_name == 'Base Door':

@@ -1798,7 +1798,23 @@ class CornerCabinet(Cabinet):
 
 
 class DiagonalCornerBaseCabinet(CornerCabinet):
-    """Diagonal corner base cabinet - 45° angled front."""
+    """Diagonal corner base cabinet - 45° angled front.
+    
+    This cabinet fits into a corner where two walls meet at 90 degrees.
+    It has an L-shaped footprint with a diagonal front panel at 45 degrees.
+    
+    The cabinet origin (0,0) is at the back-left corner (the inside corner).
+    - Left side extends in the -Y direction
+    - Right side extends in the +X direction from the right edge
+    - The diagonal front connects these two sides at 45 degrees
+    
+    Dimensions:
+    - Dim X (width): total width from origin to right edge
+    - Dim Y (depth): total depth from origin to front 
+    - Dim Z (height): total height
+    - Left Depth: depth of left wing
+    - Right Depth: depth of right wing (from right side going back)
+    """
     
     def __init__(self):
         super().__init__()
@@ -1808,11 +1824,169 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         self.depth = props.base_cabinet_depth
     
     def create(self, name="Diagonal Corner Base"):
-        # TODO: Implement diagonal corner geometry
-        # This requires special geometry with angled front
-        self.create_cabinet(name)
+        self.create_diagonal_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'DIAGONAL'
+        self.obj['IS_CORNER_CABINET'] = True
+        # self.add_diagonal_doors()
+    
+    def create_diagonal_base_carcass(self, name):
+        """Create the diagonal corner base cabinet carcass."""
+        super().create_cabinet(name)
+        
+        props = bpy.context.scene.hb_frameless
+        
+        self.add_properties_common()
+        self.add_properties_toe_kick()
+        self.add_properties_corner()
+        
+        # Set dimensions - corner size determines X and Y
+        self.set_input('Dim X', self.corner_size)
+        self.set_input('Dim Y', self.corner_size)
+        self.set_input('Dim Z', self.height)
+        
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        
+        mt = self.var_prop('Material Thickness', 'mt')
+        tkh = self.var_prop('Toe Kick Height', 'tkh')
+        tks = self.var_prop('Toe Kick Setback', 'tks')
+        ld = self.var_prop('Left Depth', 'ld')
+        rd = self.var_prop('Right Depth', 'rd')
+        
+        # Left Side - runs along Y axis on the left edge
+        # Positioned at X=0, extends from Y=0 to Y=-left_depth
+        left_side = CabinetSideNotched()
+        left_side.create('Left Side', tkh, tks, mt)
+        left_side.obj.parent = self.obj
+        left_side.obj.rotation_euler.y = math.radians(-90)
+        left_side.obj.rotation_euler.z = math.radians(-90)
+        left_side.driver_location('y', '-dim_y', [dim_y])
+        left_side.driver_input("Length", 'dim_z', [dim_z])
+        left_side.driver_input("Width", 'ld', [ld])
+        left_side.driver_input("Thickness", 'mt', [mt])
+        
+        # Right Side - runs along X axis from the right edge
+        # Positioned at Y=0, extends from X=dim_x to X=dim_x-right_depth
+        right_side = CabinetSideNotched()
+        right_side.create('Right Side', tkh, tks, mt)
+        right_side.obj.parent = self.obj
+        right_side.driver_location('x', 'dim_x', [dim_x])
+        right_side.obj.rotation_euler.y = math.radians(-90)
+        right_side.driver_input("Length", 'dim_z', [dim_z])
+        right_side.driver_input("Width", 'rd', [rd])
+        right_side.driver_input("Thickness", 'mt', [mt])
+        right_side.set_input("Mirror Y", True)
+        right_side.set_input("Mirror Z", False)
+        
+        # Left Back - vertical panel against left wall (X=0 plane)
+        # Runs from the left side to the corner
+        left_back = CabinetPart()
+        left_back.create('Left Back')
+        left_back.obj.parent = self.obj
+        left_back.obj.rotation_euler.y = math.radians(-90)
+        left_back.driver_location('x', 'mt', [mt])
+        left_back.driver_location('z', 'tkh+mt', [tkh, mt])
+        left_back.driver_input("Length", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
+        left_back.driver_input("Width", 'dim_y-mt', [dim_y, mt])
+        left_back.driver_input("Thickness", 'mt', [mt])
+        left_back.set_input("Mirror Y", True)
+        
+        # Right Back - vertical panel against right wall (Y=0 plane)
+        # Runs from the right side to the corner
+        right_back = CabinetPart()
+        right_back.create('Right Back')
+        right_back.obj.parent = self.obj
+        right_back.driver_location('x', 'mt', [mt])
+        right_back.driver_location('z', 'tkh+mt', [tkh, mt])
+        right_back.obj.rotation_euler.x = math.radians(-90)
+        right_back.driver_input("Length", 'dim_x-mt-mt', [dim_x, rd, mt])
+        right_back.driver_input("Width", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
+        right_back.driver_input("Thickness", 'mt', [mt])
+        right_back.set_input("Mirror Y", True)
+        right_back.set_input("Mirror Z", True)
+        
+        # Bottom - L-shaped bottom panel
+        # For now using two rectangular pieces
+        # Left bottom piece
+        bottom = CabinetPart()
+        bottom.create('Bottom')
+        bottom.obj.parent = self.obj
+        bottom.driver_location('z', 'tkh', [tkh])
+        bottom.driver_input("Length", 'dim_x-mt', [dim_x, mt])
+        bottom.driver_input("Width", 'dim_y-mt', [dim_y, mt])
+        bottom.driver_input("Thickness", 'mt', [mt])
+        bottom.set_input("Mirror Y", True)
+        bottom.set_input("Mirror Z", False)
+
+        chamfer = bottom.add_part_modifier('CPM_CHAMFER','Chamfer')
+        chamfer.driver_input('X','dim_x-ld-mt',[dim_x,ld,mt])
+        chamfer.driver_input('Y','dim_y-rd-mt',[dim_y,rd,mt])
+        chamfer.driver_input('Route Depth','mt+.01',[mt])
+        chamfer.set_input('Flip X',True)
+        
+        # Top - L-shaped top panel (matching bottom)
+        top = CabinetPart()
+        top.create('Top')
+        top.obj.parent = self.obj
+        top.driver_location('z', 'dim_z', [dim_z])
+        top.driver_input("Length", 'dim_x-mt', [dim_x, mt])
+        top.driver_input("Width", 'dim_y-mt', [dim_y, mt])
+        top.driver_input("Thickness", 'mt', [mt])
+        top.set_input("Mirror Y", True)
+        top.set_input("Mirror Z", True)
+        
+        chamfer = top.add_part_modifier('CPM_CHAMFER','Chamfer')
+        chamfer.driver_input('X','dim_x-ld-mt',[dim_x,ld,mt])
+        chamfer.driver_input('Y','dim_y-rd-mt',[dim_y,rd,mt])
+        chamfer.driver_input('Route Depth','mt+.01',[mt])
+        chamfer.set_input('Flip X',True)
+
+        # Toe kicks
+        left_toe_kick = CabinetPart()
+        left_toe_kick.create('Left Toe Kick')
+        left_toe_kick.obj.parent = self.obj
+        left_toe_kick.obj.rotation_euler.x = math.radians(-90)
+        left_toe_kick.obj.rotation_euler.z = math.radians(90)
+        left_toe_kick.driver_location('x', 'ld-tks', [ld,tks])
+        left_toe_kick.driver_location('y', '-dim_y+mt', [dim_y, mt])
+        left_toe_kick.driver_input("Length", 'dim_y-rd-mt+tks', [dim_y, rd, mt, tks])
+        left_toe_kick.driver_input("Width", 'tkh', [tkh])
+        left_toe_kick.driver_input("Thickness", 'mt', [mt])
+        left_toe_kick.set_input("Mirror Y", True)
+        
+        right_toe_kick = CabinetPart()
+        right_toe_kick.create('Right Toe Kick')
+        right_toe_kick.obj.parent = self.obj
+        right_toe_kick.obj.rotation_euler.x = math.radians(-90)
+        right_toe_kick.driver_location('x', 'dim_x-mt', [dim_x, mt])
+        right_toe_kick.driver_location('y', '-rd+tks', [rd, tks])
+        right_toe_kick.driver_input("Length", 'dim_x-ld-mt+tks', [dim_x, ld, mt, tks])
+        right_toe_kick.driver_input("Width", 'tkh', [tkh])
+        right_toe_kick.driver_input("Thickness", 'mt', [mt])
+        right_toe_kick.set_input("Mirror X", True)
+        right_toe_kick.set_input("Mirror Y", True)
+        
+        # Create the opening/bay for the diagonal front
+        # The opening spans diagonally from left side to right side
+        # opening = CabinetBay()
+        # opening.create("Bay")
+        # opening.obj.parent = self.obj
+        # opening.driver_location('x', 'mt', [mt])
+        # opening.driver_location('y', '-ld', [ld])
+        # opening.driver_location('z', 'tkh+mt', [tkh, mt])
+        # # Width is diagonal: sqrt(2) * (corner_size - depth)
+        # # Simplified: the opening width is the remaining space after sides
+        # opening.driver_input("Dim X", 'dim_x-ld-mt', [dim_x, ld, mt])
+        # opening.driver_input("Dim Y", 'ld-mt', [ld, mt])
+        # opening.driver_input("Dim Z", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
+    
+    def add_diagonal_doors(self):
+        """Add diagonal doors to the corner cabinet."""
+        doors = Doors()
+        doors.door_pull_location = "Base"
+        self.add_cage_to_bay(doors)
 
 
 class PieCutCornerBaseCabinet(CornerCabinet):

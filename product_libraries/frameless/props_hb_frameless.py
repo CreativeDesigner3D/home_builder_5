@@ -1794,9 +1794,9 @@ class Frameless_Scene_Props(PropertyGroup):
                 
                 # Corner cabinet definitions: (display_name, cabinet_name, thumbnail_name)
                 corner_cabinets = [
-                    ("Base", "Base", "Frameless Base Corner"),
-                    ("Tall", "Tall", "Frameless Tall Corner"),
-                    ("Upper", "Upper", "Frameless Upper Corner"),
+                    ("Base", "Diagonal Corner Base", "Frameless Base Corner"),
+                    ("Tall", "Diagonal Corner Tall", "Frameless Tall Corner"),
+                    ("Upper", "Diagonal Corner Upper", "Frameless Upper Corner"),
                 ]
                 
                 flow = box.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
