@@ -113,16 +113,98 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.snap_surface = None
         self.snap_location = None
 
+    def is_top_view(self, context):
+        """Check if we're looking from above (top-ish view)."""
+        view_matrix = context.region_data.view_matrix
+        # Get the view direction (negative Z of view matrix = looking direction)
+        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
+        # If view direction is mostly vertical (looking down), we're in top view
+        # Check if the Z component dominates
+        return abs(view_dir.z) > 0.7
+
+    def find_wall_surface_snap_2d(self, context, threshold=0.15):
+        """
+        2D proximity-based wall surface detection for top view.
+        Finds the nearest wall edge (front or back face) to the mouse position.
+        
+        Wall origin is at back face (local Y=0), front face is at Y=thickness.
+        
+        Returns:
+            Tuple of (wall_obj, snap_location, face) or (None, None, None)
+        """
+        if not self.hit_location:
+            return None, None, None
+        
+        mouse_2d = Vector((self.hit_location[0], self.hit_location[1]))
+        
+        best_wall = None
+        best_location = None
+        best_face = None
+        best_distance = threshold
+        
+        for obj in bpy.data.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            if self.current_wall and obj == self.current_wall.obj:
+                continue
+            
+            wall = hb_types.GeoNodeWall(obj)
+            wall_length = wall.get_input('Length')
+            wall_thickness = wall.get_input('Thickness')
+            
+            world_matrix = obj.matrix_world
+            
+            # Get wall direction vector (local X axis in world space) - column 0
+            wall_dir = Vector((world_matrix[0][0], world_matrix[1][0])).normalized()
+            # Get wall perpendicular (local Y axis in world space) - column 1
+            wall_perp = Vector((world_matrix[0][1], world_matrix[1][1])).normalized()
+            # Wall origin (back face at local Y=0) - column 3
+            wall_origin = Vector((world_matrix[0][3], world_matrix[1][3]))
+            
+            # Back face is at origin (Y=0 in local)
+            # Front face is at origin + perp * thickness (Y=thickness in local)
+            for face, offset in [('back', 0), ('front', wall_thickness)]:
+                # Edge start and end points
+                edge_start = wall_origin + wall_perp * offset
+                edge_end = edge_start + wall_dir * wall_length
+                
+                # Find closest point on edge line to mouse
+                edge_vec = edge_end - edge_start
+                edge_len = edge_vec.length
+                if edge_len < 0.001:
+                    continue
+                edge_dir = edge_vec / edge_len
+                
+                # Project mouse onto edge line
+                to_mouse = mouse_2d - edge_start
+                proj_dist = to_mouse.dot(edge_dir)
+                proj_dist = max(0, min(edge_len, proj_dist))  # Clamp to edge
+                
+                closest_point = edge_start + edge_dir * proj_dist
+                distance = (mouse_2d - closest_point).length
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_wall = obj
+                    best_location = Vector((closest_point.x, closest_point.y, 0))
+                    best_face = face
+        
+        return best_wall, best_location, best_face
+
     def find_wall_surface_snap(self, context):
         """
-        Find if raycast hit a wall surface. Uses the actual raycast hit_object
-        and hit_location directly - no need to calculate face since raycast
-        already hit the surface.
+        Find if mouse is over/near a wall surface.
+        Uses raycast in perspective/side views, 2D proximity in top view.
         
         Returns:
             Tuple of (wall_obj, snap_location, face) or (None, None, None)
             face is 'front' or 'back'
         """
+        # In top view, use 2D proximity detection
+        if self.is_top_view(context):
+            return self.find_wall_surface_snap_2d(context)
+        
+        # Otherwise use raycast-based detection
         if not self.hit_object or not self.hit_location:
             return None, None, None
         
@@ -151,18 +233,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         local_matrix = world_matrix.inverted()
         local_hit = local_matrix @ Vector((self.hit_location[0], self.hit_location[1], self.hit_location[2]))
         
-        # Clamp X position to wall length (keep hit within wall bounds)
+        # Clamp X position to wall length
         snap_x = max(0, min(wall_length, local_hit.x))
         
-        # Use the actual hit Y position - it's already on the surface!
-        # Just determine which face for labeling purposes
-        wall_center_y = wall_thickness / 2
-        if local_hit.y >= wall_center_y:
+        # Determine which face based on local Y
+        if local_hit.y >= 0:
             face = 'front'
         else:
             face = 'back'
         
-        # Keep the Y from the hit (it's on the surface), set Z to 0 for floor level
+        # Keep the Y from the hit (it's on the surface), set Z to 0
         local_snap = Vector((snap_x, local_hit.y, 0))
         world_snap = world_matrix @ local_snap
         
