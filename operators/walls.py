@@ -25,6 +25,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     # Endpoint snapping state
     snap_wall = None  # Wall we're snapping to
     snap_endpoint = None  # 'start' or 'end'
+    snap_surface = None  # 'front' or 'back' for surface snapping
+    snap_location = None  # Snap location for surface snapping
     highlighted_wall = None  # Currently highlighted wall object
 
     def get_default_typing_target(self):
@@ -108,6 +110,63 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.highlighted_wall = None
         self.snap_wall = None
         self.snap_endpoint = None
+        self.snap_surface = None
+        self.snap_location = None
+
+    def find_wall_surface_snap(self, context):
+        """
+        Find if raycast hit a wall surface. Uses the actual raycast hit_object
+        and hit_location directly - no need to calculate face since raycast
+        already hit the surface.
+        
+        Returns:
+            Tuple of (wall_obj, snap_location, face) or (None, None, None)
+            face is 'front' or 'back'
+        """
+        if not self.hit_object or not self.hit_location:
+            return None, None, None
+        
+        # Check if we hit a wall (could be the wall itself or a child)
+        wall_obj = None
+        check_obj = self.hit_object
+        while check_obj:
+            if 'IS_WALL_BP' in check_obj:
+                wall_obj = check_obj
+                break
+            check_obj = check_obj.parent
+        
+        if not wall_obj:
+            return None, None, None
+        
+        # Skip the current wall being drawn
+        if self.current_wall and wall_obj == self.current_wall.obj:
+            return None, None, None
+        
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        
+        # Transform hit position to wall's local space
+        world_matrix = wall_obj.matrix_world
+        local_matrix = world_matrix.inverted()
+        local_hit = local_matrix @ Vector((self.hit_location[0], self.hit_location[1], self.hit_location[2]))
+        
+        # Clamp X position to wall length (keep hit within wall bounds)
+        snap_x = max(0, min(wall_length, local_hit.x))
+        
+        # Use the actual hit Y position - it's already on the surface!
+        # Just determine which face for labeling purposes
+        wall_center_y = wall_thickness / 2
+        if local_hit.y >= wall_center_y:
+            face = 'front'
+        else:
+            face = 'back'
+        
+        # Keep the Y from the hit (it's on the surface), set Z to 0 for floor level
+        local_snap = Vector((snap_x, local_hit.y, 0))
+        world_snap = world_matrix @ local_snap
+        
+        return wall_obj, Vector((world_snap.x, world_snap.y, 0)), face
 
     def connect_to_existing_wall(self, wall_obj, endpoint):
         """
@@ -269,8 +328,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
             text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place"
         else:
-            if self.snap_wall:
+            if self.snap_wall and self.snap_endpoint:
                 text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
+            elif self.snap_wall and self.snap_surface:
+                text = f"Click to start on wall ({self.snap_surface} face) | Right-click to cancel | Esc to cancel"
             else:
                 text = "Click to place first point | Right-click to cancel | Esc to cancel"
         
@@ -291,6 +352,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Reset endpoint snapping state
         self.snap_wall = None
         self.snap_endpoint = None
+        self.snap_surface = None
+        self.snap_location = None
         self.highlighted_wall = None
 
         # Create initial objects
@@ -317,23 +380,43 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.update_snap(context, event)
         self.current_wall.obj.hide_set(False)
 
-        # Check for nearby wall endpoints (only before first point placed)
+        # Check for nearby wall endpoints or surfaces (only before first point placed)
         if not self.has_start_point:
+            # First check for endpoint snap (higher priority)
             snap_wall, snap_endpoint, snap_location = self.find_nearby_wall_endpoint(context)
             
-            # Update highlighting
-            if snap_wall != self.highlighted_wall:
-                self.clear_wall_highlight()
-                if snap_wall:
+            if snap_wall:
+                # Endpoint snap found
+                if snap_wall != self.highlighted_wall:
+                    self.clear_wall_highlight()
                     self.highlight_wall(snap_wall, highlight=True)
                     self.highlighted_wall = snap_wall
-            
-            self.snap_wall = snap_wall
-            self.snap_endpoint = snap_endpoint
-            
-            # Snap hit_location to endpoint if found
-            if snap_location:
+                
+                self.snap_wall = snap_wall
+                self.snap_endpoint = snap_endpoint
+                self.snap_surface = None
+                self.snap_location = snap_location
                 self.hit_location = snap_location
+            else:
+                # No endpoint - check for wall surface snap
+                surface_wall, surface_location, surface_face = self.find_wall_surface_snap(context)
+                
+                if surface_wall:
+                    # Surface snap found
+                    if surface_wall != self.highlighted_wall:
+                        self.clear_wall_highlight()
+                        self.highlight_wall(surface_wall, highlight=True)
+                        self.highlighted_wall = surface_wall
+                    
+                    self.snap_wall = surface_wall
+                    self.snap_endpoint = None
+                    self.snap_surface = surface_face
+                    self.snap_location = surface_location
+                    self.hit_location = surface_location
+                else:
+                    # No snap - clear any highlighting
+                    if self.highlighted_wall:
+                        self.clear_wall_highlight()
 
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
@@ -347,6 +430,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 # Check if we're snapping to an existing wall endpoint
                 if self.snap_wall and self.snap_endpoint:
                     self.connect_to_existing_wall(self.snap_wall, self.snap_endpoint)
+                    self.clear_wall_highlight()
+                elif self.snap_wall and self.snap_surface:
+                    # Snapping to wall surface - use snap location as start point
+                    self.start_point = Vector(self.snap_location)
+                    self.has_start_point = True
                     self.clear_wall_highlight()
                 else:
                     # Set first point normally
