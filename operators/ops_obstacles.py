@@ -86,6 +86,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     wall_length: float = 0
     wall_position_x: float = 0  # Position along wall
     height_from_floor: float = 0
+    wall_face: str = 'front'  # 'front' or 'back' - which side of wall to place on
     
     # Obstacle dimensions (from scene props)
     obs_width: float = 0
@@ -210,6 +211,30 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         
         return best_wall, best_position, best_distance
     
+    def get_wall_face(self, wall, location):
+        """
+        Determine which face of the wall the location is on.
+        Returns 'front' or 'back'.
+        
+        Wall origin is at back face (Y=0), front face is at Y=thickness.
+        """
+        if location is None or wall is None:
+            return 'front'
+        
+        # Transform location to wall's local space
+        world_matrix = wall.matrix_world
+        local_matrix = world_matrix.inverted()
+        local_pos = local_matrix @ Vector((location.x, location.y, location.z))
+        
+        wall_thickness = self.get_wall_thickness(wall)
+        
+        # Wall origin is at back (Y=0), front is at Y=thickness
+        # If local Y > thickness/2, we're closer to front
+        if local_pos.y > wall_thickness / 2:
+            return 'front'
+        else:
+            return 'back'
+    
     # -------------------------------------------------------------------------
     # Obstacle creation
     # -------------------------------------------------------------------------
@@ -282,13 +307,21 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             pos_x = max(half_width, min(self.wall_length - half_width, self.wall_position_x))
             
             # Calculate position on wall surface
+            # Wall origin is at back face (Y=0), front face is at Y=thickness
             pos = wall_start.copy()
             pos += wall_dir * pos_x
-            pos += perp_dir * (wall_thickness / 2 + self.obs_depth / 2)
-            pos.z = self.height_from_floor
             
+            if self.wall_face == 'front':
+                # Place on front face (Y=thickness side)
+                pos += perp_dir * (wall_thickness + self.obs_depth / 2)
+                self.obstacle_obj.rotation_euler.z = wall_angle
+            else:
+                # Place on back face (Y=0 side)
+                pos += perp_dir * (-self.obs_depth / 2)
+                self.obstacle_obj.rotation_euler.z = wall_angle + math.pi  # Face outward
+            
+            pos.z = self.height_from_floor
             self.obstacle_obj.location = pos
-            self.obstacle_obj.rotation_euler.z = wall_angle
             
         elif self.target_type == 'CEILING':
             if self.hit_location:
@@ -322,7 +355,8 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             pos_str = units.unit_to_string(context.scene.unit_settings, self.wall_position_x)
             len_str = units.unit_to_string(context.scene.unit_settings, self.wall_length)
             height_str = units.unit_to_string(context.scene.unit_settings, self.height_from_floor)
-            text = f"{obs_name} | {self.target_wall.name} | Pos: {pos_str}/{len_str} | H: {height_str} | ← → H Tab | Click to place"
+            face_str = self.wall_face.capitalize()
+            text = f"{obs_name} | {self.target_wall.name} ({face_str}) | Pos: {pos_str}/{len_str} | H: {height_str} | ← → H Tab | Click to place"
         else:
             text = f"{obs_name} ({self.target_type}) | Click to place | Esc to cancel"
         
@@ -415,6 +449,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                         self.target_type = 'WALL'
                         self.wall_length = self.get_wall_length(wall)
                         self.wall_position_x = wall_pos
+                        self.wall_face = self.get_wall_face(wall, self.hit_location)
                 elif self.obs_surface_type == 'CEILING':
                     self.target_wall = None
                     self.target_type = 'CEILING'
@@ -427,6 +462,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                         self.target_type = 'WALL'
                         self.wall_length = self.get_wall_length(wall)
                         self.wall_position_x = wall_pos
+                        self.wall_face = self.get_wall_face(wall, self.hit_location)
                     else:
                         self.target_wall = None
                         self.target_type = 'FLOOR'
