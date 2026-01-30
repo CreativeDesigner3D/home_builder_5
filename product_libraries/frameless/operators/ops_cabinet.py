@@ -603,6 +603,10 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
     equal_cabinet_width = 0.0
     non_equal_cabinet_widths = 0.0
     start_x = 0.0
+    
+    # For rotated cabinets (like islands)
+    cabinet_direction = None  # Unit vector along cabinet row
+    start_position = None  # World position of first cabinet
 
     @classmethod
     def poll(cls, context):
@@ -614,6 +618,8 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
         return False
 
     def check(self, context):
+        from mathutils import Vector
+        
         props = context.scene.hb_frameless
         
         # Calculate Non Equal Cabinet Widths and Number of Equal Cabinets
@@ -629,45 +635,72 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
         if self.number_of_equal_cabinets > 0:
             self.equal_cabinet_width = (self.total_width - self.non_equal_cabinet_widths) / self.number_of_equal_cabinets
         
-        # For Each Cabinet Set the X Location and Width Value
-        cabinet_x_loc = self.start_x
+        # For Each Cabinet Set Location and Width Value
+        # Position along the cabinet direction vector (handles rotation)
+        current_offset = 0.0
         for cabinet in props.calculator_cabinets:
             if cabinet.cabinet_obj:
                 cabinet_cage = hb_types.GeoNodeCage(cabinet.cabinet_obj)
-                cabinet_cage.obj.location.x = cabinet_x_loc
+                
+                # Calculate new position along direction
+                if self.start_position and self.cabinet_direction:
+                    new_pos = self.start_position + self.cabinet_direction * current_offset
+                    cabinet_cage.obj.location.x = new_pos.x
+                    cabinet_cage.obj.location.y = new_pos.y
+                else:
+                    # Fallback for non-rotated cabinets
+                    cabinet_cage.obj.location.x = self.start_x + current_offset
+                
                 if cabinet.is_equal:
                     cabinet.cabinet_width = self.equal_cabinet_width
                     cabinet_cage.set_input("Dim X", self.equal_cabinet_width)
                 else:
                     cabinet_cage.set_input("Dim X", cabinet.cabinet_width)
-                cabinet_x_loc += cabinet.cabinet_width
+                
+                current_offset += cabinet.cabinet_width
                 hb_utils.run_calc_fix(context, cabinet_cage.obj)
         return True
 
     def invoke(self, context, event):
+        from mathutils import Vector
+        import math
+        
         props = context.scene.hb_frameless
         
         # Clear Collection
         props.calculator_cabinets.clear()
         
-        # Collect and Sort Cabinet Objects
+        # Collect Cabinet Objects
         objs = []
         for obj in context.selected_objects:
             cabinet_bp = hb_utils.get_cabinet_bp(obj)
             if cabinet_bp and cabinet_bp not in objs:
                 objs.append(cabinet_bp)
-        objs.sort(key=lambda obj: obj.location.x, reverse=False)
         
         if len(objs) < 2:
             self.report({'WARNING'}, "Select at least 2 cabinets to adjust sizes")
             return {'CANCELLED'}
         
+        # Get cabinet direction from first cabinet's rotation
+        # Cabinet local X axis points along the cabinet row direction
+        first_rot = objs[0].rotation_euler.z
+        self.cabinet_direction = Vector((math.cos(first_rot), math.sin(first_rot), 0))
+        
+        # Sort cabinets by position projected onto the cabinet direction
+        def get_position_along_direction(obj):
+            pos = Vector((obj.location.x, obj.location.y, 0))
+            return pos.dot(self.cabinet_direction)
+        
+        objs.sort(key=get_position_along_direction, reverse=False)
+        
+        # Store start position (world position of first cabinet)
+        self.start_position = Vector((objs[0].location.x, objs[0].location.y, objs[0].location.z))
+        self.start_x = objs[0].location.x  # Keep for backwards compatibility
+        
         # Populate Collection and Set Properties
         self.total_width = 0.0
         for index, obj in enumerate(objs):
             cabinet = hb_types.GeoNodeCage(obj)
-            if index == 0:
-                self.start_x = cabinet.obj.location.x
             cab = props.calculator_cabinets.add()
             cab.cabinet_obj = cabinet.obj
             cab.is_equal = True
