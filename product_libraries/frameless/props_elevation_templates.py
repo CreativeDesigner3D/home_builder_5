@@ -1150,9 +1150,15 @@ class Island_Template(HB_Frameless_Base_Template):
         wall_width = wall.get_input('Length')
         island_width = wall_width - self.left_offset - self.right_offset
         
-        # Island position and rotation
+        # Island position and rotation (in wall's local space)
         island_y = -self.offset_from_wall - self.island_depth
         island_rotation = math.pi
+        
+        # Get wall transform for converting to world space
+        # Islands are NOT parented to walls - they're freestanding
+        from mathutils import Vector
+        wall_matrix = self.obj_wall.matrix_world
+        wall_rotation_z = self.obj_wall.rotation_euler.z
         
         has_sink = self.sink_location != 'NONE'
         has_dishwasher = self.dishwasher_location != 'NONE' and has_sink
@@ -1168,10 +1174,11 @@ class Island_Template(HB_Frameless_Base_Template):
                 cab.depth = self.island_depth
                 cab.height = base_height
                 cab.create(f"Island Cabinet {i+1}")
-                cab.obj.parent = self.obj_wall
-                cab.obj.location.x = current_x
-                cab.obj.location.y = island_y
-                cab.obj.rotation_euler.z = island_rotation
+                # Islands are NOT parented to walls - position in world space
+                local_pos = Vector((current_x, island_y, 0))
+                world_pos = wall_matrix @ local_pos
+                cab.obj.location = world_pos
+                cab.obj.rotation_euler.z = wall_rotation_z + island_rotation
                 self.apply_styles_to_cabinet(context, cab.obj)
                 hb_utils.run_calc_fix(context, cab.obj)
                 created_cabinets.append(cab.obj)
@@ -1200,10 +1207,11 @@ class Island_Template(HB_Frameless_Base_Template):
                 cab.depth = self.island_depth
                 cab.height = base_height
                 cab.create(f"Island Cabinet R{i+1}")
-                cab.obj.parent = self.obj_wall
-                cab.obj.location.x = current_x
-                cab.obj.location.y = island_y
-                cab.obj.rotation_euler.z = island_rotation
+                # Islands are NOT parented to walls - position in world space
+                local_pos = Vector((current_x, island_y, 0))
+                world_pos = wall_matrix @ local_pos
+                cab.obj.location = world_pos
+                cab.obj.rotation_euler.z = wall_rotation_z + island_rotation
                 self.apply_styles_to_cabinet(context, cab.obj)
                 hb_utils.run_calc_fix(context, cab.obj)
                 created_cabinets.append(cab.obj)
@@ -1216,10 +1224,11 @@ class Island_Template(HB_Frameless_Base_Template):
                 dishwasher.depth = self.island_depth
                 dishwasher.height = base_height
                 dishwasher.create("Dishwasher")
-                dishwasher.obj.parent = self.obj_wall
-                dishwasher.obj.location.x = current_x
-                dishwasher.obj.location.y = island_y
-                dishwasher.obj.rotation_euler.z = island_rotation
+                # Islands are NOT parented to walls - position in world space
+                local_pos = Vector((current_x, island_y, 0))
+                world_pos = wall_matrix @ local_pos
+                dishwasher.obj.location = world_pos
+                dishwasher.obj.rotation_euler.z = wall_rotation_z + island_rotation
                 created_cabinets.append(dishwasher.obj)
                 current_x -= self.dishwasher_width
             
@@ -1229,10 +1238,11 @@ class Island_Template(HB_Frameless_Base_Template):
             sink_cab.depth = self.island_depth
             sink_cab.height = base_height
             sink_cab.create("Sink Cabinet")
-            sink_cab.obj.parent = self.obj_wall
-            sink_cab.obj.location.x = current_x
-            sink_cab.obj.location.y = island_y
-            sink_cab.obj.rotation_euler.z = island_rotation
+            # Islands are NOT parented to walls - position in world space
+            local_pos = Vector((current_x, island_y, 0))
+            world_pos = wall_matrix @ local_pos
+            sink_cab.obj.location = world_pos
+            sink_cab.obj.rotation_euler.z = wall_rotation_z + island_rotation
             self.apply_styles_to_cabinet(context, sink_cab.obj)
             hb_utils.run_calc_fix(context, sink_cab.obj)
             created_cabinets.append(sink_cab.obj)
@@ -1245,10 +1255,11 @@ class Island_Template(HB_Frameless_Base_Template):
                 dishwasher.depth = self.island_depth
                 dishwasher.height = base_height
                 dishwasher.create("Dishwasher")
-                dishwasher.obj.parent = self.obj_wall
-                dishwasher.obj.location.x = current_x
-                dishwasher.obj.location.y = island_y
-                dishwasher.obj.rotation_euler.z = island_rotation
+                # Islands are NOT parented to walls - position in world space
+                local_pos = Vector((current_x, island_y, 0))
+                world_pos = wall_matrix @ local_pos
+                dishwasher.obj.location = world_pos
+                dishwasher.obj.rotation_euler.z = wall_rotation_z + island_rotation
                 created_cabinets.append(dishwasher.obj)
                 current_x -= self.dishwasher_width
             
@@ -1260,10 +1271,11 @@ class Island_Template(HB_Frameless_Base_Template):
                 cab.depth = self.island_depth
                 cab.height = base_height
                 cab.create(f"Island Cabinet L{i+1}")
-                cab.obj.parent = self.obj_wall
-                cab.obj.location.x = current_x
-                cab.obj.location.y = island_y
-                cab.obj.rotation_euler.z = island_rotation
+                # Islands are NOT parented to walls - position in world space
+                local_pos = Vector((current_x, island_y, 0))
+                world_pos = wall_matrix @ local_pos
+                cab.obj.location = world_pos
+                cab.obj.rotation_euler.z = wall_rotation_z + island_rotation
                 self.apply_styles_to_cabinet(context, cab.obj)
                 hb_utils.run_calc_fix(context, cab.obj)
                 created_cabinets.append(cab.obj)
