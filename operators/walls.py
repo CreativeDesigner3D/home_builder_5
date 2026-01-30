@@ -21,10 +21,122 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     
     # Free rotation mode (Alt toggles, snaps to 15° increments)
     free_rotation: bool = False
+    
+    # Endpoint snapping state
+    snap_wall = None  # Wall we're snapping to
+    snap_endpoint = None  # 'start' or 'end'
+    highlighted_wall = None  # Currently highlighted wall object
 
     def get_default_typing_target(self):
         """When user starts typing, they're entering wall length."""
         return hb_placement.TypingTarget.LENGTH
+
+    def find_nearby_wall_endpoint(self, context, threshold=0.15):
+        """
+        Find if mouse is near any existing wall endpoint.
+        
+        Args:
+            context: Blender context
+            threshold: Distance threshold in meters
+            
+        Returns:
+            Tuple of (wall_obj, endpoint_type, endpoint_location) or (None, None, None)
+            endpoint_type is 'start' or 'end'
+        """
+        if not self.hit_location:
+            return None, None, None
+        
+        mouse_loc = Vector((self.hit_location[0], self.hit_location[1], 0))
+        
+        best_wall = None
+        best_endpoint = None
+        best_location = None
+        best_distance = threshold
+        
+        for obj in bpy.data.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            # Skip the current wall being drawn
+            if self.current_wall and obj == self.current_wall.obj:
+                continue
+            
+            # Get wall endpoints
+            start, end = get_wall_endpoints(obj)
+            start_3d = Vector((start.x, start.y, 0))
+            end_3d = Vector((end.x, end.y, 0))
+            
+            # Check start point
+            dist_start = (mouse_loc - start_3d).length
+            if dist_start < best_distance:
+                best_distance = dist_start
+                best_wall = obj
+                best_endpoint = 'start'
+                best_location = start_3d
+            
+            # Check end point
+            dist_end = (mouse_loc - end_3d).length
+            if dist_end < best_distance:
+                best_distance = dist_end
+                best_wall = obj
+                best_endpoint = 'end'
+                best_location = end_3d
+        
+        return best_wall, best_endpoint, best_location
+
+    def highlight_wall(self, wall_obj, highlight=True):
+        """Highlight or unhighlight a wall."""
+        if wall_obj is None:
+            return
+        
+        if highlight:
+            # Store original color and set highlight color
+            if 'original_color' not in wall_obj:
+                wall_obj['original_color'] = list(wall_obj.color)
+            wall_obj.color = (0.0, 1.0, 0.5, 1.0)  # Green highlight
+            wall_obj.select_set(True)
+        else:
+            # Restore original color
+            if 'original_color' in wall_obj:
+                wall_obj.color = wall_obj['original_color']
+                del wall_obj['original_color']
+            wall_obj.select_set(False)
+
+    def clear_wall_highlight(self):
+        """Clear any highlighted wall."""
+        if self.highlighted_wall:
+            self.highlight_wall(self.highlighted_wall, highlight=False)
+            self.highlighted_wall = None
+        self.snap_wall = None
+        self.snap_endpoint = None
+
+    def connect_to_existing_wall(self, wall_obj, endpoint):
+        """
+        Connect current wall to an existing wall's endpoint and set up for continued drawing.
+        
+        Args:
+            wall_obj: The existing wall to connect to
+            endpoint: 'start' or 'end' - which endpoint to connect to
+        """
+        existing_wall = hb_types.GeoNodeWall(wall_obj)
+        
+        # Get the endpoint location
+        start, end = get_wall_endpoints(wall_obj)
+        
+        if endpoint == 'end':
+            # Connect to end of existing wall - our wall starts there
+            connect_location = Vector((end.x, end.y, 0))
+            # Set previous_wall so our wall connects properly
+            self.previous_wall = existing_wall
+            # Use constraint to connect
+            self.current_wall.connect_to_wall(existing_wall)
+        else:
+            # Connect to start of existing wall
+            connect_location = Vector((start.x, start.y, 0))
+            # Position our wall at the start point
+            self.current_wall.obj.location = connect_location
+        
+        self.start_point = connect_location
+        self.has_start_point = True
 
     def on_typed_value_changed(self):
         """Update dimension display as user types."""
@@ -157,7 +269,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
             text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place"
         else:
-            text = "Click to place first point | Right-click to cancel | Esc to cancel"
+            if self.snap_wall:
+                text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
+            else:
+                text = "Click to place first point | Right-click to cancel | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
 
@@ -172,6 +287,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.has_start_point = False
         self.dim = None
         self.free_rotation = False
+        
+        # Reset endpoint snapping state
+        self.snap_wall = None
+        self.snap_endpoint = None
+        self.highlighted_wall = None
 
         # Create initial objects
         self.create_dimension()
@@ -197,6 +317,24 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.update_snap(context, event)
         self.current_wall.obj.hide_set(False)
 
+        # Check for nearby wall endpoints (only before first point placed)
+        if not self.has_start_point:
+            snap_wall, snap_endpoint, snap_location = self.find_nearby_wall_endpoint(context)
+            
+            # Update highlighting
+            if snap_wall != self.highlighted_wall:
+                self.clear_wall_highlight()
+                if snap_wall:
+                    self.highlight_wall(snap_wall, highlight=True)
+                    self.highlighted_wall = snap_wall
+            
+            self.snap_wall = snap_wall
+            self.snap_endpoint = snap_endpoint
+            
+            # Snap hit_location to endpoint if found
+            if snap_location:
+                self.hit_location = snap_location
+
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
             self.set_wall_position_from_mouse()
@@ -206,9 +344,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Left click - place point
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if not self.has_start_point:
-                # Set first point
-                self.start_point = Vector(self.hit_location)
-                self.has_start_point = True
+                # Check if we're snapping to an existing wall endpoint
+                if self.snap_wall and self.snap_endpoint:
+                    self.connect_to_existing_wall(self.snap_wall, self.snap_endpoint)
+                    self.clear_wall_highlight()
+                else:
+                    # Set first point normally
+                    self.start_point = Vector(self.hit_location)
+                    self.has_start_point = True
             else:
                 # Confirm wall and start next
                 self.confirm_current_wall()
@@ -216,6 +359,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Right click - finish drawing
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            # Clear any wall highlight
+            self.clear_wall_highlight()
             # Remove current unfinished wall
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
@@ -223,6 +368,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Escape - cancel everything
         if event.type == 'ESC' and event.value == 'PRESS':
+            # Clear any wall highlight
+            self.clear_wall_highlight()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
