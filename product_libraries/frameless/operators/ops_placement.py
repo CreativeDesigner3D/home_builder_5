@@ -546,8 +546,14 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.is_appliance:
             appliance_class = self.get_appliance_class()
             if appliance_class:
-                self.individual_cabinet_width = appliance_class.width
-                self.preview_cage.set_input('Dim X', appliance_class.width)
+                # Use scene props for appliances that have configurable widths
+                if self.appliance_type == 'RANGE':
+                    appliance_width = props.range_width
+                else:
+                    appliance_width = appliance_class.width
+                
+                self.individual_cabinet_width = appliance_width
+                self.preview_cage.set_input('Dim X', appliance_width)
                 self.preview_cage.set_input('Dim Y', appliance_class.depth)
                 # Use get_appliance_height for special cases like hoods
                 self.preview_cage.set_input('Dim Z', self.get_appliance_height(context))
@@ -561,7 +567,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.cabinet_quantity = 1
             self.auto_quantity = False
         else:
-            self.individual_cabinet_width = props.default_cabinet_width
+            # Refrigerator Cabinet uses its own default width and doesn't auto-fill
+            if self.cabinet_name == 'Refrigerator Cabinet':
+                self.individual_cabinet_width = props.refrigerator_cabinet_width
+                self.fill_mode = False
+                self.auto_quantity = False
+            else:
+                self.individual_cabinet_width = props.default_cabinet_width
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
             self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
             self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
@@ -1407,7 +1419,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.apply_typed_value()
             self.auto_quantity = False  # User is manually setting quantity
             self.update_cabinet_quantity(context, self.cabinet_quantity + 1)
-            self.position_locked = False
+            # Don't reset position_locked - keep user's offset when changing quantity
             return {'RUNNING_MODAL'}
         
         if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
@@ -1416,7 +1428,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.apply_typed_value()
             self.auto_quantity = False  # User is manually setting quantity
             self.update_cabinet_quantity(context, self.cabinet_quantity - 1)
-            self.position_locked = False
+            # Don't reset position_locked - keep user's offset when changing quantity
             return {'RUNNING_MODAL'}
 
         # Let mixin handle typing events
