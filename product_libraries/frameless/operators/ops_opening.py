@@ -187,6 +187,12 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         hb_utils.run_calc_fix(context, bay.obj)
         hb_utils.run_calc_fix(context, bay.obj)
+        
+        # Reassign cabinet style to apply materials to new parts
+        cabinet_bp = hb_utils.get_cabinet_bp(bay_obj)
+        if cabinet_bp:
+            bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
+        
         return {'FINISHED'}
 
 
@@ -791,6 +797,8 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
             hb_utils.run_calc_fix(context, cabinet_bp)
+            # Reassign cabinet style to apply materials to new parts
+            bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
         
         return {'FINISHED'}
 
@@ -1063,6 +1071,8 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
             hb_utils.run_calc_fix(context, cabinet_bp)
+            # Reassign cabinet style to apply materials to new parts
+            bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
         
         return {'FINISHED'}
 
