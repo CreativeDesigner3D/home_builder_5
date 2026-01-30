@@ -1582,8 +1582,6 @@ class Frameless_Scene_Props(PropertyGroup):
         unit_settings = context.scene.unit_settings
         size_box = layout.box()
         row = size_box.row()
-        row.prop(self,'show_machining',text="Show Machining")
-        row = size_box.row()
         row.label(text="Toe Kick:")
         row.operator('hb_frameless.update_toe_kick_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()

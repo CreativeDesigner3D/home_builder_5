@@ -273,6 +273,8 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         panel.create(f'Applied End {side.title()}')
         panel.obj['IS_APPLIED_END_' + side] = True
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
+        panel.obj['Finish Top'] = True
+        panel.obj['Finish Bottom'] = True        
         panel.obj.parent = cabinet_obj
         
         # Position at floor level (Z=0) for full height coverage
