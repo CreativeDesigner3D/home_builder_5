@@ -2221,6 +2221,9 @@ class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
         
         if collection_name in bpy.data.collections:
             detail_collection = bpy.data.collections[collection_name]
+            # Ensure all objects are black
+            for obj in detail_collection.objects:
+                obj.color = (0, 0, 0, 1)
         else:
             # Create a new collection and link all detail objects to it
             detail_collection = bpy.data.collections.new(collection_name)
@@ -2233,6 +2236,9 @@ class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
                 if obj.type in {'CAMERA', 'LIGHT'}:
                     continue
                 
+                # Set object color to black for layout rendering
+                obj.color = (0, 0, 0, 1)
+                
                 # Link object to collection (object can be in multiple collections)
                 if obj.name not in detail_collection.objects:
                     detail_collection.objects.link(obj)
@@ -2242,6 +2248,7 @@ class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
         instance.instance_type = 'COLLECTION'
         instance.instance_collection = detail_collection
         instance.empty_display_size = 0.01
+        instance.color = (0, 0, 0, 1)  # Black for layout rendering
         instance['IS_DETAIL_INSTANCE'] = True
         instance['SOURCE_DETAIL'] = detail_scene.name
         
