@@ -921,11 +921,21 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return math.ceil(gap_width / self.max_single_cabinet_width)
 
     def update_cabinet_quantity(self, context, new_quantity: int):
-        """Update the number of cabinets."""
+        """Update the number of cabinets and recalculate widths if position is locked."""
         new_quantity = max(1, new_quantity)
         if new_quantity != self.cabinet_quantity:
             self.cabinet_quantity = new_quantity
+            self.array_modifier.count = self.cabinet_quantity
+            
+            # When position is locked (user set an offset), recalculate width to fill available space
+            # Check for either position_locked flag or explicit offset values
+            has_offset = self.left_offset is not None or self.right_offset is not None
+            if (self.position_locked or has_offset) and self.current_gap_width > 0:
+                self.individual_cabinet_width = self.current_gap_width / self.cabinet_quantity
+            
             self.update_preview_cage()
+            self.update_preview_position()
+            self.update_dimensions(context)
 
     def set_position_on_wall(self, context):
         """Position preview cage on the selected wall."""
