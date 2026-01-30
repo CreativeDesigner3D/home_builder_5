@@ -722,8 +722,9 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
         
         import tempfile
         
-        # Get all layout view scenes
+        # Get all layout view scenes, sorted by sort_order
         layout_scenes = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW')]
+        layout_scenes.sort(key=lambda s: s.home_builder.sort_order)
         
         if not layout_scenes:
             self.report({'WARNING'}, "No layout views found")
