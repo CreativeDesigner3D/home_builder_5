@@ -547,8 +547,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             appliance_class = self.get_appliance_class()
             if appliance_class:
                 # Use scene props for appliances that have configurable widths
-                if self.appliance_type == 'RANGE':
+                if self.appliance_type in ('RANGE', 'HOOD'):
                     appliance_width = props.range_width
+                elif self.appliance_type == 'DISHWASHER':
+                    appliance_width = props.dishwasher_width
+                elif self.appliance_type == 'REFRIGERATOR':
+                    appliance_width = props.refrigerator_cabinet_width
                 else:
                     appliance_width = appliance_class.width
                 
@@ -567,9 +571,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.cabinet_quantity = 1
             self.auto_quantity = False
         else:
-            # Refrigerator Cabinet uses its own default width and doesn't auto-fill
+            # Special cabinet types use specific widths and don't auto-fill
             if self.cabinet_name == 'Refrigerator Cabinet':
                 self.individual_cabinet_width = props.refrigerator_cabinet_width
+                self.fill_mode = False
+                self.auto_quantity = False
+            elif self.cabinet_name in ('Base Built-In', 'Tall Built-In'):
+                self.individual_cabinet_width = props.range_width
                 self.fill_mode = False
                 self.auto_quantity = False
             else:
