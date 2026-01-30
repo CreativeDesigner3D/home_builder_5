@@ -603,21 +603,27 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     def create_dimensions(self, context):
         """Create dimension annotations for placement feedback."""
+        # Larger text size for placement visibility
+        placement_text_size = units.inch(3)
+        
         # Total width dimension (above cabinets)
         self.dim_total_width = hb_types.GeoNodeDimension()
         self.dim_total_width.create("Dim_Total_Width")
+        self.dim_total_width.set_input("Text Size", placement_text_size)
         self.dim_total_width.obj.show_in_front = True
         self.register_placement_object(self.dim_total_width.obj)
         
         # Left offset dimension
         self.dim_left_offset = hb_types.GeoNodeDimension()
         self.dim_left_offset.create("Dim_Left_Offset")
+        self.dim_left_offset.set_input("Text Size", placement_text_size)
         self.dim_left_offset.obj.show_in_front = True
         self.register_placement_object(self.dim_left_offset.obj)
         
         # Right offset dimension
         self.dim_right_offset = hb_types.GeoNodeDimension()
         self.dim_right_offset.create("Dim_Right_Offset")
+        self.dim_right_offset.set_input("Text Size", placement_text_size)
         self.dim_right_offset.obj.show_in_front = True
         self.register_placement_object(self.dim_right_offset.obj)
     
@@ -634,8 +640,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.placement_objects = []
     
     def get_dimension_rotation(self, context, base_rotation_z):
-        """Calculate dimension rotation to face the camera based on view angle."""
-
+        """Calculate dimension rotation to face the camera based on view angle.
+        
+        Returns: (rotation_tuple, is_plan_view)
+        """
         # Get the 3D view
         region_3d = None
         for area in context.screen.areas:
@@ -644,7 +652,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 break
         
         if not region_3d:
-            return (0, 0, base_rotation_z)
+            return (0, 0, base_rotation_z), True
         
         # Get view rotation matrix and extract the view direction
         view_matrix = region_3d.view_matrix
@@ -659,10 +667,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         if vertical_component > 0.7:
             # Plan view - dimension lies flat (X rotation = 0)
-            return (0, 0, base_rotation_z)
+            return (0, 0, base_rotation_z), True
         else:
             # Elevation/3D view - rotate dimension to stand up (X rotation = 90)
-            return (math.radians(90), 0, base_rotation_z)
+            return (math.radians(90), 0, base_rotation_z), False
     
     def update_dimensions(self, context):
         """Update dimension positions and values."""
@@ -674,7 +682,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         total_width = self.individual_cabinet_width * self.cabinet_quantity
         cabinet_height = self.get_cabinet_height(context)
-        dim_z = cabinet_height + units.inch(4)  # Above cabinet
         
         # Never parent dimensions to wall - keep in world space
         self.dim_total_width.obj.parent = None
@@ -691,16 +698,30 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             left_offset = self.placement_x - self.gap_left_boundary
             right_offset = self.gap_right_boundary - (self.placement_x + total_width)
 
-            # Y position based on which side of wall (in local space)
-            if self.place_on_front:
-                dim_y = -units.inch(2)
+            # Get rotation and view type
+            dim_rotation, is_plan_view = self.get_dimension_rotation(context, wall_rotation_z)
+            
+            # Position dimensions based on view type
+            if is_plan_view:
+                # Plan view - position above cabinet so they don't overlap footprint
+                dim_z = cabinet_height + units.inch(4)
+                dim_z_offset = units.inch(8)  # Extra offset for left/right dims
+                # Y offset from wall
+                if self.place_on_front:
+                    dim_y = -units.inch(2)
+                else:
+                    dim_y = wall_thickness + units.inch(2)
             else:
-                dim_y = wall_thickness + units.inch(2)
+                # 3D/Elevation view - position at cursor height (mid-cabinet)
+                dim_z = cabinet_height / 2
+                dim_z_offset = 0  # All dims at same height
+                # Y position inline with cabinet (no offset)
+                if self.place_on_front:
+                    dim_y = 0
+                else:
+                    dim_y = wall_thickness
             
-            # Get rotation based on view angle
-            dim_rotation = self.get_dimension_rotation(context, wall_rotation_z)
-            
-            # Total width dimension - above cabinets (convert to world space)
+            # Total width dimension
             local_pos = Vector((self.placement_x, dim_y, dim_z))
             self.dim_total_width.obj.location = wall_matrix @ local_pos
             self.dim_total_width.obj.rotation_euler = dim_rotation
@@ -709,7 +730,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             # Left offset dimension - from gap start to cabinet start
             if left_offset > units.inch(0.5):
-                local_pos = Vector((self.gap_left_boundary, dim_y, dim_z + units.inch(8)))
+                local_pos = Vector((self.gap_left_boundary, dim_y, dim_z + dim_z_offset))
                 self.dim_left_offset.obj.location = wall_matrix @ local_pos
                 self.dim_left_offset.obj.rotation_euler = dim_rotation
                 self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
@@ -719,7 +740,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             # Right offset dimension - from cabinet end to gap end
             if right_offset > units.inch(0.5):
-                local_pos = Vector((self.placement_x + total_width, dim_y, dim_z + units.inch(8)))
+                local_pos = Vector((self.placement_x + total_width, dim_y, dim_z + dim_z_offset))
                 self.dim_right_offset.obj.location = wall_matrix @ local_pos
                 self.dim_right_offset.obj.rotation_euler = dim_rotation
                 self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
@@ -729,7 +750,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         else:
             # Floor placement - just show total width
             base_rotation_z = self.preview_cage.obj.rotation_euler.z
-            dim_rotation = self.get_dimension_rotation(context, base_rotation_z)
+            dim_rotation, is_plan_view = self.get_dimension_rotation(context, base_rotation_z)
+            
+            if is_plan_view:
+                dim_z = cabinet_height + units.inch(4)
+            else:
+                dim_z = cabinet_height / 2
             
             self.dim_total_width.obj.location = self.preview_cage.obj.location.copy()
             self.dim_total_width.obj.location.z = dim_z
