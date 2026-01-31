@@ -1227,6 +1227,37 @@ class FalseFront(CabinetOpening):
         # No drawer box added for false front
 
 
+class Appliance(CabinetOpening):
+    """An appliance opening displays centered text with the appliance name.
+    Used for built-in appliances like ovens, microwaves, refrigerators, etc.
+    """
+    
+    appliance_name = "Appliance"
+    
+    def create(self):
+        from ...hb_details import GeoNodeText
+        
+        super().create("Appliance")
+        
+        # Store appliance name on the object
+        self.obj['APPLIANCE_NAME'] = self.appliance_name
+        
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        
+        props = bpy.context.scene.home_builder
+        
+        appliance_text = GeoNodeText()
+        appliance_text.create('Appliance Text', self.appliance_name, props.annotation_text_size)
+        appliance_text.obj.parent = self.obj
+        appliance_text.obj['IS_APPLIANCE_TEXT'] = True
+        appliance_text.obj.rotation_euler.x = math.radians(90)
+        appliance_text.driver_location("x", 'dim_x/2', [dim_x])
+        appliance_text.driver_location("z", 'dim_z/2', [dim_z])
+        appliance_text.set_alignment('CENTER', 'CENTER')
+
+
 class CabinetPart(GeoNodeCutpart):
 
     def create(self,name):

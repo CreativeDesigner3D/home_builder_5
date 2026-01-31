@@ -106,6 +106,7 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
         layout.operator("hb_frameless.change_bay_opening", text="4 Drawer Stack").opening_type = '4_DRAWER_STACK'
         layout.separator()
         layout.operator("hb_frameless.change_bay_opening", text="Open (No Front)").opening_type = 'OPEN'
+        layout.operator("hb_frameless.change_bay_opening", text="Appliance").opening_type = 'APPLIANCE'
         layout.separator()
         layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
         layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")

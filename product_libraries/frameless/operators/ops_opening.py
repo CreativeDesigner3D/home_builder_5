@@ -24,8 +24,14 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             ('3_DRAWER_STACK', "3 Drawer Stack", "Three equal drawers"),
             ('4_DRAWER_STACK', "4 Drawer Stack", "Four equal drawers"),
             ('OPEN', "Open", "Open with no front"),
+            ('APPLIANCE', "Appliance", "Built-in appliance opening"),
         ],
         default='DOOR_DRAWER'
+    ) # type: ignore
+    
+    appliance_name: bpy.props.StringProperty(
+        name="Appliance Name",
+        default="Appliance"
     ) # type: ignore
 
     @classmethod
@@ -98,6 +104,12 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Create false front (decorative panel with no hardware)."""
         false_front = types_frameless.FalseFront()
         self.add_cage_to_bay(bay, false_front)
+
+    def create_appliance(self, bay, appliance_name="Appliance"):
+        """Create appliance opening with centered text."""
+        appliance = types_frameless.Appliance()
+        appliance.appliance_name = appliance_name
+        self.add_cage_to_bay(bay, appliance)
 
     def create_door_drawer(self, bay):
         """Create door/drawer combo (drawer on top, doors below)."""
@@ -199,6 +211,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
                 self.create_drawer_stack(bay, 4)
             elif self.opening_type == 'OPEN':
                 pass  # No children needed for open
+            elif self.opening_type == 'APPLIANCE':
+                self.create_appliance(bay, self.appliance_name)
             
             hb_utils.run_calc_fix(context, bay.obj)
             hb_utils.run_calc_fix(context, bay.obj)
