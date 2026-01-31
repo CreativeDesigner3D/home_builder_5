@@ -1,5 +1,5 @@
 import bpy
-
+from ... import hb_utils
 
 class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
     bl_label = "Applied Ends"
@@ -59,6 +59,17 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_frameless.raise_cabinet_bottom", text="Raise Bottom")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+        
+        # Show "Create Cabinet Group" if multiple cabinets are selected
+        selected_cabinets = set()
+        for obj in context.selected_objects:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp:
+                selected_cabinets.add(cabinet_bp)
+        
+        if len(selected_cabinets) > 1:
+            layout.separator()
+            layout.operator("hb_frameless.create_cabinet_group", text="Create Cabinet Group")
         
         layout.separator()
         layout.operator("hb_frameless.delete_cabinet", text="Delete Cabinet")
