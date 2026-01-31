@@ -971,6 +971,71 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.update_preview_position()
             self.update_dimensions(context)
 
+    def find_nearest_wall_from_cursor(self, context):
+        """Find the nearest wall based on projected cursor position."""
+        from bpy_extras import view3d_utils
+        from mathutils.geometry import intersect_line_plane, intersect_point_line
+        
+        snap_distance = units.inch(6)  # Snap to wall if within 6"
+        
+        # Project cursor onto floor plane
+        region = self.region
+        rv3d = region.data
+        view_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, self.mouse_pos)
+        view_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, self.mouse_pos)
+        
+        floor_point = intersect_line_plane(view_origin, view_origin + view_dir * 10000, Vector((0,0,0)), Vector((0,0,1)))
+        
+        if not floor_point:
+            return None
+        
+        cursor_2d = Vector((floor_point.x, floor_point.y))
+        
+        # Find all walls
+        nearest_wall = None
+        nearest_distance = snap_distance
+        
+        for obj in context.scene.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            
+            wall = hb_types.GeoNodeWall(obj)
+            wall_length = wall.get_input('Length')
+            wall_thickness = wall.get_input('Thickness')
+            
+            # Get wall start and end points in world space (at wall centerline)
+            wall_matrix = obj.matrix_world
+            local_start = Vector((0, wall_thickness / 2, 0))
+            local_end = Vector((wall_length, wall_thickness / 2, 0))
+            
+            world_start = wall_matrix @ local_start
+            world_end = wall_matrix @ local_end
+            
+            # Project to 2D (floor plane)
+            start_2d = Vector((world_start.x, world_start.y))
+            end_2d = Vector((world_end.x, world_end.y))
+            
+            # Find closest point on wall line segment to cursor
+            closest, percent = intersect_point_line(cursor_2d, start_2d, end_2d)
+            closest = Vector(closest[:2])  # Ensure 2D
+            
+            # Clamp to segment (percent 0-1)
+            if percent < 0:
+                closest = start_2d
+            elif percent > 1:
+                closest = end_2d
+            
+            distance = (cursor_2d - closest).length
+            
+            # Check if within wall bounds and within snap distance
+            if distance < nearest_distance and 0 <= percent <= 1:
+                nearest_distance = distance
+                nearest_wall = obj
+                # Update hit_location so set_position_on_wall works correctly
+                self.hit_location = Vector((floor_point.x, floor_point.y, 0))
+        
+        return nearest_wall
+
     def set_position_on_wall(self, context):
         """Position preview cage on the selected wall."""
         if not self.selected_wall or not self.preview_cage:
@@ -987,9 +1052,42 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         cursor_x = local_loc.x
         cursor_y = local_loc.y
         
-        # Determine which side of wall based on cursor Y position
-        # Wall mesh extends from Y=0 (front face) to Y=thickness (back face)
-        self.place_on_front = cursor_y < wall_thickness / 2
+        # Determine which side of wall based on cursor position relative to wall centerline
+        # Project cursor onto floor plane and check which side of wall it's on
+        # This is more reliable than using raycast hit position which can vary on the wall's top face
+        
+        from bpy_extras import view3d_utils
+        from mathutils.geometry import intersect_line_plane
+        
+        # Get view ray from mouse position
+        region = self.region
+        rv3d = region.data
+        view_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, self.mouse_pos)
+        view_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, self.mouse_pos)
+        
+        # Project ray onto floor plane (Z=0)
+        floor_point = intersect_line_plane(view_origin, view_origin + view_dir * 10000, Vector((0,0,0)), Vector((0,0,1)))
+        
+        if floor_point:
+            # Convert to wall's local space
+            local_cursor = self.selected_wall.matrix_world.inverted() @ floor_point
+            
+            # Check which side of wall centerline the cursor is on
+            wall_center_y = wall_thickness / 2
+            
+            # Use hysteresis - only switch if clearly past center
+            hysteresis = units.inch(1)
+            if local_cursor.y < wall_center_y - hysteresis:
+                self.place_on_front = True
+            elif local_cursor.y > wall_center_y + hysteresis:
+                self.place_on_front = False
+            # Otherwise keep current side
+        else:
+            # Fallback to raycast hit position
+            if cursor_y < wall_thickness / 2:
+                self.place_on_front = True
+            else:
+                self.place_on_front = False
         
         # Find available gap, filtering by which side we're placing on
         gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
@@ -1505,6 +1603,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.wall_length = wall.get_input('Length')
                     break
                 current = current.parent
+        
+        # Fallback: if raycast missed, find nearest wall based on cursor position
+        if not self.selected_wall:
+            self.selected_wall = self.find_nearest_wall_from_cursor(context)
+            if self.selected_wall:
+                wall = hb_types.GeoNodeWall(self.selected_wall)
+                self.wall_length = wall.get_input('Length')
 
         # Update position if not locked
         # Allow position updates while typing WIDTH (but not offsets)
