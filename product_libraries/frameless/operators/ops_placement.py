@@ -1139,42 +1139,48 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         cursor_x = local_loc.x
         cursor_y = local_loc.y
         
-        # Determine which side of wall based on cursor position relative to wall centerline
-        # Project cursor onto floor plane and check which side of wall it's on
-        # This is more reliable than using raycast hit position which can vary on the wall's top face
+        # Determine which side of wall based on cursor position
+        # Use different methods for plan view vs 3D view
         
         from bpy_extras import view3d_utils
         from mathutils.geometry import intersect_line_plane
         
-        # Get view ray from mouse position
+        # Detect if we're in plan view (looking down) or 3D view
         region = self.region
         rv3d = region.data
-        view_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, self.mouse_pos)
-        view_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, self.mouse_pos)
+        view_matrix = rv3d.view_matrix
+        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
+        is_plan_view = abs(view_dir.z) > 0.7
         
-        # Project ray onto floor plane (Z=0)
-        floor_point = intersect_line_plane(view_origin, view_origin + view_dir * 10000, Vector((0,0,0)), Vector((0,0,1)))
+        wall_center_y = wall_thickness / 2
+        hysteresis = units.inch(1)
         
-        if floor_point:
-            # Convert to wall's local space
-            local_cursor = self.selected_wall.matrix_world.inverted() @ floor_point
+        if is_plan_view:
+            # Plan view - project cursor onto floor plane for reliable detection
+            view_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, self.mouse_pos)
+            view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, self.mouse_pos)
+            floor_point = intersect_line_plane(view_origin, view_origin + view_vector * 10000, Vector((0,0,0)), Vector((0,0,1)))
             
-            # Check which side of wall centerline the cursor is on
-            wall_center_y = wall_thickness / 2
-            
-            # Use hysteresis - only switch if clearly past center
-            hysteresis = units.inch(1)
-            if local_cursor.y < wall_center_y - hysteresis:
+            if floor_point:
+                local_cursor = self.selected_wall.matrix_world.inverted() @ floor_point
+                if local_cursor.y < wall_center_y - hysteresis:
+                    self.place_on_front = True
+                elif local_cursor.y > wall_center_y + hysteresis:
+                    self.place_on_front = False
+                # Otherwise keep current side
+            else:
+                # Fallback
+                if cursor_y < wall_center_y:
+                    self.place_on_front = True
+                else:
+                    self.place_on_front = False
+        else:
+            # 3D view - use raycast hit position on wall surface
+            if cursor_y < wall_center_y - hysteresis:
                 self.place_on_front = True
-            elif local_cursor.y > wall_center_y + hysteresis:
+            elif cursor_y > wall_center_y + hysteresis:
                 self.place_on_front = False
             # Otherwise keep current side
-        else:
-            # Fallback to raycast hit position
-            if cursor_y < wall_thickness / 2:
-                self.place_on_front = True
-            else:
-                self.place_on_front = False
         
         # Find available gap, filtering by which side we're placing on
         gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
