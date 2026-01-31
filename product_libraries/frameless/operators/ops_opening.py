@@ -30,12 +30,13 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.object
-        if obj:
+        # Allow if any selected object is a bay
+        for obj in context.selected_objects:
             if 'IS_FRAMELESS_BAY_CAGE' in obj:
                 return True
             bay_bp = hb_utils.get_bay_bp(obj)
-            return bay_bp is not None
+            if bay_bp is not None:
+                return True
         return False
 
     def delete_bay_children(self, bay_obj):
@@ -149,49 +150,67 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         self.add_cage_to_bay(bay, splitter)
 
     def execute(self, context):
-        bay_obj = context.object if 'IS_FRAMELESS_BAY_CAGE' in context.object else hb_utils.get_bay_bp(context.object)
-        if not bay_obj:
-            self.report({'ERROR'}, "Could not find bay")
+        # Collect all bay objects from selection
+        bay_objs = []
+        for obj in context.selected_objects:
+            if 'IS_FRAMELESS_BAY_CAGE' in obj:
+                bay_objs.append(obj)
+            else:
+                bay_bp = hb_utils.get_bay_bp(obj)
+                if bay_bp and bay_bp not in bay_objs:
+                    bay_objs.append(bay_bp)
+        
+        if not bay_objs:
+            self.report({'ERROR'}, "Could not find any bays in selection")
             return {'CANCELLED'}
         
-        bay = types_frameless.CabinetBay(bay_obj)
+        # Track cabinets that need style reassignment
+        cabinets_to_update = set()
         
-        # Delete existing bay children
-        self.delete_bay_children(bay_obj)
+        # Apply change to all selected bays
+        for bay_obj in bay_objs:
+            bay = types_frameless.CabinetBay(bay_obj)
+            
+            # Delete existing bay children
+            self.delete_bay_children(bay_obj)
+            
+            # Create new opening based on type
+            if self.opening_type == 'DOOR_DRAWER':
+                self.create_door_drawer(bay)
+            elif self.opening_type == 'LEFT_DOOR':
+                self.create_doors(bay, door_swing=0)
+            elif self.opening_type == 'RIGHT_DOOR':
+                self.create_doors(bay, door_swing=1)
+            elif self.opening_type == 'DOUBLE_DOORS':
+                self.create_doors(bay, door_swing=2)
+            elif self.opening_type == 'FLIP_UP_DOOR':
+                self.create_flip_up_door(bay)
+            elif self.opening_type == 'SINGLE_DRAWER':
+                self.create_drawer(bay)
+            elif self.opening_type == 'PULLOUT':
+                self.create_pullout(bay)
+            elif self.opening_type == 'FALSE_FRONT':
+                self.create_false_front(bay)
+            elif self.opening_type == '2_DRAWER_STACK':
+                self.create_drawer_stack(bay, 2)
+            elif self.opening_type == '3_DRAWER_STACK':
+                self.create_drawer_stack(bay, 3)
+            elif self.opening_type == '4_DRAWER_STACK':
+                self.create_drawer_stack(bay, 4)
+            elif self.opening_type == 'OPEN':
+                pass  # No children needed for open
+            
+            hb_utils.run_calc_fix(context, bay.obj)
+            hb_utils.run_calc_fix(context, bay.obj)
+            
+            # Track cabinet for style reassignment
+            cabinet_bp = hb_utils.get_cabinet_bp(bay_obj)
+            if cabinet_bp:
+                cabinets_to_update.add(cabinet_bp.name)
         
-        # Create new opening based on type
-        if self.opening_type == 'DOOR_DRAWER':
-            self.create_door_drawer(bay)
-        elif self.opening_type == 'LEFT_DOOR':
-            self.create_doors(bay, door_swing=0)
-        elif self.opening_type == 'RIGHT_DOOR':
-            self.create_doors(bay, door_swing=1)
-        elif self.opening_type == 'DOUBLE_DOORS':
-            self.create_doors(bay, door_swing=2)
-        elif self.opening_type == 'FLIP_UP_DOOR':
-            self.create_flip_up_door(bay)
-        elif self.opening_type == 'SINGLE_DRAWER':
-            self.create_drawer(bay)
-        elif self.opening_type == 'PULLOUT':
-            self.create_pullout(bay)
-        elif self.opening_type == 'FALSE_FRONT':
-            self.create_false_front(bay)
-        elif self.opening_type == '2_DRAWER_STACK':
-            self.create_drawer_stack(bay, 2)
-        elif self.opening_type == '3_DRAWER_STACK':
-            self.create_drawer_stack(bay, 3)
-        elif self.opening_type == '4_DRAWER_STACK':
-            self.create_drawer_stack(bay, 4)
-        elif self.opening_type == 'OPEN':
-            pass  # No children needed for open
-        
-        hb_utils.run_calc_fix(context, bay.obj)
-        hb_utils.run_calc_fix(context, bay.obj)
-        
-        # Reassign cabinet style to apply materials to new parts
-        cabinet_bp = hb_utils.get_cabinet_bp(bay_obj)
-        if cabinet_bp:
-            bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
+        # Reassign cabinet styles to apply materials to new parts
+        for cabinet_name in cabinets_to_update:
+            bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_name)
         
         return {'FINISHED'}
 
