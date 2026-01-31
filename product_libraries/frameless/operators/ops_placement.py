@@ -302,6 +302,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     snap_cabinet = None  # Cabinet we're snapping to
     snap_side: str = None  # 'LEFT' or 'RIGHT' side of the snap cabinet
     
+    # Center snap state: None, 'gap', or 'cage'
+    center_snap_state = None
+    centerline_obj = None  # Visual indicator for center snap
+    
     # Placement dimensions
     dim_total_width = None  # Dimension showing total cabinet width
     dim_left_offset = None  # Dimension showing left offset from gap edge
@@ -626,9 +630,53 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.dim_right_offset.set_input("Text Size", placement_text_size)
         self.dim_right_offset.obj.show_in_front = True
         self.register_placement_object(self.dim_right_offset.obj)
+        
+        # Center snap indicator line (green vertical line)
+        self.create_centerline()
+    
+    def create_centerline(self):
+        """Create a green vertical line to indicate center snap."""
+        # Create a simple curve for the centerline
+        curve_data = bpy.data.curves.new('Centerline', 'CURVE')
+        curve_data.dimensions = '3D'
+        
+        spline = curve_data.splines.new('POLY')
+        spline.points.add(1)  # 2 points total
+        spline.points[0].co = (0, 0, 0, 1)
+        spline.points[1].co = (0, 0, 1, 1)  # Will be scaled to wall height
+        
+        self.centerline_obj = bpy.data.objects.new('Centerline', curve_data)
+        bpy.context.collection.objects.link(self.centerline_obj)
+        
+        # Line thickness
+        curve_data.bevel_depth = 0.008
+        
+        # Create green material
+        mat = bpy.data.materials.new('Centerline_Green')
+        mat.diffuse_color = (0.0, 0.9, 0.2, 1.0)  # Viewport solid color
+        mat.use_nodes = True
+        # Set the principled BSDF color to green
+        if mat.node_tree:
+            bsdf = mat.node_tree.nodes.get('Principled BSDF')
+            if bsdf:
+                bsdf.inputs['Base Color'].default_value = (0.0, 0.9, 0.2, 1.0)
+                # Use emission for visibility
+                if 'Emission Color' in bsdf.inputs:
+                    bsdf.inputs['Emission Color'].default_value = (0.0, 0.9, 0.2, 1.0)
+                    bsdf.inputs['Emission Strength'].default_value = 1.0
+                elif 'Emission' in bsdf.inputs:
+                    bsdf.inputs['Emission'].default_value = (0.0, 0.9, 0.2, 1.0)
+        self.centerline_obj.data.materials.append(mat)
+        
+        # Viewport display settings
+        self.centerline_obj.color = (0.0, 0.9, 0.2, 1.0)  # Green in solid mode
+        self.centerline_obj.show_in_front = True
+        self.centerline_obj.hide_set(True)  # Hidden by default
+        
+        self.register_placement_object(self.centerline_obj)
     
     def cleanup_placement_objects(self):
-        """Remove preview cage and dimensions."""
+        """Remove preview cage, dimensions, and centerline."""
         if self.preview_cage and self.preview_cage.obj:
             bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
         if self.dim_total_width and self.dim_total_width.obj:
@@ -637,6 +685,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             bpy.data.objects.remove(self.dim_left_offset.obj, do_unlink=True)
         if self.dim_right_offset and self.dim_right_offset.obj:
             bpy.data.objects.remove(self.dim_right_offset.obj, do_unlink=True)
+        if self.centerline_obj:
+            bpy.data.objects.remove(self.centerline_obj, do_unlink=True)
+            self.centerline_obj = None
         self.placement_objects = []
     
     def get_dimension_rotation(self, context, base_rotation_z):
@@ -766,6 +817,42 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Hide offset dimensions on floor
             self.dim_left_offset.obj.hide_set(True)
             self.dim_right_offset.obj.hide_set(True)
+        
+        # Update centerline visibility and position
+        self.update_centerline(context, total_width, cabinet_height)
+
+    def update_centerline(self, context, total_width, cabinet_height):
+        """Update centerline indicator position and visibility."""
+        if not self.centerline_obj:
+            return
+        
+        if self.center_snap_state and self.selected_wall:
+            # Show centerline at center of cabinet group
+            wall_matrix = self.selected_wall.matrix_world
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            wall_height = wall.get_input('Height')
+            
+            # Center X position
+            center_x = self.placement_x + total_width / 2
+            
+            # Y position based on which side of wall
+            if self.place_on_front:
+                center_y = 0
+            else:
+                center_y = wall_thickness
+            
+            # Position in world space
+            local_pos = Vector((center_x, center_y, 0))
+            self.centerline_obj.location = wall_matrix @ local_pos
+            self.centerline_obj.rotation_euler = self.selected_wall.rotation_euler
+            
+            # Extend to full wall height
+            self.centerline_obj.data.splines[0].points[1].co = (0, 0, wall_height, 1)
+            
+            self.centerline_obj.hide_set(False)
+        else:
+            self.centerline_obj.hide_set(True)
 
     def update_preview_cage(self):
         """Update preview cage dimensions and array count."""
@@ -1114,6 +1201,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.array_modifier.count = self.cabinet_quantity
             self.individual_cabinet_width = gap_width / self.cabinet_quantity
             snap_x = gap_start
+            self.center_snap_state = None  # Fill mode doesn't center snap
         else:
             # User has typed a width - check for auto-snap positions
             total_width = self.individual_cabinet_width * self.cabinet_quantity
@@ -1122,9 +1210,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Check if cursor is over a GeoNodeCage with no height collision (e.g., window)
             cage_center_snap = self.get_cage_center_snap(cursor_x, total_width)
             
+            # Reset center snap state
+            self.center_snap_state = None
+            
             if cage_center_snap is not None:
                 # Snap to center on the cage (e.g., center base cabinet under window)
                 snap_x = cage_center_snap
+                self.center_snap_state = 'cage'
             else:
                 # Calculate centered position in gap
                 centered_x = gap_start + (gap_width - total_width) / 2
@@ -1133,6 +1225,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # Snap to center if cursor is within 4 inches of center position
                 if distance_from_center < units.inch(4):
                     snap_x = centered_x
+                    self.center_snap_state = 'gap'
                 # Snap to left if within 4 inches of left boundary
                 elif left_gap < units.inch(4) and left_gap > 0:
                     snap_x = gap_start
@@ -1195,6 +1288,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Reset snap state
         self.snap_cabinet = None
         self.snap_side = None
+        self.center_snap_state = None  # No center snapping on floor
         
         # Try to find a cabinet from what we hit
         snap_target = None
@@ -1499,7 +1593,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             individual_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
             qty_str = f"{self.cabinet_quantity}"
             gap_str = f"Gap: {units.unit_to_string(unit_settings, self.gap_right_boundary - self.gap_left_boundary)}"
-            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
+            
+            # Add center snap indicator
+            center_str = ""
+            if self.center_snap_state == 'gap':
+                center_str = " | ↔ CENTERED"
+            elif self.center_snap_state == 'cage':
+                center_str = " | ↔ CENTERED"
+            
+            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {individual_str} = {total_str}{center_str} | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
         else:
             # Floor placement
             unit_settings = context.scene.unit_settings
@@ -1538,6 +1640,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.place_on_front = True
         self.snap_cabinet = None
         self.snap_side = None
+        self.center_snap_state = None
+        self.centerline_obj = None
         self.dim_total_width = None
         self.dim_left_offset = None
         self.dim_right_offset = None
