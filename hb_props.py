@@ -20,6 +20,7 @@ from bpy.props import (
 from . import hb_utils, hb_types
 from .units import inch
 from .hb_types import Variable
+from . import hb_project
 
 def update_main_tab(self,context):
     # TODO: Load the correct library based on the main_tab
@@ -78,6 +79,24 @@ def update_text_color(self, context):
                     bsdf = mat.node_tree.nodes.get("Principled BSDF")
                     if bsdf:
                         bsdf.inputs["Base Color"].default_value = color
+
+
+def update_ceiling_height(self, context):
+    """Update cabinet heights when ceiling height changes."""
+
+    main_scene = hb_project.get_main_scene()
+    if not main_scene:
+        return
+    
+    # Check if frameless props exist
+    if not hasattr(main_scene, 'hb_frameless'):
+        return
+    
+    frameless_props = main_scene.hb_frameless
+    
+    # Recalculate tall and upper cabinet heights based on new ceiling height
+    frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance
+    frameless_props.upper_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance - frameless_props.default_wall_cabinet_location
 
 
 def update_dimension_text_size(self, context):
@@ -371,7 +390,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
                                  ('Fake',"Fake","Fake Wall")],
                           default='Exterior')# type: ignore  
 
-    ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5)
+    ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5,update=update_ceiling_height)
     half_wall_height: FloatProperty(name="Half Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
     fake_wall_height: FloatProperty(name="Fake Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
     wall_thickness: FloatProperty(name="Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)
