@@ -1258,6 +1258,48 @@ class Appliance(CabinetOpening):
         appliance_text.set_alignment('CENTER', 'CENTER')
 
 
+class OpenWithShelves(CabinetOpening):
+    """An open opening with adjustable shelves.
+    No door or drawer front, just exposed shelves.
+    """
+    
+    def create(self):
+        super().create("Open With Shelves")
+        
+        props = bpy.context.scene.hb_frameless
+        
+        self.add_property('Shelf Quantity', 'QUANTITY', 1)
+        self.add_property('Shelf Setback', 'DISTANCE', inch(.25))
+        self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.125))
+        
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        
+        mt = props.default_carcass_part_thickness
+        self.add_property('Material Thickness', 'DISTANCE', mt)
+        mt_var = self.var_prop('Material Thickness', 'mt')
+        setback = self.var_prop('Shelf Setback', 'setback')
+        clip_gap = self.var_prop('Shelf Clip Gap', 'clip_gap')
+        qty = self.var_prop('Shelf Quantity', 'qty')
+        
+        # Create shelf part
+        shelf = CabinetPart()
+        shelf.create('Shelf')
+        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+        shelf.obj['Finish Top'] = False
+        shelf.obj['Finish Bottom'] = False
+        shelf.obj.parent = self.obj
+        
+        shelf.driver_location('x', 'clip_gap', [clip_gap])
+        shelf.driver_location('y', 'setback', [setback])
+        shelf.driver_location('z', '(dim_z-(mt*qty))/(qty+1)', [dim_z, mt_var, qty])
+        shelf.driver_input("Length", 'dim_x-clip_gap*2', [dim_x, clip_gap])
+        shelf.driver_input("Width", 'dim_y-setback', [dim_y, setback])
+        shelf.driver_input("Thickness", 'mt', [mt_var])
+
+
 class CabinetPart(GeoNodeCutpart):
 
     def create(self,name):

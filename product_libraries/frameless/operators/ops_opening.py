@@ -12,21 +12,46 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     opening_type: bpy.props.EnumProperty(
         name="Opening Type",
         items=[
-            ('DOOR_DRAWER', "Door/Drawer", "Standard door with drawer option"),
+            # Doors
             ('LEFT_DOOR', "Left Door", "Single left swing door"),
             ('RIGHT_DOOR', "Right Door", "Single right swing door"),
             ('DOUBLE_DOORS', "Double Doors", "Double swing doors"),
             ('FLIP_UP_DOOR', "Flip Up Door", "Door hinged at top, swings up"),
+            # Stacked Doors
+            ('LEFT_STACKED_DOOR', "Left Stacked Door", "Two left swing doors stacked"),
+            ('RIGHT_STACKED_DOOR', "Right Stacked Door", "Two right swing doors stacked"),
+            ('DOUBLE_STACKED_DOOR', "Double Stacked Door", "Two double doors stacked"),
+            ('LEFT_3_STACKED_DOOR', "Left 3 Stacked Door", "Three left swing doors stacked"),
+            ('RIGHT_3_STACKED_DOOR', "Right 3 Stacked Door", "Three right swing doors stacked"),
+            ('DOUBLE_3_STACKED_DOOR', "Double 3 Stacked Door", "Three double doors stacked"),
+            # Drawer/Door Combos (Base)
+            ('DOOR_DRAWER', "1 Drawer 1 Door", "One drawer over one door"),
+            ('1_DRAWER_2_DOOR', "1 Drawer 2 Door", "One drawer over double doors"),
+            ('2_DRAWER_2_DOOR', "2 Drawer 2 Door", "Two drawers over double doors"),
+            # Drawers
             ('SINGLE_DRAWER', "Single Drawer", "Single drawer"),
-            ('PULLOUT', "Pullout", "Pullout with pull at top"),
-            ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
             ('2_DRAWER_STACK', "2 Drawer Stack", "Two equal drawers"),
             ('3_DRAWER_STACK', "3 Drawer Stack", "Three equal drawers"),
             ('4_DRAWER_STACK', "4 Drawer Stack", "Four equal drawers"),
+            # Pullouts
+            ('PULLOUT', "Pullout", "Pullout with pull at top"),
+            ('PULLOUT_WITH_DRAWER', "Pullout with Drawer", "Pullout with drawer above"),
+            ('TALL_PULLOUT', "Tall Pullout", "Full height pullout"),
+            ('DOORS_WITH_TALL_PULLOUT', "Doors with Tall Pullout", "Doors above tall pullout"),
+            # Upper Door/Drawer Combos
+            ('DOORS_WITH_1_DRAWER', "Doors with 1 Drawer", "Doors above one drawer"),
+            ('DOORS_WITH_2_DRAWER', "Doors with 2 Drawers", "Doors above two drawers"),
+            ('DOORS_WITH_3_DRAWER', "Doors with 3 Drawers", "Doors above three drawers"),
+            ('DOORS_WITH_PULLOUT', "Doors with Pullout", "Doors above pullout"),
+            # Other
+            ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
+            ('MICROWAVE_DRAWER', "Microwave with Drawer", "Microwave opening with drawer below"),
             ('OPEN', "Open", "Open with no front"),
+            ('OPEN_WITH_SHELVES', "Open With Shelves", "Open with adjustable shelves"),
             ('APPLIANCE', "Appliance", "Built-in appliance opening"),
+            ('DOUBLE_APPLIANCE', "Double Appliance", "Two appliance openings stacked"),
         ],
-        default='DOOR_DRAWER'
+        default='LEFT_DOOR'
     ) # type: ignore
     
     appliance_name: bpy.props.StringProperty(
@@ -111,6 +136,181 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         appliance.appliance_name = appliance_name
         self.add_cage_to_bay(bay, appliance)
 
+    def create_open_with_shelves(self, bay):
+        """Create open opening with adjustable shelves."""
+        open_shelves = types_frameless.OpenWithShelves()
+        self.add_cage_to_bay(bay, open_shelves)
+
+    def create_stacked_doors(self, bay, door_swing, stack_count=2):
+        """Create stacked doors (2 or 3 high).
+        
+        Args:
+            bay: The bay to add to
+            door_swing: 0=Left, 1=Right, 2=Double
+            stack_count: Number of doors stacked (2 or 3)
+        """
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = stack_count - 1
+        splitter.opening_sizes = [0] * stack_count  # Equal sizes
+        
+        # Create door inserts for each opening
+        inserts = []
+        for i in range(stack_count):
+            doors = types_frameless.Doors()
+            if cabinet_type == 'UPPER':
+                doors.door_pull_location = "Upper"
+            else:
+                doors.door_pull_location = "Base"
+            inserts.append(doors)
+        
+        splitter.opening_inserts = inserts
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set door swing after creation
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = door_swing
+
+    def create_1_drawer_2_door(self, bay):
+        """Create 1 drawer over double doors (base cabinet)."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [units.inch(6), 0]  # Small drawer, rest for doors
+        
+        drawer = types_frameless.Drawer()
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Base"
+        
+        splitter.opening_inserts = [drawer, doors]
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set double doors
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = 2
+
+    def create_2_drawer_2_door(self, bay):
+        """Create 2 drawers over double doors (base cabinet)."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 2
+        splitter.opening_sizes = [units.inch(6), units.inch(6), 0]  # Two drawers, rest for doors
+        
+        drawer1 = types_frameless.Drawer()
+        drawer2 = types_frameless.Drawer()
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Base"
+        
+        splitter.opening_inserts = [drawer1, drawer2, doors]
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set double doors
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = 2
+
+    def create_pullout_with_drawer(self, bay):
+        """Create pullout with drawer above."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [units.inch(6), 0]  # Small drawer, rest for pullout
+        
+        drawer = types_frameless.Drawer()
+        pullout = types_frameless.Pullout()
+        
+        splitter.opening_inserts = [drawer, pullout]
+        self.add_cage_to_bay(bay, splitter)
+
+    def create_microwave_drawer(self, bay):
+        """Create microwave opening with drawer below."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [0, units.inch(6)]  # Microwave space, small drawer
+        
+        appliance = types_frameless.Appliance()
+        appliance.appliance_name = "Microwave"
+        drawer = types_frameless.Drawer()
+        
+        splitter.opening_inserts = [appliance, drawer]
+        self.add_cage_to_bay(bay, splitter)
+
+    def create_doors_with_drawers(self, bay, drawer_count=1):
+        """Create doors above drawers (upper cabinet style).
+        
+        Args:
+            bay: The bay to add to
+            drawer_count: Number of drawers below (1, 2, or 3)
+        """
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = drawer_count
+        
+        # Doors on top, then drawers
+        sizes = [0]  # Doors get remaining space
+        for i in range(drawer_count):
+            sizes.append(units.inch(6))  # Each drawer ~6"
+        splitter.opening_sizes = sizes
+        
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Upper"
+        
+        inserts = [doors]
+        for i in range(drawer_count):
+            inserts.append(types_frameless.Drawer())
+        
+        splitter.opening_inserts = inserts
+        self.add_cage_to_bay(bay, splitter)
+
+    def create_doors_with_pullout(self, bay):
+        """Create doors above pullout (upper cabinet style)."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [0, units.inch(8)]  # Doors, pullout
+        
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Upper"
+        pullout = types_frameless.Pullout()
+        
+        splitter.opening_inserts = [doors, pullout]
+        self.add_cage_to_bay(bay, splitter)
+
+    def create_tall_pullout(self, bay):
+        """Create full height pullout (tall cabinet)."""
+        pullout = types_frameless.Pullout()
+        self.add_cage_to_bay(bay, pullout)
+
+    def create_doors_with_tall_pullout(self, bay, door_swing=2):
+        """Create doors above tall pullout (tall cabinet)."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [units.inch(18), 0]  # Doors, tall pullout
+        
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Base"
+        pullout = types_frameless.Pullout()
+        
+        splitter.opening_inserts = [doors, pullout]
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set door swing
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = door_swing
+
+    def create_double_appliance(self, bay):
+        """Create two appliance openings stacked."""
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [0, 0]  # Equal sizes
+        
+        appliance1 = types_frameless.Appliance()
+        appliance1.appliance_name = "Appliance"
+        appliance2 = types_frameless.Appliance()
+        appliance2.appliance_name = "Appliance"
+        
+        splitter.opening_inserts = [appliance1, appliance2]
+        self.add_cage_to_bay(bay, splitter)
+
     def create_door_drawer(self, bay):
         """Create door/drawer combo (drawer on top, doors below)."""
         props = bpy.context.scene.hb_frameless
@@ -187,9 +387,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             self.delete_bay_children(bay_obj)
             
             # Create new opening based on type
-            if self.opening_type == 'DOOR_DRAWER':
-                self.create_door_drawer(bay)
-            elif self.opening_type == 'LEFT_DOOR':
+            # Single Doors
+            if self.opening_type == 'LEFT_DOOR':
                 self.create_doors(bay, door_swing=0)
             elif self.opening_type == 'RIGHT_DOOR':
                 self.create_doors(bay, door_swing=1)
@@ -197,22 +396,66 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
                 self.create_doors(bay, door_swing=2)
             elif self.opening_type == 'FLIP_UP_DOOR':
                 self.create_flip_up_door(bay)
+            # Stacked Doors
+            elif self.opening_type == 'LEFT_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=0, stack_count=2)
+            elif self.opening_type == 'RIGHT_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=1, stack_count=2)
+            elif self.opening_type == 'DOUBLE_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=2, stack_count=2)
+            elif self.opening_type == 'LEFT_3_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=0, stack_count=3)
+            elif self.opening_type == 'RIGHT_3_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=1, stack_count=3)
+            elif self.opening_type == 'DOUBLE_3_STACKED_DOOR':
+                self.create_stacked_doors(bay, door_swing=2, stack_count=3)
+            # Drawer/Door Combos (Base)
+            elif self.opening_type == 'DOOR_DRAWER':
+                self.create_door_drawer(bay)
+            elif self.opening_type == '1_DRAWER_2_DOOR':
+                self.create_1_drawer_2_door(bay)
+            elif self.opening_type == '2_DRAWER_2_DOOR':
+                self.create_2_drawer_2_door(bay)
+            # Drawers
             elif self.opening_type == 'SINGLE_DRAWER':
                 self.create_drawer(bay)
-            elif self.opening_type == 'PULLOUT':
-                self.create_pullout(bay)
-            elif self.opening_type == 'FALSE_FRONT':
-                self.create_false_front(bay)
             elif self.opening_type == '2_DRAWER_STACK':
                 self.create_drawer_stack(bay, 2)
             elif self.opening_type == '3_DRAWER_STACK':
                 self.create_drawer_stack(bay, 3)
             elif self.opening_type == '4_DRAWER_STACK':
                 self.create_drawer_stack(bay, 4)
+            # Pullouts
+            elif self.opening_type == 'PULLOUT':
+                self.create_pullout(bay)
+            elif self.opening_type == 'PULLOUT_WITH_DRAWER':
+                self.create_pullout_with_drawer(bay)
+            elif self.opening_type == 'TALL_PULLOUT':
+                self.create_tall_pullout(bay)
+            elif self.opening_type == 'DOORS_WITH_TALL_PULLOUT':
+                self.create_doors_with_tall_pullout(bay)
+            # Upper Door/Drawer Combos
+            elif self.opening_type == 'DOORS_WITH_1_DRAWER':
+                self.create_doors_with_drawers(bay, drawer_count=1)
+            elif self.opening_type == 'DOORS_WITH_2_DRAWER':
+                self.create_doors_with_drawers(bay, drawer_count=2)
+            elif self.opening_type == 'DOORS_WITH_3_DRAWER':
+                self.create_doors_with_drawers(bay, drawer_count=3)
+            elif self.opening_type == 'DOORS_WITH_PULLOUT':
+                self.create_doors_with_pullout(bay)
+            # Other
+            elif self.opening_type == 'FALSE_FRONT':
+                self.create_false_front(bay)
+            elif self.opening_type == 'MICROWAVE_DRAWER':
+                self.create_microwave_drawer(bay)
             elif self.opening_type == 'OPEN':
                 pass  # No children needed for open
+            elif self.opening_type == 'OPEN_WITH_SHELVES':
+                self.create_open_with_shelves(bay)
             elif self.opening_type == 'APPLIANCE':
                 self.create_appliance(bay, self.appliance_name)
+            elif self.opening_type == 'DOUBLE_APPLIANCE':
+                self.create_double_appliance(bay)
             
             hb_utils.run_calc_fix(context, bay.obj)
             hb_utils.run_calc_fix(context, bay.obj)
