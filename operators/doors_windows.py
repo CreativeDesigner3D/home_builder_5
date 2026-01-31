@@ -284,6 +284,9 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
             exclude_obj=self.door.obj
         )
         
+        # Apply grid snapping
+        snap_x = hb_snap.snap_value_to_grid(snap_x)
+        
         # Clamp to wall bounds
         snap_x = max(0, min(snap_x, self.wall_length - door_width))
         
@@ -303,7 +306,7 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
         """Position door freely when not over a wall."""
         if self.door and self.hit_location:
             self.door.obj.parent = None
-            self.door.obj.location = self.hit_location
+            self.door.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
             self.door.obj.location.z = 0
 
     def update_header(self, context):
@@ -484,6 +487,9 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
             exclude_obj=self.window.obj
         )
         
+        # Apply grid snapping
+        snap_x = hb_snap.snap_value_to_grid(snap_x)
+        
         # Clamp to wall bounds
         snap_x = max(0, min(snap_x, self.wall_length - window_width))
         
@@ -503,7 +509,7 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         """Position window freely when not over a wall."""
         if self.window and self.hit_location:
             self.window.obj.parent = None
-            self.window.obj.location = self.hit_location
+            self.window.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
 
     def update_header(self, context):
         """Update header text with instructions."""

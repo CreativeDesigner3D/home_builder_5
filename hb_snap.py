@@ -192,3 +192,45 @@ def main(self, crtl_is_pressed, context):
         snap_to_object(self, context, depsgraph)
     elif not result:
         snap_to_grid(self, context, crtl_is_pressed)
+
+def snap_value_to_grid(value, unit_settings=None):
+    """Snap a value (in meters) to the nearest grid increment.
+    
+    Imperial: snaps to 1" (0.0254m)
+    Metric: snaps to 1mm (0.001m)
+    
+    Args:
+        value: Value in meters to snap
+        unit_settings: Blender unit settings (optional, will get from context if not provided)
+    
+    Returns:
+        Snapped value in meters
+    """
+    from . import units
+    
+    if unit_settings is None:
+        unit_settings = bpy.context.scene.unit_settings
+    
+    if unit_settings.system == 'IMPERIAL':
+        grid = units.inch(1)
+    else:
+        grid = units.millimeter(1)
+    
+    return round(value / grid) * grid
+
+
+def snap_vector_to_grid(vec, unit_settings=None):
+    """Snap a Vector's X and Y components to the grid.
+    
+    Args:
+        vec: mathutils.Vector to snap
+        unit_settings: Blender unit settings (optional)
+    
+    Returns:
+        New Vector with snapped X and Y, original Z
+    """
+    return Vector((
+        snap_value_to_grid(vec.x, unit_settings),
+        snap_value_to_grid(vec.y, unit_settings),
+        vec.z
+    ))

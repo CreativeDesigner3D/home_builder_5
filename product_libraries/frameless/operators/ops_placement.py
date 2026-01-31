@@ -1239,6 +1239,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Update preview cage
         self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
         
+        # Apply grid snapping when not using special snap modes
+        # (center snap, cage snap, fill mode all set snap_x precisely)
+        if not self.center_snap_state and not self.fill_mode:
+            snap_x = hb_snap.snap_value_to_grid(snap_x)
+        
         # Clamp snap_x to wall bounds
         total_width = self.individual_cabinet_width * self.cabinet_quantity
         snap_x = max(0, min(snap_x, self.wall_length - total_width))
@@ -1323,9 +1328,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.snap_cabinet:
             self.position_snapped_to_cabinet()
         else:
-            # Free placement on floor
+            # Free placement on floor (snapped to grid)
             self.preview_cage.obj.parent = None
-            self.preview_cage.obj.location = Vector(self.hit_location)
+            self.preview_cage.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
             # Set Z location based on cabinet/appliance type
             if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
                 self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)

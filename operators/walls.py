@@ -334,9 +334,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def set_wall_position_from_mouse(self):
         """Update wall position/rotation based on mouse location."""
         if not self.has_start_point:
-            # First point - just move the wall origin
+            # First point - just move the wall origin (snapped to grid)
             if self.hit_location:
-                self.current_wall.obj.location = self.hit_location
+                snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+                self.current_wall.obj.location = snapped_loc
         else:
             # Drawing length - calculate from start point
             x = self.hit_location[0] - self.start_point[0]
@@ -349,9 +350,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 snap_angle = round(math.degrees(angle) / 15) * 15
                 self.current_wall.obj.rotation_euler.z = math.radians(snap_angle)
                 
-                # Length is the full distance to cursor
+                # Length is the full distance to cursor (snapped to grid)
                 length = math.sqrt(x * x + y * y)
-                self.current_wall.set_input('Length', length)
+                self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length))
             else:
                 # Default mode - snap to orthogonal (90°) directions
                 if abs(x) > abs(y):
@@ -360,14 +361,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         self.current_wall.obj.rotation_euler.z = math.radians(0)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(180)
-                    self.current_wall.set_input('Length', abs(x))
+                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x)))
                 else:
                     # Vertical
                     if y > 0:
                         self.current_wall.obj.rotation_euler.z = math.radians(90)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(-90)
-                    self.current_wall.set_input('Length', abs(y))
+                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y)))
 
             self.update_dimension()
 
@@ -517,8 +518,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.has_start_point = True
                     self.clear_wall_highlight()
                 else:
-                    # Set first point normally
-                    self.start_point = Vector(self.hit_location)
+                    # Set first point normally (snapped to grid)
+                    self.start_point = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
                     self.has_start_point = True
             else:
                 # Confirm wall and start next
