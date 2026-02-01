@@ -136,6 +136,65 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         appliance.appliance_name = appliance_name
         self.add_cage_to_bay(bay, appliance)
 
+    def create_built_in_appliance(self, bay):
+        """Create built-in appliance: doors on top, appliance 30" in center, doors on bottom."""
+        # Top doors
+        top_doors = types_frameless.Doors()
+        top_doors.door_pull_location = "Upper"
+        top_doors.half_overlay_bottom = True
+        
+        # Center appliance
+        appliance = types_frameless.Appliance()
+        appliance.appliance_name = "Appliance"
+        
+        # Bottom doors
+        bottom_doors = types_frameless.Doors()
+        bottom_doors.door_pull_location = "Base"
+        bottom_doors.half_overlay_top = True
+        
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 2
+        splitter.opening_sizes = [0, units.inch(30), 0]  # Equal top/bottom, 30" center
+        splitter.opening_inserts = [top_doors, appliance, bottom_doors]
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set double doors
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = 2
+
+    def create_built_in_double_appliance(self, bay):
+        """Create built-in double appliance: doors on top, two appliances in center, drawer on bottom."""
+        props = bpy.context.scene.hb_frameless
+        
+        # Top doors
+        top_doors = types_frameless.Doors()
+        top_doors.door_pull_location = "Upper"
+        top_doors.half_overlay_bottom = True
+        
+        # First appliance
+        appliance1 = types_frameless.Appliance()
+        appliance1.appliance_name = "Appliance"
+        
+        # Second appliance
+        appliance2 = types_frameless.Appliance()
+        appliance2.appliance_name = "Appliance"
+        
+        # Bottom drawer
+        drawer = types_frameless.Drawer()
+        drawer.half_overlay_top = True
+        
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 3
+        splitter.opening_sizes = [0, units.inch(30), units.inch(30), props.top_drawer_front_height]
+        splitter.opening_inserts = [top_doors, appliance1, appliance2, drawer]
+        self.add_cage_to_bay(bay, splitter)
+        
+        # Set double doors
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = 2
+
     def create_open_with_shelves(self, bay):
         """Create open opening with adjustable shelves."""
         open_shelves = types_frameless.OpenWithShelves()
@@ -151,11 +210,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """
         cabinet_type = self.get_cabinet_type(bay.obj)
         
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = stack_count - 1
-        splitter.opening_sizes = [0] * stack_count  # Equal sizes
-        
-        # Create door inserts for each opening
+        # Create door inserts for each opening with proper half overlays
         inserts = []
         for i in range(stack_count):
             doors = types_frameless.Doors()
@@ -163,8 +218,18 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
                 doors.door_pull_location = "Upper"
             else:
                 doors.door_pull_location = "Base"
+            
+            # Set half overlays: top door needs bottom, bottom door needs top, middle needs both
+            if i > 0:  # Not the top door
+                doors.half_overlay_top = True
+            if i < stack_count - 1:  # Not the bottom door
+                doors.half_overlay_bottom = True
+            
             inserts.append(doors)
         
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = stack_count - 1
+        splitter.opening_sizes = [0] * stack_count  # Equal sizes
         splitter.opening_inserts = inserts
         self.add_cage_to_bay(bay, splitter)
         
@@ -175,14 +240,18 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_1_drawer_2_door(self, bay):
         """Create 1 drawer over double doors (base cabinet)."""
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = 1
-        splitter.opening_sizes = [units.inch(6), 0]  # Small drawer, rest for doors
+        props = bpy.context.scene.hb_frameless
         
         drawer = types_frameless.Drawer()
+        drawer.half_overlay_bottom = True
+        
         doors = types_frameless.Doors()
         doors.door_pull_location = "Base"
+        doors.half_overlay_top = True
         
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [props.top_drawer_front_height, 0]
         splitter.opening_inserts = [drawer, doors]
         self.add_cage_to_bay(bay, splitter)
         
@@ -192,17 +261,32 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
                 child['Door Swing'] = 2
 
     def create_2_drawer_2_door(self, bay):
-        """Create 2 drawers over double doors (base cabinet)."""
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = 2
-        splitter.opening_sizes = [units.inch(6), units.inch(6), 0]  # Two drawers, rest for doors
+        """Create 2 horizontal drawers (side by side) over double doors (base cabinet)."""
+        props = bpy.context.scene.hb_frameless
+        
+        # Create horizontal splitter with two drawers side by side
+        horiz_splitter = types_frameless.SplitterHorizontal()
+        horiz_splitter.splitter_qty = 1
+        horiz_splitter.opening_sizes = [0, 0]  # Equal widths
         
         drawer1 = types_frameless.Drawer()
+        drawer1.half_overlay_right = True
+        drawer1.half_overlay_bottom = True
         drawer2 = types_frameless.Drawer()
+        drawer2.half_overlay_left = True
+        drawer2.half_overlay_bottom = True
+        horiz_splitter.opening_inserts = [drawer1, drawer2]
+        
+        # Create doors for bottom
         doors = types_frameless.Doors()
         doors.door_pull_location = "Base"
+        doors.half_overlay_top = True
         
-        splitter.opening_inserts = [drawer1, drawer2, doors]
+        # Create vertical splitter with horizontal drawer section on top, doors below
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [props.top_drawer_front_height, 0]
+        splitter.opening_inserts = [horiz_splitter, doors]
         self.add_cage_to_bay(bay, splitter)
         
         # Set double doors
@@ -212,13 +296,17 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_pullout_with_drawer(self, bay):
         """Create pullout with drawer above."""
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = 1
-        splitter.opening_sizes = [units.inch(6), 0]  # Small drawer, rest for pullout
+        props = bpy.context.scene.hb_frameless
         
         drawer = types_frameless.Drawer()
-        pullout = types_frameless.Pullout()
+        drawer.half_overlay_bottom = True
         
+        pullout = types_frameless.Pullout()
+        pullout.half_overlay_top = True
+        
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [props.top_drawer_front_height, 0]
         splitter.opening_inserts = [drawer, pullout]
         self.add_cage_to_bay(bay, splitter)
 
@@ -242,35 +330,43 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             bay: The bay to add to
             drawer_count: Number of drawers below (1, 2, or 3)
         """
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = drawer_count
+        props = bpy.context.scene.hb_frameless
         
-        # Doors on top, then drawers
-        sizes = [0]  # Doors get remaining space
-        for i in range(drawer_count):
-            sizes.append(units.inch(6))  # Each drawer ~6"
-        splitter.opening_sizes = sizes
-        
+        # Doors on top with half overlay on bottom
         doors = types_frameless.Doors()
         doors.door_pull_location = "Upper"
+        doors.half_overlay_bottom = True
         
         inserts = [doors]
-        for i in range(drawer_count):
-            inserts.append(types_frameless.Drawer())
+        sizes = [0]  # Doors get remaining space
         
+        # Add drawers with proper half overlays
+        for i in range(drawer_count):
+            drawer = types_frameless.Drawer()
+            drawer.half_overlay_top = True
+            if i < drawer_count - 1:  # Not the last drawer
+                drawer.half_overlay_bottom = True
+            inserts.append(drawer)
+            sizes.append(props.top_drawer_front_height)
+        
+        splitter = types_frameless.SplitterVertical()
+        splitter.splitter_qty = drawer_count
+        splitter.opening_sizes = sizes
         splitter.opening_inserts = inserts
         self.add_cage_to_bay(bay, splitter)
 
     def create_doors_with_pullout(self, bay):
         """Create doors above pullout (upper cabinet style)."""
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Upper"
+        doors.half_overlay_bottom = True
+        
+        pullout = types_frameless.Pullout()
+        pullout.half_overlay_top = True
+        
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
         splitter.opening_sizes = [0, units.inch(8)]  # Doors, pullout
-        
-        doors = types_frameless.Doors()
-        doors.door_pull_location = "Upper"
-        pullout = types_frameless.Pullout()
-        
         splitter.opening_inserts = [doors, pullout]
         self.add_cage_to_bay(bay, splitter)
 
@@ -281,14 +377,16 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_doors_with_tall_pullout(self, bay, door_swing=2):
         """Create doors above tall pullout (tall cabinet)."""
+        doors = types_frameless.Doors()
+        doors.door_pull_location = "Base"
+        doors.half_overlay_bottom = True
+        
+        pullout = types_frameless.Pullout()
+        pullout.half_overlay_top = True
+        
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
         splitter.opening_sizes = [units.inch(18), 0]  # Doors, tall pullout
-        
-        doors = types_frameless.Doors()
-        doors.door_pull_location = "Base"
-        pullout = types_frameless.Pullout()
-        
         splitter.opening_inserts = [doors, pullout]
         self.add_cage_to_bay(bay, splitter)
         
@@ -297,22 +395,8 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             if 'Door Swing' in child:
                 child['Door Swing'] = door_swing
 
-    def create_double_appliance(self, bay):
-        """Create two appliance openings stacked."""
-        splitter = types_frameless.SplitterVertical()
-        splitter.splitter_qty = 1
-        splitter.opening_sizes = [0, 0]  # Equal sizes
-        
-        appliance1 = types_frameless.Appliance()
-        appliance1.appliance_name = "Appliance"
-        appliance2 = types_frameless.Appliance()
-        appliance2.appliance_name = "Appliance"
-        
-        splitter.opening_inserts = [appliance1, appliance2]
-        self.add_cage_to_bay(bay, splitter)
-
     def create_door_drawer(self, bay):
-        """Create door/drawer combo (drawer on top, doors below)."""
+        """Create door/drawer combo (drawer on top, single door below)."""
         props = bpy.context.scene.hb_frameless
         cabinet_type = self.get_cabinet_type(bay.obj)
         
@@ -331,13 +415,20 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         splitter.opening_sizes = [props.top_drawer_front_height, 0]
         splitter.opening_inserts = [drawer, door]
         self.add_cage_to_bay(bay, splitter)
+        
+        # Set single door (left swing)
+        for child in bay.obj.children_recursive:
+            if 'Door Swing' in child:
+                child['Door Swing'] = 0
 
     def create_drawer_stack(self, bay, count):
         """Create a stack of drawers."""
         props = bpy.context.scene.hb_frameless
-        equal_drawer_stack_heights = props.equal_drawer_stack_heights
         
-        if equal_drawer_stack_heights:
+        # 2 drawers are always equal, 3+ use top_drawer_front_height setting
+        if count == 2:
+            top_drawer_height = 0  # Equal
+        elif props.equal_drawer_stack_heights:
             top_drawer_height = 0
         else:
             top_drawer_height = props.top_drawer_front_height
@@ -453,9 +544,9 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             elif self.opening_type == 'OPEN_WITH_SHELVES':
                 self.create_open_with_shelves(bay)
             elif self.opening_type == 'APPLIANCE':
-                self.create_appliance(bay, self.appliance_name)
+                self.create_built_in_appliance(bay)
             elif self.opening_type == 'DOUBLE_APPLIANCE':
-                self.create_double_appliance(bay)
+                self.create_built_in_double_appliance(bay)
             
             hb_utils.run_calc_fix(context, bay.obj)
             hb_utils.run_calc_fix(context, bay.obj)
