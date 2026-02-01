@@ -13,14 +13,9 @@ def get_door_height(door_obj):
     Returns:
         Door height in meters, or 0 if not found
     """
-    try:
-        if hasattr(door_obj, 'home_builder') and door_obj.home_builder.mod_name:
-            mod = door_obj.modifiers.get(door_obj.home_builder.mod_name)
-            if mod and mod.node_group and 'Length' in mod.node_group.interface.items_tree:
-                node_input = mod.node_group.interface.items_tree['Length']
-                return mod[node_input.identifier]
-    except:
-        pass
+    door = hb_types.GeoNodeObject(door_obj)
+    if door.has_input('Length'):
+        return door.get_input('Length')
     return 0
 
 

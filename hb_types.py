@@ -316,7 +316,25 @@ class GeoNodeObject:
 
         node_input = mod.node_group.interface.items_tree[input_name]
         return mod[node_input.identifier]
-     
+
+    def has_input(self, input_name):
+        """Check if a geometry node input exists.
+        
+        Args:
+            input_name: Name of the input parameter to check
+            
+        Returns:
+            True if the input exists, False otherwise
+        """
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            return False
+        
+        mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
+        if not mod or not mod.node_group:
+            return False
+        
+        return input_name in mod.node_group.interface.items_tree
+
 
 class GeoNodeWall(GeoNodeObject):
 
