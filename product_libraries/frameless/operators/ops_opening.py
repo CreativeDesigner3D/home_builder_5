@@ -3,6 +3,97 @@ from .. import types_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, hb_types, units
 
+
+def get_door_height(door_obj):
+    """Get the door's height (Length) from the geometry node modifier.
+    
+    Args:
+        door_obj: The door object
+        
+    Returns:
+        Door height in meters, or 0 if not found
+    """
+    try:
+        if hasattr(door_obj, 'home_builder') and door_obj.home_builder.mod_name:
+            mod = door_obj.modifiers.get(door_obj.home_builder.mod_name)
+            if mod and mod.node_group and 'Length' in mod.node_group.interface.items_tree:
+                node_input = mod.node_group.interface.items_tree['Length']
+                return mod[node_input.identifier]
+    except:
+        pass
+    return 0
+
+
+def get_pull_location_from_position(door_obj):
+    """Determine pull location based on the door's world position and size.
+    
+    Uses the door's world Z position to determine whether the pull should be 
+    at Base (top of door), Upper (bottom of door), or Tall (middle of door) 
+    position. Also checks if the door is tall enough for the Tall pull location.
+    
+    Args:
+        door_obj: The door object (must have world matrix calculated)
+        
+    Returns:
+        'Base', 'Tall', or 'Upper'
+    """
+    # Get the door's world position
+    world_matrix = door_obj.matrix_world
+    
+    # Get Z position of door bottom in world space
+    door_bottom_z = world_matrix.translation.z
+    
+    # Thresholds in meters (converted from inches)
+    BASE_THRESHOLD = units.inch(36)    # Below 36" from floor - use Base
+    UPPER_THRESHOLD = units.inch(48)   # Above 48" from floor - use Upper
+    
+    # First determine location based on position
+    if door_bottom_z < BASE_THRESHOLD:
+        return 'Base'
+    elif door_bottom_z >= UPPER_THRESHOLD:
+        return 'Upper'
+    else:
+        # Would be Tall, but check if door is tall enough
+        door_height = get_door_height(door_obj)
+        tall_pull_location = door_obj.get('Tall Pull Vertical Location', units.inch(36))
+        
+        # If the door height is less than the tall pull vertical location,
+        # the pull would be placed off the door - use Base or Upper instead
+        if door_height > 0 and door_height < tall_pull_location:
+            # Door is too short for Tall - decide based on position
+            # If closer to floor, use Base; if higher up, use Upper
+            if door_bottom_z < units.inch(42):
+                return 'Base'
+            else:
+                return 'Upper'
+        
+        return 'Tall'
+
+
+def assign_pull_locations_to_cabinet(cabinet_bp):
+    """Assign appropriate pull locations to all doors in a cabinet.
+    
+    Scans all door fronts in the cabinet and assigns pull locations
+    based on their world positions and sizes.
+    
+    Args:
+        cabinet_bp: The cabinet base point object
+    """
+    # Update the scene to ensure world matrices are current
+    bpy.context.view_layer.update()
+    
+    for child in cabinet_bp.children_recursive:
+        if child.get('IS_DOOR_FRONT'):
+            pull_location = get_pull_location_from_position(child)
+            
+            # Set the Pull Location property (0=Base, 1=Tall, 2=Upper)
+            pull_index = {'Base': 0, 'Tall': 1, 'Upper': 2}.get(pull_location, 0)
+            
+            # Set the Pull Location directly on the object
+            if 'Pull Location' in child:
+                child['Pull Location'] = pull_index
+
+
 class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     bl_idname = "hb_frameless.change_bay_opening"
     bl_label = "Change Bay Opening"
@@ -589,6 +680,12 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             if cabinet_bp:
                 cabinets_to_update.add(cabinet_bp.name)
         
+        # Assign pull locations based on world position
+        for cabinet_name in cabinets_to_update:
+            cabinet_bp = bpy.data.objects.get(cabinet_name)
+            if cabinet_bp:
+                assign_pull_locations_to_cabinet(cabinet_bp)
+        
         # Reassign cabinet styles to apply materials to new parts
         for cabinet_name in cabinets_to_update:
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_name)
@@ -926,6 +1023,8 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)
         if cabinet_bp:
             hb_utils.run_calc_fix(context, cabinet_bp)
+            # Assign pull locations based on world position
+            assign_pull_locations_to_cabinet(cabinet_bp)
         
         return {'FINISHED'}
 
@@ -1223,6 +1322,8 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
             hb_utils.run_calc_fix(context, cabinet_bp)
+            # Assign pull locations based on world position
+            assign_pull_locations_to_cabinet(cabinet_bp)
             # Reassign cabinet style to apply materials to new parts
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
         
@@ -1502,6 +1603,8 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
             hb_utils.run_calc_fix(context, cabinet_bp)
+            # Assign pull locations based on world position
+            assign_pull_locations_to_cabinet(cabinet_bp)
             # Reassign cabinet style to apply materials to new parts
             bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet_bp.name)
         
