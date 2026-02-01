@@ -2607,7 +2607,7 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
 class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_details.add_dimension"
     bl_label = "Add Dimension"
-    bl_description = "Add a dimension annotation. Click two points, then set offset. Snaps to line vertices."
+    bl_description = "Add a dimension annotation. Click two points, then set offset. Snaps to line vertices. Press O for ortho lock."
     bl_options = {'UNDO'}
     
     # Dimension state
@@ -2620,6 +2620,10 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
     snap_point: Vector = None
     is_snapped: bool = False
     snap_screen_pos: tuple = None
+    
+    # Ortho mode - constrains dimension to horizontal or vertical
+    ortho_mode: bool = False
+    ortho_direction: str = 'AUTO'  # 'AUTO', 'HORIZONTAL', 'VERTICAL'
     
     # Draw handler
     _handle = None
@@ -2709,12 +2713,24 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
             bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
             self._handle = None
     
+    def _get_ortho_display(self) -> str:
+        """Get display text for ortho mode state."""
+        if not self.ortho_mode:
+            return ""
+        if self.ortho_direction == 'HORIZONTAL':
+            return " [ORTHO: H]"
+        elif self.ortho_direction == 'VERTICAL':
+            return " [ORTHO: V]"
+        return " [ORTHO]"
+    
     def update_header(self, context):
         snap_text = " [SNAP]" if self.is_snapped else ""
+        ortho_text = self._get_ortho_display()
+        
         if self.click_count == 0:
-            text = f"Click first point{snap_text} | Right-click/Esc to cancel"
+            text = f"Click first point{snap_text} | O: ortho | Right-click/Esc to cancel"
         elif self.click_count == 1:
-            text = f"Click second point{snap_text} | Right-click/Esc to cancel"
+            text = f"Click second point{snap_text}{ortho_text} | O: toggle ortho | Right-click/Esc to cancel"
         else:
             text = "Move to set offset, then click to place | Right-click/Esc to cancel"
         
@@ -2730,6 +2746,8 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
         self.snap_point = None
         self.is_snapped = False
         self.snap_screen_pos = None
+        self.ortho_mode = False
+        self.ortho_direction = 'AUTO'
         
         # Add draw handler for snap indicator
         args = (self, context)
@@ -2770,6 +2788,22 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
             # Have first point, updating length
             dx = hit.x - self.first_point.x
             dy = hit.y - self.first_point.y
+            
+            # Apply ortho constraint if enabled
+            if self.ortho_mode:
+                # Auto-detect direction based on dominant axis
+                if self.ortho_direction == 'AUTO':
+                    if abs(dx) >= abs(dy):
+                        self.ortho_direction = 'HORIZONTAL'
+                    else:
+                        self.ortho_direction = 'VERTICAL'
+                
+                # Project to constrained axis
+                if self.ortho_direction == 'HORIZONTAL':
+                    dy = 0  # Zero out vertical component
+                else:  # VERTICAL
+                    dx = 0  # Zero out horizontal component
+            
             length = math.sqrt(dx * dx + dy * dy)
             angle = math.atan2(dy, dx)
             
@@ -2807,7 +2841,18 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
                 self.dim.obj.location = self.first_point
                 self.click_count = 1
             elif self.click_count == 1:
-                self.second_point = hit.copy()
+                # Apply ortho constraint to stored second point
+                if self.ortho_mode:
+                    dx = hit.x - self.first_point.x
+                    dy = hit.y - self.first_point.y
+                    if self.ortho_direction == 'HORIZONTAL':
+                        self.second_point = Vector((hit.x, self.first_point.y, 0))
+                    elif self.ortho_direction == 'VERTICAL':
+                        self.second_point = Vector((self.first_point.x, hit.y, 0))
+                    else:
+                        self.second_point = hit.copy()
+                else:
+                    self.second_point = hit.copy()
                 self.click_count = 2
             else:
                 # Confirm dimension
@@ -2825,6 +2870,25 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Pla
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
+        
+        # O key - toggle ortho mode (horizontal/vertical dimension constraint)
+        if event.type == 'O' and event.value == 'PRESS':
+            if self.ortho_mode:
+                # Cycle through modes: AUTO -> HORIZONTAL -> VERTICAL -> OFF
+                if self.ortho_direction == 'AUTO':
+                    self.ortho_direction = 'HORIZONTAL'
+                elif self.ortho_direction == 'HORIZONTAL':
+                    self.ortho_direction = 'VERTICAL'
+                else:
+                    # Turn off ortho mode
+                    self.ortho_mode = False
+                    self.ortho_direction = 'AUTO'
+            else:
+                # Turn on ortho mode
+                self.ortho_mode = True
+                self.ortho_direction = 'AUTO'
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
         
         if hb_snap.event_is_pass_through(event):
             return {'PASS_THROUGH'}
