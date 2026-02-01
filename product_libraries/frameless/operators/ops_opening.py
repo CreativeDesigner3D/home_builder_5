@@ -95,15 +95,43 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             return cabinet_bp.get('CABINET_TYPE', 'BASE')
         return 'BASE'
 
+    def get_pull_location(self, cabinet_type, position, total_openings):
+        """Determine pull location based on cabinet type and opening position.
+        
+        Args:
+            cabinet_type: 'BASE', 'UPPER', or 'TALL'
+            position: 0-indexed position from top (0 = top opening)
+            total_openings: Total number of openings in the split
+            
+        Returns:
+            'Base', 'Tall', or 'Upper'
+        """
+        if cabinet_type == 'BASE':
+            return 'Base'
+        elif cabinet_type == 'UPPER':
+            return 'Upper'
+        elif cabinet_type == 'TALL':
+            if total_openings == 1:
+                return 'Tall'
+            elif total_openings == 2:
+                # Top opening uses Upper, bottom uses Base
+                return 'Upper' if position == 0 else 'Base'
+            else:
+                # 3+ openings: top=Upper, middle=Tall, bottom=Base
+                if position == 0:
+                    return 'Upper'
+                elif position == total_openings - 1:
+                    return 'Base'
+                else:
+                    return 'Tall'
+        return 'Base'
+
     def create_doors(self, bay, door_swing):
         """Create doors opening with specified swing direction."""
         cabinet_type = self.get_cabinet_type(bay.obj)
         
         doors = types_frameless.Doors()
-        if cabinet_type == 'UPPER':
-            doors.door_pull_location = "Upper"
-        else:
-            doors.door_pull_location = "Base"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 0, 1)
         
         self.add_cage_to_bay(bay, doors)
         
@@ -138,18 +166,20 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_built_in_appliance(self, bay):
         """Create built-in appliance: doors on top, appliance 30" in center, doors on bottom."""
-        # Top doors
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
+        # Top doors (position 0 of 3)
         top_doors = types_frameless.Doors()
-        top_doors.door_pull_location = "Upper"
+        top_doors.door_pull_location = self.get_pull_location(cabinet_type, 0, 3)
         top_doors.half_overlay_bottom = True
         
-        # Center appliance
+        # Center appliance (position 1 of 3)
         appliance = types_frameless.Appliance()
         appliance.appliance_name = "Appliance"
         
-        # Bottom doors
+        # Bottom doors (position 2 of 3)
         bottom_doors = types_frameless.Doors()
-        bottom_doors.door_pull_location = "Base"
+        bottom_doors.door_pull_location = self.get_pull_location(cabinet_type, 2, 3)
         bottom_doors.half_overlay_top = True
         
         splitter = types_frameless.SplitterVertical()
@@ -166,21 +196,22 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     def create_built_in_double_appliance(self, bay):
         """Create built-in double appliance: doors on top, two appliances in center, drawer on bottom."""
         props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
         
-        # Top doors
+        # Top doors (position 0 of 4)
         top_doors = types_frameless.Doors()
-        top_doors.door_pull_location = "Upper"
+        top_doors.door_pull_location = self.get_pull_location(cabinet_type, 0, 4)
         top_doors.half_overlay_bottom = True
         
-        # First appliance
+        # First appliance (position 1 of 4)
         appliance1 = types_frameless.Appliance()
         appliance1.appliance_name = "Appliance"
         
-        # Second appliance
+        # Second appliance (position 2 of 4)
         appliance2 = types_frameless.Appliance()
         appliance2.appliance_name = "Appliance"
         
-        # Bottom drawer
+        # Bottom drawer (position 3 of 4)
         drawer = types_frameless.Drawer()
         drawer.half_overlay_top = True
         
@@ -210,14 +241,11 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """
         cabinet_type = self.get_cabinet_type(bay.obj)
         
-        # Create door inserts for each opening with proper half overlays
+        # Create door inserts for each opening with proper half overlays and pull locations
         inserts = []
         for i in range(stack_count):
             doors = types_frameless.Doors()
-            if cabinet_type == 'UPPER':
-                doors.door_pull_location = "Upper"
-            else:
-                doors.door_pull_location = "Base"
+            doors.door_pull_location = self.get_pull_location(cabinet_type, i, stack_count)
             
             # Set half overlays: top door needs bottom, bottom door needs top, middle needs both
             if i > 0:  # Not the top door
@@ -241,12 +269,13 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     def create_1_drawer_2_door(self, bay):
         """Create 1 drawer over double doors (base cabinet)."""
         props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
         
         drawer = types_frameless.Drawer()
         drawer.half_overlay_bottom = True
         
         doors = types_frameless.Doors()
-        doors.door_pull_location = "Base"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)  # position 1 of 2
         doors.half_overlay_top = True
         
         splitter = types_frameless.SplitterVertical()
@@ -263,6 +292,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     def create_2_drawer_2_door(self, bay):
         """Create 2 horizontal drawers (side by side) over double doors (base cabinet)."""
         props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
         
         # Create horizontal splitter with two drawers side by side
         horiz_splitter = types_frameless.SplitterHorizontal()
@@ -279,7 +309,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         # Create doors for bottom
         doors = types_frameless.Doors()
-        doors.door_pull_location = "Base"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)  # position 1 of 2
         doors.half_overlay_top = True
         
         # Create vertical splitter with horizontal drawer section on top, doors below
@@ -331,10 +361,12 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
             drawer_count: Number of drawers below (1, 2, or 3)
         """
         props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        total_openings = drawer_count + 1
         
         # Doors on top with half overlay on bottom
         doors = types_frameless.Doors()
-        doors.door_pull_location = "Upper"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 0, total_openings)  # position 0
         doors.half_overlay_bottom = True
         
         inserts = [doors]
@@ -357,8 +389,10 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_doors_with_pullout(self, bay):
         """Create doors above pullout (upper cabinet style)."""
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
         doors = types_frameless.Doors()
-        doors.door_pull_location = "Upper"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 0, 2)  # position 0 of 2
         doors.half_overlay_bottom = True
         
         pullout = types_frameless.Pullout()
@@ -377,8 +411,10 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_doors_with_tall_pullout(self, bay, door_swing=2):
         """Create doors above tall pullout (tall cabinet)."""
+        cabinet_type = self.get_cabinet_type(bay.obj)
+        
         doors = types_frameless.Doors()
-        doors.door_pull_location = "Base"
+        doors.door_pull_location = self.get_pull_location(cabinet_type, 0, 2)  # position 0 of 2
         doors.half_overlay_bottom = True
         
         pullout = types_frameless.Pullout()
@@ -405,10 +441,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         door = types_frameless.Doors()
         door.half_overlay_top = True
-        if cabinet_type == 'UPPER':
-            door.door_pull_location = "Upper"
-        else:
-            door.door_pull_location = "Base"
+        door.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)  # position 1 of 2
 
         splitter = types_frameless.SplitterVertical()
         splitter.splitter_qty = 1
@@ -768,8 +801,26 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         cabinet_type = self.get_cabinet_type(opening.obj)
         
         doors = types_frameless.Doors()
+        
+        # Determine pull location based on cabinet type and position
+        # half_top=True means there's an opening above (not at top)
+        # half_bottom=True means there's an opening below (not at bottom)
+        is_top = not half_top
+        is_bottom = not half_bottom
+        
         if cabinet_type == 'UPPER':
             doors.door_pull_location = "Upper"
+        elif cabinet_type == 'TALL':
+            if is_top and not is_bottom:
+                doors.door_pull_location = "Upper"
+            elif is_bottom and not is_top:
+                doors.door_pull_location = "Base"
+            elif is_top and is_bottom:
+                # Single opening - use Tall
+                doors.door_pull_location = "Tall"
+            else:
+                # Middle opening
+                doors.door_pull_location = "Tall"
         else:
             doors.door_pull_location = "Base"
         
@@ -1033,18 +1084,26 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
             is_bottom: Whether this is the bottommost opening
             opening_bottom_z: Z position of opening bottom from floor (meters)
         """
-        # Threshold for "upper" pull location - 48 inches from floor
-        UPPER_PULL_THRESHOLD = units.inch(48)
-        
         if insert_type == 'DOORS':
             doors = types_frameless.Doors()
+            
+            # Determine pull location based on cabinet type and position
             if cabinet_type == 'UPPER':
                 doors.door_pull_location = "Upper"
-            elif cabinet_type == 'TALL' and opening_bottom_z > UPPER_PULL_THRESHOLD:
-                # For tall cabinets, use Upper pull location for openings far from floor
-                doors.door_pull_location = "Upper"
+            elif cabinet_type == 'TALL':
+                if is_top and not is_bottom:
+                    doors.door_pull_location = "Upper"
+                elif is_bottom and not is_top:
+                    doors.door_pull_location = "Base"
+                elif is_top and is_bottom:
+                    # Single opening - use Tall
+                    doors.door_pull_location = "Tall"
+                else:
+                    # Middle opening
+                    doors.door_pull_location = "Tall"
             else:
                 doors.door_pull_location = "Base"
+            
             if not is_top:
                 doors.half_overlay_top = True
             if not is_bottom:
@@ -1355,8 +1414,13 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         """Create an insert based on the type."""
         if insert_type == 'DOORS':
             doors = types_frameless.Doors()
+            # Determine pull location based on cabinet type
+            # For horizontal splits, all openings are at same height
             if cabinet_type == 'UPPER':
                 doors.door_pull_location = "Upper"
+            elif cabinet_type == 'TALL':
+                # For horizontal splits in tall cabinets, use Tall as default
+                doors.door_pull_location = "Tall"
             else:
                 doors.door_pull_location = "Base"
             # Set half overlays for side-by-side openings
