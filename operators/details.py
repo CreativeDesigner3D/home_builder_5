@@ -2604,296 +2604,168 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
 # DIMENSION OPERATOR (2D Detail specific)
 # =============================================================================
 
-class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.PlacementMixin):
+class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.DimensionOperatorMixin):
     bl_idname = "home_builder_details.add_dimension"
     bl_label = "Add Dimension"
-    bl_description = "Add a dimension annotation. Click two points, then set offset. Snaps to line vertices. Press O for ortho lock."
+    bl_description = "Add a dimension annotation. Click two points, then set offset. Press O for ortho lock."
     bl_options = {'UNDO'}
     
-    # Dimension state
-    dim: hb_types.GeoNodeDimension = None
-    first_point: Vector = None
-    second_point: Vector = None
-    click_count: int = 0
+    # Preview dimension object
+    preview_dim = None
     
-    # Snap indicator
-    snap_point: Vector = None
-    is_snapped: bool = False
-    snap_screen_pos: tuple = None
+    # Store region for snapping
+    region = None
+    region_data = None
     
-    # Ortho mode - constrains dimension to horizontal or vertical
-    ortho_mode: bool = False
-    ortho_direction: str = 'AUTO'  # 'AUTO', 'HORIZONTAL', 'VERTICAL'
-    
-    # Draw handler
-    _handle = None
-    
-    def create_dimension(self, context):
-        """Create dimension object."""
-        hb_scene = context.scene.home_builder
+    def get_snap_point(self, context, coord: tuple):
+        """Snap to curve vertices in detail views."""
+        from bpy_extras import view3d_utils
         
-        self.dim = hb_types.GeoNodeDimension()
-        self.dim.create("Dimension")
-        self.dim.obj['IS_2D_ANNOTATION'] = True
+        mouse_pos = Vector((coord[0], coord[1]))
+        best_point = None
+        best_screen = None
+        best_distance = self.SNAP_RADIUS
         
-        # Apply dimension settings from scene
-        self.dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
-        self.dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
-        
-        self.register_placement_object(self.dim.obj)
-    
-    def get_curve_vertices(self, context) -> list:
-        """Get all curve vertices in the scene as world coordinates."""
-        vertices = []
         for obj in context.scene.objects:
-            if obj.type == 'CURVE' and obj != self.dim.obj:
+            if obj.type == 'CURVE' and (not self.preview_dim or obj != self.preview_dim.obj):
                 matrix = obj.matrix_world
                 for spline in obj.data.splines:
                     for point in spline.points:
-                        # Convert to world coordinates
                         world_co = matrix @ Vector((point.co[0], point.co[1], point.co[2]))
-                        vertices.append(world_co)
-                    # Also add bezier points if any
+                        screen_co = view3d_utils.location_3d_to_region_2d(
+                            self.region, self.region_data, world_co)
+                        if screen_co:
+                            distance = (screen_co - mouse_pos).length
+                            if distance < best_distance:
+                                best_point = Vector((world_co.x, world_co.y, 0))
+                                best_screen = (screen_co.x, screen_co.y)
+                                best_distance = distance
                     for point in spline.bezier_points:
                         world_co = matrix @ point.co
-                        vertices.append(world_co)
-        return vertices
+                        screen_co = view3d_utils.location_3d_to_region_2d(
+                            self.region, self.region_data, world_co)
+                        if screen_co:
+                            distance = (screen_co - mouse_pos).length
+                            if distance < best_distance:
+                                best_point = Vector((world_co.x, world_co.y, 0))
+                                best_screen = (screen_co.x, screen_co.y)
+                                best_distance = distance
+        
+        if best_point:
+            return (best_point, best_screen, True)
+        
+        plane_point = self.get_plane_point(context, coord)
+        return (plane_point, coord, False)
     
-    def snap_to_curves(self, context) -> Vector:
-        """Try to snap to nearby curve vertices. Returns snapped point or None."""
+    def get_plane_point(self, context, coord: tuple):
+        """Get point on XY plane (Z=0) for detail views."""
         from bpy_extras import view3d_utils
         
-        vertices = self.get_curve_vertices(context)
-        if not vertices:
-            return None
+        origin = view3d_utils.region_2d_to_origin_3d(self.region, self.region_data, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(self.region, self.region_data, coord)
         
-        best_vertex = None
-        best_distance = SNAP_RADIUS
+        if abs(direction.z) > 0.0001:
+            t = -origin.z / direction.z
+            point = origin + direction * t
+            return Vector((point.x, point.y, 0))
         
-        for co in vertices:
-            # Project vertex to 2D screen space
-            co2D = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, co)
-            if co2D is not None:
-                distance = (co2D - self.mouse_pos).length
-                if distance < best_distance:
-                    best_vertex = co.copy()
-                    best_distance = distance
-        
-        return best_vertex
-    
-    def get_snapped_position(self, context) -> Vector:
-        """Get position, snapping to curves if possible."""
-        from bpy_extras import view3d_utils
-        
-        # First try curve snap
-        snap = self.snap_to_curves(context)
-        if snap:
-            self.is_snapped = True
-            self.snap_point = snap
-            # Store screen position for visual indicator
-            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
-            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((snap.x, snap.y, 0))
-        
-        # Fall back to grid/raycast hit
-        self.is_snapped = False
-        self.snap_point = None
-        if self.hit_location:
-            # Store screen position for visual indicator
-            screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
-            self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((self.hit_location.x, self.hit_location.y, 0))
-        
-        self.snap_screen_pos = None
         return Vector((0, 0, 0))
     
-    def _remove_draw_handler(self):
-        """Remove the draw handler."""
-        if self._handle:
-            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
-            self._handle = None
+    def create_preview_dimension(self, context):
+        """Create the preview dimension object."""
+        self.preview_dim = hb_types.GeoNodeDimension()
+        self.preview_dim.create("Dimension")
+        self.preview_dim.obj['IS_2D_ANNOTATION'] = True
+        self.preview_dim.obj.location = self.first_point
     
-    def _get_ortho_display(self) -> str:
-        """Get display text for ortho mode state."""
-        if not self.ortho_mode:
-            return ""
-        if self.ortho_direction == 'HORIZONTAL':
-            return " [ORTHO: H]"
-        elif self.ortho_direction == 'VERTICAL':
-            return " [ORTHO: V]"
-        return " [ORTHO]"
+    def update_dimension_preview(self, context):
+        """Update the preview dimension as mouse moves."""
+        if not self.preview_dim:
+            return
+        
+        if self.dim_state == self.DIM_STATE_SECOND:
+            # Update from first_point to current_point
+            p1 = self.first_point
+            p2 = self.current_point
+            
+            dx = p2.x - p1.x
+            dy = p2.y - p1.y
+            length = math.sqrt(dx * dx + dy * dy)
+            angle = math.atan2(dy, dx)
+            
+            self.preview_dim.obj.location = p1
+            self.preview_dim.obj.rotation_euler.z = angle
+            if length > 0.0001:
+                self.preview_dim.obj.data.splines[0].points[1].co = (length, 0, 0, 1)
+        
+        elif self.dim_state == self.DIM_STATE_OFFSET:
+            # Update offset/leader length
+            p1 = self.first_point
+            p2 = self.second_point
+            offset_pos = self.current_point
+            
+            dx = p2.x - p1.x
+            dy = p2.y - p1.y
+            length = math.sqrt(dx * dx + dy * dy)
+            
+            if length > 0.0001:
+                line_dir = Vector((dx, dy, 0)).normalized()
+                to_offset = offset_pos - p1
+                parallel = to_offset.dot(line_dir)
+                perp = to_offset - line_dir * parallel
+                offset = perp.length
+                
+                cross = line_dir.x * to_offset.y - line_dir.y * to_offset.x
+                if cross < 0:
+                    offset = -offset
+                
+                self.preview_dim.set_input("Leader Length", offset)
     
-    def update_header(self, context):
-        snap_text = " [SNAP]" if self.is_snapped else ""
-        ortho_text = self._get_ortho_display()
-        
-        if self.click_count == 0:
-            text = f"Click first point{snap_text} | O: ortho | Right-click/Esc to cancel"
-        elif self.click_count == 1:
-            text = f"Click second point{snap_text}{ortho_text} | O: toggle ortho | Right-click/Esc to cancel"
-        else:
-            text = "Move to set offset, then click to place | Right-click/Esc to cancel"
-        
-        hb_placement.draw_header_text(context, text)
+    def finalize_dimension(self, context):
+        """Finalize the dimension."""
+        if self.preview_dim:
+            self.preview_dim.set_decimal()
     
-    def execute(self, context):
-        self.init_placement(context)
+    def cancel_dimension(self, context):
+        """Delete the preview dimension on cancel."""
+        if self.preview_dim and self.preview_dim.obj:
+            bpy.data.objects.remove(self.preview_dim.obj, do_unlink=True)
+        self.preview_dim = None
+    
+    def invoke(self, context, event):
+        self.region = context.region
+        self.region_data = context.region_data
         
-        self.dim = None
-        self.first_point = None
-        self.second_point = None
-        self.click_count = 0
-        self.snap_point = None
-        self.is_snapped = False
-        self.snap_screen_pos = None
-        self.ortho_mode = False
-        self.ortho_direction = 'AUTO'
+        self.init_dimension_state()
+        self.preview_dim = None
         
-        # Add draw handler for snap indicator
-        args = (self, context)
-        self._handle = bpy.types.SpaceView3D.draw_handler_add(
-            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
-        
-        self.create_dimension(context)
+        self.add_dimension_draw_handler(context)
         
         context.window_manager.modal_handler_add(self)
+        context.window.cursor_set('CROSSHAIR')
+        self.update_dimension_header(context)
+        
         return {'RUNNING_MODAL'}
     
     def modal(self, context, event):
-        context.window.cursor_set('CROSSHAIR')
         context.area.tag_redraw()
         
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
         
-        # Update base snap (for grid/floor)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(True)
-        self.update_snap(context, event)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(False)
+        result = self.handle_dimension_event(context, event)
         
-        # Get position with curve snapping (only for first two clicks)
-        if self.click_count < 2:
-            hit = self.get_snapped_position(context)
-        else:
-            hit = Vector(self.hit_location) if self.hit_location else Vector((0, 0, 0))
-            hit.z = 0
-        
-        # Update dimension based on state
-        if self.click_count == 0:
-            # Following mouse for first point
-            self.dim.obj.location = hit
-        elif self.click_count == 1:
-            # Have first point, updating length
-            dx = hit.x - self.first_point.x
-            dy = hit.y - self.first_point.y
-            
-            # Apply ortho constraint if enabled
-            if self.ortho_mode:
-                # Auto-detect direction based on dominant axis
-                if self.ortho_direction == 'AUTO':
-                    if abs(dx) >= abs(dy):
-                        self.ortho_direction = 'HORIZONTAL'
-                    else:
-                        self.ortho_direction = 'VERTICAL'
-                
-                # Project to constrained axis
-                if self.ortho_direction == 'HORIZONTAL':
-                    dy = 0  # Zero out vertical component
-                else:  # VERTICAL
-                    dx = 0  # Zero out horizontal component
-            
-            length = math.sqrt(dx * dx + dy * dy)
-            angle = math.atan2(dy, dx)
-            
-            self.dim.obj.rotation_euler.z = angle
-            self.dim.obj.data.splines[0].points[1].co = (length, 0, 0, 1)
-        elif self.click_count == 2:
-            # Have both points, setting offset
-            # Calculate perpendicular distance from hit to line
-            line_vec = self.second_point - self.first_point
-            line_len = line_vec.length
-            if line_len > 0.0001:
-                line_dir = line_vec.normalized()
-                to_hit = hit - self.first_point
-                
-                # Project to get perpendicular distance
-                parallel = to_hit.dot(line_dir)
-                perp = to_hit - line_dir * parallel
-                offset = perp.length
-                
-                # Determine sign based on which side of line
-                # Cross product Z component: positive = left side, negative = right side
-                cross = line_dir.x * to_hit.y - line_dir.y * to_hit.x
-                if cross < 0:
-                    offset = -offset
-                
-                # Allow negative leader length for dimensions on either side
-                self.dim.set_input("Leader Length", offset)
-        
-        self.update_header(context)
-        
-        # Left click
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if self.click_count == 0:
-                self.first_point = hit.copy()
-                self.dim.obj.location = self.first_point
-                self.click_count = 1
-            elif self.click_count == 1:
-                # Apply ortho constraint to stored second point
-                if self.ortho_mode:
-                    dx = hit.x - self.first_point.x
-                    dy = hit.y - self.first_point.y
-                    if self.ortho_direction == 'HORIZONTAL':
-                        self.second_point = Vector((hit.x, self.first_point.y, 0))
-                    elif self.ortho_direction == 'VERTICAL':
-                        self.second_point = Vector((self.first_point.x, hit.y, 0))
-                    else:
-                        self.second_point = hit.copy()
-                else:
-                    self.second_point = hit.copy()
-                self.click_count = 2
-            else:
-                # Confirm dimension
-                self._remove_draw_handler()
-                if self.dim.obj in self.placement_objects:
-                    self.placement_objects.remove(self.dim.obj)
-                hb_placement.clear_header_text(context)
-                self.dim.set_decimal()
-                return {'FINISHED'}
-            return {'RUNNING_MODAL'}
-        
-        # Right click / Escape - cancel
-        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
-            self._remove_draw_handler()
-            self.cancel_placement(context)
-            hb_placement.clear_header_text(context)
+        if result == 'FINISHED':
+            return {'FINISHED'}
+        elif result == 'CANCELLED':
             return {'CANCELLED'}
-        
-        # O key - toggle ortho mode (horizontal/vertical dimension constraint)
-        if event.type == 'O' and event.value == 'PRESS':
-            if self.ortho_mode:
-                # Cycle through modes: AUTO -> HORIZONTAL -> VERTICAL -> OFF
-                if self.ortho_direction == 'AUTO':
-                    self.ortho_direction = 'HORIZONTAL'
-                elif self.ortho_direction == 'HORIZONTAL':
-                    self.ortho_direction = 'VERTICAL'
-                else:
-                    # Turn off ortho mode
-                    self.ortho_mode = False
-                    self.ortho_direction = 'AUTO'
-            else:
-                # Turn on ortho mode
-                self.ortho_mode = True
-                self.ortho_direction = 'AUTO'
-            self.update_header(context)
-            return {'RUNNING_MODAL'}
-        
-        if hb_snap.event_is_pass_through(event):
+        elif result == 'PASS_THROUGH':
             return {'PASS_THROUGH'}
+        elif result == 'RUNNING_MODAL':
+            return {'RUNNING_MODAL'}
         
         return {'RUNNING_MODAL'}
+
 
 
 # =============================================================================

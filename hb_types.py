@@ -504,17 +504,35 @@ class GeoNodeDimension(GeoNodeObject):
         self.set_input("Text Size",props.annotation_dimension_text_size)
 
     def set_decimal(self):
+        """Calculate and set appropriate decimal precision for the dimension.
+        
+        Handles floating point precision issues by:
+        1. Rounding to 4 decimal places first
+        2. Checking if value is very close to a whole number
+        3. Stripping trailing zeros to show only meaningful decimals
+        """
         p1 = self.obj.data.splines[0].points[0].co
         p2 = self.obj.data.splines[0].points[1].co 
 
         dist = math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2 + (p1[2] - p2[2]) ** 2)   
-
-        text = str(round(units.meter_to_inch(math.fabs(dist)),4))
-        inch_value, decimal_value = text.split(".")
-        if decimal_value == "0":
-            self.set_input("Decimals",0)
+        inch_value = units.meter_to_inch(math.fabs(dist))
+        
+        # Round to 4 decimal places
+        rounded = round(inch_value, 4)
+        
+        # Check if it's effectively a whole number (within 1/1000" tolerance)
+        if abs(rounded - round(rounded)) < 0.001:
+            self.set_input("Decimals", 0)
+            return
+        
+        # Convert to string and strip trailing zeros
+        text = f"{rounded:.4f}".rstrip('0').rstrip('.')
+        
+        if '.' not in text:
+            self.set_input("Decimals", 0)
         else:
-            self.set_input("Decimals",len(decimal_value))
+            decimal_part = text.split('.')[1]
+            self.set_input("Decimals", len(decimal_part))
 
 class CabinetPartModifier(GeoNodeObject):
 
