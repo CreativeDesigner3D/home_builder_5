@@ -855,7 +855,11 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
         col.separator()
         
         # Text annotation
-        col.operator("home_builder_details.add_text", 
+        if is_detail_view:
+            col.operator("home_builder_details.add_text", 
+                        text="Add Text", icon='FONT_DATA')
+        else:
+            col.operator("home_builder_layouts.add_text", 
                     text="Add Text", icon='FONT_DATA')
         
         # Dimension - use appropriate operator based on view type

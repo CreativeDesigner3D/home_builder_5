@@ -3425,6 +3425,349 @@ class home_builder_layouts_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         return {'RUNNING_MODAL'}
 
 
+class home_builder_layouts_OT_add_text(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_layouts.add_text"
+    bl_label = "Add Text"
+    bl_description = "Add text annotation. Click to place, then Tab to edit."
+    bl_options = {'UNDO'}
+    
+    # Snap radius in pixels
+    SNAP_RADIUS = 20
+    
+    # Text state
+    text_obj = None
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # View plane info
+    view_plane_normal: Vector = None
+    view_plane_point: Vector = None
+    view_right: Vector = None
+    view_up: Vector = None
+    
+    # Draw handler
+    _handle = None
+    
+    @classmethod
+    def poll(cls, context):
+        return (context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')) and context.scene.camera
+    
+    def _setup_view_plane(self, context):
+        """Calculate the view plane based on camera orientation."""
+        camera = context.scene.camera
+        if not camera:
+            return False
+        
+        cam_matrix = camera.matrix_world
+        
+        cam_forward = -(cam_matrix.to_3x3() @ Vector((0, 0, 1)))
+        cam_forward.normalize()
+        
+        cam_right = cam_matrix.to_3x3() @ Vector((1, 0, 0))
+        cam_right.normalize()
+        
+        cam_up = cam_matrix.to_3x3() @ Vector((0, 1, 0))
+        cam_up.normalize()
+        
+        self.view_plane_normal = -cam_forward
+        self.view_plane_point = camera.location + cam_forward * 0.5
+        self.view_right = cam_right
+        self.view_up = cam_up
+        
+        return True
+    
+    def _get_view_plane_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the view plane."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        denom = ray_direction.dot(self.view_plane_normal)
+        if abs(denom) < 0.0001:
+            return None
+        
+        t = (self.view_plane_point - ray_origin).dot(self.view_plane_normal) / denom
+        return ray_origin + ray_direction * t
+    
+    def _project_to_view_plane(self, world_point: Vector) -> Vector:
+        """Project a world point onto the view plane."""
+        offset = world_point - self.view_plane_point
+        dist_to_plane = offset.dot(self.view_plane_normal)
+        return world_point - self.view_plane_normal * dist_to_plane
+    
+    def _get_text_rotation(self, context):
+        """Get the rotation needed to face the camera."""
+        # Simply use the camera's rotation - text should be parallel to view plane
+        camera = context.scene.camera
+        if camera:
+            return camera.rotation_euler.copy()
+        return Euler((0, 0, 0))
+    
+    def get_snap_point(self, context, coord: tuple):
+        """Get snapped point for layout views."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None, None, False
+        
+        depsgraph = context.evaluated_depsgraph_get()
+        
+        best_dist = self.SNAP_RADIUS
+        best_point = None
+        best_screen_pos = None
+        is_snapped = False
+        
+        for obj in context.scene.objects:
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            
+            if self.text_obj and obj == self.text_obj:
+                continue
+            
+            if obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                result = self._check_collection_vertices(
+                    context, obj, coord, region, rv3d, depsgraph, best_dist)
+                if result[0] is not None and result[1] < best_dist:
+                    best_point = result[0]
+                    best_dist = result[1]
+                    best_screen_pos = result[2]
+                    is_snapped = True
+                continue
+            
+            if obj.type != 'MESH':
+                continue
+            
+            matrix_world = obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = matrix_world @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+                        is_snapped = True
+            
+            eval_obj.to_mesh_clear()
+        
+        if best_point:
+            return (best_point, best_screen_pos, True)
+        
+        plane_point = self._get_view_plane_point(context, coord)
+        return (plane_point, coord, False)
+    
+    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
+        """Check vertices in a collection instance for snapping."""
+        collection = instance_obj.instance_collection
+        if not collection:
+            return (None, best_dist, None)
+        
+        instance_matrix = instance_obj.matrix_world
+        best_point = None
+        best_screen_pos = None
+        
+        for obj in collection.objects:
+            if obj.type != 'MESH':
+                continue
+            
+            combined_matrix = instance_matrix @ obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = combined_matrix @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+            
+            eval_obj.to_mesh_clear()
+        
+        return (best_point, best_dist, best_screen_pos)
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position with snapping applied."""
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        point, screen_pos, snapped = self.get_snap_point(context, coord)
+        
+        self.is_snapped = snapped
+        self.snap_screen_pos = screen_pos
+        
+        return point
+    
+    def create_text(self, context):
+        """Create a new text object on the view plane."""
+        hb_scene = context.scene.home_builder
+        
+        # Create font/text data
+        text_data = bpy.data.curves.new("Text", 'FONT')
+        text_data.body = "TEXT"
+        text_data.size = hb_scene.annotation_text_size
+        text_data.align_x = 'LEFT'
+        text_data.align_y = 'BOTTOM'
+        
+        # Create object
+        obj = bpy.data.objects.new("Text", text_data)
+        obj['IS_DETAIL_TEXT'] = True
+        obj['IS_2D_ANNOTATION'] = True
+        
+        # Apply text color
+        color = tuple(hb_scene.annotation_text_color) + (1.0,)
+        obj.color = color
+        
+        context.scene.collection.objects.link(obj)
+        
+        # Create material
+        mat = bpy.data.materials.new("Text_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
+        text_data.materials.append(mat)
+        
+        # Set extrude for visibility
+        text_data.extrude = 0.001
+        
+        # Apply font - prefer Calibri if available, then annotation_font setting
+        calibri_font = None
+        for font in bpy.data.fonts:
+            if 'calibri' in font.name.lower() and 'regular' in font.name.lower():
+                calibri_font = font
+                break
+            elif 'calibri' in font.name.lower() and calibri_font is None:
+                calibri_font = font
+        
+        if calibri_font:
+            obj.data.font = calibri_font
+        elif hb_scene.annotation_font:
+            obj.data.font = hb_scene.annotation_font
+        
+        # Set rotation to face camera
+        obj.rotation_euler = self._get_text_rotation(context)
+        
+        self.text_obj = obj
+        
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(obj)
+        
+        self.register_placement_object(obj)
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        text = f"Click to place text{snap_text} | Tab to edit after placing | Right-click/Esc to cancel"
+        hb_placement.draw_header_text(context, text)
+    
+    def execute(self, context):
+        self.init_placement(context)
+        
+        # Reset state
+        self.text_obj = None
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        
+        # Setup view plane
+        if not self._setup_view_plane(context):
+            self.report({'ERROR'}, "No camera found in scene")
+            return {'CANCELLED'}
+        
+        # Add draw handler
+        from ..operators.details import draw_snap_indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create text object
+        self.create_text(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Update snap
+        if self.text_obj:
+            self.text_obj.hide_set(True)
+        self.update_snap(context, event)
+        if self.text_obj:
+            self.text_obj.hide_set(False)
+        
+        # Get current position with snapping
+        current_pos = self.get_snapped_position(context)
+        
+        # Update text position
+        if current_pos and self.text_obj:
+            self.text_obj.location = current_pos
+        
+        self.update_header(context)
+        
+        # Left click - place text
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            current_pos = self.get_snapped_position(context)
+            if current_pos and self.text_obj:
+                self.text_obj.location = current_pos
+                
+                # Select the text object so user can Tab to edit
+                bpy.ops.object.select_all(action='DESELECT')
+                self.text_obj.select_set(True)
+                context.view_layer.objects.active = self.text_obj
+                
+                self._remove_draw_handler()
+                if self.text_obj in self.placement_objects:
+                    self.placement_objects.remove(self.text_obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Right click / Escape - cancel
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
 class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
     bl_idname = "home_builder_layouts.add_detail_to_layout"
     bl_label = "Add Detail to Layout"
@@ -3566,6 +3909,7 @@ classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
     home_builder_layouts_OT_draw_circle,
+    home_builder_layouts_OT_add_text,
     home_builder_layouts_OT_create_plan_view,
     home_builder_layouts_OT_create_3d_view,
     home_builder_layouts_OT_create_all_elevations,
