@@ -107,6 +107,44 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         description="Enter the designer name you want to have appear on reports"
 	)# type: ignore
 
+    # Layout view defaults
+    default_paper_size: bpy.props.EnumProperty(
+        name="Default Paper Size",
+        description="Default paper size for new layout views",
+        items=[
+            ('LETTER', 'Letter (8.5" x 11")', ''),
+            ('LEGAL', 'Legal (8.5" x 14")', ''),
+            ('TABLOID', 'Tabloid (11" x 17")', ''),
+            ('A4', 'A4 (210 x 297mm)', ''),
+            ('A3', 'A3 (297 x 420mm)', ''),
+        ],
+        default='LEGAL'
+    )# type: ignore
+
+    default_layout_scale: bpy.props.EnumProperty(
+        name="Default Scale",
+        description="Default drawing scale for new layout views",
+        items=[
+            ('3"=1\'', '3" = 1\'', 'Very detailed - 1:4'),
+            ('1-1/2"=1\'', '1-1/2" = 1\'', '1:8'),
+            ('1"=1\'', '1" = 1\'', '1:12'),
+            ('3/4"=1\'', '3/4" = 1\'', '1:16'),
+            ('1/2"=1\'', '1/2" = 1\'', '1:24'),
+            ('3/8"=1\'', '3/8" = 1\'', '1:32'),
+            ('1/4"=1\'', '1/4" = 1\'', '1:48 - Common for elevations'),
+            ('3/16"=1\'', '3/16" = 1\'', '1:64'),
+            ('1/8"=1\'', '1/8" = 1\'', '1:96 - Common for floor plans'),
+            ('1/16"=1\'', '1/16" = 1\'', '1:192'),
+        ],
+        default='1/4"=1\''
+    )# type: ignore
+
+    default_paper_landscape: bpy.props.BoolProperty(
+        name="Default Landscape",
+        description="Default orientation for new layout views",
+        default=True
+    )# type: ignore
+
     user_decoration_path: bpy.props.StringProperty(
 		name="User Decoration Path",
 		subtype='DIR_PATH',
@@ -119,6 +157,17 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
+        
+        # Layout view defaults
+        box = layout.box()
+        box.label(text="Layout View Defaults", icon='RENDERLAYERS')
+        col = box.column(align=True)
+        col.prop(self, "default_paper_size")
+        col.prop(self, "default_layout_scale")
+        col.prop(self, "default_paper_landscape")
+        
+        layout.separator()
+        
         layout.prop(self, "user_decoration_path")
         layout.prop(self, "user_material_path")
         layout.prop(self, "wall_color")

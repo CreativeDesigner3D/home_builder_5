@@ -14,6 +14,34 @@ from .. import units
 from .. import hb_utils
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_addon_prefs():
+    """Get addon preferences for layout defaults."""
+    import os
+    addon_name = os.path.basename(os.path.dirname(os.path.dirname(__file__)))
+    prefs = bpy.context.preferences.addons.get(addon_name)
+    if prefs:
+        return prefs.preferences
+    return None
+
+
+def apply_default_layout_settings(scene):
+    """Apply default paper size and scale from addon preferences to a layout scene."""
+    prefs = get_addon_prefs()
+    if prefs:
+        scene.hb_paper_size = prefs.default_paper_size
+        scene.hb_layout_scale = prefs.default_layout_scale
+        scene.hb_paper_landscape = prefs.default_paper_landscape
+    else:
+        # Fallback defaults if preferences not available
+        scene.hb_paper_size = 'LEGAL'
+        scene.hb_layout_scale = '1/4"=1\''
+        scene.hb_paper_landscape = True
+
+
+# =============================================================================
 # SCALE CALCULATION
 # =============================================================================
 
@@ -195,9 +223,8 @@ class home_builder_layouts_OT_create_elevation_view(bpy.types.Operator):
 
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
-        # Apply default scale and page size
-        scene.hb_paper_size = 'LETTER'
-        scene.hb_layout_scale = '1/4"=1\''
+        # Apply default settings from addon preferences
+        apply_default_layout_settings(scene)
         
         self.report({'INFO'}, f"Created elevation view: {scene.name}")
         return {'FINISHED'}
@@ -215,9 +242,8 @@ class home_builder_layouts_OT_create_plan_view(bpy.types.Operator):
 
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
-        # Apply default scale and page size for floor plans
-        # scene.hb_paper_size = 'LEGAL'
-        scene.hb_layout_scale = '1/4"=1\''
+        # Apply default settings from addon preferences
+        apply_default_layout_settings(scene)
         
         self.report({'INFO'}, f"Created plan view: {scene.name}")
         return {'FINISHED'}
@@ -255,9 +281,9 @@ class home_builder_layouts_OT_create_all_elevations(bpy.types.Operator):
     def execute(self, context):
         views = hb_layouts.create_all_elevations()
         
-        # Apply default scale to all
+        # Apply default settings from addon preferences to all
         for view in views:
-            view.scene.hb_layout_scale = '1/4"=1\''
+            apply_default_layout_settings(view.scene)
         
         self.report({'INFO'}, f"Created {len(views)} elevation views")
         return {'FINISHED'}
@@ -349,6 +375,9 @@ class home_builder_layouts_OT_create_multi_view(bpy.types.Operator):
         scene = multi_view.create(source_obj, views)
         
         if scene:
+            # Apply default settings from addon preferences
+            apply_default_layout_settings(scene)
+            
             bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
             self.report({'INFO'}, f"Created multi-view layout: {scene.name}")
         
