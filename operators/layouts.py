@@ -2410,6 +2410,557 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         return {'RUNNING_MODAL'}
 
 
+class home_builder_layouts_OT_draw_rectangle(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_layouts.draw_rectangle"
+    bl_label = "Draw Rectangle"
+    bl_description = "Draw a rectangle by clicking two corners or typing dimensions. Snaps to existing vertices."
+    bl_options = {'UNDO'}
+    
+    # Snap radius in pixels
+    SNAP_RADIUS = 20
+    
+    # Rectangle state
+    polyline = None
+    first_corner: Vector = None  # First corner in world space on view plane
+    has_first_corner: bool = False
+    
+    # Typed dimensions
+    typed_width: str = ""
+    typed_height: str = ""
+    typing_width: bool = False  # True = typing width, False = typing height
+    is_typing: bool = False
+    
+    # Current dimensions (for display and rectangle update)
+    current_width: float = 0.0
+    current_height: float = 0.0
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # View plane info (calculated once at start)
+    view_plane_normal: Vector = None
+    view_plane_point: Vector = None
+    view_right: Vector = None  # Camera's right direction (width axis)
+    view_up: Vector = None     # Camera's up direction (height axis)
+    
+    # Draw handler
+    _handle = None
+    
+    @classmethod
+    def poll(cls, context):
+        return (context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')) and context.scene.camera
+    
+    def _setup_view_plane(self, context):
+        """Calculate the view plane based on camera orientation."""
+        camera = context.scene.camera
+        if not camera:
+            return False
+        
+        cam_matrix = camera.matrix_world
+        
+        # Camera's local axes in world space
+        cam_forward = -(cam_matrix.to_3x3() @ Vector((0, 0, 1)))
+        cam_forward.normalize()
+        
+        cam_right = cam_matrix.to_3x3() @ Vector((1, 0, 0))
+        cam_right.normalize()
+        
+        cam_up = cam_matrix.to_3x3() @ Vector((0, 1, 0))
+        cam_up.normalize()
+        
+        # View plane normal is opposite of camera forward
+        self.view_plane_normal = -cam_forward
+        
+        # View plane point - slightly in front of camera
+        self.view_plane_point = camera.location + cam_forward * 0.5
+        
+        # Store camera axes for 2D calculations
+        self.view_right = cam_right
+        self.view_up = cam_up
+        
+        return True
+    
+    def _get_view_plane_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the view plane."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        denom = ray_direction.dot(self.view_plane_normal)
+        if abs(denom) < 0.0001:
+            return None
+        
+        t = (self.view_plane_point - ray_origin).dot(self.view_plane_normal) / denom
+        
+        return ray_origin + ray_direction * t
+    
+    def _world_to_view_2d(self, point: Vector) -> tuple:
+        """Convert a world point on the view plane to 2D coordinates in view space."""
+        offset = point - self.view_plane_point
+        x = offset.dot(self.view_right)
+        y = offset.dot(self.view_up)
+        return (x, y)
+    
+    def _view_2d_to_world(self, x: float, y: float) -> Vector:
+        """Convert 2D view coordinates back to world point on the view plane."""
+        return self.view_plane_point + self.view_right * x + self.view_up * y
+    
+    def _project_to_view_plane(self, world_point: Vector) -> Vector:
+        """Project a world point onto the view plane."""
+        offset = world_point - self.view_plane_point
+        dist_to_plane = offset.dot(self.view_plane_normal)
+        projected = world_point - self.view_plane_normal * dist_to_plane
+        return projected
+    
+    def get_snap_point(self, context, coord: tuple):
+        """Get snapped point for layout views (snaps to mesh vertices)."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None, None, False
+        
+        depsgraph = context.evaluated_depsgraph_get()
+        
+        best_dist = self.SNAP_RADIUS
+        best_point = None
+        best_screen_pos = None
+        is_snapped = False
+        
+        for obj in context.scene.objects:
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            
+            # Skip our own polyline
+            if self.polyline and obj == self.polyline.obj:
+                continue
+            
+            if obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                result = self._check_collection_vertices(
+                    context, obj, coord, region, rv3d, depsgraph, best_dist)
+                if result[0] is not None and result[1] < best_dist:
+                    best_point = result[0]
+                    best_dist = result[1]
+                    best_screen_pos = result[2]
+                    is_snapped = True
+                continue
+            
+            if obj.type != 'MESH':
+                continue
+            
+            matrix_world = obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = matrix_world @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+                        is_snapped = True
+            
+            eval_obj.to_mesh_clear()
+        
+        if best_point:
+            return (best_point, best_screen_pos, True)
+        
+        plane_point = self._get_view_plane_point(context, coord)
+        return (plane_point, coord, False)
+    
+    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
+        """Check vertices in a collection instance for snapping."""
+        collection = instance_obj.instance_collection
+        if not collection:
+            return (None, best_dist, None)
+        
+        instance_matrix = instance_obj.matrix_world
+        best_point = None
+        best_screen_pos = None
+        
+        for obj in collection.objects:
+            if obj.type != 'MESH':
+                continue
+            
+            combined_matrix = instance_matrix @ obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = combined_matrix @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+            
+            eval_obj.to_mesh_clear()
+        
+        return (best_point, best_dist, best_screen_pos)
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position with snapping applied (world space on view plane)."""
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        point, screen_pos, snapped = self.get_snap_point(context, coord)
+        
+        self.is_snapped = snapped
+        self.snap_screen_pos = screen_pos
+        
+        return point
+    
+    def create_rectangle(self, context):
+        """Create a new rectangle polyline object on the view plane."""
+        # Get annotation settings from scene
+        hb_scene = context.scene.home_builder
+        line_thickness = hb_scene.annotation_line_thickness
+        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        
+        # Create curve
+        curve = bpy.data.curves.new("Rectangle", 'CURVE')
+        curve.dimensions = '3D'
+        
+        # Create initial spline with 4 points
+        spline = curve.splines.new('POLY')
+        spline.points.add(3)  # Add 3 more points (4 total)
+        for i in range(4):
+            spline.points[i].co = (0, 0, 0, 1)
+        
+        # Close the rectangle
+        spline.use_cyclic_u = True
+        
+        # Create object
+        obj = bpy.data.objects.new("Rectangle", curve)
+        obj['IS_DETAIL_POLYLINE'] = True
+        obj['IS_2D_ANNOTATION'] = True
+        obj.color = line_color
+        
+        context.scene.collection.objects.link(obj)
+        
+        # Create material
+        mat = bpy.data.materials.new("Rectangle_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        curve.materials.append(mat)
+        
+        curve.bevel_depth = line_thickness
+        
+        # Create a simple wrapper
+        class RectWrapper:
+            def __init__(self, obj):
+                self.obj = obj
+            
+            def set_point(self, index, point):
+                if self.obj and self.obj.type == 'CURVE':
+                    spline = self.obj.data.splines[0]
+                    if index < len(spline.points):
+                        spline.points[index].co = (point.x, point.y, point.z, 1)
+        
+        self.polyline = RectWrapper(obj)
+        
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(obj)
+        
+        self.register_placement_object(obj)
+    
+    def update_rectangle_from_corners(self, second_corner: Vector):
+        """Update rectangle points based on two corners (world coords on view plane)."""
+        if not self.first_corner or not self.polyline:
+            return
+        
+        # Get 2D coordinates in view space
+        c1_2d = self._world_to_view_2d(self.first_corner)
+        c2_2d = self._world_to_view_2d(second_corner)
+        
+        # Calculate width and height in view space
+        self.current_width = abs(c2_2d[0] - c1_2d[0])
+        self.current_height = abs(c2_2d[1] - c1_2d[1])
+        
+        # Get min/max coordinates
+        min_x = min(c1_2d[0], c2_2d[0])
+        max_x = max(c1_2d[0], c2_2d[0])
+        min_y = min(c1_2d[1], c2_2d[1])
+        max_y = max(c1_2d[1], c2_2d[1])
+        
+        # Set the 4 corners in world space (counter-clockwise from bottom-left)
+        self.polyline.set_point(0, self._view_2d_to_world(min_x, min_y))  # Bottom-left
+        self.polyline.set_point(1, self._view_2d_to_world(max_x, min_y))  # Bottom-right
+        self.polyline.set_point(2, self._view_2d_to_world(max_x, max_y))  # Top-right
+        self.polyline.set_point(3, self._view_2d_to_world(min_x, max_y))  # Top-left
+    
+    def update_rectangle_from_dimensions(self, width: float, height: float):
+        """Update rectangle based on typed dimensions."""
+        if not self.first_corner or not self.polyline:
+            return
+        
+        self.current_width = width
+        self.current_height = height
+        
+        # Get first corner in 2D view space
+        c1_2d = self._world_to_view_2d(self.first_corner)
+        
+        # Calculate second corner (extend in positive direction)
+        c2_x = c1_2d[0] + width
+        c2_y = c1_2d[1] + height
+        
+        # Set the 4 corners in world space
+        self.polyline.set_point(0, self._view_2d_to_world(c1_2d[0], c1_2d[1]))  # Bottom-left
+        self.polyline.set_point(1, self._view_2d_to_world(c2_x, c1_2d[1]))       # Bottom-right
+        self.polyline.set_point(2, self._view_2d_to_world(c2_x, c2_y))           # Top-right
+        self.polyline.set_point(3, self._view_2d_to_world(c1_2d[0], c2_y))       # Top-left
+    
+    def parse_dimension(self, value_str: str) -> float:
+        """Parse a typed dimension string to meters. Returns 0.0 if parsing fails."""
+        if not value_str:
+            return 0.0
+        result = self.parse_typed_distance(value_str)
+        return result if result is not None else 0.0
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        
+        if not self.has_first_corner:
+            text = f"Click first corner{snap_text} | Right-click/Esc to cancel"
+        elif self.is_typing:
+            if self.typing_width:
+                text = f"Width: {self.typed_width}_ | Tab for height | Enter to confirm | Esc to cancel"
+            else:
+                width_str = units.unit_to_string(context.scene.unit_settings, self.parse_dimension(self.typed_width) or self.current_width)
+                text = f"Width: {width_str} | Height: {self.typed_height}_ | Enter to confirm | Esc to cancel"
+        else:
+            width_str = units.unit_to_string(context.scene.unit_settings, self.current_width)
+            height_str = units.unit_to_string(context.scene.unit_settings, self.current_height)
+            text = f"Width: {width_str} | Height: {height_str}{snap_text} | Type for exact size | Click to place"
+        
+        hb_placement.draw_header_text(context, text)
+    
+    def handle_typing(self, event) -> bool:
+        """Handle keyboard input for typing dimensions. Returns True if event was consumed."""
+        # Number keys to start or continue typing
+        if event.type in hb_placement.NUMBER_KEYS and event.value == 'PRESS':
+            if not self.is_typing:
+                # Start typing width
+                self.is_typing = True
+                self.typing_width = True
+                self.typed_width = hb_placement.NUMBER_KEYS[event.type]
+                self.typed_height = ""
+            elif self.typing_width:
+                self.typed_width += hb_placement.NUMBER_KEYS[event.type]
+            else:
+                self.typed_height += hb_placement.NUMBER_KEYS[event.type]
+            
+            # Update rectangle preview
+            self._update_from_typed()
+            return True
+        
+        if not self.is_typing:
+            return False
+        
+        # Backspace
+        if event.type == 'BACK_SPACE' and event.value == 'PRESS':
+            if self.typing_width:
+                if self.typed_width:
+                    self.typed_width = self.typed_width[:-1]
+                else:
+                    self.is_typing = False
+            else:
+                if self.typed_height:
+                    self.typed_height = self.typed_height[:-1]
+                else:
+                    self.typing_width = True
+            self._update_from_typed()
+            return True
+        
+        # Tab - switch between width and height
+        if event.type == 'TAB' and event.value == 'PRESS':
+            self.typing_width = not self.typing_width
+            return True
+        
+        # Enter - confirm
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            width = self.parse_dimension(self.typed_width)
+            height = self.parse_dimension(self.typed_height)
+            
+            if width > 0 and height > 0:
+                self.update_rectangle_from_dimensions(width, height)
+                return False  # Let modal handle the finish
+            elif width > 0 and not self.typed_height:
+                self.typing_width = False
+                return True
+            return True
+        
+        # Escape - cancel typing
+        if event.type == 'ESC' and event.value == 'PRESS':
+            self.is_typing = False
+            self.typed_width = ""
+            self.typed_height = ""
+            return True
+        
+        return False
+    
+    def _update_from_typed(self):
+        """Update rectangle from currently typed values."""
+        width = self.parse_dimension(self.typed_width) if self.typed_width else self.current_width
+        height = self.parse_dimension(self.typed_height) if self.typed_height else self.current_height
+        
+        width = width or 0.0
+        height = height or 0.0
+        
+        if width > 0 or height > 0:
+            self.update_rectangle_from_dimensions(
+                width if width > 0 else 0.1,
+                height if height > 0 else 0.1
+            )
+    
+    def execute(self, context):
+        self.init_placement(context)
+        
+        # Reset state
+        self.polyline = None
+        self.first_corner = None
+        self.has_first_corner = False
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        self.typed_width = ""
+        self.typed_height = ""
+        self.typing_width = False
+        self.is_typing = False
+        self.current_width = 0.0
+        self.current_height = 0.0
+        
+        # Setup view plane based on camera
+        if not self._setup_view_plane(context):
+            self.report({'ERROR'}, "No camera found in scene")
+            return {'CANCELLED'}
+        
+        # Add draw handler for snap indicator
+        from ..operators.details import draw_snap_indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create rectangle
+        self.create_rectangle(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Handle typing input first (only after first corner is placed)
+        if self.has_first_corner and self.handle_typing(event):
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Check if we should finish after Enter with valid dimensions
+        if self.has_first_corner and event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            width = self.parse_dimension(self.typed_width) if self.typed_width else 0
+            height = self.parse_dimension(self.typed_height) if self.typed_height else 0
+            
+            if width > 0 and height > 0:
+                self.update_rectangle_from_dimensions(width, height)
+                self._remove_draw_handler()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+        
+        # Update snap (only if not typing)
+        if not self.is_typing:
+            if self.polyline and self.polyline.obj:
+                self.polyline.obj.hide_set(True)
+            self.update_snap(context, event)
+            if self.polyline and self.polyline.obj:
+                self.polyline.obj.hide_set(False)
+            
+            # Get current position with snapping
+            current_pos = self.get_snapped_position(context)
+            
+            # Update rectangle preview
+            if not self.has_first_corner:
+                # Before first click, show rectangle at cursor (zero size)
+                if current_pos:
+                    self.polyline.set_point(0, current_pos)
+                    self.polyline.set_point(1, current_pos)
+                    self.polyline.set_point(2, current_pos)
+                    self.polyline.set_point(3, current_pos)
+            else:
+                # After first click, update rectangle from first corner to cursor
+                if current_pos:
+                    self.update_rectangle_from_corners(current_pos)
+        
+        self.update_header(context)
+        
+        # Left click - place corner
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if not self.has_first_corner:
+                current_pos = self.get_snapped_position(context)
+                if current_pos:
+                    self.first_corner = current_pos.copy()
+                    self.has_first_corner = True
+                    self.update_rectangle_from_corners(current_pos)
+            elif not self.is_typing:
+                # Confirm rectangle
+                self._remove_draw_handler()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Right click / Escape - cancel
+        if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        if event.type == 'ESC' and event.value == 'PRESS' and not self.is_typing:
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
 class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
     bl_idname = "home_builder_layouts.add_detail_to_layout"
     bl_label = "Add Detail to Layout"
@@ -2549,6 +3100,7 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
 
 classes = (
     home_builder_layouts_OT_create_elevation_view,
+    home_builder_layouts_OT_draw_rectangle,
     home_builder_layouts_OT_create_plan_view,
     home_builder_layouts_OT_create_3d_view,
     home_builder_layouts_OT_create_all_elevations,
