@@ -41,6 +41,12 @@ def get_paper_resolution(paper_size: str, landscape: bool = True, dpi: int = DEF
     
     return (int(width_in * dpi), int(height_in * dpi))
 
+def get_font(font_name='Calibri Regular'):
+    for font in bpy.data.fonts:
+        if font.name == font_name:
+            return font
+    return None
+
 # =============================================================================
 # TITLE BLOCK
 # =============================================================================
@@ -109,23 +115,26 @@ class TitleBlock:
         dim_x = border.var_input("Dim X", "dim_x")
         dim_y = border.var_input("Dim Y", "dim_y")
 
-        left_rect = hb_types.GeoNodeRectangle()
-        left_rect.create(f"{scene.name}_TitleBlock_Rectangle")
-        left_rect.obj.parent = border.obj
-        left_rect.obj.location = (.005, .005, 0)
-        left_rect.obj.scale = (1, 1, 1)
-        left_rect.obj.rotation_euler = (0, 0, 0)
-        left_rect.set_input("Dim X", units.inch(2.75))
-        left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])
+        # left_rect = hb_types.GeoNodeRectangle()
+        # left_rect.create(f"{scene.name}_TitleBlock_Rectangle")
+        # left_rect.obj.parent = border.obj
+        # left_rect.obj.location = (.005, .005, 0)
+        # left_rect.obj.scale = (1, 1, 1)
+        # left_rect.obj.rotation_euler = (0, 0, 0)
+        # left_rect.set_input("Dim X", units.inch(2.75))
+        # left_rect.driver_input("Dim Y", "dim_y-.01", [dim_y])
         
         # Add to Freestyle Ignore collection
-        if ignore_collection and left_rect.obj.name not in ignore_collection.objects:
-            ignore_collection.objects.link(left_rect.obj)
+        # if ignore_collection and left_rect.obj.name not in ignore_collection.objects:
+        #     ignore_collection.objects.link(left_rect.obj)
+
+        text_x = units.inch(.25)
 
         text_objs = []
-        text_objs.append(self._add_text_field(scene, left_rect.obj, "Project Name", "PROJECT NAME", (0, units.inch(4), 0)))
-        text_objs.append(self._add_text_field(scene, left_rect.obj, "Designer Name", "DESIGNER NAME", (0, units.inch(12), 0)))
-        text_objs.append(self._add_text_field(scene, left_rect.obj, "Address", "ADDRESS", (0, units.inch(20), 0)))
+        text_objs.append(self._add_text_field(scene, self.obj, "Project Name", "PROJECT NAME: <Project Name>", (text_x, units.inch(1.5), 0)))
+        text_objs.append(self._add_text_field(scene, self.obj, "Designer Name", "DESIGNER NAME: <Designer Name>", (text_x, units.inch(1), 0)))
+        text_objs.append(self._add_text_field(scene, self.obj, "Scale", "SCALE: <Scale>", (text_x, units.inch(.5), 0)))
+        text_objs.append(self._add_text_field(scene, self.obj, "Page Number", "PAGE 1 OF 12", (text_x, units.inch(0), 0)))
         
         # Add text to Freestyle Ignore collection
         for text_obj in text_objs:
@@ -150,7 +159,10 @@ class TitleBlock:
         text_obj.location = location
         text_obj.color = (0,0,0,1)
         # Rotate 90 degrees CCW around Z so text reads bottom-to-top
-        text_obj.rotation_euler = (0, 0, math.radians(90))
+        text_obj.rotation_euler = (0, 0, 0)
+        text_obj.data.font = get_font()
+        text_obj.data.align_x = 'LEFT'
+        text_obj.data.align_y = 'BOTTOM'
         
         # Black material
         mat = bpy.data.materials.new(f"{scene.name}_{field_name}_Mat")

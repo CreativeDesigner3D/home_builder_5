@@ -186,19 +186,29 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
         return self.obj
     
     def add_point(self, point: Vector):
-        """Add a point to the polyline."""
+        """Add a point to the polyline.
+        
+        Converts world coordinates to local coordinates based on object's matrix.
+        """
         if self.obj and self.obj.type == 'CURVE':
             spline = self.obj.data.splines[0]
             spline.points.add(1)
             idx = len(spline.points) - 1
-            spline.points[idx].co = (point.x, point.y, point.z, 1)
+            # Convert world to local coordinates
+            local_point = self.obj.matrix_world.inverted() @ point
+            spline.points[idx].co = (local_point.x, local_point.y, local_point.z, 1)
     
     def set_point(self, index: int, point: Vector):
-        """Set a specific point in the polyline."""
+        """Set a specific point in the polyline.
+        
+        Converts world coordinates to local coordinates based on object's matrix.
+        """
         if self.obj and self.obj.type == 'CURVE':
             spline = self.obj.data.splines[0]
             if 0 <= index < len(spline.points):
-                spline.points[index].co = (point.x, point.y, point.z, 1)
+                # Convert world to local coordinates
+                local_point = self.obj.matrix_world.inverted() @ point
+                spline.points[index].co = (local_point.x, local_point.y, local_point.z, 1)
     
     def close(self):
         """Close the polyline to form a closed shape."""
@@ -269,9 +279,9 @@ class GeoNodeCircle(hb_types.GeoNodeObject):
             self._radius = radius
     
     def set_center(self, center):
-        """Set the circle center location."""
+        """Set the circle center location (uses full 3D coordinates)."""
         if self.obj:
-            self.obj.location = (center[0], center[1], 0)
+            self.obj.location = (center[0], center[1], center[2] if len(center) > 2 else 0)
     
     def get_radius(self) -> float:
         """Get the current radius."""

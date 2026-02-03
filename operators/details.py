@@ -8,10 +8,115 @@ from .. import hb_placement
 from .. import hb_detail_library
 from .. import units
 from .. import hb_utils
+from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+from mathutils import Matrix
 
 
 # Snap radius in pixels for vertex snapping
 SNAP_RADIUS = 20
+
+
+def get_working_plane_point(context, hit_location, region, region_data):
+    """
+    Convert a hit location to the appropriate working plane based on view context.
+    
+    For detail views and plan layouts: flattens to XY plane (Z=0)
+    For elevation layouts: keeps point on wall plane
+    
+    Returns Vector on the working plane.
+    """
+    if hit_location is None:
+        return None
+    
+    is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+    
+    if is_elevation:
+        # Keep the actual hit location - it's already on the wall plane
+        return Vector((hit_location.x, hit_location.y, hit_location.z))
+    else:
+        # Flatten to XY plane
+        return Vector((hit_location.x, hit_location.y, 0))
+
+
+def get_plane_point_for_context(context, coord, region, region_data):
+    """
+    Get a point on the working plane for the given screen coordinate.
+    Used when there's no geometry to hit.
+    
+    For detail views and plan layouts: intersects XY plane (Z=0)
+    For elevation layouts: intersects wall plane
+    """
+    if not region or not region_data:
+        return Vector((0, 0, 0))
+    
+    origin = region_2d_to_origin_3d(region, region_data, coord)
+    direction = region_2d_to_vector_3d(region, region_data, coord)
+    
+    is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+    
+    if is_elevation:
+        # Get wall rotation
+        wall_rotation_z = 0
+        source_wall_name = context.scene.get('SOURCE_WALL')
+        if source_wall_name and source_wall_name in bpy.data.objects:
+            wall_obj = bpy.data.objects[source_wall_name]
+            wall_rotation_z = wall_obj.rotation_euler.z
+        
+        # Wall plane normal
+        plane_normal = Vector((0, 1, 0))
+        rot_matrix = Matrix.Rotation(wall_rotation_z, 3, 'Z')
+        plane_normal = rot_matrix @ plane_normal
+        
+        denom = direction.dot(plane_normal)
+        if abs(denom) > 0.0001:
+            t = -origin.dot(plane_normal) / denom
+            return origin + direction * t
+        return origin
+    else:
+        # XY plane intersection
+        if abs(direction.z) > 0.0001:
+            t = -origin.z / direction.z
+            point = origin + direction * t
+            return Vector((point.x, point.y, 0))
+        return Vector((origin.x, origin.y, 0))
+
+
+def get_object_rotation_for_context(context):
+    """
+    Get the appropriate rotation for 2D objects based on view context.
+    
+    For detail views and plan layouts: (0, 0, 0) - flat in XY
+    For elevation layouts: rotated to align with wall plane
+    """
+    is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+    
+    if is_elevation:
+        wall_rotation_z = 0
+        source_wall_name = context.scene.get('SOURCE_WALL')
+        if source_wall_name and source_wall_name in bpy.data.objects:
+            wall_obj = bpy.data.objects[source_wall_name]
+            wall_rotation_z = wall_obj.rotation_euler.z
+        
+        # Rotate to stand up on wall plane
+        return (math.pi / 2, 0, wall_rotation_z)
+    else:
+        return (0, 0, 0)
+
+
+def world_to_local_point(obj, world_point):
+    """
+    Convert a world coordinate to local coordinate for an object.
+    
+    This is needed because curve points are stored in local space,
+    but we calculate positions in world space.
+    """
+    if obj is None or world_point is None:
+        return world_point
+    
+    # Get the inverse of the object's world matrix
+    matrix_inv = obj.matrix_world.inverted()
+    local_point = matrix_inv @ world_point
+    return local_point
 
 
 # =============================================================================
@@ -194,8 +299,9 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         return vertices
     
     def get_curve_segments(self, context) -> list:
-        """Get all curve segments as (start, end) tuples."""
+        """Get all curve segments as (start, end) tuples on the working plane."""
         segments = []
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         
         # Add segments from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
@@ -207,13 +313,21 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
                     for i in range(num_pts - 1):
                         p1 = matrix @ Vector((points[i].co[0], points[i].co[1], points[i].co[2]))
                         p2 = matrix @ Vector((points[i+1].co[0], points[i+1].co[1], points[i+1].co[2]))
-                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                        if is_elevation:
+                            # Keep actual coordinates for elevation view
+                            segments.append((p1.copy(), p2.copy()))
+                        else:
+                            # Project to XY plane for plan/detail views
+                            segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
                     
                     # If cyclic, add closing segment
                     if spline.use_cyclic_u and num_pts > 1:
                         p1 = matrix @ Vector((points[-1].co[0], points[-1].co[1], points[-1].co[2]))
                         p2 = matrix @ Vector((points[0].co[0], points[0].co[1], points[0].co[2]))
-                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                        if is_elevation:
+                            segments.append((p1.copy(), p2.copy()))
+                        else:
+                            segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
         
         return segments
     
@@ -290,7 +404,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         if not self.hit_location:
             return 0.0
         
-        point = Vector((self.hit_location.x, self.hit_location.y, 0))
+        point = get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         segments = self.get_curve_segments(context)
         
         if not segments:
@@ -471,7 +585,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         
         # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
         if self.hit_location:
-            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            point = get_working_plane_point(context, self.hit_location, self.region, self.region.data)
             perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
             
             if perp_foot:
@@ -495,7 +609,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             # Store screen position for visual indicator
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((snap.x, snap.y, 0))
+            return get_working_plane_point(context, snap, self.region, self.region.data)
         
         self.is_snapped = False
         self.is_perp_snap = False
@@ -503,7 +617,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             # Store screen position for visual indicator
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((self.hit_location.x, self.hit_location.y, 0))
+            return get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         
         self.snap_screen_pos = None
         return Vector((0, 0, 0))
@@ -536,9 +650,10 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     def _set_preview_point(self, point: Vector):
         """Set the preview (last) point of the polyline."""
         if self.polyline and self.polyline.obj:
+            # Use set_point which handles world-to-local conversion
             spline = self.polyline.obj.data.splines[0]
             idx = len(spline.points) - 1
-            spline.points[idx].co = (point.x, point.y, 0, 1)
+            self.polyline.set_point(idx, point)
     
     def _get_preview_point(self) -> Vector:
         """Get the current preview point position."""
@@ -560,6 +675,9 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         """Create a new polyline object."""
         self.polyline = hb_details.GeoNodePolyline()
         self.polyline.create("Line")
+        
+        # Set rotation based on view context (elevation vs plan/detail)
+        self.polyline.obj.rotation_euler = get_object_rotation_for_context(context)
         
         # Apply annotation settings from scene
         hb_scene = context.scene.home_builder
@@ -593,7 +711,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             snap = self.snap_to_curves(bpy.context)
             if snap:
                 # Project along locked angle to align with snap point
-                snap_point = Vector((snap.x, snap.y, 0))
+                snap_point = get_working_plane_point(bpy.context, snap, self.region, self.region.data)
                 projected = self.project_to_snap_point(snap_point)
                 if projected:
                     self.is_snapped = True
@@ -632,7 +750,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         snap = self.snap_to_curves(bpy.context)
         if snap:
             self.is_snapped = True
-            end_point = Vector((snap.x, snap.y, 0))
+            end_point = get_working_plane_point(bpy.context, snap, self.region, self.region.data)
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
             if self.current_point:
@@ -944,8 +1062,9 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         return vertices
     
     def get_curve_segments(self, context) -> list:
-        """Get all curve segments as (start, end) tuples."""
+        """Get all curve segments as (start, end) tuples on the working plane."""
         segments = []
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         
         # Add segments from all curves (excluding current rectangle being drawn)
         for obj in context.scene.objects:
@@ -957,13 +1076,21 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
                     for i in range(num_pts - 1):
                         p1 = matrix @ Vector((points[i].co[0], points[i].co[1], points[i].co[2]))
                         p2 = matrix @ Vector((points[i+1].co[0], points[i+1].co[1], points[i+1].co[2]))
-                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                        if is_elevation:
+                            # Keep actual coordinates for elevation view
+                            segments.append((p1.copy(), p2.copy()))
+                        else:
+                            # Project to XY plane for plan/detail views
+                            segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
                     
                     # If cyclic, add closing segment
                     if spline.use_cyclic_u and num_pts > 1:
                         p1 = matrix @ Vector((points[-1].co[0], points[-1].co[1], points[-1].co[2]))
                         p2 = matrix @ Vector((points[0].co[0], points[0].co[1], points[0].co[2]))
-                        segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
+                        if is_elevation:
+                            segments.append((p1.copy(), p2.copy()))
+                        else:
+                            segments.append((Vector((p1.x, p1.y, 0)), Vector((p2.x, p2.y, 0))))
         
         return segments
     
@@ -1040,7 +1167,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         if not self.hit_location:
             return 0.0
         
-        point = Vector((self.hit_location.x, self.hit_location.y, 0))
+        point = get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         segments = self.get_curve_segments(context)
         
         if not segments:
@@ -1221,7 +1348,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         
         # Then check perpendicular foot snaps (only if no vertex snap or perp is closer)
         if self.hit_location:
-            point = Vector((self.hit_location.x, self.hit_location.y, 0))
+            point = get_working_plane_point(context, self.hit_location, self.region, self.region.data)
             perp_foot, perp_segment = self.find_nearest_perp_snap(context, point)
             
             if perp_foot:
@@ -1244,13 +1371,13 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
             self.is_snapped = True
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((snap.x, snap.y, 0))
+            return get_working_plane_point(context, snap, self.region, self.region.data)
         
         self.is_snapped = False
         if self.hit_location:
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((self.hit_location.x, self.hit_location.y, 0))
+            return get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         
         self.snap_screen_pos = None
         return Vector((0, 0, 0))
@@ -1259,6 +1386,9 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         """Create a new rectangle polyline object."""
         self.polyline = hb_details.GeoNodePolyline()
         self.polyline.create("Rectangle")
+        
+        # Set rotation based on view context (elevation vs plan/detail)
+        self.polyline.obj.rotation_euler = get_object_rotation_for_context(context)
         
         # Apply annotation settings from scene
         hb_scene = context.scene.home_builder
@@ -1283,40 +1413,79 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         self.polyline.close()
     
     def update_rectangle_from_corners(self, second_corner: Vector):
-        """Update rectangle points based on two corners."""
+        """Update rectangle points based on two corners.
+        
+        For plan view: rectangle spans X and Y, Z=0
+        For elevation view: rectangle spans X and Z, Y=wall position
+        """
         if not self.first_corner or not self.polyline:
             return
         
-        x1, y1 = self.first_corner.x, self.first_corner.y
-        x2, y2 = second_corner.x, second_corner.y
+        is_elevation = bpy.context.scene.get('IS_ELEVATION_VIEW', False)
         
-        # Store current dimensions
-        self.current_width = abs(x2 - x1)
-        self.current_height = abs(y2 - y1)
-        
-        # Set the 4 corners (counter-clockwise from first corner)
-        self.polyline.set_point(0, Vector((x1, y1, 0)))  # First corner
-        self.polyline.set_point(1, Vector((x2, y1, 0)))  # Bottom-right
-        self.polyline.set_point(2, Vector((x2, y2, 0)))  # Second corner (opposite)
-        self.polyline.set_point(3, Vector((x1, y2, 0)))  # Top-left
+        if is_elevation:
+            # Elevation: use X and Z, keep Y constant (wall plane)
+            x1, z1, y = self.first_corner.x, self.first_corner.z, self.first_corner.y
+            x2, z2 = second_corner.x, second_corner.z
+            
+            # Store current dimensions
+            self.current_width = abs(x2 - x1)
+            self.current_height = abs(z2 - z1)
+            
+            self.polyline.set_point(0, Vector((x1, y, z1)))  # First corner
+            self.polyline.set_point(1, Vector((x2, y, z1)))  # Bottom-right
+            self.polyline.set_point(2, Vector((x2, y, z2)))  # Second corner (opposite)
+            self.polyline.set_point(3, Vector((x1, y, z2)))  # Top-left
+        else:
+            # Plan view: use X and Y, Z=0
+            x1, y1 = self.first_corner.x, self.first_corner.y
+            x2, y2 = second_corner.x, second_corner.y
+            z = self.first_corner.z  # Usually 0 for plan view
+            
+            # Store current dimensions
+            self.current_width = abs(x2 - x1)
+            self.current_height = abs(y2 - y1)
+            
+            self.polyline.set_point(0, Vector((x1, y1, z)))  # First corner
+            self.polyline.set_point(1, Vector((x2, y1, z)))  # Bottom-right
+            self.polyline.set_point(2, Vector((x2, y2, z)))  # Second corner (opposite)
+            self.polyline.set_point(3, Vector((x1, y2, z)))  # Top-left
     
     def update_rectangle_from_dimensions(self, width: float, height: float):
-        """Update rectangle based on typed dimensions."""
+        """Update rectangle based on typed dimensions.
+        
+        For plan view: width is X, height is Y
+        For elevation view: width is X, height is Z
+        """
         if not self.first_corner or not self.polyline:
             return
         
-        x1, y1 = self.first_corner.x, self.first_corner.y
-        x2 = x1 + width
-        y2 = y1 + height
+        is_elevation = bpy.context.scene.get('IS_ELEVATION_VIEW', False)
         
         self.current_width = width
         self.current_height = height
         
-        # Set the 4 corners
-        self.polyline.set_point(0, Vector((x1, y1, 0)))
-        self.polyline.set_point(1, Vector((x2, y1, 0)))
-        self.polyline.set_point(2, Vector((x2, y2, 0)))
-        self.polyline.set_point(3, Vector((x1, y2, 0)))
+        if is_elevation:
+            # Elevation: width is X, height is Z
+            x1, z1, y = self.first_corner.x, self.first_corner.z, self.first_corner.y
+            x2 = x1 + width
+            z2 = z1 + height
+            
+            self.polyline.set_point(0, Vector((x1, y, z1)))
+            self.polyline.set_point(1, Vector((x2, y, z1)))
+            self.polyline.set_point(2, Vector((x2, y, z2)))
+            self.polyline.set_point(3, Vector((x1, y, z2)))
+        else:
+            # Plan view: width is X, height is Y
+            x1, y1 = self.first_corner.x, self.first_corner.y
+            x2 = x1 + width
+            y2 = y1 + height
+            z = self.first_corner.z
+            
+            self.polyline.set_point(0, Vector((x1, y1, z)))
+            self.polyline.set_point(1, Vector((x2, y1, z)))
+            self.polyline.set_point(2, Vector((x2, y2, z)))
+            self.polyline.set_point(3, Vector((x1, y2, z)))
     
     def parse_dimension(self, value_str: str) -> float:
         """Parse a typed dimension string to meters. Returns 0.0 if parsing fails."""
@@ -1619,13 +1788,13 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
             self.is_snapped = True
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((snap.x, snap.y, 0))
+            return get_working_plane_point(context, snap, self.region, self.region.data)
         
         self.is_snapped = False
         if self.hit_location:
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((self.hit_location.x, self.hit_location.y, 0))
+            return get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         
         self.snap_screen_pos = None
         return Vector((0, 0, 0))
@@ -1634,6 +1803,9 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         """Create a new circle object."""
         self.circle = hb_details.GeoNodeCircle()
         self.circle.create("Circle")
+        
+        # Set rotation based on view context (elevation vs plan/detail)
+        self.circle.obj.rotation_euler = get_object_rotation_for_context(context)
         
         # Apply annotation settings from scene
         hb_scene = context.scene.home_builder
@@ -1791,9 +1963,19 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
                 self.circle.set_center(current_pos)
             else:
                 # After center click, update radius from cursor distance
-                dx = current_pos.x - self.center.x
-                dy = current_pos.y - self.center.y
-                radius = math.sqrt(dx * dx + dy * dy)
+                is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+                
+                if is_elevation:
+                    # For elevation views, use X and Z
+                    dx = current_pos.x - self.center.x
+                    dz = current_pos.z - self.center.z
+                    radius = math.sqrt(dx * dx + dz * dz)
+                else:
+                    # For plan views, use X and Y
+                    dx = current_pos.x - self.center.x
+                    dy = current_pos.y - self.center.y
+                    radius = math.sqrt(dx * dx + dy * dy)
+                    
                 if radius > 0.001:
                     self.circle.set_radius(radius)
                     self.current_radius = radius
@@ -1900,13 +2082,13 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
             self.is_snapped = True
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, snap)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((snap.x, snap.y, 0))
+            return get_working_plane_point(context, snap, self.region, self.region.data)
         
         self.is_snapped = False
         if self.hit_location:
             screen_pos = view3d_utils.location_3d_to_region_2d(self.region, self.region.data, self.hit_location)
             self.snap_screen_pos = (screen_pos.x, screen_pos.y) if screen_pos else None
-            return Vector((self.hit_location.x, self.hit_location.y, 0))
+            return get_working_plane_point(context, self.hit_location, self.region, self.region.data)
         
         self.snap_screen_pos = None
         return Vector((0, 0, 0))
@@ -1917,6 +2099,9 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
         
         self.text_obj = hb_details.GeoNodeText()
         self.text_obj.create("Text", "TEXT", hb_scene.annotation_text_size)
+        
+        # Set rotation based on view context (elevation vs plan/detail)
+        self.text_obj.obj.rotation_euler = get_object_rotation_for_context(context)
         
         # Apply font if set
         if hb_scene.annotation_font:

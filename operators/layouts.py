@@ -1128,9 +1128,9 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
         
         # Set initial rotation based on view type
         if is_elevation:
-            self.preview_dim.obj.rotation_euler = (math.pi / 2, 0, 0)
+            self.preview_dim.obj.rotation_euler = (math.pi / 2, 0, 0)  # Stand up for wall plane
         else:
-            self.preview_dim.obj.rotation_euler = (math.pi / 2, 0, 0)
+            self.preview_dim.obj.rotation_euler = (0, 0, 0)  # Flat in XY for plan view
         
         self.preview_dim.obj.location = self.first_point
     
@@ -1147,7 +1147,12 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
             self._update_plan_preview(context)
     
     def _update_plan_preview(self, context):
-        """Update preview for plan view."""
+        """Update preview for plan view.
+        
+        Plan view looks down -Z axis, so dimensions lay flat in XY plane.
+        - Horizontal (along X): rotation (0, 0, 0)
+        - Vertical (along Y): rotation (0, 0, pi/2)
+        """
         if self.dim_state == self.DIM_STATE_SECOND:
             p1 = self.first_point
             p2 = self.current_point
@@ -1165,13 +1170,13 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
                 left_x = min(p1.x, p2.x)
                 ref_y = p1.y if p1.x == left_x else p2.y
                 self.preview_dim.obj.location = Vector((left_x, ref_y, 0))
-                self.preview_dim.obj.rotation_euler = (math.pi / 2, 0, 0)
+                self.preview_dim.obj.rotation_euler = (0, 0, 0)  # Flat in XY, along X
             else:
                 dim_length = abs(delta_y)
                 bottom_y = min(p1.y, p2.y)
                 ref_x = p1.x if p1.y == bottom_y else p2.x
                 self.preview_dim.obj.location = Vector((ref_x, bottom_y, 0))
-                self.preview_dim.obj.rotation_euler = (math.pi / 2, 0, math.pi / 2)
+                self.preview_dim.obj.rotation_euler = (0, 0, math.pi / 2)  # Flat in XY, along Y
             
             self.preview_dim.obj.data.splines[0].points[1].co = (dim_length, 0, 0, 1)
         
@@ -1654,6 +1659,710 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator, hb_placement.
 
 
 
+
+
+# =============================================================================
+# LINE DRAWING OPERATOR FOR LAYOUTS
+# =============================================================================
+
+class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_layouts.draw_line"
+    bl_label = "Draw Line"
+    bl_description = "Draw a 2D polyline on the layout. Click to place points, type for exact length. Press L to lock angle."
+    bl_options = {'UNDO'}
+    
+    # Snap radius in pixels
+    SNAP_RADIUS = 20
+    
+    # Polyline state
+    polyline = None
+    current_point: Vector = None  # The last confirmed point
+    point_count: int = 0  # Number of confirmed points
+    
+    # Ortho mode (snap to 0, 45, 90 degree angles)
+    ortho_mode: bool = True
+    ortho_angle: float = 0.0
+    
+    # Angle lock state
+    angle_locked: bool = False
+    locked_angle: float = 0.0
+    
+    # Tracking state
+    tracking_point: Vector = None
+    is_tracking: bool = False
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # Draw handler
+    _handle = None
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')
+    
+    def get_camera_plane_info(self, context):
+        """Get camera view plane information for coordinate projection."""
+        camera = context.scene.camera
+        if not camera:
+            return Vector((0, 0, 1)), Vector((0, 0, 0))
+        
+        # Get camera's view direction (negative Z in camera space)
+        cam_matrix = camera.matrix_world
+        cam_forward = -cam_matrix.to_3x3() @ Vector((0, 0, 1))
+        cam_forward.normalize()
+        
+        # Plane position - use camera location projected along view
+        plane_co = camera.location.copy()
+        
+        return cam_forward, plane_co
+    
+    def get_plane_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the camera's view plane."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        origin = region_2d_to_origin_3d(region, rv3d, coord)
+        direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        
+        if is_elevation:
+            # Elevation view: work on wall plane
+            wall_rotation_z = 0
+            source_wall_name = context.scene.get('SOURCE_WALL')
+            if source_wall_name and source_wall_name in bpy.data.objects:
+                wall_obj = bpy.data.objects[source_wall_name]
+                wall_rotation_z = wall_obj.rotation_euler.z
+            
+            # Wall plane normal (perpendicular to wall face)
+            plane_normal = Vector((0, 1, 0))
+            rot_matrix = Matrix.Rotation(wall_rotation_z, 3, 'Z')
+            plane_normal = rot_matrix @ plane_normal
+            
+            denom = direction.dot(plane_normal)
+            if abs(denom) > 0.0001:
+                t = -origin.dot(plane_normal) / denom
+                return origin + direction * t
+            return origin
+        else:
+            # Plan/layout view: XY plane (Z=0)
+            if abs(direction.z) > 0.0001:
+                t = -origin.z / direction.z
+                point = origin + direction * t
+                return Vector((point.x, point.y, 0))
+            return Vector((origin.x, origin.y, 0))
+    
+    def get_snap_point(self, context, coord: tuple):
+        """Get snapped point for layout views (snaps to mesh vertices)."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None, None, False
+        
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        depsgraph = context.evaluated_depsgraph_get()
+        
+        best_dist = self.SNAP_RADIUS
+        best_point = None
+        is_snapped = False
+        
+        for obj in context.scene.objects:
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            
+            # Skip our own polyline
+            if self.polyline and obj == self.polyline.obj:
+                continue
+            
+            if obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                result = self._check_collection_vertices(
+                    context, obj, coord, region, rv3d, depsgraph, best_dist, is_elevation)
+                if result[0] is not None and result[1] < best_dist:
+                    best_point = result[0]
+                    best_dist = result[1]
+                    is_snapped = True
+                continue
+            
+            if obj.type != 'MESH':
+                continue
+            
+            matrix_world = obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = matrix_world @ vert.co
+                
+                if is_elevation:
+                    screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                else:
+                    proj_pos = Vector((world_pos.x, world_pos.y, 0))
+                    screen_pos = location_3d_to_region_2d(region, rv3d, proj_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        if is_elevation:
+                            best_point = world_pos.copy()
+                        else:
+                            best_point = Vector((world_pos.x, world_pos.y, 0))
+                        is_snapped = True
+            
+            eval_obj.to_mesh_clear()
+        
+        if best_point:
+            screen = location_3d_to_region_2d(region, rv3d, best_point)
+            screen_pos = (screen.x, screen.y) if screen else coord
+            return (best_point, screen_pos, True)
+        
+        plane_point = self.get_plane_point(context, coord)
+        return (plane_point, coord, False)
+    
+    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist, is_elevation):
+        """Check vertices in a collection instance for snapping."""
+        collection = instance_obj.instance_collection
+        if not collection:
+            return (None, best_dist)
+        
+        instance_matrix = instance_obj.matrix_world
+        best_point = None
+        
+        for obj in collection.objects:
+            if obj.type != 'MESH':
+                continue
+            
+            combined_matrix = instance_matrix @ obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = combined_matrix @ vert.co
+                
+                if is_elevation:
+                    screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                else:
+                    proj_pos = Vector((world_pos.x, world_pos.y, 0))
+                    screen_pos = location_3d_to_region_2d(region, rv3d, proj_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        if is_elevation:
+                            best_point = world_pos.copy()
+                        else:
+                            best_point = Vector((world_pos.x, world_pos.y, 0))
+            
+            eval_obj.to_mesh_clear()
+        
+        return (best_point, best_dist)
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position with snapping applied."""
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        point, screen_pos, snapped = self.get_snap_point(context, coord)
+        
+        self.is_snapped = snapped
+        self.snap_screen_pos = screen_pos
+        
+        return point
+    
+    def create_polyline(self, context):
+        """Create a new polyline object for the layout."""
+        from .. import hb_details
+        
+        self.polyline = hb_details.GeoNodePolyline()
+        self.polyline.create("Line")
+        
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        
+        if is_elevation:
+            # Get wall rotation for elevation views
+            wall_rotation_z = 0
+            source_wall_name = context.scene.get('SOURCE_WALL')
+            if source_wall_name and source_wall_name in bpy.data.objects:
+                wall_obj = bpy.data.objects[source_wall_name]
+                wall_rotation_z = wall_obj.rotation_euler.z
+            
+            # Rotate to stand up on wall plane
+            self.polyline.obj.rotation_euler = (math.pi / 2, 0, wall_rotation_z)
+        else:
+            # Plan view: flat in XY
+            self.polyline.obj.rotation_euler = (0, 0, 0)
+        
+        # Apply annotation settings from scene
+        hb_scene = context.scene.home_builder
+        self.polyline.obj.data.bevel_depth = hb_scene.annotation_line_thickness
+        color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        self.polyline.obj.color = color
+        if self.polyline.obj.data.materials:
+            mat = self.polyline.obj.data.materials[0]
+            if mat and mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs["Base Color"].default_value = color
+        
+        self.polyline.obj['IS_2D_ANNOTATION'] = True
+        self.register_placement_object(self.polyline.obj)
+        self.point_count = 0
+        self.current_point = None
+    
+    def _set_preview_point(self, point: Vector):
+        """Set the preview (last) point of the polyline."""
+        if self.polyline and self.polyline.obj:
+            spline = self.polyline.obj.data.splines[0]
+            idx = len(spline.points) - 1
+            self.polyline.set_point(idx, point)
+    
+    def _get_preview_point(self) -> Vector:
+        """Get the current preview point position in world space."""
+        if self.polyline and self.polyline.obj:
+            spline = self.polyline.obj.data.splines[0]
+            idx = len(spline.points) - 1
+            co = spline.points[idx].co
+            # Convert from local to world
+            return self.polyline.obj.matrix_world @ Vector((co[0], co[1], co[2]))
+        return Vector((0, 0, 0))
+    
+    def _get_segment_length(self) -> float:
+        """Get the length of the current segment."""
+        if self.current_point:
+            preview = self._get_preview_point()
+            return (preview - self.current_point).length
+        return 0.0
+    
+    def _confirm_point(self):
+        """Confirm the current preview point and add a new preview point."""
+        if self.polyline and self.polyline.obj:
+            self.current_point = self._get_preview_point().copy()
+            self.point_count += 1
+            
+            # Unlock angle after placing point
+            self.angle_locked = False
+            
+            # Add a new point for the next preview
+            self.polyline.add_point(self.current_point)
+    
+    def _update_from_mouse(self, context):
+        """Update preview point based on mouse position."""
+        if self.point_count == 0 or not self.hit_location:
+            return
+        
+        # Reset tracking state
+        self.is_tracking = False
+        self.tracking_point = None
+        
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        
+        # When angle is locked, project along locked angle
+        if self.angle_locked and self.current_point:
+            point, screen_pos, snapped = self.get_snap_point(context, coord)
+            
+            if snapped and point:
+                # Project along locked angle to align with snap point
+                projected = self._project_to_locked_angle(point, is_elevation)
+                if projected:
+                    self.is_snapped = True
+                    self.is_tracking = True
+                    self.tracking_point = point.copy()
+                    screen = location_3d_to_region_2d(context.region, context.region_data, projected)
+                    self.snap_screen_pos = (screen.x, screen.y) if screen else coord
+                    self._set_preview_point(projected)
+                    return
+            
+            # No snap - extend along locked angle
+            self.is_snapped = False
+            end_point = self.get_plane_point(context, coord)
+            if end_point:
+                end_point = self._constrain_to_locked_angle(end_point, is_elevation)
+                screen = location_3d_to_region_2d(context.region, context.region_data, end_point)
+                self.snap_screen_pos = (screen.x, screen.y) if screen else coord
+                self._set_preview_point(end_point)
+            return
+        
+        # Normal behavior (not locked)
+        point, screen_pos, snapped = self.get_snap_point(context, coord)
+        
+        if snapped and point:
+            self.is_snapped = True
+            self.snap_screen_pos = screen_pos
+            if self.current_point:
+                if is_elevation:
+                    dx = point.x - self.current_point.x
+                    dz = point.z - self.current_point.z
+                    self.ortho_angle = math.atan2(dz, dx)
+                else:
+                    dx = point.x - self.current_point.x
+                    dy = point.y - self.current_point.y
+                    self.ortho_angle = math.atan2(dy, dx)
+            self._set_preview_point(point)
+            return
+        
+        self.is_snapped = False
+        end_point = self.get_plane_point(context, coord)
+        
+        if self.current_point and end_point:
+            if is_elevation:
+                dx = end_point.x - self.current_point.x
+                dz = end_point.z - self.current_point.z
+                
+                if abs(dx) < 0.0001 and abs(dz) < 0.0001:
+                    return
+                
+                length = math.sqrt(dx * dx + dz * dz)
+                
+                if self.ortho_mode:
+                    angle = math.atan2(dz, dx)
+                    snap_angle = round(math.degrees(angle) / 45) * 45
+                    self.ortho_angle = math.radians(snap_angle)
+                    
+                    end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
+                    end_point.z = self.current_point.z + math.sin(self.ortho_angle) * length
+                else:
+                    self.ortho_angle = math.atan2(dz, dx)
+            else:
+                dx = end_point.x - self.current_point.x
+                dy = end_point.y - self.current_point.y
+                
+                if abs(dx) < 0.0001 and abs(dy) < 0.0001:
+                    return
+                
+                length = math.sqrt(dx * dx + dy * dy)
+                
+                if self.ortho_mode:
+                    angle = math.atan2(dy, dx)
+                    snap_angle = round(math.degrees(angle) / 45) * 45
+                    self.ortho_angle = math.radians(snap_angle)
+                    
+                    end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
+                    end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
+                else:
+                    self.ortho_angle = math.atan2(dy, dx)
+            
+            screen = location_3d_to_region_2d(context.region, context.region_data, end_point)
+            self.snap_screen_pos = (screen.x, screen.y) if screen else coord
+        
+        if end_point:
+            self._set_preview_point(end_point)
+    
+    def _project_to_locked_angle(self, snap_point: Vector, is_elevation: bool) -> Vector:
+        """Project along locked angle to align with snap point's X or Y/Z coordinate."""
+        if not self.current_point:
+            return None
+        
+        cos_a = math.cos(self.locked_angle)
+        sin_a = math.sin(self.locked_angle)
+        
+        if is_elevation:
+            x0, z0 = self.current_point.x, self.current_point.z
+            sx, sz = snap_point.x, snap_point.z
+            
+            # Calculate t for X alignment
+            t_x = None
+            if abs(cos_a) > 0.001:
+                t_x = (sx - x0) / cos_a
+            
+            # Calculate t for Z alignment
+            t_z = None
+            if abs(sin_a) > 0.001:
+                t_z = (sz - z0) / sin_a
+            
+            t = None
+            if abs(cos_a) > abs(sin_a):
+                t = t_x
+            else:
+                t = t_z
+            
+            if t is not None:
+                ix = x0 + t * cos_a
+                iz = z0 + t * sin_a
+                return Vector((ix, self.current_point.y, iz))
+        else:
+            x0, y0 = self.current_point.x, self.current_point.y
+            sx, sy = snap_point.x, snap_point.y
+            
+            t_x = None
+            if abs(cos_a) > 0.001:
+                t_x = (sx - x0) / cos_a
+            
+            t_y = None
+            if abs(sin_a) > 0.001:
+                t_y = (sy - y0) / sin_a
+            
+            t = None
+            if abs(cos_a) > abs(sin_a):
+                t = t_x
+            else:
+                t = t_y
+            
+            if t is not None:
+                ix = x0 + t * cos_a
+                iy = y0 + t * sin_a
+                return Vector((ix, iy, 0))
+        
+        return None
+    
+    def _constrain_to_locked_angle(self, end_point: Vector, is_elevation: bool) -> Vector:
+        """Constrain point to locked angle direction."""
+        if not self.current_point:
+            return end_point
+        
+        cos_a = math.cos(self.locked_angle)
+        sin_a = math.sin(self.locked_angle)
+        
+        if is_elevation:
+            dx = end_point.x - self.current_point.x
+            dz = end_point.z - self.current_point.z
+            length = dx * cos_a + dz * sin_a
+            
+            return Vector((
+                self.current_point.x + cos_a * length,
+                self.current_point.y,
+                self.current_point.z + sin_a * length
+            ))
+        else:
+            dx = end_point.x - self.current_point.x
+            dy = end_point.y - self.current_point.y
+            length = dx * cos_a + dy * sin_a
+            
+            return Vector((
+                self.current_point.x + cos_a * length,
+                self.current_point.y + sin_a * length,
+                0
+            ))
+    
+    def _finalize(self):
+        """Finalize the polyline by removing the trailing preview point."""
+        if self.polyline and self.polyline.obj and self.point_count > 0:
+            spline = self.polyline.obj.data.splines[0]
+            if len(spline.points) > self.point_count:
+                points_data = [(p.co[0], p.co[1], p.co[2]) for p in spline.points[:self.point_count]]
+                
+                self.polyline.obj.data.splines.clear()
+                new_spline = self.polyline.obj.data.splines.new('POLY')
+                new_spline.points.add(len(points_data) - 1)
+                for i, (x, y, z) in enumerate(points_data):
+                    new_spline.points[i].co = (x, y, z, 1)
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def get_default_typing_target(self):
+        return hb_placement.TypingTarget.LENGTH
+    
+    def on_typed_value_changed(self):
+        if self.typed_value and self.polyline and self.point_count > 0:
+            parsed = self.parse_typed_distance()
+            if parsed is not None:
+                self._update_preview_from_length(bpy.context, parsed)
+        self.update_header(bpy.context)
+    
+    def apply_typed_value(self):
+        parsed = self.parse_typed_distance()
+        if parsed is not None and self.polyline and self.point_count > 0:
+            self._update_preview_from_length(bpy.context, parsed)
+            self._confirm_point()
+        self.stop_typing()
+    
+    def _update_preview_from_length(self, context, length: float):
+        """Update preview point based on typed length and current angle."""
+        if self.current_point:
+            is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+            
+            if is_elevation:
+                end_x = self.current_point.x + math.cos(self.ortho_angle) * length
+                end_z = self.current_point.z + math.sin(self.ortho_angle) * length
+                end_point = Vector((end_x, self.current_point.y, end_z))
+            else:
+                end_x = self.current_point.x + math.cos(self.ortho_angle) * length
+                end_y = self.current_point.y + math.sin(self.ortho_angle) * length
+                end_point = Vector((end_x, end_y, 0))
+            
+            self._set_preview_point(end_point)
+    
+    def update_header(self, context):
+        if self.is_tracking and self.angle_locked:
+            snap_text = " [LOCK+SNAP]"
+        elif self.angle_locked:
+            snap_text = " [LOCK]"
+        elif self.is_snapped:
+            snap_text = " [SNAP]"
+        else:
+            snap_text = ""
+        
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            text = f"Segment Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+        elif self.point_count > 0:
+            length = self._get_segment_length()
+            length_str = units.unit_to_string(context.scene.unit_settings, length)
+            
+            if self.angle_locked:
+                angle_deg = round(math.degrees(self.locked_angle))
+            else:
+                angle_deg = round(math.degrees(self.ortho_angle))
+            
+            mode = "Ortho" if self.ortho_mode else "Free"
+            
+            close_text = " | C: close" if self.point_count >= 2 else ""
+            lock_hint = "L: unlock" if self.angle_locked else "L: lock"
+            text = f"Length: {length_str} | {angle_deg}° | {mode}{snap_text} | {lock_hint}{close_text} | Right-click: finish"
+        else:
+            text = f"Click to place first point{snap_text} | Right-click/Esc to cancel"
+        
+        hb_placement.draw_header_text(context, text)
+    
+    def execute(self, context):
+        self.init_placement(context)
+        
+        # Reset state
+        self.polyline = None
+        self.current_point = None
+        self.point_count = 0
+        self.ortho_mode = True
+        self.ortho_angle = 0.0
+        self.angle_locked = False
+        self.locked_angle = 0.0
+        self.tracking_point = None
+        self.is_tracking = False
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        
+        # Add draw handler for snap indicator
+        from ..operators.details import draw_snap_indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create polyline
+        self.create_polyline(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Handle typing
+        if self.handle_typing_event(event):
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Update snap
+        if self.polyline and self.polyline.obj:
+            self.polyline.obj.hide_set(True)
+        self.update_snap(context, event)
+        if self.polyline and self.polyline.obj:
+            self.polyline.obj.hide_set(False)
+        
+        # Update preview point position
+        if self.placement_state != hb_placement.PlacementState.TYPING:
+            if self.point_count == 0:
+                pos = self.get_snapped_position(context)
+                if pos:
+                    self.polyline.set_point(0, pos)
+            else:
+                self._update_from_mouse(context)
+        
+        self.update_header(context)
+        
+        # Left click - place point
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.point_count == 0:
+                start = self.get_snapped_position(context)
+                if start:
+                    self.polyline.set_point(0, start)
+                    self.current_point = start.copy()
+                    self.point_count = 1
+                    self.polyline.add_point(start)
+            else:
+                self._confirm_point()
+            return {'RUNNING_MODAL'}
+        
+        # Right click - finish
+        if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            if self.point_count > 1:
+                self._finalize()
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            else:
+                self.cancel_placement(context)
+                hb_placement.clear_header_text(context)
+                return {'CANCELLED'}
+        
+        # C key - close the shape
+        if event.type == 'C' and event.value == 'PRESS':
+            if self.point_count >= 2:
+                self._remove_draw_handler()
+                self._finalize()
+                
+                if self.polyline and self.polyline.obj:
+                    self.polyline.obj.data.splines[0].use_cyclic_u = True
+                
+                if self.polyline.obj in self.placement_objects:
+                    self.placement_objects.remove(self.polyline.obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Escape - cancel everything
+        if event.type == 'ESC' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Alt - toggle ortho mode
+        if event.type == 'LEFT_ALT' and event.value == 'PRESS':
+            self.ortho_mode = not self.ortho_mode
+            self.angle_locked = False
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # L - lock/unlock angle
+        if event.type == 'L' and event.value == 'PRESS':
+            if self.point_count > 0:
+                if self.angle_locked:
+                    self.angle_locked = False
+                else:
+                    self.locked_angle = self.ortho_angle
+                    self.angle_locked = True
+                self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
+
 class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
     bl_idname = "home_builder_layouts.add_detail_to_layout"
     bl_label = "Add Detail to Layout"
@@ -1804,6 +2513,7 @@ classes = (
     home_builder_layouts_OT_render_layout,
     home_builder_layouts_OT_export_all_to_pdf,
     home_builder_layouts_OT_add_dimension,
+    home_builder_layouts_OT_draw_line,
     home_builder_layouts_OT_add_dimension_3d,
     home_builder_layouts_OT_add_detail_to_layout,
     home_builder_layouts_OT_move_layout_view,
