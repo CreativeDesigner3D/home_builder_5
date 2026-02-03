@@ -12,6 +12,7 @@ from .. import hb_types
 from .. import hb_placement
 from .. import units
 from .. import hb_utils
+from .. import hb_snap
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -1705,7 +1706,7 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     # Polyline state
     polyline = None
-    current_point: Vector = None  # The last confirmed point
+    current_point: Vector = None  # The last confirmed point (world space on view plane)
     point_count: int = 0  # Number of confirmed points
     
     # Ortho mode (snap to 0, 45, 90 degree angles)
@@ -1724,81 +1725,115 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     is_snapped: bool = False
     snap_screen_pos: tuple = None
     
+    # View plane info (calculated once at start)
+    view_plane_normal: Vector = None
+    view_plane_point: Vector = None
+    view_right: Vector = None  # Camera's right direction (for angle calculations)
+    view_up: Vector = None     # Camera's up direction
+    
     # Draw handler
     _handle = None
     
     @classmethod
     def poll(cls, context):
-        return context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')
+        return (context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')) and context.scene.camera
     
-    def get_camera_plane_info(self, context):
-        """Get camera view plane information for coordinate projection."""
+    def _setup_view_plane(self, context):
+        """Calculate the view plane based on camera orientation.
+        
+        The view plane is perpendicular to the camera's view direction,
+        positioned slightly in front of the camera.
+        """
         camera = context.scene.camera
         if not camera:
-            return Vector((0, 0, 1)), Vector((0, 0, 0))
+            return False
         
-        # Get camera's view direction (negative Z in camera space)
         cam_matrix = camera.matrix_world
-        cam_forward = -cam_matrix.to_3x3() @ Vector((0, 0, 1))
+        
+        # Camera's local axes in world space
+        # Camera looks down its local -Z axis
+        cam_forward = -(cam_matrix.to_3x3() @ Vector((0, 0, 1)))
         cam_forward.normalize()
         
-        # Plane position - use camera location projected along view
-        plane_co = camera.location.copy()
+        cam_right = cam_matrix.to_3x3() @ Vector((1, 0, 0))
+        cam_right.normalize()
         
-        return cam_forward, plane_co
+        cam_up = cam_matrix.to_3x3() @ Vector((0, 1, 0))
+        cam_up.normalize()
+        
+        # View plane normal is opposite of camera forward (pointing toward camera)
+        self.view_plane_normal = -cam_forward
+        
+        # View plane point - slightly in front of camera
+        # Use a small offset along camera forward direction
+        self.view_plane_point = camera.location + cam_forward * 0.5
+        
+        # Store camera axes for 2D angle calculations on the view plane
+        self.view_right = cam_right
+        self.view_up = cam_up
+        
+        return True
     
-    def get_plane_point(self, context, coord):
-        """Convert 2D mouse coordinates to 3D point on the camera's view plane."""
+    def _get_view_plane_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the view plane."""
         region = context.region
         rv3d = context.region_data
         
         if not region or not rv3d:
             return None
         
-        origin = region_2d_to_origin_3d(region, rv3d, coord)
-        direction = region_2d_to_vector_3d(region, rv3d, coord)
+        # Get ray from mouse position
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_direction = region_2d_to_vector_3d(region, rv3d, coord)
         
-        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        # Ray-plane intersection
+        # Plane equation: dot(point - plane_point, plane_normal) = 0
+        # Ray equation: point = ray_origin + t * ray_direction
+        # Solving for t: t = dot(plane_point - ray_origin, plane_normal) / dot(ray_direction, plane_normal)
         
-        if is_elevation:
-            # Elevation view: work on wall plane
-            wall_rotation_z = 0
-            source_wall_name = context.scene.get('SOURCE_WALL')
-            if source_wall_name and source_wall_name in bpy.data.objects:
-                wall_obj = bpy.data.objects[source_wall_name]
-                wall_rotation_z = wall_obj.rotation_euler.z
-            
-            # Wall plane normal (perpendicular to wall face)
-            plane_normal = Vector((0, 1, 0))
-            rot_matrix = Matrix.Rotation(wall_rotation_z, 3, 'Z')
-            plane_normal = rot_matrix @ plane_normal
-            
-            denom = direction.dot(plane_normal)
-            if abs(denom) > 0.0001:
-                t = -origin.dot(plane_normal) / denom
-                return origin + direction * t
-            return origin
-        else:
-            # Plan/layout view: XY plane (Z=0)
-            if abs(direction.z) > 0.0001:
-                t = -origin.z / direction.z
-                point = origin + direction * t
-                return Vector((point.x, point.y, 0))
-            return Vector((origin.x, origin.y, 0))
+        denom = ray_direction.dot(self.view_plane_normal)
+        if abs(denom) < 0.0001:
+            # Ray is parallel to plane
+            return None
+        
+        t = (self.view_plane_point - ray_origin).dot(self.view_plane_normal) / denom
+        
+        return ray_origin + ray_direction * t
+    
+    def _world_to_view_2d(self, point: Vector) -> tuple:
+        """Convert a world point on the view plane to 2D coordinates in view space.
+        
+        Returns (x, y) where x is along view_right and y is along view_up.
+        """
+        # Vector from plane origin to point
+        offset = point - self.view_plane_point
+        
+        # Project onto view axes
+        x = offset.dot(self.view_right)
+        y = offset.dot(self.view_up)
+        
+        return (x, y)
+    
+    def _view_2d_to_world(self, x: float, y: float) -> Vector:
+        """Convert 2D view coordinates back to world point on the view plane."""
+        return self.view_plane_point + self.view_right * x + self.view_up * y
     
     def get_snap_point(self, context, coord: tuple):
-        """Get snapped point for layout views (snaps to mesh vertices)."""
+        """Get snapped point for layout views (snaps to mesh vertices).
+        
+        Returns point in world space on the view plane.
+        """
         region = context.region
         rv3d = context.region_data
         
         if not region or not rv3d:
             return None, None, False
         
-        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
         depsgraph = context.evaluated_depsgraph_get()
         
         best_dist = self.SNAP_RADIUS
         best_point = None
+        best_screen_pos = None
         is_snapped = False
         
         for obj in context.scene.objects:
@@ -1811,10 +1846,11 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             
             if obj.instance_type == 'COLLECTION' and obj.instance_collection:
                 result = self._check_collection_vertices(
-                    context, obj, coord, region, rv3d, depsgraph, best_dist, is_elevation)
+                    context, obj, coord, region, rv3d, depsgraph, best_dist)
                 if result[0] is not None and result[1] < best_dist:
                     best_point = result[0]
                     best_dist = result[1]
+                    best_screen_pos = result[2]
                     is_snapped = True
                 continue
             
@@ -1831,41 +1867,46 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             
             for vert in mesh.vertices:
                 world_pos = matrix_world @ vert.co
-                
-                if is_elevation:
-                    screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
-                else:
-                    proj_pos = Vector((world_pos.x, world_pos.y, 0))
-                    screen_pos = location_3d_to_region_2d(region, rv3d, proj_pos)
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
                 
                 if screen_pos:
                     dist = (Vector(coord) - screen_pos).length
                     if dist < best_dist:
                         best_dist = dist
-                        if is_elevation:
-                            best_point = world_pos.copy()
-                        else:
-                            best_point = Vector((world_pos.x, world_pos.y, 0))
+                        # Project the snapped point onto our view plane
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
                         is_snapped = True
             
             eval_obj.to_mesh_clear()
         
         if best_point:
-            screen = location_3d_to_region_2d(region, rv3d, best_point)
-            screen_pos = (screen.x, screen.y) if screen else coord
-            return (best_point, screen_pos, True)
+            return (best_point, best_screen_pos, True)
         
-        plane_point = self.get_plane_point(context, coord)
+        # No snap - return point on view plane from mouse
+        plane_point = self._get_view_plane_point(context, coord)
         return (plane_point, coord, False)
     
-    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist, is_elevation):
+    def _project_to_view_plane(self, world_point: Vector) -> Vector:
+        """Project a world point onto the view plane."""
+        # Vector from plane point to world point
+        offset = world_point - self.view_plane_point
+        
+        # Remove the component along the plane normal
+        dist_to_plane = offset.dot(self.view_plane_normal)
+        projected = world_point - self.view_plane_normal * dist_to_plane
+        
+        return projected
+    
+    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
         """Check vertices in a collection instance for snapping."""
         collection = instance_obj.instance_collection
         if not collection:
-            return (None, best_dist)
+            return (None, best_dist, None)
         
         instance_matrix = instance_obj.matrix_world
         best_point = None
+        best_screen_pos = None
         
         for obj in collection.objects:
             if obj.type != 'MESH':
@@ -1881,28 +1922,21 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             
             for vert in mesh.vertices:
                 world_pos = combined_matrix @ vert.co
-                
-                if is_elevation:
-                    screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
-                else:
-                    proj_pos = Vector((world_pos.x, world_pos.y, 0))
-                    screen_pos = location_3d_to_region_2d(region, rv3d, proj_pos)
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
                 
                 if screen_pos:
                     dist = (Vector(coord) - screen_pos).length
                     if dist < best_dist:
                         best_dist = dist
-                        if is_elevation:
-                            best_point = world_pos.copy()
-                        else:
-                            best_point = Vector((world_pos.x, world_pos.y, 0))
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
             
             eval_obj.to_mesh_clear()
         
-        return (best_point, best_dist)
+        return (best_point, best_dist, best_screen_pos)
     
     def get_snapped_position(self, context) -> Vector:
-        """Get position with snapping applied."""
+        """Get position with snapping applied (world space on view plane)."""
         coord = (self.mouse_pos.x, self.mouse_pos.y)
         point, screen_pos, snapped = self.get_snap_point(context, coord)
         
@@ -1912,47 +1946,71 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         return point
     
     def create_polyline(self, context):
-        """Create a new polyline object for the layout."""
+        """Create a new polyline object on the view plane."""
         from .. import hb_details
         
-        self.polyline = hb_details.GeoNodePolyline()
-        self.polyline.create("Line")
-        
-        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
-        
-        if is_elevation:
-            # Get wall rotation for elevation views
-            wall_rotation_z = 0
-            source_wall_name = context.scene.get('SOURCE_WALL')
-            if source_wall_name and source_wall_name in bpy.data.objects:
-                wall_obj = bpy.data.objects[source_wall_name]
-                wall_rotation_z = wall_obj.rotation_euler.z
-            
-            # Rotate to stand up on wall plane
-            self.polyline.obj.rotation_euler = (math.pi / 2, 0, wall_rotation_z)
-        else:
-            # Plan view: flat in XY
-            self.polyline.obj.rotation_euler = (0, 0, 0)
-        
-        # Apply annotation settings from scene
+        # Get annotation settings from scene
         hb_scene = context.scene.home_builder
-        self.polyline.obj.data.bevel_depth = hb_scene.annotation_line_thickness
-        color = tuple(hb_scene.annotation_line_color) + (1.0,)
-        self.polyline.obj.color = color
-        if self.polyline.obj.data.materials:
-            mat = self.polyline.obj.data.materials[0]
-            if mat and mat.use_nodes:
-                bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                if bsdf:
-                    bsdf.inputs["Base Color"].default_value = color
+        line_thickness = hb_scene.annotation_line_thickness
+        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
         
-        self.polyline.obj['IS_2D_ANNOTATION'] = True
-        self.register_placement_object(self.polyline.obj)
+        # Create curve
+        curve = bpy.data.curves.new("Line", 'CURVE')
+        curve.dimensions = '3D'
+        
+        # Create initial spline with one point at origin (will be updated)
+        spline = curve.splines.new('POLY')
+        spline.points[0].co = (0, 0, 0, 1)
+        
+        # Create object
+        obj = bpy.data.objects.new("Line", curve)
+        obj['IS_DETAIL_POLYLINE'] = True
+        obj['IS_2D_ANNOTATION'] = True
+        obj.color = line_color
+        
+        context.scene.collection.objects.link(obj)
+        
+        # Create material
+        mat = bpy.data.materials.new("Line_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        curve.materials.append(mat)
+        
+        curve.bevel_depth = line_thickness
+        
+        # Create a simple wrapper object to hold the curve
+        class PolylineWrapper:
+            def __init__(self, obj):
+                self.obj = obj
+            
+            def set_point(self, index, point):
+                """Set point in world coordinates."""
+                if self.obj and self.obj.type == 'CURVE':
+                    spline = self.obj.data.splines[0]
+                    if index < len(spline.points):
+                        spline.points[index].co = (point.x, point.y, point.z, 1)
+            
+            def add_point(self, point):
+                """Add point in world coordinates."""
+                if self.obj and self.obj.type == 'CURVE':
+                    spline = self.obj.data.splines[0]
+                    spline.points.add(1)
+                    idx = len(spline.points) - 1
+                    spline.points[idx].co = (point.x, point.y, point.z, 1)
+        
+        self.polyline = PolylineWrapper(obj)
+        
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(obj)
+        
+        self.register_placement_object(obj)
         self.point_count = 0
         self.current_point = None
     
     def _set_preview_point(self, point: Vector):
-        """Set the preview (last) point of the polyline."""
+        """Set the preview (last) point of the polyline (world coords on view plane)."""
         if self.polyline and self.polyline.obj:
             spline = self.polyline.obj.data.splines[0]
             idx = len(spline.points) - 1
@@ -1964,15 +2022,19 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             spline = self.polyline.obj.data.splines[0]
             idx = len(spline.points) - 1
             co = spline.points[idx].co
-            # Convert from local to world
-            return self.polyline.obj.matrix_world @ Vector((co[0], co[1], co[2]))
+            return Vector((co[0], co[1], co[2]))
         return Vector((0, 0, 0))
     
     def _get_segment_length(self) -> float:
-        """Get the length of the current segment."""
+        """Get the length of the current segment (in view plane)."""
         if self.current_point:
             preview = self._get_preview_point()
-            return (preview - self.current_point).length
+            # Get 2D coordinates on view plane
+            p1_2d = self._world_to_view_2d(self.current_point)
+            p2_2d = self._world_to_view_2d(preview)
+            dx = p2_2d[0] - p1_2d[0]
+            dy = p2_2d[1] - p1_2d[1]
+            return math.sqrt(dx * dx + dy * dy)
         return 0.0
     
     def _confirm_point(self):
@@ -1989,7 +2051,7 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def _update_from_mouse(self, context):
         """Update preview point based on mouse position."""
-        if self.point_count == 0 or not self.hit_location:
+        if self.point_count == 0:
             return
         
         # Reset tracking state
@@ -1997,7 +2059,9 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.tracking_point = None
         
         coord = (self.mouse_pos.x, self.mouse_pos.y)
-        is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
+        
+        # Get current point in 2D view space
+        curr_2d = self._world_to_view_2d(self.current_point)
         
         # When angle is locked, project along locked angle
         if self.angle_locked and self.current_point:
@@ -2005,24 +2069,25 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             
             if snapped and point:
                 # Project along locked angle to align with snap point
-                projected = self._project_to_locked_angle(point, is_elevation)
+                projected = self._project_to_locked_angle(point)
                 if projected:
                     self.is_snapped = True
                     self.is_tracking = True
                     self.tracking_point = point.copy()
+                    self._set_preview_point(projected)
+                    # Update screen pos
                     screen = location_3d_to_region_2d(context.region, context.region_data, projected)
                     self.snap_screen_pos = (screen.x, screen.y) if screen else coord
-                    self._set_preview_point(projected)
                     return
             
             # No snap - extend along locked angle
             self.is_snapped = False
-            end_point = self.get_plane_point(context, coord)
+            end_point = self._get_view_plane_point(context, coord)
             if end_point:
-                end_point = self._constrain_to_locked_angle(end_point, is_elevation)
+                end_point = self._constrain_to_locked_angle(end_point)
+                self._set_preview_point(end_point)
                 screen = location_3d_to_region_2d(context.region, context.region_data, end_point)
                 self.snap_screen_pos = (screen.x, screen.y) if screen else coord
-                self._set_preview_point(end_point)
             return
         
         # Normal behavior (not locked)
@@ -2032,149 +2097,105 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             self.is_snapped = True
             self.snap_screen_pos = screen_pos
             if self.current_point:
-                if is_elevation:
-                    dx = point.x - self.current_point.x
-                    dz = point.z - self.current_point.z
-                    self.ortho_angle = math.atan2(dz, dx)
-                else:
-                    dx = point.x - self.current_point.x
-                    dy = point.y - self.current_point.y
-                    self.ortho_angle = math.atan2(dy, dx)
+                # Calculate angle in view plane
+                end_2d = self._world_to_view_2d(point)
+                dx = end_2d[0] - curr_2d[0]
+                dy = end_2d[1] - curr_2d[1]
+                self.ortho_angle = math.atan2(dy, dx)
             self._set_preview_point(point)
             return
         
         self.is_snapped = False
-        end_point = self.get_plane_point(context, coord)
+        end_point = self._get_view_plane_point(context, coord)
         
         if self.current_point and end_point:
-            if is_elevation:
-                dx = end_point.x - self.current_point.x
-                dz = end_point.z - self.current_point.z
-                
-                if abs(dx) < 0.0001 and abs(dz) < 0.0001:
-                    return
-                
-                length = math.sqrt(dx * dx + dz * dz)
-                
-                if self.ortho_mode:
-                    angle = math.atan2(dz, dx)
-                    snap_angle = round(math.degrees(angle) / 45) * 45
-                    self.ortho_angle = math.radians(snap_angle)
-                    
-                    end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
-                    end_point.z = self.current_point.z + math.sin(self.ortho_angle) * length
-                else:
-                    self.ortho_angle = math.atan2(dz, dx)
-            else:
-                dx = end_point.x - self.current_point.x
-                dy = end_point.y - self.current_point.y
-                
-                if abs(dx) < 0.0001 and abs(dy) < 0.0001:
-                    return
-                
-                length = math.sqrt(dx * dx + dy * dy)
-                
-                if self.ortho_mode:
-                    angle = math.atan2(dy, dx)
-                    snap_angle = round(math.degrees(angle) / 45) * 45
-                    self.ortho_angle = math.radians(snap_angle)
-                    
-                    end_point.x = self.current_point.x + math.cos(self.ortho_angle) * length
-                    end_point.y = self.current_point.y + math.sin(self.ortho_angle) * length
-                else:
-                    self.ortho_angle = math.atan2(dy, dx)
+            # Work in 2D view coordinates
+            end_2d = self._world_to_view_2d(end_point)
+            dx = end_2d[0] - curr_2d[0]
+            dy = end_2d[1] - curr_2d[1]
             
+            if abs(dx) < 0.0001 and abs(dy) < 0.0001:
+                return
+            
+            length = math.sqrt(dx * dx + dy * dy)
+            
+            if self.ortho_mode:
+                angle = math.atan2(dy, dx)
+                snap_angle = round(math.degrees(angle) / 45) * 45
+                self.ortho_angle = math.radians(snap_angle)
+                
+                # Calculate new endpoint in 2D, then convert back to 3D
+                new_x = curr_2d[0] + math.cos(self.ortho_angle) * length
+                new_y = curr_2d[1] + math.sin(self.ortho_angle) * length
+                end_point = self._view_2d_to_world(new_x, new_y)
+            else:
+                self.ortho_angle = math.atan2(dy, dx)
+            
+            # Update screen position for feedback
             screen = location_3d_to_region_2d(context.region, context.region_data, end_point)
             self.snap_screen_pos = (screen.x, screen.y) if screen else coord
         
         if end_point:
             self._set_preview_point(end_point)
     
-    def _project_to_locked_angle(self, snap_point: Vector, is_elevation: bool) -> Vector:
-        """Project along locked angle to align with snap point's X or Y/Z coordinate."""
+    def _project_to_locked_angle(self, snap_point: Vector) -> Vector:
+        """Project along locked angle to align with snap point."""
         if not self.current_point:
             return None
+        
+        # Work in 2D view coordinates
+        curr_2d = self._world_to_view_2d(self.current_point)
+        snap_2d = self._world_to_view_2d(snap_point)
         
         cos_a = math.cos(self.locked_angle)
         sin_a = math.sin(self.locked_angle)
         
-        if is_elevation:
-            x0, z0 = self.current_point.x, self.current_point.z
-            sx, sz = snap_point.x, snap_point.z
-            
-            # Calculate t for X alignment
-            t_x = None
-            if abs(cos_a) > 0.001:
-                t_x = (sx - x0) / cos_a
-            
-            # Calculate t for Z alignment
-            t_z = None
-            if abs(sin_a) > 0.001:
-                t_z = (sz - z0) / sin_a
-            
-            t = None
-            if abs(cos_a) > abs(sin_a):
-                t = t_x
-            else:
-                t = t_z
-            
-            if t is not None:
-                ix = x0 + t * cos_a
-                iz = z0 + t * sin_a
-                return Vector((ix, self.current_point.y, iz))
+        x0, y0 = curr_2d
+        sx, sy = snap_2d
+        
+        # Calculate t for alignment
+        t_x = None
+        if abs(cos_a) > 0.001:
+            t_x = (sx - x0) / cos_a
+        
+        t_y = None
+        if abs(sin_a) > 0.001:
+            t_y = (sy - y0) / sin_a
+        
+        # Use the axis that's more perpendicular to the locked angle
+        t = None
+        if abs(cos_a) > abs(sin_a):
+            t = t_x
         else:
-            x0, y0 = self.current_point.x, self.current_point.y
-            sx, sy = snap_point.x, snap_point.y
-            
-            t_x = None
-            if abs(cos_a) > 0.001:
-                t_x = (sx - x0) / cos_a
-            
-            t_y = None
-            if abs(sin_a) > 0.001:
-                t_y = (sy - y0) / sin_a
-            
-            t = None
-            if abs(cos_a) > abs(sin_a):
-                t = t_x
-            else:
-                t = t_y
-            
-            if t is not None:
-                ix = x0 + t * cos_a
-                iy = y0 + t * sin_a
-                return Vector((ix, iy, 0))
+            t = t_y
+        
+        if t is not None:
+            new_x = x0 + t * cos_a
+            new_y = y0 + t * sin_a
+            return self._view_2d_to_world(new_x, new_y)
         
         return None
     
-    def _constrain_to_locked_angle(self, end_point: Vector, is_elevation: bool) -> Vector:
+    def _constrain_to_locked_angle(self, end_point: Vector) -> Vector:
         """Constrain point to locked angle direction."""
         if not self.current_point:
             return end_point
         
+        # Work in 2D view coordinates
+        curr_2d = self._world_to_view_2d(self.current_point)
+        end_2d = self._world_to_view_2d(end_point)
+        
         cos_a = math.cos(self.locked_angle)
         sin_a = math.sin(self.locked_angle)
         
-        if is_elevation:
-            dx = end_point.x - self.current_point.x
-            dz = end_point.z - self.current_point.z
-            length = dx * cos_a + dz * sin_a
-            
-            return Vector((
-                self.current_point.x + cos_a * length,
-                self.current_point.y,
-                self.current_point.z + sin_a * length
-            ))
-        else:
-            dx = end_point.x - self.current_point.x
-            dy = end_point.y - self.current_point.y
-            length = dx * cos_a + dy * sin_a
-            
-            return Vector((
-                self.current_point.x + cos_a * length,
-                self.current_point.y + sin_a * length,
-                0
-            ))
+        dx = end_2d[0] - curr_2d[0]
+        dy = end_2d[1] - curr_2d[1]
+        length = dx * cos_a + dy * sin_a
+        
+        new_x = curr_2d[0] + cos_a * length
+        new_y = curr_2d[1] + sin_a * length
+        
+        return self._view_2d_to_world(new_x, new_y)
     
     def _finalize(self):
         """Finalize the polyline by removing the trailing preview point."""
@@ -2215,17 +2236,10 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     def _update_preview_from_length(self, context, length: float):
         """Update preview point based on typed length and current angle."""
         if self.current_point:
-            is_elevation = context.scene.get('IS_ELEVATION_VIEW', False)
-            
-            if is_elevation:
-                end_x = self.current_point.x + math.cos(self.ortho_angle) * length
-                end_z = self.current_point.z + math.sin(self.ortho_angle) * length
-                end_point = Vector((end_x, self.current_point.y, end_z))
-            else:
-                end_x = self.current_point.x + math.cos(self.ortho_angle) * length
-                end_y = self.current_point.y + math.sin(self.ortho_angle) * length
-                end_point = Vector((end_x, end_y, 0))
-            
+            curr_2d = self._world_to_view_2d(self.current_point)
+            new_x = curr_2d[0] + math.cos(self.ortho_angle) * length
+            new_y = curr_2d[1] + math.sin(self.ortho_angle) * length
+            end_point = self._view_2d_to_world(new_x, new_y)
             self._set_preview_point(end_point)
     
     def update_header(self, context):
@@ -2274,6 +2288,11 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         self.is_tracking = False
         self.is_snapped = False
         self.snap_screen_pos = None
+        
+        # Setup view plane based on camera
+        if not self._setup_view_plane(context):
+            self.report({'ERROR'}, "No camera found in scene")
+            return {'CANCELLED'}
         
         # Add draw handler for snap indicator
         from ..operators.details import draw_snap_indicator
@@ -2389,7 +2408,6 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
             return {'PASS_THROUGH'}
         
         return {'RUNNING_MODAL'}
-
 
 
 class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):

@@ -828,8 +828,13 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
         col.scale_y = 1.2
         
         # Line drawing
-        col.operator("home_builder_details.draw_line", 
-                    text="Draw Line", icon='IPO_LINEAR')
+        if is_detail_view:
+            col.operator("home_builder_details.draw_line", 
+                        text="Draw Line", icon='IPO_LINEAR')
+        else:
+            col.operator("home_builder_layouts.draw_line", 
+                        text="Draw Line", icon='IPO_LINEAR')
+
         
         # Rectangle drawing
         col.operator("home_builder_details.draw_rectangle", 
