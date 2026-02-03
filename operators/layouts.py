@@ -2961,6 +2961,470 @@ class home_builder_layouts_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         return {'RUNNING_MODAL'}
 
 
+class home_builder_layouts_OT_draw_circle(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_layouts.draw_circle"
+    bl_label = "Draw Circle"
+    bl_description = "Draw a circle by clicking center then setting radius. Type for exact size."
+    bl_options = {'UNDO'}
+    
+    # Snap radius in pixels
+    SNAP_RADIUS = 20
+    SEGMENTS = 32  # Number of segments for smooth circle
+    
+    # Circle state
+    circle_obj = None
+    center: Vector = None  # Center in world space on view plane
+    has_center: bool = False
+    
+    # Typed radius
+    typed_radius: str = ""
+    is_typing: bool = False
+    
+    # Current radius for display
+    current_radius: float = 0.0
+    
+    # Snap state
+    is_snapped: bool = False
+    snap_screen_pos: tuple = None
+    
+    # View plane info
+    view_plane_normal: Vector = None
+    view_plane_point: Vector = None
+    view_right: Vector = None
+    view_up: Vector = None
+    
+    # Draw handler
+    _handle = None
+    
+    @classmethod
+    def poll(cls, context):
+        return (context.scene.get('IS_LAYOUT_VIEW') or context.scene.get('IS_MULTI_VIEW')) and context.scene.camera
+    
+    def _setup_view_plane(self, context):
+        """Calculate the view plane based on camera orientation."""
+        camera = context.scene.camera
+        if not camera:
+            return False
+        
+        cam_matrix = camera.matrix_world
+        
+        cam_forward = -(cam_matrix.to_3x3() @ Vector((0, 0, 1)))
+        cam_forward.normalize()
+        
+        cam_right = cam_matrix.to_3x3() @ Vector((1, 0, 0))
+        cam_right.normalize()
+        
+        cam_up = cam_matrix.to_3x3() @ Vector((0, 1, 0))
+        cam_up.normalize()
+        
+        self.view_plane_normal = -cam_forward
+        self.view_plane_point = camera.location + cam_forward * 0.5
+        self.view_right = cam_right
+        self.view_up = cam_up
+        
+        return True
+    
+    def _get_view_plane_point(self, context, coord):
+        """Convert 2D mouse coordinates to 3D point on the view plane."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None
+        
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_direction = region_2d_to_vector_3d(region, rv3d, coord)
+        
+        denom = ray_direction.dot(self.view_plane_normal)
+        if abs(denom) < 0.0001:
+            return None
+        
+        t = (self.view_plane_point - ray_origin).dot(self.view_plane_normal) / denom
+        return ray_origin + ray_direction * t
+    
+    def _world_to_view_2d(self, point: Vector) -> tuple:
+        """Convert a world point on the view plane to 2D coordinates in view space."""
+        offset = point - self.view_plane_point
+        x = offset.dot(self.view_right)
+        y = offset.dot(self.view_up)
+        return (x, y)
+    
+    def _view_2d_to_world(self, x: float, y: float) -> Vector:
+        """Convert 2D view coordinates back to world point on the view plane."""
+        return self.view_plane_point + self.view_right * x + self.view_up * y
+    
+    def _project_to_view_plane(self, world_point: Vector) -> Vector:
+        """Project a world point onto the view plane."""
+        offset = world_point - self.view_plane_point
+        dist_to_plane = offset.dot(self.view_plane_normal)
+        return world_point - self.view_plane_normal * dist_to_plane
+    
+    def get_snap_point(self, context, coord: tuple):
+        """Get snapped point for layout views."""
+        region = context.region
+        rv3d = context.region_data
+        
+        if not region or not rv3d:
+            return None, None, False
+        
+        depsgraph = context.evaluated_depsgraph_get()
+        
+        best_dist = self.SNAP_RADIUS
+        best_point = None
+        best_screen_pos = None
+        is_snapped = False
+        
+        for obj in context.scene.objects:
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            
+            if self.circle_obj and obj == self.circle_obj:
+                continue
+            
+            if obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                result = self._check_collection_vertices(
+                    context, obj, coord, region, rv3d, depsgraph, best_dist)
+                if result[0] is not None and result[1] < best_dist:
+                    best_point = result[0]
+                    best_dist = result[1]
+                    best_screen_pos = result[2]
+                    is_snapped = True
+                continue
+            
+            if obj.type != 'MESH':
+                continue
+            
+            matrix_world = obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = matrix_world @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+                        is_snapped = True
+            
+            eval_obj.to_mesh_clear()
+        
+        if best_point:
+            return (best_point, best_screen_pos, True)
+        
+        plane_point = self._get_view_plane_point(context, coord)
+        return (plane_point, coord, False)
+    
+    def _check_collection_vertices(self, context, instance_obj, coord, region, rv3d, depsgraph, best_dist):
+        """Check vertices in a collection instance for snapping."""
+        collection = instance_obj.instance_collection
+        if not collection:
+            return (None, best_dist, None)
+        
+        instance_matrix = instance_obj.matrix_world
+        best_point = None
+        best_screen_pos = None
+        
+        for obj in collection.objects:
+            if obj.type != 'MESH':
+                continue
+            
+            combined_matrix = instance_matrix @ obj.matrix_world
+            
+            try:
+                eval_obj = obj.evaluated_get(depsgraph)
+                mesh = eval_obj.to_mesh()
+            except:
+                continue
+            
+            for vert in mesh.vertices:
+                world_pos = combined_matrix @ vert.co
+                screen_pos = location_3d_to_region_2d(region, rv3d, world_pos)
+                
+                if screen_pos:
+                    dist = (Vector(coord) - screen_pos).length
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_point = self._project_to_view_plane(world_pos)
+                        best_screen_pos = (screen_pos.x, screen_pos.y)
+            
+            eval_obj.to_mesh_clear()
+        
+        return (best_point, best_dist, best_screen_pos)
+    
+    def get_snapped_position(self, context) -> Vector:
+        """Get position with snapping applied."""
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        point, screen_pos, snapped = self.get_snap_point(context, coord)
+        
+        self.is_snapped = snapped
+        self.snap_screen_pos = screen_pos
+        
+        return point
+    
+    def create_circle(self, context):
+        """Create a new circle object on the view plane."""
+        # Get annotation settings
+        hb_scene = context.scene.home_builder
+        line_thickness = hb_scene.annotation_line_thickness
+        line_color = tuple(hb_scene.annotation_line_color) + (1.0,)
+        
+        # Create curve
+        curve = bpy.data.curves.new("Circle", 'CURVE')
+        curve.dimensions = '3D'
+        
+        # Create circular spline
+        spline = curve.splines.new('POLY')
+        spline.points.add(self.SEGMENTS - 1)
+        
+        # Initialize with small radius (will be updated)
+        radius = 0.001
+        for i in range(self.SEGMENTS):
+            angle = 2 * math.pi * i / self.SEGMENTS
+            # Local coordinates in view_right/view_up space
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+            spline.points[i].co = (x, y, 0, 1)
+        
+        spline.use_cyclic_u = True
+        
+        # Create object
+        obj = bpy.data.objects.new("Circle", curve)
+        obj['IS_DETAIL_CIRCLE'] = True
+        obj['IS_2D_ANNOTATION'] = True
+        obj.color = line_color
+        
+        context.scene.collection.objects.link(obj)
+        
+        # Create material
+        mat = bpy.data.materials.new("Circle_Mat")
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        curve.materials.append(mat)
+        
+        curve.bevel_depth = line_thickness
+        
+        self.circle_obj = obj
+        
+        # Add to Freestyle Ignore collection
+        ignore_collection = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_collection and obj.name not in ignore_collection.objects:
+            ignore_collection.objects.link(obj)
+        
+        self.register_placement_object(obj)
+    
+    def _update_circle_points(self, center: Vector, radius: float):
+        """Update circle points on the view plane."""
+        if not self.circle_obj or self.circle_obj.type != 'CURVE':
+            return
+        
+        spline = self.circle_obj.data.splines[0]
+        
+        for i in range(len(spline.points)):
+            angle = 2 * math.pi * i / len(spline.points)
+            # Calculate point on circle in view plane space
+            local_x = radius * math.cos(angle)
+            local_y = radius * math.sin(angle)
+            # Convert to world position
+            world_pos = center + self.view_right * local_x + self.view_up * local_y
+            spline.points[i].co = (world_pos.x, world_pos.y, world_pos.z, 1)
+    
+    def parse_radius(self, value_str: str) -> float:
+        """Parse a typed radius string to meters."""
+        if not value_str:
+            return 0.0
+        result = self.parse_typed_distance(value_str)
+        return result if result is not None else 0.0
+    
+    def _remove_draw_handler(self):
+        """Remove the draw handler."""
+        if self._handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+    
+    def update_header(self, context):
+        snap_text = " [SNAP]" if self.is_snapped else ""
+        
+        if not self.has_center:
+            text = f"Click to place center{snap_text} | Right-click/Esc to cancel"
+        elif self.is_typing:
+            text = f"Radius: {self.typed_radius}_ | Enter to confirm | Esc to cancel typing"
+        else:
+            radius_str = units.unit_to_string(context.scene.unit_settings, self.current_radius)
+            diameter_str = units.unit_to_string(context.scene.unit_settings, self.current_radius * 2)
+            text = f"Radius: {radius_str} | Diameter: {diameter_str}{snap_text} | Type for exact | Click to place"
+        
+        hb_placement.draw_header_text(context, text)
+    
+    def handle_typing(self, event) -> bool:
+        """Handle keyboard input for typing radius."""
+        if event.type in hb_placement.NUMBER_KEYS and event.value == 'PRESS':
+            if not self.is_typing:
+                self.is_typing = True
+                self.typed_radius = hb_placement.NUMBER_KEYS[event.type]
+            else:
+                self.typed_radius += hb_placement.NUMBER_KEYS[event.type]
+            
+            radius = self.parse_radius(self.typed_radius)
+            if radius > 0 and self.center:
+                self._update_circle_points(self.center, radius)
+                self.current_radius = radius
+            return True
+        
+        if not self.is_typing:
+            return False
+        
+        if event.type == 'BACK_SPACE' and event.value == 'PRESS':
+            if self.typed_radius:
+                self.typed_radius = self.typed_radius[:-1]
+                radius = self.parse_radius(self.typed_radius)
+                if radius > 0 and self.center:
+                    self._update_circle_points(self.center, radius)
+                    self.current_radius = radius
+            else:
+                self.is_typing = False
+            return True
+        
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            radius = self.parse_radius(self.typed_radius)
+            if radius > 0 and self.center:
+                self._update_circle_points(self.center, radius)
+                self.current_radius = radius
+                return False  # Let modal finish
+            return True
+        
+        if event.type == 'ESC' and event.value == 'PRESS':
+            self.is_typing = False
+            self.typed_radius = ""
+            return True
+        
+        return False
+    
+    def execute(self, context):
+        self.init_placement(context)
+        
+        # Reset state
+        self.circle_obj = None
+        self.center = None
+        self.has_center = False
+        self.is_snapped = False
+        self.snap_screen_pos = None
+        self.typed_radius = ""
+        self.is_typing = False
+        self.current_radius = 0.0
+        
+        # Setup view plane
+        if not self._setup_view_plane(context):
+            self.report({'ERROR'}, "No camera found in scene")
+            return {'CANCELLED'}
+        
+        # Add draw handler
+        from ..operators.details import draw_snap_indicator
+        args = (self, context)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_snap_indicator, args, 'WINDOW', 'POST_PIXEL')
+        
+        # Create circle
+        self.create_circle(context)
+        
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+    
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+        context.area.tag_redraw()
+        
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+        
+        # Handle typing
+        if self.has_center and self.handle_typing(event):
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        
+        # Check for Enter to finish
+        if self.has_center and event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            radius = self.parse_radius(self.typed_radius) if self.typed_radius else self.current_radius
+            if radius > 0:
+                self._update_circle_points(self.center, radius)
+                self._remove_draw_handler()
+                if self.circle_obj in self.placement_objects:
+                    self.placement_objects.remove(self.circle_obj)
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+        
+        # Update snap
+        if not self.is_typing:
+            if self.circle_obj:
+                self.circle_obj.hide_set(True)
+            self.update_snap(context, event)
+            if self.circle_obj:
+                self.circle_obj.hide_set(False)
+            
+            current_pos = self.get_snapped_position(context)
+            
+            if not self.has_center:
+                # Move circle to cursor (tiny radius)
+                if current_pos:
+                    self._update_circle_points(current_pos, 0.001)
+            else:
+                # Update radius from cursor distance
+                if current_pos and self.center:
+                    center_2d = self._world_to_view_2d(self.center)
+                    current_2d = self._world_to_view_2d(current_pos)
+                    dx = current_2d[0] - center_2d[0]
+                    dy = current_2d[1] - center_2d[1]
+                    radius = math.sqrt(dx * dx + dy * dy)
+                    
+                    if radius > 0.001:
+                        self._update_circle_points(self.center, radius)
+                        self.current_radius = radius
+        
+        self.update_header(context)
+        
+        # Left click
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if not self.has_center:
+                current_pos = self.get_snapped_position(context)
+                if current_pos:
+                    self.center = current_pos.copy()
+                    self.has_center = True
+            elif not self.is_typing:
+                if self.current_radius > 0.001:
+                    self._remove_draw_handler()
+                    if self.circle_obj in self.placement_objects:
+                        self.placement_objects.remove(self.circle_obj)
+                    hb_placement.clear_header_text(context)
+                    return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+        
+        # Right click / Escape - cancel
+        if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        if event.type == 'ESC' and event.value == 'PRESS' and not self.is_typing:
+            self._remove_draw_handler()
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        
+        # Pass through navigation
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+        
+        return {'RUNNING_MODAL'}
+
+
 class home_builder_layouts_OT_add_detail_to_layout(bpy.types.Operator):
     bl_idname = "home_builder_layouts.add_detail_to_layout"
     bl_label = "Add Detail to Layout"
@@ -3101,6 +3565,7 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
 classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
+    home_builder_layouts_OT_draw_circle,
     home_builder_layouts_OT_create_plan_view,
     home_builder_layouts_OT_create_3d_view,
     home_builder_layouts_OT_create_all_elevations,

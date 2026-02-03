@@ -845,8 +845,12 @@ class HOME_BUILDER_PT_annotations_drawing(bpy.types.Panel):
                         text="Draw Rectangle", icon='MESH_PLANE')
         
         # Circle drawing
-        col.operator("home_builder_details.draw_circle", 
-                    text="Draw Circle", icon='MESH_CIRCLE')
+        if is_detail_view:
+            col.operator("home_builder_details.draw_circle", 
+                        text="Draw Circle", icon='MESH_CIRCLE')
+        else:
+            col.operator("home_builder_layouts.draw_circle", 
+                        text="Draw Circle", icon='MESH_CIRCLE')
         
         col.separator()
         
