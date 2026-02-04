@@ -752,10 +752,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             # Get rotation and view type
             dim_rotation, is_plan_view = self.get_dimension_rotation(context, wall_rotation_z)
             
+            # Get cabinet z location (for upper cabinets mounted off floor)
+            cabinet_z_loc = self.preview_cage.obj.location.z
+            
             # Position dimensions based on view type
             if is_plan_view:
                 # Plan view - position above cabinet so they don't overlap footprint
-                dim_z = cabinet_height + units.inch(4)
+                dim_z = cabinet_z_loc + cabinet_height + units.inch(4)
                 dim_z_offset = units.inch(8)  # Extra offset for left/right dims
                 # Y offset from wall
                 if self.place_on_front:
@@ -763,8 +766,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 else:
                     dim_y = wall_thickness + units.inch(2)
             else:
-                # 3D/Elevation view - position at cursor height (mid-cabinet)
-                dim_z = cabinet_height / 2
+                # 3D/Elevation view - position at cabinet center height
+                dim_z = cabinet_z_loc + cabinet_height / 2
                 dim_z_offset = 0  # All dims at same height
                 # Y position inline with cabinet (no offset)
                 if self.place_on_front:
@@ -777,6 +780,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.dim_total_width.obj.location = wall_matrix @ local_pos
             self.dim_total_width.obj.rotation_euler = dim_rotation
             self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
+            self.dim_total_width.set_decimal()
             self.dim_total_width.obj.hide_set(False)
             
             # Left offset dimension - from gap start to cabinet start
@@ -785,6 +789,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.dim_left_offset.obj.location = wall_matrix @ local_pos
                 self.dim_left_offset.obj.rotation_euler = dim_rotation
                 self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
+                self.dim_left_offset.set_decimal()
                 self.dim_left_offset.obj.hide_set(False)
             else:
                 self.dim_left_offset.obj.hide_set(True)
@@ -795,6 +800,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.dim_right_offset.obj.location = wall_matrix @ local_pos
                 self.dim_right_offset.obj.rotation_euler = dim_rotation
                 self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
+                self.dim_right_offset.set_decimal()
                 self.dim_right_offset.obj.hide_set(False)
             else:
                 self.dim_right_offset.obj.hide_set(True)
@@ -803,15 +809,19 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             base_rotation_z = self.preview_cage.obj.rotation_euler.z
             dim_rotation, is_plan_view = self.get_dimension_rotation(context, base_rotation_z)
             
+            # Get cabinet z location (for upper cabinets mounted off floor)
+            cabinet_z_loc = self.preview_cage.obj.location.z
+            
             if is_plan_view:
-                dim_z = cabinet_height + units.inch(4)
+                dim_z = cabinet_z_loc + cabinet_height + units.inch(4)
             else:
-                dim_z = cabinet_height / 2
+                dim_z = cabinet_z_loc + cabinet_height / 2
             
             self.dim_total_width.obj.location = self.preview_cage.obj.location.copy()
             self.dim_total_width.obj.location.z = dim_z
             self.dim_total_width.obj.rotation_euler = dim_rotation
             self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
+            self.dim_total_width.set_decimal()
             self.dim_total_width.obj.hide_set(False)
             
             # Hide offset dimensions on floor
