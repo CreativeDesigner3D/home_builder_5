@@ -282,11 +282,239 @@ class home_builder_OT_rendering_settings(bpy.types.Operator):
         col.prop(view_settings, "look", text="Look")
 
 
+
+
+class home_builder_OT_create_camera(bpy.types.Operator):
+    bl_idname = "home_builder.create_camera"
+    bl_label = "Create Camera"
+    bl_description = "Create a camera from the current viewport view"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    add_track_to: bpy.props.BoolProperty(
+        name="Add Track To Target",
+        description="Create an empty at scene center and track the camera to it",
+        default=False
+    )  # type: ignore
+    
+    add_backplate: bpy.props.BoolProperty(
+        name="Add Lit Backplate",
+        description="Create an emissive plane behind the scene that fills the camera view",
+        default=False
+    )  # type: ignore
+    
+    backplate_color: bpy.props.FloatVectorProperty(
+        name="Backplate Color",
+        subtype='COLOR',
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0)
+    )  # type: ignore
+    
+    backplate_distance: bpy.props.FloatProperty(
+        name="Backplate Distance",
+        description="Distance from camera to backplate",
+        default=50.0,
+        min=1.0,
+        max=1000.0,
+        unit='LENGTH'
+    )  # type: ignore
+
+    def get_view3d_area(self, context):
+        """Find the first 3D view area in the current screen"""
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                return area
+        return None
+    
+    def get_scene_center(self, context):
+        """Calculate the center of all mesh objects in the scene"""
+        from mathutils import Vector
+        
+        min_co = Vector((float('inf'), float('inf'), float('inf')))
+        max_co = Vector((float('-inf'), float('-inf'), float('-inf')))
+        has_objects = False
+        
+        for obj in context.scene.objects:
+            if obj.type == 'MESH':
+                has_objects = True
+                # Get world-space bounding box corners
+                for corner in obj.bound_box:
+                    world_co = obj.matrix_world @ Vector(corner)
+                    min_co.x = min(min_co.x, world_co.x)
+                    min_co.y = min(min_co.y, world_co.y)
+                    min_co.z = min(min_co.z, world_co.z)
+                    max_co.x = max(max_co.x, world_co.x)
+                    max_co.y = max(max_co.y, world_co.y)
+                    max_co.z = max(max_co.z, world_co.z)
+        
+        if has_objects:
+            return (min_co + max_co) / 2
+        return Vector((0, 0, 0))
+    
+    def create_backplate(self, context, cam_obj):
+        """Create a lit backplate plane parented to the camera"""
+        import math
+        
+        cam_data = cam_obj.data
+        distance = self.backplate_distance
+        
+        # Calculate plane size to fill camera view
+        # Using vertical FOV and aspect ratio
+        render = context.scene.render
+        aspect = render.resolution_x / render.resolution_y
+        
+        # Get vertical FOV
+        if cam_data.sensor_fit == 'VERTICAL':
+            vfov = 2 * math.atan(cam_data.sensor_height / (2 * cam_data.lens))
+        else:
+            hfov = 2 * math.atan(cam_data.sensor_width / (2 * cam_data.lens))
+            vfov = 2 * math.atan(math.tan(hfov / 2) / aspect)
+        
+        # Calculate plane dimensions (add 10% margin)
+        height = 2 * distance * math.tan(vfov / 2) * 1.1
+        width = height * aspect
+        
+        # Create plane mesh
+        import bmesh
+        mesh = bpy.data.meshes.new("Backplate")
+        bm = bmesh.new()
+        
+        # Create vertices (plane facing +Z, will be rotated by parenting)
+        hw, hh = width / 2, height / 2
+        v1 = bm.verts.new((-hw, -hh, 0))
+        v2 = bm.verts.new((hw, -hh, 0))
+        v3 = bm.verts.new((hw, hh, 0))
+        v4 = bm.verts.new((-hw, hh, 0))
+        bm.faces.new((v1, v2, v3, v4))
+        
+        bm.to_mesh(mesh)
+        bm.free()
+        
+        # Create object
+        backplate = bpy.data.objects.new("Backplate", mesh)
+        context.scene.collection.objects.link(backplate)
+        
+        # Position in front of camera (local -Z)
+        backplate.parent = cam_obj
+        backplate.location = (0, 0, -distance)
+        backplate.rotation_euler = (math.radians(180), 0, 0)
+        
+        # Create emission material
+        mat = bpy.data.materials.new(name="Backplate Material")
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        
+        # Clear default nodes
+        nodes.clear()
+        
+        # Create emission shader
+        emission = nodes.new(type='ShaderNodeEmission')
+        emission.inputs['Color'].default_value = self.backplate_color
+        emission.inputs['Strength'].default_value = 1.0
+        emission.location = (0, 0)
+        
+        # Create output
+        output = nodes.new(type='ShaderNodeOutputMaterial')
+        output.location = (200, 0)
+        
+        links.new(emission.outputs['Emission'], output.inputs['Surface'])
+        
+        # Assign material
+        backplate.data.materials.append(mat)
+        
+        # Disable shadow casting
+        backplate.visible_shadow = False
+        
+        return backplate
+
+    def invoke(self, context, event):
+        if not self.get_view3d_area(context):
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        area = self.get_view3d_area(context)
+        if not area:
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
+        
+        space = area.spaces.active
+        region_3d = space.region_3d
+        
+        # Create camera data and object
+        cam_data = bpy.data.cameras.new(name="Camera")
+        cam_obj = bpy.data.objects.new(name="Camera", object_data=cam_data)
+        
+        # Link to scene
+        context.scene.collection.objects.link(cam_obj)
+        
+        # Set camera position and rotation from view
+        cam_obj.matrix_world = region_3d.view_matrix.inverted()
+        
+        # Set as active camera
+        context.scene.camera = cam_obj
+        
+        # Add track to constraint if requested
+        if self.add_track_to:
+            # Create empty at scene center
+            center = self.get_scene_center(context)
+            empty = bpy.data.objects.new(name="Camera Target", object_data=None)
+            empty.empty_display_type = 'SPHERE'
+            empty.empty_display_size = 0.1
+            empty.location = center
+            context.scene.collection.objects.link(empty)
+            
+            # Add Track To constraint
+            constraint = cam_obj.constraints.new(type='TRACK_TO')
+            constraint.target = empty
+            constraint.track_axis = 'TRACK_NEGATIVE_Z'
+            constraint.up_axis = 'UP_Y'
+            
+            # Select both, with camera active
+            bpy.ops.object.select_all(action='DESELECT')
+            empty.select_set(True)
+            cam_obj.select_set(True)
+            context.view_layer.objects.active = cam_obj
+        else:
+            # Select the camera
+            bpy.ops.object.select_all(action='DESELECT')
+            cam_obj.select_set(True)
+            context.view_layer.objects.active = cam_obj
+        
+        # Add backplate if requested
+        if self.add_backplate:
+            backplate = self.create_backplate(context, cam_obj)
+            backplate.select_set(True)
+        
+        # Lock camera to view and switch to camera view
+        space.lock_camera = True
+        space.region_3d.view_perspective = 'CAMERA'
+        
+        self.report({'INFO'}, f"Created camera: {cam_obj.name}")
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "add_track_to")
+        
+        layout.separator()
+        
+        layout.prop(self, "add_backplate")
+        if self.add_backplate:
+            col = layout.column(align=True)
+            col.prop(self, "backplate_color", text="Color")
+            col.prop(self, "backplate_distance", text="Distance")
+
 classes = (
     home_builder_OT_reload_addon,
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
     home_builder_OT_rendering_settings,
+    home_builder_OT_create_camera,
     home_builder_annotations_OT_apply_settings_to_all,
 )
 

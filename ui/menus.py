@@ -19,6 +19,11 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         
         layout.separator()
         
+        # Camera
+        layout.operator("home_builder.create_camera", text="Create Camera", icon='CAMERA_DATA')
+        
+        layout.separator()
+        
         # Settings
         layout.operator("home_builder.set_recommended_settings", 
                        text="Recommended Settings", icon='PREFERENCES')
