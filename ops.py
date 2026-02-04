@@ -26,7 +26,7 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
     bl_description = "This will set the recommended blender settings"
 
     turn_off_relationship_lines: bpy.props.BoolProperty(name="Turn Off Relationship Lines",
-                                                        description="This setting culters the interface with unneeded relationship lines",
+                                                        description="This setting clutters the interface with unneeded relationship lines",
                                                         default=True)# type: ignore
 
     turn_on_object_color_type: bpy.props.BoolProperty(name="Turn On Object Color Type",
@@ -51,21 +51,32 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
 
     def check(self, context):
         return True
-
-    def invoke(self,context,event):
+    
+    def get_view3d_space(self, context):
+        """Find the first 3D view space in the current screen"""
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':
-                for region in area.regions:
-                    if region.data:
-                        self.space_data = region.data
+                return area.spaces.active
+        return None
+
+    def invoke(self, context, event):
+        # Verify we have a 3D view available
+        if not self.get_view3d_space(context):
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
 
     def execute(self, context):
-        view = context.space_data
+        view = self.get_view3d_space(context)
+        if not view:
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
+        
         overlay = view.overlay
         shading = view.shading        
         tool_settings = context.scene.tool_settings
+        
         if self.turn_off_relationship_lines:
             overlay.show_relationship_lines = False
         if self.turn_on_object_color_type:

@@ -1033,29 +1033,6 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
                        text="Apply to All Annotations", icon='FILE_REFRESH')
 
 
-# -----------------------------------------------------------------------------
-# PANEL 6: SETTINGS & DEVELOPER
-# -----------------------------------------------------------------------------
-class HOME_BUILDER_PT_settings(bpy.types.Panel):
-    bl_label = "Settings"
-    bl_idname = "HOME_BUILDER_PT_settings"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = CATEGORY_NAME
-    bl_order = 6
-    bl_options = {'DEFAULT_CLOSED'}
-    
-    def draw(self, context):
-        layout = self.layout
-        
-        col = layout.column(align=True)
-        col.operator('home_builder.set_recommended_settings', 
-                    text="Set Recommended Settings", icon='PREFERENCES')
-        
-        col.separator()
-        col.operator("home_builder.reload_addon", text="Reload Add-on", icon='FILE_REFRESH')
-
-
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -1089,7 +1066,6 @@ classes = (
     HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations_edit,
     HOME_BUILDER_PT_annotations_settings,
-    HOME_BUILDER_PT_settings,
 )
 
 def register():

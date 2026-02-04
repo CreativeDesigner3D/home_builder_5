@@ -1,6 +1,34 @@
 import bpy
 
 
+class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
+    bl_label = "Home Builder"
+    bl_idname = "HOME_BUILDER_MT_main_menu"
+
+    def draw(self, context):
+        layout = self.layout
+        
+        # Room operations
+        layout.operator("home_builder.create_room", text="New Room", icon='ADD')
+        layout.menu("HOME_BUILDER_MT_room_list", text="Switch Room", icon='LOOP_BACK')
+        
+        layout.separator()
+        
+        # Layout views submenu
+        layout.menu("HOME_BUILDER_MT_layout_views_create", text="Create View", icon='VIEW_ORTHO')
+        
+        layout.separator()
+        
+        # Settings
+        layout.operator("home_builder.set_recommended_settings", 
+                       text="Set Recommended Settings", icon='PREFERENCES')
+        
+        layout.separator()
+        
+        # Developer
+        layout.operator("home_builder.reload_addon", text="Reload Add-on", icon='FILE_REFRESH')
+
+
 class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     bl_label = "Wall Commands"
 
@@ -33,10 +61,25 @@ class HOME_BUILDER_MT_window_commands(bpy.types.Menu):
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Window").object_type = 'WINDOW'
 
 
+def draw_home_builder_menu(self, context):
+    self.layout.menu("HOME_BUILDER_MT_main_menu")
+
+
 classes = (
+    HOME_BUILDER_MT_main_menu,
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_door_commands,
     HOME_BUILDER_MT_window_commands,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    bpy.types.TOPBAR_MT_editor_menus.append(draw_home_builder_menu)
+
+
+def unregister():
+    bpy.types.TOPBAR_MT_editor_menus.remove(draw_home_builder_menu)
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
