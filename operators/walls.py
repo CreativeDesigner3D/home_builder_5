@@ -56,7 +56,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         best_location = None
         best_distance = threshold
         
-        for obj in bpy.data.objects:
+        for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
             # Skip the current wall being drawn
@@ -91,6 +91,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if wall_obj is None:
             return
         
+        # Check if object is still valid and in the view layer
+        try:
+            if wall_obj.name not in bpy.context.view_layer.objects:
+                return
+        except ReferenceError:
+            return
+        
         if highlight:
             # Store original color and set highlight color
             if 'original_color' not in wall_obj:
@@ -107,7 +114,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def clear_wall_highlight(self):
         """Clear any highlighted wall."""
         if self.highlighted_wall:
-            self.highlight_wall(self.highlighted_wall, highlight=False)
+            try:
+                # Check if object is still valid before trying to unhighlight
+                if self.highlighted_wall.name in bpy.context.view_layer.objects:
+                    self.highlight_wall(self.highlighted_wall, highlight=False)
+            except ReferenceError:
+                pass
             self.highlighted_wall = None
         self.snap_wall = None
         self.snap_endpoint = None
@@ -143,7 +155,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         best_face = None
         best_distance = threshold
         
-        for obj in bpy.data.objects:
+        for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
             if self.current_wall and obj == self.current_wall.obj:
