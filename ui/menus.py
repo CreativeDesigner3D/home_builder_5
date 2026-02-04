@@ -21,7 +21,9 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         
         # Settings
         layout.operator("home_builder.set_recommended_settings", 
-                       text="Set Recommended Settings", icon='PREFERENCES')
+                       text="Recommended Settings", icon='PREFERENCES')
+        layout.operator("home_builder.rendering_settings",
+                       text="Rendering Settings", icon='RENDER_STILL')
         
         layout.separator()
         

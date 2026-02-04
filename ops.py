@@ -209,10 +209,84 @@ class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+class home_builder_OT_rendering_settings(bpy.types.Operator):
+    bl_idname = "home_builder.rendering_settings"
+    bl_label = "Rendering Settings"
+    bl_description = "Configure common Eevee rendering settings"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def check(self, context):
+        return True
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=400)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        eevee = scene.eevee
+        render = scene.render
+        view_settings = scene.view_settings
+        
+        # Samples
+        box = layout.box()
+        box.label(text="Quality", icon='RENDER_STILL')
+        col = box.column(align=True)
+        col.prop(eevee, "taa_render_samples", text="Render Samples")
+        col.prop(eevee, "taa_samples", text="Viewport Samples")
+        
+        # Ray Tracing
+        box = layout.box()
+        box.label(text="Ray Tracing", icon='LIGHT_SUN')
+        col = box.column(align=True)
+        col.prop(eevee, "use_raytracing", text="Enable Ray Tracing")
+        
+        if eevee.use_raytracing:
+            col.separator()
+            col.prop(eevee.ray_tracing_options, "resolution_scale", text="Resolution Scale")
+            col.prop(eevee.ray_tracing_options, "trace_max_roughness", text="Max Roughness")
+            
+            col.separator()
+            col.label(text="Features:")
+            row = col.row(align=True)
+            row.prop(eevee, "use_shadow_jitter_viewport", text="Soft Shadows", toggle=True)
+        
+        # Freestyle
+        box = layout.box()
+        box.label(text="Freestyle", icon='MOD_LINEART')
+        col = box.column(align=True)
+        col.prop(render, "use_freestyle", text="Enable Freestyle")
+        
+        if render.use_freestyle:
+            col.prop(render, "line_thickness_mode", text="Thickness Mode")
+            if render.line_thickness_mode == 'ABSOLUTE':
+                col.prop(render, "line_thickness", text="Line Thickness")
+            
+        # Transparent Background
+        box = layout.box()
+        box.label(text="Film", icon='IMAGE_DATA')
+        col = box.column(align=True)
+        col.prop(render, "film_transparent", text="Transparent Background")
+        
+        # Color Management
+        box = layout.box()
+        box.label(text="Color Management", icon='COLOR')
+        col = box.column(align=True)
+        col.prop(view_settings, "view_transform", text="View Transform")
+        col.prop(view_settings, "look", text="Look")
+
+
 classes = (
     home_builder_OT_reload_addon,
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
+    home_builder_OT_rendering_settings,
     home_builder_annotations_OT_apply_settings_to_all,
 )
 
