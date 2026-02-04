@@ -284,7 +284,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             parsed = self.parse_typed_distance()
             if parsed is not None and self.current_wall:
                 self.current_wall.set_input('Length', parsed)
-                self.update_dimension()
+                self.update_dimension(bpy.context)
         self.update_header(bpy.context)
 
     def apply_typed_value(self):
@@ -292,7 +292,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         parsed = self.parse_typed_distance()
         if parsed is not None and self.current_wall:
             self.current_wall.set_input('Length', parsed)
-            self.update_dimension()
+            self.update_dimension(bpy.context)
             # Confirm this wall and start next
             self.confirm_current_wall()
         self.stop_typing()
@@ -324,13 +324,38 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.dim.create("Dimension")
         self.register_placement_object(self.dim.obj)
 
-    def update_dimension(self):
+    def get_view_distance(self, context):
+        """Get the current view distance for scaling UI elements."""
+        try:
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    for space in area.spaces:
+                        if space.type == 'VIEW_3D':
+                            return space.region_3d.view_distance
+        except:
+            pass
+        return 10.0  # Default fallback
+
+    def update_dimension(self, context=None):
         """Update dimension display to match wall length."""
         if self.current_wall and self.dim:
             length = self.current_wall.get_input('Length')
             height = self.current_wall.get_input('Height')
             self.dim.obj.location.z = height + units.inch(1)
             self.dim.obj.data.splines[0].points[1].co = (length, 0, 0, 0)
+            
+            # Update decimal precision based on value
+            self.dim.set_decimal()
+            
+            # Scale text size based on view distance
+            if context:
+                view_dist = self.get_view_distance(context)
+                # Base size at view distance of 10m, scale proportionally
+                base_size = units.inch(8)
+                text_size = base_size * (view_dist / 10.0)
+                # Clamp to reasonable range
+                text_size = max(units.inch(4), min(units.inch(24), text_size))
+                self.dim.set_input("Text Size", text_size)
 
     def set_wall_position_from_mouse(self):
         """Update wall position/rotation based on mouse location."""
@@ -371,7 +396,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         self.current_wall.obj.rotation_euler.z = math.radians(-90)
                     self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y)))
 
-            self.update_dimension()
+            self.update_dimension(bpy.context)
 
     def confirm_current_wall(self):
         """Finalize current wall and prepare for next."""
