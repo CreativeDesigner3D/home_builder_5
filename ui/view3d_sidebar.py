@@ -312,7 +312,11 @@ class HOME_BUILDER_PT_room_layout_lighting(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        layout.operator("home_builder_walls.add_room_lights")
+        
+        col = layout.column(align=True)
+        col.scale_y = 1.2
+        col.operator("home_builder_walls.add_room_lights", text="Add Room Lights", icon='LIGHT')
+        col.operator("home_builder_walls.setup_world_lighting", text="Setup World Lighting", icon='WORLD')
 
 
 # SUBPANEL: Obstacles

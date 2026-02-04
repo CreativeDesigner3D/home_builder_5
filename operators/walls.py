@@ -1,6 +1,7 @@
 import bpy
 import bmesh
 import math
+import os
 from mathutils import Vector
 from .. import hb_types, hb_snap, hb_placement, units
 
@@ -1051,11 +1052,231 @@ class home_builder_walls_OT_update_wall_miters(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+class home_builder_walls_OT_setup_world_lighting(bpy.types.Operator):
+    bl_idname = "home_builder_walls.setup_world_lighting"
+    bl_label = "Setup World Lighting"
+    bl_description = "Setup world environment lighting using HDRI or Sky texture"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    lighting_type: bpy.props.EnumProperty(
+        name="Lighting Type",
+        items=[
+            ('HDRI', 'HDRI Environment', 'Use an HDRI image for environment lighting'),
+            ('SKY', 'Sky Texture', 'Use a procedural sky texture'),
+        ],
+        default='HDRI'
+    )  # type: ignore
+    
+    hdri_choice: bpy.props.EnumProperty(
+        name="HDRI",
+        items=[
+            ('studio.exr', 'Studio', 'Clean studio lighting'),
+            ('interior.exr', 'Interior', 'Interior room lighting'),
+            ('courtyard.exr', 'Courtyard', 'Outdoor courtyard'),
+            ('forest.exr', 'Forest', 'Forest environment'),
+            ('city.exr', 'City', 'Urban environment'),
+            ('sunrise.exr', 'Sunrise', 'Warm sunrise lighting'),
+            ('sunset.exr', 'Sunset', 'Golden sunset lighting'),
+            ('night.exr', 'Night', 'Night time lighting'),
+        ],
+        default='studio.exr'
+    )  # type: ignore
+    
+    hdri_strength: bpy.props.FloatProperty(
+        name="Strength",
+        description="Brightness of the environment",
+        default=1.0,
+        min=0.0,
+        max=10.0
+    )  # type: ignore
+    
+    hdri_rotation: bpy.props.FloatProperty(
+        name="Rotation",
+        description="Rotate the environment horizontally",
+        default=0.0,
+        min=0.0,
+        max=360.0,
+        subtype='ANGLE'
+    )  # type: ignore
+    
+    # Sky texture options
+    sky_type: bpy.props.EnumProperty(
+        name="Sky Type",
+        items=[
+            ('PREETHAM', 'Preetham', 'Simple sky model'),
+            ('HOSEK_WILKIE', 'Hosek/Wilkie', 'More accurate sky model'),
+            ('SINGLE_SCATTERING', 'Single Scattering', 'Realistic atmospheric scattering'),
+            ('MULTIPLE_SCATTERING', 'Multiple Scattering', 'Most realistic atmospheric scattering'),
+        ],
+        default='MULTIPLE_SCATTERING'
+    )  # type: ignore
+    
+    sun_elevation: bpy.props.FloatProperty(
+        name="Sun Elevation",
+        description="Angle of the sun above the horizon",
+        default=0.7854,  # 45 degrees
+        min=0.0,
+        max=1.5708,  # 90 degrees
+        subtype='ANGLE'
+    )  # type: ignore
+    
+    sun_rotation: bpy.props.FloatProperty(
+        name="Sun Rotation",
+        description="Horizontal rotation of the sun",
+        default=0.0,
+        min=0.0,
+        max=6.2832,  # 360 degrees
+        subtype='ANGLE'
+    )  # type: ignore
+    
+    sky_strength: bpy.props.FloatProperty(
+        name="Strength",
+        description="Brightness of the sky",
+        default=1.0,
+        min=0.0,
+        max=10.0
+    )  # type: ignore
+
+    def get_hdri_path(self):
+        """Get path to Blender's bundled HDRI files"""
+        blender_dir = os.path.dirname(bpy.app.binary_path)
+        version = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
+        hdri_path = os.path.join(blender_dir, version, "datafiles", "studiolights", "world")
+        return hdri_path
+
+    def setup_hdri(self, context):
+        """Setup HDRI environment lighting"""
+        world = context.scene.world
+        if not world:
+            world = bpy.data.worlds.new("World")
+            context.scene.world = world
+        
+        world.use_nodes = True
+        nodes = world.node_tree.nodes
+        links = world.node_tree.links
+        
+        # Clear existing nodes
+        nodes.clear()
+        
+        # Create nodes
+        output = nodes.new(type='ShaderNodeOutputWorld')
+        output.location = (400, 0)
+        
+        background = nodes.new(type='ShaderNodeBackground')
+        background.location = (200, 0)
+        background.inputs['Strength'].default_value = self.hdri_strength
+        
+        env_tex = nodes.new(type='ShaderNodeTexEnvironment')
+        env_tex.location = (-200, 0)
+        
+        tex_coord = nodes.new(type='ShaderNodeTexCoord')
+        tex_coord.location = (-600, 0)
+        
+        mapping = nodes.new(type='ShaderNodeMapping')
+        mapping.location = (-400, 0)
+        mapping.inputs['Rotation'].default_value[2] = self.hdri_rotation
+        
+        # Load HDRI image
+        hdri_path = os.path.join(self.get_hdri_path(), self.hdri_choice)
+        if os.path.exists(hdri_path):
+            img = bpy.data.images.load(hdri_path, check_existing=True)
+            env_tex.image = img
+        else:
+            self.report({'WARNING'}, f"HDRI file not found: {hdri_path}")
+            return False
+        
+        # Connect nodes
+        links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
+        links.new(mapping.outputs['Vector'], env_tex.inputs['Vector'])
+        links.new(env_tex.outputs['Color'], background.inputs['Color'])
+        links.new(background.outputs['Background'], output.inputs['Surface'])
+        
+        return True
+
+    def setup_sky(self, context):
+        """Setup procedural sky texture"""
+        world = context.scene.world
+        if not world:
+            world = bpy.data.worlds.new("World")
+            context.scene.world = world
+        
+        world.use_nodes = True
+        nodes = world.node_tree.nodes
+        links = world.node_tree.links
+        
+        # Clear existing nodes
+        nodes.clear()
+        
+        # Create nodes
+        output = nodes.new(type='ShaderNodeOutputWorld')
+        output.location = (400, 0)
+        
+        background = nodes.new(type='ShaderNodeBackground')
+        background.location = (200, 0)
+        background.inputs['Strength'].default_value = self.sky_strength
+        
+        sky_tex = nodes.new(type='ShaderNodeTexSky')
+        sky_tex.location = (-100, 0)
+        sky_tex.sky_type = self.sky_type
+        sky_tex.sun_elevation = self.sun_elevation
+        sky_tex.sun_rotation = self.sun_rotation
+        
+        # Connect nodes
+        links.new(sky_tex.outputs['Color'], background.inputs['Color'])
+        links.new(background.outputs['Background'], output.inputs['Surface'])
+        
+        return True
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        
+        layout.prop(self, "lighting_type", expand=True)
+        
+        layout.separator()
+        
+        if self.lighting_type == 'HDRI':
+            box = layout.box()
+            box.label(text="HDRI Settings", icon='WORLD')
+            col = box.column(align=True)
+            col.prop(self, "hdri_choice", text="Environment")
+            col.prop(self, "hdri_strength")
+            col.prop(self, "hdri_rotation")
+        else:
+            box = layout.box()
+            box.label(text="Sky Settings", icon='LIGHT_SUN')
+            col = box.column(align=True)
+            col.prop(self, "sky_type")
+            col.prop(self, "sun_elevation")
+            col.prop(self, "sun_rotation")
+            col.prop(self, "sky_strength")
+
+    def execute(self, context):
+        if self.lighting_type == 'HDRI':
+            if self.setup_hdri(context):
+                self.report({'INFO'}, f"Setup HDRI environment: {self.hdri_choice}")
+            else:
+                return {'CANCELLED'}
+        else:
+            if self.setup_sky(context):
+                self.report({'INFO'}, f"Setup {self.sky_type} sky texture")
+            else:
+                return {'CANCELLED'}
+        
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_add_room_lights,
+    home_builder_walls_OT_setup_world_lighting,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,
