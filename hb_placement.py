@@ -339,16 +339,42 @@ class PlacementMixin:
     def cancel_placement(self, context):
         """
         Clean up and cancel the placement operation.
-        Removes any objects registered with register_placement_object().
+        Removes any objects registered with register_placement_object() and their children.
         """
         if self.placement_objects:
             for obj in self.placement_objects:
-                if obj and obj.name in bpy.data.objects:
-                    bpy.data.objects.remove(obj, do_unlink=True)
+                try:
+                    # Check if object reference is still valid
+                    if obj and obj.name in bpy.data.objects:
+                        # Delete children first (recursively)
+                        self._delete_object_and_children(obj)
+                except ReferenceError:
+                    # Object was already deleted (e.g., as a child of another object)
+                    pass
             self.placement_objects = []
             
         self.placement_state = PlacementState.IDLE
         context.window.cursor_set('DEFAULT')
+    
+    def _delete_object_and_children(self, obj):
+        """Recursively delete an object and all its children."""
+        try:
+            if not obj or obj.name not in bpy.data.objects:
+                return
+            
+            # Collect all children first (can't iterate while modifying)
+            children = list(obj.children)
+            
+            # Delete children recursively
+            for child in children:
+                self._delete_object_and_children(child)
+            
+            # Now delete the object itself
+            if obj.name in bpy.data.objects:
+                bpy.data.objects.remove(obj, do_unlink=True)
+        except ReferenceError:
+            # Object was already deleted
+            pass
         
     # -------------------------------------------------------------------------
     # Wall Children Utilities
