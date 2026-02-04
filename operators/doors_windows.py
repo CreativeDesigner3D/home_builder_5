@@ -21,6 +21,152 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     wall_length: float = 0
     placement_x: float = 0
     
+    # Gap boundaries for offset calculations
+    gap_left_boundary: float = 0
+    gap_right_boundary: float = 0
+    
+    # Dimensions
+    dim_total_width = None
+    dim_left_offset = None
+    dim_right_offset = None
+    
+    def get_view_distance(self, context):
+        """Get the current view distance for scaling UI elements."""
+        try:
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    for space in area.spaces:
+                        if space.type == 'VIEW_3D':
+                            return space.region_3d.view_distance
+        except:
+            pass
+        return 10.0
+    
+    def create_placement_dimensions(self):
+        """Create dimension annotations for placement feedback."""
+        # Total width dimension
+        self.dim_total_width = hb_types.GeoNodeDimension()
+        self.dim_total_width.create("Dim_Total_Width")
+        self.dim_total_width.obj.show_in_front = True
+        self.register_placement_object(self.dim_total_width.obj)
+        
+        # Left offset dimension
+        self.dim_left_offset = hb_types.GeoNodeDimension()
+        self.dim_left_offset.create("Dim_Left_Offset")
+        self.dim_left_offset.obj.show_in_front = True
+        self.register_placement_object(self.dim_left_offset.obj)
+        
+        # Right offset dimension
+        self.dim_right_offset = hb_types.GeoNodeDimension()
+        self.dim_right_offset.create("Dim_Right_Offset")
+        self.dim_right_offset.obj.show_in_front = True
+        self.register_placement_object(self.dim_right_offset.obj)
+    
+    def get_dimension_rotation(self, context, base_rotation_z):
+        """Calculate dimension rotation to face the camera based on view angle.
+        
+        Returns: (rotation_tuple, is_plan_view)
+        """
+        region_3d = None
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                region_3d = area.spaces.active.region_3d
+                break
+        
+        if not region_3d:
+            return (0, 0, base_rotation_z), True
+        
+        view_matrix = region_3d.view_matrix
+        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
+        
+        vertical_component = abs(view_dir.z)
+        
+        if vertical_component > 0.7:
+            # Plan view - dimension lies flat
+            return (0, 0, base_rotation_z), True
+        else:
+            # Elevation/3D view - rotate dimension to stand up
+            return (math.radians(90), 0, base_rotation_z), False
+
+    def update_placement_dimensions(self, context, obj_width, obj_height, wall_thickness, z_offset=0):
+        """Update dimension positions and values."""
+        if not self.dim_total_width or not self.selected_wall:
+            return
+        
+        # Scale text based on view distance
+        view_dist = self.get_view_distance(context)
+        base_size = units.inch(8)
+        text_size = base_size * (view_dist / 10.0)
+        text_size = max(units.inch(4), min(units.inch(24), text_size))
+        
+        self.dim_total_width.set_input("Text Size", text_size)
+        self.dim_left_offset.set_input("Text Size", text_size)
+        self.dim_right_offset.set_input("Text Size", text_size)
+        
+        wall_matrix = self.selected_wall.matrix_world
+        wall_rotation_z = self.selected_wall.rotation_euler.z
+        
+        left_offset = self.placement_x - self.gap_left_boundary
+        right_offset = self.gap_right_boundary - (self.placement_x + obj_width)
+        
+        # Get rotation based on view angle
+        dim_rotation, is_plan_view = self.get_dimension_rotation(context, wall_rotation_z)
+        
+        # Position at mid-height of object, accounting for z offset
+        dim_z = z_offset + obj_height / 2
+        dim_y = wall_thickness + units.inch(2)
+        
+        # Total width dimension
+        local_pos = Vector((self.placement_x, dim_y, dim_z))
+        self.dim_total_width.obj.location = wall_matrix @ local_pos
+        self.dim_total_width.obj.rotation_euler = dim_rotation
+        self.dim_total_width.obj.data.splines[0].points[1].co = (obj_width, 0, 0, 1)
+        self.dim_total_width.set_decimal()
+        self.dim_total_width.obj.hide_set(False)
+        
+        # Left offset dimension
+        if left_offset > units.inch(0.5):
+            local_pos = Vector((self.gap_left_boundary, dim_y, dim_z))
+            self.dim_left_offset.obj.location = wall_matrix @ local_pos
+            self.dim_left_offset.obj.rotation_euler = dim_rotation
+            self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
+            self.dim_left_offset.set_decimal()
+            self.dim_left_offset.obj.hide_set(False)
+        else:
+            self.dim_left_offset.obj.hide_set(True)
+        
+        # Right offset dimension
+        if right_offset > units.inch(0.5):
+            local_pos = Vector((self.placement_x + obj_width, dim_y, dim_z))
+            self.dim_right_offset.obj.location = wall_matrix @ local_pos
+            self.dim_right_offset.obj.rotation_euler = dim_rotation
+            self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
+            self.dim_right_offset.set_decimal()
+            self.dim_right_offset.obj.hide_set(False)
+        else:
+            self.dim_right_offset.obj.hide_set(True)
+    
+    def hide_placement_dimensions(self):
+        """Hide all placement dimensions."""
+        if self.dim_total_width:
+            self.dim_total_width.obj.hide_set(True)
+        if self.dim_left_offset:
+            self.dim_left_offset.obj.hide_set(True)
+        if self.dim_right_offset:
+            self.dim_right_offset.obj.hide_set(True)
+    
+    def delete_placement_dimensions(self):
+        """Delete all placement dimension objects."""
+        for dim in [self.dim_total_width, self.dim_left_offset, self.dim_right_offset]:
+            if dim and dim.obj and dim.obj.name in bpy.data.objects:
+                # Remove from placement_objects if present
+                if dim.obj in self.placement_objects:
+                    self.placement_objects.remove(dim.obj)
+                bpy.data.objects.remove(dim.obj, do_unlink=True)
+        self.dim_total_width = None
+        self.dim_left_offset = None
+        self.dim_right_offset = None
+    
     def get_placed_object(self):
         """Override this to return the object being placed."""
         raise NotImplementedError
@@ -163,6 +309,13 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
             
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.set_placed_object_height(parsed)
+        
+        # Refresh dimensions after value change
+        self.refresh_placement_dimensions()
+    
+    def refresh_placement_dimensions(self):
+        """Override in subclass to refresh dimensions after typing changes."""
+        pass
     
     def get_offset_display(self, context) -> str:
         """Get formatted offset string showing distance from appropriate edge."""
@@ -260,6 +413,9 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
         door_text.set_alignment('CENTER', 'CENTER')
         
         self.register_placement_object(self.door.obj)
+        
+        # Create placement dimensions
+        self.create_placement_dimensions()
 
     def set_position_on_wall(self):
         """Position door on the selected wall with gap-aware snapping."""
@@ -270,6 +426,7 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
         self.wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
         door_width = self.get_placed_object_width()
+        door_height = self.door.get_input('Dim Z')
         
         # Get local X position on wall from world hit location
         world_loc = Vector(self.hit_location)
@@ -283,6 +440,10 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
             door_width,
             exclude_obj=self.door.obj
         )
+        
+        # Store gap boundaries for dimension display
+        self.gap_left_boundary = gap_start
+        self.gap_right_boundary = gap_end
         
         # Apply grid snapping
         snap_x = hb_snap.snap_value_to_grid(snap_x)
@@ -301,6 +462,9 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
         
         # Match door depth to wall thickness
         self.door.set_input("Dim Y", wall_thickness)
+        
+        # Update placement dimensions
+        self.update_placement_dimensions(bpy.context, door_width, door_height, wall_thickness)
 
     def set_position_free(self):
         """Position door freely when not over a wall."""
@@ -308,6 +472,17 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
             self.door.obj.parent = None
             self.door.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
             self.door.obj.location.z = 0
+        # Hide dimensions when not on wall
+        self.hide_placement_dimensions()
+
+    def refresh_placement_dimensions(self):
+        """Refresh dimensions after typing changes."""
+        if self.selected_wall and self.door:
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            door_width = self.get_placed_object_width()
+            door_height = self.door.get_input('Dim Z')
+            self.update_placement_dimensions(bpy.context, door_width, door_height, wall_thickness)
 
     def update_header(self, context):
         """Update header text with instructions."""
@@ -383,6 +558,8 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
             if self.selected_wall:
                 if self.door.obj in self.placement_objects:
                     self.placement_objects.remove(self.door.obj)
+                # Delete placement dimensions
+                self.delete_placement_dimensions()
                 # Cut hole in wall
                 self.cut_wall(self.selected_wall, self.door.obj)
                 hb_placement.clear_header_text(context)
@@ -462,6 +639,9 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         window_text.set_alignment('CENTER', 'CENTER')
 
         self.register_placement_object(self.window.obj)
+        
+        # Create placement dimensions
+        self.create_placement_dimensions()
 
     def set_position_on_wall(self):
         """Position window on the selected wall with gap-aware snapping."""
@@ -473,6 +653,8 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         self.wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
         window_width = self.get_placed_object_width()
+        window_height = self.window.get_input('Dim Z')
+        window_z = props.window_height_from_floor
         
         # Get local X position on wall from world hit location
         world_loc = Vector(self.hit_location)
@@ -487,6 +669,10 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
             exclude_obj=self.window.obj
         )
         
+        # Store gap boundaries for dimension display
+        self.gap_left_boundary = gap_start
+        self.gap_right_boundary = gap_end
+        
         # Apply grid snapping
         snap_x = hb_snap.snap_value_to_grid(snap_x)
         
@@ -499,17 +685,33 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         self.window.obj.parent = self.selected_wall
         self.window.obj.location.x = snap_x
         self.window.obj.location.y = 0
-        self.window.obj.location.z = props.window_height_from_floor
+        self.window.obj.location.z = window_z
         self.window.obj.rotation_euler = (0, 0, 0)
         
         # Match window depth to wall thickness
         self.window.set_input("Dim Y", wall_thickness)
+        
+        # Update placement dimensions (account for window height from floor)
+        self.update_placement_dimensions(bpy.context, window_width, window_height, wall_thickness, window_z)
 
     def set_position_free(self):
         """Position window freely when not over a wall."""
         if self.window and self.hit_location:
             self.window.obj.parent = None
             self.window.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+        # Hide dimensions when not on wall
+        self.hide_placement_dimensions()
+
+    def refresh_placement_dimensions(self):
+        """Refresh dimensions after typing changes."""
+        if self.selected_wall and self.window:
+            props = bpy.context.scene.home_builder
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            window_width = self.get_placed_object_width()
+            window_height = self.window.get_input('Dim Z')
+            window_z = props.window_height_from_floor
+            self.update_placement_dimensions(bpy.context, window_width, window_height, wall_thickness, window_z)
 
     def update_header(self, context):
         """Update header text with instructions."""
@@ -585,6 +787,8 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
             if self.selected_wall:
                 if self.window.obj in self.placement_objects:
                     self.placement_objects.remove(self.window.obj)
+                # Delete placement dimensions
+                self.delete_placement_dimensions()
                 # Cut hole in wall
                 self.cut_wall(self.selected_wall, self.window.obj)
                 hb_placement.clear_header_text(context)
