@@ -983,6 +983,36 @@ class Crown_Detail(PropertyGroup):
         return None
 
 
+class Toe_Kick_Detail(PropertyGroup):
+    """Toe kick detail stored as a reference to a detail scene."""
+    
+    detail_scene_name: StringProperty(
+        name="Detail Scene",
+        description="Name of the detail scene containing the toe kick profile"
+    )  # type: ignore
+    
+    description: StringProperty(
+        name="Description", 
+        description="Description of this toe kick detail",
+        default=""
+    )  # type: ignore
+    
+    def get_detail_scene(self):
+        """Get the detail scene object, if it exists."""
+        if self.detail_scene_name and self.detail_scene_name in bpy.data.scenes:
+            return bpy.data.scenes[self.detail_scene_name]
+        return None
+
+
+class HB_UL_toe_kick_details(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            layout.prop(item, "name", text="", emboss=False, icon='MOD_LINEART')
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text="", icon='MOD_LINEART')
+
+
 class HB_MT_crown_detail_library(bpy.types.Menu):
     """Menu for loading crown details from library."""
     bl_label = "Crown Detail Library"
@@ -1293,6 +1323,10 @@ class Frameless_Scene_Props(PropertyGroup):
     # CROWN DETAILS
     crown_details: CollectionProperty(type=Crown_Detail, name="Crown Details")# type: ignore
     active_crown_detail_index: IntProperty(name="Active Crown Detail Index", default=0)# type: ignore
+
+    # TOE KICK DETAILS
+    toe_kick_details: CollectionProperty(type=Toe_Kick_Detail, name="Toe Kick Details")# type: ignore
+    active_toe_kick_detail_index: IntProperty(name="Active Toe Kick Detail Index", default=0)# type: ignore
 
     
     #CABINET PULL OPTIONS
@@ -1736,8 +1770,58 @@ class Frameless_Scene_Props(PropertyGroup):
         from .props_elevation_templates import draw_elevation_template_ui
         draw_elevation_template_ui(context, layout)
 
-    def draw_toe_kick_details_ui(self,layout,context):
-        pass
+    def draw_toe_kick_details_ui(self, layout, context):
+        """Draw the toe kick details UI section."""
+        from ... import hb_project
+        
+        # Get Toe Kick Details from Main Scene
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        # Create new toe kick detail button
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator("hb_frameless.create_toe_kick_detail", text="Create Toe Kick Detail", icon='ADD')
+        
+        layout.separator()
+        
+        # UIList for toe kick details
+        if len(props.toe_kick_details) > 0:
+            row = layout.row()
+            row.template_list(
+                "HB_UL_toe_kick_details", "",
+                props, "toe_kick_details",
+                props, "active_toe_kick_detail_index",
+                rows=3
+            )
+            
+            # Add/Remove buttons
+            col = row.column(align=True)
+            col.operator("hb_frameless.create_toe_kick_detail", icon='ADD', text="")
+            col.operator("hb_frameless.delete_toe_kick_detail", icon='REMOVE', text="")
+            col.separator()
+            col.operator("hb_frameless.edit_toe_kick_detail", icon='GREASEPENCIL', text="")
+            
+            # Active toe kick detail properties
+            if props.toe_kick_details and props.active_toe_kick_detail_index < len(props.toe_kick_details):
+                toe_kick = props.toe_kick_details[props.active_toe_kick_detail_index]
+                
+                box = layout.box()
+                box.prop(toe_kick, "name", text="Name")
+                box.prop(toe_kick, "description", text="Description")
+                
+                # Show detail scene status
+                detail_scene = toe_kick.get_detail_scene()
+                if detail_scene:
+                    row = box.row()
+                    row.label(text=f"Profile Scene: {toe_kick.detail_scene_name}", icon='CHECKMARK')
+                else:
+                    row = box.row()
+                    row.label(text="No profile scene", icon='ERROR')
+        else:
+            box = layout.box()
+            box.label(text="No toe kick details defined", icon='INFO')
+            box.label(text="Create a toe kick detail to define toe kick profiles")
 
     def draw_upper_bottom_details_ui(self,layout,context):
         pass
@@ -1977,6 +2061,8 @@ classes = (
     Crown_Detail,
     HB_MT_crown_detail_library,
     HB_UL_crown_details,
+    Toe_Kick_Detail,
+    HB_UL_toe_kick_details,
     Frameless_Scene_Props,
 )
 
