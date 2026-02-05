@@ -7,6 +7,7 @@ from . import ops_appliance
 from . import ops_styles
 from . import ops_crown
 from . import ops_toe_kick
+from . import ops_upper_bottom
 from . import ops_library
 from . import ops_defaults
 from . import ops_finished_ends
@@ -22,6 +23,7 @@ def register():
     ops_styles.register()
     ops_crown.register()
     ops_toe_kick.register()
+    ops_upper_bottom.register()
     ops_library.register()
     ops_defaults.register()
     ops_finished_ends.register()
@@ -37,6 +39,7 @@ def unregister():
     ops_styles.unregister()
     ops_crown.unregister()
     ops_toe_kick.unregister()
+    ops_upper_bottom.unregister()
     ops_library.unregister()
     ops_defaults.unregister()
     ops_finished_ends.unregister()
