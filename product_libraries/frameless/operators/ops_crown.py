@@ -4,7 +4,7 @@ import os
 from mathutils import Vector
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, hb_project, hb_details, units
+from .... import hb_utils, hb_project, hb_details, hb_types, units
 
 class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     """Create a new crown molding detail"""
@@ -45,11 +45,11 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         hb_scene = scene.home_builder
         hb_scene.annotation_line_thickness = units.inch(0.02)
         
-        # Load Calibri font as default
-        calibri_path = r"C:\Windows\Fonts\calibri.ttf"
-        if os.path.exists(calibri_path):
-            font = bpy.data.fonts.load(calibri_path, check_existing=True)
-            hb_scene.annotation_font = font
+        # Set Calibri font as default if available
+        for font in bpy.data.fonts:
+            if 'calibri' in font.name.lower():
+                hb_scene.annotation_font = font
+                break
         
         # Draw a cabinet side detail as starting point to add crown molding details to
         self._draw_cabinet_side_detail(context, scene, props)
@@ -108,6 +108,17 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -part_thickness+door_overlay, 0)))
         door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -corner_size, 0)))
 
+        # --- CLEARANCE DIMENSION ---
+        # Vertical dimension from top of cabinet (Y=0) to ceiling line
+        top_clearance = props.default_top_cabinet_clearance
+        clearance_dim = hb_types.GeoNodeDimension()
+        clearance_dim.create("Clearance Dimension")
+        clearance_dim.obj.location = Vector((-corner_size - units.inch(0.5), 0, 0))
+        clearance_dim.obj.rotation_euler.z = math.pi / 2  # Vertical
+        clearance_dim.obj.data.splines[0].points[1].co = (top_clearance, 0, 0, 1)
+        clearance_dim.set_input("Leader Length", units.inch(-0.5))
+        clearance_dim.set_decimal()
+        
         # --- CEILING LINE ---
         # Get ceiling height and top cabinet clearance
         main_scene_hb = hb_project.get_main_scene().home_builder
