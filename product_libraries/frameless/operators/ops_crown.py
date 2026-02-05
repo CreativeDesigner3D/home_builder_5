@@ -41,6 +41,16 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         # Set as active
         props.active_crown_detail_index = len(props.crown_details) - 1
         
+        # Set crown detail defaults
+        hb_scene = scene.home_builder
+        hb_scene.annotation_line_thickness = units.inch(0.02)
+        
+        # Load Calibri font as default
+        calibri_path = r"C:\Windows\Fonts\calibri.ttf"
+        if os.path.exists(calibri_path):
+            font = bpy.data.fonts.load(calibri_path, check_existing=True)
+            hb_scene.annotation_font = font
+        
         # Draw a cabinet side detail as starting point to add crown molding details to
         self._draw_cabinet_side_detail(context, scene, props)
         
@@ -98,9 +108,71 @@ class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
         door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -part_thickness+door_overlay, 0)))
         door_profile.add_point(Vector((door_to_cab_gap+door_thickness, -corner_size, 0)))
 
+        # --- CEILING LINE ---
+        # Get ceiling height and top cabinet clearance
+        main_scene_hb = hb_project.get_main_scene().home_builder
+        ceiling_height = main_scene_hb.ceiling_height
+        top_clearance = props.default_top_cabinet_clearance
+        
+        # Ceiling line is at top_clearance above the top of the cabinet (Y=0)
+        ceiling_y = top_clearance
+        
+        # Draw ceiling line spanning the detail width
+        detail_left = -corner_size - units.inch(1)
+        detail_right = door_to_cab_gap + door_thickness + units.inch(2)
+        
+        ceiling_line = hb_details.GeoNodePolyline()
+        ceiling_line.create("Ceiling Line")
+        ceiling_line.set_point(0, Vector((detail_left, ceiling_y, 0)))
+        ceiling_line.add_point(Vector((detail_right, ceiling_y, 0)))
+        
+        # Add ceiling height label
+        ceiling_height_inches = round(ceiling_height / units.inch(1))
+        ceiling_text = hb_details.GeoNodeText()
+        ceiling_text.create("Ceiling Label", f'CEILING HT. {ceiling_height_inches}"', hb_scene.annotation_text_size)
+        if hb_scene.annotation_font:
+            ceiling_text.obj.data.font = hb_scene.annotation_font
+        ceiling_text.set_location(Vector((detail_right + units.inch(0.25), ceiling_y, 0)))
+        ceiling_text.set_alignment('LEFT', 'CENTER')
+        
+        # --- DOOR OVERLAY LABEL ---
+        # Get overlay type from active cabinet style
+        overlay_type_text = "FULL OVERLAY"
+        if props.cabinet_styles:
+            style_index = props.active_cabinet_style_index
+            if style_index < len(props.cabinet_styles):
+                style = props.cabinet_styles[style_index]
+                overlay_type = style.door_overlay_type
+                if overlay_type == 'FULL':
+                    overlay_type_text = "FULL OVERLAY"
+                elif overlay_type == 'HALF':
+                    overlay_type_text = "HALF OVERLAY"
+                elif overlay_type == 'INSET':
+                    overlay_type_text = "INSET"
+        
+        # Draw leader line pointing to the door
+        door_center_x = door_to_cab_gap + door_thickness / 2
+        door_mid_y = (-part_thickness + door_overlay + (-corner_size)) / 2
+        leader_end_x = door_to_cab_gap + door_thickness + units.inch(2)
+        
+        door_leader = hb_details.GeoNodePolyline()
+        door_leader.create("Door Overlay Leader")
+        door_leader.set_point(0, Vector((door_center_x, door_mid_y, 0)))
+        door_leader.add_point(Vector((leader_end_x, door_mid_y, 0)))
+        
+        # Add overlay type text at end of leader
+        overlay_text = hb_details.GeoNodeText()
+        overlay_text.create("Door Overlay Label", overlay_type_text, hb_scene.annotation_text_size)
+        if hb_scene.annotation_font:
+            overlay_text.obj.data.font = hb_scene.annotation_font
+        overlay_text.set_location(Vector((leader_end_x + units.inch(0.25), door_mid_y, 0)))
+        overlay_text.set_alignment('LEFT', 'CENTER')
+
         # Add a label/text annotation
         text = hb_details.GeoNodeText()
         text.create("Label", "CROWN DETAIL", hb_scene.annotation_text_size)
+        if hb_scene.annotation_font:
+            text.obj.data.font = hb_scene.annotation_font
         text.set_location(Vector((0, -corner_size - units.inch(1), 0)))
         text.set_alignment('CENTER', 'TOP')
         
@@ -284,19 +356,31 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             bpy.data.objects.remove(child, do_unlink=True)
     
     def _get_cabinet_bounds(self, cabinet):
-        """Get world-space bounds of a cabinet."""
-        world_loc = cabinet.matrix_world.translation
-        dims = cabinet.dimensions
+        """Get world-space bounds of a cabinet using bounding box corners."""
+        matrix = cabinet.matrix_world
+        
+        # Transform all bounding box corners to world space
+        world_corners = [matrix @ Vector(corner) for corner in cabinet.bound_box]
+        
+        # Find min/max in each axis
+        xs = [c.x for c in world_corners]
+        ys = [c.y for c in world_corners]
+        zs = [c.z for c in world_corners]
+        
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        min_z, max_z = min(zs), max(zs)
+        
         return {
-            'left_x': world_loc.x,
-            'right_x': world_loc.x + dims.x,
-            'front_y': world_loc.y - dims.y,
-            'back_y': world_loc.y,
-            'bottom_z': world_loc.z,
-            'top_z': world_loc.z + dims.z,
-            'width': dims.x,
-            'depth': dims.y,
-            'height': dims.z,
+            'left_x': min_x,
+            'right_x': max_x,
+            'front_y': min_y,
+            'back_y': max_y,
+            'bottom_z': min_z,
+            'top_z': max_z,
+            'width': max_x - min_x,
+            'depth': max_y - min_y,
+            'height': max_z - min_z,
         }
     
     def _is_against_wall(self, cabinet, side, walls, tolerance=0.05):
@@ -332,10 +416,22 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         
         return False
     
+    def _get_wall_direction(self, cabinet):
+        """Get the wall direction for a cabinet. Returns 'X' or 'Y'."""
+        if cabinet.parent and (cabinet.parent.get('IS_WALL_BP') or cabinet.parent.get('IS_WALL')):
+            wall_rot_z = cabinet.parent.rotation_euler.z
+            import math
+            # If wall is rotated ~90 or ~270 degrees, cabinets run along Y
+            angle = abs(wall_rot_z) % math.pi
+            if abs(angle - math.pi/2) < 0.1:
+                return 'Y'
+        return 'X'
+    
     def _find_adjacent_cabinet(self, cabinet, side, all_cabinets, tolerance=0.02):
-        """Find a cabinet adjacent to the given side."""
+        """Find a cabinet adjacent to the given side. Works for both X and Y arrangements."""
         bounds = self._get_cabinet_bounds(cabinet)
         cab_type = cabinet.get('CABINET_TYPE', '')
+        axis = self._get_wall_direction(cabinet)
         
         for other in all_cabinets:
             if other == cabinet:
@@ -352,21 +448,39 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             if abs(bounds['top_z'] - other_bounds['top_z']) > tolerance:
                 continue
             
-            if side == 'left':
-                # Check if other cabinet's right edge meets this cabinet's left edge
-                if abs(other_bounds['right_x'] - bounds['left_x']) < tolerance:
-                    return other
-            elif side == 'right':
-                # Check if other cabinet's left edge meets this cabinet's right edge
-                if abs(other_bounds['left_x'] - bounds['right_x']) < tolerance:
-                    return other
+            if axis == 'X':
+                if side == 'left':
+                    if abs(other_bounds['right_x'] - bounds['left_x']) < tolerance:
+                        return other
+                elif side == 'right':
+                    if abs(other_bounds['left_x'] - bounds['right_x']) < tolerance:
+                        return other
+            else:  # Y axis
+                if side == 'left':
+                    # "Left" = the end with higher Y (start of run)
+                    if abs(other_bounds['front_y'] - bounds['back_y']) < tolerance:
+                        return other
+                elif side == 'right':
+                    # "Right" = the end with lower Y (end of run)
+                    if abs(other_bounds['back_y'] - bounds['front_y']) < tolerance:
+                        return other
         
         return None
     
     def _group_adjacent_cabinets(self, selected_cabinets, all_cabinets, walls):
         """Group selected cabinets that are adjacent to each other."""
-        # Sort cabinets by X position
-        sorted_cabs = sorted(selected_cabinets, key=lambda c: self._get_cabinet_bounds(c)['left_x'])
+        if not selected_cabinets:
+            return []
+        
+        # Determine arrangement axis from first cabinet's wall
+        axis = self._get_wall_direction(selected_cabinets[0])
+        
+        # Sort cabinets by position along the arrangement axis
+        if axis == 'X':
+            sorted_cabs = sorted(selected_cabinets, key=lambda c: self._get_cabinet_bounds(c)['left_x'])
+        else:
+            # For Y axis, sort by back_y descending (highest Y = start of run)
+            sorted_cabs = sorted(selected_cabinets, key=lambda c: self._get_cabinet_bounds(c)['back_y'], reverse=True)
         
         groups = []
         used = set()
@@ -379,7 +493,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             group_cabs = [cabinet]
             used.add(cabinet)
             
-            # Find all connected cabinets to the right
+            # Find all connected cabinets to the right (end of run)
             current = cabinet
             while True:
                 right_neighbor = self._find_adjacent_cabinet(current, 'right', all_cabinets)
@@ -408,9 +522,51 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
                 'right_wall': right_against_wall,
                 'left_adjacent': left_adjacent,
                 'right_adjacent': right_adjacent,
+                'axis': axis,
             })
         
         return groups
+    
+    def _get_wall_aligned_bounds(self, bounds, axis):
+        """Map world-space bounds to wall-aligned coordinates.
+        
+        Returns dict with:
+            along_start: Start position along the wall (left/first end)
+            along_end: End position along the wall (right/last end)  
+            front: Front face position (into room)
+            back: Back face position (against wall)
+            depth: Cabinet depth (back - front for X, or right_x - left_x for Y)
+        
+        For X-axis walls: along=X, depth=Y (front=min_y, back=max_y)
+        For Y-axis walls: along=-Y, depth=-X (front=min_x, back=max_x)
+        """
+        if axis == 'X':
+            return {
+                'along_start': bounds['left_x'],
+                'along_end': bounds['right_x'],
+                'front': bounds['front_y'],
+                'back': bounds['back_y'],
+                'depth': bounds['back_y'] - bounds['front_y'],
+            }
+        else:  # Y axis - wall runs along -Y
+            return {
+                'along_start': bounds['back_y'],   # High Y = start of run
+                'along_end': bounds['front_y'],     # Low Y = end of run
+                'front': bounds['left_x'],          # Min X = front (into room)
+                'back': bounds['right_x'],          # Max X = back (wall)
+                'depth': bounds['right_x'] - bounds['left_x'],
+            }
+    
+    def _make_world_point(self, along, depth, axis):
+        """Convert wall-aligned (along, depth) coordinates to world XY point.
+        
+        For X-axis: along=X, depth=Y → (along, depth, 0)
+        For Y-axis: along=Y, depth=X → (depth, along, 0)
+        """
+        if axis == 'X':
+            return Vector((along, depth, 0))
+        else:
+            return Vector((depth, along, 0))
     
     def _create_crown_for_group(self, context, group, profile, walls, all_cabinets, target_scene):
         """Create crown molding extrusion for a group of cabinets."""
@@ -418,6 +574,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         cabinets = group['cabinets']
         first_cab = cabinets[0]
         last_cab = cabinets[-1]
+        axis = group.get('axis', 'X')
         
         profile_offset_x = profile.location.x  # Depth offset (positive = forward)
         profile_offset_y = profile.location.y  # Height offset
@@ -444,40 +601,40 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         first_bounds = self._get_cabinet_bounds(first_cab)
         last_bounds = self._get_cabinet_bounds(last_cab)
         
+        # Get wall-aligned bounds
+        first_wb = self._get_wall_aligned_bounds(first_bounds, axis)
+        last_wb = self._get_wall_aligned_bounds(last_bounds, axis)
+        
         # Calculate profile adjustments
         if profile_offset_x < 0:
-            # Profile is set back - inset from edges
             inset = abs(profile_offset_x)
             extend = 0
         else:
-            # Profile extends forward
             inset = 0
             extend = profile_offset_x
         
-        # === LEFT SIDE ===
+        # Along-wall sign: +1 for X (increasing), -1 for Y (decreasing)
+        a_sign = 1 if axis == 'X' else -1
+        
+        # === LEFT SIDE (start of run) ===
         if group['left_wall']:
-            # Against wall - start at front corner, no return
-            start_x = first_bounds['left_x'] + inset
-            # Start directly at the front
-            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+            start_along = first_wb['along_start'] + a_sign * inset
+            world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         elif group['left_adjacent']:
             adj_bounds = self._get_cabinet_bounds(group['left_adjacent'])
+            adj_wb = self._get_wall_aligned_bounds(adj_bounds, axis)
             adj_type = group['left_adjacent'].get('CABINET_TYPE', '')
             
-            # Start at left edge
-            start_x = first_bounds['left_x'] + inset
+            start_along = first_wb['along_start'] + a_sign * inset
             
             if adj_type == 'TALL' and first_cab.get('CABINET_TYPE') == 'UPPER':
-                # Tall to the left of upper - return to tall's depth
-                world_points.append(Vector((start_x, adj_bounds['front_y'] - extend + inset, 0)))
+                world_points.append(self._make_world_point(start_along, adj_wb['front'] - extend + inset, axis))
             
-            # Add front point for this cabinet
-            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+            world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         else:
-            # Open left side - add return to back
-            start_x = first_bounds['left_x'] + inset
-            world_points.append(Vector((start_x, first_bounds['back_y'], 0)))
-            world_points.append(Vector((start_x, first_bounds['front_y'] - extend + inset, 0)))
+            start_along = first_wb['along_start'] + a_sign * inset
+            world_points.append(self._make_world_point(start_along, first_wb['back'], axis))
+            world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         
         # === MIDDLE - transitions between cabinets ===
         for i in range(len(cabinets) - 1):
@@ -485,57 +642,50 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             next_cab = cabinets[i + 1]
             current_bounds = self._get_cabinet_bounds(current_cab)
             next_bounds = self._get_cabinet_bounds(next_cab)
+            current_wb = self._get_wall_aligned_bounds(current_bounds, axis)
+            next_wb = self._get_wall_aligned_bounds(next_bounds, axis)
             
             current_type = current_cab.get('CABINET_TYPE', '')
             next_type = next_cab.get('CABINET_TYPE', '')
             
-            # Transition X position (right edge of current = left edge of next)
-            trans_x = current_bounds['right_x']
+            trans_along = current_wb['along_end']
             
-            # Check for depth change
-            depth_diff = abs(current_bounds['depth'] - next_bounds['depth'])
+            depth_diff = abs(current_wb['depth'] - next_wb['depth'])
             
             if depth_diff > 0.01:
-                # Depth transition - add step
                 if current_type == 'TALL' and next_type == 'UPPER':
-                    # Tall to Upper - step back to upper depth
-                    world_points.append(Vector((trans_x - inset, current_bounds['front_y'] - extend + inset, 0)))
-                    world_points.append(Vector((trans_x - inset, next_bounds['front_y'] - extend + inset, 0)))
+                    world_points.append(self._make_world_point(trans_along - a_sign * inset, current_wb['front'] - extend + inset, axis))
+                    world_points.append(self._make_world_point(trans_along - a_sign * inset, next_wb['front'] - extend + inset, axis))
                 elif current_type == 'UPPER' and next_type == 'TALL':
-                    # Upper to Tall - step forward to tall depth  
-                    world_points.append(Vector((trans_x + inset, current_bounds['front_y'] - extend + inset, 0)))
-                    world_points.append(Vector((trans_x + inset, next_bounds['front_y'] - extend + inset, 0)))
-            # If same depth, no intermediate points needed - path continues
+                    world_points.append(self._make_world_point(trans_along + a_sign * inset, current_wb['front'] - extend + inset, axis))
+                    world_points.append(self._make_world_point(trans_along + a_sign * inset, next_wb['front'] - extend + inset, axis))
         
-        # === RIGHT SIDE ===
+        # === RIGHT SIDE (end of run) ===
         if group['right_wall']:
-            # Against wall - end at front corner, no return
-            end_x = last_bounds['right_x'] - inset
-            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
+            end_along = last_wb['along_end'] - a_sign * inset
+            world_points.append(self._make_world_point(end_along, last_wb['front'] - extend + inset, axis))
         elif group['right_adjacent']:
             adj_bounds = self._get_cabinet_bounds(group['right_adjacent'])
+            adj_wb = self._get_wall_aligned_bounds(adj_bounds, axis)
             adj_type = group['right_adjacent'].get('CABINET_TYPE', '')
             
-            end_x = last_bounds['right_x'] - inset
+            end_along = last_wb['along_end'] - a_sign * inset
             
-            # Add front point for last cabinet
-            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
+            world_points.append(self._make_world_point(end_along, last_wb['front'] - extend + inset, axis))
             
             if adj_type == 'TALL' and last_cab.get('CABINET_TYPE') == 'UPPER':
-                # Upper transitioning to tall on right - return to tall's depth
-                world_points.append(Vector((end_x, adj_bounds['front_y'] - extend + inset, 0)))
+                world_points.append(self._make_world_point(end_along, adj_wb['front'] - extend + inset, axis))
         else:
-            # Open right side - add return to back
-            end_x = last_bounds['right_x'] - inset
-            world_points.append(Vector((end_x, last_bounds['front_y'] - extend + inset, 0)))
-            world_points.append(Vector((end_x, last_bounds['back_y'], 0)))
+            end_along = last_wb['along_end'] - a_sign * inset
+            world_points.append(self._make_world_point(end_along, last_wb['front'] - extend + inset, axis))
+            world_points.append(self._make_world_point(end_along, last_wb['back'], axis))
         
         # Convert world points to local coordinates relative to first cabinet
-        first_world = first_cab.matrix_world.translation
+        first_inv = first_cab.matrix_world.inverted()
         local_points = []
         for pt in world_points:
-            local_pt = Vector((pt.x - first_world.x, pt.y - first_world.y, 0))
-            local_points.append(local_pt)
+            local_pt = first_inv @ pt
+            local_points.append(Vector((local_pt.x, local_pt.y, 0)))
         
         # Create the curve
         curve_data = bpy.data.curves.new(name=f"Crown_Path_{profile.name}", type='CURVE')
