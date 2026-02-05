@@ -1,35 +1,30 @@
 import math
+from . import finish_colors
 
-def get_color(color):
-    c1 = [1,1,1,1]
-    c2 = [1,1,1,1]     
-    if color == 'White':
-        c1 = [0.806947, 0.752943, 0.679543, 1.000000]
-        c2 = [0.806947, 0.752943, 0.679543, 1.000000] 
-    if color == 'Black':
-        c1 = [0.013702, 0.009721, 0.010960, 1.000000]
-        c2 = [0.031896, 0.023153, 0.020289, 1.000000]
-    if color == 'Blue':
-        c1 = [0.057805, 0.107023, 0.138432, 1.000000]
-        c2 = [0.057805, 0.107023, 0.138432, 1.000000] 
-    if color == 'Green':
-        c1 = [0.035601, 0.043735, 0.028426, 1.000000]
-        c2 = [0.035601, 0.043735, 0.028426, 1.000000] 
-    if color == 'Red':
-        c1 = [0.104616, 0.049707, 0.051269, 1.000000]
-        c2 = [0.072271, 0.043735, 0.045186, 1.000000] 
-    if color == 'Yellow':
-        c1 = [0.558337, 0.238398, 0.090842, 1.000000]
-        c2 = [0.423265, 0.158961, 0.051270, 1.000000]
-    if color == 'Brown':
-        c1 = [0.155926, 0.068478, 0.034340, 1.000000]
-        c2 = [0.086500, 0.051270, 0.038204, 1.000000] 
-    if color == 'Grey':
-        c1 = [0.202503, 0.193292, 0.182563, 1.000000]
-        c2 = [0.119111, 0.113844, 0.107702, 1.000000] 
-    return c1,c2
+
+def get_color(color_name, color_type='stain'):
+    """Get color pair for a given color name.
+    
+    Args:
+        color_name: Name of the color (e.g. 'Natural', 'Espresso')
+        color_type: 'stain' or 'paint'
+    
+    Returns:
+        (c1, c2) tuple of RGBA lists
+    """
+    data = finish_colors.get_color_data(color_name, color_type)
+    
+    c1 = data.get('color_1', [1, 1, 1, 1])
+    c2 = data.get('color_2', [1, 1, 1, 1])
+    return c1, c2
+
 
 def update_finish_material(cabinet_style):
+    """Update the finish material nodes based on the cabinet style settings.
+    
+    Reads wood species + color settings from the cabinet style,
+    applies all shader parameters to the Wood node group.
+    """
     material = cabinet_style.material
     material_rotated = cabinet_style.material_rotated
 
@@ -46,9 +41,23 @@ def update_finish_material(cabinet_style):
             rotated_node = n
             break
 
-    #Assign Default Values
-    c1 = [1,1,1,1]
-    c2 = [1,1,1,1]
+    if not mat_node or not rotated_node:
+        return
+
+    # --- Determine color type and get color data ---
+    if cabinet_style.wood_species == 'PAINT_GRADE':
+        color_name = cabinet_style.paint_color
+        color_type = 'paint'
+    else:
+        color_name = cabinet_style.stain_color
+        color_type = 'stain'
+
+    color_data = finish_colors.get_color_data(color_name, color_type)
+
+    c1 = color_data.get('color_1', [1, 1, 1, 1])
+    c2 = color_data.get('color_2', [1, 1, 1, 1])
+
+    # --- Determine wood grain parameters from species ---
     noise_scale_1 = 0
     noise_scale_2 = 0
     texture_variation_1 = 0
@@ -58,7 +67,6 @@ def update_finish_material(cabinet_style):
     voronoi_detail_2 = 0
     knots_scale = 0
     knots_darkness = 0
-    roughness = 1    
 
     if cabinet_style.wood_species == 'MAPLE':
         noise_scale_1 = 3.5
@@ -68,7 +76,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 15.0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2 
-    if cabinet_style.wood_species == 'OAK':
+    elif cabinet_style.wood_species == 'OAK':
         noise_scale_1 = 15.0
         noise_scale_2 = 2.5
         texture_variation_1 = 5.5
@@ -76,7 +84,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 15.0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2  
-    if cabinet_style.wood_species == 'CHERRY':
+    elif cabinet_style.wood_species == 'CHERRY':
         noise_scale_1 = 3.5
         noise_scale_2 = 2.5
         texture_variation_1 = 2.0
@@ -84,7 +92,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 15.0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2 
-    if cabinet_style.wood_species == 'WALNUT':
+    elif cabinet_style.wood_species == 'WALNUT':
         noise_scale_1 = 3.5
         noise_scale_2 = 2.5
         texture_variation_1 = 3.5
@@ -92,7 +100,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 15.0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2 
-    if cabinet_style.wood_species == 'BIRCH':
+    elif cabinet_style.wood_species == 'BIRCH':
         noise_scale_1 = 3.5
         noise_scale_2 = 0.5
         texture_variation_1 = 0.1
@@ -100,7 +108,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2  
-    if cabinet_style.wood_species == 'HICKORY':
+    elif cabinet_style.wood_species == 'HICKORY':
         noise_scale_1 = 3.5
         noise_scale_2 = 2.5
         texture_variation_1 = 3.5
@@ -108,7 +116,7 @@ def update_finish_material(cabinet_style):
         noise_detail = 15.0
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2 
-    if cabinet_style.wood_species == 'ALDER':
+    elif cabinet_style.wood_species == 'ALDER':
         noise_scale_1 = 3.5
         noise_scale_2 = 2.5
         texture_variation_1 = 3.5
@@ -117,63 +125,44 @@ def update_finish_material(cabinet_style):
         voronoi_detail_1 = 0.0
         voronoi_detail_2 = 0.2 
 
-    if cabinet_style.wood_species == 'PAINT_GRADE':
-        c1,c2 = get_color(cabinet_style.paint_color)
-    else:
-        c1,c2 = get_color(cabinet_style.stain_color)
+    # --- Apply color overrides from color data (user adjustable) ---
+    roughness = color_data.get('roughness', finish_colors.SHADER_DEFAULTS['roughness'])
+    noise_bump_strength = color_data.get('noise_bump_strength', finish_colors.SHADER_DEFAULTS['noise_bump_strength'])
+    knots_bump_strength = color_data.get('knots_bump_strength', finish_colors.SHADER_DEFAULTS['knots_bump_strength'])
+    wood_bump_strength = color_data.get('wood_bump_strength', finish_colors.SHADER_DEFAULTS['wood_bump_strength'])
 
-    for input in mat_node.inputs:
-        if input.name == 'Rotation':
-            input.default_value[2] = math.radians(90)
-        if input.name == 'Wood Color 1':
-            input.default_value = c1
-        if input.name == 'Wood Color 2':
-            input.default_value = c2
-        if input.name == 'Noise Scale 1':
-            input.default_value = noise_scale_1
-        if input.name == 'Noise Scale 2':
-            input.default_value = noise_scale_2
-        if input.name == 'Texture Variation 1':
-            input.default_value = texture_variation_1
-        if input.name == 'Texture Variation 2':
-            input.default_value = texture_variation_2
-        if input.name == 'Noise Detail':
-            input.default_value = noise_detail
-        if input.name == 'Voronoi Detail 1':
-            input.default_value = voronoi_detail_1
-        if input.name == 'Voronoi Detail 2':
-            input.default_value = voronoi_detail_2
-        if input.name == 'Knots Scale':
-            input.default_value = knots_scale
-        if input.name == 'Knots Darkness':
-            input.default_value = knots_darkness
-        if input.name == 'Roughness':
-            input.default_value = roughness    
-
-    for input in rotated_node.inputs:
-        if input.name == 'Rotation':
-            input.default_value[2] = math.radians(0)        
-        if input.name == 'Wood Color 1':
-            input.default_value = c1
-        if input.name == 'Wood Color 2':
-            input.default_value = c2
-        if input.name == 'Noise Scale 1':
-            input.default_value = noise_scale_1
-        if input.name == 'Noise Scale 2':
-            input.default_value = noise_scale_2
-        if input.name == 'Texture Variation 1':
-            input.default_value = texture_variation_1
-        if input.name == 'Texture Variation 2':
-            input.default_value = texture_variation_2
-        if input.name == 'Noise Detail':
-            input.default_value = noise_detail
-        if input.name == 'Voronoi Detail 1':
-            input.default_value = voronoi_detail_1
-        if input.name == 'Voronoi Detail 2':
-            input.default_value = voronoi_detail_2
-        if input.name == 'Knots Scale':
-            input.default_value = knots_scale
-        if input.name == 'Knots Darkness':
-            input.default_value = knots_darkness
-        if input.name == 'Roughness':
-            input.default_value = roughness
+    # --- Apply to both material and rotated material ---
+    for node, rotation in [(mat_node, math.radians(90)), (rotated_node, math.radians(0))]:
+        for inp in node.inputs:
+            if inp.name == 'Rotation':
+                inp.default_value[2] = rotation
+            elif inp.name == 'Wood Color 1':
+                inp.default_value = c1
+            elif inp.name == 'Wood Color 2':
+                inp.default_value = c2
+            elif inp.name == 'Noise Scale 1':
+                inp.default_value = noise_scale_1
+            elif inp.name == 'Noise Scale 2':
+                inp.default_value = noise_scale_2
+            elif inp.name == 'Texture Variation 1':
+                inp.default_value = texture_variation_1
+            elif inp.name == 'Texture Variation 2':
+                inp.default_value = texture_variation_2
+            elif inp.name == 'Noise Detail':
+                inp.default_value = noise_detail
+            elif inp.name == 'Voronoi Detail 1':
+                inp.default_value = voronoi_detail_1
+            elif inp.name == 'Voronoi Detail 2':
+                inp.default_value = voronoi_detail_2
+            elif inp.name == 'Knots Scale':
+                inp.default_value = knots_scale
+            elif inp.name == 'Knots Darkness':
+                inp.default_value = knots_darkness
+            elif inp.name == 'Roughness':
+                inp.default_value = roughness
+            elif inp.name == 'Noise Bump Strength':
+                inp.default_value = noise_bump_strength
+            elif inp.name == 'Knots Bump Strength':
+                inp.default_value = knots_bump_strength
+            elif inp.name == 'Wood Bump Strength':
+                inp.default_value = wood_bump_strength

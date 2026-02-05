@@ -256,6 +256,7 @@ from ... import units
 from ... import hb_types
 from ... import hb_project
 from . import wood_materials
+from . import finish_colors
 import bpy.utils.previews
 
 # Preview collection for library thumbnails
@@ -358,9 +359,60 @@ def update_frameless_selection_mode(self,context):
 # CABINET STYLE SYSTEM
 # =============================================================================
 
+
+# ============================================
+# DYNAMIC ENUM CALLBACKS FOR COLORS
+# ============================================
+
+def get_stain_color_enum_items(self, context):
+    """Dynamic enum items for stain color dropdown."""
+    items = []
+    colors = finish_colors.get_all_stain_colors()
+    for i, name in enumerate(colors.keys()):
+        is_custom = finish_colors.is_custom_color(name, 'stain')
+        desc = f"Custom: {name}" if is_custom else name
+        items.append((name, name, desc, i))
+    if not items:
+        items.append(('Natural', "Natural", "Natural", 0))
+    return items
+
+
+def get_paint_color_enum_items(self, context):
+    """Dynamic enum items for paint color dropdown."""
+    items = []
+    colors = finish_colors.get_all_paint_colors()
+    for i, name in enumerate(colors.keys()):
+        is_custom = finish_colors.is_custom_color(name, 'paint')
+        desc = f"Custom: {name}" if is_custom else name
+        items.append((name, name, desc, i))
+    if not items:
+        items.append(('Arctic White', "Arctic White", "Arctic White", 0))
+    return items
+
+
+def update_cabinet_style_name(self, context):
+    """Update material names when cabinet style name changes."""
+    new_name = self.name
+    if self.material:
+        self.material.name = new_name + " Finish"
+    if self.material_rotated:
+        self.material_rotated.name = new_name + " Finish ROTATED"
+    if self.interior_material:
+        self.interior_material.name = new_name + " Interior"
+    if self.interior_material_rotated:
+        self.interior_material_rotated.name = new_name + " Interior ROTATED"
+
+
 class Frameless_Cabinet_Style(PropertyGroup):
     """Cabinet style defining wood, finish, interior, and door overlay settings."""
     
+    name: StringProperty(
+        name="Name",
+        description="Cabinet style name",
+        default="Style",
+        update=update_cabinet_style_name,
+    )  # type: ignore
+
     show_expanded: BoolProperty(
         name="Show Expanded",
         description="Show expanded style options",
@@ -387,38 +439,18 @@ class Frameless_Cabinet_Style(PropertyGroup):
     # Finish/Stain
     stain_color: EnumProperty(
         name="Stain Color",
-        description="Type of finish applied",
-        items=[
-            ('White', "White", "White"),
-            ('Black', "Black", "Black"),
-            ('Blue', "Blue", "Blue"),
-            ('Green', "Green", "Green"),
-            ('Red', "Red", "Red"),
-            ('Yellow', "Yellow", "Yellow"),
-            ('Brown', "Brown", "Brown"),
-            ('Grey', "Grey", "Grey"),
-        ],
-        default='White'
+        description="Stain color for cabinet finish",
+        items=get_stain_color_enum_items,
     )  # type: ignore
     
     paint_color: EnumProperty(
         name="Paint Color",
-        description="Type of finish applied",
-        items=[
-            ('White', "White", "White"),
-            ('Black', "Black", "Black"),
-            ('Blue', "Blue", "Blue"),
-            ('Green', "Green", "Green"),
-            ('Red', "Red", "Red"),
-            ('Yellow', "Yellow", "Yellow"),
-            ('Brown', "Brown", "Brown"),
-            ('Grey', "Grey", "Grey"),
-        ],
-        default='White'
+        description="Paint color for cabinet finish",
+        items=get_paint_color_enum_items,
     )  # type: ignore
     
     # Interior material
-    interior_material: EnumProperty(
+    interior_material_type: EnumProperty(
         name="Interior Material",
         description="Material for cabinet interior",
         items=[
@@ -462,6 +494,13 @@ class Frameless_Cabinet_Style(PropertyGroup):
     material_rotated: bpy.props.PointerProperty(name="Material Rotated",type=bpy.types.Material)# type: ignore
     interior_material: bpy.props.PointerProperty(name="Interior Material",type=bpy.types.Material)# type: ignore
     interior_material_rotated: bpy.props.PointerProperty(name="Interior Material Rotated",type=bpy.types.Material)# type: ignore
+    
+    # Advanced color editing
+    show_advanced_color: BoolProperty(
+        name="Show Advanced Color Options",
+        description="Show advanced shader parameters for color editing",
+        default=False
+    )  # type: ignore
 
     def get_finish_material(self):
         if self.material and self.material_rotated:
@@ -572,10 +611,42 @@ class Frameless_Cabinet_Style(PropertyGroup):
         else:
             col.prop(self, "paint_color", text="Paint Color")
         
+        # Color preview swatch
+        color_type = 'paint' if self.wood_species == 'PAINT_GRADE' else 'stain'
+        color_name = self.paint_color if self.wood_species == 'PAINT_GRADE' else self.stain_color
+        color_data = finish_colors.get_color_data(color_name, color_type)
+        is_custom = finish_colors.is_custom_color(color_name, color_type)
+        
+        # Color management buttons
+        row = box.row(align=True)
+        row.operator("hb_frameless.add_custom_finish_color", text="New Color", icon='ADD')
+        if is_custom:
+            op = row.operator("hb_frameless.delete_custom_finish_color", text="Delete", icon='REMOVE')
+            op.color_name = color_name
+            op.color_type = color_type
+        
+        # Advanced color options toggle
+        row = box.row()
+        row.prop(self, "show_advanced_color", 
+                 text="Advanced Color Options",
+                 icon='TRIA_DOWN' if self.show_advanced_color else 'TRIA_RIGHT',
+                 emboss=False)
+        
+        if self.show_advanced_color:
+            adv_box = box.box()
+            adv_box.label(text="Shader Parameters (saved per-color):")
+            col = adv_box.column(align=True)
+            col.label(text=f"Roughness: {color_data.get('roughness', 1.0):.2f}")
+            col.label(text=f"Noise Bump: {color_data.get('noise_bump_strength', 0.1):.2f}")
+            col.label(text=f"Knots Bump: {color_data.get('knots_bump_strength', 0.15):.2f}")
+            col.label(text=f"Wood Bump: {color_data.get('wood_bump_strength', 0.2):.2f}")
+            col.separator()
+            col.operator("hb_frameless.edit_finish_color", text="Edit Color Properties", icon='GREASEPENCIL').color_type = color_type
+        
         # Interior
         col = box.column(align=True)
         col.label(text="Interior:")
-        col.prop(self, "interior_material", text="Material")
+        col.prop(self, "interior_material_type", text="Material")
         
         # Door overlay
         col = box.column(align=True)

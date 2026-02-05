@@ -974,6 +974,245 @@ class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+# ============================================
+# FINISH COLOR OPERATORS
+# ============================================
+
+class hb_frameless_OT_add_custom_finish_color(bpy.types.Operator):
+    """Add a new custom finish color"""
+    bl_idname = "hb_frameless.add_custom_finish_color"
+    bl_label = "Add Custom Finish Color"
+    bl_description = "Create a new custom color and save it to your user library"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    color_name: bpy.props.StringProperty(name="Color Name", default="My Custom Color")  # type: ignore
+    color_1: bpy.props.FloatVectorProperty(
+        name="Color 1", subtype='COLOR', size=4, min=0, max=1,
+        default=(0.5, 0.4, 0.3, 1.0)
+    )  # type: ignore
+    color_2: bpy.props.FloatVectorProperty(
+        name="Color 2", subtype='COLOR', size=4, min=0, max=1,
+        default=(0.4, 0.3, 0.2, 1.0)
+    )  # type: ignore
+    roughness: bpy.props.FloatProperty(name="Roughness", min=0, max=1, default=1.0)  # type: ignore
+    noise_bump_strength: bpy.props.FloatProperty(name="Noise Bump Strength", min=0, max=1, default=0.1)  # type: ignore
+    knots_bump_strength: bpy.props.FloatProperty(name="Knots Bump Strength", min=0, max=1, default=0.15)  # type: ignore
+    wood_bump_strength: bpy.props.FloatProperty(name="Wood Bump Strength", min=0, max=1, default=0.2)  # type: ignore
+    
+    def invoke(self, context, event):
+        from .. import finish_colors
+        
+        # Pre-fill from current selection
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[props.active_cabinet_style_index]
+            color_type = 'paint' if style.wood_species == 'PAINT_GRADE' else 'stain'
+            color_name = style.paint_color if style.wood_species == 'PAINT_GRADE' else style.stain_color
+            data = finish_colors.get_color_data(color_name, color_type)
+            self.color_1 = data.get('color_1', [0.5, 0.4, 0.3, 1.0])
+            self.color_2 = data.get('color_2', [0.4, 0.3, 0.2, 1.0])
+            self.roughness = data.get('roughness', 1.0)
+            self.noise_bump_strength = data.get('noise_bump_strength', 0.1)
+            self.knots_bump_strength = data.get('knots_bump_strength', 0.15)
+            self.wood_bump_strength = data.get('wood_bump_strength', 0.2)
+        
+        return context.window_manager.invoke_props_dialog(self, width=350)
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "color_name")
+        
+        row = layout.row()
+        col = row.column()
+        col.label(text="Primary Color:")
+        col.prop(self, "color_1", text="")
+        col = row.column()
+        col.label(text="Secondary Color:")
+        col.prop(self, "color_2", text="")
+        
+        layout.separator()
+        layout.label(text="Shader Parameters:")
+        layout.prop(self, "roughness")
+        layout.prop(self, "noise_bump_strength")
+        layout.prop(self, "knots_bump_strength")
+        layout.prop(self, "wood_bump_strength")
+    
+    def execute(self, context):
+        from .. import finish_colors
+        
+        if not self.color_name.strip():
+            self.report({'WARNING'}, "Color name cannot be empty")
+            return {'CANCELLED'}
+        
+        # Determine which type based on active style
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        color_type = 'stain'
+        if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[props.active_cabinet_style_index]
+            if style.wood_species == 'PAINT_GRADE':
+                color_type = 'paint'
+        
+        color_data = {
+            'color_1': list(self.color_1),
+            'color_2': list(self.color_2),
+            'roughness': self.roughness,
+            'noise_bump_strength': self.noise_bump_strength,
+            'knots_bump_strength': self.knots_bump_strength,
+            'wood_bump_strength': self.wood_bump_strength,
+        }
+        
+        if finish_colors.save_custom_color(self.color_name, color_data, color_type):
+            # Set the active style to use the new color
+            if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+                style = props.cabinet_styles[props.active_cabinet_style_index]
+                if color_type == 'paint':
+                    style.paint_color = self.color_name
+                else:
+                    style.stain_color = self.color_name
+            
+            self.report({'INFO'}, f"Saved custom {color_type} color: {self.color_name}")
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, "Failed to save custom color")
+            return {'CANCELLED'}
+
+
+class hb_frameless_OT_delete_custom_finish_color(bpy.types.Operator):
+    """Delete a custom finish color from the user library"""
+    bl_idname = "hb_frameless.delete_custom_finish_color"
+    bl_label = "Delete Custom Color"
+    bl_description = "Delete this custom color from your user library"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    color_name: bpy.props.StringProperty(name="Color Name")  # type: ignore
+    color_type: bpy.props.StringProperty(name="Color Type", default='stain')  # type: ignore
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+    
+    def execute(self, context):
+        from .. import finish_colors
+        
+        if finish_colors.delete_custom_color(self.color_name, self.color_type):
+            self.report({'INFO'}, f"Deleted custom color: {self.color_name}")
+            return {'FINISHED'}
+        else:
+            self.report({'WARNING'}, f"Cannot delete built-in color: {self.color_name}")
+            return {'CANCELLED'}
+
+
+class hb_frameless_OT_edit_finish_color(bpy.types.Operator):
+    """Edit the shader parameters for the current finish color"""
+    bl_idname = "hb_frameless.edit_finish_color"
+    bl_label = "Edit Finish Color"
+    bl_description = "Edit the color and shader parameters, then save as a new custom color"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    color_type: bpy.props.StringProperty(name="Color Type", default='stain')  # type: ignore
+    
+    color_name: bpy.props.StringProperty(name="Color Name", default="")  # type: ignore
+    color_1: bpy.props.FloatVectorProperty(
+        name="Primary Color", subtype='COLOR', size=4, min=0, max=1,
+        default=(0.5, 0.4, 0.3, 1.0)
+    )  # type: ignore
+    color_2: bpy.props.FloatVectorProperty(
+        name="Secondary Color", subtype='COLOR', size=4, min=0, max=1,
+        default=(0.4, 0.3, 0.2, 1.0)
+    )  # type: ignore
+    roughness: bpy.props.FloatProperty(name="Roughness", min=0, max=1, default=1.0)  # type: ignore
+    noise_bump_strength: bpy.props.FloatProperty(name="Noise Bump Strength", min=0, max=1, default=0.1)  # type: ignore
+    knots_bump_strength: bpy.props.FloatProperty(name="Knots Bump Strength", min=0, max=1, default=0.15)  # type: ignore
+    wood_bump_strength: bpy.props.FloatProperty(name="Wood Bump Strength", min=0, max=1, default=0.2)  # type: ignore
+    
+    def invoke(self, context, event):
+        from .. import finish_colors
+        
+        # Pre-fill from current selection
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[props.active_cabinet_style_index]
+            color_name = style.paint_color if self.color_type == 'paint' else style.stain_color
+            data = finish_colors.get_color_data(color_name, self.color_type)
+            
+            self.color_name = color_name
+            self.color_1 = data.get('color_1', [0.5, 0.4, 0.3, 1.0])
+            self.color_2 = data.get('color_2', [0.4, 0.3, 0.2, 1.0])
+            self.roughness = data.get('roughness', 1.0)
+            self.noise_bump_strength = data.get('noise_bump_strength', 0.1)
+            self.knots_bump_strength = data.get('knots_bump_strength', 0.15)
+            self.wood_bump_strength = data.get('wood_bump_strength', 0.2)
+        
+        return context.window_manager.invoke_props_dialog(self, width=350)
+    
+    def draw(self, context):
+        from .. import finish_colors
+        layout = self.layout
+        
+        is_custom = finish_colors.is_custom_color(self.color_name, self.color_type)
+        is_default = not is_custom and self.color_name in (
+            finish_colors.DEFAULT_STAIN_COLORS if self.color_type == 'stain' 
+            else finish_colors.DEFAULT_PAINT_COLORS
+        )
+        
+        if is_default:
+            layout.label(text="Editing a built-in color will save as a custom override", icon='INFO')
+        
+        layout.prop(self, "color_name")
+        
+        row = layout.row()
+        col = row.column()
+        col.label(text="Primary Color:")
+        col.prop(self, "color_1", text="")
+        col = row.column()
+        col.label(text="Secondary Color:")
+        col.prop(self, "color_2", text="")
+        
+        layout.separator()
+        layout.label(text="Shader Parameters:")
+        layout.prop(self, "roughness")
+        layout.prop(self, "noise_bump_strength")
+        layout.prop(self, "knots_bump_strength")
+        layout.prop(self, "wood_bump_strength")
+    
+    def execute(self, context):
+        from .. import finish_colors
+        
+        if not self.color_name.strip():
+            self.report({'WARNING'}, "Color name cannot be empty")
+            return {'CANCELLED'}
+        
+        color_data = {
+            'color_1': list(self.color_1),
+            'color_2': list(self.color_2),
+            'roughness': self.roughness,
+            'noise_bump_strength': self.noise_bump_strength,
+            'knots_bump_strength': self.knots_bump_strength,
+            'wood_bump_strength': self.wood_bump_strength,
+        }
+        
+        if finish_colors.save_custom_color(self.color_name, color_data, self.color_type):
+            # Update active style to use this color
+            main_scene = hb_project.get_main_scene()
+            props = main_scene.hb_frameless
+            if props.cabinet_styles and props.active_cabinet_style_index < len(props.cabinet_styles):
+                style = props.cabinet_styles[props.active_cabinet_style_index]
+                if self.color_type == 'paint':
+                    style.paint_color = self.color_name
+                else:
+                    style.stain_color = self.color_name
+            
+            self.report({'INFO'}, f"Saved color: {self.color_name}")
+            return {'FINISHED'}
+        else:
+            self.report({'ERROR'}, "Failed to save color")
+            return {'CANCELLED'}
+
+
 classes = (
     hb_frameless_OT_add_door_style,
     hb_frameless_OT_remove_door_style,
@@ -989,6 +1228,9 @@ classes = (
     hb_frameless_OT_update_cabinet_pulls,
     hb_frameless_OT_update_pull_locations,
     hb_frameless_OT_update_pull_finish,
+    hb_frameless_OT_add_custom_finish_color,
+    hb_frameless_OT_delete_custom_finish_color,
+    hb_frameless_OT_edit_finish_color,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
