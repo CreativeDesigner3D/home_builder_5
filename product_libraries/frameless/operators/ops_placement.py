@@ -921,6 +921,117 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
 
+    def get_adjacent_wall_intrusion(self, wall_obj, side='left'):
+        """
+        Calculate how far cabinets on an adjacent (connected) wall intrude into
+        this wall's available placement space.
+        
+        Uses coordinate transforms to handle any wall angle, not just 90 degrees.
+        Only considers cabinets that vertically and depth-wise overlap with
+        the cabinet being placed.
+        
+        Args:
+            wall_obj: The current wall object
+            side: 'left' (x=0 end) or 'right' (x=wall_length end)
+        
+        Returns:
+            float: intrusion distance along wall's X axis, or 0 if none
+        """
+        wall = hb_types.GeoNodeWall(wall_obj)
+        adj_wall_node = wall.get_connected_wall(direction=side)
+        if not adj_wall_node:
+            return 0.0
+        
+        adj_wall_obj = adj_wall_node.obj
+        wall_length = wall.get_input('Length')
+        wall_matrix_inv = wall_obj.matrix_world.inverted()
+        adj_matrix = adj_wall_obj.matrix_world
+        
+        # Our cabinet's vertical bounds
+        cabinet_z_start = self.get_cabinet_z_location(bpy.context)
+        cabinet_height = self.get_cabinet_height(bpy.context)
+        cabinet_z_end = cabinet_z_start + cabinet_height
+        
+        # Our cabinet's Y zone in local space (depth direction from wall surface)
+        cabinet_depth = self.get_cabinet_depth(bpy.context)
+        if self.place_on_front:
+            our_y_min = -cabinet_depth
+            our_y_max = 0
+        else:
+            our_y_min = wall.get_input('Thickness')
+            our_y_max = our_y_min + cabinet_depth
+        
+        max_intrusion = 0.0
+        
+        for child in adj_wall_obj.children:
+            if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
+                continue
+            if not ('IS_FRAMELESS_CABINET_CAGE' in child or 'IS_APPLIANCE' in child):
+                continue
+            
+            # Get adjacent cabinet dimensions
+            try:
+                child_geo = hb_types.GeoNodeObject(child)
+                child_width = child_geo.get_input('Dim X')
+                child_depth = child_geo.get_input('Dim Y')
+                child_height = child_geo.get_input('Dim Z')
+            except:
+                continue
+            
+            # Vertical overlap check
+            child_z_start = child.location.z
+            child_z_end = child_z_start + child_height
+            if not (cabinet_z_start < child_z_end and child_z_start < cabinet_z_end):
+                continue
+            
+            # Build corner positions in adjacent wall's local space
+            is_back_side = abs(child.rotation_euler.z - math.pi) < 0.1 or abs(child.rotation_euler.z + math.pi) < 0.1
+            if is_back_side:
+                child_x_start = child.location.x - child_width
+                adj_thickness = adj_wall_node.get_input('Thickness')
+                corners_adj_local = [
+                    Vector((child_x_start, adj_thickness, 0)),
+                    Vector((child_x_start + child_width, adj_thickness, 0)),
+                    Vector((child_x_start, adj_thickness + child_depth, 0)),
+                    Vector((child_x_start + child_width, adj_thickness + child_depth, 0)),
+                ]
+            else:
+                child_x_start = child.location.x
+                corners_adj_local = [
+                    Vector((child_x_start, 0, 0)),
+                    Vector((child_x_start + child_width, 0, 0)),
+                    Vector((child_x_start, -child_depth, 0)),
+                    Vector((child_x_start + child_width, -child_depth, 0)),
+                ]
+            
+            # Transform corners to our wall's local space
+            corners_our = []
+            for c in corners_adj_local:
+                world_pos = adj_matrix @ c
+                our_pos = wall_matrix_inv @ world_pos
+                corners_our.append(our_pos)
+            
+            # Check Y overlap (depth zone) with our cabinet
+            adj_y_min = min(c.y for c in corners_our)
+            adj_y_max = max(c.y for c in corners_our)
+            if not (our_y_min < adj_y_max and adj_y_min < our_y_max):
+                continue
+            
+            # Calculate X intrusion from the relevant end
+            if side == 'left':
+                # Intrusion from x=0: how far the deepest corner extends into positive X
+                for c in corners_our:
+                    if c.x > 0:
+                        max_intrusion = max(max_intrusion, c.x)
+            else:
+                # Intrusion from x=wall_length: how far the deepest corner extends into wall
+                for c in corners_our:
+                    if c.x < wall_length:
+                        intrusion = wall_length - c.x
+                        max_intrusion = max(max_intrusion, intrusion)
+        
+        return max(0.0, max_intrusion)
+
     def find_placement_gap_by_side(self, wall_obj, cursor_x: float, object_width: float, 
                                      place_on_front: bool, wall_thickness: float) -> tuple:
         """
@@ -1009,6 +1120,19 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         # Sort by X position
         children = sorted(children, key=lambda x: x[0])
+        
+        # Add virtual obstacles from cabinets on adjacent walls
+        left_intrusion = self.get_adjacent_wall_intrusion(wall_obj, 'left')
+        if left_intrusion > 0:
+            children.append((0, left_intrusion, None))
+        
+        right_intrusion = self.get_adjacent_wall_intrusion(wall_obj, 'right')
+        if right_intrusion > 0:
+            children.append((wall_length - right_intrusion, wall_length, None))
+        
+        # Re-sort after adding virtual obstacles
+        if left_intrusion > 0 or right_intrusion > 0:
+            children = sorted(children, key=lambda x: x[0])
         
         if not children:
             return (0, wall_length, cursor_x)
