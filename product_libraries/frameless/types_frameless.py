@@ -1896,6 +1896,14 @@ class CornerCabinet(Cabinet):
         """
         raise NotImplementedError("Subclasses must implement add_corner_modifier")
 
+    def create_corner_bays(self, dim_x, dim_y, dim_z, mt, tkh, ld, rd):
+        """Create bay openings for corner cabinet doors.
+        
+        Override in subclasses. Called at end of create_corner_base_carcass().
+        Default is no bays (no doors).
+        """
+        pass
+
     def create_corner_base_carcass(self, name):
         """Create the corner base cabinet carcass.
         
@@ -2065,6 +2073,7 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'PIECUT'
         self.obj['IS_CORNER_CABINET'] = True
+        self.add_corner_doors()
 
     def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
         """Pie cut uses CPM_CORNERNOTCH for a rectangular notch."""
@@ -2074,6 +2083,42 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         notch.driver_input('Route Depth', 'mt+.01', [mt])
         notch.set_input('Flip X', True)
         notch.set_input('Flip Y', True)
+
+    def add_corner_doors(self):
+        """Add a single door to each front face of the pie-cut L-shape."""
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+        tkh = self.var_prop('Toe Kick Height', 'tkh')
+        rb = self.var_prop('Remove Bottom', 'rb')
+        ld = self.var_prop('Left Depth', 'ld')
+        rd = self.var_prop('Right Depth', 'rd')
+
+        left_door = CabinetDoor()
+        left_door.create("Left Door")
+        left_door.obj.parent = self.obj
+        left_door.obj.rotation_euler.y = math.radians(-90)
+        left_door.obj.rotation_euler.z = math.radians(180)
+        left_door.driver_location('x', 'ld', [ld])
+        left_door.driver_location('y', '-rd', [rd])
+        left_door.driver_location('z', 'tkh+IF(rb,0,mt)', [tkh, mt, rb])
+        left_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z, tkh, mt, rb])
+        left_door.driver_input("Width",  'dim_x-ld-mt', [dim_x, ld, mt])
+        left_door.driver_input("Thickness", 'mt', [mt])
+
+        right_door = CabinetDoor()
+        right_door.create("Right Door")
+        right_door.obj.parent = self.obj
+        right_door.obj.rotation_euler.x = math.radians(90)
+        right_door.obj.rotation_euler.y = math.radians(-90)
+        right_door.driver_location('x', 'ld', [ld])
+        right_door.driver_location('y', '-rd', [rd])
+        right_door.driver_location('z', 'tkh+IF(rb,0,mt)', [tkh, mt, rb])
+        right_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z, tkh, mt, rb])
+        right_door.driver_input("Width", 'dim_y-rd-mt', [dim_y, rd, mt])
+        right_door.driver_input("Thickness", 'mt', [mt])
+        right_door.set_input("Mirror Y", True)
 
 
 class DiagonalCornerTallCabinet(CornerCabinet):
