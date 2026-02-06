@@ -1123,11 +1123,21 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # No vertical collision, skip this object (including doors/windows)
                 continue
             
-            # Get object horizontal bounds
-            # Check if object is rotated 180° (back side placement)
-            is_rotated = abs(child.rotation_euler.z - math.pi) < 0.1 or abs(child.rotation_euler.z + math.pi) < 0.1
+            # Get object horizontal bounds based on rotation
+            rot_z = child.rotation_euler.z
+            is_rotated_180 = abs(rot_z - math.pi) < 0.1 or abs(rot_z + math.pi) < 0.1
+            is_rotated_neg90 = abs(rot_z - math.radians(-90)) < 0.1 or abs(rot_z - math.radians(270)) < 0.1
             
-            if is_rotated:
+            if is_rotated_neg90:
+                # -90° rotation (right corner cabinet): origin is at right edge,
+                # local Y maps to wall -X, so cabinet extends left by Dim Y
+                try:
+                    child_depth = hb_types.GeoNodeObject(child).get_input('Dim Y')
+                except:
+                    child_depth = child_width
+                x_start = child.location.x - child_depth
+                x_end = child.location.x
+            elif is_rotated_180:
                 # Back side: location.x is at right edge, cabinet extends left
                 x_start = child.location.x - child_width
                 x_end = child.location.x
