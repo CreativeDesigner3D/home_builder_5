@@ -1860,7 +1860,26 @@ class InteriorSplitterHorizontal(CabinetInterior):
 
 
 class CornerCabinet(Cabinet):
-    """Base class for corner cabinets."""
+    """Base class for corner cabinets.
+    
+    Corner cabinets fit into a corner where two walls meet at 90 degrees.
+    They have an L-shaped footprint with the origin (0,0) at the back-left 
+    corner (the inside corner where walls meet).
+    
+    - Left side extends in the -Y direction
+    - Right side extends in the +X direction from the right edge
+    
+    Dimensions:
+    - Dim X (width): total width from origin to right edge
+    - Dim Y (depth): total depth from origin to front 
+    - Dim Z (height): total height
+    - Left Depth: depth of left wing
+    - Right Depth: depth of right wing (from right side going back)
+    
+    Subclasses override add_corner_modifier() to control the top/bottom shape:
+    - Diagonal: CPM_CHAMFER (45° angled front)
+    - Pie Cut: CPM_CORNERNOTCH (rectangular notch, two fronts at 90°)
+    """
     
     corner_size = inch(36)  # Size of corner (both directions)
     
@@ -1869,45 +1888,21 @@ class CornerCabinet(Cabinet):
         self.add_property('Left Depth', 'DISTANCE', self.depth)
         self.add_property('Right Depth', 'DISTANCE', self.depth)
 
-
-class DiagonalCornerBaseCabinet(CornerCabinet):
-    """Diagonal corner base cabinet - 45° angled front.
-    
-    This cabinet fits into a corner where two walls meet at 90 degrees.
-    It has an L-shaped footprint with a diagonal front panel at 45 degrees.
-    
-    The cabinet origin (0,0) is at the back-left corner (the inside corner).
-    - Left side extends in the -Y direction
-    - Right side extends in the +X direction from the right edge
-    - The diagonal front connects these two sides at 45 degrees
-    
-    Dimensions:
-    - Dim X (width): total width from origin to right edge
-    - Dim Y (depth): total depth from origin to front 
-    - Dim Z (height): total height
-    - Left Depth: depth of left wing
-    - Right Depth: depth of right wing (from right side going back)
-    """
-    
-    def __init__(self):
-        super().__init__()
-        props = bpy.context.scene.hb_frameless
-        self.corner_size = props.base_inside_corner_size
-        self.height = props.base_cabinet_height
-        self.depth = props.base_cabinet_depth
-    
-    def create(self, name="Diagonal Corner Base"):
-        self.create_diagonal_base_carcass(name)
-        self.obj['CABINET_TYPE'] = 'BASE'
-        self.obj['CORNER_TYPE'] = 'DIAGONAL'
-        self.obj['IS_CORNER_CABINET'] = True
-        # self.add_diagonal_doors()
-    
-    def create_diagonal_base_carcass(self, name):
-        """Create the diagonal corner base cabinet carcass."""
-        super().create_cabinet(name)
+    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
+        """Add the corner shape modifier to a top or bottom panel.
         
-        props = bpy.context.scene.hb_frameless
+        Override in subclasses to use CPM_CHAMFER (diagonal) or 
+        CPM_CORNERNOTCH (pie cut).
+        """
+        raise NotImplementedError("Subclasses must implement add_corner_modifier")
+
+    def create_corner_base_carcass(self, name):
+        """Create the corner base cabinet carcass.
+        
+        Shared by all corner base cabinet types (diagonal, pie cut).
+        The top/bottom panel shape is determined by add_corner_modifier().
+        """
+        super().create_cabinet(name)
         
         self.add_properties_common()
         self.add_properties_toe_kick()
@@ -1959,12 +1954,12 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         left_back.create('Left Back')
         left_back.obj.parent = self.obj
         left_back.obj.rotation_euler.y = math.radians(-90)
-        left_back.driver_location('x', 'mt', [mt])
         left_back.driver_location('z', 'tkh+mt', [tkh, mt])
         left_back.driver_input("Length", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
         left_back.driver_input("Width", 'dim_y-mt', [dim_y, mt])
         left_back.driver_input("Thickness", 'mt', [mt])
         left_back.set_input("Mirror Y", True)
+        left_back.set_input("Mirror Z", True)
         
         # Right Back - vertical panel against right wall (Y=0 plane)
         # Runs from the right side to the corner
@@ -1980,9 +1975,7 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         right_back.set_input("Mirror Y", True)
         right_back.set_input("Mirror Z", True)
         
-        # Bottom - L-shaped bottom panel
-        # For now using two rectangular pieces
-        # Left bottom piece
+        # Bottom panel
         bottom = CabinetPart()
         bottom.create('Bottom')
         bottom.obj.parent = self.obj
@@ -1992,14 +1985,9 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         bottom.driver_input("Thickness", 'mt', [mt])
         bottom.set_input("Mirror Y", True)
         bottom.set_input("Mirror Z", False)
-
-        chamfer = bottom.add_part_modifier('CPM_CHAMFER','Chamfer')
-        chamfer.driver_input('X','dim_x-ld-mt',[dim_x,ld,mt])
-        chamfer.driver_input('Y','dim_y-rd-mt',[dim_y,rd,mt])
-        chamfer.driver_input('Route Depth','mt+.01',[mt])
-        chamfer.set_input('Flip X',True)
+        self.add_corner_modifier(bottom, dim_x, dim_y, ld, rd, mt)
         
-        # Top - L-shaped top panel (matching bottom)
+        # Top panel (matching bottom)
         top = CabinetPart()
         top.create('Top')
         top.obj.parent = self.obj
@@ -2009,12 +1997,7 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         top.driver_input("Thickness", 'mt', [mt])
         top.set_input("Mirror Y", True)
         top.set_input("Mirror Z", True)
-        
-        chamfer = top.add_part_modifier('CPM_CHAMFER','Chamfer')
-        chamfer.driver_input('X','dim_x-ld-mt',[dim_x,ld,mt])
-        chamfer.driver_input('Y','dim_y-rd-mt',[dim_y,rd,mt])
-        chamfer.driver_input('Route Depth','mt+.01',[mt])
-        chamfer.set_input('Flip X',True)
+        self.add_corner_modifier(top, dim_x, dim_y, ld, rd, mt)
 
         # Toe kicks
         left_toe_kick = CabinetPart()
@@ -2040,30 +2023,10 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         right_toe_kick.driver_input("Thickness", 'mt', [mt])
         right_toe_kick.set_input("Mirror X", True)
         right_toe_kick.set_input("Mirror Y", True)
-        
-        # Create the opening/bay for the diagonal front
-        # The opening spans diagonally from left side to right side
-        # opening = CabinetBay()
-        # opening.create("Bay")
-        # opening.obj.parent = self.obj
-        # opening.driver_location('x', 'mt', [mt])
-        # opening.driver_location('y', '-ld', [ld])
-        # opening.driver_location('z', 'tkh+mt', [tkh, mt])
-        # # Width is diagonal: sqrt(2) * (corner_size - depth)
-        # # Simplified: the opening width is the remaining space after sides
-        # opening.driver_input("Dim X", 'dim_x-ld-mt', [dim_x, ld, mt])
-        # opening.driver_input("Dim Y", 'ld-mt', [ld, mt])
-        # opening.driver_input("Dim Z", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
-    
-    def add_diagonal_doors(self):
-        """Add diagonal doors to the corner cabinet."""
-        doors = Doors()
-        doors.door_pull_location = "Base"
-        self.add_cage_to_bay(doors)
 
 
-class PieCutCornerBaseCabinet(CornerCabinet):
-    """L-shaped corner base cabinet - two fronts at 90°."""
+class DiagonalCornerBaseCabinet(CornerCabinet):
+    """Diagonal corner base cabinet - 45° angled front."""
     
     def __init__(self):
         super().__init__()
@@ -2072,11 +2035,45 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         self.height = props.base_cabinet_height
         self.depth = props.base_cabinet_depth
     
-    def create(self, name="L-Shape Corner Base"):
-        # TODO: Implement L-shape corner geometry
-        self.create_cabinet(name)
+    def create(self, name="Diagonal Corner Base"):
+        self.create_corner_base_carcass(name)
+        self.obj['CABINET_TYPE'] = 'BASE'
+        self.obj['CORNER_TYPE'] = 'DIAGONAL'
+        self.obj['IS_CORNER_CABINET'] = True
+
+    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
+        """Diagonal uses CPM_CHAMFER to cut a 45° angle."""
+        chamfer = part.add_part_modifier('CPM_CHAMFER', 'Chamfer')
+        chamfer.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
+        chamfer.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
+        chamfer.driver_input('Route Depth', 'mt+.01', [mt])
+        chamfer.set_input('Flip X', True)
+
+
+class PieCutCornerBaseCabinet(CornerCabinet):
+    """Pie cut corner base cabinet - rectangular notch, two fronts at 90°."""
+    
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.corner_size = props.base_inside_corner_size
+        self.height = props.base_cabinet_height
+        self.depth = props.base_cabinet_depth
+    
+    def create(self, name="Pie Cut Corner Base"):
+        self.create_corner_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'PIECUT'
+        self.obj['IS_CORNER_CABINET'] = True
+
+    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
+        """Pie cut uses CPM_CORNERNOTCH for a rectangular notch."""
+        notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
+        notch.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
+        notch.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
+        notch.driver_input('Route Depth', 'mt+.01', [mt])
+        notch.set_input('Flip X', True)
+        notch.set_input('Flip Y', True)
 
 
 class DiagonalCornerTallCabinet(CornerCabinet):

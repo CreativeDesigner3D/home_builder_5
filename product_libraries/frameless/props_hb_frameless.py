@@ -2029,15 +2029,38 @@ class Frameless_Scene_Props(PropertyGroup):
                 row.prop(self,'tall_inside_corner_size',text="Tall")
                 row.prop(self,'upper_inside_corner_size',text="Upper")
                 
-                # Corner cabinet definitions: (display_name, cabinet_name, thumbnail_name)
-                corner_cabinets = [
+                # Diagonal corner cabinet definitions: (display_name, cabinet_name, thumbnail_name)
+                box.label(text="Diagonal Corner")
+                diagonal_cabinets = [
                     ("Base", "Diagonal Corner Base", "Frameless Base Corner"),
                     ("Tall", "Diagonal Corner Tall", "Frameless Tall Corner"),
                     ("Upper", "Diagonal Corner Upper", "Frameless Upper Corner"),
                 ]
                 
                 flow = box.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-                for display_name, cabinet_name, thumb_name in corner_cabinets:
+                for display_name, cabinet_name, thumb_name in diagonal_cabinets:
+                    cab_box = flow.box()
+                    cab_box.scale_y = 0.9
+                    
+                    # Show thumbnail
+                    icon_id = load_cabinet_thumbnail(thumb_name)
+                    if icon_id:
+                        cab_box.template_icon(icon_value=icon_id, scale=4.0)
+                    
+                    # Button
+                    op = cab_box.operator('hb_frameless.draw_cabinet', text=display_name)
+                    op.cabinet_name = cabinet_name
+
+                # Pie cut corner cabinet definitions
+                box.label(text="Pie Cut Corner")
+                piecut_cabinets = [
+                    ("Base", "Pie Cut Corner Base", "Frameless Base Corner"),
+                    ("Tall", "Pie Cut Corner Tall", "Frameless Tall Corner"),
+                    ("Upper", "Pie Cut Corner Upper", "Frameless Upper Corner"),
+                ]
+                
+                flow = box.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
+                for display_name, cabinet_name, thumb_name in piecut_cabinets:
                     cab_box = flow.box()
                     cab_box.scale_y = 0.9
                     
