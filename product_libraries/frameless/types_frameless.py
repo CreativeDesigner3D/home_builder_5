@@ -2085,7 +2085,17 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         notch.set_input('Flip Y', True)
 
     def add_corner_doors(self):
-        """Add a single door to each front face of the pie-cut L-shape."""
+        """Add a single door to each front face of the pie-cut notch.
+        
+        Left door covers the notch X-face (at Y=-rd, running in +X).
+        Right door covers the notch Y-face (at X=ld, running in -Y).
+        Both doors hinge from the notch corner.
+        
+        Overlay edges:
+          Top/Bottom: full overlay over horizontal carcass panels
+          Outer: full overlay over adjacent side panel
+          Inner (corner): half gap between the two doors
+        """
         dim_x = self.var_input('Dim X', 'dim_x')
         dim_y = self.var_input('Dim Y', 'dim_y')
         dim_z = self.var_input('Dim Z', 'dim_z')
@@ -2095,29 +2105,70 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         ld = self.var_prop('Left Depth', 'ld')
         rd = self.var_prop('Right Depth', 'rd')
 
+        # Overlay properties
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
+        self.add_property('Top Reveal', 'DISTANCE', inch(.0625))
+        self.add_property('Bottom Reveal', 'DISTANCE', inch(0))
+        self.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
+
+        ft = self.var_prop('Front Thickness', 'ft')
+        dtcg = self.var_prop('Door to Cabinet Gap', 'dtcg')
+        tr = self.var_prop('Top Reveal', 'tr')
+        br = self.var_prop('Bottom Reveal', 'br')
+        otr = self.var_prop('Outer Reveal', 'otr')
+
+        # Overlay calculation empty (avoids circular dependencies)
+        overlay_obj = self.add_empty('Corner Overlay Calc')
+        overlay_obj.home_builder.add_property("Overlay Top", 'DISTANCE', 0.0)
+        overlay_obj.home_builder.add_property("Overlay Bottom", 'DISTANCE', 0.0)
+        overlay_obj.home_builder.add_property("Overlay Outer", 'DISTANCE', 0.0)
+
+        # Full overlay = material thickness - reveal
+        overlay_obj.home_builder.driver_prop("Overlay Top", "mt-tr", [mt, tr])
+        overlay_obj.home_builder.driver_prop("Overlay Bottom", "mt-br", [mt, br])
+        overlay_obj.home_builder.driver_prop("Overlay Outer", "mt-otr", [mt, otr])
+
+        to = overlay_obj.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_obj.home_builder.var_prop('Overlay Bottom', 'bo')
+        oo = overlay_obj.home_builder.var_prop('Overlay Outer', 'oo')
+
+        # --- Left door (notch X-face) ---
         left_door = CabinetDoor()
+        left_door.door_pull_location = "Base"
         left_door.create("Left Door")
         left_door.obj.parent = self.obj
         left_door.obj.rotation_euler.y = math.radians(-90)
         left_door.obj.rotation_euler.z = math.radians(180)
-        left_door.driver_location('x', 'ld', [ld])
-        left_door.driver_location('y', '-rd', [rd])
-        left_door.driver_location('z', 'tkh+IF(rb,0,mt)', [tkh, mt, rb])
-        left_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z, tkh, mt, rb])
-        left_door.driver_input("Width",  'dim_x-ld-mt', [dim_x, ld, mt])
-        left_door.driver_input("Thickness", 'mt', [mt])
+        # X: shift inner edge by half corner gap
+        left_door.driver_location('x', 'ld+dtcg', [ld, dtcg])
+        left_door.driver_location('y', '-rd-dtcg', [rd, dtcg])
+        # Z: shift down by bottom overlay
+        left_door.driver_location('z', 'tkh+IF(rb,0,mt)-bo', [tkh, mt, rb, bo])
+        # Height: opening height + top + bottom overlay
+        left_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt+to+bo', [dim_z, tkh, mt, rb, to, bo])
+        # Width: notch X span + outer overlay - half corner gap
+        left_door.driver_input("Width", 'dim_x-ld-mt+oo-dtcg', [dim_x, ld, mt, oo, dtcg])
+        left_door.driver_input("Thickness", 'ft', [ft])
 
+        # --- Right door (notch Y-face) ---
         right_door = CabinetDoor()
+        right_door.door_pull_location = "Base"
         right_door.create("Right Door")
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        right_door.driver_location('x', 'ld', [ld])
-        right_door.driver_location('y', '-rd', [rd])
-        right_door.driver_location('z', 'tkh+IF(rb,0,mt)', [tkh, mt, rb])
-        right_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z, tkh, mt, rb])
-        right_door.driver_input("Width", 'dim_y-rd-mt', [dim_y, rd, mt])
-        right_door.driver_input("Thickness", 'mt', [mt])
+        # X: push forward off the carcass face
+        right_door.driver_location('x', 'ld+dtcg+mt+dtcg', [ld, dtcg, mt])
+        # Y: shift inner edge by half corner gap
+        right_door.driver_location('y', '-rd-dtcg', [rd, dtcg])
+        # Z: shift down by bottom overlay
+        right_door.driver_location('z', 'tkh+IF(rb,0,mt)-bo', [tkh, mt, rb, bo])
+        # Height: opening height + top + bottom overlay
+        right_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt+to+bo', [dim_z, tkh, mt, rb, to, bo])
+        # Width: notch Y span + outer overlay - half corner gap
+        right_door.driver_input("Width", 'dim_y-rd-mt+oo-dtcg-mt-dtcg', [dim_y, rd, mt, oo, dtcg])
+        right_door.driver_input("Thickness", 'ft', [ft])
         right_door.set_input("Mirror Y", True)
 
 
