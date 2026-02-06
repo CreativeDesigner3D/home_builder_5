@@ -306,6 +306,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     center_snap_state = None
     centerline_obj = None  # Visual indicator for center snap
     
+    # Corner cabinet placement side (right side needs -90° rotation)
+    corner_right_side: bool = False
+    
     # Placement dimensions
     dim_total_width = None  # Dimension showing total cabinet width
     dim_left_offset = None  # Dimension showing left offset from gap edge
@@ -584,10 +587,27 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.individual_cabinet_width = props.range_width
                 self.fill_mode = False
                 self.auto_quantity = False
+            elif 'Corner' in self.cabinet_name:
+                # Corner cabinets use corner size for both width and depth
+                if 'Base' in self.cabinet_name:
+                    corner_size = props.base_inside_corner_size
+                elif 'Tall' in self.cabinet_name:
+                    corner_size = props.tall_inside_corner_size
+                elif 'Upper' in self.cabinet_name:
+                    corner_size = props.upper_inside_corner_size
+                else:
+                    corner_size = props.base_inside_corner_size
+                self.individual_cabinet_width = corner_size
+                self.fill_mode = False
+                self.auto_quantity = False
+                self.cabinet_quantity = 1
             else:
                 self.individual_cabinet_width = props.default_cabinet_width
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
-            self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
+            if 'Corner' in self.cabinet_name:
+                self.preview_cage.set_input('Dim Y', corner_size)
+            else:
+                self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
             self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
         
         self.preview_cage.set_input('Mirror Y', True)
@@ -1370,37 +1390,77 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 elif left_gap < units.inch(4) and left_gap > 0:
                     snap_x = gap_start
         
-        # Update preview cage
-        self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
-        
-        # Apply grid snapping when not using special snap modes
-        # (center snap, cage snap, fill mode all set snap_x precisely)
-        if not self.center_snap_state and not self.fill_mode:
-            snap_x = hb_snap.snap_value_to_grid(snap_x)
-        
-        # Clamp snap_x to wall bounds
-        total_width = self.individual_cabinet_width * self.cabinet_quantity
-        snap_x = max(0, min(snap_x, self.wall_length - total_width))
-        
-        self.placement_x = snap_x
-        
-        # Position preview based on which side of wall
-        self.preview_cage.obj.parent = self.selected_wall
-        self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
-        
-        if self.place_on_front:
-            # Front side - cabinet back against wall (Y = 0), no rotation
-            self.preview_cage.obj.location.x = snap_x
-            self.preview_cage.obj.location.y = 0
-            self.preview_cage.obj.rotation_euler = (0, 0, 0)
+        # Corner cabinet special handling
+        is_corner = 'Corner' in self.cabinet_name
+        if is_corner:
+            corner_snap_threshold = self.individual_cabinet_width
+            near_left = cursor_x < corner_snap_threshold
+            near_right = cursor_x > (self.wall_length - corner_snap_threshold)
+            
+            if near_left or near_right:
+                self.corner_right_side = near_right
+                
+                if self.corner_right_side:
+                    snap_x = self.wall_length
+                else:
+                    snap_x = 0
+                
+                self.placement_x = snap_x
+                
+                self.preview_cage.obj.parent = self.selected_wall
+                self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
+                self.preview_cage.obj.location.y = 0
+                
+                if self.corner_right_side:
+                    self.preview_cage.obj.location.x = self.wall_length
+                    self.preview_cage.obj.rotation_euler = (0, 0, math.radians(-90))
+                else:
+                    self.preview_cage.obj.location.x = 0
+                    self.preview_cage.obj.rotation_euler = (0, 0, 0)
+            else:
+                # Not near a corner - position freely along wall
+                self.corner_right_side = False
+                snap_x = hb_snap.snap_value_to_grid(cursor_x)
+                snap_x = max(0, min(snap_x, self.wall_length - self.individual_cabinet_width))
+                self.placement_x = snap_x
+                
+                self.preview_cage.obj.parent = self.selected_wall
+                self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
+                self.preview_cage.obj.location.x = snap_x
+                self.preview_cage.obj.location.y = 0
+                self.preview_cage.obj.rotation_euler = (0, 0, 0)
         else:
-            # Back side - rotated 180° around Z axis
-            # Cabinet origin is back-left, so when rotated 180°:
-            # - Need to offset X by width (since it rotates around origin)
-            # - Y at wall_thickness (cabinet back against wall back)
-            self.preview_cage.obj.location.x = snap_x + total_width
-            self.preview_cage.obj.location.y = wall_thickness
-            self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
+            # Update preview cage
+            self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+            
+            # Apply grid snapping when not using special snap modes
+            # (center snap, cage snap, fill mode all set snap_x precisely)
+            if not self.center_snap_state and not self.fill_mode:
+                snap_x = hb_snap.snap_value_to_grid(snap_x)
+            
+            # Clamp snap_x to wall bounds
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            snap_x = max(0, min(snap_x, self.wall_length - total_width))
+            
+            self.placement_x = snap_x
+            
+            # Position preview based on which side of wall
+            self.preview_cage.obj.parent = self.selected_wall
+            self.preview_cage.obj.location.z = self.get_cabinet_z_location(context)
+            
+            if self.place_on_front:
+                # Front side - cabinet back against wall (Y = 0), no rotation
+                self.preview_cage.obj.location.x = snap_x
+                self.preview_cage.obj.location.y = 0
+                self.preview_cage.obj.rotation_euler = (0, 0, 0)
+            else:
+                # Back side - rotated 180° around Z axis
+                # Cabinet origin is back-left, so when rotated 180°:
+                # - Need to offset X by width (since it rotates around origin)
+                # - Y at wall_thickness (cabinet back against wall back)
+                self.preview_cage.obj.location.x = snap_x + total_width
+                self.preview_cage.obj.location.y = wall_thickness
+                self.preview_cage.obj.rotation_euler = (0, 0, math.pi)
         
         # Update dimensions
         self.update_dimensions(context)
@@ -1649,7 +1709,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.obj.parent = self.selected_wall
                 cabinet.obj.location.z = z_loc
                 
-                if self.place_on_front:
+                is_corner = 'Corner' in self.cabinet_name
+                if is_corner and self.corner_right_side:
+                    cabinet.obj.location.x = self.wall_length
+                    cabinet.obj.location.y = 0
+                    cabinet.obj.rotation_euler = (0, 0, math.radians(-90))
+                elif is_corner:
+                    cabinet.obj.location.x = current_x
+                    cabinet.obj.location.y = 0
+                    cabinet.obj.rotation_euler = (0, 0, 0)
+                elif self.place_on_front:
                     cabinet.obj.location.x = current_x
                     cabinet.obj.location.y = 0
                     cabinet.obj.rotation_euler = (0, 0, 0)
@@ -1787,6 +1856,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.snap_side = None
         self.center_snap_state = None
         self.centerline_obj = None
+        self.corner_right_side = False
         self.dim_total_width = None
         self.dim_left_offset = None
         self.dim_right_offset = None
