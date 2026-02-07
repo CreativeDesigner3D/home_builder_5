@@ -1462,6 +1462,7 @@ class CabinetDoor(CabinetFront):
 
         pull = GeoNodeHardware()
         pull.create('Pull')
+        pull.obj['IS_CABINET_PULL'] = True
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
         pull.set_input("Object",pull_obj)
@@ -2133,6 +2134,10 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         bo = overlay_obj.home_builder.var_prop('Overlay Bottom', 'bo')
         oo = overlay_obj.home_builder.var_prop('Overlay Outer', 'oo')
 
+        # Door swing: determines which door(s) get a pull handle
+        self.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
+        ds = self.var_prop('Door Swing', 'ds')
+
         # --- Left door (notch X-face) ---
         left_door = CabinetDoor()
         left_door.door_pull_location = "Base"
@@ -2170,6 +2175,22 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         right_door.driver_input("Width", 'dim_y-rd-mt+oo-dtcg-mt-dtcg', [dim_y, rd, mt, oo, dtcg])
         right_door.driver_input("Thickness", 'ft', [ft])
         right_door.set_input("Mirror Y", True)
+
+        # Hide pulls based on door swing setting
+        # ds==0: Left swing (pull on left door only)
+        # ds==1: Right swing (pull on right door only)
+        # ds==2: Both (pulls on both doors)
+        for child in left_door.obj.children:
+            if 'IS_CABINET_PULL' in child:
+                pull = GeoNodeHardware(child)
+                pull.driver_hide('IF(ds==0,True,False)', [ds])
+                break
+
+        for child in right_door.obj.children:
+            if 'IS_CABINET_PULL' in child:
+                pull = GeoNodeHardware(child)
+                pull.driver_hide('IF(ds==1,True,False)', [ds])
+                break
 
 
 class DiagonalCornerTallCabinet(CornerCabinet):
