@@ -1,7 +1,7 @@
 import bpy
 import math
 import os
-from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart, GeoNodeHardware, GeoNodeDrawerBox
+from ...hb_types import GeoNodeObject, GeoNodeCage, GeoNodeCutpart, GeoNodeHardware, GeoNodeDrawerBox, CabinetPartModifier
 from ... import hb_project
 from ... import units
 from ...units import inch
@@ -2074,6 +2074,22 @@ class PieCutCornerBaseCabinet(CornerCabinet):
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'PIECUT'
         self.obj['IS_CORNER_CABINET'] = True
+
+        # Add corner notch to cage so wireframe matches the L-shape
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        ld = self.var_prop('Left Depth', 'ld')
+        rd = self.var_prop('Right Depth', 'rd')
+        mt = self.var_prop('Material Thickness', 'mt')
+        cpm = CabinetPartModifier(self.obj)
+        cpm.add_node('CPM_CORNERNOTCH', 'Corner Notch')
+        cpm.driver_input('X', 'dim_x-ld', [dim_x, ld, mt])
+        cpm.driver_input('Y', 'dim_y-rd', [dim_y, rd, mt])
+        cpm.driver_input('Route Depth', 'dim_z+.01', [dim_z])
+        cpm.set_input('Flip X', True)
+        cpm.set_input('Flip Y', True)
+
         self.add_corner_doors()
 
     def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
