@@ -598,6 +598,22 @@ class Frameless_Cabinet_Style(PropertyGroup):
                     if not child.get('FORCE_HALF_OVERLAY_RIGHT', False):
                         child['Half Overlay Right'] = is_half
 
+        #Update corner cabinet overlay properties (stored on cabinet root)
+        is_half = (self.door_overlay_type == 'HALF')
+        is_inset = (self.door_overlay_type == 'INSET')
+
+        if 'Inset Front' in cabinet_obj:
+            cabinet_obj['Inset Front'] = is_inset
+
+        if 'Half Overlay Top' in cabinet_obj:
+            cabinet_obj['Half Overlay Top'] = is_half
+
+        if 'Half Overlay Bottom' in cabinet_obj:
+            cabinet_obj['Half Overlay Bottom'] = is_half
+
+        if 'Half Overlay Outer' in cabinet_obj:
+            cabinet_obj['Half Overlay Outer'] = is_half
+
     def draw_cabinet_style_ui(self, layout, context):
         box = layout.box()
         box.prop(self, "name", text="Style Name")
