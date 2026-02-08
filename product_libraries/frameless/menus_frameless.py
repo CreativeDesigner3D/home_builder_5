@@ -267,6 +267,18 @@ class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
         layout.operator("hb_frameless.delete_interior_part", text="Delete Part")
 
 
+class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
+    bl_label = "Part Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.cabinet_prompts", text="Part Prompts")
+        layout.separator()
+        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+        layout.separator()
+        layout.operator("hb_frameless.delete_cabinet", text="Delete Part")
+
+
 class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
     bl_label = "Appliance Commands"
 
@@ -291,6 +303,7 @@ classes = (
     HOME_BUILDER_MT_interior_commands,
     HOME_BUILDER_MT_interior_change,
     HOME_BUILDER_MT_interior_part_commands,
+    HOME_BUILDER_MT_part_commands,
     HOME_BUILDER_MT_appliance_commands,
 )
 

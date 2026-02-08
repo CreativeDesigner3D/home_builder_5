@@ -4,6 +4,18 @@ import os
 from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from .. import types_frameless
+from .. import types_products
+
+# Part name to class mapping (module-level, not operator attribute)
+PART_CLASS_MAP = {
+    'Floating Shelves': types_products.FloatingShelf,
+    'Valance': types_products.Valance,
+    'Support Frame': types_products.SupportFrame,
+    'Half Wall': types_products.HalfWall,
+    'Misc Part': types_products.MiscPart,
+    'Leg': types_products.Leg,
+    'Panel': types_products.Panel,
+}
 from .. import props_hb_frameless
 from ...common import types_appliances
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
@@ -601,14 +613,26 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.fill_mode = False
                 self.auto_quantity = False
                 self.cabinet_quantity = 1
+            elif self.cabinet_name in PART_CLASS_MAP:
+                # Parts use their own default dimensions
+                part_instance = PART_CLASS_MAP[self.cabinet_name]()
+                self.individual_cabinet_width = part_instance.width
+                self.fill_mode = False
+                self.auto_quantity = False
+                self.cabinet_quantity = 1
             else:
                 self.individual_cabinet_width = props.default_cabinet_width
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
             if 'Corner' in self.cabinet_name:
                 self.preview_cage.set_input('Dim Y', corner_size)
+            elif self.cabinet_name in PART_CLASS_MAP:
+                part_instance = PART_CLASS_MAP[self.cabinet_name]()
+                self.preview_cage.set_input('Dim Y', part_instance.depth)
+                self.preview_cage.set_input('Dim Z', part_instance.height)
             else:
                 self.preview_cage.set_input('Dim Y', self.get_cabinet_depth(context))
-            self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
+            if self.cabinet_name not in PART_CLASS_MAP:
+                self.preview_cage.set_input('Dim Z', self.get_cabinet_height(context))
         
         self.preview_cage.set_input('Mirror Y', True)
         
@@ -1646,7 +1670,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             if appliance_class:
                 return appliance_class()
             return types_frameless.Cabinet()
-        
+
+        # Handle parts
+        if self.cabinet_name in PART_CLASS_MAP:
+            return PART_CLASS_MAP[self.cabinet_name]()
+
         # Handle corner cabinets first
         if 'Diagonal Corner' in self.cabinet_name:
             if 'Base' in self.cabinet_name:
@@ -1709,6 +1737,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     # Set height for appliances that need custom height (like hoods)
                     cabinet.height = self.get_appliance_height(context)
                     cabinet.create(self.cabinet_name or 'Appliance')
+                elif self.cabinet_name in PART_CLASS_MAP:
+                    # Parts use their own default height/depth, only override width
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.create(self.cabinet_name)
                 else:
                     cabinet.width = self.individual_cabinet_width
                     cabinet.height = self.get_cabinet_height(context)
@@ -1756,6 +1788,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     # Set height for appliances that need custom height (like hoods)
                     cabinet.height = self.get_appliance_height(context)
                     cabinet.create(self.cabinet_name or 'Appliance')
+                elif self.cabinet_name in PART_CLASS_MAP:
+                    # Parts use their own default height/depth, only override width
+                    cabinet.width = self.individual_cabinet_width
+                    cabinet.create(self.cabinet_name)
                 else:
                     cabinet.width = self.individual_cabinet_width
                     cabinet.height = self.get_cabinet_height(context)
@@ -2012,7 +2048,7 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     toggle_on: bpy.props.BoolProperty(name="Toggle On",default=False)# type: ignore
     
     # Markers that should be treated like cabinets for selection purposes
-    CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_APPLIANCE']
+    CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_FRAMELESS_PRODUCT_CAGE', 'IS_APPLIANCE']
 
     def is_cabinet_like(self, obj):
         """Check if object has any cabinet-like marker."""
@@ -2105,6 +2141,8 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
                 cabinet_type = 'UPPER'
             else:
                 cabinet_type = 'BASE'
+            print(f"cabinet_type: {cabinet_type}")
+            print(f"cabinet_name: {self.cabinet_name}")
             bpy.ops.hb_frameless.place_cabinet(
                 'INVOKE_DEFAULT', 
                 cabinet_type=cabinet_type, 

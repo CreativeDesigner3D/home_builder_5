@@ -3,6 +3,7 @@ from . import props_elevation_templates
 from . import operators
 from . import menus_frameless
 from . import types_frameless
+from . import types_products
 
 NAMESPACE = "hb_frameless"
 MENU_NAME = "Frameless"

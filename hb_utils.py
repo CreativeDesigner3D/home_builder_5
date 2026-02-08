@@ -6,13 +6,30 @@ from mathutils import Quaternion, Euler
 # =============================================================================
 
 def get_cabinet_bp(obj):
-    """Walk up the parent hierarchy to find the cabinet base point object."""
+    """Walk up the parent hierarchy to find the cabinet or part base point object.
+    
+    Finds objects with IS_FRAMELESS_CABINET_CAGE or IS_FRAMELESS_PRODUCT_CAGE markers.
+    """
     if obj is None:
         return None
-    if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+    if 'IS_FRAMELESS_CABINET_CAGE' in obj or 'IS_FRAMELESS_PRODUCT_CAGE' in obj:
         return obj
     if obj.parent:
         return get_cabinet_bp(obj.parent)
+    return None
+
+
+def get_product_bp(obj):
+    """Walk up the parent hierarchy to find the part base point object.
+    
+    Only finds objects with IS_FRAMELESS_PRODUCT_CAGE marker (not cabinets).
+    """
+    if obj is None:
+        return None
+    if 'IS_FRAMELESS_PRODUCT_CAGE' in obj:
+        return obj
+    if obj.parent:
+        return get_product_bp(obj.parent)
     return None
 
 
