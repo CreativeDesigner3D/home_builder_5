@@ -380,6 +380,81 @@ class SupportFrame(Product):
             'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
             '-ss', [ss])
 
+        # ---- LEGS ----
+        # All legs: rotation_euler.y = -90 (no mirrors)
+        # Length (lh) extends -Z (downward from origin)
+        # Width (ld) extends +Y
+        # Thickness (lw) extends +X
+        # Inset (type 0): leg sits inside frame panels
+        # Wrapped (type 1): leg is flush with outside of frame
+
+        # Front Left Leg
+        fl_leg = CabinetPart()
+        fl_leg.create('Front Left Leg')
+        fl_leg.obj.parent = self.obj
+        fl_leg.obj.rotation_euler.y = math.radians(-90)
+        fl_leg.obj.rotation_euler.z = math.radians(-90)
+        fl_leg.driver_location('x', 'IF(fllt==0,mt,0)', [fllt, mt])
+        fl_leg.driver_location('y', 'IF(fllt==0,-(dim_y-mt),-dim_y)', [fllt, dim_y, mt, ld])
+        fl_leg.driver_location('z', 'dim_z', [dim_z])
+        fl_leg.driver_input("Length", 'lh', [lh])
+        fl_leg.driver_input("Width", 'lw', [lw])
+        fl_leg.driver_input("Thickness", 'ld', [ld])
+        fl_leg.driver_hide('IF(fll,False,True)', [fll])
+        fl_leg.set_input("Mirror X", True)
+        fl_leg.obj['Finish Top'] = True
+        fl_leg.obj['Finish Bottom'] = True
+
+        # Front Right Leg
+        fr_leg = CabinetPart()
+        fr_leg.create('Front Right Leg')
+        fr_leg.obj.parent = self.obj
+        fr_leg.obj.rotation_euler.y = math.radians(-90)
+        fr_leg.driver_location('x', 'IF(frlt==0,dim_x-mt,dim_x)', [frlt, dim_x, mt, lw])
+        fr_leg.driver_location('y', 'IF(frlt==0,-(dim_y-mt),-dim_y)', [frlt, dim_y, mt, ld])
+        fr_leg.driver_location('z', 'dim_z', [dim_z])
+        fr_leg.driver_input("Length", 'lh', [lh])
+        fr_leg.driver_input("Width", 'ld', [ld])
+        fr_leg.driver_input("Thickness", 'lw', [lw])
+        fr_leg.driver_hide('IF(frl,False,True)', [frl])
+        fr_leg.set_input("Mirror X", True)
+        fr_leg.obj['Finish Top'] = True
+        fr_leg.obj['Finish Bottom'] = True
+
+        # Back Left Leg
+        bl_leg = CabinetPart()
+        bl_leg.create('Back Left Leg')
+        bl_leg.obj.parent = self.obj
+        bl_leg.obj.rotation_euler.y = math.radians(-90)
+        bl_leg.obj.rotation_euler.z = math.radians(180)
+        bl_leg.driver_location('x', 'IF(bllt==0,mt,0)', [bllt, mt])
+        bl_leg.driver_location('y', 'IF(bllt==0,-(mt),0)', [bllt, mt, ld])
+        bl_leg.driver_location('z', 'dim_z', [dim_z])
+        bl_leg.driver_input("Length", 'lh', [lh])
+        bl_leg.driver_input("Width", 'ld', [ld])
+        bl_leg.driver_input("Thickness", 'lw', [lw])
+        bl_leg.driver_hide('IF(bll,False,True)', [bll])
+        bl_leg.set_input("Mirror X", True)
+        bl_leg.obj['Finish Top'] = True
+        bl_leg.obj['Finish Bottom'] = True
+
+        # Back Right Leg
+        br_leg = CabinetPart()
+        br_leg.create('Back Right Leg')
+        br_leg.obj.parent = self.obj
+        br_leg.obj.rotation_euler.y = math.radians(-90)
+        br_leg.obj.rotation_euler.z = math.radians(90)
+        br_leg.driver_location('x', 'IF(brlt==0,dim_x-mt,dim_x)', [brlt, dim_x, mt, lw])
+        br_leg.driver_location('y', 'IF(brlt==0,-(mt),0)', [brlt, mt, ld])
+        br_leg.driver_location('z', 'dim_z', [dim_z])
+        br_leg.driver_input("Length", 'lh', [lh])
+        br_leg.driver_input("Width", 'lw', [lw])
+        br_leg.driver_input("Thickness", 'ld', [ld])
+        br_leg.driver_hide('IF(brl,False,True)', [brl])
+        br_leg.set_input("Mirror X", True)
+        br_leg.obj['Finish Top'] = True
+        br_leg.obj['Finish Bottom'] = True
+
 class HalfWall(Product):
     """Pony wall / knee wall.
     
