@@ -304,15 +304,13 @@ class SupportFrame(Product):
         l_panel.obj.parent = self.obj
         l_panel.obj.rotation_euler.x = math.radians(-90)
         l_panel.obj.rotation_euler.z = math.radians(90)
-        l_panel.driver_location('y', '-mt', [mt])
-        l_panel.driver_input("Length", 'dim_y-mt*2', [dim_y,mt])
+        l_panel.driver_location('y', '-IF(AND(bll,bllt==1),ld,mt)', [mt, bll, bllt, ld])
+        l_panel.driver_input("Length", 'dim_y-IF(AND(fll,fllt==1),ld,mt)-IF(AND(bll,bllt==1),ld,mt)', [dim_y, mt, fll, fllt, ld, bll, bllt])
         l_panel.driver_input("Width", 'dim_z', [dim_z])
         l_panel.driver_input("Thickness", 'mt', [mt])
         l_panel.set_input("Mirror X", True)
         l_panel.set_input("Mirror Y", True)
         l_panel.set_input("Mirror Z", True)
-        l_panel.obj['Finish Top'] = True
-        l_panel.obj['Finish Bottom'] = True
 
         r_panel = CabinetPart()
         r_panel.create('Right Panel')
@@ -320,36 +318,32 @@ class SupportFrame(Product):
         r_panel.obj.rotation_euler.x = math.radians(-90)
         r_panel.obj.rotation_euler.z = math.radians(90)
         r_panel.driver_location('x', 'dim_x', [dim_x])
-        r_panel.driver_location('y', '-mt', [mt])
-        r_panel.driver_input("Length", 'dim_y-mt*2', [dim_y,mt])
+        r_panel.driver_location('y', '-IF(AND(brl,brlt==1),ld,mt)', [mt, brl, brlt, ld])
+        r_panel.driver_input("Length", 'dim_y-IF(AND(frl,frlt==1),ld,mt)-IF(AND(brl,brlt==1),ld,mt)', [dim_y, mt, frl, frlt, ld, brl, brlt])
         r_panel.driver_input("Width", 'dim_z', [dim_z])
         r_panel.driver_input("Thickness", 'mt', [mt])
         r_panel.set_input("Mirror X", True)
         r_panel.set_input("Mirror Y", True)
-        r_panel.obj['Finish Top'] = True
-        r_panel.obj['Finish Bottom'] = True
 
         front = CabinetPart()
         front.create('Front Panel')
         front.obj.parent = self.obj
         front.obj.rotation_euler.x = math.radians(90)
+        front.driver_location('x', 'IF(AND(fll,fllt==1),lw,0)', [fll, fllt, lw])
         front.driver_location('y', '-dim_y', [dim_y])
-        front.driver_input("Length", 'dim_x', [dim_x])
+        front.driver_input("Length", 'dim_x-IF(AND(fll,fllt==1),lw,0)-IF(AND(frl,frlt==1),lw,0)', [dim_x, fll, fllt, lw, frl, frlt])
         front.driver_input("Width", 'dim_z', [dim_z])
         front.driver_input("Thickness", 'mt', [mt])
         front.set_input("Mirror Z", True)
-        front.obj['Finish Top'] = True
-        front.obj['Finish Bottom'] = True
 
         back = CabinetPart()
-        back.create('Front Panel')
+        back.create('Back Panel')
         back.obj.parent = self.obj
         back.obj.rotation_euler.x = math.radians(90)
-        back.driver_input("Length", 'dim_x', [dim_x])
+        back.driver_location('x', 'IF(AND(bll,bllt==1),lw,0)', [bll, bllt, lw])
+        back.driver_input("Length", 'dim_x-IF(AND(bll,bllt==1),lw,0)-IF(AND(brl,brlt==1),lw,0)', [dim_x, bll, bllt, lw, brl, brlt])
         back.driver_input("Width", 'dim_z', [dim_z])
         back.driver_input("Thickness", 'mt', [mt])
-        back.obj['Finish Top'] = True
-        back.obj['Finish Bottom'] = True
 
         # Support with array modifier
         support = CabinetPart()
@@ -381,12 +375,6 @@ class SupportFrame(Product):
             '-ss', [ss])
 
         # ---- LEGS ----
-        # All legs: rotation_euler.y = -90 (no mirrors)
-        # Length (lh) extends -Z (downward from origin)
-        # Width (ld) extends +Y
-        # Thickness (lw) extends +X
-        # Inset (type 0): leg sits inside frame panels
-        # Wrapped (type 1): leg is flush with outside of frame
 
         # Front Left Leg
         fl_leg = CabinetPart()
