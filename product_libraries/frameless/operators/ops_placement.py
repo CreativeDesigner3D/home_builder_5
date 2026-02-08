@@ -445,6 +445,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return props.base_cabinet_depth
 
     def get_cabinet_height(self, context) -> float:
+        if (self.cursor_z_tracking or self.align_top_to_base) and self.cursor_z_product_height > 0:
+            return self.cursor_z_product_height
         props = context.scene.hb_frameless
         if self.cabinet_type == 'BASE':
             return props.base_cabinet_height
@@ -455,6 +457,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return props.base_cabinet_height
 
     def get_cabinet_z_location(self, context) -> float:
+        # Floating shelves track cursor Z position
+        if self.cursor_z_tracking:
+            return self.cursor_z
+        
+        # Support Frame: top aligns with base cabinet top
+        if self.align_top_to_base:
+            props = context.scene.hb_frameless
+            frame_height = self.preview_cage.get_input('Dim Z') if self.preview_cage else units.inch(4)
+            return props.base_cabinet_height - frame_height
+        
         props = context.scene.hb_frameless
         
         if self.cabinet_type == 'UPPER':
@@ -617,9 +629,14 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # Parts use their own default dimensions
                 part_instance = PART_CLASS_MAP[self.cabinet_name]()
                 self.individual_cabinet_width = part_instance.width
-                self.fill_mode = False
-                self.auto_quantity = False
-                self.cabinet_quantity = 1
+                if self.cursor_z_tracking or self.align_top_to_base:
+                    # Fill-gap products (Floating Shelves, Support Frame, etc.) with qty 1
+                    self.auto_quantity = False
+                    self.cabinet_quantity = 1
+                else:
+                    self.fill_mode = False
+                    self.auto_quantity = False
+                    self.cabinet_quantity = 1
             else:
                 self.individual_cabinet_width = props.default_cabinet_width
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
@@ -695,8 +712,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Line thickness
         curve_data.bevel_depth = 0.008
         
-        # Create green material
-        mat = bpy.data.materials.new('Centerline_Green')
+        # Create or reuse green material
+        mat = bpy.data.materials.get('Centerline_Green')
+        if mat is None:
+            mat = bpy.data.materials.new('Centerline_Green')
         mat.diffuse_color = (0.0, 0.9, 0.2, 1.0)  # Viewport solid color
         mat.use_nodes = True
         # Set the principled BSDF color to green
@@ -1327,6 +1346,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         cursor_x = local_loc.x
         cursor_y = local_loc.y
         
+        # Track cursor Z for products that follow the cursor height (e.g. Floating Shelves)
+        if self.cursor_z_tracking:
+            z_inches = round(units.meter_to_inch(local_loc.z))
+            z_inches = max(0, z_inches)  # Don't go below floor
+            self.cursor_z = units.inch(z_inches)
+        
         # Determine which side of wall based on cursor position
         # Use different methods for plan view vs 3D view
         
@@ -1560,7 +1585,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.preview_cage.obj.parent = None
             self.preview_cage.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
             # Set Z location based on cabinet/appliance type
-            if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+            if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
                 self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
             else:
                 self.preview_cage.obj.location.z = 0
@@ -1609,7 +1634,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.preview_cage.obj.location = self.snap_cabinet.location + world_offset
         
         # Set Z location based on cabinet/appliance type
-        if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+        if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
             self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
         else:
             self.preview_cage.obj.location.z = self.snap_cabinet.location.z
@@ -1810,7 +1835,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.obj.rotation_euler = rotation
                 
                 # Set Z location based on cabinet/appliance type
-                if self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+                if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
                     cabinet.obj.location.z = self.get_cabinet_z_location(context)
                 else:
                     cabinet.obj.location.z = start_loc.z
@@ -1890,6 +1915,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.fill_mode = context.scene.hb_frameless.fill_cabinets
         self.cabinet_quantity = 1
         self.auto_quantity = True
+        self.cursor_z_tracking = False
+        self.cursor_z = 0
+        self.cursor_z_product_height = 0
+        self.align_top_to_base = False
         self.current_gap_width = 0
         self.max_single_cabinet_width = units.inch(36)
         self.individual_cabinet_width = context.scene.hb_frameless.default_cabinet_width
@@ -1906,6 +1935,22 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.dim_total_width = None
         self.dim_left_offset = None
         self.dim_right_offset = None
+
+        # Products that follow cursor Z with inch snapping, fill gap with qty 1
+        if self.cabinet_name in ('Floating Shelves', 'Valance'):
+            self.cursor_z_tracking = True
+            self.cabinet_type = 'UPPER'
+            self.cursor_z = context.scene.hb_frameless.default_wall_cabinet_location
+            self.fill_mode = True
+            part_instance = PART_CLASS_MAP[self.cabinet_name]()
+            self.cursor_z_product_height = part_instance.height
+
+        # Support Frame: top aligns with top of base cabinets, fill gap
+        if self.cabinet_name == 'Support Frame':
+            self.align_top_to_base = True
+            self.fill_mode = True
+            part_instance = PART_CLASS_MAP[self.cabinet_name]()
+            self.cursor_z_product_height = part_instance.height
 
         self.create_preview_cage(context)
         self.create_dimensions(context)
