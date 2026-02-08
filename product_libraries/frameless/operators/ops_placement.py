@@ -2015,6 +2015,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     hb_utils.run_calc_fix(context, cabinet.obj)
                     # Assign door styles to all fronts (after drivers have calculated sizes)
                     self.assign_door_styles_to_cabinet(cabinet.obj)
+                    # Calculate default shelf quantities based on opening heights
+                    bpy.ops.hb_frameless.calculate_shelf_quantity(cabinet_name=cabinet.obj.name)
                 # Apply toggle mode for display
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
             # Remove preview cage and dimensions

@@ -3,6 +3,61 @@ import math
 from .. import types_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, hb_types, units
+from ....units import inch
+
+
+def get_default_shelf_quantity(opening_height, opening_depth):
+    """Determine the default number of shelves based on opening height and depth.
+    
+    Args:
+        opening_height: The interior opening height in meters.
+        opening_depth: The interior opening depth in meters.
+        
+    Returns:
+        Integer shelf count.
+    """
+    height_inches = opening_height / inch(1)
+    depth_inches = opening_depth / inch(1)
+    
+    if depth_inches <= 18:
+        if height_inches <= 20:
+            return 1
+        elif height_inches <= 32:
+            return 2
+        elif height_inches <= 44:
+            return 3
+        else:
+            return 4
+    else:
+        if height_inches <= 28:
+            return 1
+        elif height_inches <= 40:
+            return 2
+        elif height_inches <= 52:
+            return 3
+        else:
+            return 4
+
+
+def update_shelf_quantities(context, cabinet_obj):
+    """Find all shelf interiors in a cabinet and set their quantity based on opening height.
+    
+    Should be called after run_calc_fix so drivers have resolved.
+    
+    Args:
+        context: Blender context
+        cabinet_obj: The cabinet base point object
+    """
+    for obj in cabinet_obj.children_recursive:
+        if 'IS_FRAMELESS_INTERIOR_CAGE' in obj and 'Shelf Quantity' in obj:
+            interior = hb_types.GeoNodeCage(obj)
+            try:
+                opening_height = interior.get_input('Dim Z')
+                opening_depth = interior.get_input('Dim Y')
+                qty = get_default_shelf_quantity(opening_height, opening_depth)
+                obj['Shelf Quantity'] = qty
+            except (ValueError, KeyError):
+                pass
 
 
 class hb_frameless_OT_interior_prompts(bpy.types.Operator):
@@ -152,9 +207,11 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
         elif self.interior_type == 'EMPTY':
             pass  # No interior needed
         
-        # Run calc fix
+        # Run calc fix and update shelf quantities
         cabinet_bp = hb_utils.get_cabinet_bp(parent_opening)
         if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+            update_shelf_quantities(context, cabinet_bp)
             hb_utils.run_calc_fix(context, cabinet_bp)
         
         return {'FINISHED'}
@@ -443,9 +500,11 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
         splitter.driver_input('Dim Y', 'dim_y', [dim_y])
         splitter.driver_input('Dim Z', 'dim_z', [dim_z])
         
-        # Run calc fix
+        # Run calc fix and update shelf quantities
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+            update_shelf_quantities(context, cabinet_bp)
             hb_utils.run_calc_fix(context, cabinet_bp)
         
         return {'FINISHED'}
@@ -718,9 +777,11 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
         splitter.driver_input('Dim Y', 'dim_y', [dim_y])
         splitter.driver_input('Dim Z', 'dim_z', [dim_z])
         
-        # Run calc fix
+        # Run calc fix and update shelf quantities
         cabinet_bp = hb_utils.get_cabinet_bp(parent_obj)
         if cabinet_bp:
+            hb_utils.run_calc_fix(context, cabinet_bp)
+            update_shelf_quantities(context, cabinet_bp)
             hb_utils.run_calc_fix(context, cabinet_bp)
         
         return {'FINISHED'}
@@ -764,7 +825,32 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
             row.prop(self, type_props[i], text="")
 
 
+class hb_frameless_OT_calculate_shelf_quantity(bpy.types.Operator):
+    """Calculate default shelf quantity based on opening height"""
+    bl_idname = "hb_frameless.calculate_shelf_quantity"
+    bl_label = "Calculate Shelf Quantity"
+    bl_description = "Set shelf quantities based on opening heights"
+    bl_options = {'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(name="Cabinet Name", default="") # type: ignore
+
+    def execute(self, context):
+        if self.cabinet_name and self.cabinet_name in bpy.data.objects:
+            cabinet_obj = bpy.data.objects[self.cabinet_name]
+        elif context.object:
+            cabinet_obj = hb_utils.get_cabinet_bp(context.object)
+        else:
+            return {'CANCELLED'}
+
+        if cabinet_obj:
+            update_shelf_quantities(context, cabinet_obj)
+            hb_utils.run_calc_fix(context, cabinet_obj)
+
+        return {'FINISHED'}
+
+
 classes = (
+    hb_frameless_OT_calculate_shelf_quantity,
     hb_frameless_OT_interior_prompts,
     hb_frameless_OT_change_interior_type,
     hb_frameless_OT_interior_part_prompts,
