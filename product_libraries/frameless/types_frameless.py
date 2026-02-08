@@ -935,19 +935,21 @@ class CabinetShelves(CabinetInterior):
         shelves.obj['Finish Top'] = False
         shelves.obj['Finish Bottom'] = False
         shelves.obj.parent = self.obj
-        # array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
-        # array_mod.count = 1   
-        # array_mod.use_relative_offset = False
-        # array_mod.use_constant_offset = True
-        # array_mod.constant_offset_displace = (0,0,0)        
+        array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
+        array_mod.count = 1   
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        array_mod.constant_offset_displace = (0,0,0)        
         shelves.driver_location('x', 'clip_gap',[clip_gap])
         shelves.driver_location('y', 'setback',[setback])
         shelves.driver_location('z', '(dim_z-(mt*qty))/(qty+1)',[dim_z,mt,qty])
         shelves.driver_input("Length", 'dim_x-clip_gap*2', [dim_x,clip_gap])
         shelves.driver_input("Width", 'dim_y-setback', [dim_y,setback])
         shelves.driver_input("Thickness", 'mt', [mt])
-        # shelves.set_input("Mirror Y", True)
-        # shelves.set_input("Mirror Z", False)
+        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
+        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
+                                     '((dim_z-(mt*qty))/(qty+1))+mt',
+                                     [dim_z,mt,qty])        
 
 
 class Doors(CabinetOpening):

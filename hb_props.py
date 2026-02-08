@@ -309,6 +309,14 @@ class Home_Builder_Object_Props(PropertyGroup):
         hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
+    def add_driver(self,property_name,index,expression,variables):
+        if index == -1:
+            driver = self.id_data.driver_add(property_name)
+        else:
+            driver = self.id_data.driver_add(property_name,index)
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
     def var_prop(self, prop_name, name):
         """Get a variable from a property"""
         return Variable(self.id_data,'["' + prop_name + '"]',name)
