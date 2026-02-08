@@ -262,7 +262,7 @@ class SupportFrame(Product):
         self.depth = inch(24)
 
     def add_properties(self):
-        self.add_property('Support Spacing', 'DISTANCE', inch(24))
+        self.add_property('Support Spacing', 'DISTANCE', inch(16))
         self.add_property('Front Left Leg', 'CHECKBOX', True)
         self.add_property('Front Right Leg', 'CHECKBOX', True)
         self.add_property('Back Left Leg', 'CHECKBOX', True)
@@ -350,6 +350,35 @@ class SupportFrame(Product):
         back.driver_input("Thickness", 'mt', [mt])
         back.obj['Finish Top'] = True
         back.obj['Finish Bottom'] = True
+
+        # Support with array modifier
+        support = CabinetPart()
+        support.create('Support')
+        support.obj.parent = self.obj
+        support.obj.rotation_euler.x = math.radians(-90)
+        support.obj.rotation_euler.z = math.radians(90)
+        support.driver_location('x', 'ss', [ss])
+        support.driver_location('y', '-mt', [mt])
+        support.driver_input("Length", 'dim_y-mt*2', [dim_y, mt])
+        support.driver_input("Width", 'dim_z', [dim_z])
+        support.driver_input("Thickness", 'mt', [mt])
+        support.set_input("Mirror X", True)
+        support.set_input("Mirror Y", True)
+        support.set_input("Mirror Z", True)
+        support.obj['Finish Top'] = False
+        support.obj['Finish Bottom'] = False
+        array_mod = support.obj.modifiers.new('Qty', 'ARRAY')
+        array_mod.count = 1
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        array_mod.constant_offset_displace = (0, 0, 0)
+        support.obj.home_builder.add_driver(
+            'modifiers["' + array_mod.name + '"].count', -1,
+            'IF(ss>0,floor((dim_x-mt*2-ss)/ss)+1,0)',
+            [ss, dim_x, mt])
+        support.obj.home_builder.add_driver(
+            'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
+            '-ss', [ss])
 
 class HalfWall(Product):
     """Pony wall / knee wall.
@@ -476,6 +505,36 @@ class HalfWall(Product):
         back_skin.driver_input("Thickness", 'st', [st])
         back_skin.obj['Finish Top'] = True
         back_skin.obj['Finish Bottom'] = True
+
+        # Stud with array modifier
+        stud = CabinetPart()
+        stud.create('Stud')
+        stud.obj.parent = self.obj
+        stud.obj.rotation_euler.x = math.radians(90)
+        stud.obj.rotation_euler.y = math.radians(-90)
+        stud.obj.rotation_euler.z = math.radians(-90)
+        stud.driver_location('x', 'mt+esfe', [mt, esfe])
+        stud.driver_location('y', '-st', [st])
+        stud.driver_location('z', 'mt', [mt])
+        stud.driver_input("Length", 'dim_z-mt*2', [dim_z, mt])
+        stud.driver_input("Width", 'dim_y-st*2', [dim_y, st])
+        stud.driver_input("Thickness", 'st', [st])
+        stud.set_input("Mirror Y", True)
+        stud.set_input("Mirror Z", True)
+        stud.obj['Finish Top'] = False
+        stud.obj['Finish Bottom'] = False
+        array_mod = stud.obj.modifiers.new('Qty', 'ARRAY')
+        array_mod.count = 1
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        array_mod.constant_offset_displace = (0, 0, 0)
+        stud.obj.home_builder.add_driver(
+            'modifiers["' + array_mod.name + '"].count', -1,
+            'IF(ssp>0,floor((dim_x-mt*2-esfe*2)/ssp)+1,1)',
+            [ssp, dim_x, mt, esfe])
+        stud.obj.home_builder.add_driver(
+            'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
+            '-ssp', [ssp])
 
 
 class MiscPart(Product):
