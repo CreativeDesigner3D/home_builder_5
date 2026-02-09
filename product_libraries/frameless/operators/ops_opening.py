@@ -317,6 +317,11 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Create open opening with adjustable shelves."""
         open_shelves = types_frameless.OpenWithShelves()
         self.add_cage_to_bay(bay, open_shelves)
+        # Calculate shelf quantity from bay dimensions
+        bay_height = bay.get_input('Dim Z')
+        bay_depth = bay.get_input('Dim Y')
+        qty = ops_interior.get_default_shelf_quantity(bay_height, bay_depth)
+        open_shelves.obj['Shelf Quantity'] = qty
 
     def create_stacked_doors(self, bay, door_swing, stack_count=2):
         """Create stacked doors (2 or 3 high).
