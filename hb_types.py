@@ -588,6 +588,23 @@ class CabinetPartModifier(GeoNodeObject):
         hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression         
 
+    def driver_hide(self, expression, variables=[]):
+        """Drive modifier visibility (show_viewport/show_render).
+        
+        Note: show_viewport=True means visible, so the expression should be
+        inverted compared to object hide. Use show_viewport = NOT(hide_expression).
+        """
+        if not self.mod:
+            raise ValueError("Cabinet Part Modifier not found")
+        mod_path = 'modifiers["' + self.mod.name + '"].show_viewport'
+        driver = self.obj.driver_add(mod_path)
+        hb_utils.add_driver_variables(driver, variables)
+        driver.driver.expression = expression
+        mod_path_render = 'modifiers["' + self.mod.name + '"].show_render'
+        driver = self.obj.driver_add(mod_path_render)
+        hb_utils.add_driver_variables(driver, variables)
+        driver.driver.expression = expression
+
     def set_input(self, input_name, value):
         """Safely set geometry node input value
         

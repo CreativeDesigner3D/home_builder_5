@@ -108,6 +108,7 @@ class FloatingShelf(Product):
         led_route.driver_input('End Y','led_ib+led_wb',[led_ib,led_wb])        
         led_route.driver_input('Route Depth','led_depth',[led_depth])
         led_route.set_input('Flip Z',True)
+        led_route.driver_hide('IF(led_rt,False,True)', [led_rt])
 
         bottom = CabinetPart()
         bottom.create('Bottom')
@@ -125,6 +126,7 @@ class FloatingShelf(Product):
         led_route.driver_input('End Y','led_it+led_wt',[led_it,led_wt])        
         led_route.driver_input('Route Depth','led_depth',[led_depth])
         led_route.set_input('Flip Z',False)
+        led_route.driver_hide('IF(led_rb,False,True)', [led_rb])
 
         l_panel = CabinetPart()
         l_panel.create('Left Panel')
