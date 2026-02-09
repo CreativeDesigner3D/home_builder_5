@@ -267,16 +267,68 @@ class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
         layout.operator("hb_frameless.delete_interior_part", text="Delete Part")
 
 
+class HOME_BUILDER_MT_floating_shelf_commands(bpy.types.Menu):
+    bl_label = "Floating Shelf Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.product_prompts", text="Floating Shelf Prompts")
+        layout.separator()
+        layout.operator("hb_frameless.delete_product", text="Delete Floating Shelf")
+
+
+class HOME_BUILDER_MT_valance_commands(bpy.types.Menu):
+    bl_label = "Valance Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.product_prompts", text="Valance Prompts")
+        layout.separator()
+        layout.operator("hb_frameless.delete_product", text="Delete Valance")
+
+
+class HOME_BUILDER_MT_support_frame_commands(bpy.types.Menu):
+    bl_label = "Support Frame Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.product_prompts", text="Support Frame Prompts")
+        layout.separator()
+        layout.operator("hb_frameless.delete_product", text="Delete Support Frame")
+
+
+class HOME_BUILDER_MT_half_wall_commands(bpy.types.Menu):
+    bl_label = "Half Wall Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.product_prompts", text="Half Wall Prompts")
+        layout.separator()
+        layout.operator("hb_frameless.delete_product", text="Delete Half Wall")
+
+
+class HOME_BUILDER_MT_leg_commands(bpy.types.Menu):
+    bl_label = "Leg Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_frameless.product_prompts", text="Leg Prompts")
+        layout.separator()
+        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+        layout.separator()
+        layout.operator("hb_frameless.delete_product", text="Delete Leg")
+
+
 class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
     bl_label = "Part Commands"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.cabinet_prompts", text="Part Prompts")
+        layout.operator("hb_frameless.product_prompts", text="Part Prompts")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
         layout.separator()
-        layout.operator("hb_frameless.delete_cabinet", text="Delete Part")
+        layout.operator("hb_frameless.delete_product", text="Delete Part")
 
 
 class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
@@ -303,6 +355,11 @@ classes = (
     HOME_BUILDER_MT_interior_commands,
     HOME_BUILDER_MT_interior_change,
     HOME_BUILDER_MT_interior_part_commands,
+    HOME_BUILDER_MT_floating_shelf_commands,
+    HOME_BUILDER_MT_valance_commands,
+    HOME_BUILDER_MT_support_frame_commands,
+    HOME_BUILDER_MT_half_wall_commands,
+    HOME_BUILDER_MT_leg_commands,
     HOME_BUILDER_MT_part_commands,
     HOME_BUILDER_MT_appliance_commands,
 )

@@ -61,6 +61,7 @@ class FloatingShelf(Product):
     def create(self, name="Floating Shelf"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'FLOATING_SHELF'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_floating_shelf_commands'
 
         self.add_properties_common()
         self.add_properties()
@@ -177,6 +178,7 @@ class Valance(Product):
     def create(self, name="Valance"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'VALANCE'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_valance_commands'
 
         self.add_properties_common()
         self.add_properties()
@@ -278,6 +280,7 @@ class SupportFrame(Product):
     def create(self, name="Support Frame"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'SUPPORT_FRAME'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_support_frame_commands'
 
         self.add_properties_common()
         self.add_properties()
@@ -471,6 +474,7 @@ class HalfWall(Product):
     def create(self, name="Half Wall"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'HALF_WALL'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_half_wall_commands'
 
         self.add_properties_common()
         self.add_properties()
@@ -675,6 +679,7 @@ class Leg(Product):
     def create(self, name="Leg"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'LEG'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_leg_commands'
 
         self.add_properties_common()
         self.add_properties()
@@ -754,6 +759,7 @@ class Panel(Product):
     def create(self, name="Panel"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'PANEL'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
 
         dim_x = self.var_input('Dim X', 'dim_x')
         dim_y = self.var_input('Dim Y', 'dim_y')

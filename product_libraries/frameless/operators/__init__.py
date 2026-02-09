@@ -11,6 +11,7 @@ from . import ops_upper_bottom
 from . import ops_library
 from . import ops_defaults
 from . import ops_finished_ends
+from . import ops_products
 
 
 def register():
@@ -27,6 +28,7 @@ def register():
     ops_library.register()
     ops_defaults.register()
     ops_finished_ends.register()
+    ops_products.register()
 
 
 def unregister():
@@ -43,3 +45,4 @@ def unregister():
     ops_library.unregister()
     ops_defaults.unregister()
     ops_finished_ends.unregister()
+    ops_products.unregister()
