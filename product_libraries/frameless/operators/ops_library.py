@@ -223,6 +223,7 @@ class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator, hb_pla
 
     root_objects: list = []
     orphan_offsets: dict = {}  # {obj: Vector offset from first root}
+    geo_node_refs: set = set()  # Objects referenced by geometry node modifiers
 
     @classmethod
     def poll(cls, context):
@@ -253,18 +254,44 @@ class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator, hb_pla
                 # Register orphan objects (e.g. pulls) for cleanup on cancel
                 self.register_placement_object(obj)
         
-        # Compute offsets for orphan parentless objects relative to first root
+        # Find objects referenced by geometry node Object inputs (e.g. hardware meshes)
+        # These need to stay in the scene but should be hidden
+        geo_node_refs = set()
+        for obj in loaded_objects:
+            for mod in obj.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    for item in mod.node_group.interface.items_tree:
+                        if item.item_type == 'SOCKET' and item.in_out == 'INPUT' and item.socket_type == 'NodeSocketObject':
+                            try:
+                                ref_obj = mod[item.identifier]
+                                if ref_obj:
+                                    geo_node_refs.add(ref_obj)
+                            except (KeyError, TypeError):
+                                pass
+
+        # Hide geometry node reference objects (they must stay for modifiers)
+        self.geo_node_refs = geo_node_refs
+        for ref_obj in geo_node_refs:
+            ref_obj.hide_set(True)
+            ref_obj.hide_viewport = True
+            ref_obj.hide_render = True
+
+        # Compute offsets for remaining orphan parentless objects relative to first root
+        # Exclude geo node reference objects from position tracking
         self.orphan_offsets = {}
         if self.root_objects:
             root_loc = self.root_objects[0].location.copy()
             for obj in self.placement_objects:
-                if obj not in self.root_objects and obj.parent is None:
+                if obj not in self.root_objects and obj.parent is None and obj not in geo_node_refs:
                     self.orphan_offsets[obj] = obj.location - root_loc
 
     def _set_hide_recursive(self, hide):
-        """Hide/unhide root objects and all their children recursively."""
+        """Hide/unhide root objects and all their children recursively.
+        Skips geometry node reference objects (they stay permanently hidden)."""
         def _hide(obj):
             try:
+                if obj in self.geo_node_refs:
+                    return
                 obj.hide_set(hide)
                 for child in obj.children:
                     _hide(child)
