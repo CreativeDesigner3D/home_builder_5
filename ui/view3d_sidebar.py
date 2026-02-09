@@ -260,6 +260,10 @@ class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
             row = col.row()
             row.prop(hb_scene, 'fake_wall_height', text="Fake Wall Height")
             row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+        
+        row = col.row()
+        row.prop(hb_scene, 'wall_material', text="Wall Material")
+        row.operator('home_builder_walls.apply_wall_material', text="", icon='FILE_REFRESH', emboss=False)
 
 
 # SUBPANEL: Doors & Windows

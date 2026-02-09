@@ -140,6 +140,23 @@ def update_show_entry_door_and_window_cages(self, context):
             obj.display_type = 'TEXTURED' if self.show_entry_door_and_window_cages else 'WIRE'
             obj.show_in_front = True if self.show_entry_door_and_window_cages else False
 
+
+def update_wall_material(self, context):
+    """Update all wall material inputs when wall material changes."""
+    mat = self.wall_material
+    if not mat:
+        return
+    material_inputs = [
+        'Top Surface', 'Bottom Surface',
+        'Inside Face', 'Outside Face',
+        'Left Edge', 'Right Edge',
+    ]
+    for obj in context.scene.objects:
+        if obj.get('IS_WALL_BP'):
+            wall = hb_types.GeoNodeWall(obj)
+            for input_name in material_inputs:
+                wall.set_input(input_name, mat)
+
 class Calculator_Prompt(PropertyGroup):
     distance_value: FloatProperty(name="Distance Value",subtype='DISTANCE',precision=5)# type: ignore
     equal: BoolProperty(name="Equal",default=True)# type: ignore
@@ -410,7 +427,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
     window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
 
-    wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material)# type: ignore
+    wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
 
     show_entry_doors_and_windows: BoolProperty(name="Show Entry Doors and Windows", default=False)
     show_obstacles: BoolProperty(name="Show Obstacles", default=False)

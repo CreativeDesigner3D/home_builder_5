@@ -1308,6 +1308,36 @@ class home_builder_walls_OT_setup_world_lighting(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_walls_OT_apply_wall_material(bpy.types.Operator):
+    bl_idname = "home_builder_walls.apply_wall_material"
+    bl_label = "Apply Wall Material"
+    bl_description = "Apply the wall material to all walls in the scene"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.home_builder
+        mat = props.wall_material
+        if not mat:
+            self.report({'WARNING'}, "No wall material selected")
+            return {'CANCELLED'}
+        
+        material_inputs = [
+            'Top Surface', 'Bottom Surface',
+            'Inside Face', 'Outside Face',
+            'Left Edge', 'Right Edge',
+        ]
+        wall_count = 0
+        for obj in context.scene.objects:
+            if obj.get('IS_WALL_BP'):
+                wall = hb_types.GeoNodeWall(obj)
+                for input_name in material_inputs:
+                    wall.set_input(input_name, mat)
+                wall_count += 1
+        
+        self.report({'INFO'}, f"Applied material to {wall_count} wall(s)")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
@@ -1317,6 +1347,7 @@ classes = (
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,
+    home_builder_walls_OT_apply_wall_material,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
