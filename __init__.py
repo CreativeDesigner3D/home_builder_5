@@ -16,6 +16,7 @@ from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
 from . import hb_layouts
+from . import hb_assets
 
 from bpy.app.handlers import persistent
 
@@ -145,13 +146,9 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         default=True
     )# type: ignore
 
-    user_decoration_path: bpy.props.StringProperty(
-		name="User Decoration Path",
-		subtype='DIR_PATH',
-	)# type: ignore
-
-    user_material_path: bpy.props.StringProperty(
-		name="User Material Path",
+    extended_library_path: bpy.props.StringProperty(
+		name="Extended Asset Library Path",
+		description="Path to the downloaded extended asset library folder",
 		subtype='DIR_PATH',
 	)# type: ignore
 
@@ -168,8 +165,11 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         
         layout.separator()
         
-        layout.prop(self, "user_decoration_path")
-        layout.prop(self, "user_material_path")
+        box = layout.box()
+        box.label(text="Asset Library", icon='ASSET_MANAGER')
+        row = box.row(align=True)
+        row.prop(self, "extended_library_path")
+        row.operator("home_builder.refresh_extended_library", text="", icon='FILE_REFRESH')
         layout.prop(self, "wall_color")
         layout.prop(self, "cabinet_color")
         layout.prop(self, "door_window_color")
@@ -196,6 +196,7 @@ def register():
     closets.register()
     face_frame.register()
     frameless.register()
+    hb_assets.register()
 
     bpy.app.handlers.load_post.append(load_file_post)
 
@@ -218,6 +219,7 @@ def unregister():
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()
+    hb_assets.unregister()
 
     bpy.app.handlers.load_post.remove(load_file_post)
 

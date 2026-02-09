@@ -1,0 +1,21 @@
+# This is an Asset Catalog Definition file for Blender.
+#
+# Empty lines and lines starting with `#` will be ignored.
+# The first non-ignored line should be the version indicator.
+# Other lines are of the format "UUID:catalog/path/for/assets:simple name"
+
+VERSION 1
+
+ef395c45-0ba4-437d-9104-d1485631d7e3:Decorations:Decorations
+b2710df0-4ba3-4cc3-a99c-dc6c618e176e:Decorations/Kitchen:Decorations-Kitchen
+443ee1e0-4113-434b-b307-c2ab55df8880:Decorations/Bathroom:Decorations-Bathroom
+1a34f7e3-0504-48b0-ae78-0250e03d4ce1:Decorations/Living Room:Decorations-Living Room
+c8295287-ab69-4684-9982-c2ece4ded092:Decorations/Bedroom:Decorations-Bedroom
+7d7945c2-85c6-4cf8-98bb-5438ad9e8355:Decorations/Office:Decorations-Office
+71efb65d-ed5a-4aea-ae97-7ef1a82848e9:Decorations/Appliances:Decorations-Appliances
+3e847308-544c-47d7-b375-9dbdcb553b9c:Materials:Materials
+5455ceb1-5fc8-4c12-8cab-4fdd5588a550:Materials/Countertops:Materials-Countertops
+be7fc35d-e135-41a3-815d-19fc772099d3:Materials/Cabinet Finishes:Materials-Cabinet Finishes
+1d8795da-0cac-4194-91df-6fca0a45881f:Materials/Flooring:Materials-Flooring
+a625efd5-fcec-4c00-9af5-403f830a0bbc:Materials/Wall:Materials-Wall
+d94a53cb-223a-4705-875e-ca50dc93e692:Materials/Hardware:Materials-Hardware
