@@ -215,6 +215,7 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_opening_type", text="False Front").opening_type = 'FALSE_FRONT'
         layout.separator()
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
+        layout.operator("hb_frameless.change_opening_type", text="Open with Shelves").opening_type = 'OPEN_WITH_SHELVES'
         layout.separator()
         layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
         layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")

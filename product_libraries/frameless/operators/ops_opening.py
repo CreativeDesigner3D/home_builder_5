@@ -808,6 +808,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('PULLOUT', "Pullout", "Pullout with pull at top"),
             ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
             ('OPEN', "Open", "Open (no front)"),
+            ('OPEN_WITH_SHELVES', "Open with Shelves", "Open with adjustable shelves"),
         ],
         default='LEFT_DOOR'
     ) # type: ignore
@@ -1013,6 +1014,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
                                    half_left=half_left, half_right=half_right)
         elif self.opening_type == 'OPEN':
             pass  # No children needed for open
+        elif self.opening_type == 'OPEN_WITH_SHELVES':
+            open_shelves = types_frameless.OpenWithShelves()
+            self.add_insert_to_opening(opening, open_shelves)
         
         # Run calc fix to update
         cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)
