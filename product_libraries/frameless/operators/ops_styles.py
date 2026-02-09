@@ -486,10 +486,10 @@ class hb_frameless_OT_assign_cabinet_style_to_selected_cabinets(bpy.types.Operat
         )
         
         if result and obj:
-            # Check if hit object or any of its parents is a cabinet cage
+            # Check if hit object or any of its parents is a cabinet cage or product cage
             current = obj
             while current:
-                if current.get('IS_FRAMELESS_CABINET_CAGE'):
+                if current.get('IS_FRAMELESS_CABINET_CAGE') or current.get('IS_FRAMELESS_PRODUCT_CAGE'):
                     return current
                 current = current.parent
         
