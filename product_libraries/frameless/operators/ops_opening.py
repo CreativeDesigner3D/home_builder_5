@@ -2,6 +2,7 @@ import bpy
 from .. import types_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, hb_types, units
+from . import ops_interior
 
 
 def get_door_height(door_obj):
@@ -1017,6 +1018,11 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         elif self.opening_type == 'OPEN_WITH_SHELVES':
             open_shelves = types_frameless.OpenWithShelves()
             self.add_insert_to_opening(opening, open_shelves)
+            # Calculate shelf quantity from opening dimensions
+            opening_height = opening.get_input('Dim Z')
+            opening_depth = opening.get_input('Dim Y')
+            qty = ops_interior.get_default_shelf_quantity(opening_height, opening_depth)
+            open_shelves.obj['Shelf Quantity'] = qty
         
         # Run calc fix to update
         cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)

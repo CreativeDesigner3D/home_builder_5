@@ -1278,12 +1278,12 @@ class OpenWithShelves(CabinetOpening):
         dim_y = self.var_input('Dim Y', 'dim_y')
         dim_z = self.var_input('Dim Z', 'dim_z')
         
-        mt = props.default_carcass_part_thickness
-        self.add_property('Material Thickness', 'DISTANCE', mt)
+        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
         mt_var = self.var_prop('Material Thickness', 'mt')
         setback = self.var_prop('Shelf Setback', 'setback')
         clip_gap = self.var_prop('Shelf Clip Gap', 'clip_gap')
         qty = self.var_prop('Shelf Quantity', 'qty')
+        mt = self.var_prop('Material Thickness', 'mt')
         
         # Create shelf part
         shelf = CabinetPart()
@@ -1300,6 +1300,15 @@ class OpenWithShelves(CabinetOpening):
         shelf.driver_input("Length", 'dim_x-clip_gap*2', [dim_x, clip_gap])
         shelf.driver_input("Width", 'dim_y-setback', [dim_y, setback])
         shelf.driver_input("Thickness", 'mt', [mt_var])
+        array_mod = shelf.obj.modifiers.new('Qty','ARRAY')
+        array_mod.count = 1   
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        array_mod.constant_offset_displace = (0,0,0)    
+        shelf.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
+        shelf.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
+                                     '((dim_z-(mt*qty))/(qty+1))+mt',
+                                     [dim_z,mt,qty])      
 
 
 class CabinetPart(GeoNodeCutpart):
