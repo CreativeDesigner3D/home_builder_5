@@ -447,16 +447,18 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
     bl_label = "Create Cabinet Group"
     bl_description = "This will create a cabinet group for all of the selected cabinets"
 
+    CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_FRAMELESS_PRODUCT_CAGE', 'IS_APPLIANCE']
+
     def execute(self, context):
-        # Get Selected Cabinets
+        # Get Selected Cabinets, Products, and Appliances
         selected_cabinets = []
         for obj in context.selected_objects:
-            if 'IS_FRAMELESS_CABINET_CAGE' in obj:
+            if any(marker in obj for marker in self.CABINET_LIKE_MARKERS):
                 cabinet_cage = types_frameless.Cabinet(obj)
                 selected_cabinets.append(cabinet_cage)
         
         if not selected_cabinets:
-            self.report({'WARNING'}, "No cabinets selected")
+            self.report({'WARNING'}, "No cabinets, products, or appliances selected")
             return {'CANCELLED'}
         
         # Find overall size and base point for new group
