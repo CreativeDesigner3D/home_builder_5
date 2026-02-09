@@ -86,6 +86,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_half_wall(layout, obj)
         elif self.part_type == 'LEG':
             self.draw_leg(layout, obj)
+        elif self.part_type == 'UPPER_LEG':
+            self.draw_upper_leg(layout, obj)
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
@@ -230,6 +232,24 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row.label(text="Toe Kick Setback:")
         row.prop(obj, '["Toe Kick Setback"]', text="")
 
+        box = layout.box()
+        box.label(text="Options")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Override Left Panel Depth:")
+        row.prop(obj, '["Override Left Panel Depth"]', text="")
+        row = col.row(align=True)
+        row.label(text="Override Right Panel Depth:")
+        row.prop(obj, '["Override Right Panel Depth"]', text="")
+        row = col.row(align=True)
+        row.label(text="Only Include Filler:")
+        row.prop(obj, '["Only Include Filler"]', text="")
+        row = col.row(align=True)
+        row.label(text="Finish Type:")
+        row.prop(obj, '["Finish Type"]', text="")
+
+
+    def draw_upper_leg(self, layout, obj):
         box = layout.box()
         box.label(text="Options")
         col = box.column(align=True)

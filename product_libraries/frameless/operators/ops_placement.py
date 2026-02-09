@@ -14,6 +14,8 @@ PART_CLASS_MAP = {
     'Half Wall': types_products.HalfWall,
     'Misc Part': types_products.MiscPart,
     'Leg': types_products.Leg,
+    'Tall Leg': types_products.TallLeg,
+    'Upper Leg': types_products.UpperLeg,
     'Panel': types_products.Panel,
 }
 from .. import props_hb_frameless
@@ -2182,7 +2184,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
             # Map cabinet names to types
             if 'Base' in self.cabinet_name:
                 cabinet_type = 'BASE'
-            elif 'Tall' in self.cabinet_name or self.cabinet_name == 'Refrigerator Cabinet':
+            elif 'Tall' in self.cabinet_name or self.cabinet_name in ('Refrigerator Cabinet', 'Tall Leg'):
                 cabinet_type = 'TALL'
             elif 'Upper' in self.cabinet_name:
                 cabinet_type = 'UPPER'

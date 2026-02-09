@@ -744,6 +744,188 @@ class Leg(Product):
         right_panel.set_input('Mirror Y', True)
 
 
+class TallLeg(Product):
+    """Vertical Leg for tall cabinets.
+    
+    Same construction as base Leg but with tall cabinet default sizes.
+    Dim X = width, Dim Y = depth, Dim Z = height.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = inch(2)
+        self.height = props.tall_cabinet_height
+        self.depth = props.tall_cabinet_depth
+
+    def add_properties(self):
+        props = bpy.context.scene.hb_frameless
+        self.add_property('Toe Kick Height', 'DISTANCE', props.default_toe_kick_height)
+        self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
+        self.add_property('Override Left Panel Depth', 'DISTANCE', 0.0)
+        self.add_property('Override Right Panel Depth', 'DISTANCE', 0.0)
+        self.add_property('Only Include Filler', 'CHECKBOX', False)
+        self.add_property('Finish Type', 'COMBOBOX', 0, combobox_items=["Left", "Right", "Both"])
+
+    def create(self, name="Tall Leg"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'LEG'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_leg_commands'
+
+        self.add_properties_common()
+        self.add_properties()
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+        tkh = self.var_prop('Toe Kick Height', 'tkh')
+        tks = self.var_prop('Toe Kick Setback', 'tks')
+        olpd = self.var_prop('Override Left Panel Depth', 'olpd')
+        orpd = self.var_prop('Override Right Panel Depth', 'orpd')
+        oif = self.var_prop('Only Include Filler', 'oif')
+        ft = self.var_prop('Finish Type', 'ft')
+
+        front = CabinetPart()
+        front.create('Front')
+        front.obj.parent = self.obj
+        front.obj.rotation_euler.x = math.radians(-90)
+        front.obj.rotation_euler.y = math.radians(-90)
+        front.driver_location("z", 'tkh', [tkh])
+        front.driver_location("y", '-dim_y', [dim_y])
+        front.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+        front.driver_input("Width", 'dim_x', [dim_x])
+        front.driver_input("Thickness", 'mt', [mt])
+
+        tk_front = CabinetPart()
+        tk_front.create('Toe Kick Front')
+        tk_front.obj.parent = self.obj
+        tk_front.obj.rotation_euler.x = math.radians(-90)
+        tk_front.obj.rotation_euler.y = math.radians(-90)
+        tk_front.driver_location("y", '-dim_y+tks', [dim_y, tks])
+        tk_front.driver_input("Length", 'tkh', [tkh])
+        tk_front.driver_input("Width", 'dim_x', [dim_x])
+        tk_front.driver_input("Thickness", 'mt', [mt])
+        tk_front.driver_hide('IF(tkh==0,True,False)', [tkh])
+
+        left_panel = CabinetSideNotched()
+        left_panel.create('Left Panel', tkh, tks, mt)
+        left_panel.obj.parent = self.obj
+        left_panel.obj.rotation_euler.y = math.radians(-90)
+        left_panel.driver_location("y", 'IF(olpd==0,0,-dim_y+mt+olpd)', [olpd, dim_y, mt])
+        left_panel.driver_input("Length", 'dim_z', [dim_z])
+        left_panel.driver_input("Width", 'IF(olpd==0,dim_y-mt,olpd)', [olpd, dim_y, mt])
+        left_panel.driver_input("Thickness", 'mt', [mt])
+        left_panel.set_input('Mirror Z', True)
+        left_panel.set_input('Mirror Y', True)
+        left_panel.driver_hide('IF(oif,True,IF(OR(ft==0,ft==2),False,True))', [oif, ft])
+
+        right_panel = CabinetSideNotched()
+        right_panel.create('Right Panel', tkh, tks, mt)
+        right_panel.obj.parent = self.obj
+        right_panel.obj.rotation_euler.y = math.radians(-90)
+        right_panel.driver_location("x", 'dim_x', [dim_x])
+        right_panel.driver_location("y", 'IF(orpd==0,0,-dim_y+mt+orpd)', [orpd, dim_y, mt])
+        right_panel.driver_input("Length", 'dim_z', [dim_z])
+        right_panel.driver_input("Width", 'IF(orpd==0,dim_y-mt,orpd)', [orpd, dim_y, mt])
+        right_panel.driver_input("Thickness", 'mt', [mt])
+        right_panel.driver_hide('IF(oif,True,IF(OR(ft==1,ft==2),False,True))', [oif, ft])
+        right_panel.set_input('Mirror Y', True)
+
+
+class UpperLeg(Product):
+    """Vertical Leg for upper cabinets.
+    
+    No toe kick. Includes top and bottom panels.
+    Placed at upper cabinet height above the floor.
+    Dim X = width, Dim Y = depth, Dim Z = height.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = inch(2)
+        self.height = props.upper_cabinet_height
+        self.depth = props.upper_cabinet_depth
+
+    def add_properties(self):
+        self.add_property('Override Left Panel Depth', 'DISTANCE', 0.0)
+        self.add_property('Override Right Panel Depth', 'DISTANCE', 0.0)
+        self.add_property('Only Include Filler', 'CHECKBOX', False)
+        self.add_property('Finish Type', 'COMBOBOX', 0, combobox_items=["Left", "Right", "Both"])
+
+    def create(self, name="Upper Leg"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'UPPER_LEG'
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_leg_commands'
+
+        self.add_properties_common()
+        self.add_properties()
+
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        mt = self.var_prop('Material Thickness', 'mt')
+        olpd = self.var_prop('Override Left Panel Depth', 'olpd')
+        orpd = self.var_prop('Override Right Panel Depth', 'orpd')
+        oif = self.var_prop('Only Include Filler', 'oif')
+        ft = self.var_prop('Finish Type', 'ft')
+
+        front = CabinetPart()
+        front.create('Front')
+        front.obj.parent = self.obj
+        front.obj.rotation_euler.x = math.radians(-90)
+        front.obj.rotation_euler.y = math.radians(-90)
+        front.driver_location("y", '-dim_y', [dim_y])
+        front.driver_input("Length", 'dim_z', [dim_z])
+        front.driver_input("Width", 'dim_x', [dim_x])
+        front.driver_input("Thickness", 'mt', [mt])
+
+        top = CabinetPart()
+        top.create('Top')
+        top.obj.parent = self.obj
+        top.driver_location('z', 'dim_z', [dim_z])
+        top.driver_input("Length", 'dim_x', [dim_x])
+        top.driver_input("Width", 'dim_y-mt', [dim_y, mt])
+        top.driver_input("Thickness", 'mt', [mt])
+        top.set_input("Mirror Z", True)
+        top.set_input("Mirror Y", True)
+
+        bottom = CabinetPart()
+        bottom.create('Bottom')
+        bottom.obj.parent = self.obj
+        bottom.driver_input("Length", 'dim_x', [dim_x])
+        bottom.driver_input("Width", 'dim_y-mt', [dim_y, mt])
+        bottom.driver_input("Thickness", 'mt', [mt])
+        bottom.set_input("Mirror Y", True)
+
+        left_panel = CabinetPart()
+        left_panel.create('Left Panel')
+        left_panel.obj.parent = self.obj
+        left_panel.obj.rotation_euler.y = math.radians(-90)
+        left_panel.driver_location("y", 'IF(olpd==0,0,-dim_y+mt+olpd)', [olpd, dim_y, mt])
+        left_panel.driver_location("z", 'mt', [mt])
+        left_panel.driver_input("Length", 'dim_z-mt*2', [dim_z, mt])
+        left_panel.driver_input("Width", 'IF(olpd==0,dim_y-mt,olpd)', [olpd, dim_y, mt])
+        left_panel.driver_input("Thickness", 'mt', [mt])
+        left_panel.set_input('Mirror Z', True)
+        left_panel.set_input('Mirror Y', True)
+        left_panel.driver_hide('IF(oif,True,IF(OR(ft==0,ft==2),False,True))', [oif, ft])
+
+        right_panel = CabinetPart()
+        right_panel.create('Right Panel')
+        right_panel.obj.parent = self.obj
+        right_panel.obj.rotation_euler.y = math.radians(-90)
+        right_panel.driver_location("x", 'dim_x', [dim_x])
+        right_panel.driver_location("y", 'IF(orpd==0,0,-dim_y+mt+orpd)', [orpd, dim_y, mt])
+        right_panel.driver_location("z", 'mt', [mt])
+        right_panel.driver_input("Length", 'dim_z-mt*2', [dim_z, mt])
+        right_panel.driver_input("Width", 'IF(orpd==0,dim_y-mt,orpd)', [orpd, dim_y, mt])
+        right_panel.driver_input("Thickness", 'mt', [mt])
+        right_panel.driver_hide('IF(oif,True,IF(OR(ft==1,ft==2),False,True))', [oif, ft])
+        right_panel.set_input('Mirror Y', True)
+
+
 class Panel(Product):
     """Single flat vertical panel (filler, end panel, etc).
     

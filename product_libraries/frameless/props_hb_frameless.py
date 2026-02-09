@@ -1840,6 +1840,8 @@ class Frameless_Scene_Props(PropertyGroup):
             ("Half Wall", "Half Wall", "Half Wall"),
             ("Misc Part", "Misc Part", "Misc Part"),
             ("Leg", "Leg", "Leg"),
+            ("Tall Leg", "Tall Leg", "Leg"),
+            ("Upper Leg", "Upper Leg", "Leg"),
             ("Panel", "Panel", "Panel"),
         ]
         
