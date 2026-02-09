@@ -720,6 +720,12 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         # Fill to create faces (handles non-convex shapes)
         bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)
         
+        # UV unwrap - planar projection from top down (X,Y -> U,V)
+        uv_layer = bm.loops.layers.uv.new("UVMap")
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv_layer].uv = (loop.vert.co.x, loop.vert.co.y)
+        
         bm.to_mesh(mesh)
         bm.free()
         
