@@ -59,6 +59,7 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_frameless.raise_cabinet_bottom", text="Raise Bottom")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+        layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         
         # Show "Create Cabinet Group" if multiple cabinets are selected
         selected_cabinets = set()

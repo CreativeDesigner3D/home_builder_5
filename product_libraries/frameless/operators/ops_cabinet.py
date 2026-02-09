@@ -19,6 +19,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
+    finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
 
     cabinet = None
 
@@ -44,6 +45,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             self.toe_kick_setback = cabinet_bp['Toe Kick Setback']
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
+        self.finished_interior = cabinet_bp.get('Finished Interior', False)
         
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
@@ -61,6 +63,21 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
         
+        # Handle Finished Interior toggle
+        old_finished = self.cabinet.obj.get('Finished Interior', False)
+        if self.finished_interior != old_finished:
+            self.cabinet.obj['Finished Interior'] = self.finished_interior
+            # Re-apply style to update materials
+            style_index = self.cabinet.obj.get('CABINET_STYLE_INDEX', 0)
+            main_scene = hb_project.get_main_scene()
+            props = main_scene.hb_frameless
+            if len(props.cabinet_styles) > 0:
+                if style_index < len(props.cabinet_styles):
+                    style = props.cabinet_styles[style_index]
+                else:
+                    style = props.cabinet_styles[0]
+                style.assign_style_to_cabinet(self.cabinet.obj)
+
         hb_utils.run_calc_fix(context, self.cabinet.obj)
         return True
 
@@ -100,6 +117,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             
             row = col.row()
             row.prop(self, 'remove_bottom')
+        
+        # Finished Interior option
+        box = layout.box()
+        box.label(text="Interior")
+        row = box.row()
+        row.prop(self, 'finished_interior')
 
 
 class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
@@ -738,6 +761,75 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
             else:
                 row.prop(cabinet, 'cabinet_width', text="Width:")
 
+class hb_frameless_OT_finish_interior(bpy.types.Operator):
+    bl_idname = "hb_frameless.finish_interior"
+    bl_label = "Finish Interior"
+    bl_description = "Change all interior surfaces of the cabinet to use the finish material"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            return cabinet_bp is not None
+        return False
+
+    def execute(self, context):
+        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
+        if not cabinet_bp:
+            self.report({'WARNING'}, "No cabinet found")
+            return {'CANCELLED'}
+
+        # Toggle the Finished Interior flag
+        is_currently_finished = cabinet_bp.get('Finished Interior', False)
+        cabinet_bp['Finished Interior'] = not is_currently_finished
+
+        # Get the cabinet style
+        style_index = cabinet_bp.get('CABINET_STYLE_INDEX', 0)
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if len(props.cabinet_styles) == 0:
+            self.report({'WARNING'}, "No cabinet styles defined")
+            return {'CANCELLED'}
+
+        if style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[style_index]
+        else:
+            style = props.cabinet_styles[0]
+
+        finish_mat, finish_mat_rotated = style.get_finish_material()
+        interior_mat, interior_mat_rotated = style.get_interior_material()
+
+        if cabinet_bp['Finished Interior']:
+            # Apply finish material to all surfaces
+            for child in cabinet_bp.children_recursive:
+                if 'CABINET_PART' in child:
+                    part = hb_types.GeoNodeObject(child)
+                    part.set_input("Top Surface", finish_mat)
+                    part.set_input("Bottom Surface", finish_mat)
+                    part.set_input("Edge W1", finish_mat_rotated)
+                    part.set_input("Edge W2", finish_mat_rotated)
+                    part.set_input("Edge L1", finish_mat_rotated)
+                    part.set_input("Edge L2", finish_mat_rotated)
+
+                    # Also update Material input on any cabinet part modifiers
+                    for mod in child.modifiers:
+                        if mod.type == 'NODES' and mod.node_group:
+                            if 'Material' in mod.node_group.interface.items_tree:
+                                node_input = mod.node_group.interface.items_tree['Material']
+                                mod[node_input.identifier] = finish_mat
+
+            self.report({'INFO'}, "Cabinet interior finished")
+        else:
+            # Revert: use assign_style_to_cabinet logic (respects Finish Top/Bottom per part)
+            style.assign_style_to_cabinet(cabinet_bp)
+            self.report({'INFO'}, "Cabinet interior reverted to standard materials")
+
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_adjust_multiple_cabinet_widths,
     hb_frameless_OT_cabinet_prompts,
@@ -749,6 +841,7 @@ classes = (
     hb_frameless_OT_delete_cabinet,
     hb_frameless_OT_create_cabinet_group,
     hb_frameless_OT_select_cabinet_group,
+    hb_frameless_OT_finish_interior,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

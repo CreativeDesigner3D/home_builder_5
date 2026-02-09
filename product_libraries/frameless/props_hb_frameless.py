@@ -542,16 +542,25 @@ class Frameless_Cabinet_Style(PropertyGroup):
         #Update all cabinet parts with correct materials
         self.get_finish_material()
         self.get_interior_material()
+
+        # Check if this cabinet has a finished interior
+        finished_interior = cabinet_obj.get('Finished Interior', False)
+
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' in child:
                 part = hb_types.GeoNodeObject(child)
                 
-                # Determine material based on Finish Top/Bottom properties
-                finish_top = child.get('Finish Top', False)
-                finish_bottom = child.get('Finish Bottom', True)
-                
-                top_mat = self.material if finish_top else self.interior_material
-                bottom_mat = self.material if finish_bottom else self.interior_material
+                if finished_interior:
+                    # All surfaces get finish material
+                    top_mat = self.material
+                    bottom_mat = self.material
+                else:
+                    # Determine material based on Finish Top/Bottom properties
+                    finish_top = child.get('Finish Top', False)
+                    finish_bottom = child.get('Finish Bottom', True)
+                    
+                    top_mat = self.material if finish_top else self.interior_material
+                    bottom_mat = self.material if finish_bottom else self.interior_material
                 
                 part.set_input("Top Surface", top_mat)
                 part.set_input("Bottom Surface", bottom_mat)
