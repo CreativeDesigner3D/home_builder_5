@@ -6,7 +6,7 @@ import subprocess
 from mathutils import Vector
 from .. import types_frameless
 from .. import props_hb_frameless
-from .... import hb_utils, units
+from .... import hb_utils, hb_placement, hb_snap, units
 
 class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
     """Save Cabinet Group to User Library"""
@@ -209,11 +209,11 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
             context.scene.render.filepath = original_filepath
 
 
-class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator):
+class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator, hb_placement.PlacementMixin):
     """Load Cabinet Group from User Library"""
     bl_idname = "hb_frameless.load_cabinet_group_from_library"
     bl_label = 'Load Cabinet Group from Library'
-    bl_description = "Load a cabinet group from the user library into the current scene"
+    bl_description = "Load a cabinet group from the user library. Click to place, Right-click or ESC to cancel"
     bl_options = {'UNDO'}
 
     filepath: bpy.props.StringProperty(
@@ -221,46 +221,135 @@ class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator):
         subtype='FILE_PATH'
     )  # type: ignore
 
+    root_objects: list = []
+    orphan_offsets: dict = {}  # {obj: Vector offset from first root}
+
     @classmethod
     def poll(cls, context):
         return True
-    
-    def execute(self, context):
-        if not self.filepath or not os.path.exists(self.filepath):
-            self.report({'ERROR'}, f"File not found: {self.filepath}")
-            return {'CANCELLED'}
-        
-        # Link or append the cabinet group from the library file
+
+    def load_objects(self, context):
+        """Load objects from the library file and return root objects."""
         with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
-            # Get all objects from the file
             data_to.objects = data_from.objects
             data_to.meshes = data_from.meshes
             data_to.materials = data_from.materials
             data_to.node_groups = data_from.node_groups
-        
-        # Find the root cabinet group (the one without a parent that is a cabinet cage)
-        root_objects = []
+
+        # Link all objects to the scene first so parent relationships resolve
+        loaded_objects = []
         for obj in data_to.objects:
             if obj is not None:
-                # Link to scene
                 context.scene.collection.objects.link(obj)
-                
-                # Check if it's a root cabinet group
-                if 'IS_FRAMELESS_CABINET_CAGE' in obj and obj.parent is None:
-                    root_objects.append(obj)
+                loaded_objects.append(obj)
+
+        # Find root cabinet group objects (IS_CAGE_GROUP with no parent)
+        self.root_objects = []
+        for obj in loaded_objects:
+            if obj.get('IS_CAGE_GROUP') and obj.parent is None:
+                self.root_objects.append(obj)
+                self.register_placement_object(obj)
+            elif obj.parent is None:
+                # Register orphan objects (e.g. pulls) for cleanup on cancel
+                self.register_placement_object(obj)
         
-        # Select the imported objects
+        # Compute offsets for orphan parentless objects relative to first root
+        self.orphan_offsets = {}
+        if self.root_objects:
+            root_loc = self.root_objects[0].location.copy()
+            for obj in self.placement_objects:
+                if obj not in self.root_objects and obj.parent is None:
+                    self.orphan_offsets[obj] = obj.location - root_loc
+
+    def _set_hide_recursive(self, hide):
+        """Hide/unhide root objects and all their children recursively."""
+        def _hide(obj):
+            try:
+                obj.hide_set(hide)
+                for child in obj.children:
+                    _hide(child)
+            except ReferenceError:
+                pass
+        for obj in self.root_objects:
+            _hide(obj)
+        for obj in self.orphan_offsets:
+            try:
+                obj.hide_set(hide)
+            except ReferenceError:
+                pass
+
+    def update_header(self, context):
+        """Update header text with instructions."""
+        text = "Click to place cabinet group | R: rotate 90° | Right-click/Esc: cancel"
+        hb_placement.draw_header_text(context, text)
+
+    def execute(self, context):
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"File not found: {self.filepath}")
+            return {'CANCELLED'}
+
+        self.init_placement(context)
+        self.load_objects(context)
+
+        if not self.root_objects:
+            self.cancel_placement(context)
+            self.report({'WARNING'}, "No cabinet groups found in file")
+            return {'CANCELLED'}
+
         bpy.ops.object.select_all(action='DESELECT')
-        for obj in root_objects:
+        for obj in self.root_objects:
             obj.select_set(True)
             context.view_layer.objects.active = obj
-        
-        # Position at 3D cursor
-        for obj in root_objects:
-            obj.location = context.scene.cursor.location
-        
-        self.report({'INFO'}, f"Loaded cabinet group from: {os.path.basename(self.filepath)}")
-        return {'FINISHED'}
+
+        self.update_header(context)
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        context.area.tag_redraw()
+
+        if event.type == 'INBETWEEN_MOUSEMOVE':
+            return {'RUNNING_MODAL'}
+
+        # Hide all loaded objects during raycast so we don't hit ourselves
+        self._set_hide_recursive(True)
+        self.update_snap(context, event)
+        self._set_hide_recursive(False)
+
+        # Update position to follow cursor
+        if self.hit_location:
+            snapped = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+            for obj in self.root_objects:
+                obj.location = snapped
+            # Move orphan objects maintaining their offset from root
+            for obj, offset in self.orphan_offsets.items():
+                obj.location = snapped + offset
+
+        # Left click - confirm placement
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            hb_placement.clear_header_text(context)
+            context.window.cursor_set('DEFAULT')
+            self.report({'INFO'}, f"Placed cabinet group from: {os.path.basename(self.filepath)}")
+            return {'FINISHED'}
+
+        # R key - rotate 90 degrees
+        if event.type == 'R' and event.value == 'PRESS':
+            for obj in self.root_objects:
+                obj.rotation_euler.z += math.radians(90)
+            return {'RUNNING_MODAL'}
+
+        # Right click or Escape - cancel
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self.cancel_placement(context)
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        # Pass through navigation events
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+
+        return {'RUNNING_MODAL'}
 
 
 class hb_frameless_OT_refresh_user_library(bpy.types.Operator):
