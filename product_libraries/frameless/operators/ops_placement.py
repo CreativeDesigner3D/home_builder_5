@@ -2107,7 +2107,7 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
         return False
 
     def toggle_obj(self, obj):
-        if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj:
+        if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj or 'IS_CUTTING_OBJ' in obj:
             return
         
         # Special handling for cabinet-like objects (cabinets, appliances, etc.)

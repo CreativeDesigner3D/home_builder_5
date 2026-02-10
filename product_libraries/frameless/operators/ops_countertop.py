@@ -397,6 +397,7 @@ class hb_frameless_OT_countertop_boolean_cut(bpy.types.Operator):
         # Hide the cutter in viewport
         cutter.display_type = 'WIRE'
         cutter.hide_render = True
+        cutter['IS_CUTTING_OBJ'] = True
 
         self.report({'INFO'}, f"Added boolean cut using {cutter.name}")
         return {'FINISHED'}
