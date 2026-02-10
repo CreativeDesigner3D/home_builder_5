@@ -25,16 +25,11 @@ def get_available_pulls():
 def get_pull_enum_items(self, context):
     """Dynamic enum items for pull selection."""
     items = []
-    for name, filename in get_available_pulls():
-        # Check for matching thumbnail
-        thumb_path = os.path.join(os.path.dirname(__file__), 
-                                  'frameless_assets', 'cabinet_pulls', 
-                                  name + '.png')
+    for i, (name, filename) in enumerate(get_available_pulls()):
         items.append((filename, name, f"Use {name}", 'OBJECT_DATA', len(items)))
-    if not items:
-        items.append(('NONE', "No Pulls Found", "No pull files in cabinet_pulls folder"))
+    items.append(('NONE', "No Pulls", "Don't add pulls to cabinets", 'X', len(items)))
+    items.append(('CUSTOM', "Custom", "Use a custom pull object from the scene", 'EYEDROPPER', len(items)))
     return items
-
 # ============================================
 # PULL FINISH DEFINITIONS
 # ============================================
@@ -1890,36 +1885,43 @@ class Frameless_Scene_Props(PropertyGroup):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
-        # Pull Selection - Side by side thumbnails
+        # Pull Selection - Side by side
         row = layout.row(align=True)
-        
+
         # Door Pull column
         col = row.column(align=True)
         col.label(text="Door Pull:")
         col.prop(props, 'door_pull_selection', text="")
-        door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
-        if door_pull_name:
-            thumb_path = os.path.join(os.path.dirname(__file__), 
-                                      'frameless_assets', 'cabinet_pulls', 
-                                      door_pull_name + '.png')
-            if os.path.exists(thumb_path):
-                icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
-                if icon_id:
-                    col.template_icon(icon_value=icon_id, scale=4.0)
-        
+        if props.door_pull_selection == 'CUSTOM':
+            col.prop(props, 'current_door_pull_object', text="")
+        elif props.door_pull_selection not in ('NONE', 'CUSTOM'):
+            door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
+            if door_pull_name:
+                thumb_path = os.path.join(os.path.dirname(__file__),
+                                          'frameless_assets', 'cabinet_pulls',
+                                          door_pull_name + '.png')
+                if os.path.exists(thumb_path):
+                    icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
+                    if icon_id:
+                        col.template_icon(icon_value=icon_id, scale=4.0)
+
         # Drawer Pull column
         col = row.column(align=True)
         col.label(text="Drawer Pull:")
         col.prop(props, 'drawer_pull_selection', text="")
-        drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
-        if drawer_pull_name:
-            thumb_path = os.path.join(os.path.dirname(__file__), 
-                                      'frameless_assets', 'cabinet_pulls', 
-                                      drawer_pull_name + '.png')
-            if os.path.exists(thumb_path):
-                icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
-                if icon_id:
-                    col.template_icon(icon_value=icon_id, scale=4.0)
+        if props.drawer_pull_selection == 'CUSTOM':
+            col.prop(props, 'current_drawer_front_pull_object', text="")
+        elif props.drawer_pull_selection not in ('NONE', 'CUSTOM'):
+            drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
+            if drawer_pull_name:
+                thumb_path = os.path.join(os.path.dirname(__file__),
+                                          'frameless_assets', 'cabinet_pulls',
+                                          drawer_pull_name + '.png')
+                if os.path.exists(thumb_path):
+                    icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
+                    if icon_id:
+                        col.template_icon(icon_value=icon_id, scale=4.0)
+
         
         # Finish dropdown inline
         row = layout.row(align=True)

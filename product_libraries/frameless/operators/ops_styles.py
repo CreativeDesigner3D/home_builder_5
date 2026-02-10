@@ -787,74 +787,95 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
         default='ALL'
     )# type: ignore
 
-    def execute(self, context):
+    def _get_pull_obj(self, props, pull_type):
+        """Get pull object based on current selection. Returns (pull_obj, is_none).
+        is_none=True means pulls should be cleared."""
+        if pull_type == 'drawer':
+            selection = props.drawer_pull_selection
+        else:
+            selection = props.door_pull_selection
         
+        if selection == 'NONE':
+            return None, True
+        
+        if selection == 'CUSTOM':
+            if pull_type == 'drawer':
+                return props.current_drawer_front_pull_object, False
+            else:
+                return props.current_door_pull_object, False
+        
+        # Bundled pull - load from file
+        pull_obj = props_hb_frameless.load_pull_object(selection)
+        if pull_obj:
+            if pull_type == 'drawer':
+                props.current_drawer_front_pull_object = pull_obj
+            else:
+                props.current_door_pull_object = pull_obj
+        return pull_obj, False
+
+    def execute(self, context):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
-        # Clear cached pull objects to force reload
-        if self.pull_type in ('DOOR', 'ALL'):
-            props.current_door_pull_object = None
-        if self.pull_type in ('DRAWER', 'ALL'):
-            props.current_drawer_front_pull_object = None
-        
-        # Load new pull objects
-        door_pull_obj = None
-        drawer_pull_obj = None
+        door_pull_obj, door_is_none = None, False
+        drawer_pull_obj, drawer_is_none = None, False
         
         if self.pull_type in ('DOOR', 'ALL'):
-            door_pull_obj = props_hb_frameless.load_pull_object(props.door_pull_selection)
-            if door_pull_obj:
-                props.current_door_pull_object = door_pull_obj
-        
+            door_pull_obj, door_is_none = self._get_pull_obj(props, 'door')
         if self.pull_type in ('DRAWER', 'ALL'):
-            drawer_pull_obj = props_hb_frameless.load_pull_object(props.drawer_pull_selection)
-            if drawer_pull_obj:
-                props.current_drawer_front_pull_object = drawer_pull_obj
+            drawer_pull_obj, drawer_is_none = self._get_pull_obj(props, 'drawer')
         
-        # Update all existing pulls in the current scene
         updated_count = 0
-        updated_fronts = []
+        cleared_count = 0
+        updated_objs = []
         
         for obj in context.scene.objects:
-            # Find pull hardware objects (children of door/drawer fronts)
-            if obj.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL') and door_pull_obj:
-                for child in obj.children:
-                    if 'Pull' in child.name and child.home_builder.mod_name:
-                        try:
-                            pull_hw = hb_types.GeoNodeHardware(child)
-                            pull_hw.set_input("Object", door_pull_obj)
-                            # Update Pull Length property on the front
-                            obj['Pull Length'] = door_pull_obj.dimensions.x
-                            updated_fronts.append(obj)
-                            updated_count += 1
-                        except:
-                            pass
+            if not obj.get('IS_CABINET_PULL'):
+                continue
             
-            elif obj.get('IS_DRAWER_FRONT') and self.pull_type in ('DRAWER', 'ALL') and drawer_pull_obj:
-                for child in obj.children:
-                    if 'Pull' in child.name and child.home_builder.mod_name:
-                        try:
-                            pull_hw = hb_types.GeoNodeHardware(child)
-                            pull_hw.set_input("Object", drawer_pull_obj)
-                            # Update Pull Length property on the front
-                            obj['Pull Length'] = drawer_pull_obj.dimensions.x
-                            updated_fronts.append(obj)
-                            updated_count += 1
-                        except:
-                            pass
-        
+            parent = obj.parent
+            if not parent:
+                continue
+            
+            try:
+                pull_hw = hb_types.GeoNodeHardware(obj)
+                
+                if parent.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL'):
+                    if door_is_none:
+                        pull_hw.set_input("Object", None)
+                        cleared_count += 1
+                    elif door_pull_obj:
+                        pull_hw.set_input("Object", door_pull_obj)
+                        parent['Pull Length'] = door_pull_obj.dimensions.x
+                        updated_count += 1
+                    updated_objs.append(obj)
+                    updated_objs.append(parent)
+                
+                elif parent.get('IS_DRAWER_FRONT') and self.pull_type in ('DRAWER', 'ALL'):
+                    if drawer_is_none:
+                        pull_hw.set_input("Object", None)
+                        cleared_count += 1
+                    elif drawer_pull_obj:
+                        pull_hw.set_input("Object", drawer_pull_obj)
+                        parent['Pull Length'] = drawer_pull_obj.dimensions.x
+                        updated_count += 1
+                    updated_objs.append(obj)
+                    updated_objs.append(parent)
+            except:
+                pass
+
         # Force driver recalculation
-        for obj in updated_fronts:
+        for obj in updated_objs:
             obj.update_tag()
-            for child in obj.children:
-                if 'Pull' in child.name:
-                    child.update_tag()
-        
+
         hb_utils.run_calc_fix(context)
-        
-        self.report({'INFO'}, f"Updated {updated_count} pull(s)")
+
+        if cleared_count:
+            self.report({'INFO'}, f"Cleared {cleared_count} pull(s)")
+        else:
+            self.report({'INFO'}, f"Updated {updated_count} pull(s)")
         return {'FINISHED'}
+
 
 
 class hb_frameless_OT_update_pull_locations(bpy.types.Operator):

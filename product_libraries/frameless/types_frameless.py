@@ -1385,7 +1385,12 @@ class CabinetFront(CabinetPart):
                 self.obj['DOOR_STYLE_NAME'] = style.name
 
     def get_pull_object(self, pull_type='door'):
-        """Get the pull object for doors or drawers based on current selection."""
+        """Get the pull object for doors or drawers based on current selection.
+        
+        Returns None if pulls are disabled (NONE) or no valid object is found.
+        For CUSTOM selection, returns the pointer property object.
+        For bundled pulls, loads from .blend file and caches.
+        """
         from . import props_hb_frameless
         from ... import hb_project
         
@@ -1400,15 +1405,21 @@ class CabinetFront(CabinetPart):
             pull_filename = props.door_pull_selection
             cached = props.current_door_pull_object
         
-        # Check if cached object matches current selection
+        # No pulls selected
+        if pull_filename == 'NONE':
+            return None
+        
+        # Custom pull from scene - use the pointer property directly
+        if pull_filename == 'CUSTOM':
+            return cached  # Returns None if not assigned yet
+        
+        # Bundled pull - check if cached object matches current selection
         if cached:
-            # Check if the cached object name contains the pull name (without .blend)
             pull_name = os.path.splitext(pull_filename)[0] if pull_filename else ""
             if pull_name and pull_name in cached.name:
                 return cached
-            # Selection changed, need to load new pull
         
-        # Load the selected pull
+        # Load the selected bundled pull
         pull_obj = props_hb_frameless.load_pull_object(pull_filename)
         
         if pull_obj:
@@ -1418,18 +1429,7 @@ class CabinetFront(CabinetPart):
                 props.current_door_pull_object = pull_obj
             return pull_obj
         
-        # Fallback to default if load failed
-        pull_path = os.path.join(os.path.dirname(__file__),
-                                 'frameless_assets', 'cabinet_pulls', 'Mushroom Knob.blend')
-        with bpy.data.libraries.load(pull_path) as (data_from, data_to):
-            data_to.objects = data_from.objects
-        
-        for obj in data_to.objects:
-            if pull_type == 'drawer':
-                props.current_drawer_front_pull_object = obj
-            else:
-                props.current_door_pull_object = obj
-            return obj
+        return None
 
 class CabinetDoor(CabinetFront):
 
@@ -1476,7 +1476,8 @@ class CabinetDoor(CabinetFront):
         pull.obj['IS_CABINET_PULL'] = True
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
-        pull.set_input("Object",pull_obj)
+        if pull_obj:
+            pull.set_input("Object",pull_obj)
         # Base: measure from top of door to TOP of pull (subtract half pull length)
         # Tall/Upper: measure from bottom of door to BOTTOM of pull (add half pull length)
         pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))',[length,pl,pvl_base,pvl_tall,pvl_upper,pull_len])
@@ -1510,11 +1511,13 @@ class CabinetFlipUpDoor(CabinetFront):
 
         pull = GeoNodeHardware()
         pull.create('Pull')
+        pull.obj['IS_CABINET_PULL'] = True
         pull.obj.parent = self.obj
         # Rotate pull 90 degrees for horizontal orientation
         pull.obj.rotation_euler.x = math.radians(-90)
         pull.obj.rotation_euler.z = math.radians(90)
-        pull.set_input("Object", pull_obj)
+        if pull_obj:
+            pull.set_input("Object", pull_obj)
         # Position at bottom (like upper pull) but centered horizontally
         pull.driver_location('x', 'pvl', [pvl])
         pull.driver_location('y', '-width/2', [width])
@@ -1552,10 +1555,12 @@ class CabinetDrawerFront(CabinetFront):
 
         pull = GeoNodeHardware()
         pull.create('Pull')
+        pull.obj['IS_CABINET_PULL'] = True
         pull.obj.parent = self.obj
         pull.obj.rotation_euler.x = math.radians(-90)
         pull.obj.rotation_euler.z = math.radians(90)
-        pull.set_input("Object",pull_obj)
+        if pull_obj:
+            pull.set_input("Object",pull_obj)
         # When not centered: measure from top of drawer front to TOP of pull
         pull.driver_location('x', 'IF(center_pull,length/2,length-hhl-pull_len/2)',[center_pull,length,hhl,pull_len])
         pull.driver_location('y', '-width/2',[width])
