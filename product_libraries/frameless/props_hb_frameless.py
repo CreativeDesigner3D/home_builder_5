@@ -2177,6 +2177,12 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.add_countertops', text="Add Countertops", icon='MESH_PLANE')
         row.operator('hb_frameless.remove_countertops', text="", icon='X')
 
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_frameless.countertop_boolean_cut', text="Cut Hole (Select 2)", icon='MOD_BOOLEAN')
+
     def draw_library_ui(self,layout,context):
 
         col = layout.column(align=True)

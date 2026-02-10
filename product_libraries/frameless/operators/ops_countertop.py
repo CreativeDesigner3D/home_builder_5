@@ -356,9 +356,56 @@ class hb_frameless_OT_remove_countertops(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_countertop_boolean_cut(bpy.types.Operator):
+    bl_idname = "hb_frameless.countertop_boolean_cut"
+    bl_label = "Cut Countertop"
+    bl_description = "Add a boolean cut to the countertop using the selected cutting object (sink, cooktop, etc.)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return len(context.selected_objects) == 2
+
+    def execute(self, context):
+        selected = context.selected_objects
+        active = context.active_object
+
+        # Determine which is the countertop and which is the cutter
+        countertop = None
+        cutter = None
+
+        for obj in selected:
+            if obj.get('IS_COUNTERTOP'):
+                countertop = obj
+            else:
+                cutter = obj
+
+        if not countertop:
+            self.report({'WARNING'}, "No countertop found in selection")
+            return {'CANCELLED'}
+
+        if not cutter:
+            self.report({'WARNING'}, "No cutting object found in selection")
+            return {'CANCELLED'}
+
+        # Add boolean modifier
+        mod = countertop.modifiers.new(name=f"Cut - {cutter.name}", type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter
+        mod.solver = 'EXACT'
+
+        # Hide the cutter in viewport
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+
+        self.report({'INFO'}, f"Added boolean cut using {cutter.name}")
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_add_countertops,
     hb_frameless_OT_remove_countertops,
+    hb_frameless_OT_countertop_boolean_cut,
 )
 
 
