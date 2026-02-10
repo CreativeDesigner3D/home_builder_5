@@ -13,6 +13,7 @@ from . import ops_defaults
 from . import ops_finished_ends
 from . import ops_products
 from . import ops_countertop
+from . import ops_cleanup
 
 
 def register():
@@ -31,6 +32,7 @@ def register():
     ops_finished_ends.register()
     ops_products.register()
     ops_countertop.register()
+    ops_cleanup.register()
 
 
 def unregister():
@@ -49,3 +51,4 @@ def unregister():
     ops_finished_ends.unregister()
     ops_products.unregister()
     ops_countertop.unregister()
+    ops_cleanup.unregister()
