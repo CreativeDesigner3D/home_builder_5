@@ -12,6 +12,7 @@ from . import ops_library
 from . import ops_defaults
 from . import ops_finished_ends
 from . import ops_products
+from . import ops_countertop
 
 
 def register():
@@ -29,6 +30,7 @@ def register():
     ops_defaults.register()
     ops_finished_ends.register()
     ops_products.register()
+    ops_countertop.register()
 
 
 def unregister():
@@ -46,3 +48,4 @@ def unregister():
     ops_defaults.unregister()
     ops_finished_ends.unregister()
     ops_products.unregister()
+    ops_countertop.unregister()

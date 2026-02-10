@@ -1222,7 +1222,7 @@ class Frameless_Scene_Props(PropertyGroup):
     # Calculator cabinets for Adjust Cabinet Sizes operator
     calculator_cabinets: CollectionProperty(name="Calculator Cabinets", type=CalculatorCabinet) # type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options",description="Show Countertop Options.",default=False)# type: ignore
-    show_cabinet_styles: BoolProperty(name="Show Cabinet Styles",description="Show Cabinet Styles.",default=True)# type: ignore
+    show_cabinet_styles: BoolProperty(name="Show Cabinet Styles",description="Show Cabinet Styles.",default=False)# type: ignore
 
     # CABINET STYLES
     cabinet_styles: CollectionProperty(type=Frameless_Cabinet_Style, name="Cabinet Styles")# type: ignore
@@ -1505,6 +1505,27 @@ class Frameless_Scene_Props(PropertyGroup):
         description="Select finish for cabinet pulls",
         items=get_pull_finish_enum_items,
     )# type: ignore
+
+    # COUNTERTOP OPTIONS
+    countertop_thickness: FloatProperty(name="Countertop Thickness",
+                                        description="Thickness of the countertop slab",
+                                        default=units.inch(1.5),
+                                        unit='LENGTH')# type: ignore
+
+    countertop_overhang_front: FloatProperty(name="Countertop Front Overhang",
+                                              description="Overhang past the front of cabinets",
+                                              default=units.inch(1.0),
+                                              unit='LENGTH')# type: ignore
+
+    countertop_overhang_sides: FloatProperty(name="Countertop Side Overhang",
+                                              description="Overhang past exposed ends of cabinets",
+                                              default=units.inch(1.0),
+                                              unit='LENGTH')# type: ignore
+
+    countertop_overhang_back: FloatProperty(name="Countertop Back Overhang",
+                                             description="Overhang past the back of cabinets toward wall",
+                                             default=units.inch(0.0),
+                                             unit='LENGTH')# type: ignore
 
 
     def ensure_default_style(self):
@@ -2137,6 +2158,25 @@ class Frameless_Scene_Props(PropertyGroup):
         row = layout.row()
         row.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes in New Cabinets")
 
+    def draw_countertop_ui(self, layout, context):
+        """Draw the countertop options UI section."""
+        from ... import hb_project
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        col = layout.column(align=True)
+        col.prop(props, 'countertop_thickness', text="Thickness")
+        col.prop(props, 'countertop_overhang_front', text="Front Overhang")
+        col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
+        col.prop(props, 'countertop_overhang_back', text="Back Overhang")
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_frameless.add_countertops', text="Add Countertops", icon='MESH_PLANE')
+        row.operator('hb_frameless.remove_countertops', text="", icon='X')
+
     def draw_library_ui(self,layout,context):
 
         col = layout.column(align=True)
@@ -2253,6 +2293,13 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_upper_bottom_details',text="Upper Bottom Details",icon='TRIA_DOWN' if self.show_upper_bottom_details else 'TRIA_RIGHT',emboss=False)
             if self.show_upper_bottom_details:
                 self.draw_upper_bottom_details_ui(box,context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self,'show_countertop_options',text="Countertops",icon='TRIA_DOWN' if self.show_countertop_options else 'TRIA_RIGHT',emboss=False)
+            if self.show_countertop_options:
+                self.draw_countertop_ui(box,context)
 
     @classmethod
     def register(cls):
