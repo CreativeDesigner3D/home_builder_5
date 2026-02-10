@@ -1054,6 +1054,136 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+
+class home_builder_walls_OT_delete_room_lights(bpy.types.Operator):
+    bl_idname = "home_builder_walls.delete_room_lights"
+    bl_label = "Delete All Room Lights"
+    bl_description = "Remove all room lights from the scene"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        light_objects = [obj for obj in context.scene.objects if obj.get('IS_ROOM_LIGHT')]
+
+        if not light_objects:
+            self.report({'WARNING'}, "No room lights found")
+            return {'CANCELLED'}
+
+        count = len(light_objects)
+        for obj in light_objects:
+            light_data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if light_data and light_data.users == 0:
+                bpy.data.lights.remove(light_data)
+
+        # Remove empty Room Lights collection
+        if "Room Lights" in bpy.data.collections:
+            col = bpy.data.collections["Room Lights"]
+            if len(col.objects) == 0:
+                bpy.data.collections.remove(col)
+
+        self.report({'INFO'}, f"Deleted {count} room light(s)")
+        return {'FINISHED'}
+
+
+class home_builder_walls_OT_update_room_lights(bpy.types.Operator):
+    bl_idname = "home_builder_walls.update_room_lights"
+    bl_label = "Update Room Lights"
+    bl_description = "Update properties of all room lights"
+    bl_options = {'UNDO'}
+
+    light_power: bpy.props.FloatProperty(
+        name="Light Power",
+        description="Power of each light in watts",
+        default=200.0,
+        min=10.0,
+        max=2000.0,
+        unit='POWER'
+    )  # type: ignore
+
+    light_temperature: bpy.props.FloatProperty(
+        name="Color Temperature",
+        description="Light color temperature in Kelvin",
+        default=3000.0,
+        min=2000.0,
+        max=6500.0
+    )  # type: ignore
+
+    light_radius: bpy.props.FloatProperty(
+        name="Shadow Softness",
+        description="Light source radius for shadow softness",
+        default=0.1,
+        min=0.0,
+        max=1.0,
+        unit='LENGTH'
+    )  # type: ignore
+
+    def kelvin_to_rgb(self, temperature):
+        temp = temperature / 100.0
+        if temp <= 66:
+            red = 255
+        else:
+            red = temp - 60
+            red = 329.698727446 * (red ** -0.1332047592)
+            red = max(0, min(255, red))
+        if temp <= 66:
+            green = temp
+            green = 99.4708025861 * math.log(green) - 161.1195681661
+        else:
+            green = temp - 60
+            green = 288.1221695283 * (green ** -0.0755148492)
+        green = max(0, min(255, green))
+        if temp >= 66:
+            blue = 255
+        elif temp <= 19:
+            blue = 0
+        else:
+            blue = temp - 10
+            blue = 138.5177312231 * math.log(blue) - 305.0447927307
+            blue = max(0, min(255, blue))
+        return (red / 255.0, green / 255.0, blue / 255.0)
+
+    def invoke(self, context, event):
+        # Initialize from existing lights
+        light_objects = [obj for obj in context.scene.objects if obj.get('IS_ROOM_LIGHT')]
+        if not light_objects:
+            self.report({'WARNING'}, "No room lights found")
+            return {'CANCELLED'}
+
+        # Read current values from first light
+        first_light = light_objects[0].data
+        self.light_power = first_light.energy
+        self.light_radius = first_light.shadow_soft_size
+
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Light Properties", icon='OUTLINER_OB_LIGHT')
+        col = box.column(align=True)
+        col.prop(self, 'light_power')
+        col.prop(self, 'light_temperature')
+        col.prop(self, 'light_radius')
+
+    def execute(self, context):
+        light_objects = [obj for obj in context.scene.objects if obj.get('IS_ROOM_LIGHT')]
+
+        if not light_objects:
+            self.report({'WARNING'}, "No room lights found")
+            return {'CANCELLED'}
+
+        color = self.kelvin_to_rgb(self.light_temperature)
+
+        for obj in light_objects:
+            obj.data.energy = self.light_power
+            obj.data.color = color
+            obj.data.shadow_soft_size = self.light_radius
+
+        self.report({'INFO'}, f"Updated {len(light_objects)} room light(s)")
+        return {'FINISHED'}
+
+
 class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_wall_height"
     bl_label = "Update Wall Height"
@@ -1350,6 +1480,8 @@ classes = (
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
+    home_builder_walls_OT_delete_room_lights,
+    home_builder_walls_OT_update_room_lights,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,

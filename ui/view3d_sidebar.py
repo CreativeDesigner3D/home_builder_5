@@ -322,6 +322,17 @@ class HOME_BUILDER_PT_room_layout_lighting(bpy.types.Panel):
         col.operator("home_builder_walls.add_room_lights", text="Add Room Lights", icon='LIGHT')
         col.operator("home_builder_walls.setup_world_lighting", text="Setup World Lighting", icon='WORLD')
 
+        # Show management options if room lights exist
+        room_lights = [obj for obj in context.scene.objects if obj.get('IS_ROOM_LIGHT')]
+        if room_lights:
+            box = layout.box()
+            row = box.row()
+            row.label(text=f"Room Lights: {len(room_lights)}", icon='OUTLINER_OB_LIGHT')
+            col = box.column(align=True)
+            col.scale_y = 1.2
+            col.operator("home_builder_walls.update_room_lights", text="Update Room Lights", icon='PREFERENCES')
+            col.operator("home_builder_walls.delete_room_lights", text="Delete Room Lights", icon='TRASH')
+
 
 # SUBPANEL: Obstacles
 class HOME_BUILDER_PT_room_layout_obstacles(bpy.types.Panel):
