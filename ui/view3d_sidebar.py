@@ -196,6 +196,44 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
             row.operator("home_builder.rename_room", text="Rename", icon='GREASEPENCIL')
             row.operator("home_builder.duplicate_room", text="Duplicate", icon='DUPLICATE')
 
+        # Linked Rooms section
+        linked_rooms = [obj for obj in context.scene.objects if obj.get('IS_LINKED_ROOM')]
+
+        layout.separator()
+        box = layout.box()
+        row = box.row()
+        row.label(text='Linked Rooms', icon='LINKED')
+
+        if linked_rooms:
+            for obj in linked_rooms:
+                source = obj.get('LINKED_ROOM_SOURCE', 'Unknown')
+                inner_box = box.box()
+                row = inner_box.row()
+                row.label(text=source, icon='HOME')
+                op = row.operator('home_builder.unlink_room', text='', icon='X')
+                op.object_name = obj.name
+
+                row = inner_box.row(align=True)
+                # Walls toggle
+                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_WALLS') else 'CHECKBOX_DEHLT'
+                op = row.operator('home_builder.toggle_linked_room_category', text='Walls', icon=icon)
+                op.object_name = obj.name
+                op.category = 'walls'
+                # Lights toggle
+                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_LIGHTS') else 'CHECKBOX_DEHLT'
+                op = row.operator('home_builder.toggle_linked_room_category', text='Lights', icon=icon)
+                op.object_name = obj.name
+                op.category = 'lights'
+                # Products toggle
+                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_PRODUCTS') else 'CHECKBOX_DEHLT'
+                op = row.operator('home_builder.toggle_linked_room_category', text='Products', icon=icon)
+                op.object_name = obj.name
+                op.category = 'products'
+
+        col = box.column(align=True)
+        col.scale_y = 1.2
+        col.operator('home_builder.link_room', text='Link Room', icon='ADD')
+
 
 # -----------------------------------------------------------------------------
 # PANEL 2: ROOM LAYOUT
