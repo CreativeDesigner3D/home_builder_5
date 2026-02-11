@@ -288,13 +288,10 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
 
 def get_room_scenes_enum(self, context):
     """Get enum items for room scenes (excluding current scene)."""
-    items = []
-    for scene in bpy.data.scenes:
-        if scene == context.scene:
-            continue
-        if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
-            continue
-        items.append((scene.name, scene.name, f"Link {scene.name} into current scene"))
+    scenes = [s for s in bpy.data.scenes
+              if s != context.scene and not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
+    scenes.sort(key=lambda s: s.home_builder.sort_order)
+    items = [(s.name, s.name, f"Link {s.name} into current scene") for s in scenes]
     if not items:
         items.append(('NONE', 'No Rooms Available', ''))
     return items

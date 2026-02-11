@@ -604,6 +604,7 @@ class HOME_BUILDER_MT_room_list(bpy.types.Menu):
         room_scenes = [s for s in bpy.data.scenes 
                       if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
         
+        room_scenes.sort(key=lambda s: s.home_builder.sort_order)
         for scene in room_scenes:
             op = layout.operator("home_builder_layouts.go_to_layout_view",
                                text=scene.name, icon='HOME')
