@@ -951,13 +951,17 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
 
         lights = []
         
-        # Create or get collection for lights
-        light_collection_name = "Room Lights"
+        # Create or get scene-specific collection for lights
+        scene = bpy.context.scene
+        light_collection_name = f"{scene.name} - Lights"
         if light_collection_name not in bpy.data.collections:
             light_collection = bpy.data.collections.new(light_collection_name)
-            bpy.context.scene.collection.children.link(light_collection)
+            scene.collection.children.link(light_collection)
         else:
             light_collection = bpy.data.collections[light_collection_name]
+            # Ensure it's linked to the current scene
+            if light_collection.name not in scene.collection.children:
+                scene.collection.children.link(light_collection)
         
         # Get color from temperature
         color = self.kelvin_to_rgb(light_temperature)
@@ -1075,11 +1079,15 @@ class home_builder_walls_OT_delete_room_lights(bpy.types.Operator):
             if light_data and light_data.users == 0:
                 bpy.data.lights.remove(light_data)
 
-        # Remove empty Room Lights collection
-        if "Room Lights" in bpy.data.collections:
-            col = bpy.data.collections["Room Lights"]
-            if len(col.objects) == 0:
-                bpy.data.collections.remove(col)
+        # Remove empty lights collection (check both old and new naming)
+        scene = context.scene
+        for col_name in [f"{scene.name} - Lights", "Room Lights"]:
+            if col_name in bpy.data.collections:
+                col = bpy.data.collections[col_name]
+                if len(col.objects) == 0:
+                    if col.name in scene.collection.children:
+                        scene.collection.children.unlink(col)
+                    bpy.data.collections.remove(col)
 
         self.report({'INFO'}, f"Deleted {count} room light(s)")
         return {'FINISHED'}

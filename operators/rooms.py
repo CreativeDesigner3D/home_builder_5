@@ -375,20 +375,22 @@ def organize_room_collections(scene):
     
     # Move lights
     move_to_collection(light_objects, collections['lights'])
-    # Also move lights from "Room Lights" collection if it exists
-    if "Room Lights" in bpy.data.collections:
-        old_light_col = bpy.data.collections["Room Lights"]
-        for obj in list(old_light_col.objects):
-            if obj not in light_objects:
-                light_objects.add(obj)
-                collections['lights'].objects.link(obj)
-            old_light_col.objects.unlink(obj)
-        # Remove old collection if empty
-        if len(old_light_col.objects) == 0:
-            # Unlink from scene
-            if old_light_col.name in scene.collection.children:
-                scene.collection.children.unlink(old_light_col)
-            bpy.data.collections.remove(old_light_col)
+    # Migrate lights from old-style "Room Lights" collection if it exists
+    for old_col_name in ["Room Lights", f"{name} - Lights"]:
+        if old_col_name in bpy.data.collections and old_col_name != col_names['lights']:
+            old_light_col = bpy.data.collections[old_col_name]
+            for obj in list(old_light_col.objects):
+                if obj not in light_objects:
+                    light_objects.add(obj)
+                    if obj.name not in collections['lights'].objects:
+                        collections['lights'].objects.link(obj)
+                if obj.name in old_light_col.objects:
+                    old_light_col.objects.unlink(obj)
+            # Remove old collection if empty
+            if len(old_light_col.objects) == 0:
+                if old_light_col.name in scene.collection.children:
+                    scene.collection.children.unlink(old_light_col)
+                bpy.data.collections.remove(old_light_col)
     
     # Move products + their children (cabinets, obstacles, floors)
     # Exclude GeoNodeCage objects (invisible parametric control objects)
