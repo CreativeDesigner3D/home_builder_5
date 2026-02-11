@@ -1597,8 +1597,8 @@ def get_wall_endpoints(wall_obj):
     return start.to_2d(), end.to_2d()
 
 def find_wall_chains():
-    """Find connected chains of walls, returning list of ordered wall objects."""
-    walls = [obj for obj in bpy.data.objects if obj.get('IS_WALL_BP')]
+    """Find connected chains of walls in the current scene, returning list of ordered wall objects."""
+    walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
     
     if not walls:
         return []
