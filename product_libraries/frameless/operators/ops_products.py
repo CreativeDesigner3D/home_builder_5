@@ -299,9 +299,119 @@ class hb_frameless_OT_delete_product(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+class hb_frameless_OT_convert_to_door_panel(bpy.types.Operator):
+    bl_idname = "hb_frameless.convert_to_door_panel"
+    bl_label = "Convert to Door Panel"
+    bl_description = "Add a 5-piece door style modifier to this misc part"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.object:
+            bp = get_product_bp(context.object)
+            if bp and bp.get('IS_FRAMELESS_MISC_PART'):
+                return True
+        return False
+
+    def execute(self, context):
+        from .... import hb_project
+
+        bp = get_product_bp(context.object)
+        part = hb_types.GeoNodeCutpart(bp)
+
+        # Check if door style modifier already exists
+        existing_mod = None
+        for mod in bp.modifiers:
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                existing_mod = mod
+                break
+
+        if existing_mod:
+            door_style_mod = hb_types.CabinetPartModifier()
+            door_style_mod.obj = bp
+            door_style_mod.mod = existing_mod
+        else:
+            door_style_mod = part.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
+
+        # Get door style for dimensions and cabinet style for materials
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        # Door style (stile/rail dimensions)
+        door_style = None
+        if props.door_styles and props.active_door_style_index < len(props.door_styles):
+            door_style = props.door_styles[props.active_door_style_index]
+
+        # Cabinet style (materials)
+        style_index = bp.get('CABINET_STYLE_INDEX', 0)
+        cab_style = None
+        if props.cabinet_styles and style_index < len(props.cabinet_styles):
+            cab_style = props.cabinet_styles[style_index]
+
+        if door_style:
+            door_style_mod.set_input("Left Stile Width", door_style.stile_width)
+            door_style_mod.set_input("Right Stile Width", door_style.stile_width)
+            door_style_mod.set_input("Top Rail Width", door_style.rail_width)
+            door_style_mod.set_input("Bottom Rail Width", door_style.rail_width)
+            door_style_mod.set_input("Panel Thickness", door_style.panel_thickness)
+            door_style_mod.set_input("Panel Inset", door_style.panel_inset)
+
+            # Mid rail for tall doors
+            part_height = part.get_input('Length') or 0
+            auto_mid_rail_height = units.inch(45.5)
+            if part_height > auto_mid_rail_height or door_style.add_mid_rail:
+                try:
+                    door_style_mod.set_input("Add Mid Rail", True)
+                    door_style_mod.set_input("Mid Rail Width", door_style.mid_rail_width)
+                    if part_height > auto_mid_rail_height:
+                        door_style_mod.set_input("Center Mid Rail", True)
+                    else:
+                        door_style_mod.set_input("Center Mid Rail", door_style.center_mid_rail)
+                        if not door_style.center_mid_rail:
+                            door_style_mod.set_input("Mid Rail Location", door_style.mid_rail_location)
+                except:
+                    pass
+            else:
+                try:
+                    door_style_mod.set_input("Add Mid Rail", False)
+                except:
+                    pass
+
+            # Materials from cabinet style
+            if cab_style:
+                material, material_rotated = cab_style.get_finish_material()
+                if material:
+                    try:
+                        door_style_mod.set_input("Stile Material", material)
+                        door_style_mod.set_input("Rail Material", material_rotated)
+                        if door_style.panel_material == 'GLASS':
+                            from ..props_hb_frameless import get_or_create_glass_material
+                            glass_mat = get_or_create_glass_material()
+                            door_style_mod.set_input("Panel Material", glass_mat)
+                        else:
+                            door_style_mod.set_input("Panel Material", material)
+                    except:
+                        pass
+        else:
+            # No door style - use sensible defaults
+            door_style_mod.set_input("Left Stile Width", units.inch(2.5))
+            door_style_mod.set_input("Right Stile Width", units.inch(2.5))
+            door_style_mod.set_input("Top Rail Width", units.inch(2.5))
+            door_style_mod.set_input("Bottom Rail Width", units.inch(2.5))
+            door_style_mod.set_input("Panel Thickness", units.inch(0.75))
+            door_style_mod.set_input("Panel Inset", units.inch(0.25))
+
+        door_style_mod.mod.show_viewport = True
+
+        self.report({'INFO'}, "Converted to door panel")
+        return {'FINISHED'}
+
 classes = (
     hb_frameless_OT_product_prompts,
     hb_frameless_OT_delete_product,
+    hb_frameless_OT_convert_to_door_panel,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

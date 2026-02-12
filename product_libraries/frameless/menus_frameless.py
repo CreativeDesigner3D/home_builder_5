@@ -341,6 +341,9 @@ class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
         if not is_misc:
             layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
             layout.separator()
+        if is_misc:
+            layout.operator("hb_frameless.convert_to_door_panel", text="Convert to Door Panel")
+            layout.separator()
         layout.operator("hb_frameless.delete_product", text="Delete Part")
 
 
