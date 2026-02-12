@@ -42,6 +42,8 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
+        layout.separator()
+        layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
 
 
 class HOME_BUILDER_MT_door_commands(bpy.types.Menu):

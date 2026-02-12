@@ -1624,7 +1624,92 @@ class home_builder_walls_OT_apply_wall_material(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+
+class home_builder_walls_OT_delete_wall(bpy.types.Operator):
+    """Delete a wall and properly disconnect from adjacent walls"""
+    bl_idname = "home_builder_walls.delete_wall"
+    bl_label = "Delete Wall"
+    bl_description = "Delete the selected wall, removing all children and disconnecting from adjacent walls"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj and obj.get('IS_WALL_BP'):
+            return True
+        # Check if parent is a wall
+        if obj and obj.parent and obj.parent.get('IS_WALL_BP'):
+            return True
+        return False
+
+    def get_wall_bp(self, obj):
+        """Get the wall base point object."""
+        if obj.get('IS_WALL_BP'):
+            return obj
+        if obj.parent and obj.parent.get('IS_WALL_BP'):
+            return obj.parent
+        return None
+
+    def execute(self, context):
+        wall_bp = self.get_wall_bp(context.active_object)
+        if not wall_bp:
+            self.report({'WARNING'}, "No wall selected")
+            return {'CANCELLED'}
+
+        wall = hb_types.GeoNodeWall(wall_bp)
+
+        # Find connected walls before we start deleting
+        left_wall = wall.get_connected_wall('left')
+        right_wall = wall.get_connected_wall('right')
+
+        # Handle right wall (next wall constrained to our obj_x)
+        if right_wall:
+            # Store world location before removing constraint
+            right_world_loc = right_wall.obj.matrix_world.translation.copy()
+
+            # Remove the COPY_LOCATION constraint from right wall
+            for con in right_wall.obj.constraints:
+                if con.type == 'COPY_LOCATION' and con.target == wall.obj_x:
+                    right_wall.obj.constraints.remove(con)
+                    break
+
+            # Set location to stored world location
+            right_wall.obj.location = right_world_loc
+
+        # Handle left wall (our wall is constrained to left wall's obj_x)
+        if left_wall:
+            # Clear the connected_object reference on the left wall's obj_x
+            if left_wall.obj_x:
+                left_wall.obj_x.home_builder.connected_object = None
+
+        # Collect all objects to delete (wall bp + all children recursively)
+        objects_to_delete = set()
+        objects_to_delete.add(wall_bp)
+        for child in wall_bp.children_recursive:
+            objects_to_delete.add(child)
+
+        # Deselect all first
+        bpy.ops.object.select_all(action='DESELECT')
+
+        # Delete all collected objects
+        for obj in objects_to_delete:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+        # Update miter angles on remaining adjacent walls
+        if left_wall and left_wall.obj.name in bpy.data.objects:
+            calculate_wall_miter_angles(left_wall.obj)
+        if right_wall and right_wall.obj.name in bpy.data.objects:
+            calculate_wall_miter_angles(right_wall.obj)
+
+        self.report({'INFO'}, "Wall deleted")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
 classes = (
+    home_builder_walls_OT_delete_wall,
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
