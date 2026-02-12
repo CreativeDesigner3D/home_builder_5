@@ -351,6 +351,7 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.add_floor")
+        layout.operator("home_builder_walls.add_ceiling")
 
 
 # SUBPANEL: Lighting

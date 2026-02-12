@@ -797,6 +797,122 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+
+class home_builder_walls_OT_add_ceiling(bpy.types.Operator):
+    bl_idname = "home_builder_walls.add_ceiling"
+    bl_label = "Add Ceiling"
+    bl_description = "This will add a ceiling to the room based on the wall layout"
+    bl_options = {'UNDO'}
+
+    def create_ceiling_mesh(self, name, points, height):
+        """Create a ceiling mesh from boundary points at the given height."""
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+
+        bpy.context.collection.objects.link(obj)
+
+        bm = bmesh.new()
+
+        # If closed loop, remove duplicate closing point
+        closed = is_closed_loop(points)
+        if closed:
+            points = points[:-1]
+
+        # Add vertices at ceiling height
+        verts = [bm.verts.new(Vector((p.x, p.y, height))) for p in points]
+        bm.verts.ensure_lookup_table()
+
+        # Create boundary edges
+        edges = []
+        for i in range(len(verts)):
+            next_i = (i + 1) % len(verts)
+            edge = bm.edges.new((verts[i], verts[next_i]))
+            edges.append(edge)
+
+        # Fill to create faces
+        bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)
+
+        # Flip normals so they face downward (into the room)
+        bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
+
+        # UV unwrap - planar projection from top down (X,Y -> U,V)
+        uv_layer = bm.loops.layers.uv.new("UVMap")
+        for face in bm.faces:
+            for loop in face.loops:
+                loop[uv_layer].uv = (loop.vert.co.x, loop.vert.co.y)
+
+        bm.to_mesh(mesh)
+        bm.free()
+
+        return obj
+
+    def execute(self, context):
+        props = context.scene.home_builder
+        ceiling_height = props.ceiling_height
+
+        chains = find_wall_chains()
+
+        if not chains:
+            self.report({'WARNING'}, "No connected walls found")
+            return {'CANCELLED'}
+
+        ceilings_created = 0
+        for i, chain in enumerate(chains):
+            # Try to get ceiling height from the first wall in the chain
+            wall = hb_types.GeoNodeWall(chain[0])
+            chain_height = wall.get_input('Height')
+            if chain_height is None or chain_height == 0:
+                chain_height = ceiling_height
+
+            points = get_room_boundary_points(chain)
+
+            # Handle cases with only 1 or 2 walls
+            if len(points) < 3 or (len(points) <= 3 and not is_closed_loop(points)):
+                all_points = []
+                for w in chain:
+                    start, end = get_wall_endpoints(w)
+                    all_points.append(Vector((start.x, start.y, 0)))
+                    all_points.append(Vector((end.x, end.y, 0)))
+
+                if len(all_points) >= 2:
+                    min_x = min(p.x for p in all_points)
+                    max_x = max(p.x for p in all_points)
+                    min_y = min(p.y for p in all_points)
+                    max_y = max(p.y for p in all_points)
+
+                    if abs(max_x - min_x) < 0.01:
+                        max_x = min_x + 3.0
+                    if abs(max_y - min_y) < 0.01:
+                        max_y = min_y + 3.0
+
+                    points = [
+                        Vector((min_x, min_y, 0)),
+                        Vector((max_x, min_y, 0)),
+                        Vector((max_x, max_y, 0)),
+                        Vector((min_x, max_y, 0)),
+                        Vector((min_x, min_y, 0)),
+                    ]
+                else:
+                    continue
+            else:
+                if not is_closed_loop(points):
+                    points.append(points[0].copy())
+
+            name = "Ceiling" if i == 0 else f"Ceiling.{i:03d}"
+
+            ceiling_obj = self.create_ceiling_mesh(name, points, chain_height)
+            ceiling_obj['IS_CEILING_BP'] = True
+
+            ceilings_created += 1
+
+        if ceilings_created > 0:
+            self.report({'INFO'}, f"Created {ceilings_created} ceiling(s)")
+            return {'FINISHED'}
+        else:
+            self.report({'WARNING'}, "Could not create ceiling - insufficient wall data")
+            return {'CANCELLED'}
+
+
 class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
     bl_idname = "home_builder_walls.add_room_lights"
     bl_label = "Add Room Lights"
@@ -1486,6 +1602,7 @@ classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
+    home_builder_walls_OT_add_ceiling,
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
     home_builder_walls_OT_delete_room_lights,
