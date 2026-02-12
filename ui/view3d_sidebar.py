@@ -23,6 +23,23 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+
+        # Check if Object Color Type is enabled in the viewport shading
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        if space.shading.color_type != 'OBJECT':
+                            box = layout.box()
+                            row = box.row()
+                            row.alert = True
+                            row.label(text="Object Color Type is not enabled!", icon='ERROR')
+                            box.label(text="Colors will not display correctly.", icon='BLANK1')
+                            box.operator("home_builder.set_recommended_settings",
+                                        text="Open Recommended Settings", icon='PREFERENCES')
+                            break
+                break
+
         in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
         in_detail_view = context.scene.get('IS_DETAIL_VIEW')
         

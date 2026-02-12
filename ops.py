@@ -97,8 +97,8 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         layout = self.layout
         box = layout.box()
         box.label(text="These are the recommended Home Builder settings.")
+        box.prop(self,'turn_on_object_color_type',text="Turn On Object Color Type - IMPORTANT")
         box.prop(self,'turn_off_relationship_lines')
-        box.prop(self,'turn_on_object_color_type')
         box.prop(self,'turn_off_3d_cursor')
         box.prop(self,'show_wireframes')
         box.prop(self,'change_studio_lighting')
