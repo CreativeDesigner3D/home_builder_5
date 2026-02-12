@@ -328,8 +328,19 @@ class HOME_BUILDER_MT_part_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.product_prompts", text="Part Prompts")
         layout.separator()
-        layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
-        layout.separator()
+        # Hide Applied Ends for misc parts (they have no cage with openings)
+        obj = context.object
+        is_misc = False
+        if obj:
+            current = obj
+            while current:
+                if current.get('IS_FRAMELESS_MISC_PART'):
+                    is_misc = True
+                    break
+                current = current.parent
+        if not is_misc:
+            layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+            layout.separator()
         layout.operator("hb_frameless.delete_product", text="Delete Part")
 
 

@@ -541,35 +541,39 @@ class Frameless_Cabinet_Style(PropertyGroup):
         # Check if this cabinet has a finished interior
         finished_interior = cabinet_obj.get('Finished Interior', False)
 
-        for child in cabinet_obj.children_recursive:
-            if 'CABINET_PART' in child:
-                part = hb_types.GeoNodeObject(child)
-                
-                if finished_interior:
-                    # All surfaces get finish material
-                    top_mat = self.material
-                    bottom_mat = self.material
-                else:
-                    # Determine material based on Finish Top/Bottom properties
-                    finish_top = child.get('Finish Top', False)
-                    finish_bottom = child.get('Finish Bottom', True)
-                    
-                    top_mat = self.material if finish_top else self.interior_material
-                    bottom_mat = self.material if finish_bottom else self.interior_material
-                
-                part.set_input("Top Surface", top_mat)
-                part.set_input("Bottom Surface", bottom_mat)
-                part.set_input("Edge W1", self.material_rotated)
-                part.set_input("Edge W2", self.material_rotated)
-                part.set_input("Edge L1", self.material_rotated)
-                part.set_input("Edge L2", self.material_rotated)
-                
-                # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
-                for mod in child.modifiers:
-                    if mod.type == 'NODES' and mod.node_group:
-                        if 'Material' in mod.node_group.interface.items_tree:
-                            node_input = mod.node_group.interface.items_tree['Material']
-                            mod[node_input.identifier] = self.material
+        # Collect parts to update: children with CABINET_PART, plus the object itself if it's a misc part
+        parts_to_update = [child for child in cabinet_obj.children_recursive if 'CABINET_PART' in child]
+        if cabinet_obj.get('IS_FRAMELESS_MISC_PART') and 'CABINET_PART' in cabinet_obj:
+            parts_to_update.append(cabinet_obj)
+
+        for child in parts_to_update:
+            part = hb_types.GeoNodeObject(child)
+
+            if finished_interior:
+                # All surfaces get finish material
+                top_mat = self.material
+                bottom_mat = self.material
+            else:
+                # Determine material based on Finish Top/Bottom properties
+                finish_top = child.get('Finish Top', False)
+                finish_bottom = child.get('Finish Bottom', True)
+
+                top_mat = self.material if finish_top else self.interior_material
+                bottom_mat = self.material if finish_bottom else self.interior_material
+
+            part.set_input("Top Surface", top_mat)
+            part.set_input("Bottom Surface", bottom_mat)
+            part.set_input("Edge W1", self.material_rotated)
+            part.set_input("Edge W2", self.material_rotated)
+            part.set_input("Edge L1", self.material_rotated)
+            part.set_input("Edge L2", self.material_rotated)
+
+            # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
+            for mod in child.modifiers:
+                if mod.type == 'NODES' and mod.node_group:
+                    if 'Material' in mod.node_group.interface.items_tree:
+                        node_input = mod.node_group.interface.items_tree['Material']
+                        mod[node_input.identifier] = self.material
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:

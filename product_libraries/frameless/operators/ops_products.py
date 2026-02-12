@@ -6,7 +6,7 @@ def get_product_bp(obj):
     """Walk up parent hierarchy to find the product base point."""
     if obj is None:
         return None
-    if 'IS_FRAMELESS_PRODUCT_CAGE' in obj:
+    if 'IS_FRAMELESS_PRODUCT_CAGE' in obj or 'IS_FRAMELESS_MISC_PART' in obj:
         return obj
     if obj.parent:
         return get_product_bp(obj.parent)
@@ -34,20 +34,31 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
 
     def invoke(self, context, event):
         product_bp = get_product_bp(context.object)
-        self.product = hb_types.GeoNodeCage(product_bp)
         self.part_type = product_bp.get('PART_TYPE', '')
 
-        self.width = self.product.get_input('Dim X')
-        self.height = self.product.get_input('Dim Z')
-        self.depth = self.product.get_input('Dim Y')
+        if product_bp.get('IS_FRAMELESS_MISC_PART'):
+            self.product = hb_types.GeoNodeCutpart(product_bp)
+            self.width = self.product.get_input('Length')
+            self.height = self.product.get_input('Thickness')
+            self.depth = self.product.get_input('Width')
+        else:
+            self.product = hb_types.GeoNodeCage(product_bp)
+            self.width = self.product.get_input('Dim X')
+            self.height = self.product.get_input('Dim Z')
+            self.depth = self.product.get_input('Dim Y')
 
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
 
     def check(self, context):
-        self.product.set_input('Dim X', self.width)
-        self.product.set_input('Dim Z', self.height)
-        self.product.set_input('Dim Y', self.depth)
+        if self.product.obj.get('IS_FRAMELESS_MISC_PART'):
+            self.product.set_input('Length', self.width)
+            self.product.set_input('Thickness', self.height)
+            self.product.set_input('Width', self.depth)
+        else:
+            self.product.set_input('Dim X', self.width)
+            self.product.set_input('Dim Z', self.height)
+            self.product.set_input('Dim Y', self.depth)
         hb_utils.run_calc_fix(context, self.product.obj)
         return True
 

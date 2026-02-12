@@ -489,7 +489,7 @@ class hb_frameless_OT_assign_cabinet_style_to_selected_cabinets(bpy.types.Operat
             # Check if hit object or any of its parents is a cabinet cage or product cage
             current = obj
             while current:
-                if current.get('IS_FRAMELESS_CABINET_CAGE') or current.get('IS_FRAMELESS_PRODUCT_CAGE'):
+                if current.get('IS_FRAMELESS_CABINET_CAGE') or current.get('IS_FRAMELESS_PRODUCT_CAGE') or current.get('IS_FRAMELESS_MISC_PART'):
                     return current
                 current = current.parent
         
@@ -739,7 +739,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         self._cabinets = []
         for scene in bpy.data.scenes:
             for obj in scene.objects:
-                if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
                     cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
                     if cab_style_index == style_index:
                         self._cabinets.append(obj)
