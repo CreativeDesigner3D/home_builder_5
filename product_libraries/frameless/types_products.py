@@ -606,52 +606,30 @@ class HalfWall(Product):
             '-ssp', [ssp])
 
 
-class MiscPart(Product):
-    """A single freely-resizable part. The simplest product.
-    
-    Uses IS_FRAMELESS_MISC_PART instead of IS_FRAMELESS_PRODUCT_CAGE
-    so it does not appear in Cabinets selection mode.
+class MiscPart(CabinetPart):
+    """A single freely-resizable cabinet part with no cage wrapper.
+
+    Uses IS_FRAMELESS_MISC_PART marker so it does not appear in 
+    Cabinets selection mode.
     """
 
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.width = inch(24)
-        self.height =  props.default_carcass_part_thickness
+        self.height = props.default_carcass_part_thickness
         self.depth = inch(12)
 
-    def create_product(self, name):
-        """Override to use MISC marker instead of PRODUCT marker."""
-        GeoNodeCage.create(self, name)
+    def create(self, name="Misc Part"):
+        super().create(name)
         self.obj['IS_FRAMELESS_MISC_PART'] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
-        self.obj.display_type = 'WIRE'
-
-        self.set_input('Dim X', self.width)
-        self.set_input('Dim Y', self.depth)
-        self.set_input('Dim Z', self.height)
+        self.set_input('Length', self.width)
+        self.set_input('Width', self.depth)
+        self.set_input('Thickness', self.height)
         self.set_input('Mirror Y', True)
-
-    def create(self, name="Misc Part"):
-        self.create_product(name)
-        # self.obj['PART_TYPE'] = 'MISC_PART'
-
-        # self.add_properties_common()
-
-        # dim_x = self.var_input('Dim X', 'dim_x')
-        # dim_y = self.var_input('Dim Y', 'dim_y')
-        # dim_z = self.var_input('Dim Z', 'dim_z')
-        # mt = self.var_prop('Material Thickness', 'mt')
-
-        # part = CabinetPart()
-        # part.create('Part')
-        # part.obj.parent = self.obj
-        # part.driver_input("Length", 'dim_x', [dim_x])
-        # part.driver_input("Width", 'dim_y', [dim_y])
-        # part.driver_input("Thickness", 'dim_z', [dim_z])
-        # part.set_input("Mirror Y", True)
-        # part.obj['Finish Top'] = True
-        # part.obj['Finish Bottom'] = True
+        self.obj['Finish Top'] = True
+        self.obj['Finish Bottom'] = True
 
 
 class Leg(Product):
