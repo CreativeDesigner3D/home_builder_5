@@ -1135,12 +1135,38 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
         for chain in chains:
             points = get_room_boundary_points(chain)
             
-            if len(points) < 3:
-                continue
-            
-            # Close polygon for point-in-polygon test
-            if not is_closed_loop(points):
-                points.append(points[0].copy())
+            # Handle cases with only 1 or 2 walls - create rectangular boundary from bounding box
+            if len(points) < 3 or (len(points) <= 3 and not is_closed_loop(points)):
+                all_points = []
+                for wall in chain:
+                    start, end = get_wall_endpoints(wall)
+                    all_points.append(Vector((start.x, start.y, 0)))
+                    all_points.append(Vector((end.x, end.y, 0)))
+                
+                if len(all_points) < 2:
+                    continue
+                
+                min_x = min(p.x for p in all_points)
+                max_x = max(p.x for p in all_points)
+                min_y = min(p.y for p in all_points)
+                max_y = max(p.y for p in all_points)
+                
+                if abs(max_x - min_x) < 0.01:
+                    max_x = min_x + 3.0
+                if abs(max_y - min_y) < 0.01:
+                    max_y = min_y + 3.0
+                
+                points = [
+                    Vector((min_x, min_y, 0)),
+                    Vector((max_x, min_y, 0)),
+                    Vector((max_x, max_y, 0)),
+                    Vector((min_x, max_y, 0)),
+                    Vector((min_x, min_y, 0)),
+                ]
+            else:
+                # Close polygon for point-in-polygon test
+                if not is_closed_loop(points):
+                    points.append(points[0].copy())
             
             # Get ceiling height from first wall in chain
             wall = hb_types.GeoNodeWall(chain[0])
