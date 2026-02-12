@@ -32,7 +32,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.hb_face_frame            
+        if hasattr(bpy.types.Scene, 'hb_face_frame'):
+            del bpy.types.Scene.hb_face_frame
 
 classes = (
     Face_Frame_Scene_Props,

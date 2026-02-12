@@ -696,7 +696,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
                 factor=context.window_manager.home_builder.progress
             )
         else:
-            row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')        
+            row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')
+            row.operator("hb_frameless.update_cabinet_materials", text="", icon='MATERIAL')
 
 
 class HB_UL_cabinet_styles(UIList):
@@ -2321,7 +2322,8 @@ class Frameless_Scene_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.hb_frameless            
+        if hasattr(bpy.types.Scene, 'hb_frameless'):
+            del bpy.types.Scene.hb_frameless
 
 
 classes = (

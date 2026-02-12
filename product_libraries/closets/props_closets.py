@@ -32,7 +32,8 @@ class Closets_Scene_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.hb_closets            
+        if hasattr(bpy.types.Scene, 'hb_closets'):
+            del bpy.types.Scene.hb_closets
 
 classes = (
     Closets_Scene_Props,

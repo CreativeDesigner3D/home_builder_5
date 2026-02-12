@@ -49,6 +49,10 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
                                                         description="This setting changes the studio lighting to the recommended lighting",
                                                         default=True)# type: ignore
 
+    auto_run_python_scripts: bpy.props.BoolProperty(name="Auto Run Python Scripts",
+                                                        description="This enables auto run python scripts which is required for cabinets to draw correctly",
+                                                        default=True)# type: ignore
+
     def check(self, context):
         return True
     
@@ -91,6 +95,8 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
             shading.studio_light = 'paint.sl'
         if self.use_vertex_snapping:
             tool_settings.snap_elements_base = {'VERTEX'}
+        if self.auto_run_python_scripts:
+            bpy.context.preferences.filepaths.use_scripts_auto_execute = True
         return {'FINISHED'}
 
     def draw(self, context):
@@ -103,6 +109,7 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         box.prop(self,'show_wireframes')
         box.prop(self,'change_studio_lighting')
         box.prop(self,'use_vertex_snapping')
+        box.prop(self,'auto_run_python_scripts',text="Auto Run Python Scripts - IMPORTANT")
 
 
 class home_builder_OT_reload_addon(bpy.types.Operator):

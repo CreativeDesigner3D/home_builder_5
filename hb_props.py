@@ -348,7 +348,8 @@ class Home_Builder_Object_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.Object.home_builder    
+        if hasattr(bpy.types.Object, 'home_builder'):
+            del bpy.types.Object.home_builder
 
 
 
@@ -573,7 +574,8 @@ class Home_Builder_Scene_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.home_builder    
+        if hasattr(bpy.types.Scene, 'home_builder'):
+            del bpy.types.Scene.home_builder
 
 class Home_Builder_Window_Manager_Props(PropertyGroup):
 
@@ -594,7 +596,8 @@ class Home_Builder_Window_Manager_Props(PropertyGroup):
         
     @classmethod
     def unregister(cls):
-        del bpy.types.WindowManager.home_builder   
+        if hasattr(bpy.types.WindowManager, 'home_builder'):
+            del bpy.types.WindowManager.home_builder
 
 classes = (
     Calculator_Prompt,

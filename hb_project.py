@@ -132,7 +132,8 @@ class Home_Builder_Project_Props(PropertyGroup):
     
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.hb_project
+        if hasattr(bpy.types.Scene, 'hb_project'):
+            del bpy.types.Scene.hb_project
 
 
 # =============================================================================

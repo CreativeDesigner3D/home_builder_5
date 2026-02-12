@@ -3976,6 +3976,9 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     
-    del bpy.types.Scene.hb_layout_scale
-    del bpy.types.Scene.hb_paper_size
-    del bpy.types.Scene.hb_paper_landscape
+    if hasattr(bpy.types.Scene, 'hb_layout_scale'):
+        del bpy.types.Scene.hb_layout_scale
+    if hasattr(bpy.types.Scene, 'hb_paper_size'):
+        del bpy.types.Scene.hb_paper_size
+    if hasattr(bpy.types.Scene, 'hb_paper_landscape'):
+        del bpy.types.Scene.hb_paper_landscape

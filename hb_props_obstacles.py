@@ -264,7 +264,8 @@ class Obstacles_Scene_Props(PropertyGroup):
     
     @classmethod
     def unregister(cls):
-        del bpy.types.Scene.hb_obstacles
+        if hasattr(bpy.types.Scene, 'hb_obstacles'):
+            del bpy.types.Scene.hb_obstacles
 
 
 # =============================================================================

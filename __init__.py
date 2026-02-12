@@ -200,6 +200,13 @@ def register():
 
     bpy.app.handlers.load_post.append(load_file_post)
 
+    # Load driver functions on first enable
+    import inspect
+    from . import hb_driver_functions
+    for name, obj in inspect.getmembers(hb_driver_functions):
+        if name not in bpy.app.driver_namespace:
+            bpy.app.driver_namespace[name] = obj
+
 def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 

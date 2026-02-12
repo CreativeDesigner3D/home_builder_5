@@ -6,6 +6,23 @@ from .. import props_hb_frameless
 from ..props_hb_frameless import get_or_create_pull_finish_material
 from .... import hb_utils, hb_project, hb_types, units
 
+
+def ensure_default_styles():
+    """Ensure at least one cabinet style and one door style exist."""
+    main_scene = hb_project.get_main_scene()
+    props = main_scene.hb_frameless
+
+    if len(props.cabinet_styles) == 0:
+        style = props.cabinet_styles.add()
+        style.name = "Style 1"
+        props.active_cabinet_style_index = 0
+
+    if len(props.door_styles) == 0:
+        style = props.door_styles.add()
+        style.name = "Door Style 1"
+        props.active_door_style_index = 0
+
+
 class hb_frameless_OT_add_door_style(bpy.types.Operator):
     """Add a new door style"""
     bl_idname = "hb_frameless.add_door_style"
@@ -632,6 +649,8 @@ class hb_frameless_OT_assign_cabinet_style(bpy.types.Operator):
     cabinet_name: bpy.props.StringProperty(name="Cabinet Name",default="")# type: ignore
 
     def execute(self, context):
+        ensure_default_styles()
+
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
@@ -764,6 +783,84 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
         # Fallback for non-invoke calls
         return self.invoke(context, None)
 
+
+
+class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
+    """Quickly update only the materials on all cabinets using the active style (skips overlay and geometry updates)"""
+    bl_idname = "hb_frameless.update_cabinet_materials"
+    bl_label = "Update Cabinet Materials"
+    bl_description = "Quickly update materials on all cabinets using the active cabinet style without recalculating geometry"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.cabinet_styles) > 0
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        if not props.cabinet_styles:
+            self.report({'WARNING'}, "No cabinet styles defined")
+            return {'CANCELLED'}
+
+        style_index = props.active_cabinet_style_index
+        style = props.cabinet_styles[style_index]
+
+        # Get materials once
+        style.get_finish_material()
+        style.get_interior_material()
+
+        # Collect all cabinets that use this style
+        cabinets = []
+        for scene in bpy.data.scenes:
+            for obj in scene.objects:
+                if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('IS_FRAMELESS_MISC_PART'):
+                    cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
+                    if cab_style_index == style_index:
+                        cabinets.append(obj)
+
+        if not cabinets:
+            self.report({'INFO'}, f"No cabinets found using style \'{style.name}\'")
+            return {'CANCELLED'}
+
+        # Update materials only on all matching cabinets
+        for cabinet_obj in cabinets:
+            finished_interior = cabinet_obj.get('Finished Interior', False)
+
+            parts_to_update = [child for child in cabinet_obj.children_recursive if 'CABINET_PART' in child]
+            if cabinet_obj.get('IS_FRAMELESS_MISC_PART') and 'CABINET_PART' in cabinet_obj:
+                parts_to_update.append(cabinet_obj)
+
+            for child in parts_to_update:
+                part = hb_types.GeoNodeObject(child)
+
+                if finished_interior:
+                    top_mat = style.material
+                    bottom_mat = style.material
+                else:
+                    finish_top = child.get('Finish Top', False)
+                    finish_bottom = child.get('Finish Bottom', True)
+                    top_mat = style.material if finish_top else style.interior_material
+                    bottom_mat = style.material if finish_bottom else style.interior_material
+
+                part.set_input("Top Surface", top_mat)
+                part.set_input("Bottom Surface", bottom_mat)
+                part.set_input("Edge W1", style.material_rotated)
+                part.set_input("Edge W2", style.material_rotated)
+                part.set_input("Edge L1", style.material_rotated)
+                part.set_input("Edge L2", style.material_rotated)
+
+                for mod in child.modifiers:
+                    if mod.type == 'NODES' and mod.node_group:
+                        if 'Material' in mod.node_group.interface.items_tree:
+                            node_input = mod.node_group.interface.items_tree['Material']
+                            mod[node_input.identifier] = style.material
+
+        self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style \'{style.name}\'")
+        return {'FINISHED'}
 
 
 # =============================================================================
@@ -1246,6 +1343,7 @@ classes = (
     hb_frameless_OT_assign_cabinet_style_to_selected_cabinets,
     hb_frameless_OT_assign_cabinet_style,
     hb_frameless_OT_update_cabinets_from_style,
+    hb_frameless_OT_update_cabinet_materials,
     hb_frameless_OT_update_cabinet_pulls,
     hb_frameless_OT_update_pull_locations,
     hb_frameless_OT_update_pull_finish,

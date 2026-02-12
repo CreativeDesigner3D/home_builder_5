@@ -1,5 +1,5 @@
 import bpy
-from .... import hb_utils, hb_types, units
+from .... import hb_utils, hb_types, units, hb_project
 
 
 def get_product_bp(obj):
@@ -316,8 +316,6 @@ class hb_frameless_OT_convert_to_door_panel(bpy.types.Operator):
         return False
 
     def execute(self, context):
-        from .... import hb_project
-
         bp = get_product_bp(context.object)
         part = hb_types.GeoNodeCutpart(bp)
 
