@@ -102,14 +102,16 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        box.label(text="These are the recommended Home Builder settings.")
-        box.prop(self,'turn_on_object_color_type',text="Turn On Object Color Type - IMPORTANT")
+        box.label(text="These are the required Home Builder settings.")
+        box.prop(self,'turn_on_object_color_type',text="Turn On Object Color Type - REQUIRED")
+        box.prop(self,'auto_run_python_scripts',text="Auto Run Python Scripts - REQUIRED")
+        box = layout.box()
+        box.label(text="These are the recommended Home Builder settings.")        
         box.prop(self,'turn_off_relationship_lines')
         box.prop(self,'turn_off_3d_cursor')
         box.prop(self,'show_wireframes')
         box.prop(self,'change_studio_lighting')
         box.prop(self,'use_vertex_snapping')
-        box.prop(self,'auto_run_python_scripts',text="Auto Run Python Scripts - IMPORTANT")
 
 
 class home_builder_OT_reload_addon(bpy.types.Operator):
