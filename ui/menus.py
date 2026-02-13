@@ -43,6 +43,9 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
         layout.separator()
+        layout.operator("home_builder_walls.hide_wall", text="Hide Wall", icon='HIDE_ON')
+        layout.operator("home_builder_walls.show_all_walls", text="Show All Walls", icon='HIDE_OFF')
+        layout.separator()
         layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
 
 

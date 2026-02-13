@@ -1708,7 +1708,65 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
 
+
+
+class home_builder_walls_OT_hide_wall(bpy.types.Operator):
+    """Hide the selected wall and all its children"""
+    bl_idname = "home_builder_walls.hide_wall"
+    bl_label = "Hide Wall"
+    bl_description = "Hide the selected wall and all of its children"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj and obj.get('IS_WALL_BP'):
+            return True
+        if obj and obj.parent and obj.parent.get('IS_WALL_BP'):
+            return True
+        return False
+
+    def execute(self, context):
+        obj = context.active_object
+        wall_bp = obj if obj.get('IS_WALL_BP') else obj.parent
+
+        wall_bp.hide_set(True)
+        wall_bp.hide_viewport = True
+        for child in wall_bp.children_recursive:
+            child.hide_set(True)
+            child.hide_viewport = True
+
+        self.report({'INFO'}, f"Wall hidden")
+        return {'FINISHED'}
+
+
+class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
+    """Show all hidden walls in the scene"""
+    bl_idname = "home_builder_walls.show_all_walls"
+    bl_label = "Show All Walls"
+    bl_description = "Unhide all hidden walls and their children"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        count = 0
+        for obj in context.scene.objects:
+            if obj.get('IS_WALL_BP') and (obj.hide_get() or obj.hide_viewport):
+                obj.hide_set(False)
+                obj.hide_viewport = False
+                for child in obj.children_recursive:
+                    child.hide_set(False)
+                    child.hide_viewport = False
+                count += 1
+
+        if count > 0:
+            self.report({'INFO'}, f"Restored {count} hidden wall(s)")
+        else:
+            self.report({'INFO'}, "No hidden walls found")
+        return {'FINISHED'}
+
 classes = (
+    home_builder_walls_OT_hide_wall,
+    home_builder_walls_OT_show_all_walls,
     home_builder_walls_OT_delete_wall,
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
