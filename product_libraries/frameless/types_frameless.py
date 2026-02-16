@@ -1136,6 +1136,8 @@ class Pullout(CabinetOpening):
     Default interior is a Drawer Box, but different accessories can be added.
     """
 
+    door_pull_location = "Base"
+
     def create(self):
         super().create("Pullout")
 
@@ -1157,28 +1159,26 @@ class Pullout(CabinetOpening):
 
         inset = self.var_prop('Inset Front', 'inset')
 
-        drawer_front = CabinetDrawerFront()
-        drawer_front.create('Pullout Front')
-        drawer_front.obj.parent = self.obj
-        drawer_front.obj.rotation_euler.x = math.radians(90)
-        drawer_front.obj.rotation_euler.y = math.radians(-90)
-        drawer_front.driver_location('x', '-lo',[lo])
-        # Inset: drawer front sits inside opening (Y=0), Overlay: projects forward
-        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
-        drawer_front.driver_location('z', '-bo',[bo])
-        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
-        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
-        drawer_front.driver_input("Thickness", 'ft', [ft]) 
-        drawer_front.driver_prop("Top Overlay", 'to', [to])
-        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
-        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
-        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
-        drawer_front.set_input("Mirror Y", True)
+        pullout_front = CabinetPulloutFront()
+        pullout_front.door_pull_location = self.door_pull_location
+        pullout_front.create('Pullout Front')
+        pullout_front.obj.parent = self.obj
+        pullout_front.obj.rotation_euler.x = math.radians(90)
+        pullout_front.obj.rotation_euler.y = math.radians(-90)
+        pullout_front.driver_location('x', '-lo',[lo])
+        # Inset: front sits inside opening (Y=0), Overlay: projects forward
+        pullout_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
+        pullout_front.driver_location('z', '-bo',[bo])
+        pullout_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
+        pullout_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
+        pullout_front.driver_input("Thickness", 'ft', [ft]) 
+        pullout_front.driver_prop("Top Overlay", 'to', [to])
+        pullout_front.driver_prop("Bottom Overlay", 'bo', [bo])
+        pullout_front.driver_prop("Left Overlay", 'lo', [lo])
+        pullout_front.driver_prop("Right Overlay", 'ro', [ro])
+        pullout_front.set_input("Mirror Y", True)
         
-        # Set Center Pull to False - pull will be at top
-        drawer_front.set_property("Center Pull", False)
-        
-        drawer_front.add_drawer_box()
+        pullout_front.add_drawer_box()
 
 
 class FalseFront(CabinetOpening):
@@ -1626,6 +1626,114 @@ class CabinetDrawerFront(CabinetFront):
         # Y is horizontal Location
         drawer_box.driver_location('y', '-lo - side_clr', [lo,side_clr])
         # Hide drawer box when False Front is enabled
+        false_front = self.var_prop('False Front', 'false_front')
+        drawer_box.driver_hide('false_front', [false_front])
+
+
+
+
+class CabinetPulloutFront(CabinetFront):
+    """Pullout front - uses Base/Tall/Upper pull location like doors.
+    Unlike drawer fronts, pullout fronts never use centered pulls.
+    """
+
+    door_pull_location = "Base"
+    
+    def create(self, name):
+        super().create(name)
+        self.obj['IS_PULLOUT_FRONT'] = True
+        props = bpy.context.scene.hb_frameless
+
+        self.add_property("False Front", 'CHECKBOX', False)
+
+        pull_location_index = 0
+        if self.door_pull_location == "Base":
+            pull_location_index = 0
+        elif self.door_pull_location == "Tall":
+            pull_location_index = 1
+        elif self.door_pull_location == "Upper":
+            pull_location_index = 2
+
+        self.add_property("Pull Location", 'COMBOBOX', pull_location_index, combobox_items=["Base", "Tall", "Upper"])
+        self.add_property('Base Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_base)
+        self.add_property('Tall Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_tall)
+        self.add_property('Upper Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
+
+        pull_obj = self.get_pull_object(pull_type='drawer')
+        pull_length = pull_obj.dimensions.x if pull_obj else 0.1016
+        self.add_property('Pull Length', 'DISTANCE', pull_length)
+
+        length = self.var_input('Length', 'length')
+        width = self.var_input('Width', 'width')
+        thickness = self.var_input('Thickness', 'thickness')
+        false_front = self.var_prop('False Front', 'false_front')
+        pl = self.var_prop('Pull Location', 'pl')
+        pvl_base = self.var_prop('Base Pull Vertical Location', 'pvl_base')
+        pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
+        pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
+        pull_len = self.var_prop('Pull Length', 'pull_len')
+
+        pull = GeoNodeHardware()
+        pull.create('Pull')
+        pull.obj['IS_CABINET_PULL'] = True
+        pull.obj.parent = self.obj
+        pull.obj.rotation_euler.x = math.radians(-90)
+        pull.obj.rotation_euler.z = math.radians(90)
+        if pull_obj:
+            pull.set_input("Object", pull_obj)
+        # Base: measure from top, Tall/Upper: measure from bottom
+        pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))', [length, pl, pvl_base, pvl_tall, pvl_upper, pull_len])
+        pull.driver_location('y', '-width/2', [width])
+        pull.driver_location('z', 'thickness', [thickness])
+        pull.driver_hide('false_front', [false_front])
+
+    def add_drawer_box(self):
+        """Add a drawer box to this pullout front."""
+        props = bpy.context.scene.hb_frameless
+        
+        if not props.include_drawer_boxes:
+            return
+        
+        if self.obj.get('False Front', False):
+            return
+
+        for child in self.obj.children:
+            if child.get('IS_DRAWER_BOX'):
+                return
+
+        drawer_opening = GeoNodeCage(self.obj.parent)
+        opening_depth = drawer_opening.var_input('Dim Y', 'opening_depth')
+
+        df_height = self.var_input('Length', 'df_height')
+        df_width = self.var_input('Width', 'df_width')
+        lo = self.var_prop('Left Overlay', 'lo')
+        ro = self.var_prop('Right Overlay', 'ro')
+        to = self.var_prop('Top Overlay', 'to')
+        bo = self.var_prop('Bottom Overlay', 'bo')
+        
+        if 'Drawer Box Side Clearance' not in self.obj:
+            self.add_property('Drawer Box Side Clearance', 'DISTANCE', inch(0.5))
+            self.add_property('Drawer Box Top Clearance', 'DISTANCE', inch(0.75))
+            self.add_property('Drawer Box Rear Clearance', 'DISTANCE', inch(1.0))
+            self.add_property('Drawer Box Bottom Clearance', 'DISTANCE', inch(.5))
+        
+        side_clr = self.var_prop('Drawer Box Side Clearance', 'side_clr')
+        top_clr = self.var_prop('Drawer Box Top Clearance', 'top_clr')
+        rear_clr = self.var_prop('Drawer Box Rear Clearance', 'rear_clr')
+        bottom_clr = self.var_prop('Drawer Box Bottom Clearance', 'bottom_clr')
+        
+        drawer_box = GeoNodeDrawerBox()
+        drawer_box.create('Drawer Box')
+        drawer_box.obj['IS_FRAMELESS_INTERIOR_PART'] = True
+        drawer_box.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
+        drawer_box.obj.parent = self.obj
+        drawer_box.obj.rotation_euler.x = math.radians(-90)
+        drawer_box.obj.rotation_euler.z = math.radians(-90)
+        drawer_box.driver_input('Dim X', 'df_width - lo - ro - (side_clr * 2)', [df_width, lo, ro, side_clr])
+        drawer_box.driver_input('Dim Y', 'opening_depth - rear_clr', [opening_depth, rear_clr])
+        drawer_box.driver_input('Dim Z', 'df_height - to - bo - top_clr - bottom_clr', [df_height, to, bo, top_clr, bottom_clr])
+        drawer_box.driver_location('x', 'bo + bottom_clr', [bo, bottom_clr])
+        drawer_box.driver_location('y', '-lo - side_clr', [lo, side_clr])
         false_front = self.var_prop('False Front', 'false_front')
         drawer_box.driver_hide('false_front', [false_front])
 

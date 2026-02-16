@@ -232,7 +232,9 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_pullout(self, bay):
         """Create pullout opening (drawer with pull at top)."""
+        cabinet_type = self.get_cabinet_type(bay.obj)
         pullout = types_frameless.Pullout()
+        pullout.door_pull_location = self.get_pull_location(cabinet_type, 0, 1)
         self.add_cage_to_bay(bay, pullout)
 
     def create_flip_up_door(self, bay):
@@ -419,11 +421,13 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
     def create_pullout_with_drawer(self, bay):
         """Create pullout with drawer above."""
         props = bpy.context.scene.hb_frameless
+        cabinet_type = self.get_cabinet_type(bay.obj)
         
         drawer = types_frameless.Drawer()
         drawer.half_overlay_bottom = True
         
         pullout = types_frameless.Pullout()
+        pullout.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)
         pullout.half_overlay_top = True
         
         splitter = types_frameless.SplitterVertical()
@@ -488,6 +492,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         doors.half_overlay_bottom = True
         
         pullout = types_frameless.Pullout()
+        pullout.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)
         pullout.half_overlay_top = True
         
         splitter = types_frameless.SplitterVertical()
@@ -498,7 +503,9 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
 
     def create_tall_pullout(self, bay):
         """Create full height pullout (tall cabinet)."""
+        cabinet_type = self.get_cabinet_type(bay.obj)
         pullout = types_frameless.Pullout()
+        pullout.door_pull_location = self.get_pull_location(cabinet_type, 0, 1)
         self.add_cage_to_bay(bay, pullout)
 
     def create_doors_with_tall_pullout(self, bay, door_swing=2):
@@ -510,6 +517,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         doors.half_overlay_bottom = True
         
         pullout = types_frameless.Pullout()
+        pullout.door_pull_location = self.get_pull_location(cabinet_type, 1, 2)
         pullout.half_overlay_top = True
         
         splitter = types_frameless.SplitterVertical()
@@ -948,7 +956,25 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
 
     def create_pullout(self, opening, half_top, half_bottom, half_left, half_right):
         """Create pullout (drawer with pull at top)."""
+        cabinet_type = self.get_cabinet_type(opening.obj)
         pullout = types_frameless.Pullout()
+
+        is_top = not half_top
+        is_bottom = not half_bottom
+
+        if cabinet_type == 'UPPER':
+            pullout.door_pull_location = "Upper"
+        elif cabinet_type == 'TALL':
+            if is_top and not is_bottom:
+                pullout.door_pull_location = "Upper"
+            elif is_bottom and not is_top:
+                pullout.door_pull_location = "Base"
+            elif is_top and is_bottom:
+                pullout.door_pull_location = "Tall"
+            else:
+                pullout.door_pull_location = "Tall"
+        else:
+            pullout.door_pull_location = "Base"
         
         # Apply half overlays based on position in splitter
         pullout.half_overlay_top = half_top

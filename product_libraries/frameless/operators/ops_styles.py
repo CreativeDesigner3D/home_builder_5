@@ -1023,6 +1023,17 @@ class hb_frameless_OT_update_pull_locations(bpy.types.Operator):
                     drawer_count += 1
                 except Exception as e:
                     print(f"Error updating drawer front {obj.name}: {e}")
+
+            # Update pullout fronts (same locations as doors)
+            elif obj.get('IS_PULLOUT_FRONT') and self.update_type in ('DOOR', 'ALL'):
+                try:
+                    obj['Base Pull Vertical Location'] = props.pull_vertical_location_base
+                    obj['Tall Pull Vertical Location'] = props.pull_vertical_location_tall
+                    obj['Upper Pull Vertical Location'] = props.pull_vertical_location_upper
+                    updated_fronts.append(obj)
+                    door_count += 1
+                except Exception as e:
+                    print(f"Error updating pullout front {obj.name}: {e}")
         
         # Force driver recalculation (workaround for Blender bug #133392)
         # Touch location on all pull objects to mark transforms dirty
