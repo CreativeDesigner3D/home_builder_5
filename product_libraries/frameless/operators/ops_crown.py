@@ -644,7 +644,8 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         else:
             start_along = first_wb['along_start'] + a_sign * inset
-            world_points.append(self._make_world_point(start_along, first_wb['back'], axis))
+            back_along = first_wb['along_start'] + a_sign * inset - a_sign * extend
+            world_points.append(self._make_world_point(back_along, first_wb['back'], axis))
             world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         
         # === MIDDLE - transitions between cabinets ===
@@ -688,8 +689,9 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
                 world_points.append(self._make_world_point(end_along, adj_wb['front'] - extend + inset, axis))
         else:
             end_along = last_wb['along_end'] - a_sign * inset
+            back_along = last_wb['along_end'] - a_sign * inset + a_sign * extend
             world_points.append(self._make_world_point(end_along, last_wb['front'] - extend + inset, axis))
-            world_points.append(self._make_world_point(end_along, last_wb['back'], axis))
+            world_points.append(self._make_world_point(back_along, last_wb['back'], axis))
         
         # Convert world points to local coordinates relative to first cabinet
         first_inv = first_cab.matrix_world.inverted()
