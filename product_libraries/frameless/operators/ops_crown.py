@@ -643,10 +643,9 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             
             world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
         else:
-            start_along = first_wb['along_start'] + a_sign * inset
             back_along = first_wb['along_start'] + a_sign * inset - a_sign * extend
             world_points.append(self._make_world_point(back_along, first_wb['back'], axis))
-            world_points.append(self._make_world_point(start_along, first_wb['front'] - extend + inset, axis))
+            world_points.append(self._make_world_point(back_along, first_wb['front'] - extend + inset, axis))
         
         # === MIDDLE - transitions between cabinets ===
         for i in range(len(cabinets) - 1):
@@ -688,9 +687,8 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             if adj_type == 'TALL' and last_cab.get('CABINET_TYPE') == 'UPPER':
                 world_points.append(self._make_world_point(end_along, adj_wb['front'] - extend + inset, axis))
         else:
-            end_along = last_wb['along_end'] - a_sign * inset
             back_along = last_wb['along_end'] - a_sign * inset + a_sign * extend
-            world_points.append(self._make_world_point(end_along, last_wb['front'] - extend + inset, axis))
+            world_points.append(self._make_world_point(back_along, last_wb['front'] - extend + inset, axis))
             world_points.append(self._make_world_point(back_along, last_wb['back'], axis))
         
         # Convert world points to local coordinates relative to first cabinet
