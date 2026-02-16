@@ -395,35 +395,71 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         }
     
     def _is_against_wall(self, cabinet, side, walls, tolerance=0.05):
-        """Check if cabinet side is against a wall."""
+        """Check if cabinet side is against a wall.
+        
+        Uses world-space bounding boxes for both cabinet and wall to handle
+        rotated walls. 'side' is relative to the cabinet arrangement:
+          'left' = start of run, 'right' = end of run, 'back' = wall side
+        """
         bounds = self._get_cabinet_bounds(cabinet)
+        axis = self._get_wall_direction(cabinet)
         
         for wall in walls:
-            wall_loc = wall.matrix_world.translation
-            wall_dims = wall.dimensions
-            
-            # Wall bounds (walls are typically thin in Y)
-            wall_min_x = wall_loc.x
-            wall_max_x = wall_loc.x + wall_dims.x
-            wall_min_y = wall_loc.y - wall_dims.y
-            wall_max_y = wall_loc.y
+            # Use world-space bounding box for rotated walls
+            from mathutils import Vector
+            corners = [wall.matrix_world @ Vector(c) for c in wall.bound_box]
+            wxs = [c.x for c in corners]
+            wys = [c.y for c in corners]
+            w_min_x, w_max_x = min(wxs), max(wxs)
+            w_min_y, w_max_y = min(wys), max(wys)
+            w_thickness_x = w_max_x - w_min_x
+            w_thickness_y = w_max_y - w_min_y
             
             if side == 'left':
-                # Check if cabinet's left edge is near wall's right edge or within wall
-                if abs(bounds['left_x'] - wall_max_x) < tolerance or abs(bounds['left_x'] - wall_min_x) < tolerance:
-                    # Check Y overlap
-                    if bounds['back_y'] >= wall_min_y and bounds['front_y'] <= wall_max_y:
-                        return True
+                if axis == 'X':
+                    # Left = min X edge; wall should be thin in X (perpendicular wall)
+                    if w_thickness_x < 0.2:
+                        if (abs(bounds['left_x'] - w_max_x) < tolerance or 
+                            abs(bounds['left_x'] - w_min_x) < tolerance):
+                            if bounds['front_y'] >= w_min_y - tolerance and bounds['back_y'] <= w_max_y + tolerance:
+                                return True
+                else:
+                    # Y-axis run: left = max Y (start); wall should be thin in Y (perpendicular wall)
+                    if w_thickness_y < 0.2:
+                        if (abs(bounds['back_y'] - w_max_y) < tolerance or 
+                            abs(bounds['back_y'] - w_min_y) < tolerance):
+                            if bounds['left_x'] >= w_min_x - tolerance and bounds['right_x'] <= w_max_x + tolerance:
+                                return True
+            
             elif side == 'right':
-                # Check if cabinet's right edge is near wall's left edge
-                if abs(bounds['right_x'] - wall_min_x) < tolerance or abs(bounds['right_x'] - wall_max_x) < tolerance:
-                    if bounds['back_y'] >= wall_min_y and bounds['front_y'] <= wall_max_y:
-                        return True
+                if axis == 'X':
+                    # Right = max X edge; wall should be thin in X
+                    if w_thickness_x < 0.2:
+                        if (abs(bounds['right_x'] - w_min_x) < tolerance or 
+                            abs(bounds['right_x'] - w_max_x) < tolerance):
+                            if bounds['front_y'] >= w_min_y - tolerance and bounds['back_y'] <= w_max_y + tolerance:
+                                return True
+                else:
+                    # Y-axis run: right = min Y (end); wall should be thin in Y
+                    if w_thickness_y < 0.2:
+                        if (abs(bounds['front_y'] - w_min_y) < tolerance or 
+                            abs(bounds['front_y'] - w_max_y) < tolerance):
+                            if bounds['left_x'] >= w_min_x - tolerance and bounds['right_x'] <= w_max_x + tolerance:
+                                return True
+            
             elif side == 'back':
-                # Check if cabinet's back is against wall
-                if abs(bounds['back_y'] - wall_min_y) < tolerance:
-                    if bounds['left_x'] >= wall_min_x and bounds['right_x'] <= wall_max_x:
-                        return True
+                if axis == 'X':
+                    # Back = max Y; wall thin in Y
+                    if w_thickness_y < 0.2:
+                        if abs(bounds['back_y'] - w_min_y) < tolerance or abs(bounds['back_y'] - w_max_y) < tolerance:
+                            if bounds['left_x'] >= w_min_x - tolerance and bounds['right_x'] <= w_max_x + tolerance:
+                                return True
+                else:
+                    # Y-axis: back = max X; wall thin in X
+                    if w_thickness_x < 0.2:
+                        if abs(bounds['right_x'] - w_min_x) < tolerance or abs(bounds['right_x'] - w_max_x) < tolerance:
+                            if bounds['front_y'] >= w_min_y - tolerance and bounds['back_y'] <= w_max_y + tolerance:
+                                return True
         
         return False
     
