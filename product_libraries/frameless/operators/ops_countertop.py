@@ -14,6 +14,64 @@ def get_cabinet_depth(cab_obj):
     return cage.get_input('Dim Y')
 
 
+def split_cabinets_at_ranges(wall_obj, cabinets):
+    """Split a wall's cabinet list into sub-groups separated by ranges.
+    Returns a list of cabinet sub-groups that should each get their own countertop."""
+    if not cabinets:
+        return []
+
+    # Find ranges on this wall
+    ranges = []
+    for obj in wall_obj.children:
+        if obj.get('IS_APPLIANCE') and obj.get('APPLIANCE_TYPE') == 'RANGE':
+            cage = hb_types.GeoNodeCage(obj)
+            r_start = obj.location.x
+            r_end = r_start + cage.get_input('Dim X')
+            ranges.append((r_start, r_end))
+
+    if not ranges:
+        return [cabinets]
+
+    ranges.sort(key=lambda r: r[0])
+    cabinets_sorted = sorted(cabinets, key=lambda c: c.location.x)
+
+    groups = []
+    current_group = []
+
+    for cab in cabinets_sorted:
+        cage = hb_types.GeoNodeCage(cab)
+        cab_start = cab.location.x
+        cab_end = cab_start + cage.get_input('Dim X')
+        cab_mid = (cab_start + cab_end) / 2
+
+        # Check if this cabinet overlaps with any range
+        overlaps_range = False
+        for r_start, r_end in ranges:
+            if cab_mid >= r_start and cab_mid <= r_end:
+                overlaps_range = True
+                break
+
+        if not overlaps_range:
+            # Check if a range sits between this cabinet and the previous one
+            if current_group:
+                prev = current_group[-1]
+                prev_cage = hb_types.GeoNodeCage(prev)
+                prev_end = prev.location.x + prev_cage.get_input('Dim X')
+                for r_start, r_end in ranges:
+                    if r_start >= prev_end - 0.01 and r_end <= cab_start + 0.01:
+                        # Range is between previous and current cabinet - split here
+                        groups.append(current_group)
+                        current_group = []
+                        break
+
+            current_group.append(cab)
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
 def gather_base_cabinets(context):
     """Collect base cabinets grouped by wall, cage groups, and lone islands."""
     wall_cabinets = {}
@@ -319,9 +377,15 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
             for i, (wall_obj, cabinets) in enumerate(run):
                 has_left = i > 0
                 has_right = i < len(run) - 1
-                ct = create_wall_countertop(context, wall_obj, cabinets, has_left, has_right)
-                if ct:
-                    ct_count += 1
+                # Split cabinets at ranges so countertops don't span over them
+                sub_groups = split_cabinets_at_ranges(wall_obj, cabinets)
+                for gi, group in enumerate(sub_groups):
+                    # Suppress overhang on sides adjacent to a range
+                    left_conn = has_left if gi == 0 else True
+                    right_conn = has_right if gi == len(sub_groups) - 1 else True
+                    ct = create_wall_countertop(context, wall_obj, group, left_conn, right_conn)
+                    if ct:
+                        ct_count += 1
 
         # Cage group countertops
         for group_obj, cabinets in cage_groups:
