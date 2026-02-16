@@ -368,11 +368,15 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             bpy.data.objects.remove(child, do_unlink=True)
     
     def _get_cabinet_bounds(self, cabinet):
-        """Get world-space bounds of a cabinet using bounding box corners."""
+        """Get world-space bounds of a cabinet using evaluated bounding box corners."""
         matrix = cabinet.matrix_world
         
+        # Use evaluated object to get proper bound_box for geometry node objects
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        eval_obj = cabinet.evaluated_get(depsgraph)
+        
         # Transform all bounding box corners to world space
-        world_corners = [matrix @ Vector(corner) for corner in cabinet.bound_box]
+        world_corners = [matrix @ Vector(corner) for corner in eval_obj.bound_box]
         
         # Find min/max in each axis
         xs = [c.x for c in world_corners]
