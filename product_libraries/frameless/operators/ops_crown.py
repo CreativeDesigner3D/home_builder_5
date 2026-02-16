@@ -340,9 +340,10 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             cabinet['CROWN_DETAIL_NAME'] = crown.name
             cabinet['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
         
-        # Get all walls and all cabinets in scene for adjacency detection
-        all_walls = [o for o in main_scene.objects if o.get('IS_WALL_BP') or o.get('IS_WALL')]
-        all_cabinets = [o for o in main_scene.objects if o.get('IS_FRAMELESS_CABINET_CAGE')]
+        # Get all walls and all cabinets in current scene for adjacency detection
+        current_scene = context.scene
+        all_walls = [o for o in current_scene.objects if o.get('IS_WALL_BP') or o.get('IS_WALL')]
+        all_cabinets = [o for o in current_scene.objects if o.get('IS_FRAMELESS_CABINET_CAGE')]
         
         # Analyze cabinet adjacency and group connected cabinets
         cabinet_groups = self._group_adjacent_cabinets(cabinets, all_cabinets, all_walls)
@@ -350,7 +351,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         # Create crown molding for each group
         for group in cabinet_groups:
             for profile in profiles:
-                self._create_crown_for_group(context, group, profile, all_walls, all_cabinets, main_scene)
+                self._create_crown_for_group(context, group, profile, all_walls, all_cabinets, current_scene)
         
         total_cabs = sum(len(g['cabinets']) for g in cabinet_groups)
         self.report({'INFO'}, f"Created crown molding on {total_cabs} cabinet(s) in {len(cabinet_groups)} group(s)")
