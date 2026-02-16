@@ -665,11 +665,13 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             
             if depth_diff > 0.01:
                 if current_type == 'TALL' and next_type == 'UPPER':
-                    world_points.append(self._make_world_point(trans_along - a_sign * inset, current_wb['front'] - extend + inset, axis))
-                    world_points.append(self._make_world_point(trans_along - a_sign * inset, next_wb['front'] - extend + inset, axis))
+                    trans_adj = trans_along - a_sign * inset + a_sign * extend
+                    world_points.append(self._make_world_point(trans_adj, current_wb['front'] - extend + inset, axis))
+                    world_points.append(self._make_world_point(trans_adj, next_wb['front'] - extend + inset, axis))
                 elif current_type == 'UPPER' and next_type == 'TALL':
-                    world_points.append(self._make_world_point(trans_along + a_sign * inset, current_wb['front'] - extend + inset, axis))
-                    world_points.append(self._make_world_point(trans_along + a_sign * inset, next_wb['front'] - extend + inset, axis))
+                    trans_adj = trans_along + a_sign * inset - a_sign * extend
+                    world_points.append(self._make_world_point(trans_adj, current_wb['front'] - extend + inset, axis))
+                    world_points.append(self._make_world_point(trans_adj, next_wb['front'] - extend + inset, axis))
         
         # === RIGHT SIDE (end of run) ===
         if group['right_wall']:
