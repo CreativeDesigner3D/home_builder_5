@@ -354,7 +354,8 @@ class hb_frameless_OT_add_cabinet_style(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         
         # Create new style
         style = props.cabinet_styles.add()
@@ -383,12 +384,14 @@ class hb_frameless_OT_remove_cabinet_style(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         # Must have more than 1 style to remove
         return len(props.cabinet_styles) > 1
 
     def execute(self, context):
-        props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         
         if len(props.cabinet_styles) <= 1:
             self.report({'WARNING'}, "Cannot remove the last cabinet style")
@@ -406,15 +409,16 @@ class hb_frameless_OT_remove_cabinet_style(bpy.types.Operator):
         
         # Update any cabinets that referenced this style
         # (shift indices for cabinets using styles after the removed one)
-        for obj in context.scene.objects:
-            if obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
-                if cab_style_index == index:
-                    # Reset to default style
-                    obj['CABINET_STYLE_INDEX'] = 0
-                elif cab_style_index > index:
-                    # Shift index down
-                    obj['CABINET_STYLE_INDEX'] = cab_style_index - 1
+        for scene in bpy.data.scenes:
+            for obj in scene.objects:
+                if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                    cab_style_index = obj.get('CABINET_STYLE_INDEX', 0)
+                    if cab_style_index == index:
+                        # Reset to default style
+                        obj['CABINET_STYLE_INDEX'] = 0
+                    elif cab_style_index > index:
+                        # Shift index down
+                        obj['CABINET_STYLE_INDEX'] = cab_style_index - 1
         
         self.report({'INFO'}, f"Removed cabinet style: {style_name}")
         return {'FINISHED'}
@@ -429,11 +433,13 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         return len(props.cabinet_styles) > 0
 
     def execute(self, context):
-        props = context.scene.hb_frameless
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
         
         if not props.cabinet_styles:
             return {'CANCELLED'}
