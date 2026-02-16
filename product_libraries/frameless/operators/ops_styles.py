@@ -861,9 +861,17 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
 
                 for mod in child.modifiers:
                     if mod.type == 'NODES' and mod.node_group:
-                        if 'Material' in mod.node_group.interface.items_tree:
-                            node_input = mod.node_group.interface.items_tree['Material']
+                        tree_items = mod.node_group.interface.items_tree
+                        if 'Material' in tree_items:
+                            node_input = tree_items['Material']
                             mod[node_input.identifier] = style.material
+                        # Update 5-piece door materials (Stile, Rail, Panel)
+                        if 'Stile Material' in tree_items:
+                            mod[tree_items['Stile Material'].identifier] = style.material
+                        if 'Rail Material' in tree_items:
+                            mod[tree_items['Rail Material'].identifier] = style.material_rotated
+                        if 'Panel Material' in tree_items:
+                            mod[tree_items['Panel Material'].identifier] = style.material
 
         self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style \'{style.name}\'")
         return {'FINISHED'}
