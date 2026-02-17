@@ -146,10 +146,13 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         default=True
     )# type: ignore
 
-    extended_library_path: bpy.props.StringProperty(
-		name="Extended Asset Library Path",
-		description="Path to the downloaded extended asset library folder",
-		subtype='DIR_PATH',
+    asset_libraries: bpy.props.CollectionProperty(
+		type=hb_assets.HB_AssetLibraryEntry,
+	)# type: ignore
+
+    asset_libraries_index: bpy.props.IntProperty(
+		name="Active Library Index",
+		default=0,
 	)# type: ignore
 
     def draw(self, context):
@@ -166,10 +169,14 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         layout.separator()
         
         box = layout.box()
-        box.label(text="Asset Library", icon='ASSET_MANAGER')
-        row = box.row(align=True)
-        row.prop(self, "extended_library_path")
-        row.operator("home_builder.refresh_extended_library", text="", icon='FILE_REFRESH')
+        box.label(text="Asset Libraries", icon='ASSET_MANAGER')
+        row = box.row()
+        row.template_list("HB_UL_asset_libraries", "", self, "asset_libraries", self, "asset_libraries_index", rows=3)
+        col = row.column(align=True)
+        col.operator("home_builder.add_asset_library", text="", icon='ADD')
+        col.operator("home_builder.remove_asset_library", text="", icon='REMOVE')
+        col.separator()
+        col.operator("home_builder.refresh_asset_libraries", text="", icon='FILE_REFRESH')
         layout.prop(self, "wall_color")
         layout.prop(self, "cabinet_color")
         layout.prop(self, "door_window_color")
@@ -178,6 +185,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "obstacle_color")              
 
 def register():
+    hb_assets.register()
     bpy.utils.register_class(Home_Builder_AddonPreferences)
 
     hb_props.register()
@@ -196,7 +204,8 @@ def register():
     closets.register()
     face_frame.register()
     frameless.register()
-    hb_assets.register()
+
+    hb_assets.ensure_asset_libraries()
 
     bpy.app.handlers.load_post.append(load_file_post)
 

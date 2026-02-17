@@ -2,7 +2,7 @@ import bpy
 import os
 
 BUNDLED_LIBRARY_NAME = "Home Builder"
-EXTENDED_LIBRARY_NAME = "Home Builder Extended"
+USER_LIBRARY_PREFIX = "HB: "
 
 
 def get_addon_assets_path():
@@ -10,10 +10,10 @@ def get_addon_assets_path():
     return os.path.join(os.path.dirname(__file__), "assets")
 
 
-def get_extended_assets_path():
-    """Return the user-configured extended library path, or empty string."""
+def get_user_libraries():
+    """Return the list of user-configured library entries."""
     prefs = bpy.context.preferences.addons[__package__].preferences
-    return bpy.path.abspath(prefs.extended_library_path) if prefs.extended_library_path else ""
+    return prefs.asset_libraries
 
 
 def get_catalog_map():
@@ -32,6 +32,11 @@ def get_catalog_map():
                     path = parts[1]
                     catalog_map[path] = uid
     return catalog_map
+
+
+def _get_library_name(user_name):
+    """Get the Blender asset library name for a user library entry."""
+    return USER_LIBRARY_PREFIX + user_name
 
 
 def _register_library(name, path):
@@ -61,26 +66,118 @@ def _remove_library(name):
 
 
 def ensure_asset_libraries():
-    """Register both bundled and extended asset libraries."""
+    """Register bundled and all user asset libraries."""
+    # Clean up legacy extended library from previous versions
+    _remove_library("Home Builder Extended")
+    
     _register_library(BUNDLED_LIBRARY_NAME, get_addon_assets_path())
-    ext_path = get_extended_assets_path()
-    if ext_path:
-        _register_library(EXTENDED_LIBRARY_NAME, ext_path)
+    for entry in get_user_libraries():
+        if entry.library_path:
+            lib_path = bpy.path.abspath(entry.library_path)
+            _register_library(_get_library_name(entry.name), lib_path)
 
 
 def remove_asset_libraries():
-    """Remove both asset libraries from Blender preferences."""
+    """Remove all Home Builder asset libraries from Blender preferences."""
     _remove_library(BUNDLED_LIBRARY_NAME)
-    _remove_library(EXTENDED_LIBRARY_NAME)
+    for entry in get_user_libraries():
+        _remove_library(_get_library_name(entry.name))
 
 
-def refresh_extended_library():
-    """Re-register or remove the extended library based on current preference."""
-    ext_path = get_extended_assets_path()
-    if ext_path and os.path.isdir(ext_path):
-        _register_library(EXTENDED_LIBRARY_NAME, ext_path)
-    else:
-        _remove_library(EXTENDED_LIBRARY_NAME)
+def refresh_user_libraries():
+    """Sync all user libraries - register valid ones, remove invalid ones."""
+    # Remove any HB: prefixed libraries that are no longer in the list
+    asset_libs = bpy.context.preferences.filepaths.asset_libraries
+    user_lib_names = {_get_library_name(e.name) for e in get_user_libraries()}
+    
+    to_remove = []
+    for i, lib in enumerate(asset_libs):
+        if lib.name.startswith(USER_LIBRARY_PREFIX) and lib.name not in user_lib_names:
+            to_remove.append(lib.name)
+    for name in to_remove:
+        _remove_library(name)
+    
+    # Register/update current entries
+    for entry in get_user_libraries():
+        lib_name = _get_library_name(entry.name)
+        if entry.library_path:
+            lib_path = bpy.path.abspath(entry.library_path)
+            if os.path.isdir(lib_path):
+                _register_library(lib_name, lib_path)
+            else:
+                _remove_library(lib_name)
+        else:
+            _remove_library(lib_name)
+
+
+class HB_AssetLibraryEntry(bpy.types.PropertyGroup):
+    """A single user asset library entry."""
+    name: bpy.props.StringProperty(
+        name="Name",
+        description="Display name for this library",
+        default="New Library"
+    )  # type: ignore
+    library_path: bpy.props.StringProperty(
+        name="Path",
+        description="Path to the asset library folder",
+        subtype='DIR_PATH',
+    )  # type: ignore
+
+
+class HB_UL_asset_libraries(bpy.types.UIList):
+    """UIList for displaying user asset libraries."""
+    bl_idname = "HB_UL_asset_libraries"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row.prop(item, "name", text="", emboss=False)
+            row.prop(item, "library_path", text="")
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text=item.name)
+
+
+class HB_OT_add_asset_library(bpy.types.Operator):
+    """Add a new asset library entry"""
+    bl_idname = "home_builder.add_asset_library"
+    bl_label = "Add Asset Library"
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        entry = prefs.asset_libraries.add()
+        entry.name = "New Library"
+        prefs.asset_libraries_index = len(prefs.asset_libraries) - 1
+        return {'FINISHED'}
+
+
+class HB_OT_remove_asset_library(bpy.types.Operator):
+    """Remove the selected asset library entry"""
+    bl_idname = "home_builder.remove_asset_library"
+    bl_label = "Remove Asset Library"
+
+    def execute(self, context):
+        prefs = context.preferences.addons[__package__].preferences
+        index = prefs.asset_libraries_index
+        if 0 <= index < len(prefs.asset_libraries):
+            # Remove from Blender's asset libraries first
+            entry = prefs.asset_libraries[index]
+            _remove_library(_get_library_name(entry.name))
+            # Remove from our list
+            prefs.asset_libraries.remove(index)
+            prefs.asset_libraries_index = min(index, len(prefs.asset_libraries) - 1)
+        return {'FINISHED'}
+
+
+class HB_OT_refresh_asset_libraries(bpy.types.Operator):
+    """Refresh all user asset libraries"""
+    bl_idname = "home_builder.refresh_asset_libraries"
+    bl_label = "Refresh Asset Libraries"
+
+    def execute(self, context):
+        refresh_user_libraries()
+        self.report({'INFO'}, "Asset libraries updated")
+        return {'FINISHED'}
 
 
 class VIEW3D_AST_home_builder(bpy.types.AssetShelf):
@@ -158,31 +255,23 @@ class HB_OT_assign_asset_catalog(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class HB_OT_refresh_extended_library(bpy.types.Operator):
-    """Refresh the extended asset library after changing the path"""
-    bl_idname = "home_builder.refresh_extended_library"
-    bl_label = "Refresh Extended Library"
-
-    def execute(self, context):
-        refresh_extended_library()
-        self.report({'INFO'}, "Extended library updated")
-        return {'FINISHED'}
-
-
 classes = (
+    HB_AssetLibraryEntry,
+    HB_UL_asset_libraries,
+    HB_OT_add_asset_library,
+    HB_OT_remove_asset_library,
+    HB_OT_refresh_asset_libraries,
     VIEW3D_AST_home_builder,
     HB_OT_assign_asset_catalog,
-    HB_OT_refresh_extended_library,
 )
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    ensure_asset_libraries()
 
 
 def unregister():
+    remove_asset_libraries()
     for cls in classes:
         bpy.utils.unregister_class(cls)
-    remove_asset_libraries()
