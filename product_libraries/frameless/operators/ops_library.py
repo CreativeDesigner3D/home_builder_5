@@ -25,6 +25,12 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
         subtype='DIR_PATH',
         default=""
     )  # type: ignore
+
+    save_category: bpy.props.StringProperty(
+        name="Category",
+        description="Category subfolder to save into (leave empty for root)",
+        default=""
+    )  # type: ignore
     
     create_thumbnail: bpy.props.BoolProperty(
         name="Create Thumbnail",
@@ -56,6 +62,7 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
         layout = self.layout
         layout.prop(self, "cabinet_group_name")
         layout.prop(self, "save_path")
+        layout.prop(self, "save_category")
         layout.prop(self, "create_thumbnail")
     
     def execute(self, context):
@@ -69,13 +76,18 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
             self.report({'ERROR'}, "Please select a save location")
             return {'CANCELLED'}
         
+        # Append category subfolder if specified
+        actual_save_path = self.save_path
+        if self.save_category.strip():
+            actual_save_path = os.path.join(self.save_path, self.save_category.strip())
+
         # Create directory if it doesn't exist
-        os.makedirs(self.save_path, exist_ok=True)
+        os.makedirs(actual_save_path, exist_ok=True)
         
         # Sanitize filename
         safe_name = "".join(c for c in self.cabinet_group_name if c.isalnum() or c in (' ', '-', '_')).strip()
         blend_filename = f"{safe_name}.blend"
-        blend_filepath = os.path.join(self.save_path, blend_filename)
+        blend_filepath = os.path.join(actual_save_path, blend_filename)
         
         # Check if file already exists
         if os.path.exists(blend_filepath):
@@ -97,7 +109,7 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
         
         # Generate thumbnail if requested
         if self.create_thumbnail:
-            self._create_thumbnail(context, cabinet_group, self.save_path, safe_name)
+            self._create_thumbnail(context, cabinet_group, actual_save_path, safe_name)
         
         self.report({'INFO'}, f"Saved cabinet group to: {blend_filepath}")
         return {'FINISHED'}
@@ -470,29 +482,66 @@ def get_user_library_path():
     return os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
 
 
-def get_user_library_items():
-    """Get list of cabinet group files across the default library and all user library paths."""
+def get_all_cabinet_group_paths():
+    """Get all cabinet group library paths (default + user libraries with cabinet_groups/)."""
     from .... import hb_assets
-
-    # Default user library path + any user libraries with cabinet_groups/ subfolder
     all_paths = hb_assets.get_all_subfolder_paths("cabinet_groups")
     default_path = get_user_library_path()
     if os.path.isdir(default_path) and default_path not in all_paths:
         all_paths.insert(0, default_path)
+    return all_paths
 
+
+def get_cabinet_group_categories():
+    """Get list of cabinet group categories across all library paths.
+    
+    Loose .blend files in the root are grouped under 'General'.
+    """
+    categories_set = set()
+    has_loose_files = False
+    
+    for groups_path in get_all_cabinet_group_paths():
+        if not os.path.exists(groups_path):
+            continue
+        for item in os.listdir(groups_path):
+            item_path = os.path.join(groups_path, item)
+            if os.path.isdir(item_path):
+                # Only count as category if it has .blend files
+                if any(f.endswith('.blend') for f in os.listdir(item_path)):
+                    categories_set.add(item)
+            elif item.endswith('.blend'):
+                has_loose_files = True
+    
+    categories = [('ALL', 'All', 'Show all cabinet groups')]
+    if has_loose_files:
+        categories.append(('General', 'General', 'Uncategorized cabinet groups'))
+    for c in sorted(categories_set):
+        categories.append((c, c, c))
+    
+    return categories
+
+
+def get_cabinet_group_category_enum_items(self, context):
+    """Dynamic enum items for cabinet group category selection."""
+    return get_cabinet_group_categories()
+
+
+def get_user_library_items(category=None):
+    """Get list of cabinet group files, optionally filtered by category."""
     items = []
     seen_names = set()
 
-    for library_path in all_paths:
-        if not os.path.exists(library_path):
-            continue
-        for filename in sorted(os.listdir(library_path)):
+    def _scan_dir(search_path):
+        """Scan a directory for .blend files and add to items."""
+        if not os.path.exists(search_path):
+            return
+        for filename in sorted(os.listdir(search_path)):
             if filename.endswith('.blend'):
                 name = filename[:-6]
                 if name not in seen_names:
                     seen_names.add(name)
-                    filepath = os.path.join(library_path, filename)
-                    thumbnail_path = os.path.join(library_path, f"{name}.png")
+                    filepath = os.path.join(search_path, filename)
+                    thumbnail_path = os.path.join(search_path, f"{name}.png")
                     has_thumbnail = os.path.exists(thumbnail_path)
                     items.append({
                         'name': name,
@@ -500,7 +549,25 @@ def get_user_library_items():
                         'thumbnail': thumbnail_path if has_thumbnail else None
                     })
 
+    for library_path in get_all_cabinet_group_paths():
+        if not os.path.exists(library_path):
+            continue
+
+        if category and category != 'NONE':
+            if category == 'General':
+                _scan_dir(library_path)
+            else:
+                _scan_dir(os.path.join(library_path, category))
+        else:
+            # No category filter - scan root and all subfolders
+            _scan_dir(library_path)
+            for item in sorted(os.listdir(library_path)):
+                item_path = os.path.join(library_path, item)
+                if os.path.isdir(item_path):
+                    _scan_dir(item_path)
+
     return items
+
 
 
 

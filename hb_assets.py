@@ -38,6 +38,10 @@ def get_all_subfolder_paths(subfolder_name, bundled_path=None):
         bundled_path: The addon's built-in path for this content (included first if valid)
     
     Returns list of directory paths. User libraries are scanned for matching subfolders.
+    Libraries should follow the convention of placing content in named subfolders:
+        my_library/moldings/
+        my_library/cabinet_pulls/
+        my_library/cabinet_groups/
     """
     paths = []
     

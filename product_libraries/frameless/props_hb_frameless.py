@@ -15,31 +15,141 @@ def get_bundled_pulls_path():
     return os.path.join(os.path.dirname(__file__), 'frameless_assets', 'cabinet_pulls')
 
 
-def get_available_pulls():
-    """Get list of available pull .blend files across all library paths."""
+def get_all_pull_paths():
+    """Get all cabinet pull library paths."""
     from ... import hb_assets
-    all_paths = hb_assets.get_all_subfolder_paths("cabinet_pulls", get_bundled_pulls_path())
-    pulls = []
+    return hb_assets.get_all_subfolder_paths("cabinet_pulls", get_bundled_pulls_path())
+
+
+def get_pull_categories():
+    """Get list of pull categories (subfolders) across all library paths.
+    
+    Loose .blend files in the root are grouped under 'General'.
+    """
+    categories_set = set()
+    has_loose_files = False
+    
+    for pulls_path in get_all_pull_paths():
+        if not os.path.exists(pulls_path):
+            continue
+        for item in os.listdir(pulls_path):
+            item_path = os.path.join(pulls_path, item)
+            if os.path.isdir(item_path):
+                categories_set.add(item)
+            elif item.endswith('.blend'):
+                has_loose_files = True
+    
+    categories = [('ALL', 'All', 'Show all pulls')]
+    if has_loose_files:
+        categories.append(('General', 'General', 'Uncategorized pulls'))
+    for c in sorted(categories_set):
+        categories.append((c, c, c))
+    
+    return categories
+
+
+def get_pull_category_enum_items(self, context):
+    """Dynamic enum items for pull category selection."""
+    return get_pull_categories()
+
+
+def get_pulls_in_category(category):
+    """Get list of pull items in a specific category across all library paths.
+    
+    Returns list of dicts with 'name', 'filename', 'filepath', 'thumbnail'.
+    """
+    items = []
     seen_names = set()
-    for pulls_folder in all_paths:
-        if os.path.exists(pulls_folder):
-            for f in sorted(os.listdir(pulls_folder)):
-                if f.endswith('.blend'):
-                    name = os.path.splitext(f)[0]
-                    if name not in seen_names:
-                        seen_names.add(name)
-                        pulls.append((name, f, pulls_folder))
-    return pulls
+    
+    for pulls_path in get_all_pull_paths():
+        if not os.path.exists(pulls_path):
+            continue
+        
+        if category == 'General':
+            search_path = pulls_path
+            # Only get loose files, not subfolder contents
+            entries = [f for f in sorted(os.listdir(pulls_path)) 
+                      if os.path.isfile(os.path.join(pulls_path, f))]
+        else:
+            search_path = os.path.join(pulls_path, category)
+            if not os.path.exists(search_path):
+                continue
+            entries = sorted(os.listdir(search_path))
+        
+        for f in entries:
+            if f.endswith('.blend'):
+                name = os.path.splitext(f)[0]
+                if name not in seen_names:
+                    seen_names.add(name)
+                    filepath = os.path.join(search_path, f)
+                    thumb_path = os.path.join(search_path, name + '.png')
+                    items.append({
+                        'name': name,
+                        'filename': f,
+                        'filepath': filepath,
+                        'thumbnail': thumb_path if os.path.exists(thumb_path) else None
+                    })
+    return items
 
 
 def get_pull_enum_items(self, context):
-    """Dynamic enum items for pull selection."""
+    """Dynamic enum items for pull selection, filtered by category."""
     items = []
-    for i, (name, filename, folder) in enumerate(get_available_pulls()):
-        items.append((filename, name, f"Use {name}", 'OBJECT_DATA', len(items)))
+    
+    # Get category from the property group
+    category = getattr(self, 'pull_category', 'ALL')
+    
+    if category == 'ALL':
+        # Get all pulls from all categories
+        all_cats = get_pull_categories()
+        seen = set()
+        for cat_id, _, _ in all_cats:
+            if cat_id == 'ALL':
+                continue
+            for pull in get_pulls_in_category(cat_id):
+                if pull['filename'] not in seen:
+                    seen.add(pull['filename'])
+                    items.append((pull['filename'], pull['name'],
+                                 f"Use {pull['name']}", 'OBJECT_DATA', len(items)))
+    elif category:
+        for pull in get_pulls_in_category(category):
+            items.append((pull['filename'], pull['name'], 
+                         f"Use {pull['name']}", 'OBJECT_DATA', len(items)))
+    
     items.append(('NONE', "No Pulls", "Don't add pulls to cabinets", 'X', len(items)))
     items.append(('CUSTOM', "Custom", "Use a custom pull object from the scene", 'EYEDROPPER', len(items)))
     return items
+
+
+def find_pull_file(pull_filename):
+    """Find a pull file across all library paths and their category subfolders.
+    
+    Returns full path or None.
+    """
+    if not pull_filename or pull_filename == 'NONE':
+        return None
+    
+    for pulls_path in get_all_pull_paths():
+        # Check root level
+        file_path = os.path.join(pulls_path, pull_filename)
+        if os.path.exists(file_path):
+            return file_path
+        # Check category subfolders
+        if os.path.exists(pulls_path):
+            for item in os.listdir(pulls_path):
+                sub_path = os.path.join(pulls_path, item)
+                if os.path.isdir(sub_path):
+                    file_path = os.path.join(sub_path, pull_filename)
+                    if os.path.exists(file_path):
+                        return file_path
+    return None
+
+def get_cabinet_group_category_items(self, context):
+    '''Dynamic enum items for cabinet group categories.'''
+    from .operators import ops_library
+    return ops_library.get_cabinet_group_categories()
+
+
 # ============================================
 # PULL FINISH DEFINITIONS
 # ============================================
@@ -226,18 +336,6 @@ def get_or_create_glass_material():
     
     return mat
 
-
-def find_pull_file(pull_filename):
-    """Find a pull file across all library paths. Returns full path or None."""
-    if not pull_filename or pull_filename == 'NONE':
-        return None
-    from ... import hb_assets
-    all_paths = hb_assets.get_all_subfolder_paths("cabinet_pulls", get_bundled_pulls_path())
-    for pulls_folder in all_paths:
-        pull_path = os.path.join(pulls_folder, pull_filename)
-        if os.path.exists(pull_path):
-            return pull_path
-    return None
 
 
 def load_pull_object(pull_filename):
@@ -1240,6 +1338,12 @@ class Frameless_Scene_Props(PropertyGroup):
     show_appliance_library: BoolProperty(name="Show Appliance Library",description="Show Appliance Library.",default=False)# type: ignore
     show_part_library: BoolProperty(name="Show Part Library",description="Show Part Library.",default=False)# type: ignore
     show_user_library: BoolProperty(name="Show User Library",description="Show User Library.",default=False)# type: ignore
+
+    cabinet_group_category: EnumProperty(
+        name="Group Category",
+        description="Select cabinet group category",
+        items=get_cabinet_group_category_items,
+    )# type: ignore
     show_elevation_templates: BoolProperty(name="Show Elevation Templates",description="Show Elevation Templates.",default=False)# type: ignore
     show_general_options: BoolProperty(name="Show General Options",description="Show General Options.",default=False)# type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options",description="Show Handle Options.",default=False)# type: ignore
@@ -1518,6 +1622,12 @@ class Frameless_Scene_Props(PropertyGroup):
                                                         default=True)# type: ignore
 
     # Pull selection from library
+    pull_category: EnumProperty(
+        name="Pull Category",
+        description="Select pull category",
+        items=get_pull_category_enum_items,
+    )# type: ignore
+
     door_pull_selection: EnumProperty(
         name="Door Pull",
         description="Select pull style for doors",
@@ -1703,9 +1813,15 @@ class Frameless_Scene_Props(PropertyGroup):
         col.operator('hb_frameless.save_cabinet_group_to_user_library', text="Save to Library", icon='FILE_TICK')
         
         layout.separator()
-        
-        # Get library items
-        library_items = ops_library.get_user_library_items()
+
+        # Category dropdown
+        row = layout.row(align=True)
+        row.label(text="Category:")
+        row.prop(self, 'cabinet_group_category', text="")
+
+        # Get library items filtered by category
+        category = self.cabinet_group_category if hasattr(self, 'cabinet_group_category') else 'ALL'
+        library_items = ops_library.get_user_library_items(None if category == 'ALL' else category)
         
         if not library_items:
             box = layout.box()
@@ -1936,6 +2052,11 @@ class Frameless_Scene_Props(PropertyGroup):
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
+        # Pull Category
+        row = layout.row(align=True)
+        row.label(text="Category:")
+        row.prop(props, 'pull_category', text="")
+
         # Pull Selection - Side by side
         row = layout.row(align=True)
 
