@@ -823,6 +823,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             ('FALSE_FRONT', "False Front", "Decorative panel with no hardware"),
             ('OPEN', "Open", "Open (no front)"),
             ('OPEN_WITH_SHELVES', "Open with Shelves", "Open with adjustable shelves"),
+            ('APPLIANCE', "Appliance", "Built-in appliance opening"),
         ],
         default='LEFT_DOOR'
     ) # type: ignore
@@ -1068,6 +1069,9 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             opening_depth = opening.get_input('Dim Y')
             qty = ops_interior.get_default_shelf_quantity(opening_height, opening_depth)
             open_shelves.obj['Shelf Quantity'] = qty
+        elif self.opening_type == 'APPLIANCE':
+            appliance = types_frameless.Appliance()
+            self.add_insert_to_opening(opening, appliance)
         
         # Re-apply FORCE_HALF_OVERLAY flags to new insert children
         for child in opening_obj.children:

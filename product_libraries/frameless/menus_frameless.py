@@ -213,6 +213,8 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
         layout.operator("hb_frameless.change_opening_type", text="Open with Shelves").opening_type = 'OPEN_WITH_SHELVES'
         layout.separator()
+        layout.operator("hb_frameless.change_opening_type", text="Appliance").opening_type = 'APPLIANCE'
+        layout.separator()
         layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...",icon='COLLAPSEMENU')
         layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...",icon='PAUSE')
 
