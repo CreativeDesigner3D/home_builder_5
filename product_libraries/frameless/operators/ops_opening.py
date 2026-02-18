@@ -1016,8 +1016,22 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         
         opening = types_frameless.CabinetOpening(opening_obj)
         
-        # Get half overlay settings based on position in splitter
-        half_top, half_bottom, half_left, half_right = self.get_half_overlay_from_parent(opening_obj)
+        # Read half overlay from the opening's own custom properties
+        half_top = bool(opening_obj.get('Half Overlay Top', False))
+        half_bottom = bool(opening_obj.get('Half Overlay Bottom', False))
+        half_left = bool(opening_obj.get('Half Overlay Left', False))
+        half_right = bool(opening_obj.get('Half Overlay Right', False))
+        
+        # Also check children for FORCE_HALF_OVERLAY flags before deleting
+        for child in opening_obj.children:
+            if child.get('FORCE_HALF_OVERLAY_TOP'):
+                half_top = True
+            if child.get('FORCE_HALF_OVERLAY_BOTTOM'):
+                half_bottom = True
+            if child.get('FORCE_HALF_OVERLAY_LEFT'):
+                half_left = True
+            if child.get('FORCE_HALF_OVERLAY_RIGHT'):
+                half_right = True
         
         # Delete existing opening children
         self.delete_opening_children(opening_obj)
@@ -1054,6 +1068,17 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
             opening_depth = opening.get_input('Dim Y')
             qty = ops_interior.get_default_shelf_quantity(opening_height, opening_depth)
             open_shelves.obj['Shelf Quantity'] = qty
+        
+        # Re-apply FORCE_HALF_OVERLAY flags to new insert children
+        for child in opening_obj.children:
+            if half_top:
+                child['FORCE_HALF_OVERLAY_TOP'] = True
+            if half_bottom:
+                child['FORCE_HALF_OVERLAY_BOTTOM'] = True
+            if half_left:
+                child['FORCE_HALF_OVERLAY_LEFT'] = True
+            if half_right:
+                child['FORCE_HALF_OVERLAY_RIGHT'] = True
         
         # Run calc fix to update
         cabinet_bp = hb_utils.get_cabinet_bp(opening_obj)
