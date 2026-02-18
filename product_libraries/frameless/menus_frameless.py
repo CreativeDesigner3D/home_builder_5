@@ -81,12 +81,10 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
-        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical Openings")
-        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal Openings")
-        layout.separator()
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
-
+        layout.separator()
+        layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
+        
 
 class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
     bl_label = "Change Bay Configuration"
@@ -116,8 +114,8 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
             self.draw_base_options(layout)  # Fallback
         
         layout.separator()
-        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
-        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")
+        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...",icon='COLLAPSEMENU')
+        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...",icon='PAUSE')
     
     def draw_base_options(self, layout):
         """Draw options for base cabinets."""
@@ -195,10 +193,9 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
+        layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
-        layout.separator()
-        layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
 
 
 class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
@@ -218,8 +215,8 @@ class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_opening_type", text="Open (No Front)").opening_type = 'OPEN'
         layout.operator("hb_frameless.change_opening_type", text="Open with Shelves").opening_type = 'OPEN_WITH_SHELVES'
         layout.separator()
-        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...")
-        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...")
+        layout.operator("hb_frameless.custom_vertical_splitter", text="Custom Vertical...",icon='COLLAPSEMENU')
+        layout.operator("hb_frameless.custom_horizontal_splitter", text="Custom Horizontal...",icon='PAUSE')
 
 
 class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
