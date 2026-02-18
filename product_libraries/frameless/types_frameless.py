@@ -1267,48 +1267,18 @@ class OpenWithShelves(CabinetOpening):
     
     def create(self):
         super().create("Open With Shelves")
+        self.add_interior(CabinetShelves())
         
-        props = bpy.context.scene.hb_frameless
-        
-        self.add_property('Shelf Quantity', 'QUANTITY', 1)
-        self.add_property('Shelf Setback', 'DISTANCE', inch(.25))
-        self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.125))
-        
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        
-        self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
-        mt_var = self.var_prop('Material Thickness', 'mt')
-        setback = self.var_prop('Shelf Setback', 'setback')
-        clip_gap = self.var_prop('Shelf Clip Gap', 'clip_gap')
-        qty = self.var_prop('Shelf Quantity', 'qty')
-        mt = self.var_prop('Material Thickness', 'mt')
-        
-        # Create shelf part
-        shelf = CabinetPart()
-        shelf.create('Shelf')
-        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
-        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
-        shelf.obj['Finish Top'] = False
-        shelf.obj['Finish Bottom'] = False
-        shelf.obj.parent = self.obj
-        
-        shelf.driver_location('x', 'clip_gap', [clip_gap])
-        shelf.driver_location('y', 'setback', [setback])
-        shelf.driver_location('z', '(dim_z-(mt*qty))/(qty+1)', [dim_z, mt_var, qty])
-        shelf.driver_input("Length", 'dim_x-clip_gap*2', [dim_x, clip_gap])
-        shelf.driver_input("Width", 'dim_y-setback', [dim_y, setback])
-        shelf.driver_input("Thickness", 'mt', [mt_var])
-        array_mod = shelf.obj.modifiers.new('Qty','ARRAY')
-        array_mod.count = 1   
-        array_mod.use_relative_offset = False
-        array_mod.use_constant_offset = True
-        array_mod.constant_offset_displace = (0,0,0)    
-        shelf.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
-        shelf.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
-                                     '((dim_z-(mt*qty))/(qty+1))+mt',
-                                     [dim_z,mt,qty])      
+    def add_interior(self,interior):
+        x = self.var_input('Dim X', 'x')
+        y = self.var_input('Dim Y', 'y')
+        z = self.var_input('Dim Z', 'z')
+
+        interior.create('Interior')
+        interior.obj.parent = self.obj
+        interior.driver_input('Dim X','x',[x])
+        interior.driver_input('Dim Y','y',[y])
+        interior.driver_input('Dim Z','z',[z])  
 
 
 class CabinetPart(GeoNodeCutpart):
