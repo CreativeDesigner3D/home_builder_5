@@ -128,7 +128,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
 class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
     bl_idname = "hb_frameless.drop_cabinet_to_countertop"
     bl_label = "Drop to Countertop"
-    bl_description = "Lower cabinet height to standard countertop height (36 inches)"
+    bl_description = "Drop the bottom of an upper cabinet to the countertop surface"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -136,101 +136,27 @@ class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
         obj = context.object
         if obj:
             cabinet_bp = hb_utils.get_cabinet_bp(obj)
-            if cabinet_bp and 'CABINET_TYPE' in cabinet_bp:
-                return cabinet_bp['CABINET_TYPE'] in ['TALL', 'UPPER']
+            if cabinet_bp and cabinet_bp.get('CABINET_TYPE') == 'UPPER':
+                return True
         return False
 
     def execute(self, context):
         cabinet_bp = hb_utils.get_cabinet_bp(context.object)
         cabinet = hb_types.GeoNodeCage(cabinet_bp)
-        countertop_height = units.inch(36)
         
-        if cabinet_bp['CABINET_TYPE'] == 'UPPER':
-            # For uppers, move the bottom of the cabinet to countertop height
-            current_z = cabinet_bp.location.z
-            current_height = cabinet.get_input('Dim Z')
-            new_z = countertop_height
-            cabinet_bp.location.z = new_z
-        elif cabinet_bp['CABINET_TYPE'] == 'TALL':
-            # For talls, reduce height so top is at countertop height
-            cabinet.set_input('Dim Z', countertop_height)
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        
+        countertop_top = props.base_cabinet_height + props.countertop_thickness
+        current_height = cabinet.get_input('Dim Z')
+        current_top = cabinet_bp.location.z + current_height
+        
+        new_height = current_top - countertop_top
+        cabinet.set_input('Dim Z', new_height)
+        cabinet_bp.location.z = countertop_top
+        hb_utils.run_calc_fix(context, cabinet.obj)
         
         return {'FINISHED'}
-
-
-class hb_frameless_OT_drop_cabinet_height(bpy.types.Operator):
-    bl_idname = "hb_frameless.drop_cabinet_height"
-    bl_label = "Drop Height"
-    bl_description = "Lower the cabinet by a specified amount"
-    bl_options = {'UNDO'}
-
-    drop_amount: bpy.props.FloatProperty(
-        name="Drop Amount",
-        unit='LENGTH',
-        precision=5,
-        default=0.0762  # 3 inches
-    ) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        if obj:
-            cabinet_bp = hb_utils.get_cabinet_bp(obj)
-            return cabinet_bp is not None
-        return False
-
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=250)
-
-    def execute(self, context):
-        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
-        cabinet = hb_types.GeoNodeCage(cabinet_bp)
-        current_height = cabinet.get_input('Dim Z')
-        cabinet.set_input('Dim Z', current_height - self.drop_amount)
-        return {'FINISHED'}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, 'drop_amount')
-
-
-class hb_frameless_OT_raise_cabinet_bottom(bpy.types.Operator):
-    bl_idname = "hb_frameless.raise_cabinet_bottom"
-    bl_label = "Raise Bottom"
-    bl_description = "Raise the bottom of the cabinet by a specified amount"
-    bl_options = {'UNDO'}
-
-    raise_amount: bpy.props.FloatProperty(
-        name="Raise Amount",
-        unit='LENGTH',
-        precision=5,
-        default=0.0762  # 3 inches
-    ) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        if obj:
-            cabinet_bp = hb_utils.get_cabinet_bp(obj)
-            return cabinet_bp is not None
-        return False
-
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=250)
-
-    def execute(self, context):
-        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
-        cabinet = hb_types.GeoNodeCage(cabinet_bp)
-        current_height = cabinet.get_input('Dim Z')
-        cabinet.set_input('Dim Z', current_height - self.raise_amount)
-        cabinet_bp.location.z += self.raise_amount
-        return {'FINISHED'}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, 'raise_amount')
 
 
 class hb_frameless_OT_add_applied_end(bpy.types.Operator):
@@ -834,8 +760,6 @@ classes = (
     hb_frameless_OT_adjust_multiple_cabinet_widths,
     hb_frameless_OT_cabinet_prompts,
     hb_frameless_OT_drop_cabinet_to_countertop,
-    hb_frameless_OT_drop_cabinet_height,
-    hb_frameless_OT_raise_cabinet_bottom,
     hb_frameless_OT_add_applied_end,
     hb_frameless_OT_remove_applied_end,
     hb_frameless_OT_delete_cabinet,

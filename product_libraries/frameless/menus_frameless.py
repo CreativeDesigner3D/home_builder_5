@@ -55,8 +55,6 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_frameless.adjust_multiple_cabinet_widths", text="Adjust Cabinet Sizes")
         layout.separator()
         layout.operator("hb_frameless.drop_cabinet_to_countertop", text="Drop to Countertop")
-        layout.operator("hb_frameless.drop_cabinet_height", text="Drop Height")
-        layout.operator("hb_frameless.raise_cabinet_bottom", text="Raise Bottom")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
