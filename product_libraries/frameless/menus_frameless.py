@@ -224,8 +224,6 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.door_front_prompts", text="Front Prompts")
         layout.separator()
-        layout.operator("hb_frameless.assign_door_style_to_selected_fronts", text="Assign Door Style")
-        layout.separator()
         layout.operator("hb_frameless.delete_front", text="Delete Front")
 
 
@@ -246,9 +244,10 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.change_interior_type", text="Shelves").interior_type = 'SHELVES'
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
-        layout.separator()
-        layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
-        layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Horizontal Division...")
+        #TODO: Implement ability to create custom interior divisions
+        # layout.separator()
+        # layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
+        # layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Horizontal Division...")
 
 
 class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
@@ -256,10 +255,9 @@ class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.interior_part_prompts", text="Part Prompts")
+        layout.operator("hb_frameless.interior_prompts", text="Interior Options...")
         layout.separator()
-        layout.operator("hb_frameless.interior_prompts", text="Edit Interior...")
-        layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior Configuration")
+        layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
         layout.separator()
         layout.operator("hb_frameless.delete_interior_part", text="Delete Part")
 
@@ -348,9 +346,6 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.appliance_prompts", text="Appliance Prompts")
-        layout.separator()
-        layout.operator("hb_frameless.toggle_panel_ready", text="Toggle Panel Ready")
-        layout.operator("hb_frameless.add_appliance_door_panel", text="Add Appliance Door Panel")
         layout.separator()
         layout.operator("hb_frameless.delete_appliance", text="Delete Appliance")
 

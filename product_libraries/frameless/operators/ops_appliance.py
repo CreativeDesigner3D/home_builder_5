@@ -59,48 +59,6 @@ class hb_frameless_OT_appliance_prompts(bpy.types.Operator):
         row.prop(self, 'appliance_depth', text="")
 
 
-class hb_frameless_OT_toggle_panel_ready(bpy.types.Operator):
-    bl_idname = "hb_frameless.toggle_panel_ready"
-    bl_label = "Toggle Panel Ready"
-    bl_description = "Toggle panel ready option for this appliance"
-    bl_options = {'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        if obj:
-            appliance_bp = hb_utils.get_appliance_bp(obj)
-            return appliance_bp is not None and 'Panel Ready' in appliance_bp
-        return False
-
-    def execute(self, context):
-        appliance_bp = hb_utils.get_appliance_bp(context.object)
-        appliance_bp['Panel Ready'] = not appliance_bp.get('Panel Ready', False)
-        hb_utils.run_calc_fix(context, appliance_bp)
-        return {'FINISHED'}
-
-
-class hb_frameless_OT_add_appliance_door_panel(bpy.types.Operator):
-    bl_idname = "hb_frameless.add_appliance_door_panel"
-    bl_label = "Add Appliance Door Panel"
-    bl_description = "Add a door panel to this appliance"
-    bl_options = {'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        if obj:
-            appliance_bp = hb_utils.get_appliance_bp(obj)
-            return appliance_bp is not None
-        return False
-
-    def execute(self, context):
-        appliance_bp = hb_utils.get_appliance_bp(context.object)
-        # TODO: Implement appliance door panel creation
-        self.report({'INFO'}, "Appliance door panel will be added")
-        return {'FINISHED'}
-
-
 class hb_frameless_OT_delete_appliance(bpy.types.Operator):
     bl_idname = "hb_frameless.delete_appliance"
     bl_label = "Delete Appliance"
@@ -123,8 +81,6 @@ class hb_frameless_OT_delete_appliance(bpy.types.Operator):
 
 classes = (
     hb_frameless_OT_appliance_prompts,
-    hb_frameless_OT_toggle_panel_ready,
-    hb_frameless_OT_add_appliance_door_panel,
     hb_frameless_OT_delete_appliance,
 )
 
