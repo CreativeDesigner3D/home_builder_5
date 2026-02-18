@@ -261,6 +261,27 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         return wall_obj, Vector((world_snap.x, world_snap.y, 0)), face
 
+    def find_chain_start(self, wall_obj):
+        """Trace back through wall chain to find the first wall and count walls.
+        
+        Returns:
+            Tuple of (first_wall_obj, wall_count) or (None, 0)
+        """
+        visited = set()
+        current = hb_types.GeoNodeWall(wall_obj)
+        count = 1
+        
+        while True:
+            visited.add(current.obj.name)
+            left_wall = current.get_connected_wall('left')
+            if left_wall and left_wall.obj.name not in visited:
+                current = left_wall
+                count += 1
+            else:
+                break
+        
+        return current, count
+
     def connect_to_existing_wall(self, wall_obj, endpoint):
         """
         Connect current wall to an existing wall's endpoint and set up for continued drawing.
@@ -281,6 +302,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.previous_wall = existing_wall
             # Use constraint to connect
             self.current_wall.connect_to_wall(existing_wall)
+            
+            # Trace chain to find first wall for room closing
+            first_wall_geonode, chain_count = self.find_chain_start(wall_obj)
+            if chain_count >= 2:
+                self.first_wall = first_wall_geonode
+                self.confirmed_wall_count = chain_count
         else:
             # Connect to start of existing wall
             connect_location = Vector((start.x, start.y, 0))
@@ -410,8 +437,61 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
             self.update_dimension(bpy.context)
 
+    def close_room(self, context):
+        """Close the room by connecting the current wall back to the first wall."""
+        closing_wall = self.current_wall
+        first_wall = self.first_wall
+        
+        # Calculate angle and distance to first wall's origin
+        first_loc = first_wall.obj.location
+        dx = first_loc.x - self.start_point.x
+        dy = first_loc.y - self.start_point.y
+        closing_length = math.sqrt(dx * dx + dy * dy)
+        
+        if closing_length < 0.01:
+            return
+        
+        closing_angle = math.atan2(dy, dx)
+        closing_wall.obj.rotation_euler.z = closing_angle
+        closing_wall.set_input('Length', closing_length)
+        
+        # Connect closing wall's end to first wall
+        closing_wall.obj_x.home_builder.connected_object = first_wall.obj
+        
+        context.view_layer.update()
+        
+        # Update miter angles for previous wall and closing wall's left side
+        calculate_wall_miter_angles(closing_wall.obj)
+        calculate_wall_miter_angles(self.previous_wall.obj)
+        
+        # Set miter angles between closing wall's end and first wall's start
+        closing_rot = closing_wall.obj.rotation_euler.z
+        first_rot = first_wall.obj.rotation_euler.z
+        turn = first_rot - closing_rot
+        while turn > math.pi: turn -= 2 * math.pi
+        while turn < -math.pi: turn += 2 * math.pi
+        closing_wall.set_input('Right Angle', -turn / 2)
+        first_wall.set_input('Left Angle', turn / 2)
+        
+        # Remove closing wall from cancel list (it's confirmed)
+        if closing_wall.obj in self.placement_objects:
+            self.placement_objects.remove(closing_wall.obj)
+        for child in closing_wall.obj.children:
+            if child in self.placement_objects:
+                self.placement_objects.remove(child)
+        
+        # Clean up dimension
+        if self.dim:
+            if self.dim.obj in self.placement_objects:
+                self.placement_objects.remove(self.dim.obj)
+            bpy.data.objects.remove(self.dim.obj, do_unlink=True)
+
     def confirm_current_wall(self):
         """Finalize current wall and prepare for next."""
+        # Capture the very first start point (before it gets updated)
+        if self.first_start_point is None:
+            self.first_start_point = self.start_point.copy()
+        
         # Update start point to end of current wall
         wall_length = self.current_wall.get_input('Length')
         angle = self.current_wall.obj.rotation_euler.z
@@ -433,6 +513,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Update miter angles for this wall and connected walls
         update_connected_wall_miters(self.current_wall.obj)
 
+        self.confirmed_wall_count += 1
+        if self.confirmed_wall_count == 1:
+            self.first_wall = self.current_wall
         self.previous_wall = self.current_wall
         self.create_wall(bpy.context)
 
@@ -445,7 +528,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             length_str = units.unit_to_string(context.scene.unit_settings, length)
             angle_deg = round(math.degrees(self.current_wall.obj.rotation_euler.z))
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
-            text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place"
+            close_hint = " | C: close room" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
+            text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
         else:
             if self.snap_wall and self.snap_endpoint:
                 text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
@@ -467,6 +551,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.has_start_point = False
         self.dim = None
         self.free_rotation = False
+        self.first_start_point = None
+        self.first_wall = None
+        self.confirmed_wall_count = 0
         
         # Reset endpoint snapping state
         self.snap_wall = None
@@ -580,6 +667,15 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
+
+        # C key - close room (requires 2+ confirmed walls)
+        if event.type == 'C' and event.value == 'PRESS' and self.has_start_point:
+            if self.confirmed_wall_count >= 2 and self.first_wall is not None:
+                self.close_room(context)
+                self.clear_wall_highlight()
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
 
         # Alt key toggles free rotation mode
         if event.type == 'LEFT_ALT' and event.value == 'PRESS':
