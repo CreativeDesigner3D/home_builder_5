@@ -1971,8 +1971,8 @@ class Frameless_Scene_Props(PropertyGroup):
         # Appliance cabinets: (display_name, cabinet_name, thumbnail_name)
         appliance_cabinets = [
             ("Fridge Cabinet", "Refrigerator Cabinet", "Refrigerator Frameless Cabinet"),
-            ("Base Built-In", "Base Built-In", "Base Built-In"),
-            ("Tall Built-In", "Tall Built-In", "Tall Built-In"),
+            # ("Base Built-In", "Base Built-In", "Base Built-In"),
+            # ("Tall Built-In", "Tall Built-In", "Tall Built-In"),
             ("Dishwasher", "Dishwasher", "Dishwasher"),
             ("Refrigerator", "Refrigerator", "Refrigerator"),
             ("Range", "Range", "Range"),
