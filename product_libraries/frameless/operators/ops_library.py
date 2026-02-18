@@ -471,30 +471,37 @@ def get_user_library_path():
 
 
 def get_user_library_items():
-    """Get list of cabinet group files in the user library."""
-    
-    library_path = get_user_library_path()
+    """Get list of cabinet group files across the default library and all user library paths."""
+    from .... import hb_assets
+
+    # Default user library path + any user libraries with cabinet_groups/ subfolder
+    all_paths = hb_assets.get_all_subfolder_paths("cabinet_groups")
+    default_path = get_user_library_path()
+    if os.path.isdir(default_path) and default_path not in all_paths:
+        all_paths.insert(0, default_path)
+
     items = []
-    
-    if not os.path.exists(library_path):
-        return items
-    
-    for filename in os.listdir(library_path):
-        if filename.endswith('.blend'):
-            name = filename[:-6]  # Remove .blend extension
-            filepath = os.path.join(library_path, filename)
-            
-            # Check for thumbnail
-            thumbnail_path = os.path.join(library_path, f"{name}.png")
-            has_thumbnail = os.path.exists(thumbnail_path)
-            
-            items.append({
-                'name': name,
-                'filepath': filepath,
-                'thumbnail': thumbnail_path if has_thumbnail else None
-            })
-    
+    seen_names = set()
+
+    for library_path in all_paths:
+        if not os.path.exists(library_path):
+            continue
+        for filename in sorted(os.listdir(library_path)):
+            if filename.endswith('.blend'):
+                name = filename[:-6]
+                if name not in seen_names:
+                    seen_names.add(name)
+                    filepath = os.path.join(library_path, filename)
+                    thumbnail_path = os.path.join(library_path, f"{name}.png")
+                    has_thumbnail = os.path.exists(thumbnail_path)
+                    items.append({
+                        'name': name,
+                        'filepath': filepath,
+                        'thumbnail': thumbnail_path if has_thumbnail else None
+                    })
+
     return items
+
 
 
 

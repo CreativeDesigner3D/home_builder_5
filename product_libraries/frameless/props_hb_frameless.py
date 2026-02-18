@@ -10,22 +10,32 @@ from bpy.types import (
         )
 from . import types_frameless
 
+def get_bundled_pulls_path():
+    """Get the path to the bundled cabinet pulls folder."""
+    return os.path.join(os.path.dirname(__file__), 'frameless_assets', 'cabinet_pulls')
+
+
 def get_available_pulls():
-    """Get list of available pull .blend files from the cabinet_pulls folder."""
-    pulls_folder = os.path.join(os.path.dirname(__file__), 
-                                'frameless_assets', 'cabinet_pulls')
+    """Get list of available pull .blend files across all library paths."""
+    from ... import hb_assets
+    all_paths = hb_assets.get_all_subfolder_paths("cabinet_pulls", get_bundled_pulls_path())
     pulls = []
-    if os.path.exists(pulls_folder):
-        for f in os.listdir(pulls_folder):
-            if f.endswith('.blend'):
-                name = os.path.splitext(f)[0]
-                pulls.append((name, f))
+    seen_names = set()
+    for pulls_folder in all_paths:
+        if os.path.exists(pulls_folder):
+            for f in sorted(os.listdir(pulls_folder)):
+                if f.endswith('.blend'):
+                    name = os.path.splitext(f)[0]
+                    if name not in seen_names:
+                        seen_names.add(name)
+                        pulls.append((name, f, pulls_folder))
     return pulls
+
 
 def get_pull_enum_items(self, context):
     """Dynamic enum items for pull selection."""
     items = []
-    for i, (name, filename) in enumerate(get_available_pulls()):
+    for i, (name, filename, folder) in enumerate(get_available_pulls()):
         items.append((filename, name, f"Use {name}", 'OBJECT_DATA', len(items)))
     items.append(('NONE', "No Pulls", "Don't add pulls to cabinets", 'X', len(items)))
     items.append(('CUSTOM', "Custom", "Use a custom pull object from the scene", 'EYEDROPPER', len(items)))
@@ -217,21 +227,28 @@ def get_or_create_glass_material():
     return mat
 
 
-def load_pull_object(pull_filename):
-    """Load a pull object from a .blend file."""
+def find_pull_file(pull_filename):
+    """Find a pull file across all library paths. Returns full path or None."""
     if not pull_filename or pull_filename == 'NONE':
         return None
-    
-    pulls_folder = os.path.join(os.path.dirname(__file__), 
-                                'frameless_assets', 'cabinet_pulls')
-    pull_path = os.path.join(pulls_folder, pull_filename)
-    
-    if not os.path.exists(pull_path):
+    from ... import hb_assets
+    all_paths = hb_assets.get_all_subfolder_paths("cabinet_pulls", get_bundled_pulls_path())
+    for pulls_folder in all_paths:
+        pull_path = os.path.join(pulls_folder, pull_filename)
+        if os.path.exists(pull_path):
+            return pull_path
+    return None
+
+
+def load_pull_object(pull_filename):
+    """Load a pull object from a .blend file."""
+    pull_path = find_pull_file(pull_filename)
+    if not pull_path:
         return None
-    
+
     with bpy.data.libraries.load(pull_path) as (data_from, data_to):
         data_to.objects = data_from.objects
-    
+
     # Return the first object loaded
     for obj in data_to.objects:
         return obj
@@ -1931,10 +1948,8 @@ class Frameless_Scene_Props(PropertyGroup):
         elif props.door_pull_selection not in ('NONE', 'CUSTOM'):
             door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
             if door_pull_name:
-                thumb_path = os.path.join(os.path.dirname(__file__),
-                                          'frameless_assets', 'cabinet_pulls',
-                                          door_pull_name + '.png')
-                if os.path.exists(thumb_path):
+                thumb_path = find_pull_file(door_pull_name + '.png')
+                if thumb_path and os.path.exists(thumb_path):
                     icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
                     if icon_id:
                         col.template_icon(icon_value=icon_id, scale=4.0)
@@ -1948,10 +1963,8 @@ class Frameless_Scene_Props(PropertyGroup):
         elif props.drawer_pull_selection not in ('NONE', 'CUSTOM'):
             drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
             if drawer_pull_name:
-                thumb_path = os.path.join(os.path.dirname(__file__),
-                                          'frameless_assets', 'cabinet_pulls',
-                                          drawer_pull_name + '.png')
-                if os.path.exists(thumb_path):
+                thumb_path = find_pull_file(drawer_pull_name + '.png')
+                if thumb_path and os.path.exists(thumb_path):
                     icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
                     if icon_id:
                         col.template_icon(icon_value=icon_id, scale=4.0)

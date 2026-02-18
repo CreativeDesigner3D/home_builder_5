@@ -16,6 +16,44 @@ def get_user_libraries():
     return prefs.asset_libraries
 
 
+def get_user_library_paths():
+    """Return all user-configured library root paths."""
+    paths = []
+    try:
+        for entry in get_user_libraries():
+            if entry.library_path:
+                lib_path = bpy.path.abspath(entry.library_path)
+                if os.path.isdir(lib_path) and lib_path not in paths:
+                    paths.append(lib_path)
+    except Exception:
+        pass
+    return paths
+
+
+def get_all_subfolder_paths(subfolder_name, bundled_path=None):
+    """Return all paths for a specific subfolder, starting with the bundled path.
+    
+    Args:
+        subfolder_name: Folder name to look for (e.g. 'moldings', 'cabinet_pulls')
+        bundled_path: The addon's built-in path for this content (included first if valid)
+    
+    Returns list of directory paths. User libraries are scanned for matching subfolders.
+    """
+    paths = []
+    
+    # Bundled path first
+    if bundled_path and os.path.isdir(bundled_path):
+        paths.append(bundled_path)
+    
+    # Scan user library paths for matching subfolder
+    for lib_path in get_user_library_paths():
+        sub = os.path.join(lib_path, subfolder_name)
+        if os.path.isdir(sub) and sub not in paths:
+            paths.append(sub)
+    
+    return paths
+
+
 def get_catalog_map():
     """Parse the blender_assets.cats.txt and return a dict of {catalog_path: uuid}."""
     cats_file = os.path.join(get_addon_assets_path(), "blender_assets.cats.txt")

@@ -796,42 +796,50 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return crown_obj
 
 
-def get_molding_library_path():
-    """Get the path to the molding library folder."""
-    # Go up one level from operators/ to frameless/
+def get_bundled_molding_path():
+    """Get the path to the bundled molding library folder."""
     frameless_dir = os.path.dirname(os.path.dirname(__file__))
     return os.path.join(frameless_dir, "frameless_assets", "moldings")
 
 
+def get_all_molding_paths():
+    """Get all molding library paths (bundled + user libraries with moldings/ subfolder)."""
+    from .... import hb_assets
+    return hb_assets.get_all_subfolder_paths("moldings", get_bundled_molding_path())
+
+
 def get_molding_categories():
-    """Get list of molding categories (subfolders)."""
-    library_path = get_molding_library_path()
-    categories = []
-    if os.path.exists(library_path):
-        for folder in sorted(os.listdir(library_path)):
-            folder_path = os.path.join(library_path, folder)
-            if os.path.isdir(folder_path):
-                categories.append((folder, folder, folder))
+    """Get list of molding categories (subfolders) across all library paths."""
+    categories_set = set()
+    for moldings_path in get_all_molding_paths():
+        if os.path.exists(moldings_path):
+            for folder in os.listdir(moldings_path):
+                folder_path = os.path.join(moldings_path, folder)
+                if os.path.isdir(folder_path):
+                    categories_set.add(folder)
+    categories = [(c, c, c) for c in sorted(categories_set)]
     return categories if categories else [('NONE', "No Categories", "No molding categories found")]
 
 
 def get_molding_items(category):
-    """Get list of molding items in a category."""
-    library_path = get_molding_library_path()
-    category_path = os.path.join(library_path, category)
+    """Get list of molding items in a category across all library paths."""
     items = []
-    if os.path.exists(category_path):
-        for f in sorted(os.listdir(category_path)):
-            if f.endswith('.blend'):
-                name = os.path.splitext(f)[0]
-                filepath = os.path.join(category_path, f)
-                # Check for thumbnail
-                thumb_path = os.path.join(category_path, name + '.png')
-                items.append({
-                    'name': name,
-                    'filepath': filepath,
-                    'thumbnail': thumb_path if os.path.exists(thumb_path) else None
-                })
+    seen_names = set()
+    for moldings_path in get_all_molding_paths():
+        category_path = os.path.join(moldings_path, category)
+        if os.path.exists(category_path):
+            for f in sorted(os.listdir(category_path)):
+                if f.endswith('.blend'):
+                    name = os.path.splitext(f)[0]
+                    if name not in seen_names:
+                        seen_names.add(name)
+                        filepath = os.path.join(category_path, f)
+                        thumb_path = os.path.join(category_path, name + '.png')
+                        items.append({
+                            'name': name,
+                            'filepath': filepath,
+                            'thumbnail': thumb_path if os.path.exists(thumb_path) else None
+                        })
     return items
 
 
