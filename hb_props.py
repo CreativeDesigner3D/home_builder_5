@@ -565,7 +565,7 @@ class Home_Builder_Window_Manager_Props(PropertyGroup):
 
     def get_user_preferences(self,context):
         preferences = context.preferences
-        add_on_prefs = preferences.addons[os.path.basename(os.path.dirname(__file__))].preferences
+        add_on_prefs = preferences.addons[__package__].preferences
         return add_on_prefs
 
     @classmethod

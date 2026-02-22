@@ -12,8 +12,11 @@ def get_addon_assets_path():
 
 def get_user_libraries():
     """Return the list of user-configured library entries."""
-    prefs = bpy.context.preferences.addons[__package__].preferences
-    return prefs.asset_libraries
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+        return prefs.asset_libraries
+    except (AttributeError, KeyError):
+        return []
 
 
 def get_user_library_paths():
