@@ -972,6 +972,17 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                         updated_count += 1
                     updated_objs.append(obj)
                     updated_objs.append(parent)
+                
+                elif parent.get('IS_PULLOUT_FRONT') and self.pull_type in ('DOOR', 'ALL'):
+                    if door_is_none:
+                        pull_hw.set_input("Object", None)
+                        cleared_count += 1
+                    elif door_pull_obj:
+                        pull_hw.set_input("Object", door_pull_obj)
+                        parent['Pull Length'] = door_pull_obj.dimensions.x
+                        updated_count += 1
+                    updated_objs.append(obj)
+                    updated_objs.append(parent)
             except:
                 pass
 
@@ -1122,6 +1133,20 @@ class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
 # ============================================
 # FINISH COLOR OPERATORS
 # ============================================
+
+class hb_frameless_OT_update_all_pulls(bpy.types.Operator):
+    bl_idname = "hb_frameless.update_all_pulls"
+    bl_label = "Update All Pulls"
+    bl_description = "Update pull selection, locations, and finish on all cabinets"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        bpy.ops.hb_frameless.update_cabinet_pulls(pull_type='ALL')
+        bpy.ops.hb_frameless.update_pull_locations(update_type='ALL')
+        bpy.ops.hb_frameless.update_pull_finish()
+        self.report({'INFO'}, "Updated all pulls")
+        return {'FINISHED'}
+
 
 class hb_frameless_OT_add_custom_finish_color(bpy.types.Operator):
     """Add a new custom finish color"""
@@ -1372,6 +1397,7 @@ classes = (
     hb_frameless_OT_update_cabinet_pulls,
     hb_frameless_OT_update_pull_locations,
     hb_frameless_OT_update_pull_finish,
+    hb_frameless_OT_update_all_pulls,
     hb_frameless_OT_add_custom_finish_color,
     hb_frameless_OT_delete_custom_finish_color,
     hb_frameless_OT_edit_finish_color,

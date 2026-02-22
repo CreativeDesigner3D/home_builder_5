@@ -2090,20 +2090,19 @@ class Frameless_Scene_Props(PropertyGroup):
                     if icon_id:
                         col.template_icon(icon_value=icon_id, scale=4.0)
 
-        
+
         # Finish dropdown inline
         row = layout.row(align=True)
         row.label(text="Finish:")
         row.prop(props, 'pull_finish', text="")
         
-        layout.separator()
-        
         # Pull Locations - compact grid
         col = layout.column(align=True)
+        col.label(text="Handle Location:")
         col.prop(props, 'pull_dim_from_edge', text="Edge Distance")
         
         col.separator()
-        col.label(text="Door Pull Height:")
+        col.label(text="Vertical Location:")
         row = col.row(align=True)
         row.prop(props, 'pull_vertical_location_base', text="Base")
         row.prop(props, 'pull_vertical_location_tall', text="Tall")
@@ -2115,13 +2114,9 @@ class Frameless_Scene_Props(PropertyGroup):
         if not props.center_pulls_on_drawer_front:
             col.prop(props, 'pull_vertical_location_drawers', text="Drawer Pull Height")
         
-        layout.separator()
-        
-        # Update buttons - single row
-        row = layout.row(align=True)
-        row.operator('hb_frameless.update_cabinet_pulls', text="Pulls", icon='FILE_REFRESH')
-        row.operator('hb_frameless.update_pull_locations', text="Locations", icon='FILE_REFRESH')
-        row.operator('hb_frameless.update_pull_finish', text="Finish", icon='FILE_REFRESH')
+        row = layout.row()
+        row.scale_y = 1.3
+        row.operator('hb_frameless.update_all_pulls', text="Update Pulls", icon='FILE_REFRESH')
 
     def draw_crown_details_ui(self, layout, context):
         """Draw the crown molding details UI section."""
