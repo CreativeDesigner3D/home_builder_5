@@ -622,6 +622,12 @@ class HOME_BUILDER_MT_room_list(bpy.types.Menu):
                                text=scene.name, icon='HOME')
             op.scene_name = scene.name
 
+        layout.separator()
+        layout.operator("home_builder.create_room", text="Create Room", icon='ADD')
+        layout.operator("home_builder.rename_room", text="Rename Room", icon='GREASEPENCIL')
+        op = layout.operator("home_builder.delete_room", text="Delete Room", icon='X')
+        op.scene_name = context.scene.name
+
 
 class HOME_BUILDER_MT_detail_library(bpy.types.Menu):
     bl_label = "Detail Library"
