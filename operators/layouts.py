@@ -740,16 +740,8 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
         try:
             from PIL import Image
         except ImportError:
-            # Auto-install Pillow
-            self.report({'INFO'}, "Installing Pillow...")
-            import subprocess
-            import sys
-            try:
-                subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'Pillow', '--break-system-packages'])
-                from PIL import Image
-            except Exception as e:
-                self.report({'ERROR'}, f"Failed to install Pillow: {e}")
-                return {'CANCELLED'}
+            self.report({'ERROR'}, "Pillow is required for PDF export. Please reinstall the Home Builder extension.")
+            return {'CANCELLED'}
         
         import tempfile
         
