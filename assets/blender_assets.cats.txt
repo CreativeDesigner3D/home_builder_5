@@ -26,6 +26,7 @@ e85209b0-c893-4ed4-8990-d60e6125a722:Decorations/Dishwashers:Decorations-Dishwas
 e805d65a-c648-448e-9b87-54334b6276dd:Decorations/Cooktops:Decorations-Cooktops
 ff475cb9-5e21-4698-ae5b-6f4def6ab564:Decorations/Plants:Decorations-Plants
 520c38d8-2bbc-4a63-8d4a-29aee47fe080:Decorations/Lighting:Decorations-Lighting
+520c38d8-2bbc-4a63-8d4a-29aee47fe08x:Decorations/Deco Wood:Decorations-Deco Wood
 3e847308-544c-47d7-b375-9dbdcb553b9c:Materials:Materials
 5455ceb1-5fc8-4c12-8cab-4fdd5588a550:Materials/Countertops:Materials-Countertops
 be7fc35d-e135-41a3-815d-19fc772099d3:Materials/Cabinet Finishes:Materials-Cabinet Finishes
