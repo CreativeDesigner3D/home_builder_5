@@ -386,8 +386,13 @@ class hb_frameless_OT_delete_cabinet(bpy.types.Operator):
         return False
 
     def execute(self, context):
-        cabinet_bp = hb_utils.get_cabinet_bp(context.object)
-        hb_utils.delete_obj_and_children(cabinet_bp)
+        cabinet_bps = set()
+        for obj in context.selected_objects:
+            cabinet_bp = hb_utils.get_cabinet_bp(obj)
+            if cabinet_bp:
+                cabinet_bps.add(cabinet_bp)
+        for cabinet_bp in cabinet_bps:
+            hb_utils.delete_obj_and_children(cabinet_bp)
         return {'FINISHED'}
 
 
