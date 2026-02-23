@@ -1823,16 +1823,21 @@ class home_builder_walls_OT_hide_wall(bpy.types.Operator):
         return False
 
     def execute(self, context):
-        obj = context.active_object
-        wall_bp = obj if obj.get('IS_WALL_BP') else obj.parent
+        wall_bps = set()
+        for obj in context.selected_objects:
+            if obj.get('IS_WALL_BP'):
+                wall_bps.add(obj)
+            elif obj.parent and obj.parent.get('IS_WALL_BP'):
+                wall_bps.add(obj.parent)
 
-        wall_bp.hide_set(True)
-        wall_bp.hide_viewport = True
-        for child in wall_bp.children_recursive:
-            child.hide_set(True)
-            child.hide_viewport = True
+        for wall_bp in wall_bps:
+            wall_bp.hide_set(True)
+            wall_bp.hide_viewport = True
+            for child in wall_bp.children_recursive:
+                child.hide_set(True)
+                child.hide_viewport = True
 
-        self.report({'INFO'}, f"Wall hidden")
+        self.report({'INFO'}, f"{len(wall_bps)} wall(s) hidden")
         return {'FINISHED'}
 
 
