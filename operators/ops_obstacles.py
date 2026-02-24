@@ -1,5 +1,6 @@
 import bpy
 import math
+import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_utils, hb_snap, hb_placement, hb_types, units
 
@@ -10,7 +11,6 @@ from .. import hb_utils, hb_snap, hb_placement, hb_types, units
 
 def create_obstacle_mesh(name, width, height, depth, obstacle_type):
     """Create a simple box mesh for the obstacle."""
-    import bmesh
     
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -612,7 +612,6 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     def invoke(self, context, event):
         obj = context.active_object
         if obj.type == 'MESH':
-            from mathutils import Vector
             bounds = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
             self.width = max(v.x for v in bounds) - min(v.x for v in bounds)
             self.height = max(v.z for v in bounds) - min(v.z for v in bounds)
@@ -625,7 +624,6 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
         old_mesh = obj.data
         
-        import bmesh
         mesh = bpy.data.meshes.new(obj.name)
         bm = bmesh.new()
         

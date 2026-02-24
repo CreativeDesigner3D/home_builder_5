@@ -11,11 +11,11 @@ from bpy.props import (
     CollectionProperty,
     EnumProperty,
 )
+from mathutils import Vector
 from . import types_frameless
 from ..common import types_appliances
 from ... import hb_utils, hb_types, hb_project, units
 from ...units import inch
-
 
 def update_template_preview(self, context):
     """Callback when any template property changes."""
@@ -930,7 +930,7 @@ class Island_Template(HB_Frameless_Base_Template):
 
     offset_from_wall: FloatProperty(
         name="Offset From Wall",
-        default=inch(42),
+        default=inch(72),
         unit='LENGTH',
         precision=4,
         update=update_template_preview
@@ -1156,7 +1156,6 @@ class Island_Template(HB_Frameless_Base_Template):
         
         # Get wall transform for converting to world space
         # Islands are NOT parented to walls - they're freestanding
-        from mathutils import Vector
         wall_matrix = self.obj_wall.matrix_world
         wall_rotation_z = self.obj_wall.rotation_euler.z
         

@@ -5,6 +5,185 @@ import os
 from mathutils import Vector
 from .. import hb_types, hb_snap, hb_placement, units
 
+# Wall Miter Angle Calculation
+def calculate_wall_miter_angles(wall_obj):
+    """
+    Calculate and set the miter angles for a wall based on connected walls.
+    Uses the GeoNodeWall.get_connected_wall() method to find connections.
+    
+    The miter angle formula:
+    - turn_angle = connected_wall_rotation - this_wall_rotation (normalized to -180° to 180°)
+    - For the RIGHT end (end of wall): right_angle = -turn_angle / 2
+    - For the LEFT end (start of wall): left_angle = turn_angle / 2
+    """
+    import math
+    
+    wall = hb_types.GeoNodeWall(wall_obj)
+    this_rot = wall_obj.rotation_euler.z
+    
+    # Get connected wall on the left (at our START)
+    left_wall = wall.get_connected_wall('left')
+    if left_wall:
+        prev_rot = left_wall.obj.rotation_euler.z
+        turn = this_rot - prev_rot
+        # Normalize turn angle to -pi to pi
+        while turn > math.pi: turn -= 2 * math.pi
+        while turn < -math.pi: turn += 2 * math.pi
+        
+        left_angle = turn / 2
+        wall.set_input('Left Angle', left_angle)
+    else:
+        wall.set_input('Left Angle', 0)
+    
+    # Get connected wall on the right (at our END)
+    right_wall = wall.get_connected_wall('right')
+    if right_wall:
+        next_rot = right_wall.obj.rotation_euler.z
+        turn = next_rot - this_rot
+        # Normalize turn angle to -pi to pi
+        while turn > math.pi: turn -= 2 * math.pi
+        while turn < -math.pi: turn += 2 * math.pi
+        
+        right_angle = -turn / 2
+        wall.set_input('Right Angle', right_angle)
+    else:
+        wall.set_input('Right Angle', 0)
+
+
+def update_all_wall_miters():
+    """Update miter angles for all walls in the scene."""
+    for obj in bpy.data.objects:
+        if 'IS_WALL_BP' in obj:
+            calculate_wall_miter_angles(obj)
+
+
+def update_connected_wall_miters(wall_obj):
+    """Update miter angles for a wall and all walls connected to it."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+
+    # Update this wall
+    calculate_wall_miter_angles(wall_obj)
+
+    # Update connected wall on the left
+    left_wall = wall.get_connected_wall('left')
+    if left_wall:
+        calculate_wall_miter_angles(left_wall.obj)
+
+    # Update connected wall on the right
+    right_wall = wall.get_connected_wall('right')
+    if right_wall:
+        calculate_wall_miter_angles(right_wall.obj)
+
+# Room Lighting Helpers
+def point_in_polygon(point, polygon):
+    """Ray casting algorithm to check if point is inside polygon."""
+    x, y = point.x, point.y
+    n = len(polygon)
+    inside = False
+    
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i].x, polygon[i].y
+        xj, yj = polygon[j].x, polygon[j].y
+        
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    
+    return inside
+  
+def get_wall_endpoints(wall_obj):
+    """Get the start and end points of a wall in world coordinates."""
+    
+    world_matrix = wall_obj.matrix_world
+    start = world_matrix.translation.copy()
+    
+    rot_z = wall_obj.matrix_world.to_euler().z
+    
+    # Find obj_x child to get wall length
+    length = 0
+    for child in wall_obj.children:
+        if 'obj_x' in child.name.lower():
+            length = child.location.x
+            break
+    
+    direction = Vector((math.cos(rot_z), math.sin(rot_z), 0))
+    end = start + direction * length
+    
+    return start.to_2d(), end.to_2d()
+
+def find_wall_chains():
+    """Find connected chains of walls in the current scene, returning list of ordered wall objects."""
+    walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
+    
+    if not walls:
+        return []
+    
+    wall_data = {}
+    for wall in walls:
+        start, end = get_wall_endpoints(wall)
+        wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
+    
+    tolerance = 0.01
+    connections = {}
+    
+    for name1, data1 in wall_data.items():
+        for name2, data2 in wall_data.items():
+            if name1 == name2:
+                continue
+            if (data1['end'] - data2['start']).length < tolerance:
+                connections[name1] = name2
+    
+    has_predecessor = set(connections.values())
+    start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
+    
+    if not start_walls and walls:
+        start_walls = [walls[0].name]
+    
+    chains = []
+    used = set()
+    
+    for start_name in start_walls:
+        if start_name in used:
+            continue
+        
+        chain = []
+        current = start_name
+        
+        while current and current not in used:
+            used.add(current)
+            chain.append(wall_data[current]['obj'])
+            current = connections.get(current)
+            if current == start_name:
+                break
+        
+        if chain:
+            chains.append(chain)
+    
+    return chains
+
+def get_room_boundary_points(wall_chain):
+    """Extract boundary points from a chain of walls."""
+
+    points = []
+    
+    for wall in wall_chain:
+        start, end = get_wall_endpoints(wall)
+        if not points or (Vector(points[-1]) - Vector((start.x, start.y, 0))).length > 0.01:
+            points.append(Vector((start.x, start.y, 0)))
+    
+    if wall_chain:
+        start, end = get_wall_endpoints(wall_chain[-1])
+        points.append(Vector((end.x, end.y, 0)))
+    
+    return points
+
+def is_closed_loop(points, tolerance=0.01):
+    """Check if the points form a closed loop."""
+    if len(points) < 3:
+        return False
+    return (points[0] - points[-1]).length < tolerance
+    
 class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_walls.draw_walls"
     bl_label = "Draw Walls"
@@ -1924,181 +2103,3 @@ classes = (
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)
-# Wall Miter Angle Calculation
-def calculate_wall_miter_angles(wall_obj):
-    """
-    Calculate and set the miter angles for a wall based on connected walls.
-    Uses the GeoNodeWall.get_connected_wall() method to find connections.
-    
-    The miter angle formula:
-    - turn_angle = connected_wall_rotation - this_wall_rotation (normalized to -180° to 180°)
-    - For the RIGHT end (end of wall): right_angle = -turn_angle / 2
-    - For the LEFT end (start of wall): left_angle = turn_angle / 2
-    """
-    import math
-    
-    wall = hb_types.GeoNodeWall(wall_obj)
-    this_rot = wall_obj.rotation_euler.z
-    
-    # Get connected wall on the left (at our START)
-    left_wall = wall.get_connected_wall('left')
-    if left_wall:
-        prev_rot = left_wall.obj.rotation_euler.z
-        turn = this_rot - prev_rot
-        # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
-        
-        left_angle = turn / 2
-        wall.set_input('Left Angle', left_angle)
-    else:
-        wall.set_input('Left Angle', 0)
-    
-    # Get connected wall on the right (at our END)
-    right_wall = wall.get_connected_wall('right')
-    if right_wall:
-        next_rot = right_wall.obj.rotation_euler.z
-        turn = next_rot - this_rot
-        # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
-        
-        right_angle = -turn / 2
-        wall.set_input('Right Angle', right_angle)
-    else:
-        wall.set_input('Right Angle', 0)
-
-
-def update_all_wall_miters():
-    """Update miter angles for all walls in the scene."""
-    for obj in bpy.data.objects:
-        if 'IS_WALL_BP' in obj:
-            calculate_wall_miter_angles(obj)
-
-
-def update_connected_wall_miters(wall_obj):
-    """Update miter angles for a wall and all walls connected to it."""
-    wall = hb_types.GeoNodeWall(wall_obj)
-
-    # Update this wall
-    calculate_wall_miter_angles(wall_obj)
-
-    # Update connected wall on the left
-    left_wall = wall.get_connected_wall('left')
-    if left_wall:
-        calculate_wall_miter_angles(left_wall.obj)
-
-    # Update connected wall on the right
-    right_wall = wall.get_connected_wall('right')
-    if right_wall:
-        calculate_wall_miter_angles(right_wall.obj)
-
-# Room Lighting Helpers
-def point_in_polygon(point, polygon):
-    """Ray casting algorithm to check if point is inside polygon."""
-    x, y = point.x, point.y
-    n = len(polygon)
-    inside = False
-    
-    j = n - 1
-    for i in range(n):
-        xi, yi = polygon[i].x, polygon[i].y
-        xj, yj = polygon[j].x, polygon[j].y
-        
-        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
-            inside = not inside
-        j = i
-    
-    return inside
-  
-def get_wall_endpoints(wall_obj):
-    """Get the start and end points of a wall in world coordinates."""
-    
-    world_matrix = wall_obj.matrix_world
-    start = world_matrix.translation.copy()
-    
-    rot_z = wall_obj.matrix_world.to_euler().z
-    
-    # Find obj_x child to get wall length
-    length = 0
-    for child in wall_obj.children:
-        if 'obj_x' in child.name.lower():
-            length = child.location.x
-            break
-    
-    direction = Vector((math.cos(rot_z), math.sin(rot_z), 0))
-    end = start + direction * length
-    
-    return start.to_2d(), end.to_2d()
-
-def find_wall_chains():
-    """Find connected chains of walls in the current scene, returning list of ordered wall objects."""
-    walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
-    
-    if not walls:
-        return []
-    
-    wall_data = {}
-    for wall in walls:
-        start, end = get_wall_endpoints(wall)
-        wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
-    
-    tolerance = 0.01
-    connections = {}
-    
-    for name1, data1 in wall_data.items():
-        for name2, data2 in wall_data.items():
-            if name1 == name2:
-                continue
-            if (data1['end'] - data2['start']).length < tolerance:
-                connections[name1] = name2
-    
-    has_predecessor = set(connections.values())
-    start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
-    
-    if not start_walls and walls:
-        start_walls = [walls[0].name]
-    
-    chains = []
-    used = set()
-    
-    for start_name in start_walls:
-        if start_name in used:
-            continue
-        
-        chain = []
-        current = start_name
-        
-        while current and current not in used:
-            used.add(current)
-            chain.append(wall_data[current]['obj'])
-            current = connections.get(current)
-            if current == start_name:
-                break
-        
-        if chain:
-            chains.append(chain)
-    
-    return chains
-
-def get_room_boundary_points(wall_chain):
-    """Extract boundary points from a chain of walls."""
-
-    points = []
-    
-    for wall in wall_chain:
-        start, end = get_wall_endpoints(wall)
-        if not points or (Vector(points[-1]) - Vector((start.x, start.y, 0))).length > 0.01:
-            points.append(Vector((start.x, start.y, 0)))
-    
-    if wall_chain:
-        start, end = get_wall_endpoints(wall_chain[-1])
-        points.append(Vector((end.x, end.y, 0)))
-    
-    return points
-
-def is_closed_loop(points, tolerance=0.01):
-    """Check if the points form a closed loop."""
-    if len(points) < 3:
-        return False
-    return (points[0] - points[-1]).length < tolerance

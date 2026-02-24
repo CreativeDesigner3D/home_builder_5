@@ -1,5 +1,7 @@
 import bpy
 from .units import inch
+from mathutils import Vector
+import bmesh
 
 class home_builder_OT_to_do(bpy.types.Operator):
     bl_idname = "home_builder.to_do"
@@ -338,7 +340,6 @@ class home_builder_OT_create_camera(bpy.types.Operator):
     
     def get_scene_center(self, context):
         """Calculate the center of all mesh objects in the scene"""
-        from mathutils import Vector
         
         min_co = Vector((float('inf'), float('inf'), float('inf')))
         max_co = Vector((float('-inf'), float('-inf'), float('-inf')))
@@ -385,7 +386,6 @@ class home_builder_OT_create_camera(bpy.types.Operator):
         width = height * aspect
         
         # Create plane mesh
-        import bmesh
         mesh = bpy.data.meshes.new("Backplate")
         bm = bmesh.new()
         

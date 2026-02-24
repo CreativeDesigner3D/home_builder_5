@@ -5,6 +5,7 @@ from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from .. import types_frameless
 from .. import types_products
+from mathutils.geometry import intersect_line_plane, intersect_point_line
 
 # Part name to class mapping (module-level, not operator attribute)
 PART_CLASS_MAP = {
@@ -1269,8 +1270,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def find_nearest_wall_from_cursor(self, context):
         """Find the nearest wall based on projected cursor position."""
-        from bpy_extras import view3d_utils
-        from mathutils.geometry import intersect_line_plane, intersect_point_line
         
         snap_distance = units.inch(6)  # Snap to wall if within 6"
         
@@ -1356,9 +1355,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         # Determine which side of wall based on cursor position
         # Use different methods for plan view vs 3D view
-        
-        from bpy_extras import view3d_utils
-        from mathutils.geometry import intersect_line_plane
         
         # Detect if we're in plan view (looking down) or 3D view
         region = self.region

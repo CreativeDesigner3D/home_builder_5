@@ -1,5 +1,6 @@
 import bpy
 import math
+import gpu
 from mathutils import Vector
 from .. import hb_details
 from .. import hb_types
@@ -8,8 +9,10 @@ from .. import hb_placement
 from .. import hb_detail_library
 from .. import units
 from .. import hb_utils
+from bpy_extras import view3d_utils
 from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
 from mathutils import Matrix
+from gpu_extras.batch import batch_for_shader
 
 
 # Snap radius in pixels for vertex snapping
@@ -125,9 +128,6 @@ def world_to_local_point(obj, world_point):
 
 def draw_snap_indicator(self, context):
     """Draw visual feedback for snapping - green circle when snapped, yellow when not."""
-    import gpu
-    from gpu_extras.batch import batch_for_shader
-    import math
     
     if not hasattr(self, 'snap_screen_pos') or self.snap_screen_pos is None:
         return
@@ -364,7 +364,6 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         Find the nearest perpendicular foot point on any segment.
         Returns (foot_point, segment) or (None, None) if none found within snap radius.
         """
-        from bpy_extras import view3d_utils
         
         segments = self.get_curve_segments(context)
         if not segments:
@@ -399,8 +398,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         Find the angle of the nearest line segment for perpendicular constraint.
         Returns the perpendicular angle (segment angle + 90 degrees).
         """
-        from bpy_extras import view3d_utils
-        
+
         if not self.hit_location:
             return 0.0
         
@@ -443,8 +441,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         Find the nearest vertex for tracking (extension alignment).
         Returns the point or None if none nearby.
         """
-        from bpy_extras import view3d_utils
-        
+
         vertices = self.get_curve_vertices(context)
         if not vertices:
             return None
@@ -566,8 +563,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def snap_to_curves(self, context) -> Vector:
         """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
-        from bpy_extras import view3d_utils
-        
+
         best_point = None
         best_distance = SNAP_RADIUS
         self.is_perp_snap = False
@@ -601,8 +597,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
-        from bpy_extras import view3d_utils
-        
+
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
@@ -697,8 +692,7 @@ class home_builder_details_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
     
     def _update_from_mouse(self):
         """Update preview point based on mouse position."""
-        from bpy_extras import view3d_utils
-        
+
         if self.point_count == 0 or not self.hit_location:
             return
         
@@ -1127,8 +1121,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         Find the nearest perpendicular foot point on any segment.
         Returns (foot_point, segment) or (None, None) if none found within snap radius.
         """
-        from bpy_extras import view3d_utils
-        
+
         segments = self.get_curve_segments(context)
         if not segments:
             return (None, None)
@@ -1162,8 +1155,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         Find the angle of the nearest line segment for perpendicular constraint.
         Returns the perpendicular angle (segment angle + 90 degrees).
         """
-        from bpy_extras import view3d_utils
-        
+
         if not self.hit_location:
             return 0.0
         
@@ -1206,8 +1198,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         Find the nearest vertex for tracking (extension alignment).
         Returns the point or None if none nearby.
         """
-        from bpy_extras import view3d_utils
-        
+
         vertices = self.get_curve_vertices(context)
         if not vertices:
             return None
@@ -1329,8 +1320,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
     
     def snap_to_curves(self, context) -> Vector:
         """Try to snap to nearby curve vertices or perpendicular foot points. Returns snapped point or None."""
-        from bpy_extras import view3d_utils
-        
+
         best_point = None
         best_distance = SNAP_RADIUS
         self.is_perp_snap = False
@@ -1364,8 +1354,7 @@ class home_builder_details_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
-        from bpy_extras import view3d_utils
-        
+
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
@@ -1763,8 +1752,7 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
     
     def snap_to_curves(self, context) -> Vector:
         """Try to snap to nearby curve vertices. Returns snapped point or None."""
-        from bpy_extras import view3d_utils
-        
+
         best_point = None
         best_distance = SNAP_RADIUS
         
@@ -1781,8 +1769,7 @@ class home_builder_details_OT_draw_circle(bpy.types.Operator, hb_placement.Place
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
-        from bpy_extras import view3d_utils
-        
+
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
@@ -2057,8 +2044,7 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
     
     def snap_to_curves(self, context) -> Vector:
         """Try to snap to nearby curve vertices. Returns snapped point or None."""
-        from bpy_extras import view3d_utils
-        
+
         best_point = None
         best_distance = SNAP_RADIUS
         
@@ -2075,8 +2061,7 @@ class home_builder_details_OT_add_text(bpy.types.Operator, hb_placement.Placemen
     
     def get_snapped_position(self, context) -> Vector:
         """Get position, snapping to curves if possible."""
-        from bpy_extras import view3d_utils
-        
+
         snap = self.snap_to_curves(context)
         if snap:
             self.is_snapped = True
@@ -2804,8 +2789,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
     
     def get_snap_point(self, context, coord: tuple):
         """Snap to curve vertices in detail views."""
-        from bpy_extras import view3d_utils
-        
+
         mouse_pos = Vector((coord[0], coord[1]))
         best_point = None
         best_screen = None
@@ -2844,8 +2828,7 @@ class home_builder_details_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
     
     def get_plane_point(self, context, coord: tuple):
         """Get point on XY plane (Z=0) for detail views."""
-        from bpy_extras import view3d_utils
-        
+
         origin = view3d_utils.region_2d_to_origin_3d(self.region, self.region_data, coord)
         direction = view3d_utils.region_2d_to_vector_3d(self.region, self.region_data, coord)
         

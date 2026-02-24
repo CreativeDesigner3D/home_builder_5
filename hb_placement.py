@@ -1,8 +1,10 @@
 import bpy
+import gpu
+import math
 from mathutils import Vector
 from enum import Enum, auto
+from gpu_extras.batch import batch_for_shader
 from . import hb_snap, units
-
 
 class PlacementState(Enum):
     """States for placement modal operators"""
@@ -573,7 +575,6 @@ class DimensionOperatorMixin:
     
     def apply_ortho_constraint(self, point: 'Vector') -> 'Vector':
         """Apply ortho constraint to a point relative to first_point."""
-        from mathutils import Vector
         
         if not self.ortho_mode or not self.first_point:
             return point
@@ -778,9 +779,6 @@ class DimensionOperatorMixin:
 
 def draw_dimension_snap_indicator(operator, context):
     """Draw visual feedback for dimension snapping."""
-    import gpu
-    from gpu_extras.batch import batch_for_shader
-    import math
     
     if not hasattr(operator, 'snap_screen_pos') or operator.snap_screen_pos is None:
         return

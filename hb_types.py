@@ -412,7 +412,6 @@ class GeoNodeWall(GeoNodeObject):
         elif direction == 'right':
             # Right connection: find any wall that has a COPY_LOCATION constraint
             # targeting our obj_x
-            import bpy
             for obj in bpy.data.objects:
                 if 'IS_WALL_BP' in obj and obj != self.obj:
                     for con in obj.constraints:

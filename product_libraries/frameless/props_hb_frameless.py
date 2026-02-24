@@ -2,13 +2,26 @@ from typing import Any
 import bpy
 import os
 from bpy.types import (
-        Operator,
-        Panel,
         PropertyGroup,
         UIList,
-        AddonPreferences,
         )
+from bpy.props import (
+        BoolProperty,
+        FloatProperty,
+        IntProperty,
+        PointerProperty,
+        StringProperty,
+        CollectionProperty,
+        EnumProperty,
+        )
+from ... import units
+from ... import hb_types
+from ... import hb_project
 from . import types_frameless
+from . import wood_materials
+from . import finish_colors
+import bpy.utils.previews
+
 
 def get_bundled_pulls_path():
     """Get the path to the bundled cabinet pulls folder."""
@@ -240,7 +253,6 @@ def get_pull_finish_enum_items(self, context):
 
 def get_or_create_pull_finish_material(finish_key):
     """Get or create a material for the specified pull finish"""
-    import bpy
     
     if finish_key not in PULL_FINISHES:
         return None
@@ -351,23 +363,6 @@ def load_pull_object(pull_filename):
     for obj in data_to.objects:
         return obj
     return None
-
-
-from bpy.props import (
-        BoolProperty,
-        FloatProperty,
-        IntProperty,
-        PointerProperty,
-        StringProperty,
-        CollectionProperty,
-        EnumProperty,
-        )
-from ... import units
-from ... import hb_types
-from ... import hb_project
-from . import wood_materials
-from . import finish_colors
-import bpy.utils.previews
 
 # Preview collection for library thumbnails
 preview_collections = {}
