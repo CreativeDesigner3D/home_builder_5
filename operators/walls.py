@@ -1865,9 +1865,49 @@ class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
             self.report({'INFO'}, "No hidden walls found")
         return {'FINISHED'}
 
+
+
+class home_builder_walls_OT_isolate_selected_walls(bpy.types.Operator):
+    """Isolate selected walls by hiding all other walls"""
+    bl_idname = "home_builder_walls.isolate_selected_walls"
+    bl_label = "Isolate Selected Walls"
+    bl_description = "Hide all walls except the selected ones"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj and obj.get('IS_WALL_BP'):
+            return True
+        if obj and obj.parent and obj.parent.get('IS_WALL_BP'):
+            return True
+        return False
+
+    def execute(self, context):
+        selected_wall_bps = set()
+        for obj in context.selected_objects:
+            if obj.get('IS_WALL_BP'):
+                selected_wall_bps.add(obj)
+            elif obj.parent and obj.parent.get('IS_WALL_BP'):
+                selected_wall_bps.add(obj.parent)
+
+        hidden_count = 0
+        for obj in context.scene.objects:
+            if obj.get('IS_WALL_BP') and obj not in selected_wall_bps:
+                obj.hide_set(True)
+                obj.hide_viewport = True
+                for child in obj.children_recursive:
+                    child.hide_set(True)
+                    child.hide_viewport = True
+                hidden_count += 1
+
+        self.report({'INFO'}, f"Isolated {len(selected_wall_bps)} wall(s), hid {hidden_count} other(s)")
+        return {'FINISHED'}
+
 classes = (
     home_builder_walls_OT_hide_wall,
     home_builder_walls_OT_show_all_walls,
+    home_builder_walls_OT_isolate_selected_walls,
     home_builder_walls_OT_delete_wall,
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
