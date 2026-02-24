@@ -2283,6 +2283,11 @@ class Frameless_Scene_Props(PropertyGroup):
                 else:
                     row = box.row()
                     row.label(text="No profile scene", icon='ERROR')
+                
+                # Assign to cabinets button
+                row = layout.row(align=True)
+                row.scale_y = 1.3
+                row.operator("hb_frameless.assign_upper_bottom_to_cabinets", text="Assign to Selected Cabinets", icon='CHECKMARK')
         else:
             box = layout.box()
             box.label(text="No upper bottom details defined", icon='INFO')
