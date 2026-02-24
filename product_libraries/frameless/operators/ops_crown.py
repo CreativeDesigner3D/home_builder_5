@@ -888,6 +888,8 @@ class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
                 
                 # Apply scene annotation settings if it's a curve
                 if obj.type == 'CURVE':
+                    obj.data.dimensions = '2D'
+                    obj.data.fill_mode = 'NONE'
                     hb_scene = context.scene.home_builder
                     obj.data.bevel_depth = hb_scene.annotation_line_thickness
                     color = tuple(hb_scene.annotation_line_color) + (1.0,)
