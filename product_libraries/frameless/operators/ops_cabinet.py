@@ -574,8 +574,6 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
         return False
 
     def check(self, context):
-        from mathutils import Vector
-        
         props = context.scene.hb_frameless
         
         # Calculate Non Equal Cabinet Widths and Number of Equal Cabinets
@@ -618,9 +616,6 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
         return True
 
     def invoke(self, context, event):
-        from mathutils import Vector
-        import math
-        
         props = context.scene.hb_frameless
         
         # Clear Collection

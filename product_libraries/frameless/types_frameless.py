@@ -1600,8 +1600,6 @@ class CabinetDrawerFront(CabinetFront):
         drawer_box.driver_hide('false_front', [false_front])
 
 
-
-
 class CabinetPulloutFront(CabinetFront):
     """Pullout front - uses Base/Tall/Upper pull location like doors.
     Unlike drawer fronts, pullout fronts never use centered pulls.
@@ -1711,7 +1709,6 @@ class CabinetPulloutFront(CabinetFront):
 # =============================================================================
 # CORNER CABINETS
 # =============================================================================
-
 
 
 class InteriorSection(GeoNodeCage):

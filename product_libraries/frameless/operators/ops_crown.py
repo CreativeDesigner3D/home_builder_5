@@ -52,7 +52,7 @@ def get_molding_items(category):
                             'thumbnail': thumb_path if os.path.exists(thumb_path) else None
                         })
     return items
-    
+
 class hb_frameless_OT_create_crown_detail(bpy.types.Operator):
     """Create a new crown molding detail"""
     bl_idname = "hb_frameless.create_crown_detail"
@@ -458,7 +458,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         
         for wall in walls:
             # Use world-space bounding box for rotated walls
-            from mathutils import Vector
             corners = [wall.matrix_world @ Vector(c) for c in wall.bound_box]
             wxs = [c.x for c in corners]
             wys = [c.y for c in corners]
