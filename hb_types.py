@@ -490,6 +490,28 @@ class GeoNodeDoorSwing(GeoNodeObject):
 
 class GeoNodeDimension(GeoNodeObject):  
 
+    @staticmethod
+    def get_unit_type():
+        """Get the Unit Type value based on Blender's unit settings.
+        
+        Returns:
+            int: 0=inches, 1=feet, 2=millimeters, 3=centimeters, 4=meters
+        """
+        unit_settings = bpy.context.scene.unit_settings
+        if unit_settings.system == 'METRIC':
+            length_unit = unit_settings.length_unit
+            if length_unit == 'MILLIMETERS':
+                return 2
+            elif length_unit == 'CENTIMETERS':
+                return 3
+            elif length_unit == 'METERS':
+                return 4
+            else:
+                return 3  # Default metric to centimeters
+        else:
+            # IMPERIAL or NONE
+            return 0  # Default to inches
+
     def create(self,name):
         props = bpy.context.scene.home_builder
 
@@ -501,23 +523,44 @@ class GeoNodeDimension(GeoNodeObject):
         self.set_input("Line Thickness",props.annotation_dimension_line_thickness)
         self.set_input("Extend Line",props.annotation_dimension_extend_line)
         self.set_input("Text Size",props.annotation_dimension_text_size)
+        self.set_input("Unit Type", self.get_unit_type())
 
     def set_decimal(self):
         """Calculate and set appropriate decimal precision for the dimension.
         
         Handles floating point precision issues by:
-        1. Rounding to 2 decimal places first (practical precision for inches)
-        2. Checking if value is very close to a whole number
+        1. Converting to display units based on unit type
+        2. Rounding appropriately for the unit system
         3. Stripping trailing zeros to show only meaningful decimals
         """
         p1 = self.obj.data.splines[0].points[0].co
         p2 = self.obj.data.splines[0].points[1].co 
 
         dist = math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2 + (p1[2] - p2[2]) ** 2)   
-        inch_value = units.meter_to_inch(math.fabs(dist))
+        dist = math.fabs(dist)
         
-        # Round to 2 decimal places (practical precision for inches)
-        rounded = round(inch_value, 2)
+        unit_type = self.get_unit_type()
+        
+        if unit_type == 0:  # inches
+            display_value = units.meter_to_inch(dist)
+            precision = 2
+        elif unit_type == 1:  # feet
+            display_value = units.meter_to_inch(dist) / 12
+            precision = 2
+        elif unit_type == 2:  # millimeters
+            display_value = dist * 1000
+            precision = 1
+        elif unit_type == 3:  # centimeters
+            display_value = dist * 100
+            precision = 2
+        elif unit_type == 4:  # meters
+            display_value = dist
+            precision = 3
+        else:
+            display_value = units.meter_to_inch(dist)
+            precision = 2
+        
+        rounded = round(display_value, precision)
         
         # Check if it's effectively a whole number
         if abs(rounded - round(rounded)) < 0.001:
@@ -525,7 +568,7 @@ class GeoNodeDimension(GeoNodeObject):
             return
         
         # Convert to string and strip trailing zeros
-        text = f"{rounded:.2f}".rstrip('0').rstrip('.')
+        text = f"{rounded:.{precision}f}".rstrip('0').rstrip('.')
         
         if '.' not in text:
             self.set_input("Decimals", 0)
