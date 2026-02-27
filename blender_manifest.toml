@@ -1,9 +1,9 @@
 schema_version = "1.0.0"
 
 id = "home_builder_5"
-version = "1.0.0"
+version = "5.0.0"
 name = "Home Builder 5"
-tagline = "Library for designing interior spaces with cabinets"
+tagline = "Design interior spaces with parametric cabinets, walls, and 2D layouts"
 maintainer = "Andrew Peel"
 type = "add-on"
 
@@ -20,6 +20,8 @@ license = [
 copyright = [
     "2024-2026 Andrew Peel",
 ]
+
+platforms = ["windows-x64", "macos-arm64", "macos-x64", "linux-x64"]
 
 # Bundled Python wheels (Pillow for PDF export)
 wheels = [
