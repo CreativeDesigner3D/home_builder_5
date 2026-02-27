@@ -90,7 +90,10 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
             overlay.wireframe_threshold = 0.0
             overlay.wireframe_opacity = 0.8
         if self.change_studio_lighting:
-            shading.studio_light = 'paint.sl'
+            try:
+                shading.studio_light = 'paint.sl'
+            except Exception:
+                self.report({'INFO'}, "Studio light 'paint.sl' not available in this Blender build")
         if self.use_vertex_snapping:
             tool_settings.snap_elements_base = {'VERTEX'}
         return {'FINISHED'}
