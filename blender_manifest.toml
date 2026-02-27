@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "home_builder_5"
 version = "5.0.0"
 name = "Home Builder 5"
-tagline = "Design interior spaces with parametric cabinets, walls, and 2D layouts"
+tagline = "Design interior spaces with parametric cabinets"
 maintainer = "Andrew Peel"
 type = "add-on"
 
