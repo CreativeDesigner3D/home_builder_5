@@ -466,6 +466,163 @@ class BaseCabinet(Cabinet):
         self.add_cage_to_bay(door_drawer)
 
 
+class LapDrawerCabinet(Cabinet):
+    """Lap drawer cabinet - a single drawer box raised off the floor.
+    
+    The box height is determined by top_drawer_front_height.
+    The top of the cabinet aligns with the top of a standard base cabinet.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = props.default_cabinet_width
+        self.height = props.top_drawer_front_height
+        self.depth = props.base_cabinet_depth
+    
+    def create(self, name="Lap Drawer"):
+        self.create_lap_drawer_carcass(name)
+        self.obj['CABINET_TYPE'] = 'BASE'
+        
+        # Add single drawer exterior
+        drawer = Drawer()
+        self.add_cage_to_bay(drawer)
+    
+    def create_lap_drawer_carcass(self, name):
+        self.create_cabinet(name)
+        
+        props = bpy.context.scene.hb_frameless
+        
+        self.add_properties_common()
+        self.add_properties_base_top()
+        
+        # Z location: top aligns with base cabinet height
+        self.obj.location.z = props.base_cabinet_height - self.height
+        
+        dim_x = self.var_input('Dim X', 'dim_x')
+        dim_y = self.var_input('Dim Y', 'dim_y')
+        dim_z = self.var_input('Dim Z', 'dim_z')
+        
+        mt = self.var_prop('Material Thickness', 'mt')
+        btc = self.var_prop('Base Top Construction', 'btc')
+        sw = self.var_prop('Stretcher Width', 'sw')
+        saw = self.var_prop('Sink Apron Width', 'saw')
+        
+        # Left Side - plain (no toe kick notch)
+        left_side = CabinetPart()
+        left_side.create('Left Side')
+        left_side.obj.parent = self.obj
+        left_side.obj.rotation_euler.y = math.radians(-90)
+        left_side.driver_input("Length", 'dim_z', [dim_z])
+        left_side.driver_input("Width", 'dim_y', [dim_y])
+        left_side.driver_input("Thickness", 'mt', [mt])
+        left_side.set_input("Mirror Y", True)
+        left_side.set_input("Mirror Z", True)
+        
+        # Right Side - plain (no toe kick notch)
+        right_side = CabinetPart()
+        right_side.create('Right Side')
+        right_side.obj.parent = self.obj
+        right_side.driver_location('x', 'dim_x', [dim_x])
+        right_side.obj.rotation_euler.y = math.radians(-90)
+        right_side.driver_input("Length", 'dim_z', [dim_z])
+        right_side.driver_input("Width", 'dim_y', [dim_y])
+        right_side.driver_input("Thickness", 'mt', [mt])
+        right_side.set_input("Mirror Y", True)
+        right_side.set_input("Mirror Z", False)
+        
+        # Bottom
+        bottom = CabinetPart()
+        bottom.create('Bottom')
+        bottom.obj.parent = self.obj
+        bottom.driver_location('x', 'mt', [mt])
+        bottom.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        bottom.driver_input("Width", 'dim_y', [dim_y])
+        bottom.driver_input("Thickness", 'mt', [mt])
+        bottom.set_input("Mirror Y", True)
+        bottom.set_input("Mirror Z", False)
+        
+        # Back
+        back = CabinetPart()
+        back.create('Back')
+        back.obj.parent = self.obj
+        back.obj.rotation_euler.x = math.radians(90)
+        back.obj.rotation_euler.y = math.radians(-90)
+        back.driver_location('x', 'mt', [mt])
+        back.driver_location('z', 'mt', [mt])
+        back.driver_input("Length", 'dim_z-mt-IF(btc==2,0,mt)', [dim_z, mt, btc])
+        back.driver_input("Width", 'dim_x-(mt*2)', [dim_x, mt])
+        back.driver_input("Thickness", 'mt', [mt])
+        back.set_input("Mirror Y", True)
+        
+        # Full Top - shown when btc==0
+        top = CabinetPart()
+        top.create('Top')
+        top.obj.parent = self.obj
+        top.driver_location('x', 'mt', [mt])
+        top.driver_location('z', 'dim_z', [dim_z])
+        top.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        top.driver_input("Width", 'dim_y', [dim_y])
+        top.driver_input("Thickness", 'mt', [mt])
+        top.set_input("Mirror Y", True)
+        top.set_input("Mirror Z", True)
+        top.driver_hide('IF(btc!=0,True,False)', [btc])
+        
+        # Front Stretcher - shown when btc==1
+        front_stretcher = CabinetPart()
+        front_stretcher.create('Front Stretcher')
+        front_stretcher.obj.parent = self.obj
+        front_stretcher.driver_location('x', 'mt', [mt])
+        front_stretcher.driver_location('y', '-dim_y', [dim_y])
+        front_stretcher.driver_location('z', 'dim_z', [dim_z])
+        front_stretcher.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        front_stretcher.driver_input("Width", 'sw', [sw])
+        front_stretcher.driver_input("Thickness", 'mt', [mt])
+        front_stretcher.set_input("Mirror Z", True)
+        front_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+        front_stretcher.obj['Finish Top'] = False
+        front_stretcher.obj['Finish Bottom'] = False
+        
+        # Back Stretcher - shown when btc==1
+        back_stretcher = CabinetPart()
+        back_stretcher.create('Back Stretcher')
+        back_stretcher.obj.parent = self.obj
+        back_stretcher.driver_location('x', 'mt', [mt])
+        back_stretcher.driver_location('y', '-sw', [sw])
+        back_stretcher.driver_location('z', 'dim_z', [dim_z])
+        back_stretcher.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        back_stretcher.driver_input("Width", 'sw', [sw])
+        back_stretcher.driver_input("Thickness", 'mt', [mt])
+        back_stretcher.set_input("Mirror Z", True)
+        back_stretcher.driver_hide('IF(btc!=1,True,False)', [btc])
+        back_stretcher.obj['Finish Top'] = False
+        back_stretcher.obj['Finish Bottom'] = False
+        
+        # Sink Apron Front - shown when btc==2
+        sink_apron = CabinetPart()
+        sink_apron.create('Sink Apron')
+        sink_apron.obj.parent = self.obj
+        sink_apron.obj.rotation_euler.x = math.radians(-90)
+        sink_apron.driver_location('x', 'mt', [mt])
+        sink_apron.driver_location('y', '-dim_y', [dim_y])
+        sink_apron.driver_location('z', 'dim_z', [dim_z])
+        sink_apron.driver_input("Length", 'dim_x-(mt*2)', [dim_x, mt])
+        sink_apron.driver_input("Width", 'saw', [saw])
+        sink_apron.driver_input("Thickness", 'mt', [mt])
+        sink_apron.driver_hide('IF(btc!=2,True,False)', [btc])
+        
+        # Bay/Opening
+        opening = CabinetBay()
+        opening.create("Bay")
+        opening.obj.parent = self.obj
+        opening.driver_location('x', 'mt', [mt])
+        opening.driver_location('y', '-dim_y', [dim_y])
+        opening.driver_location('z', 'mt', [mt])
+        opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x, mt])
+        opening.driver_input("Dim Y", 'dim_y-mt', [dim_y, mt])
+        opening.driver_input("Dim Z", 'dim_z-(mt*2)', [dim_z, mt])
+
+
 class TallCabinet(Cabinet):
     """Tall cabinet (pantry, oven, utility). Has toe kick, full height."""
     

@@ -451,6 +451,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if (self.cursor_z_tracking or self.align_top_to_base) and self.cursor_z_product_height > 0:
             return self.cursor_z_product_height
         props = context.scene.hb_frameless
+        if self.cabinet_name == 'Lap Drawer':
+            return props.top_drawer_front_height
         if self.cabinet_type == 'BASE':
             return props.base_cabinet_height
         elif self.cabinet_type == 'TALL':
@@ -471,6 +473,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return props.base_cabinet_height - frame_height
         
         props = context.scene.hb_frameless
+        
+        if self.cabinet_name == 'Lap Drawer':
+            return props.base_cabinet_height - props.top_drawer_front_height
         
         if self.cabinet_type == 'UPPER':
             return props.default_wall_cabinet_location
@@ -1716,6 +1721,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 return types_frameless.PieCutCornerUpperCabinet()
         
         # Handle regular cabinets
+        if self.cabinet_name == 'Lap Drawer':
+            cabinet = types_frameless.LapDrawerCabinet()
+            return cabinet
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
             if self.cabinet_name == 'Base Door':
