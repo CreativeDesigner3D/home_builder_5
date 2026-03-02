@@ -133,9 +133,13 @@ def gather_base_cabinets(context, selected_only=False):
 
         if obj.parent and obj.parent.get('IS_WALL_BP'):
             wall = obj.parent
-            if wall not in wall_cabinets:
-                wall_cabinets[wall] = []
-            wall_cabinets[wall].append(obj)
+            # Separate front-side and back-side cabinets on the same wall
+            is_back = (abs(obj.rotation_euler.z - math.pi) < 0.1 or 
+                       abs(obj.rotation_euler.z + math.pi) < 0.1)
+            wall_key = (wall, is_back)
+            if wall_key not in wall_cabinets:
+                wall_cabinets[wall_key] = []
+            wall_cabinets[wall_key].append(obj)
         else:
             island_cabinets.append(obj)
 
@@ -144,35 +148,41 @@ def gather_base_cabinets(context, selected_only=False):
 
 def build_wall_runs(wall_cabinets):
     """Group connected walls into runs. Returns list of runs,
-    where each run is a list of (wall_obj, cabinets) tuples."""
+    where each run is a list of (wall_obj, cabinets) tuples.
+    wall_cabinets is keyed by (wall_obj, is_back) tuples to keep
+    front-side and back-side cabinets separate."""
     if not wall_cabinets:
         return []
 
     used = set()
     runs = []
 
-    for wall_obj in wall_cabinets:
-        if wall_obj in used:
+    for wall_key in wall_cabinets:
+        if wall_key in used:
             continue
 
+        wall_obj, is_back = wall_key
+
+        # Trace left to find the start of this run (only following same side)
         run_start = wall_obj
         wall = hb_types.GeoNodeWall(run_start)
         while True:
             left = wall.get_connected_wall('left')
-            if left and left.obj in wall_cabinets and left.obj not in used:
+            if left and (left.obj, is_back) in wall_cabinets and (left.obj, is_back) not in used:
                 run_start = left.obj
                 wall = left
             else:
                 break
 
+        # Build the run going right (only following same side)
         run = []
         current = run_start
-        while current and current in wall_cabinets and current not in used:
-            used.add(current)
-            run.append((current, wall_cabinets[current]))
+        while current and (current, is_back) in wall_cabinets and (current, is_back) not in used:
+            used.add((current, is_back))
+            run.append((current, wall_cabinets[(current, is_back)]))
             wall = hb_types.GeoNodeWall(current)
             right = wall.get_connected_wall('right')
-            if right and right.obj in wall_cabinets:
+            if right and (right.obj, is_back) in wall_cabinets:
                 current = right.obj
             else:
                 break
