@@ -10,7 +10,7 @@ from .... import hb_utils, hb_placement, hb_snap, units
 
 def get_user_library_path():
     """Get the default user library path for cabinet groups."""
-    return os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
+    return bpy.utils.extension_path_user(__package__.split('.')[0], path="cabinet_groups", create=True)
 
 def get_all_cabinet_group_paths():
     """Get all cabinet group library paths (default + user libraries with cabinet_groups/)."""
@@ -139,10 +139,8 @@ class hb_frameless_OT_save_cabinet_group_to_user_library(bpy.types.Operator):
     def invoke(self, context, event):
         self.cabinet_group_name = context.object.name
         
-        # Set default save path to user documents
-        
-        default_path = os.path.join(os.path.expanduser("~"), "Documents", "Home Builder Library", "Cabinet Groups")
-        self.save_path = default_path
+        # Set default save path to user library
+        self.save_path = get_user_library_path()
         
         return context.window_manager.invoke_props_dialog(self, width=400)
     

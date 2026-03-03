@@ -4,12 +4,13 @@ Finish Color Library System
 Manages stain and paint colors for cabinet materials.
 Colors are stored in two tiers:
   1. Built-in defaults (shipped with the addon, not editable)
-  2. User custom colors (saved to %APPDATA%/home_builder_5/custom_colors.json)
+  2. User custom colors (saved to the extension's user data folder)
 
 Each color defines the two wood colors plus optional shader overrides
 that get applied to the procedural wood material node group.
 """
 
+import bpy
 import os
 import json
 
@@ -18,15 +19,8 @@ import json
 # ============================================
 
 def get_user_data_folder():
-    """Get the user data folder for Home Builder 5.
-    Creates it if it doesn't exist.
-    Returns: path string (e.g. C:/Users/.../AppData/Roaming/home_builder_5/)
-    """
-    appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
-    folder = os.path.join(appdata, 'home_builder_5')
-    if not os.path.exists(folder):
-        os.makedirs(folder, exist_ok=True)
-    return folder
+    """Get the user data folder for Home Builder 5."""
+    return bpy.utils.extension_path_user(__package__.split('.')[0], path="user_data", create=True)
 
 
 def get_custom_colors_path():

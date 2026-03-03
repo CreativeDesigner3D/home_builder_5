@@ -13,15 +13,7 @@ from datetime import datetime
 
 def get_user_library_path() -> str:
     """Get the path to the user's detail library folder."""
-    # Store in Blender's config folder
-    config_path = bpy.utils.user_resource('CONFIG')
-    library_path = os.path.join(config_path, "home_builder", "detail_library")
-    
-    # Create if it doesn't exist
-    if not os.path.exists(library_path):
-        os.makedirs(library_path)
-    
-    return library_path
+    return bpy.utils.extension_path_user(__package__, path="detail_library", create=True)
 
 
 def get_library_index_path() -> str:
