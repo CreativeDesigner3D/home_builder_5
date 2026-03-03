@@ -9,7 +9,7 @@ type = "add-on"
 
 website = "https://creativedesigner3d.com/"
 
-tags = ["3D View", "Scene"]
+tags = ["Add Mesh", "Scene"]
 
 blender_version_min = "5.0.0"
 
