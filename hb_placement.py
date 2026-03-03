@@ -97,6 +97,10 @@ class PlacementMixin:
         
         Call this early in your modal() before position logic.
         """
+        # Update region to match the viewport the mouse is currently over
+        region = hb_snap.get_region(context, event.mouse_x, event.mouse_y)
+        if region is not None:
+            self.region = region
         self.mouse_pos = Vector((
             event.mouse_x - self.region.x,
             event.mouse_y - self.region.y

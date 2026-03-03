@@ -7,12 +7,26 @@ from mathutils.geometry import intersect_line_plane
 RADIUS = 50
 STEPS = 6
 
-def get_region(context):
+def get_region(context, mouse_x=None, mouse_y=None):
+    """Get the 3D viewport region.
+    
+    If mouse coordinates are provided, returns the region the mouse is over.
+    Otherwise falls back to the first 3D viewport region found.
+    """
+    fallback = None
     for area in context.screen.areas:
         if area.type == 'VIEW_3D':
-            for region in area.regions:
-                if region.data:
-                    return region
+            if mouse_x is not None and mouse_y is not None:
+                if (area.x <= mouse_x < area.x + area.width and
+                        area.y <= mouse_y < area.y + area.height):
+                    for region in area.regions:
+                        if region.data:
+                            return region
+            else:
+                for region in area.regions:
+                    if region.data and fallback is None:
+                        fallback = region
+    return fallback
 
 def event_is_pass_through(event):
     if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
