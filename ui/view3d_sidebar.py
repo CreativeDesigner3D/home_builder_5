@@ -1118,6 +1118,25 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
 
 
 
+
+class HOME_BUILDER_PT_room_layout_stairs(bpy.types.Panel):
+    bl_label = "Stairs"
+    bl_idname = "HOME_BUILDER_PT_room_layout_stairs"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_room_layout"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_frameless.place_stairs', text="Place Stairs", icon='MOD_ARRAY')
+
+
 classes = (
     HOME_BUILDER_PT_hidden_header,
     HOME_BUILDER_PT_project,
@@ -1129,6 +1148,7 @@ classes = (
     HOME_BUILDER_PT_room_layout_floor,
     HOME_BUILDER_PT_room_layout_lighting,
     HOME_BUILDER_PT_room_layout_obstacles,
+    HOME_BUILDER_PT_room_layout_stairs,
     HOME_BUILDER_PT_product_library,
     HOME_BUILDER_PT_layout_views,
     HOME_BUILDER_MT_layout_views_create,
