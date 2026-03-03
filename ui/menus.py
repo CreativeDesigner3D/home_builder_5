@@ -29,11 +29,6 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
                        text="Recommended Settings", icon='PREFERENCES')
         layout.operator("home_builder.rendering_settings",
                        text="Rendering Settings", icon='RENDER_STILL')
-        
-        layout.separator()
-        
-        # Developer
-        layout.operator("home_builder.reload_addon", text="Reload Add-on", icon='FILE_REFRESH')
 
 
 class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
