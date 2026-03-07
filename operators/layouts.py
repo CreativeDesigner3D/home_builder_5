@@ -1964,7 +1964,9 @@ class home_builder_layouts_OT_draw_line(bpy.types.Operator, hb_placement.Placeme
         # Create material
         mat = bpy.data.materials.new("Line_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = line_color
         curve.materials.append(mat)
         
         curve.bevel_depth = line_thickness
@@ -2651,7 +2653,9 @@ class home_builder_layouts_OT_draw_rectangle(bpy.types.Operator, hb_placement.Pl
         # Create material
         mat = bpy.data.materials.new("Rectangle_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = line_color
         curve.materials.append(mat)
         
         curve.bevel_depth = line_thickness
@@ -3197,7 +3201,9 @@ class home_builder_layouts_OT_draw_circle(bpy.types.Operator, hb_placement.Place
         # Create material
         mat = bpy.data.materials.new("Circle_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = line_color
         curve.materials.append(mat)
         
         curve.bevel_depth = line_thickness
@@ -3636,7 +3642,9 @@ class home_builder_layouts_OT_add_text(bpy.types.Operator, hb_placement.Placemen
         # Create material
         mat = bpy.data.materials.new("Text_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = color
         text_data.materials.append(mat)
         
         # Set extrude for visibility

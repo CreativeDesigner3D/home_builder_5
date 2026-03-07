@@ -167,9 +167,11 @@ class TitleBlock:
         # Black material
         mat = bpy.data.materials.new(f"{scene.name}_{field_name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
         text_obj.data.materials.append(mat)
-        
+
         self.text_objects.append(text_obj)
         return text_obj
     
@@ -1434,9 +1436,11 @@ class MultiView(LayoutView):
         # Black material
         mat = bpy.data.materials.new(f"Label_{text}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
         text_obj.data.materials.append(mat)
-        
+
         return text_obj
 
 

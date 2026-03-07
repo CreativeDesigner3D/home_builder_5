@@ -2567,7 +2567,9 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         else:
             mat = bpy.data.materials.new(f"{new_obj.name}_Mat")
             mat.use_nodes = True
-            mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
             new_curve.materials.append(mat)
         
         new_curve.bevel_depth = curve.bevel_depth if curve.bevel_depth > 0 else 0.002
@@ -2646,7 +2648,9 @@ class home_builder_details_OT_offset_curve(bpy.types.Operator):
         else:
             mat = bpy.data.materials.new(f"{self._preview_obj.name}_Mat")
             mat.use_nodes = True
-            mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
             new_curve.materials.append(mat)
         
         new_curve.bevel_depth = curve.bevel_depth if curve.bevel_depth > 0 else 0.002

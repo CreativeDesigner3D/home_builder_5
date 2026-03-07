@@ -275,8 +275,10 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         # Create material
         mat = bpy.data.materials.new(f"{obs_data[1]}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
-        mat.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.8
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = color
+            bsdf.inputs["Alpha"].default_value = 0.8
         mat.blend_method = 'BLEND'
         self.obstacle_obj.data.materials.append(mat)
         

@@ -124,12 +124,14 @@ class GeoNodeLine(hb_types.GeoNodeObject):
         # Create black material
         mat = bpy.data.materials.new(f"{name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
         curve.materials.append(mat)
-        
+
         # Set bevel for line thickness
         curve.bevel_depth = 0.002  # Small line thickness
-        
+
         return self.obj
     
     def set_points(self, start: Vector, end: Vector):
@@ -178,7 +180,9 @@ class GeoNodePolyline(hb_types.GeoNodeObject):
         # Create material
         mat = bpy.data.materials.new(f"{name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = line_color
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = line_color
         curve.materials.append(mat)
         
         curve.bevel_depth = line_thickness
@@ -254,7 +258,9 @@ class GeoNodeCircle(hb_types.GeoNodeObject):
         # Set up material (black line) - match GeoNodeLine approach
         mat = bpy.data.materials.new(f"{name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
         curve_data.materials.append(mat)
         
         # Set bevel for line thickness
@@ -310,7 +316,9 @@ class GeoNodeText(hb_types.GeoNodeObject):
         # Create black material
         mat = bpy.data.materials.new(f"{name}_Mat")
         mat.use_nodes = True
-        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0, 0, 0, 1)
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
         text_data.materials.append(mat)
         
         # Set extrude for visibility (thin 3D text)
