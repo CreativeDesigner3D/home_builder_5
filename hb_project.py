@@ -140,27 +140,25 @@ class Home_Builder_Project_Props(PropertyGroup):
 # MAIN SCENE MANAGEMENT
 # =============================================================================
 
-def get_main_scene(context=None, create_tag=True):
+def get_main_scene(context=None):
     """
     Get the main scene that stores project-level data.
+    Always returns a scene if any exist. Will attempt to tag a new
+    main scene if none is tagged, but handles restricted (draw) contexts
+    gracefully by catching the write error.
     
     Args:
         context: Blender context (optional, uses bpy.context if None)
-        create_tag: If True, tags the first available scene as main if none found
     
     Returns:
-        The main scene, or None if not found and create_tag=False
+        The main scene, or None if no scenes exist
     """
     # Look for a scene with the main flag
     for scene in bpy.data.scenes:
         if scene.get('IS_MAIN_SCENE'):
             return scene
     
-    # No main scene found
-    if not create_tag:
-        return None
-    
-    # Tag a scene as main - prefer first room scene, otherwise first scene
+    # No main scene tagged - find best candidate
     room_scenes = get_room_scenes()
     if room_scenes:
         main = room_scenes[0]
@@ -169,7 +167,12 @@ def get_main_scene(context=None, create_tag=True):
     else:
         return None
     
-    main['IS_MAIN_SCENE'] = True
+    # Attempt to tag - this will fail silently in draw contexts
+    try:
+        main['IS_MAIN_SCENE'] = True
+    except AttributeError:
+        pass
+    
     return main
 
 
@@ -183,7 +186,7 @@ def get_project_props(context=None):
     Returns:
         Home_Builder_Project_Props instance
     """
-    main = get_main_scene(context, create_tag=True)
+    main = get_main_scene(context)
     if main:
         return main.hb_project
     return None
@@ -191,7 +194,7 @@ def get_project_props(context=None):
 
 def ensure_main_scene(context=None):
     """
-    Ensure a main scene is tagged. Call this on file load.
+    Ensure a main scene is tagged. Call this on file load or after room deletion.
     
     Args:
         context: Blender context (optional)
@@ -199,7 +202,19 @@ def ensure_main_scene(context=None):
     Returns:
         The main scene
     """
-    return get_main_scene(context, create_tag=True)
+    main = get_main_scene(context)
+    if main:
+        return main
+    
+    # No main scene tagged - tag the first room scene or first scene
+    room_scenes = get_room_scenes()
+    if room_scenes:
+        set_main_scene(room_scenes[0])
+        return room_scenes[0]
+    elif bpy.data.scenes:
+        set_main_scene(bpy.data.scenes[0])
+        return bpy.data.scenes[0]
+    return None
 
 
 def is_main_scene(scene):

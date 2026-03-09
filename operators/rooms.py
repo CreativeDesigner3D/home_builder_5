@@ -1,5 +1,6 @@
 import bpy
 from .. import hb_utils
+from .. import hb_project
 
 # =============================================================================
 # ROOM MANAGEMENT OPERATORS
@@ -138,8 +139,13 @@ class home_builder_OT_delete_room(bpy.types.Operator):
                     context.window.scene = scene
                     break
         
+        was_main = scene_to_delete.get('IS_MAIN_SCENE', False)
         scene_name = scene_to_delete.name
         bpy.data.scenes.remove(scene_to_delete)
+        
+        # Re-tag a main scene if we just deleted it
+        if was_main:
+            hb_project.ensure_main_scene(context)
         
         self.report({'INFO'}, f"Deleted room: {scene_name}")
         return {'FINISHED'}
