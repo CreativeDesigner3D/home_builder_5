@@ -1,6 +1,10 @@
 import bpy
+import gpu
+import math
 from .units import inch
 from mathutils import Vector
+from gpu_extras.batch import batch_for_shader
+from bpy_extras.view3d_utils import region_2d_to_location_3d, location_3d_to_region_2d
 import bmesh
 
 class home_builder_OT_to_do(bpy.types.Operator):
@@ -486,12 +490,175 @@ class home_builder_OT_create_camera(bpy.types.Operator):
             col.prop(self, "backplate_color", text="Color")
             col.prop(self, "backplate_distance", text="Distance")
 
+
+def _draw_scale_line(operator, context):
+    """GPU draw callback for the scale line preview."""
+    if operator.first_point is None:
+        return
+    
+    region = context.region
+    rv3d = context.region_data
+    if not region or not rv3d:
+        return
+    
+    # Convert 3D points to 2D screen coords
+    p1_2d = location_3d_to_region_2d(region, rv3d, operator.first_point)
+    if p1_2d is None:
+        return
+    
+    if operator.current_mouse_pos:
+        p2_2d = operator.current_mouse_pos
+    else:
+        return
+    
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    
+    # Draw line
+    gpu.state.line_width_set(2.0)
+    shader.bind()
+    shader.uniform_float("color", (1.0, 0.5, 0.0, 0.9))
+    batch = batch_for_shader(shader, 'LINES', {"pos": [p1_2d, p2_2d]})
+    batch.draw(shader)
+    
+    # Draw point markers
+    for pt in [p1_2d, p2_2d]:
+        segments = 24
+        radius = 6
+        circle_verts = []
+        for i in range(segments + 1):
+            angle = 2 * math.pi * i / segments
+            cx = pt[0] + radius * math.cos(angle)
+            cy = pt[1] + radius * math.sin(angle)
+            circle_verts.append((cx, cy))
+        shader.uniform_float("color", (1.0, 1.0, 0.0, 1.0))
+        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": circle_verts})
+        batch.draw(shader)
+    
+    gpu.state.blend_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
+class home_builder_OT_set_scale_with_two_points(bpy.types.Operator):
+    bl_idname = "home_builder.set_scale_with_two_points"
+    bl_label = "Set Image Scale"
+    bl_description = "Scale a reference image by clicking two points of a known distance"
+    bl_options = {'UNDO'}
+
+    known_distance: bpy.props.FloatProperty(
+        name="Known Distance",
+        description="The real-world distance between the two points you will select",
+        subtype='DISTANCE',
+        min=0.0001,
+    )  # type: ignore
+
+    # Runtime state (not saved)
+    first_point = None
+    current_mouse_pos = None
+    empty_image = None
+    _draw_handle = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return (obj and obj.type == 'EMPTY' and obj.empty_display_type == 'IMAGE')
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=250)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Enter the known distance between two points:")
+        layout.prop(self, 'known_distance')
+
+    def execute(self, context):
+        self.empty_image = context.active_object
+        self.first_point = None
+        self.current_mouse_pos = None
+
+        # Add GPU draw handler
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_scale_line, (self, context), 'WINDOW', 'POST_PIXEL')
+
+        context.area.header_text_set("Click the FIRST point on the image")
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def cleanup(self, context):
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+        context.area.tag_redraw()
+
+    def get_image_plane_point(self, context, event):
+        """Project mouse position onto the image empty's local XY plane."""
+        region = context.region
+        rv3d = context.region_data
+        coord = (event.mouse_region_x, event.mouse_region_y)
+        
+        # Use the empty's location and orientation to define the plane
+        obj = self.empty_image
+        plane_point = obj.location
+        plane_normal = obj.matrix_world.to_3x3() @ Vector((0, 0, 1))
+        
+        # Get 3D point on that plane
+        from mathutils.geometry import intersect_line_plane
+        from bpy_extras.view3d_utils import region_2d_to_vector_3d, region_2d_to_origin_3d
+        
+        view_vector = region_2d_to_vector_3d(region, rv3d, coord)
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        
+        point = intersect_line_plane(ray_origin, ray_origin + view_vector, plane_point, plane_normal)
+        return point
+
+    def modal(self, context, event):
+        context.area.tag_redraw()
+
+        if event.type == 'MOUSEMOVE':
+            self.current_mouse_pos = (event.mouse_region_x, event.mouse_region_y)
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            point = self.get_image_plane_point(context, event)
+            if point is None:
+                return {'RUNNING_MODAL'}
+
+            if self.first_point is None:
+                self.first_point = point
+                context.area.header_text_set("Click the SECOND point on the image")
+            else:
+                # Calculate and apply scale
+                distance = (self.first_point - point).length
+                if distance > 0:
+                    scale_factor = self.known_distance / distance
+                    self.empty_image.empty_display_size *= scale_factor
+                    self.report({'INFO'}, f"Image scaled by {scale_factor:.4f}")
+                else:
+                    self.report({'WARNING'}, "Points are too close together")
+                
+                self.cleanup(context)
+                return {'FINISHED'}
+
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self.cleanup(context)
+            self.report({'INFO'}, "Cancelled")
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+
 classes = (
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
     home_builder_OT_rendering_settings,
     home_builder_OT_create_camera,
     home_builder_annotations_OT_apply_settings_to_all,
+    home_builder_OT_set_scale_with_two_points,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)             

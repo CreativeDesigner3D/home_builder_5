@@ -1119,6 +1119,47 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
 
 
 
+
+# SUBPANEL: Reference Image
+class HOME_BUILDER_PT_room_layout_reference_image(bpy.types.Panel):
+    bl_label = "Reference Image"
+    bl_idname = "HOME_BUILDER_PT_room_layout_reference_image"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_room_layout"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        obj = context.active_object
+        has_image = (obj and obj.type == 'EMPTY' and obj.empty_display_type == 'IMAGE')
+        
+        if has_image:
+            col = layout.column(align=True)
+            col.scale_y = 1.3
+            col.operator("home_builder.set_scale_with_two_points", 
+                        text="Set Image Scale", icon='FIXED_SIZE')
+            
+            col = layout.column(align=True)
+            col.use_property_split = True
+            col.use_property_decorate = False
+            col.prop(obj, "empty_display_size", text="Display Size")
+            col.prop(obj, "empty_image_offset", text="Offset")
+            col.separator()
+            col.prop(obj, "show_empty_image_orthographic", text="Show in Ortho")
+            col.prop(obj, "show_empty_image_perspective", text="Show in Perspective")
+            col.prop(obj, "use_empty_image_alpha", text="Use Alpha")
+            if obj.use_empty_image_alpha:
+                col.prop(obj, "color", index=3, text="Opacity", slider=True)
+        else:
+            layout.label(text="To add a reference image.",icon='INFO')
+            layout.label(text="Drag an image into the 3D viewport.", icon='BLANK1')
+            layout.label(text="This can be used to trace floor plans.", icon='BLANK1')
+            
+
+
 class HOME_BUILDER_PT_room_layout_stairs(bpy.types.Panel):
     bl_label = "Stairs"
     bl_idname = "HOME_BUILDER_PT_room_layout_stairs"
@@ -1148,6 +1189,7 @@ classes = (
     HOME_BUILDER_PT_room_layout_floor,
     HOME_BUILDER_PT_room_layout_lighting,
     HOME_BUILDER_PT_room_layout_obstacles,
+    HOME_BUILDER_PT_room_layout_reference_image,
     HOME_BUILDER_PT_room_layout_stairs,
     HOME_BUILDER_PT_product_library,
     HOME_BUILDER_PT_layout_views,
