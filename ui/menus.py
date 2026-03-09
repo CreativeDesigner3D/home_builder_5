@@ -1,6 +1,20 @@
 import bpy
 
 
+class HOME_BUILDER_OT_change_units(bpy.types.Operator):
+    bl_idname = "home_builder.change_units"
+    bl_label = "Change Units"
+    bl_description = "Change the scene unit system"
+
+    unit_system: bpy.props.StringProperty(name="Unit System")
+    length_unit: bpy.props.StringProperty(name="Length Unit")
+
+    def execute(self, context):
+        context.scene.unit_settings.system = self.unit_system
+        context.scene.unit_settings.length_unit = self.length_unit
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
     bl_label = "Home Builder"
     bl_idname = "HOME_BUILDER_MT_main_menu"
@@ -21,6 +35,11 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         
         # Camera
         layout.operator("home_builder.create_camera", text="Create Camera", icon='CAMERA_DATA')
+        
+        layout.separator()
+        
+        # Units
+        layout.menu("HOME_BUILDER_MT_change_units", text="Change Units", icon='DRIVER_DISTANCE')
         
         layout.separator()
         
@@ -71,12 +90,38 @@ class HOME_BUILDER_MT_window_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Window").object_type = 'WINDOW'
 
+class HOME_BUILDER_MT_change_units(bpy.types.Menu):
+    bl_label = "Change Units"
+    bl_idname = "HOME_BUILDER_MT_change_units"
+
+    def draw(self, context):
+        layout = self.layout
+        unit_settings = context.scene.unit_settings
+
+        units = [
+            ("METRIC", "METERS", "Meters"),
+            ("METRIC", "CENTIMETERS", "Centimeters"),
+            ("METRIC", "MILLIMETERS", "Millimeters"),
+            ("IMPERIAL", "FEET", "Feet"),
+            ("IMPERIAL", "INCHES", "Inches"),
+        ]
+
+        for system, length, label in units:
+            is_active = (unit_settings.system == system and unit_settings.length_unit == length)
+            icon = 'CHECKMARK' if is_active else 'NONE'
+            op = layout.operator("home_builder.change_units", text=label, icon=icon)
+            op.unit_system = system
+            op.length_unit = length
+
+
 
 def draw_home_builder_menu(self, context):
     self.layout.menu("HOME_BUILDER_MT_main_menu")
 
 
 classes = (
+    HOME_BUILDER_OT_change_units,
+    HOME_BUILDER_MT_change_units,
     HOME_BUILDER_MT_main_menu,
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_door_commands,
