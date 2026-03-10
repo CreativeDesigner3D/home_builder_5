@@ -224,7 +224,6 @@ class HB_OT_refresh_asset_libraries(bpy.types.Operator):
 class VIEW3D_AST_home_builder(bpy.types.AssetShelf):
     bl_space_type = 'VIEW_3D'
     bl_idname = "VIEW3D_AST_home_builder"
-    bl_options = {'DEFAULT_VISIBLE'}
 
     bl_default_preview_size = 96
 
