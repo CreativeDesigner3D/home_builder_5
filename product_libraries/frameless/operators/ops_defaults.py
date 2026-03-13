@@ -9,11 +9,22 @@ class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
 
     def execute(self, context):
         frameless_props = context.scene.hb_frameless
+        # Map enum string to COMBOBOX index
+        type_map = {
+            'Notch Ends to Floor': 0,
+            'Ladder Style': 1,
+            'Floating': 2,
+            'Leg Levelers': 3,
+        }
+        new_type_index = type_map.get(frameless_props.default_toe_kick_type, 0)
+
         for obj in context.scene.objects:
             if 'Toe Kick Height' in obj:
                 obj['Toe Kick Height'] = frameless_props.default_toe_kick_height
             if 'Toe Kick Setback' in obj:
-                obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback  
+                obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback
+            if 'Toe Kick Type' in obj:
+                obj['Toe Kick Type'] = new_type_index
             hb_utils.run_calc_fix(context,obj)              
         return {'FINISHED'}
 

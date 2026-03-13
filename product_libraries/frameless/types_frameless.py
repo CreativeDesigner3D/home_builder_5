@@ -18,11 +18,26 @@ class Cabinet(GeoNodeCage):
         props = bpy.context.scene.hb_frameless
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
 
+    def _get_toe_kick_type_index(self):
+        """Map the default_toe_kick_type enum to a COMBOBOX index."""
+        props = bpy.context.scene.hb_frameless
+        type_map = {
+            'Notch Ends to Floor': 0,
+            'Ladder Style': 1,
+            'Floating': 2,
+            'Leg Levelers': 3,
+        }
+        return type_map.get(props.default_toe_kick_type, 0)
+
     def add_properties_toe_kick(self):
         props = bpy.context.scene.hb_frameless
         self.add_property('Toe Kick Height', 'DISTANCE', props.default_toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
         self.add_property('Remove Bottom', 'CHECKBOX', False)
+        tkt_index = self._get_toe_kick_type_index()
+        self.add_property('Toe Kick Type', 'COMBOBOX', tkt_index,
+                          combobox_items=["Notch Ends to Floor", "Ladder Style", "Floating", "Leg Levelers"])
+        self.add_property('Leg Leveler Inset', 'DISTANCE', props.default_leg_leveler_inset)
     
     def add_properties_base_top(self):
         """Add base top construction properties."""
@@ -47,6 +62,55 @@ class Cabinet(GeoNodeCage):
                 cage.driver_input('Dim X', 'dim_x',[dim_x])
                 cage.driver_input('Dim Y', 'dim_y',[dim_y])
                 cage.driver_input('Dim Z', 'dim_z',[dim_z])
+
+    def _get_leg_leveler_object(self):
+        """Get the leg leveler mesh object, loading once and caching via scene props."""
+        from ... import hb_project
+
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        # Return cached if available
+        if props.current_leg_leveler_object:
+            return props.current_leg_leveler_object
+
+        # Load from file
+        leveler_path = os.path.join(
+            os.path.dirname(__file__), 'frameless_assets', 'leg_levelers', 'Leg Leveler.blend'
+        )
+        if not os.path.exists(leveler_path):
+            print(f"WARNING: Leg leveler file not found: {leveler_path}")
+            return None
+
+        with bpy.data.libraries.load(leveler_path) as (data_from, data_to):
+            data_to.objects = data_from.objects
+
+        for obj in data_to.objects:
+            props.current_leg_leveler_object = obj
+            return obj
+        return None
+
+    def _add_leg_levelers(self, dim_x, dim_y, lli):
+        """Add four leg leveler hardware objects at the bottom corners of the cabinet."""
+        ll_obj = self._get_leg_leveler_object()
+        if ll_obj is None:
+            return
+
+        positions = [
+            ('Leg Leveler FL', 'lli', '-(dim_y-lli)', [lli], [dim_y, lli]),          # Front Left
+            ('Leg Leveler FR', 'dim_x-lli', '-(dim_y-lli)', [dim_x, lli], [dim_y, lli]),  # Front Right
+            ('Leg Leveler BL', 'lli', '-lli', [lli], [lli]),                          # Back Left
+            ('Leg Leveler BR', 'dim_x-lli', '-lli', [dim_x, lli], [lli]),             # Back Right
+        ]
+        for name, x_expr, y_expr, x_vars, y_vars in positions:
+            ll = GeoNodeHardware()
+            ll.create(name)
+            ll.obj['IS_LEG_LEVELER'] = True
+            ll.obj.parent = self.obj
+            ll.set_input("Object", ll_obj)
+            ll.driver_location('x', x_expr, x_vars)
+            ll.driver_location('y', y_expr, y_vars)
+            ll.obj.location.z = 0
 
     def create_cabinet(self,name):
         super().create(name)
@@ -78,27 +142,55 @@ class Cabinet(GeoNodeCage):
         sw = self.var_prop('Stretcher Width', 'sw')
         saw = self.var_prop('Sink Apron Width', 'saw')
 
-        left_side = CabinetSideNotched()
-        left_side.create('Left Side',tkh,tks,mt)
-        left_side.obj.parent = self.obj
-        left_side.obj.rotation_euler.y = math.radians(-90)
-        left_side.driver_input("Length", 'dim_z', [dim_z])
-        left_side.driver_input("Width", 'dim_y', [dim_y])
-        left_side.driver_input("Thickness", 'mt', [mt])
-        left_side.set_input("Mirror Y", True)
-        left_side.set_input("Mirror Z", True)
+        toe_kick_type = self.obj.get('Toe Kick Type', 0)
 
-        right_side = CabinetSideNotched()
-        right_side.create('Right Side',tkh,tks,mt)
-        right_side.obj.parent = self.obj
-        right_side.driver_location('x', 'dim_x',[dim_x])
-        right_side.obj.rotation_euler.y = math.radians(-90)
-        right_side.driver_input("Length", 'dim_z', [dim_z])
-        right_side.driver_input("Width", 'dim_y', [dim_y])
-        right_side.driver_input("Thickness", 'mt', [mt])
-        right_side.set_input("Mirror Y", True)
-        right_side.set_input("Mirror Z", False)
+        # === SIDES ===
+        if toe_kick_type == 0:  # Notch Ends to Floor
+            left_side = CabinetSideNotched()
+            left_side.create('Left Side',tkh,tks,mt)
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.driver_input("Length", 'dim_z', [dim_z])
+            left_side.driver_input("Width", 'dim_y', [dim_y])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            left_side.set_input("Mirror Y", True)
+            left_side.set_input("Mirror Z", True)
 
+            right_side = CabinetSideNotched()
+            right_side.create('Right Side',tkh,tks,mt)
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x',[dim_x])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z', [dim_z])
+            right_side.driver_input("Width", 'dim_y', [dim_y])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
+        else:  # Ladder Style, Floating, Leg Levelers - plain sides starting at tkh
+            left_side = CabinetPart()
+            left_side.create('Left Side')
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.driver_location('z', 'tkh', [tkh])
+            left_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            left_side.driver_input("Width", 'dim_y', [dim_y])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            left_side.set_input("Mirror Y", True)
+            left_side.set_input("Mirror Z", True)
+
+            right_side = CabinetPart()
+            right_side.create('Right Side')
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x', [dim_x])
+            right_side.driver_location('z', 'tkh', [tkh])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            right_side.driver_input("Width", 'dim_y', [dim_y])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
+
+        # === BOTTOM (same for all types) ===
         bottom = CabinetPart()
         bottom.create('Bottom')
         bottom.obj.parent = self.obj
@@ -111,6 +203,7 @@ class Cabinet(GeoNodeCage):
         bottom.set_input("Mirror Z", False)
         bottom.driver_hide('IF(rb==1,True,False)', [rb])
 
+        # === BACK (same for all types) ===
         back = CabinetPart()
         back.create('Back')
         back.obj.parent = self.obj
@@ -123,19 +216,22 @@ class Cabinet(GeoNodeCage):
         back.driver_input("Thickness", 'mt', [mt])
         back.set_input("Mirror Y", True)
 
-        toe_kick = CabinetPart()
-        toe_kick.create('Toe Kick')
-        toe_kick.obj.parent = self.obj
-        toe_kick.obj.rotation_euler.x = math.radians(-90)
-        toe_kick.driver_location('x', 'mt',[mt])
-        toe_kick.driver_location('y', '-dim_y+tks',[dim_y,tks])
-        toe_kick.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
-        toe_kick.driver_input("Width", 'tkh', [tkh])
-        toe_kick.driver_input("Thickness", 'mt', [mt])
-        toe_kick.set_input("Mirror Y", True)
-        toe_kick.set_input("Mirror Z", False)
-        toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
+        # === TOE KICK PANEL (only for Notch Ends to Floor) ===
+        if toe_kick_type == 0:
+            toe_kick = CabinetPart()
+            toe_kick.create('Toe Kick')
+            toe_kick.obj.parent = self.obj
+            toe_kick.obj.rotation_euler.x = math.radians(-90)
+            toe_kick.driver_location('x', 'mt',[mt])
+            toe_kick.driver_location('y', '-dim_y+tks',[dim_y,tks])
+            toe_kick.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
+            toe_kick.driver_input("Width", 'tkh', [tkh])
+            toe_kick.driver_input("Thickness", 'mt', [mt])
+            toe_kick.set_input("Mirror Y", True)
+            toe_kick.set_input("Mirror Z", False)
+            toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
 
+        # === TOP / STRETCHERS (same for all types) ===
         # Full Top - shown when btc==0
         top = CabinetPart()
         top.create('Top')
@@ -192,6 +288,7 @@ class Cabinet(GeoNodeCage):
         sink_apron.driver_input("Thickness", 'mt', [mt])
         sink_apron.driver_hide('IF(btc!=2,True,False)', [btc])
 
+        # === BAY OPENING (same for all types) ===
         opening = CabinetBay()
         opening.create("Bay")
         opening.obj.parent = self.obj
@@ -201,6 +298,19 @@ class Cabinet(GeoNodeCage):
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
         opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
         opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z,tkh,mt,rb])
+
+        # === TOE KICK TYPE-SPECIFIC ADDITIONS ===
+        if toe_kick_type == 1:  # Ladder Style
+            ladder = LadderBaseCage()
+            ladder.create('Ladder Base')
+            ladder.obj.parent = self.obj
+            ladder.driver_location('y', '-dim_y+tks', [dim_y, tks])
+            ladder.driver_input("Dim X", 'dim_x', [dim_x])
+            ladder.driver_input("Dim Y", 'dim_y-tks', [dim_y, tks])
+            ladder.driver_input("Dim Z", 'tkh', [tkh])
+        elif toe_kick_type == 3:  # Leg Levelers
+            lli = self.var_prop('Leg Leveler Inset', 'lli')
+            self._add_leg_levelers(dim_x, dim_y, lli)
 
     def create_tall_carcass(self,name):
         """Create tall cabinet carcass - always uses full top, no stretcher options."""
@@ -219,27 +329,55 @@ class Cabinet(GeoNodeCage):
         tks = self.var_prop('Toe Kick Setback', 'tks')
         rb = self.var_prop('Remove Bottom', 'rb')
 
-        left_side = CabinetSideNotched()
-        left_side.create('Left Side',tkh,tks,mt)
-        left_side.obj.parent = self.obj
-        left_side.obj.rotation_euler.y = math.radians(-90)
-        left_side.driver_input("Length", 'dim_z', [dim_z])
-        left_side.driver_input("Width", 'dim_y', [dim_y])
-        left_side.driver_input("Thickness", 'mt', [mt])
-        left_side.set_input("Mirror Y", True)
-        left_side.set_input("Mirror Z", True)
+        toe_kick_type = self.obj.get('Toe Kick Type', 0)
 
-        right_side = CabinetSideNotched()
-        right_side.create('Right Side',tkh,tks,mt)
-        right_side.obj.parent = self.obj
-        right_side.driver_location('x', 'dim_x',[dim_x])
-        right_side.obj.rotation_euler.y = math.radians(-90)
-        right_side.driver_input("Length", 'dim_z', [dim_z])
-        right_side.driver_input("Width", 'dim_y', [dim_y])
-        right_side.driver_input("Thickness", 'mt', [mt])
-        right_side.set_input("Mirror Y", True)
-        right_side.set_input("Mirror Z", False)
+        # === SIDES ===
+        if toe_kick_type == 0:  # Notch Ends to Floor
+            left_side = CabinetSideNotched()
+            left_side.create('Left Side',tkh,tks,mt)
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.driver_input("Length", 'dim_z', [dim_z])
+            left_side.driver_input("Width", 'dim_y', [dim_y])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            left_side.set_input("Mirror Y", True)
+            left_side.set_input("Mirror Z", True)
 
+            right_side = CabinetSideNotched()
+            right_side.create('Right Side',tkh,tks,mt)
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x',[dim_x])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z', [dim_z])
+            right_side.driver_input("Width", 'dim_y', [dim_y])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
+        else:  # Ladder Style, Floating, Leg Levelers - plain sides starting at tkh
+            left_side = CabinetPart()
+            left_side.create('Left Side')
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.driver_location('z', 'tkh', [tkh])
+            left_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            left_side.driver_input("Width", 'dim_y', [dim_y])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            left_side.set_input("Mirror Y", True)
+            left_side.set_input("Mirror Z", True)
+
+            right_side = CabinetPart()
+            right_side.create('Right Side')
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x', [dim_x])
+            right_side.driver_location('z', 'tkh', [tkh])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            right_side.driver_input("Width", 'dim_y', [dim_y])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
+
+        # === BOTTOM (same for all types) ===
         bottom = CabinetPart()
         bottom.create('Bottom')
         bottom.obj.parent = self.obj
@@ -252,6 +390,7 @@ class Cabinet(GeoNodeCage):
         bottom.set_input("Mirror Z", False)
         bottom.driver_hide('IF(rb==1,True,False)', [rb])
 
+        # === BACK (same for all types) ===
         back = CabinetPart()
         back.create('Back')
         back.obj.parent = self.obj
@@ -264,18 +403,20 @@ class Cabinet(GeoNodeCage):
         back.driver_input("Thickness", 'mt', [mt])
         back.set_input("Mirror Y", True)
 
-        toe_kick = CabinetPart()
-        toe_kick.create('Toe Kick')
-        toe_kick.obj.parent = self.obj
-        toe_kick.obj.rotation_euler.x = math.radians(-90)
-        toe_kick.driver_location('x', 'mt',[mt])
-        toe_kick.driver_location('y', '-dim_y+tks',[dim_y,tks])
-        toe_kick.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
-        toe_kick.driver_input("Width", 'tkh', [tkh])
-        toe_kick.driver_input("Thickness", 'mt', [mt])
-        toe_kick.set_input("Mirror Y", True)
-        toe_kick.set_input("Mirror Z", False)
-        toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
+        # === TOE KICK PANEL (only for Notch Ends to Floor) ===
+        if toe_kick_type == 0:
+            toe_kick = CabinetPart()
+            toe_kick.create('Toe Kick')
+            toe_kick.obj.parent = self.obj
+            toe_kick.obj.rotation_euler.x = math.radians(-90)
+            toe_kick.driver_location('x', 'mt',[mt])
+            toe_kick.driver_location('y', '-dim_y+tks',[dim_y,tks])
+            toe_kick.driver_input("Length", 'dim_x-(mt*2)', [dim_x,mt])
+            toe_kick.driver_input("Width", 'tkh', [tkh])
+            toe_kick.driver_input("Thickness", 'mt', [mt])
+            toe_kick.set_input("Mirror Y", True)
+            toe_kick.set_input("Mirror Z", False)
+            toe_kick.driver_hide('IF(rb==1,True,False)', [rb])
 
         # Full Top - always present for tall cabinets
         top = CabinetPart()
@@ -289,6 +430,7 @@ class Cabinet(GeoNodeCage):
         top.set_input("Mirror Y", True)
         top.set_input("Mirror Z", True)
 
+        # === BAY OPENING (same for all types) ===
         opening = CabinetBay()
         opening.create("Bay")
         opening.obj.parent = self.obj
@@ -298,6 +440,19 @@ class Cabinet(GeoNodeCage):
         opening.driver_input("Dim X", 'dim_x-(mt*2)', [dim_x,mt])
         opening.driver_input("Dim Y", 'dim_y-mt', [dim_y,mt])
         opening.driver_input("Dim Z", 'dim_z-tkh-IF(rb,0,mt)-mt', [dim_z,tkh,mt,rb])
+
+        # === TOE KICK TYPE-SPECIFIC ADDITIONS ===
+        if toe_kick_type == 1:  # Ladder Style
+            ladder = LadderBaseCage()
+            ladder.create('Ladder Base')
+            ladder.obj.parent = self.obj
+            ladder.driver_location('y', '-dim_y+tks', [dim_y, tks])
+            ladder.driver_input("Dim X", 'dim_x', [dim_x])
+            ladder.driver_input("Dim Y", 'dim_y-tks', [dim_y, tks])
+            ladder.driver_input("Dim Z", 'tkh', [tkh])
+        elif toe_kick_type == 3:  # Leg Levelers
+            lli = self.var_prop('Leg Leveler Inset', 'lli')
+            self._add_leg_levelers(dim_x, dim_y, lli)
 
     def create_upper_carcass(self,name):
         self.create_cabinet(name)
@@ -1450,6 +1605,20 @@ class CabinetPart(GeoNodeCutpart):
         self.set_input('Thickness', inch(.75))  
 
 
+class LadderBaseCage(GeoNodeCage):
+    """Placeholder cage representing a ladder-style toe kick base assembly.
+    
+    This is a wireframe cage showing the overall dimensions of the ladder base.
+    The actual ladder parts (side pieces, stretchers) will be implemented later.
+    """
+
+    def create(self, name):
+        super().create(name)
+        self.obj['IS_LADDER_BASE'] = True
+        self.obj['IS_FRAMELESS_LADDER_CAGE'] = True
+        self.obj.color = (0.5, 0.3, 0, 1)  # Brown-ish color to distinguish from cabinet cage
+
+
 class CabinetSideNotched(CabinetPart):
 
     def create(self,name,tkh,tks,mt):
@@ -2278,6 +2447,29 @@ class CornerCabinet(Cabinet):
                 break
 
 
+    def _add_corner_leg_levelers(self, dim_x, dim_y, lli, ld, rd):
+        """Add leg leveler hardware at the corners of a corner cabinet."""
+        ll_obj = self._get_leg_leveler_object()
+        if ll_obj is None:
+            return
+
+        # Corner cabinets have an L-shape, so place levelers at the 4 outer corners
+        positions = [
+            ('Leg Leveler BL', 'lli', '-(dim_y-lli)', [lli], [dim_y, lli]),           # Back Left
+            ('Leg Leveler BR', 'dim_x-lli', '-lli', [dim_x, lli], [lli]),              # Back Right
+            ('Leg Leveler FL', 'ld', '-(dim_y-lli)', [ld], [dim_y, lli]),              # Front Left
+            ('Leg Leveler FR', 'dim_x-lli', '-rd', [dim_x, lli], [rd]),                # Front Right
+        ]
+        for name, x_expr, y_expr, x_vars, y_vars in positions:
+            ll = GeoNodeHardware()
+            ll.create(name)
+            ll.obj['IS_LEG_LEVELER'] = True
+            ll.obj.parent = self.obj
+            ll.set_input("Object", ll_obj)
+            ll.driver_location('x', x_expr, x_vars)
+            ll.driver_location('y', y_expr, y_vars)
+            ll.obj.location.z = 0
+
     def create_corner_base_carcass(self, name):
         """Create the corner base cabinet carcass.
         
@@ -2304,34 +2496,56 @@ class CornerCabinet(Cabinet):
         tks = self.var_prop('Toe Kick Setback', 'tks')
         ld = self.var_prop('Left Depth', 'ld')
         rd = self.var_prop('Right Depth', 'rd')
+
+        toe_kick_type = self.obj.get('Toe Kick Type', 0)
         
-        # Left Side - runs along Y axis on the left edge
-        # Positioned at X=0, extends from Y=0 to Y=-left_depth
-        left_side = CabinetSideNotched()
-        left_side.create('Left Side', tkh, tks, mt)
-        left_side.obj.parent = self.obj
-        left_side.obj.rotation_euler.y = math.radians(-90)
-        left_side.obj.rotation_euler.z = math.radians(-90)
-        left_side.driver_location('y', '-dim_y', [dim_y])
-        left_side.driver_input("Length", 'dim_z', [dim_z])
-        left_side.driver_input("Width", 'ld', [ld])
-        left_side.driver_input("Thickness", 'mt', [mt])
+        # === SIDES ===
+        if toe_kick_type == 0:  # Notch Ends to Floor
+            left_side = CabinetSideNotched()
+            left_side.create('Left Side', tkh, tks, mt)
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.obj.rotation_euler.z = math.radians(-90)
+            left_side.driver_location('y', '-dim_y', [dim_y])
+            left_side.driver_input("Length", 'dim_z', [dim_z])
+            left_side.driver_input("Width", 'ld', [ld])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            
+            right_side = CabinetSideNotched()
+            right_side.create('Right Side', tkh, tks, mt)
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x', [dim_x])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z', [dim_z])
+            right_side.driver_input("Width", 'rd', [rd])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
+        else:  # Ladder Style, Floating, Leg Levelers - plain sides starting at tkh
+            left_side = CabinetPart()
+            left_side.create('Left Side')
+            left_side.obj.parent = self.obj
+            left_side.obj.rotation_euler.y = math.radians(-90)
+            left_side.obj.rotation_euler.z = math.radians(-90)
+            left_side.driver_location('y', '-dim_y', [dim_y])
+            left_side.driver_location('z', 'tkh', [tkh])
+            left_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            left_side.driver_input("Width", 'ld', [ld])
+            left_side.driver_input("Thickness", 'mt', [mt])
+            
+            right_side = CabinetPart()
+            right_side.create('Right Side')
+            right_side.obj.parent = self.obj
+            right_side.driver_location('x', 'dim_x', [dim_x])
+            right_side.driver_location('z', 'tkh', [tkh])
+            right_side.obj.rotation_euler.y = math.radians(-90)
+            right_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
+            right_side.driver_input("Width", 'rd', [rd])
+            right_side.driver_input("Thickness", 'mt', [mt])
+            right_side.set_input("Mirror Y", True)
+            right_side.set_input("Mirror Z", False)
         
-        # Right Side - runs along X axis from the right edge
-        # Positioned at Y=0, extends from X=dim_x to X=dim_x-right_depth
-        right_side = CabinetSideNotched()
-        right_side.create('Right Side', tkh, tks, mt)
-        right_side.obj.parent = self.obj
-        right_side.driver_location('x', 'dim_x', [dim_x])
-        right_side.obj.rotation_euler.y = math.radians(-90)
-        right_side.driver_input("Length", 'dim_z', [dim_z])
-        right_side.driver_input("Width", 'rd', [rd])
-        right_side.driver_input("Thickness", 'mt', [mt])
-        right_side.set_input("Mirror Y", True)
-        right_side.set_input("Mirror Z", False)
-        
-        # Left Back - vertical panel against left wall (X=0 plane)
-        # Runs from the left side to the corner
+        # === BACKS (same for all types) ===
         left_back = CabinetPart()
         left_back.create('Left Back')
         left_back.obj.parent = self.obj
@@ -2343,8 +2557,6 @@ class CornerCabinet(Cabinet):
         left_back.set_input("Mirror Y", True)
         left_back.set_input("Mirror Z", True)
         
-        # Right Back - vertical panel against right wall (Y=0 plane)
-        # Runs from the right side to the corner
         right_back = CabinetPart()
         right_back.create('Right Back')
         right_back.obj.parent = self.obj
@@ -2357,7 +2569,7 @@ class CornerCabinet(Cabinet):
         right_back.set_input("Mirror Y", True)
         right_back.set_input("Mirror Z", True)
         
-        # Bottom panel
+        # === BOTTOM (same for all types) ===
         bottom = CabinetPart()
         bottom.create('Bottom')
         bottom.obj.parent = self.obj
@@ -2369,7 +2581,7 @@ class CornerCabinet(Cabinet):
         bottom.set_input("Mirror Z", False)
         self.add_corner_modifier(bottom, dim_x, dim_y, ld, rd, mt)
         
-        # Top panel (matching bottom)
+        # === TOP (same for all types) ===
         top = CabinetPart()
         top.create('Top')
         top.obj.parent = self.obj
@@ -2381,30 +2593,43 @@ class CornerCabinet(Cabinet):
         top.set_input("Mirror Z", True)
         self.add_corner_modifier(top, dim_x, dim_y, ld, rd, mt)
 
-        # Toe kicks
-        left_toe_kick = CabinetPart()
-        left_toe_kick.create('Left Toe Kick')
-        left_toe_kick.obj.parent = self.obj
-        left_toe_kick.obj.rotation_euler.x = math.radians(-90)
-        left_toe_kick.obj.rotation_euler.z = math.radians(90)
-        left_toe_kick.driver_location('x', 'ld-tks', [ld,tks])
-        left_toe_kick.driver_location('y', '-dim_y+mt', [dim_y, mt])
-        left_toe_kick.driver_input("Length", 'dim_y-rd-mt+tks', [dim_y, rd, mt, tks])
-        left_toe_kick.driver_input("Width", 'tkh', [tkh])
-        left_toe_kick.driver_input("Thickness", 'mt', [mt])
-        left_toe_kick.set_input("Mirror Y", True)
-        
-        right_toe_kick = CabinetPart()
-        right_toe_kick.create('Right Toe Kick')
-        right_toe_kick.obj.parent = self.obj
-        right_toe_kick.obj.rotation_euler.x = math.radians(-90)
-        right_toe_kick.driver_location('x', 'dim_x-mt', [dim_x, mt])
-        right_toe_kick.driver_location('y', '-rd+tks', [rd, tks])
-        right_toe_kick.driver_input("Length", 'dim_x-ld-mt+tks', [dim_x, ld, mt, tks])
-        right_toe_kick.driver_input("Width", 'tkh', [tkh])
-        right_toe_kick.driver_input("Thickness", 'mt', [mt])
-        right_toe_kick.set_input("Mirror X", True)
-        right_toe_kick.set_input("Mirror Y", True)
+        # === TOE KICK PANELS (only for Notch Ends to Floor) ===
+        if toe_kick_type == 0:
+            left_toe_kick = CabinetPart()
+            left_toe_kick.create('Left Toe Kick')
+            left_toe_kick.obj.parent = self.obj
+            left_toe_kick.obj.rotation_euler.x = math.radians(-90)
+            left_toe_kick.obj.rotation_euler.z = math.radians(90)
+            left_toe_kick.driver_location('x', 'ld-tks', [ld,tks])
+            left_toe_kick.driver_location('y', '-dim_y+mt', [dim_y, mt])
+            left_toe_kick.driver_input("Length", 'dim_y-rd-mt+tks', [dim_y, rd, mt, tks])
+            left_toe_kick.driver_input("Width", 'tkh', [tkh])
+            left_toe_kick.driver_input("Thickness", 'mt', [mt])
+            left_toe_kick.set_input("Mirror Y", True)
+            
+            right_toe_kick = CabinetPart()
+            right_toe_kick.create('Right Toe Kick')
+            right_toe_kick.obj.parent = self.obj
+            right_toe_kick.obj.rotation_euler.x = math.radians(-90)
+            right_toe_kick.driver_location('x', 'dim_x-mt', [dim_x, mt])
+            right_toe_kick.driver_location('y', '-rd+tks', [rd, tks])
+            right_toe_kick.driver_input("Length", 'dim_x-ld-mt+tks', [dim_x, ld, mt, tks])
+            right_toe_kick.driver_input("Width", 'tkh', [tkh])
+            right_toe_kick.driver_input("Thickness", 'mt', [mt])
+            right_toe_kick.set_input("Mirror X", True)
+            right_toe_kick.set_input("Mirror Y", True)
+
+        # === TOE KICK TYPE-SPECIFIC ADDITIONS ===
+        if toe_kick_type == 1:  # Ladder Style
+            ladder = LadderBaseCage()
+            ladder.create('Ladder Base')
+            ladder.obj.parent = self.obj
+            ladder.driver_input("Dim X", 'dim_x', [dim_x])
+            ladder.driver_input("Dim Y", 'dim_y', [dim_y])
+            ladder.driver_input("Dim Z", 'tkh', [tkh])
+        elif toe_kick_type == 3:  # Leg Levelers
+            lli = self.var_prop('Leg Leveler Inset', 'lli')
+            self._add_corner_leg_levelers(dim_x, dim_y, lli, ld, rd)
 
     def create_corner_upper_carcass(self, name):
         """Create the corner upper cabinet carcass.

@@ -1524,8 +1524,14 @@ class Frameless_Scene_Props(PropertyGroup):
     default_toe_kick_type: EnumProperty(name="Toe Kick Type",
                        items=[('Notch Ends to Floor',"Notch Ends to Floor","Notch Ends to Floor"),
                               ('Ladder Style',"Ladder Style","Ladder Style"),
+                              ('Floating',"Floating","Floating"),
                               ('Leg Levelers',"Leg Levelers","Leg Levelers")],
-                       default='Ladder Style')# type: ignore
+                       default='Notch Ends to Floor')# type: ignore
+
+    default_leg_leveler_inset: FloatProperty(name="Default Leg Leveler Inset",
+                                                 description="Distance from edge of cabinet to leg leveler",
+                                                 default=units.inch(2.0),
+                                                 unit='LENGTH')# type: ignore
 
     base_top_construction: EnumProperty(name="Base Top Construction",
                        items=[('Stretchers',"Stretchers","Stretchers"),
@@ -1566,6 +1572,7 @@ class Frameless_Scene_Props(PropertyGroup):
     #CABINET PULL OPTIONS
     current_door_pull_object: PointerProperty(type=bpy.types.Object)# type: ignore
     current_drawer_front_pull_object: PointerProperty(type=bpy.types.Object)# type: ignore
+    current_leg_leveler_object: PointerProperty(type=bpy.types.Object)# type: ignore
 
     pull_dim_from_edge: FloatProperty(name="Pull Distance From Edge",
                                                  description="Distance from Edge of Door to center of pull",
@@ -2007,6 +2014,9 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'default_toe_kick_setback',text="Setback")
         row = size_box.row()
         row.prop(self,'default_toe_kick_type',text="Type")
+        if self.default_toe_kick_type == 'Leg Levelers':
+            row = size_box.row()
+            row.prop(self,'default_leg_leveler_inset',text="Leveler Inset")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Base Top Construction:")
