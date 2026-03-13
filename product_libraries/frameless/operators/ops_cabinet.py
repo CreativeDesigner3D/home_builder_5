@@ -62,7 +62,6 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             self.cabinet.obj['Toe Kick Setback'] = self.toe_kick_setback
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
-        
         # Handle Finished Interior toggle
         old_finished = self.cabinet.obj.get('Finished Interior', False)
         if self.finished_interior != old_finished:
@@ -117,6 +116,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             
             row = col.row()
             row.prop(self, 'remove_bottom')
+        
+        # Base Top Construction for BASE cabinets
+        if self.cabinet.obj.get('CABINET_TYPE') == 'BASE':
+            box = layout.box()
+            box.label(text="Base Top Construction")
+            row = box.row()
+            self.cabinet.draw_prop(row, 'Base Top Construction', text="")
         
         # Finished Interior option
         box = layout.box()

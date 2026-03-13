@@ -83,6 +83,18 @@ class GeoNodeObject:
     def add_property(self,name,type,value,combobox_items=[]):
         self.obj.home_builder.add_property(name,type,value,combobox_items)
 
+    def draw_prop(self, layout, prop_name, text=None):
+        """Draw a custom property in the UI if it exists on the object.
+        
+        Args:
+            layout: The Blender UI layout to draw into
+            prop_name: Name of the custom property
+            text: Display label. None uses prop_name, "" hides label.
+        """
+        if prop_name in self.obj:
+            display_text = prop_name if text is None else text
+            layout.prop(self.obj, '["' + prop_name + '"]', text=display_text)
+
     def set_property(self, prop_name, value):
         """Set a property value.
         
