@@ -1171,10 +1171,11 @@ class CabinetOpening(GeoNodeCage):
         self.add_property("Horizontal Gap",'DISTANCE',inch(.125))
 
     def add_properties_opening_thickness(self):
-        self.add_property("Left Thickness",'DISTANCE',inch(.75))
-        self.add_property("Right Thickness",'DISTANCE',inch(.75))
-        self.add_property("Top Thickness",'DISTANCE',inch(.75))
-        self.add_property("Bottom Thickness",'DISTANCE',inch(.75))
+        props = bpy.context.scene.hb_frameless
+        self.add_property("Left Thickness",'DISTANCE',props.default_carcass_part_thickness)
+        self.add_property("Right Thickness",'DISTANCE',props.default_carcass_part_thickness)
+        self.add_property("Top Thickness",'DISTANCE',props.default_carcass_part_thickness)
+        self.add_property("Bottom Thickness",'DISTANCE',props.default_carcass_part_thickness)
 
     def add_properties_front_overlay_calculations(self):
         hot = self.var_prop('Half Overlay Top', 'hot')
