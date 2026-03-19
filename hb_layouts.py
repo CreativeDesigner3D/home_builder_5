@@ -356,7 +356,7 @@ class LayoutView:
             solid_lineset.linestyle.color = (0, 0, 0)  # Black
             solid_lineset.linestyle.thickness = 1.5
         
-        # Create Dashed lineset
+        # Create Dashed lineset (for hidden/interior parts behind doors)
         dashed_lineset = freestyle.linesets.new('Dashed')
         dashed_lineset.select_silhouette = True
         dashed_lineset.select_border = True
@@ -365,6 +365,8 @@ class LayoutView:
         dashed_lineset.select_by_collection = True
         dashed_lineset.collection = self.freestyle_dashed
         dashed_lineset.collection_negation = 'INCLUSIVE'
+        dashed_lineset.select_by_visibility = True
+        dashed_lineset.visibility = 'HIDDEN'
         
         # Configure dashed line style
         if dashed_lineset.linestyle:
@@ -465,18 +467,18 @@ class ElevationView(LayoutView):
     """Elevation view of a wall - front orthographic projection."""
     
     wall_obj: bpy.types.Object = None
-    content_collection: bpy.types.Collection = None
-    collection_instance: bpy.types.Object = None
+    content_collections: list = None  # List of (solid_collection, dashed_collection) tuples per cabinet
+    collection_instances: list = None  # List of collection instance objects
     
     def __init__(self, scene=None):
         super().__init__(scene)
+        self.content_collections = []
+        self.collection_instances = []
         if scene:
-            # Find the content collection instance
+            # Find all collection instances in the scene
             for obj in scene.objects:
                 if obj.type == 'EMPTY' and obj.instance_type == 'COLLECTION':
-                    self.collection_instance = obj
-                    self.content_collection = obj.instance_collection
-                    break
+                    self.collection_instances.append(obj)
             
             # Find the source wall from scene custom property
             wall_name = scene.get('SOURCE_WALL')
@@ -531,23 +533,8 @@ class ElevationView(LayoutView):
         # Calculate bounds of all objects to fit camera properly (includes dimensions)
         self._fit_camera_to_content(wall_obj)
         
-        # Create collection for wall objects
-        self.content_collection = bpy.data.collections.new(f"{view_name} Content")
-        
-        # Add wall and all its children to the collection
-        self._add_object_to_collection(wall_obj, self.content_collection)
-        
-        # Create collection instance in the new scene
-        self.collection_instance = bpy.data.objects.new(f"{view_name} Instance", None)
-        self.collection_instance.empty_display_size = .01
-        self.collection_instance.instance_type = 'COLLECTION'
-        self.collection_instance.instance_collection = self.content_collection
-        self.scene.collection.objects.link(self.collection_instance)
-        
-        # Add collection instance to Freestyle Solid collection
-        solid_collection = self.get_freestyle_collection('SOLID')
-        if solid_collection and self.collection_instance.name not in solid_collection.objects:
-            solid_collection.objects.link(self.collection_instance)
+        # Create per-cabinet collections with solid/dashed split for Freestyle
+        self._create_content_collections(wall_obj, view_name)
         
         # Add title block
         self.title_block = TitleBlock()
@@ -730,28 +717,104 @@ class ElevationView(LayoutView):
         
         return dim
 
-    def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
-        """Recursively add object and its children to collection.
-        Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
+    def _create_content_collections(self, wall_obj: bpy.types.Object, view_name: str):
+        """Create per-cabinet collections with solid/dashed split for Freestyle rendering.
         
-        # Skip cage objects and helper empties - they are organizational, not visible geometry
-        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
-                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
-                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
-                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
+        Each cabinet gets its own solid collection (and dashed collection if it has interior parts).
+        The wall mesh itself gets a separate solid collection.
+        Each collection gets a collection instance in the elevation scene, enabling
+        independent selection, color changes, and duplication of individual cabinets.
+        """
+        solid_freestyle = self.get_freestyle_collection('SOLID')
+        dashed_freestyle = self.get_freestyle_collection('DASHED')
         
-        # Skip helper empties
-        is_helper = (obj.get('obj_x') or 
-                     'Overlay Prompt Obj' in obj.name)
+        # Create a solid collection for the wall mesh itself
+        wall_solid = bpy.data.collections.new(f"{view_name}_{wall_obj.name}_Solid")
+        if wall_obj.name not in wall_solid.objects:
+            wall_solid.objects.link(wall_obj)
+        self._create_collection_instance(wall_solid, f"{view_name}_{wall_obj.name}", solid_freestyle)
         
-        if not is_cage and not is_helper:
-            # Link object to collection (it can be in multiple collections)
-            if obj.name not in collection.objects:
-                collection.objects.link(obj)
+        # Process each direct child of the wall
+        for child in wall_obj.children:
+            # Skip helper empties
+            if child.get('obj_x') or 'Overlay Prompt Obj' in child.name:
+                continue
+            
+            if child.get('IS_FRAMELESS_CABINET_CAGE'):
+                # Cabinet: create solid and dashed collections
+                cabinet_name = child.name
+                cab_solid = bpy.data.collections.new(f"{view_name}_{cabinet_name}_Solid")
+                cab_dashed = bpy.data.collections.new(f"{view_name}_{cabinet_name}_Dashed")
+                
+                # Recursively sort cabinet parts into solid vs dashed
+                self._collect_objects_split(child, cab_solid, cab_dashed)
+                
+                # Always create solid instance
+                self._create_collection_instance(cab_solid, f"{view_name}_{cabinet_name}_Solid", solid_freestyle)
+                
+                # Only create dashed instance if there are dashed objects
+                if len(cab_dashed.objects) > 0:
+                    self._create_collection_instance(cab_dashed, f"{view_name}_{cabinet_name}_Dashed", dashed_freestyle)
+                else:
+                    # Clean up empty collection
+                    bpy.data.collections.remove(cab_dashed)
+            else:
+                # Non-cabinet child (e.g. applied end panels, other geometry)
+                if not self._is_cage(child) and not self._is_helper(child):
+                    # Add to wall solid collection
+                    if child.name not in wall_solid.objects:
+                        wall_solid.objects.link(child)
+    
+    def _create_collection_instance(self, collection: bpy.types.Collection, name: str, 
+                                     freestyle_collection: bpy.types.Collection) -> bpy.types.Object:
+        """Create a collection instance object in the elevation scene and add to a Freestyle collection."""
+        instance = bpy.data.objects.new(name, None)
+        instance.empty_display_size = .01
+        instance.instance_type = 'COLLECTION'
+        instance.instance_collection = collection
+        self.scene.collection.objects.link(instance)
         
-        # Add all children recursively (even if parent is a cage)
+        if freestyle_collection and instance.name not in freestyle_collection.objects:
+            freestyle_collection.objects.link(instance)
+        
+        self.collection_instances.append(instance)
+        self.content_collections.append(collection)
+        return instance
+    
+    def _collect_objects_split(self, obj: bpy.types.Object, solid_col: bpy.types.Collection, 
+                               dashed_col: bpy.types.Collection):
+        """Recursively sort an object tree into solid and dashed collections.
+        
+        Interior parts (IS_FRAMELESS_INTERIOR_PART) go to dashed, all other visible
+        geometry goes to solid. Cages and helpers are skipped but their children are processed.
+        """
+        if not self._is_cage(obj) and not self._is_helper(obj):
+            if obj.get('IS_FRAMELESS_INTERIOR_PART'):
+                if obj.name not in dashed_col.objects:
+                    dashed_col.objects.link(obj)
+            else:
+                if obj.name not in solid_col.objects:
+                    solid_col.objects.link(obj)
+        
         for child in obj.children:
-            self._add_object_to_collection(child, collection)
+            self._collect_objects_split(child, solid_col, dashed_col)
+    
+    @staticmethod
+    def _is_cage(obj: bpy.types.Object) -> bool:
+        """Check if an object is a cage (organizational container, not visible geometry)."""
+        return bool(
+            obj.get('IS_FRAMELESS_CABINET_CAGE') or
+            obj.get('IS_FRAMELESS_BAY_CAGE') or
+            obj.get('IS_FRAMELESS_OPENING_CAGE') or
+            obj.get('IS_FRAMELESS_DOORS_CAGE') or
+            obj.get('IS_FRAMELESS_INTERIOR_CAGE') or
+            obj.get('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE')
+        )
+    
+    @staticmethod
+    def _is_helper(obj: bpy.types.Object) -> bool:
+        """Check if an object is a helper empty (not visible geometry)."""
+        return bool(obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name)
     
     def update(self):
         """Update the elevation view to reflect changes in the 3D model."""
