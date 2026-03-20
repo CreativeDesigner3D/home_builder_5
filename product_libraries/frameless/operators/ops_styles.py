@@ -816,8 +816,16 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
         style = props.cabinet_styles[style_index]
 
         # Get materials once
-        style.get_finish_material()
-        style.get_interior_material()
+        finish_mat, finish_mat_rotated = style.get_finish_material()
+        interior_mat, interior_mat_rotated = style.get_interior_material()
+
+        # Determine edge material
+        if style.edge_banding == 'CUSTOM' and style.custom_edge_material:
+            edge_material = style.custom_edge_material
+        elif finish_mat_rotated:
+            edge_material = finish_mat_rotated
+        else:
+            edge_material = None
 
         # Collect all cabinets that use this style
         cabinets = []
@@ -829,7 +837,7 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
                         cabinets.append(obj)
 
         if not cabinets:
-            self.report({'INFO'}, f"No cabinets found using style \'{style.name}\'")
+            self.report({'INFO'}, f"No cabinets found using style '{style.name}'")
             return {'CANCELLED'}
 
         # Update materials only on all matching cabinets
@@ -844,36 +852,36 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
                 part = hb_types.GeoNodeObject(child)
 
                 if finished_interior:
-                    top_mat = style.material
-                    bottom_mat = style.material
+                    top_mat = finish_mat
+                    bottom_mat = finish_mat
                 else:
                     finish_top = child.get('Finish Top', False)
                     finish_bottom = child.get('Finish Bottom', True)
-                    top_mat = style.material if finish_top else style.interior_material
-                    bottom_mat = style.material if finish_bottom else style.interior_material
+                    top_mat = finish_mat if finish_top else interior_mat
+                    bottom_mat = finish_mat if finish_bottom else interior_mat
 
                 part.set_input("Top Surface", top_mat)
                 part.set_input("Bottom Surface", bottom_mat)
-                part.set_input("Edge W1", style.material_rotated)
-                part.set_input("Edge W2", style.material_rotated)
-                part.set_input("Edge L1", style.material_rotated)
-                part.set_input("Edge L2", style.material_rotated)
+                part.set_input("Edge W1", edge_material)
+                part.set_input("Edge W2", edge_material)
+                part.set_input("Edge L1", edge_material)
+                part.set_input("Edge L2", edge_material)
 
                 for mod in child.modifiers:
                     if mod.type == 'NODES' and mod.node_group:
                         tree_items = mod.node_group.interface.items_tree
                         if 'Material' in tree_items:
                             node_input = tree_items['Material']
-                            mod[node_input.identifier] = style.material
+                            mod[node_input.identifier] = finish_mat
                         # Update 5-piece door materials (Stile, Rail, Panel)
                         if 'Stile Material' in tree_items:
-                            mod[tree_items['Stile Material'].identifier] = style.material
+                            mod[tree_items['Stile Material'].identifier] = finish_mat
                         if 'Rail Material' in tree_items:
-                            mod[tree_items['Rail Material'].identifier] = style.material_rotated
+                            mod[tree_items['Rail Material'].identifier] = finish_mat_rotated
                         if 'Panel Material' in tree_items:
-                            mod[tree_items['Panel Material'].identifier] = style.material
+                            mod[tree_items['Panel Material'].identifier] = finish_mat
 
-        self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style \'{style.name}\'")
+        self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style '{style.name}'")
         return {'FINISHED'}
 
 

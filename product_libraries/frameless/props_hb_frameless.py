@@ -537,6 +537,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('HICKORY', "Hickory", "Hickory wood"),
             ('ALDER', "Alder", "Alder wood"),
             ('PAINT_GRADE', "Paint Grade", "Paint Grade"),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MAPLE'
     )  # type: ignore
@@ -566,6 +567,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('ALMOND_MELAMINE', "Almond Melamine", "Almond melamine"),
             ('GREY_MELAMINE', "Grey Melamine", "Grey melamine"),
             ('PRE_FINISHED', "Pre-Finished", "Pre-finished interior"),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MAPLE_PLY'
     )  # type: ignore
@@ -591,6 +593,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('PVC', "PVC", "PVC edge banding"),
             ('ABS', "ABS", "ABS edge banding"),
             ('NONE', "None", "No edge banding"),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MATCHING'
     )  # type: ignore
@@ -599,6 +602,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
     material_rotated: bpy.props.PointerProperty(name="Material Rotated",type=bpy.types.Material)# type: ignore
     interior_material: bpy.props.PointerProperty(name="Interior Material",type=bpy.types.Material)# type: ignore
     interior_material_rotated: bpy.props.PointerProperty(name="Interior Material Rotated",type=bpy.types.Material)# type: ignore
+
+    custom_material: bpy.props.PointerProperty(name="Custom Exterior Material",type=bpy.types.Material)# type: ignore
+    custom_interior_material: bpy.props.PointerProperty(name="Custom Interior Material",type=bpy.types.Material)# type: ignore
+    custom_edge_material: bpy.props.PointerProperty(name="Custom Edge Material",type=bpy.types.Material)# type: ignore
     
     # Advanced color editing
     show_advanced_color: BoolProperty(
@@ -608,6 +615,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
     )  # type: ignore
 
     def get_finish_material(self):
+        if self.wood_species == 'CUSTOM':
+            if self.custom_material:
+                return self.custom_material, self.custom_material
+            return None, None
         if self.material and self.material_rotated:
             wood_materials.update_finish_material(self)
             return self.material,self.material_rotated
@@ -626,6 +637,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
             return self.material,self.material_rotated
 
     def get_interior_material(self):
+        if self.interior_material_type == 'CUSTOM':
+            if self.custom_interior_material:
+                return self.custom_interior_material, self.custom_interior_material
+            return None, None
         if self.interior_material and self.interior_material_rotated:
             return self.interior_material,self.interior_material_rotated
         else:
@@ -645,8 +660,16 @@ class Frameless_Cabinet_Style(PropertyGroup):
         #Assign Properties to Cabinet done in ops_hb_frameless.py
 
         #Update all cabinet parts with correct materials
-        self.get_finish_material()
-        self.get_interior_material()
+        finish_mat, finish_mat_rotated = self.get_finish_material()
+        interior_mat, interior_mat_rotated = self.get_interior_material()
+
+        # Determine edge material
+        if self.edge_banding == 'CUSTOM' and self.custom_edge_material:
+            edge_material = self.custom_edge_material
+        elif finish_mat_rotated:
+            edge_material = finish_mat_rotated
+        else:
+            edge_material = None
 
         # Check if this cabinet has a finished interior
         finished_interior = cabinet_obj.get('Finished Interior', False)
@@ -661,22 +684,22 @@ class Frameless_Cabinet_Style(PropertyGroup):
 
             if finished_interior:
                 # All surfaces get finish material
-                top_mat = self.material
-                bottom_mat = self.material
+                top_mat = finish_mat
+                bottom_mat = finish_mat
             else:
                 # Determine material based on Finish Top/Bottom properties
                 finish_top = child.get('Finish Top', False)
                 finish_bottom = child.get('Finish Bottom', True)
 
-                top_mat = self.material if finish_top else self.interior_material
-                bottom_mat = self.material if finish_bottom else self.interior_material
+                top_mat = finish_mat if finish_top else interior_mat
+                bottom_mat = finish_mat if finish_bottom else interior_mat
 
             part.set_input("Top Surface", top_mat)
             part.set_input("Bottom Surface", bottom_mat)
-            part.set_input("Edge W1", self.material_rotated)
-            part.set_input("Edge W2", self.material_rotated)
-            part.set_input("Edge L1", self.material_rotated)
-            part.set_input("Edge L2", self.material_rotated)
+            part.set_input("Edge W1", edge_material)
+            part.set_input("Edge W2", edge_material)
+            part.set_input("Edge L1", edge_material)
+            part.set_input("Edge L2", edge_material)
 
             # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
             for mod in child.modifiers:
@@ -684,14 +707,14 @@ class Frameless_Cabinet_Style(PropertyGroup):
                     tree_items = mod.node_group.interface.items_tree
                     if 'Material' in tree_items:
                         node_input = tree_items['Material']
-                        mod[node_input.identifier] = self.material
+                        mod[node_input.identifier] = finish_mat
                     # Update 5-piece door materials (Stile, Rail, Panel)
                     if 'Stile Material' in tree_items:
-                        mod[tree_items['Stile Material'].identifier] = self.material
+                        mod[tree_items['Stile Material'].identifier] = finish_mat
                     if 'Rail Material' in tree_items:
-                        mod[tree_items['Rail Material'].identifier] = self.material_rotated
+                        mod[tree_items['Rail Material'].identifier] = finish_mat_rotated
                     if 'Panel Material' in tree_items:
-                        mod[tree_items['Panel Material'].identifier] = self.material
+                        mod[tree_items['Panel Material'].identifier] = finish_mat
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:
@@ -748,47 +771,52 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         col.label(text="Wood & Finish:")
         col.prop(self, "wood_species", text="Wood")
-        if self.wood_species != 'PAINT_GRADE':
+        if self.wood_species == 'CUSTOM':
+            col.prop(self, "custom_material", text="Material")
+        elif self.wood_species != 'PAINT_GRADE':
             col.prop(self, "stain_color", text="Stain Color")
         else:
             col.prop(self, "paint_color", text="Paint Color")
         
-        # Color preview swatch
-        color_type = 'paint' if self.wood_species == 'PAINT_GRADE' else 'stain'
-        color_name = self.paint_color if self.wood_species == 'PAINT_GRADE' else self.stain_color
-        color_data = finish_colors.get_color_data(color_name, color_type)
-        is_custom = finish_colors.is_custom_color(color_name, color_type)
-        
-        # Color management buttons
-        row = box.row(align=True)
-        row.operator("hb_frameless.add_custom_finish_color", text="New Color", icon='ADD')
-        if is_custom:
-            op = row.operator("hb_frameless.delete_custom_finish_color", text="Delete", icon='REMOVE')
-            op.color_name = color_name
-            op.color_type = color_type
-        
-        # Advanced color options toggle
-        row = box.row()
-        row.prop(self, "show_advanced_color", 
-                 text="Advanced Color Options",
-                 icon='TRIA_DOWN' if self.show_advanced_color else 'TRIA_RIGHT',
-                 emboss=False)
-        
-        if self.show_advanced_color:
-            adv_box = box.box()
-            adv_box.label(text="Shader Parameters (saved per-color):")
-            col = adv_box.column(align=True)
-            col.label(text=f"Roughness: {color_data.get('roughness', 1.0):.2f}")
-            col.label(text=f"Noise Bump: {color_data.get('noise_bump_strength', 0.1):.2f}")
-            col.label(text=f"Knots Bump: {color_data.get('knots_bump_strength', 0.15):.2f}")
-            col.label(text=f"Wood Bump: {color_data.get('wood_bump_strength', 0.2):.2f}")
-            col.separator()
-            col.operator("hb_frameless.edit_finish_color", text="Edit Color Properties", icon='GREASEPENCIL').color_type = color_type
+        if self.wood_species not in ('CUSTOM',):
+            # Color preview swatch
+            color_type = 'paint' if self.wood_species == 'PAINT_GRADE' else 'stain'
+            color_name = self.paint_color if self.wood_species == 'PAINT_GRADE' else self.stain_color
+            color_data = finish_colors.get_color_data(color_name, color_type)
+            is_custom = finish_colors.is_custom_color(color_name, color_type)
+            
+            # Color management buttons
+            row = box.row(align=True)
+            row.operator("hb_frameless.add_custom_finish_color", text="New Color", icon='ADD')
+            if is_custom:
+                op = row.operator("hb_frameless.delete_custom_finish_color", text="Delete", icon='REMOVE')
+                op.color_name = color_name
+                op.color_type = color_type
+            
+            # Advanced color options toggle
+            row = box.row()
+            row.prop(self, "show_advanced_color", 
+                     text="Advanced Color Options",
+                     icon='TRIA_DOWN' if self.show_advanced_color else 'TRIA_RIGHT',
+                     emboss=False)
+            
+            if self.show_advanced_color:
+                adv_box = box.box()
+                adv_box.label(text="Shader Parameters (saved per-color):")
+                col = adv_box.column(align=True)
+                col.label(text=f"Roughness: {color_data.get('roughness', 1.0):.2f}")
+                col.label(text=f"Noise Bump: {color_data.get('noise_bump_strength', 0.1):.2f}")
+                col.label(text=f"Knots Bump: {color_data.get('knots_bump_strength', 0.15):.2f}")
+                col.label(text=f"Wood Bump: {color_data.get('wood_bump_strength', 0.2):.2f}")
+                col.separator()
+                col.operator("hb_frameless.edit_finish_color", text="Edit Color Properties", icon='GREASEPENCIL').color_type = color_type
         
         # Interior
         col = box.column(align=True)
         col.label(text="Interior:")
         col.prop(self, "interior_material_type", text="Material")
+        if self.interior_material_type == 'CUSTOM':
+            col.prop(self, "custom_interior_material", text="Material")
         
         # Door overlay
         col = box.column(align=True)
@@ -799,6 +827,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         col.label(text="Edge Banding:")
         col.prop(self, "edge_banding", text="Type")
+        if self.edge_banding == 'CUSTOM':
+            col.prop(self, "custom_edge_material", text="Material")
         
         # Paint style onto cabinets button
         row = box.row()
