@@ -1616,7 +1616,7 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.home_builder
-        for obj in bpy.data.objects:
+        for obj in context.scene.objects:
             if 'IS_WALL_BP' in obj:
                 wall = hb_types.GeoNodeWall(obj)
                 wall.set_input('Height', props.ceiling_height)
@@ -1630,7 +1630,7 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.home_builder
-        for obj in bpy.data.objects:
+        for obj in context.scene.objects:
             if 'IS_WALL_BP' in obj:
                 wall = hb_types.GeoNodeWall(obj)
                 wall.set_input('Thickness', props.wall_thickness)
