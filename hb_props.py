@@ -84,15 +84,11 @@ def update_text_color(self, context):
 def update_ceiling_height(self, context):
     """Update cabinet heights when ceiling height changes."""
 
-    main_scene = hb_project.get_main_scene()
-    if not main_scene:
+    # Check if frameless props exist on the current scene
+    if not hasattr(context.scene, 'hb_frameless'):
         return
     
-    # Check if frameless props exist
-    if not hasattr(main_scene, 'hb_frameless'):
-        return
-    
-    frameless_props = main_scene.hb_frameless
+    frameless_props = context.scene.hb_frameless
     
     # Recalculate tall and upper cabinet heights based on new ceiling height
     frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance

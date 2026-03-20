@@ -424,11 +424,7 @@ def clear_library_previews():
         pcoll.clear()
 
 def update_top_cabinet_clearance(self, context):
-    from ... import hb_project
-    
-    # Get ceiling height from main scene
-    main_scene = hb_project.get_main_scene()
-    hb_props = main_scene.home_builder
+    hb_props = context.scene.home_builder
     
     # Calculate heights based on clearance settings
     # Tall cabinet: goes from floor to ceiling minus clearance
