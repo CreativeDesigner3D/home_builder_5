@@ -560,13 +560,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
         name="Interior Material",
         description="Material for cabinet interior",
         items=[
-            ('MATCHING', "Matching Exterior", "Same as exterior wood"),
             ('MAPLE_PLY', "Maple Plywood", "Maple veneer plywood"),
-            ('BIRCH_PLY', "Birch Plywood", "Birch veneer plywood"),
-            ('WHITE_MELAMINE', "White Melamine", "White melamine"),
-            ('ALMOND_MELAMINE', "Almond Melamine", "Almond melamine"),
-            ('GREY_MELAMINE', "Grey Melamine", "Grey melamine"),
-            ('PRE_FINISHED', "Pre-Finished", "Pre-finished interior"),
+            ('MATCHING', "Matching Exterior", "Use the same material as the exterior"),
             ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MAPLE_PLY'
@@ -590,9 +585,6 @@ class Frameless_Cabinet_Style(PropertyGroup):
         description="Edge banding type",
         items=[
             ('MATCHING', "Matching Wood", "Matching wood edge banding"),
-            ('PVC', "PVC", "PVC edge banding"),
-            ('ABS', "ABS", "ABS edge banding"),
-            ('NONE', "None", "No edge banding"),
             ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MATCHING'
@@ -641,6 +633,8 @@ class Frameless_Cabinet_Style(PropertyGroup):
             if self.custom_interior_material:
                 return self.custom_interior_material, self.custom_interior_material
             return None, None
+        if self.interior_material_type == 'MATCHING':
+            return self.get_finish_material()
         if self.interior_material and self.interior_material_rotated:
             return self.interior_material,self.interior_material_rotated
         else:
