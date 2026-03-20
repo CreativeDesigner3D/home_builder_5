@@ -12,6 +12,7 @@ from .operators import layouts
 from .operators import rooms
 from .operators import details
 from .operators import ops_obstacles
+from .operators import export
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -197,6 +198,7 @@ def register():
     rooms.register()
     details.register()
     doors_windows.register()
+    export.register()
     ops.register()
     view3d_sidebar.register()
     menu_apend.register()
@@ -228,6 +230,7 @@ def unregister():
     rooms.unregister()
     details.unregister()
     doors_windows.unregister()
+    export.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
     menu_apend.unregister()

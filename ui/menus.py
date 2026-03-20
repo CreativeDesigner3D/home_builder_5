@@ -48,6 +48,11 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
                        text="Recommended Settings", icon='PREFERENCES')
         layout.operator("home_builder.rendering_settings",
                        text="Rendering Settings", icon='RENDER_STILL')
+        
+        layout.separator()
+        
+        # Export
+        layout.operator("home_builder.prepare_for_export", icon='EXPORT')
 
 
 class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
@@ -89,6 +94,7 @@ class HOME_BUILDER_MT_window_commands(bpy.types.Menu):
         layout.operator("home_builder_doors_windows.window_prompts", text="Window Prompts")
         layout.separator()
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Window").object_type = 'WINDOW'
+
 
 class HOME_BUILDER_MT_change_units(bpy.types.Menu):
     bl_label = "Change Units"
