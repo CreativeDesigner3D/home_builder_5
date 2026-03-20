@@ -805,74 +805,59 @@ class Frameless_Cabinet_Style(PropertyGroup):
         box = layout.box()
         box.prop(self, "name", text="Style Name")
         
-        # Wood settings
+        # Exterior material
         col = box.column(align=True)
-        col.label(text="Wood & Finish:")
-        col.prop(self, "wood_species", text="Wood")
+        col.prop(self, "wood_species", text="Exterior")
         if self.wood_species == 'CUSTOM':
-            col.prop(self, "custom_material", text="Material")
+            col.prop(self, "custom_material", text="")
         elif self.wood_species == 'CUSTOM_PROCEDURAL':
-            # Colors
             col.prop(self, "custom_wood_color_1", text="Color 1")
             col.prop(self, "custom_wood_color_2", text="Color 2")
-            col.separator()
             col.prop(self, "custom_roughness", text="Roughness")
-            col.separator()
-            col.label(text="Bump Strength:")
             col.prop(self, "custom_noise_bump_strength", text="Noise Bump")
             col.prop(self, "custom_knots_bump_strength", text="Knots Bump")
             col.prop(self, "custom_wood_bump_strength", text="Wood Bump")
-            
-            # Expandable grain options
             row = box.row()
             row.prop(self, "show_custom_grain_options",
                      text="Grain Options",
                      icon='TRIA_DOWN' if self.show_custom_grain_options else 'TRIA_RIGHT',
                      emboss=False)
             if self.show_custom_grain_options:
-                grain_box = box.box()
-                col = grain_box.column(align=True)
-                col.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
-                col.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
-                col.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
-                col.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
-                col.prop(self, "custom_noise_detail", text="Noise Detail")
-                col.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
-                col.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
-                col.prop(self, "custom_knots_scale", text="Knots Scale")
-                col.prop(self, "custom_knots_darkness", text="Knots Darkness")
-        elif self.wood_species != 'PAINT_GRADE':
-            col.prop(self, "stain_color", text="Stain Color")
-        else:
+                grain_col = box.column(align=True)
+                grain_col.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
+                grain_col.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
+                grain_col.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
+                grain_col.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
+                grain_col.prop(self, "custom_noise_detail", text="Noise Detail")
+                grain_col.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
+                grain_col.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
+                grain_col.prop(self, "custom_knots_scale", text="Knots Scale")
+                grain_col.prop(self, "custom_knots_darkness", text="Knots Darkness")
+        elif self.wood_species == 'PAINT_GRADE':
             col.prop(self, "paint_color", text="Paint Color")
+        else:
+            col.prop(self, "stain_color", text="Stain Color")
         
-
-        
-        # Interior
+        # Interior material
         col = box.column(align=True)
-        col.label(text="Interior:")
-        col.prop(self, "interior_material_type", text="Material")
+        col.prop(self, "interior_material_type", text="Interior")
         if self.interior_material_type == 'CUSTOM':
-            col.prop(self, "custom_interior_material", text="Material")
+            col.prop(self, "custom_interior_material", text="")
         
-        # Door overlay
-        col = box.column(align=True)
-        col.label(text="Door Overlay:")
-        col.prop(self, "door_overlay_type", text="Type")
-
         # Edge banding
         col = box.column(align=True)
-        col.label(text="Edge Banding:")
-        col.prop(self, "edge_banding", text="Type")
+        col.prop(self, "edge_banding", text="Edge Banding")
         if self.edge_banding == 'CUSTOM':
-            col.prop(self, "custom_edge_material", text="Material")
+            col.prop(self, "custom_edge_material", text="")
         
-        # Paint style onto cabinets button
+        # Door overlay
+        box.prop(self, "door_overlay_type", text="Door Overlay")
+        
+        # Action buttons
         row = box.row()
         row.scale_y = 1.3
         row.operator("hb_frameless.assign_cabinet_style_to_selected_cabinets", text="Assign Style", icon='BRUSH_DATA')
         
-        # Update cabinets button with progress bar
         row = box.row()
         row.scale_y = 1.3
         if context.window_manager.home_builder.progress < 1.0:
