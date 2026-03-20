@@ -465,6 +465,14 @@ def update_frameless_selection_mode(self,context):
 # =============================================================================
 
 
+def update_custom_procedural_material(self, context):
+    """Live-update the procedural material when a custom parameter changes."""
+    if self.wood_species != 'CUSTOM_PROCEDURAL':
+        return
+    if self.material and self.material_rotated:
+        wood_materials.update_finish_material_custom_procedural(self)
+
+
 # ============================================
 # DYNAMIC ENUM CALLBACKS FOR COLORS
 # ============================================
@@ -537,6 +545,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('HICKORY', "Hickory", "Hickory wood"),
             ('ALDER', "Alder", "Alder wood"),
             ('PAINT_GRADE', "Paint Grade", "Paint Grade"),
+            ('CUSTOM_PROCEDURAL', "Custom Procedural", "Procedural wood material with custom parameters"),
             ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MAPLE'
@@ -598,6 +607,28 @@ class Frameless_Cabinet_Style(PropertyGroup):
     custom_material: bpy.props.PointerProperty(name="Custom Exterior Material",type=bpy.types.Material)# type: ignore
     custom_interior_material: bpy.props.PointerProperty(name="Custom Interior Material",type=bpy.types.Material)# type: ignore
     custom_edge_material: bpy.props.PointerProperty(name="Custom Edge Material",type=bpy.types.Material)# type: ignore
+
+    # Custom Procedural Material Properties
+    custom_wood_color_1: bpy.props.FloatVectorProperty(
+        name="Wood Color 1", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.8, 0.65, 0.45), update=update_custom_procedural_material)# type: ignore
+    custom_wood_color_2: bpy.props.FloatVectorProperty(
+        name="Wood Color 2", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.6, 0.45, 0.3), update=update_custom_procedural_material)# type: ignore
+    custom_noise_scale_1: FloatProperty(name="Noise Scale 1", default=3.5, min=0.0, max=50.0, update=update_custom_procedural_material)# type: ignore
+    custom_noise_scale_2: FloatProperty(name="Noise Scale 2", default=2.5, min=0.0, max=50.0, update=update_custom_procedural_material)# type: ignore
+    custom_texture_variation_1: FloatProperty(name="Texture Variation 1", default=0.1, min=0.0, max=20.0, update=update_custom_procedural_material)# type: ignore
+    custom_texture_variation_2: FloatProperty(name="Texture Variation 2", default=12.5, min=0.0, max=20.0, update=update_custom_procedural_material)# type: ignore
+    custom_noise_detail: FloatProperty(name="Noise Detail", default=15.0, min=0.0, max=20.0, update=update_custom_procedural_material)# type: ignore
+    custom_voronoi_detail_1: FloatProperty(name="Voronoi Detail 1", default=0.0, min=0.0, max=10.0, update=update_custom_procedural_material)# type: ignore
+    custom_voronoi_detail_2: FloatProperty(name="Voronoi Detail 2", default=0.2, min=0.0, max=10.0, update=update_custom_procedural_material)# type: ignore
+    custom_knots_scale: FloatProperty(name="Knots Scale", default=0.0, min=0.0, max=20.0, update=update_custom_procedural_material)# type: ignore
+    custom_knots_darkness: FloatProperty(name="Knots Darkness", default=0.0, min=0.0, max=1.0, update=update_custom_procedural_material)# type: ignore
+    custom_roughness: FloatProperty(name="Roughness", default=1.0, min=0.0, max=1.0, update=update_custom_procedural_material)# type: ignore
+    custom_noise_bump_strength: FloatProperty(name="Noise Bump Strength", default=0.1, min=0.0, max=1.0, update=update_custom_procedural_material)# type: ignore
+    custom_knots_bump_strength: FloatProperty(name="Knots Bump Strength", default=0.15, min=0.0, max=1.0, update=update_custom_procedural_material)# type: ignore
+    custom_wood_bump_strength: FloatProperty(name="Wood Bump Strength", default=0.2, min=0.0, max=1.0, update=update_custom_procedural_material)# type: ignore
+    show_custom_grain_options: BoolProperty(name="Show Grain Options", default=False)# type: ignore
     
     # Advanced color editing
     show_advanced_color: BoolProperty(
@@ -611,6 +642,19 @@ class Frameless_Cabinet_Style(PropertyGroup):
             if self.custom_material:
                 return self.custom_material, self.custom_material
             return None, None
+        if self.wood_species == 'CUSTOM_PROCEDURAL':
+            if not self.material or not self.material_rotated:
+                library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
+                with bpy.data.libraries.load(library_path) as (data_from, data_to):
+                    data_to.materials = ["Wood"]
+                material = data_to.materials[0]
+                material.name = self.name + " Finish"
+                self.material = material
+                rotated_mat = material.copy()
+                rotated_mat.name = material.name + " ROTATED"
+                self.material_rotated = rotated_mat
+            wood_materials.update_finish_material_custom_procedural(self)
+            return self.material, self.material_rotated
         if self.material and self.material_rotated:
             wood_materials.update_finish_material(self)
             return self.material,self.material_rotated
@@ -767,43 +811,42 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col.prop(self, "wood_species", text="Wood")
         if self.wood_species == 'CUSTOM':
             col.prop(self, "custom_material", text="Material")
+        elif self.wood_species == 'CUSTOM_PROCEDURAL':
+            # Colors
+            col.prop(self, "custom_wood_color_1", text="Color 1")
+            col.prop(self, "custom_wood_color_2", text="Color 2")
+            col.separator()
+            col.prop(self, "custom_roughness", text="Roughness")
+            col.separator()
+            col.label(text="Bump Strength:")
+            col.prop(self, "custom_noise_bump_strength", text="Noise Bump")
+            col.prop(self, "custom_knots_bump_strength", text="Knots Bump")
+            col.prop(self, "custom_wood_bump_strength", text="Wood Bump")
+            
+            # Expandable grain options
+            row = box.row()
+            row.prop(self, "show_custom_grain_options",
+                     text="Grain Options",
+                     icon='TRIA_DOWN' if self.show_custom_grain_options else 'TRIA_RIGHT',
+                     emboss=False)
+            if self.show_custom_grain_options:
+                grain_box = box.box()
+                col = grain_box.column(align=True)
+                col.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
+                col.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
+                col.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
+                col.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
+                col.prop(self, "custom_noise_detail", text="Noise Detail")
+                col.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
+                col.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
+                col.prop(self, "custom_knots_scale", text="Knots Scale")
+                col.prop(self, "custom_knots_darkness", text="Knots Darkness")
         elif self.wood_species != 'PAINT_GRADE':
             col.prop(self, "stain_color", text="Stain Color")
         else:
             col.prop(self, "paint_color", text="Paint Color")
         
-        if self.wood_species not in ('CUSTOM',):
-            # Color preview swatch
-            color_type = 'paint' if self.wood_species == 'PAINT_GRADE' else 'stain'
-            color_name = self.paint_color if self.wood_species == 'PAINT_GRADE' else self.stain_color
-            color_data = finish_colors.get_color_data(color_name, color_type)
-            is_custom = finish_colors.is_custom_color(color_name, color_type)
-            
-            # Color management buttons
-            row = box.row(align=True)
-            row.operator("hb_frameless.add_custom_finish_color", text="New Color", icon='ADD')
-            if is_custom:
-                op = row.operator("hb_frameless.delete_custom_finish_color", text="Delete", icon='REMOVE')
-                op.color_name = color_name
-                op.color_type = color_type
-            
-            # Advanced color options toggle
-            row = box.row()
-            row.prop(self, "show_advanced_color", 
-                     text="Advanced Color Options",
-                     icon='TRIA_DOWN' if self.show_advanced_color else 'TRIA_RIGHT',
-                     emboss=False)
-            
-            if self.show_advanced_color:
-                adv_box = box.box()
-                adv_box.label(text="Shader Parameters (saved per-color):")
-                col = adv_box.column(align=True)
-                col.label(text=f"Roughness: {color_data.get('roughness', 1.0):.2f}")
-                col.label(text=f"Noise Bump: {color_data.get('noise_bump_strength', 0.1):.2f}")
-                col.label(text=f"Knots Bump: {color_data.get('knots_bump_strength', 0.15):.2f}")
-                col.label(text=f"Wood Bump: {color_data.get('wood_bump_strength', 0.2):.2f}")
-                col.separator()
-                col.operator("hb_frameless.edit_finish_color", text="Edit Color Properties", icon='GREASEPENCIL').color_type = color_type
+
         
         # Interior
         col = box.column(align=True)

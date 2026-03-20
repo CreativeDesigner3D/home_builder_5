@@ -166,3 +166,63 @@ def update_finish_material(cabinet_style):
                 inp.default_value = knots_bump_strength
             elif inp.name == 'Wood Bump Strength':
                 inp.default_value = wood_bump_strength
+
+
+def update_finish_material_custom_procedural(cabinet_style):
+    """Update the finish material using custom procedural values from the cabinet style properties."""
+    material = cabinet_style.material
+    material_rotated = cabinet_style.material_rotated
+
+    mat_node = None
+    rotated_node = None
+
+    for n in material.node_tree.nodes:
+        if n.label == 'Wood':
+            mat_node = n
+            break
+
+    for n in material_rotated.node_tree.nodes:
+        if n.label == 'Wood':
+            rotated_node = n
+            break
+
+    if not mat_node or not rotated_node:
+        return
+
+    c1 = list(cabinet_style.custom_wood_color_1) + [1.0]
+    c2 = list(cabinet_style.custom_wood_color_2) + [1.0]
+
+    for node, rotation in [(mat_node, math.radians(90)), (rotated_node, math.radians(0))]:
+        for inp in node.inputs:
+            if inp.name == 'Rotation':
+                inp.default_value[2] = rotation
+            elif inp.name == 'Wood Color 1':
+                inp.default_value = c1
+            elif inp.name == 'Wood Color 2':
+                inp.default_value = c2
+            elif inp.name == 'Noise Scale 1':
+                inp.default_value = cabinet_style.custom_noise_scale_1
+            elif inp.name == 'Noise Scale 2':
+                inp.default_value = cabinet_style.custom_noise_scale_2
+            elif inp.name == 'Texture Variation 1':
+                inp.default_value = cabinet_style.custom_texture_variation_1
+            elif inp.name == 'Texture Variation 2':
+                inp.default_value = cabinet_style.custom_texture_variation_2
+            elif inp.name == 'Noise Detail':
+                inp.default_value = cabinet_style.custom_noise_detail
+            elif inp.name == 'Voronoi Detail 1':
+                inp.default_value = cabinet_style.custom_voronoi_detail_1
+            elif inp.name == 'Voronoi Detail 2':
+                inp.default_value = cabinet_style.custom_voronoi_detail_2
+            elif inp.name == 'Knots Scale':
+                inp.default_value = cabinet_style.custom_knots_scale
+            elif inp.name == 'Knots Darkness':
+                inp.default_value = cabinet_style.custom_knots_darkness
+            elif inp.name == 'Roughness':
+                inp.default_value = cabinet_style.custom_roughness
+            elif inp.name == 'Noise Bump Strength':
+                inp.default_value = cabinet_style.custom_noise_bump_strength
+            elif inp.name == 'Knots Bump Strength':
+                inp.default_value = cabinet_style.custom_knots_bump_strength
+            elif inp.name == 'Wood Bump Strength':
+                inp.default_value = cabinet_style.custom_wood_bump_strength
