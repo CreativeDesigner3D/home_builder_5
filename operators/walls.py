@@ -1016,7 +1016,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.dim.obj.data.splines[0].points[1].co = (length, 0, 0, 0)
             
             # Update decimal precision based on value
-            self.dim.set_decimal()
+            self.dim.set_decimal(fine=self.fine_snap)
             
             # Scale text size based on view distance
             if context:
@@ -1037,7 +1037,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     # Use exact snap position (no grid snap) for wall face/endpoint snaps
                     self.current_wall.obj.location = Vector(self.hit_location)
                 else:
-                    snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+                    snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location), fine=self.fine_snap)
                     self.current_wall.obj.location = snapped_loc
         else:
             # Drawing length - calculate from start point
@@ -1050,7 +1050,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 snap_angle = round(math.degrees(angle) / 15) * 15
                 self.current_wall.obj.rotation_euler.z = math.radians(snap_angle)
                 length = math.sqrt(x * x + y * y)
-                self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length))
+                self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length, fine=self.fine_snap))
             else:
                 # Default mode - snap to orthogonal (90°) directions
                 if abs(x) > abs(y):
@@ -1058,13 +1058,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         self.current_wall.obj.rotation_euler.z = math.radians(0)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(180)
-                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x)))
+                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x), fine=self.fine_snap))
                 else:
                     if y > 0:
                         self.current_wall.obj.rotation_euler.z = math.radians(90)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(-90)
-                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y)))
+                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y), fine=self.fine_snap))
 
             # Check for end snap to existing wall faces
             snap_len, snap_wall_obj, snap_face = self.find_end_wall_snap(bpy.context)
@@ -1192,7 +1192,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
             close_hint = " | C: close room" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
             snap_hint = f" [Snap: {self.end_snap_face} face]" if self.end_snap_wall else ""
-            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint} | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
+            fine_hint = " [Fine: 1/16\"]" if self.fine_snap else ""
+            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint}{fine_hint} | {rotation_mode} | Shift: fine snap | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
         else:
             if self.snap_wall and self.snap_endpoint:
                 text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
@@ -1232,6 +1233,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Surface snap hysteresis (prevents face flicker in top view)
         self._last_surface_wall = None
         self._last_surface_face = None
+        
+        # Fine snap mode (Shift held = 1/16" imperial, 1mm metric)
+        self.fine_snap = False
 
         # Draw handler for snap indicator
         self._snap_draw_handle = None
@@ -1319,6 +1323,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     if self.highlighted_wall:
                         self.clear_wall_highlight()
 
+        # Track shift state for fine snap
+        self.fine_snap = event.shift
+
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
             self.set_wall_position_from_mouse()
@@ -1343,7 +1350,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self._show_wall_objects()
                 else:
                     # Set first point normally (snapped to grid)
-                    self.start_point = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+                    self.start_point = hb_snap.snap_vector_to_grid(Vector(self.hit_location), fine=self.fine_snap)
                     self.has_start_point = True
                     self._show_wall_objects()
             else:

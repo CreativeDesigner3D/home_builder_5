@@ -537,13 +537,17 @@ class GeoNodeDimension(GeoNodeObject):
         self.set_input("Text Size",props.annotation_dimension_text_size)
         self.set_input("Unit Type", self.get_unit_type())
 
-    def set_decimal(self):
+    def set_decimal(self, fine=False):
         """Calculate and set appropriate decimal precision for the dimension.
         
         Handles floating point precision issues by:
         1. Converting to display units based on unit type
-        2. Rounding appropriately for the unit system
+        2. Snapping to the actual grid increment to clean floating point noise
         3. Stripping trailing zeros to show only meaningful decimals
+        
+        Args:
+            fine: If True, use higher precision for fine snap increments
+                  (e.g. 1/16" = 4 decimal places for inches)
         """
         p1 = self.obj.data.splines[0].points[0].co
         p2 = self.obj.data.splines[0].points[1].co 
@@ -555,22 +559,35 @@ class GeoNodeDimension(GeoNodeObject):
         
         if unit_type == 0:  # inches
             display_value = units.meter_to_inch(dist)
-            precision = 2
+            # Snap to actual increment to remove floating point noise
+            snap_inc = 1/16 if fine else 1.0
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 4 if fine else 2
         elif unit_type == 1:  # feet
             display_value = units.meter_to_inch(dist) / 12
-            precision = 2
+            snap_inc = (1/16) / 12 if fine else 1/12
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 4 if fine else 2
         elif unit_type == 2:  # millimeters
             display_value = dist * 1000
-            precision = 1
+            snap_inc = 1.0 if fine else 10.0
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 2 if fine else 1
         elif unit_type == 3:  # centimeters
             display_value = dist * 100
-            precision = 2
+            snap_inc = 0.1 if fine else 1.0
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 3 if fine else 2
         elif unit_type == 4:  # meters
             display_value = dist
-            precision = 3
+            snap_inc = 0.001 if fine else 0.01
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 4 if fine else 3
         else:
             display_value = units.meter_to_inch(dist)
-            precision = 2
+            snap_inc = 1/16 if fine else 1.0
+            display_value = round(display_value / snap_inc) * snap_inc
+            precision = 4 if fine else 2
         
         rounded = round(display_value, precision)
         

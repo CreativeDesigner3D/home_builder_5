@@ -207,15 +207,16 @@ def main(self, crtl_is_pressed, context):
     elif not result:
         snap_to_grid(self, context, crtl_is_pressed)
 
-def snap_value_to_grid(value, unit_settings=None):
+def snap_value_to_grid(value, unit_settings=None, fine=False):
     """Snap a value (in meters) to the nearest grid increment.
     
-    Imperial: snaps to 1" (0.0254m)
-    Metric: snaps to 1mm (0.001m)
+    Normal:  Imperial = 1",   Metric = 10mm
+    Fine:    Imperial = 1/16", Metric = 1mm
     
     Args:
         value: Value in meters to snap
         unit_settings: Blender unit settings (optional, will get from context if not provided)
+        fine: If True, use finer snap increment (Shift held)
     
     Returns:
         Snapped value in meters
@@ -226,25 +227,26 @@ def snap_value_to_grid(value, unit_settings=None):
         unit_settings = bpy.context.scene.unit_settings
     
     if unit_settings.system == 'IMPERIAL':
-        grid = units.inch(1)
+        grid = units.inch(1/16) if fine else units.inch(1)
     else:
-        grid = units.millimeter(1)
+        grid = units.millimeter(1) if fine else units.millimeter(10)
     
     return round(value / grid) * grid
 
 
-def snap_vector_to_grid(vec, unit_settings=None):
+def snap_vector_to_grid(vec, unit_settings=None, fine=False):
     """Snap a Vector's X and Y components to the grid.
     
     Args:
         vec: mathutils.Vector to snap
         unit_settings: Blender unit settings (optional)
+        fine: If True, use finer snap increment (Shift held)
     
     Returns:
         New Vector with snapped X and Y, original Z
     """
     return Vector((
-        snap_value_to_grid(vec.x, unit_settings),
-        snap_value_to_grid(vec.y, unit_settings),
+        snap_value_to_grid(vec.x, unit_settings, fine),
+        snap_value_to_grid(vec.y, unit_settings, fine),
         vec.z
     ))
