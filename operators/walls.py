@@ -2,7 +2,9 @@ import bpy
 import bmesh
 import math
 import os
+import gpu
 from mathutils import Vector
+from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, units
 
 # Wall Miter Angle Calculation
@@ -184,6 +186,108 @@ def is_closed_loop(points, tolerance=0.01):
         return False
     return (points[0] - points[-1]).length < tolerance
     
+
+
+def _draw_snap_point(x, y, color, radius, cross_size, diamond=False):
+    """Draw a snap crosshair + circle at screen position (x, y)."""
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+    # --- Outer circle ---
+    gpu.state.line_width_set(2.0)
+    segments = 32
+    circle_verts = []
+    for i in range(segments + 1):
+        a = 2 * math.pi * i / segments
+        circle_verts.append((x + radius * math.cos(a), y + radius * math.sin(a)))
+
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": circle_verts})
+    batch.draw(shader)
+
+    # --- Crosshair ---
+    cross_verts = [
+        (x - cross_size, y), (x + cross_size, y),
+        (x, y - cross_size), (x, y + cross_size),
+    ]
+    batch = batch_for_shader(shader, 'LINES', {"pos": cross_verts})
+    batch.draw(shader)
+
+    # --- Diamond indicator for surface snap ---
+    if diamond:
+        diamond_y = y + radius + 8
+        diamond_size = 4
+        diamond_verts = [
+            (x, diamond_y + diamond_size),
+            (x + diamond_size, diamond_y),
+            (x, diamond_y - diamond_size),
+            (x - diamond_size, diamond_y),
+            (x, diamond_y + diamond_size),
+        ]
+        shader.uniform_float("color", color)
+        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": diamond_verts})
+        batch.draw(shader)
+
+    gpu.state.line_width_set(1.0)
+
+
+def draw_wall_snap_indicator(op, context):
+    """GPU draw callback: renders snap indicators during wall drawing."""
+    region = op.region
+    if region is None:
+        return
+
+    from bpy_extras import view3d_utils
+
+    gpu.state.blend_set('ALPHA')
+
+    if not op.has_start_point:
+        # --- Phase 1: Before first point, show indicator at cursor ---
+        if op.hit_location is None:
+            gpu.state.blend_set('NONE')
+            return
+
+        loc_2d = view3d_utils.location_3d_to_region_2d(
+            region, region.data, Vector(op.hit_location))
+        if loc_2d is None:
+            gpu.state.blend_set('NONE')
+            return
+
+        if op.snap_wall and (op.snap_endpoint or op.snap_surface):
+            color = (0.0, 1.0, 0.4, 0.9)
+            _draw_snap_point(loc_2d.x, loc_2d.y, color, 12, 8,
+                             diamond=bool(op.snap_surface))
+        else:
+            _draw_snap_point(loc_2d.x, loc_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
+
+    else:
+        # --- Phase 2: During drawing, show indicator at wall endpoint ---
+        if op.current_wall is None or op.start_point is None:
+            gpu.state.blend_set('NONE')
+            return
+
+        wall_length = op.current_wall.get_input('Length')
+        angle = op.current_wall.obj.rotation_euler.z
+        end_3d = Vector((
+            op.start_point.x + math.cos(angle) * wall_length,
+            op.start_point.y + math.sin(angle) * wall_length,
+            0,
+        ))
+
+        end_2d = view3d_utils.location_3d_to_region_2d(
+            region, region.data, end_3d)
+        if end_2d is None:
+            gpu.state.blend_set('NONE')
+            return
+
+        if op.end_snap_wall:
+            color = (0.0, 1.0, 0.4, 0.9)
+            _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
+        else:
+            _draw_snap_point(end_2d.x, end_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
+
+    gpu.state.blend_set('NONE')
+
 class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_walls.draw_walls"
     bl_label = "Draw Walls"
@@ -805,6 +909,20 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.previous_wall = self.current_wall
         self.create_wall(bpy.context)
 
+    def _show_wall_objects(self):
+        """Show the wall and dimension objects after first point is placed."""
+        self.current_wall.obj.hide_set(False)
+        for child in self.current_wall.obj.children:
+            child.hide_set(False)
+        if self.dim and self.dim.obj:
+            self.dim.obj.hide_set(False)
+
+    def _remove_snap_indicator(self):
+        """Remove the snap indicator draw handler if still active."""
+        if self._snap_draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._snap_draw_handle, 'WINDOW')
+            self._snap_draw_handle = None
+
     def update_header(self, context):
         """Update header text with instructions and current value."""
         if self.placement_state == hb_placement.PlacementState.TYPING:
@@ -853,9 +971,23 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.end_snap_wall = None
         self.end_snap_face = None
 
+        # Draw handler for snap indicator
+        self._snap_draw_handle = None
+
         # Create initial objects
         self.create_dimension()
         self.create_wall(context)
+
+        # Hide wall and dimension until first point is placed
+        self.current_wall.obj.hide_set(True)
+        for child in self.current_wall.obj.children:
+            child.hide_set(True)
+        if self.dim and self.dim.obj:
+            self.dim.obj.hide_set(True)
+
+        # Add GPU draw handler for snap indicator
+        self._snap_draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_wall_snap_indicator, (self, context), 'WINDOW', 'POST_PIXEL')
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -874,12 +1006,18 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Update snap (hide current wall and dimension during raycast)
         self.current_wall.obj.hide_set(True)
+        for child in self.current_wall.obj.children:
+            child.hide_set(True)
         if self.dim and self.dim.obj:
             self.dim.obj.hide_set(True)
         self.update_snap(context, event)
-        self.current_wall.obj.hide_set(False)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(False)
+        # Only unhide after first point is placed
+        if self.has_start_point:
+            self.current_wall.obj.hide_set(False)
+            for child in self.current_wall.obj.children:
+                child.hide_set(False)
+            if self.dim and self.dim.obj:
+                self.dim.obj.hide_set(False)
 
         # Check for nearby wall endpoints or surfaces (only before first point placed)
         if not self.has_start_point:
@@ -932,6 +1070,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 if self.snap_wall and self.snap_endpoint:
                     self.connect_to_existing_wall(self.snap_wall, self.snap_endpoint)
                     self.clear_wall_highlight()
+                    self._show_wall_objects()
                 elif self.snap_wall and self.snap_surface:
                     # Snapping to wall surface - use exact snap location
                     snap_loc = Vector(self.snap_location)
@@ -939,10 +1078,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.current_wall.obj.location = snap_loc  # Ensure position matches
                     self.has_start_point = True
                     self.clear_wall_highlight()
+                    self._show_wall_objects()
                 else:
                     # Set first point normally (snapped to grid)
                     self.start_point = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
                     self.has_start_point = True
+                    self._show_wall_objects()
             else:
                 # Confirm wall and start next
                 self.confirm_current_wall()
@@ -952,6 +1093,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
             # Clear any wall highlight
             self.clear_wall_highlight()
+            self._remove_snap_indicator()
             # Remove current unfinished wall
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
@@ -961,6 +1103,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if event.type == 'ESC' and event.value == 'PRESS':
             # Clear any wall highlight
             self.clear_wall_highlight()
+            self._remove_snap_indicator()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
@@ -970,6 +1113,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if self.confirmed_wall_count >= 2 and self.first_wall is not None:
                 self.close_room(context)
                 self.clear_wall_highlight()
+                self._remove_snap_indicator()
                 hb_placement.clear_header_text(context)
                 return {'FINISHED'}
             return {'RUNNING_MODAL'}
