@@ -3,6 +3,7 @@ import bmesh
 import math
 import os
 import gpu
+import blf
 from mathutils import Vector
 from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, units
@@ -188,6 +189,120 @@ def is_closed_loop(points, tolerance=0.01):
     
 
 
+
+
+def _draw_dim_text(x, y, text, color):
+    """Draw centered text at screen position."""
+    font_id = 0
+    blf.size(font_id, 13)
+    blf.color(font_id, *color)
+    w, h = blf.dimensions(font_id, text)
+    blf.position(font_id, x - w / 2, y - h / 2, 0)
+    blf.draw(font_id, text)
+
+
+def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
+    """
+    Draw left/right dimension lines along the wall face from the snap point.
+    Shows the distance from the snap point to each end of the wall.
+    """
+    from bpy_extras import view3d_utils
+
+    wall = hb_types.GeoNodeWall(wall_obj)
+    wall_length = wall.get_input('Length')
+    wall_thickness = wall.get_input('Thickness')
+
+    wm = wall_obj.matrix_world
+    wall_dir = Vector((wm[0][0], wm[1][0])).normalized()
+    wall_perp = Vector((wm[0][1], wm[1][1])).normalized()
+    wall_origin = Vector((wm[0][3], wm[1][3]))
+
+    face_offset = 0 if face == 'back' else wall_thickness
+
+    # Face endpoints in 3D
+    face_start_3d = Vector((*( wall_origin + wall_perp * face_offset), 0))
+    face_end_3d = Vector((*( wall_origin + wall_perp * face_offset + wall_dir * wall_length), 0))
+
+    # Snap point projected onto face line
+    snap_2d_pos = Vector((snap_point_3d.x, snap_point_3d.y))
+    to_snap = snap_2d_pos - (wall_origin + wall_perp * face_offset)
+    local_along = max(0, min(wall_length, to_snap.dot(wall_dir)))
+
+    left_dist = local_along
+    right_dist = wall_length - local_along
+
+    snap_on_face = wall_origin + wall_perp * face_offset + wall_dir * local_along
+    snap_face_3d = Vector((snap_on_face.x, snap_on_face.y, 0))
+
+    # Project to screen
+    s2d = view3d_utils.location_3d_to_region_2d(region, region.data, snap_face_3d)
+    l2d = view3d_utils.location_3d_to_region_2d(region, region.data, face_start_3d)
+    r2d = view3d_utils.location_3d_to_region_2d(region, region.data, face_end_3d)
+
+    if not s2d or not l2d or not r2d:
+        return
+
+    # Face direction in screen space
+    face_vec = r2d - l2d
+    if face_vec.length < 2:
+        return
+    face_dir_n = face_vec.normalized()
+
+    # Offset direction: perpendicular to face, pointing away from wall body
+    offset_dir = Vector((-face_dir_n.y, face_dir_n.x))
+    wall_mid_3d = Vector((*(wall_origin + wall_perp * (wall_thickness / 2)), 0))
+    wall_mid_2d = view3d_utils.location_3d_to_region_2d(region, region.data, wall_mid_3d)
+    if wall_mid_2d:
+        if (wall_mid_2d - s2d).dot(offset_dir) > 0:
+            offset_dir = -offset_dir
+
+    offset_px = 20
+    tick_half = 5
+    dim_color = (0.0, 0.85, 1.0, 0.85)
+    leader_color = (0.0, 0.85, 1.0, 0.3)
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    tick_dir = Vector((-offset_dir.y, offset_dir.x))
+
+    unit_settings = bpy.context.scene.unit_settings
+
+    for dist, p_from, p_to in [(left_dist, s2d, l2d), (right_dist, s2d, r2d)]:
+        if dist < 0.005:
+            continue
+
+        a = p_from + offset_dir * offset_px
+        b = p_to + offset_dir * offset_px
+
+        shader.bind()
+
+        # Leader lines (subtle)
+        gpu.state.line_width_set(1.0)
+        shader.uniform_float("color", leader_color)
+        for fp, dp in [(p_from, a), (p_to, b)]:
+            batch = batch_for_shader(shader, 'LINES', {"pos": [(fp.x, fp.y), (dp.x, dp.y)]})
+            batch.draw(shader)
+
+        # Dimension line
+        gpu.state.line_width_set(1.5)
+        shader.uniform_float("color", dim_color)
+        batch = batch_for_shader(shader, 'LINES', {"pos": [(a.x, a.y), (b.x, b.y)]})
+        batch.draw(shader)
+
+        # Tick marks
+        for p in [a, b]:
+            t1 = p + tick_dir * tick_half
+            t2 = p - tick_dir * tick_half
+            batch = batch_for_shader(shader, 'LINES', {"pos": [(t1.x, t1.y), (t2.x, t2.y)]})
+            batch.draw(shader)
+
+        # Text label
+        mid = (a + b) / 2 + offset_dir * 12
+        text = units.unit_to_string(unit_settings, dist)
+        _draw_dim_text(mid.x, mid.y, text, dim_color)
+
+    gpu.state.line_width_set(1.0)
+
+
 def _draw_snap_point(x, y, color, radius, cross_size, diamond=False):
     """Draw a snap crosshair + circle at screen position (x, y)."""
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -257,6 +372,11 @@ def draw_wall_snap_indicator(op, context):
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(loc_2d.x, loc_2d.y, color, 12, 8,
                              diamond=bool(op.snap_surface))
+            # Draw left/right dimensions along the target wall face
+            if op.snap_surface and op.snap_location:
+                _draw_wall_snap_dimensions(
+                    region, op.snap_wall,
+                    Vector(op.snap_location), op.snap_surface)
         else:
             _draw_snap_point(loc_2d.x, loc_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
 
@@ -283,6 +403,9 @@ def draw_wall_snap_indicator(op, context):
         if op.end_snap_wall:
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
+            # Draw left/right dimensions along the target wall face
+            _draw_wall_snap_dimensions(
+                region, op.end_snap_wall, end_3d, op.end_snap_face)
         else:
             _draw_snap_point(end_2d.x, end_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
 
