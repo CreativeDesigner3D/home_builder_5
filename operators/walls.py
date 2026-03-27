@@ -421,7 +421,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def find_wall_surface_snap_2d(self, context, threshold=0.15):
         """
         2D proximity-based wall surface detection for top view.
-        Finds the nearest wall edge (front or back face) to the mouse position.
+        Uses local-space projection with hysteresis to prevent face flicker
+        when the cursor is inside the wall.
         
         Wall origin is at back face (local Y=0), front face is at Y=thickness.
         
@@ -429,6 +430,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             Tuple of (wall_obj, snap_location, face) or (None, None, None)
         """
         if not self.hit_location:
+            self._last_surface_wall = None
+            self._last_surface_face = None
             return None, None, None
         
         mouse_2d = Vector((self.hit_location[0], self.hit_location[1]))
@@ -450,40 +453,77 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             
             world_matrix = obj.matrix_world
             
-            # Get wall direction vector (local X axis in world space) - column 0
+            # Wall axes in world space
             wall_dir = Vector((world_matrix[0][0], world_matrix[1][0])).normalized()
-            # Get wall perpendicular (local Y axis in world space) - column 1
             wall_perp = Vector((world_matrix[0][1], world_matrix[1][1])).normalized()
-            # Wall origin (back face at local Y=0) - column 3
             wall_origin = Vector((world_matrix[0][3], world_matrix[1][3]))
             
-            # Back face is at origin (Y=0 in local)
-            # Front face is at origin + perp * thickness (Y=thickness in local)
-            for face, offset in [('back', 0), ('front', wall_thickness)]:
-                # Edge start and end points
-                edge_start = wall_origin + wall_perp * offset
-                edge_end = edge_start + wall_dir * wall_length
-                
-                # Find closest point on edge line to mouse
-                edge_vec = edge_end - edge_start
-                edge_len = edge_vec.length
-                if edge_len < 0.001:
+            # Project mouse into wall's local 2D space
+            to_mouse = mouse_2d - wall_origin
+            local_along = to_mouse.dot(wall_dir)
+            local_perp = to_mouse.dot(wall_perp)
+            
+            # Check if cursor is alongside the wall (with threshold margin)
+            if local_along < -threshold or local_along > wall_length + threshold:
+                continue
+            
+            # Determine perpendicular distance to each face
+            dist_to_back = abs(local_perp)
+            dist_to_front = abs(local_perp - wall_thickness)
+            
+            # Hysteresis: if we were already snapped to a face on this wall,
+            # only switch when the cursor is clearly past the 70/30 line
+            # toward the other face. This prevents flicker at the centerline.
+            inside_wall = 0 <= local_perp <= wall_thickness
+            
+            if (inside_wall and self._last_surface_wall == obj
+                    and self._last_surface_face is not None):
+                # Bias toward keeping the current face.
+                # Switch only when cursor crosses 70% toward the other face.
+                if self._last_surface_face == 'back':
+                    # Currently on back — switch to front only if past 70% of thickness
+                    if local_perp > wall_thickness * 0.7:
+                        face = 'front'
+                    else:
+                        face = 'back'
+                else:
+                    # Currently on front — switch to back only if below 30% of thickness
+                    if local_perp < wall_thickness * 0.3:
+                        face = 'back'
+                    else:
+                        face = 'front'
+            else:
+                # No hysteresis — pick nearest face
+                if dist_to_back <= dist_to_front:
+                    face = 'back'
+                else:
+                    face = 'front'
+            
+            face_offset = 0 if face == 'back' else wall_thickness
+            perp_dist = dist_to_back if face == 'back' else dist_to_front
+            
+            # Skip if too far from the nearest face
+            if perp_dist > threshold:
+                # Also check if we're inside (both faces within threshold)
+                if not inside_wall:
                     continue
-                edge_dir = edge_vec / edge_len
-                
-                # Project mouse onto edge line
-                to_mouse = mouse_2d - edge_start
-                proj_dist = to_mouse.dot(edge_dir)
-                proj_dist = max(0, min(edge_len, proj_dist))  # Clamp to edge
-                
-                closest_point = edge_start + edge_dir * proj_dist
-                distance = (mouse_2d - closest_point).length
-                
-                if distance < best_distance:
-                    best_distance = distance
-                    best_wall = obj
-                    best_location = Vector((closest_point.x, closest_point.y, 0))
-                    best_face = face
+                # Inside the wall — perp_dist to chosen face may exceed threshold
+                # but we still want to snap
+                perp_dist = min(dist_to_back, dist_to_front)
+            
+            # Snap point: clamp along-position to wall extent, project onto face
+            clamped_along = max(0, min(wall_length, local_along))
+            snap_world = wall_origin + wall_dir * clamped_along + wall_perp * face_offset
+            
+            if perp_dist < best_distance:
+                best_distance = perp_dist
+                best_wall = obj
+                best_location = Vector((snap_world.x, snap_world.y, 0))
+                best_face = face
+        
+        # Update hysteresis state
+        self._last_surface_wall = best_wall
+        self._last_surface_face = best_face
         
         return best_wall, best_location, best_face
 
@@ -549,6 +589,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         """
         Check if the current wall's endpoint is near or would cross an existing wall face.
         Snaps the wall length so it ends cleanly at the front or back face.
+        
+        When the wall would pass through both faces of an existing wall,
+        snaps to the FIRST face hit (smallest t) so the wall stops at the
+        near side rather than punching through.
 
         Returns:
             (snap_length, wall_obj, face) or (None, None, None)
@@ -574,7 +618,6 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             if obj == self.current_wall.obj:
                 continue
-            # Skip the wall we're connected to (previous wall)
             if self.previous_wall and obj == self.previous_wall.obj:
                 continue
 
@@ -587,11 +630,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             ep = Vector((wm[0][1], wm[1][1])).normalized()
             eo = Vector((wm[0][3], wm[1][3]))
 
-            for face, offset in [('back', 0), ('front', et)]:
-                fs = eo + ep * offset  # face line start
-                fd = ed                # face line direction
+            # Collect valid face hits for this wall, then pick the best
+            wall_hits = []
 
-                # Line intersection: wp + t*wd = fs + s*fd
+            for face, offset in [('back', 0), ('front', et)]:
+                fs = eo + ep * offset
+                fd = ed
+
                 denom = wd.x * fd.y - wd.y * fd.x
 
                 if abs(denom) < 1e-10:
@@ -602,13 +647,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     if 0 <= s <= el:
                         closest = fs + fd * s
                         dist = (end_pt - closest).length
-                        if dist < threshold and dist < best_score:
+                        if dist < threshold:
                             snap_t = (closest - wp).dot(wd)
                             if snap_t > 0.01:
-                                best_score = dist
-                                best_t = snap_t
-                                best_wall = obj
-                                best_face = face
+                                wall_hits.append((snap_t, face, dist))
                     continue
 
                 diff = fs - wp
@@ -616,21 +658,34 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 s = (diff.x * wd.y - diff.y * wd.x) / denom
 
                 if t < 0.01:
-                    continue  # Intersection behind wall start
+                    continue
                 if s < -0.01 or s > el + 0.01:
-                    continue  # Intersection outside existing wall extent
+                    continue
 
-                # Score: distance from intersection to current endpoint
                 dist_to_end = abs(t - wall_length)
 
-                # Snap if endpoint is near the face OR wall would pass through
                 if dist_to_end < threshold or t < wall_length:
-                    score = dist_to_end
-                    if score < best_score:
-                        best_score = score
-                        best_t = t
-                        best_wall = obj
-                        best_face = face
+                    wall_hits.append((t, face, dist_to_end))
+
+            if not wall_hits:
+                continue
+
+            # Pick the first face the wall would hit (smallest t)
+            wall_hits.sort(key=lambda h: h[0])
+            hit_t, hit_face, hit_dist = wall_hits[0]
+
+            # Score across all walls: prefer closest to current endpoint,
+            # but strongly prefer any crossing (t < wall_length)
+            if hit_t < wall_length:
+                score = -1000 + hit_t  # Crossings always win, prefer earliest
+            else:
+                score = hit_dist
+
+            if score < best_score:
+                best_score = score
+                best_t = hit_t
+                best_wall = obj
+                best_face = hit_face
 
         return best_t, best_wall, best_face
 
@@ -970,6 +1025,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # End-of-wall snap state (during drawing)
         self.end_snap_wall = None
         self.end_snap_face = None
+        
+        # Surface snap hysteresis (prevents face flicker in top view)
+        self._last_surface_wall = None
+        self._last_surface_face = None
 
         # Draw handler for snap indicator
         self._snap_draw_handle = None
