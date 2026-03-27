@@ -540,6 +540,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         """Create the dimension annotation."""
         self.dim = hb_types.GeoNodeDimension()
         self.dim.create("Dimension")
+        self.dim.obj['HB_CURRENT_DRAW_OBJ'] = True
         self.register_placement_object(self.dim.obj)
 
     def get_view_distance(self, context):
@@ -760,10 +761,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
-        # Update snap (hide current wall during raycast)
+        # Update snap (hide current wall and dimension during raycast)
         self.current_wall.obj.hide_set(True)
+        if self.dim and self.dim.obj:
+            self.dim.obj.hide_set(True)
         self.update_snap(context, event)
         self.current_wall.obj.hide_set(False)
+        if self.dim and self.dim.obj:
+            self.dim.obj.hide_set(False)
 
         # Check for nearby wall endpoints or surfaces (only before first point placed)
         if not self.has_start_point:
