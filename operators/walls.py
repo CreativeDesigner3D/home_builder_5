@@ -345,6 +345,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Skip the current wall being drawn
             if self.current_wall and obj == self.current_wall.obj:
                 continue
+            # Skip the previously drawn wall
+            if self.previous_wall and obj == self.previous_wall.obj:
+                continue
             
             # Get wall endpoints
             start, end = get_wall_endpoints(obj)
@@ -445,6 +448,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if 'IS_WALL_BP' not in obj:
                 continue
             if self.current_wall and obj == self.current_wall.obj:
+                continue
+            if self.previous_wall and obj == self.previous_wall.obj:
                 continue
             
             wall = hb_types.GeoNodeWall(obj)
@@ -558,6 +563,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         # Skip the current wall being drawn
         if self.current_wall and wall_obj == self.current_wall.obj:
+            return None, None, None
+        # Skip the previously drawn wall
+        if self.previous_wall and wall_obj == self.previous_wall.obj:
             return None, None, None
         
         wall = hb_types.GeoNodeWall(wall_obj)
