@@ -201,10 +201,20 @@ def _draw_dim_text(x, y, text, color):
     blf.draw(font_id, text)
 
 
-def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
+def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face,
+                               drawing_gap=0, gap_direction=0):
     """
     Draw left/right dimension lines along the wall face from the snap point.
-    Shows the distance from the snap point to each end of the wall.
+    Shows the distance from the snap point to each end of the wall,
+    with a visible gap for the drawing wall's thickness.
+    
+    Args:
+        drawing_gap: Width of the drawing wall projected onto the target face (meters).
+        gap_direction: Signed float indicating which direction along the target face
+                       the wall body extends from the snap point.
+                       > 0: gap extends in target wall's +X direction from snap point
+                       < 0: gap extends in target wall's -X direction from snap point
+                       == 0: gap centered on snap point (fallback when direction unknown)
     """
     from bpy_extras import view3d_utils
 
@@ -218,28 +228,44 @@ def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
     wall_origin = Vector((wm[0][3], wm[1][3]))
 
     face_offset = 0 if face == 'back' else wall_thickness
-
-    # Face endpoints in 3D
-    face_start_3d = Vector((*( wall_origin + wall_perp * face_offset), 0))
-    face_end_3d = Vector((*( wall_origin + wall_perp * face_offset + wall_dir * wall_length), 0))
+    face_base = wall_origin + wall_perp * face_offset
 
     # Snap point projected onto face line
     snap_2d_pos = Vector((snap_point_3d.x, snap_point_3d.y))
-    to_snap = snap_2d_pos - (wall_origin + wall_perp * face_offset)
+    to_snap = snap_2d_pos - face_base
     local_along = max(0, min(wall_length, to_snap.dot(wall_dir)))
 
-    left_dist = local_along
-    right_dist = wall_length - local_along
+    # Compute gap edges based on direction
+    if gap_direction > 0:
+        # Wall body extends in +along direction from snap point
+        gap_left = local_along
+        gap_right = min(wall_length, local_along + drawing_gap)
+    elif gap_direction < 0:
+        # Wall body extends in -along direction from snap point
+        gap_left = max(0, local_along - drawing_gap)
+        gap_right = local_along
+    else:
+        # Unknown direction — center the gap
+        half_gap = drawing_gap / 2
+        gap_left = max(0, local_along - half_gap)
+        gap_right = min(wall_length, local_along + half_gap)
 
-    snap_on_face = wall_origin + wall_perp * face_offset + wall_dir * local_along
-    snap_face_3d = Vector((snap_on_face.x, snap_on_face.y, 0))
+    left_dist = gap_left
+    right_dist = wall_length - gap_right
+
+    # 3D points on the face
+    face_start_3d = Vector((*face_base, 0))
+    face_end_3d = Vector((*(face_base + wall_dir * wall_length), 0))
+    gap_left_3d = Vector((*(face_base + wall_dir * gap_left), 0))
+    gap_right_3d = Vector((*(face_base + wall_dir * gap_right), 0))
 
     # Project to screen
-    s2d = view3d_utils.location_3d_to_region_2d(region, region.data, snap_face_3d)
     l2d = view3d_utils.location_3d_to_region_2d(region, region.data, face_start_3d)
     r2d = view3d_utils.location_3d_to_region_2d(region, region.data, face_end_3d)
+    gl2d = view3d_utils.location_3d_to_region_2d(region, region.data, gap_left_3d)
+    gr2d = view3d_utils.location_3d_to_region_2d(region, region.data, gap_right_3d)
 
-    if not s2d or not l2d or not r2d:
+    if not l2d or not r2d or not gl2d or not gr2d:
         return
 
     # Face direction in screen space
@@ -253,20 +279,23 @@ def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
     wall_mid_3d = Vector((*(wall_origin + wall_perp * (wall_thickness / 2)), 0))
     wall_mid_2d = view3d_utils.location_3d_to_region_2d(region, region.data, wall_mid_3d)
     if wall_mid_2d:
-        if (wall_mid_2d - s2d).dot(offset_dir) > 0:
+        snap_2d = (gl2d + gr2d) / 2
+        if (wall_mid_2d - snap_2d).dot(offset_dir) > 0:
             offset_dir = -offset_dir
 
     offset_px = 20
     tick_half = 5
     dim_color = (0.0, 0.85, 1.0, 0.85)
     leader_color = (0.0, 0.85, 1.0, 0.3)
+    gap_color = (1.0, 0.6, 0.0, 0.6)
 
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     tick_dir = Vector((-offset_dir.y, offset_dir.x))
 
     unit_settings = bpy.context.scene.unit_settings
 
-    for dist, p_from, p_to in [(left_dist, s2d, l2d), (right_dist, s2d, r2d)]:
+    # Draw left and right dimension segments
+    for dist, p_from, p_to in [(left_dist, gl2d, l2d), (right_dist, gr2d, r2d)]:
         if dist < 0.005:
             continue
 
@@ -275,7 +304,7 @@ def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
 
         shader.bind()
 
-        # Leader lines (subtle)
+        # Leader lines
         gpu.state.line_width_set(1.0)
         shader.uniform_float("color", leader_color)
         for fp, dp in [(p_from, a), (p_to, b)]:
@@ -299,6 +328,31 @@ def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face):
         mid = (a + b) / 2 + offset_dir * 12
         text = units.unit_to_string(unit_settings, dist)
         _draw_dim_text(mid.x, mid.y, text, dim_color)
+
+    # Draw gap indicator (wall thickness zone)
+    if drawing_gap > 0.005:
+        ga = gl2d + offset_dir * offset_px
+        gb = gr2d + offset_dir * offset_px
+
+        shader.bind()
+
+        # Gap line (thicker, orange)
+        gpu.state.line_width_set(3.0)
+        shader.uniform_float("color", gap_color)
+        batch = batch_for_shader(shader, 'LINES', {"pos": [(ga.x, ga.y), (gb.x, gb.y)]})
+        batch.draw(shader)
+
+        # Leader lines for gap edges
+        gpu.state.line_width_set(1.0)
+        shader.uniform_float("color", (1.0, 0.6, 0.0, 0.3))
+        for fp, dp in [(gl2d, ga), (gr2d, gb)]:
+            batch = batch_for_shader(shader, 'LINES', {"pos": [(fp.x, fp.y), (dp.x, dp.y)]})
+            batch.draw(shader)
+
+        # Gap dimension text
+        gap_mid = (ga + gb) / 2 + offset_dir * 12
+        gap_text = units.unit_to_string(unit_settings, drawing_gap)
+        _draw_dim_text(gap_mid.x, gap_mid.y, gap_text, gap_color)
 
     gpu.state.line_width_set(1.0)
 
@@ -374,9 +428,17 @@ def draw_wall_snap_indicator(op, context):
                              diamond=bool(op.snap_surface))
             # Draw left/right dimensions along the target wall face
             if op.snap_surface and op.snap_location:
+                # Gap = drawing wall thickness
+                # Direction based on which face: back face means the
+                # wall body (thickness) extends in the target wall's
+                # +Y direction, which projects as +X along the face.
+                # Front face is the opposite.
+                draw_thickness = context.scene.home_builder.wall_thickness
+                p1_gap_dir = 1.0 if op.snap_surface == 'back' else -1.0
                 _draw_wall_snap_dimensions(
                     region, op.snap_wall,
-                    Vector(op.snap_location), op.snap_surface)
+                    Vector(op.snap_location), op.snap_surface,
+                    drawing_gap=draw_thickness, gap_direction=p1_gap_dir)
         else:
             _draw_snap_point(loc_2d.x, loc_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
 
@@ -404,8 +466,18 @@ def draw_wall_snap_indicator(op, context):
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
             # Draw left/right dimensions along the target wall face
+            # Compute gap: drawing wall thickness projected onto target face
+            draw_thickness = op.current_wall.get_input('Thickness')
+            draw_angle = op.current_wall.obj.rotation_euler.z
+            draw_perp = Vector((-math.sin(draw_angle), math.cos(draw_angle)))
+            tw = op.end_snap_wall.matrix_world
+            target_dir = Vector((tw[0][0], tw[1][0])).normalized()
+            proj = draw_perp.dot(target_dir)
+            gap = abs(proj) * draw_thickness
+            gap_dir = 1.0 if proj > 0 else (-1.0 if proj < 0 else 0)
             _draw_wall_snap_dimensions(
-                region, op.end_snap_wall, end_3d, op.end_snap_face)
+                region, op.end_snap_wall, end_3d, op.end_snap_face,
+                drawing_gap=gap, gap_direction=gap_dir)
         else:
             _draw_snap_point(end_2d.x, end_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
 
