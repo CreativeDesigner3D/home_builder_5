@@ -440,6 +440,96 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         return wall_obj, Vector((world_snap.x, world_snap.y, 0)), face
 
+
+    def find_end_wall_snap(self, context, threshold=0.15):
+        """
+        Check if the current wall's endpoint is near or would cross an existing wall face.
+        Snaps the wall length so it ends cleanly at the front or back face.
+
+        Returns:
+            (snap_length, wall_obj, face) or (None, None, None)
+        """
+        if not self.current_wall or not self.has_start_point:
+            return None, None, None
+
+        wall_length = self.current_wall.get_input('Length')
+        if wall_length < 0.01:
+            return None, None, None
+
+        angle = self.current_wall.obj.rotation_euler.z
+        wd = Vector((math.cos(angle), math.sin(angle)))
+        wp = Vector((self.start_point.x, self.start_point.y))
+
+        best_t = None
+        best_wall = None
+        best_face = None
+        best_score = float('inf')
+
+        for obj in context.view_layer.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            if obj == self.current_wall.obj:
+                continue
+            # Skip the wall we're connected to (previous wall)
+            if self.previous_wall and obj == self.previous_wall.obj:
+                continue
+
+            ew = hb_types.GeoNodeWall(obj)
+            el = ew.get_input('Length')
+            et = ew.get_input('Thickness')
+
+            wm = obj.matrix_world
+            ed = Vector((wm[0][0], wm[1][0])).normalized()
+            ep = Vector((wm[0][1], wm[1][1])).normalized()
+            eo = Vector((wm[0][3], wm[1][3]))
+
+            for face, offset in [('back', 0), ('front', et)]:
+                fs = eo + ep * offset  # face line start
+                fd = ed                # face line direction
+
+                # Line intersection: wp + t*wd = fs + s*fd
+                denom = wd.x * fd.y - wd.y * fd.x
+
+                if abs(denom) < 1e-10:
+                    # Parallel - check endpoint proximity to face line
+                    end_pt = wp + wd * wall_length
+                    to_end = end_pt - fs
+                    s = to_end.dot(fd)
+                    if 0 <= s <= el:
+                        closest = fs + fd * s
+                        dist = (end_pt - closest).length
+                        if dist < threshold and dist < best_score:
+                            snap_t = (closest - wp).dot(wd)
+                            if snap_t > 0.01:
+                                best_score = dist
+                                best_t = snap_t
+                                best_wall = obj
+                                best_face = face
+                    continue
+
+                diff = fs - wp
+                t = (diff.x * fd.y - diff.y * fd.x) / denom
+                s = (diff.x * wd.y - diff.y * wd.x) / denom
+
+                if t < 0.01:
+                    continue  # Intersection behind wall start
+                if s < -0.01 or s > el + 0.01:
+                    continue  # Intersection outside existing wall extent
+
+                # Score: distance from intersection to current endpoint
+                dist_to_end = abs(t - wall_length)
+
+                # Snap if endpoint is near the face OR wall would pass through
+                if dist_to_end < threshold or t < wall_length:
+                    score = dist_to_end
+                    if score < best_score:
+                        best_score = score
+                        best_t = t
+                        best_wall = obj
+                        best_face = face
+
+        return best_t, best_wall, best_face
+
     def find_chain_start(self, wall_obj):
         """Trace back through wall chain to find the first wall and count walls.
         
@@ -579,10 +669,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def set_wall_position_from_mouse(self):
         """Update wall position/rotation based on mouse location."""
         if not self.has_start_point:
-            # First point - just move the wall origin (snapped to grid)
+            # First point - move wall origin
             if self.hit_location:
-                snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
-                self.current_wall.obj.location = snapped_loc
+                if self.snap_wall and (self.snap_endpoint or self.snap_surface):
+                    # Use exact snap position (no grid snap) for wall face/endpoint snaps
+                    self.current_wall.obj.location = Vector(self.hit_location)
+                else:
+                    snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
+                    self.current_wall.obj.location = snapped_loc
         else:
             # Drawing length - calculate from start point
             x = self.hit_location[0] - self.start_point[0]
@@ -591,29 +685,41 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if self.free_rotation:
                 # Free rotation mode - snap to 15° increments
                 angle = math.atan2(y, x)
-                # Snap to nearest 15 degrees
                 snap_angle = round(math.degrees(angle) / 15) * 15
                 self.current_wall.obj.rotation_euler.z = math.radians(snap_angle)
-                
-                # Length is the full distance to cursor (snapped to grid)
                 length = math.sqrt(x * x + y * y)
                 self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length))
             else:
                 # Default mode - snap to orthogonal (90°) directions
                 if abs(x) > abs(y):
-                    # Horizontal
                     if x > 0:
                         self.current_wall.obj.rotation_euler.z = math.radians(0)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(180)
                     self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x)))
                 else:
-                    # Vertical
                     if y > 0:
                         self.current_wall.obj.rotation_euler.z = math.radians(90)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(-90)
                     self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y)))
+
+            # Check for end snap to existing wall faces
+            snap_len, snap_wall_obj, snap_face = self.find_end_wall_snap(bpy.context)
+            if snap_len is not None:
+                self.current_wall.set_input('Length', snap_len)
+                self.end_snap_wall = snap_wall_obj
+                self.end_snap_face = snap_face
+                # Highlight the target wall
+                if snap_wall_obj != self.highlighted_wall:
+                    self.clear_wall_highlight()
+                    self.highlight_wall(snap_wall_obj, highlight=True)
+                    self.highlighted_wall = snap_wall_obj
+            else:
+                if self.end_snap_wall:
+                    self.end_snap_wall = None
+                    self.end_snap_face = None
+                    self.clear_wall_highlight()
 
             self.update_dimension(bpy.context)
 
@@ -709,7 +815,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             angle_deg = round(math.degrees(self.current_wall.obj.rotation_euler.z))
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
             close_hint = " | C: close room" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
-            text = f"Length: {length_str} | Angle: {angle_deg}° | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
+            snap_hint = f" [Snap: {self.end_snap_face} face]" if self.end_snap_wall else ""
+            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint} | {rotation_mode} | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
         else:
             if self.snap_wall and self.snap_endpoint:
                 text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
@@ -741,6 +848,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.snap_surface = None
         self.snap_location = None
         self.highlighted_wall = None
+        
+        # End-of-wall snap state (during drawing)
+        self.end_snap_wall = None
+        self.end_snap_face = None
 
         # Create initial objects
         self.create_dimension()
@@ -822,8 +933,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.connect_to_existing_wall(self.snap_wall, self.snap_endpoint)
                     self.clear_wall_highlight()
                 elif self.snap_wall and self.snap_surface:
-                    # Snapping to wall surface - use snap location as start point
-                    self.start_point = Vector(self.snap_location)
+                    # Snapping to wall surface - use exact snap location
+                    snap_loc = Vector(self.snap_location)
+                    self.start_point = snap_loc
+                    self.current_wall.obj.location = snap_loc  # Ensure position matches
                     self.has_start_point = True
                     self.clear_wall_highlight()
                 else:
