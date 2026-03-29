@@ -116,7 +116,10 @@ def get_wall_endpoints(wall_obj):
     return start.to_2d(), end.to_2d()
 
 def find_wall_chains():
-    """Find connected chains of walls in the current scene, returning list of ordered wall objects."""
+    """Find connected chains of walls in the current scene, returning list of ordered wall objects.
+    
+    Handles both open chains (interior walls) and closed loops (room perimeters).
+    """
     walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
     
     if not walls:
@@ -140,12 +143,10 @@ def find_wall_chains():
     has_predecessor = set(connections.values())
     start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
     
-    if not start_walls and walls:
-        start_walls = [walls[0].name]
-    
     chains = []
     used = set()
     
+    # First pass: trace open chains from walls with no predecessor
     for start_name in start_walls:
         if start_name in used:
             continue
@@ -159,6 +160,24 @@ def find_wall_chains():
             current = connections.get(current)
             if current == start_name:
                 break
+        
+        if chain:
+            chains.append(chain)
+    
+    # Second pass: find closed loops (walls where every member has a predecessor)
+    for name in wall_data:
+        if name in used:
+            continue
+        
+        chain = []
+        current = name
+        
+        while current and current not in used:
+            used.add(current)
+            chain.append(wall_data[current]['obj'])
+            current = connections.get(current)
+            if current == name:
+                break  # Completed the loop
         
         if chain:
             chains.append(chain)
@@ -1544,56 +1563,60 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
             self.report({'WARNING'}, "No connected walls found")
             return {'CANCELLED'}
         
-        floors_created = 0
-        for i, chain in enumerate(chains):
+        # Separate closed loops from open chains
+        closed_chains = []
+        open_chains = []
+        for chain in chains:
             points = get_room_boundary_points(chain)
-            
-            # Handle cases with only 1 or 2 walls - create rectangular floor from bounding box
-            if len(points) < 3 or (len(points) <= 3 and not is_closed_loop(points)):
-                # Get all wall endpoints to calculate bounding box
+            if len(points) >= 3 and is_closed_loop(points):
+                closed_chains.append((chain, points))
+            else:
+                open_chains.append(chain)
+        
+        floors_created = 0
+        
+        if closed_chains:
+            # Closed loops exist — use only those (open chains are interior walls)
+            for chain, points in closed_chains:
+                name = "Floor" if floors_created == 0 else f"Floor.{floors_created:03d}"
+                floor_obj = self.create_floor_mesh(name, points)
+                floor_obj['IS_FLOOR_BP'] = True
+                floors_created += 1
+        else:
+            # No closed loops — create bounding box floors from open chains
+            for chain in open_chains:
                 all_points = []
                 for wall in chain:
                     start, end = get_wall_endpoints(wall)
                     all_points.append(Vector((start.x, start.y, 0)))
                     all_points.append(Vector((end.x, end.y, 0)))
                 
-                if len(all_points) >= 2:
-                    # Calculate bounding box
-                    min_x = min(p.x for p in all_points)
-                    max_x = max(p.x for p in all_points)
-                    min_y = min(p.y for p in all_points)
-                    max_y = max(p.y for p in all_points)
-                    
-                    # Ensure we have a valid rectangle (not a line)
-                    if abs(max_x - min_x) < 0.01:
-                        # Walls are vertical, extend horizontally
-                        max_x = min_x + 3.0  # Default 3 meters width
-                    if abs(max_y - min_y) < 0.01:
-                        # Walls are horizontal, extend vertically
-                        max_y = min_y + 3.0  # Default 3 meters depth
-                    
-                    # Create rectangular floor points (counter-clockwise)
-                    points = [
-                        Vector((min_x, min_y, 0)),
-                        Vector((max_x, min_y, 0)),
-                        Vector((max_x, max_y, 0)),
-                        Vector((min_x, max_y, 0)),
-                        Vector((min_x, min_y, 0)),  # Close the loop
-                    ]
-                else:
+                if len(all_points) < 2:
                     continue
-            else:
-                # Close the loop if not already closed
-                if not is_closed_loop(points):
-                    points.append(points[0].copy())
-            
-            # Create floor name
-            name = "Floor" if i == 0 else f"Floor.{i:03d}"
-            
-            floor_obj = self.create_floor_mesh(name, points)
-            floor_obj['IS_FLOOR_BP'] = True
-            
-            floors_created += 1
+                
+                min_x = min(p.x for p in all_points)
+                max_x = max(p.x for p in all_points)
+                min_y = min(p.y for p in all_points)
+                max_y = max(p.y for p in all_points)
+                
+                # Ensure valid rectangle (not a line)
+                if abs(max_x - min_x) < 0.01:
+                    max_x = min_x + 3.0
+                if abs(max_y - min_y) < 0.01:
+                    max_y = min_y + 3.0
+                
+                points = [
+                    Vector((min_x, min_y, 0)),
+                    Vector((max_x, min_y, 0)),
+                    Vector((max_x, max_y, 0)),
+                    Vector((min_x, max_y, 0)),
+                    Vector((min_x, min_y, 0)),
+                ]
+                
+                name = "Floor" if floors_created == 0 else f"Floor.{floors_created:03d}"
+                floor_obj = self.create_floor_mesh(name, points)
+                floor_obj['IS_FLOOR_BP'] = True
+                floors_created += 1
         
         if floors_created > 0:
             self.report({'INFO'}, f"Created {floors_created} floor(s)")
@@ -1662,54 +1685,67 @@ class home_builder_walls_OT_add_ceiling(bpy.types.Operator):
             self.report({'WARNING'}, "No connected walls found")
             return {'CANCELLED'}
 
-        ceilings_created = 0
-        for i, chain in enumerate(chains):
-            # Try to get ceiling height from the first wall in the chain
-            wall = hb_types.GeoNodeWall(chain[0])
-            chain_height = wall.get_input('Height')
-            if chain_height is None or chain_height == 0:
-                chain_height = ceiling_height
-
+        # Separate closed loops from open chains
+        closed_chains = []
+        open_chains = []
+        for chain in chains:
             points = get_room_boundary_points(chain)
+            if len(points) >= 3 and is_closed_loop(points):
+                closed_chains.append((chain, points))
+            else:
+                open_chains.append(chain)
+        
+        ceilings_created = 0
+        
+        if closed_chains:
+            for chain, points in closed_chains:
+                wall = hb_types.GeoNodeWall(chain[0])
+                chain_height = wall.get_input('Height')
+                if chain_height is None or chain_height == 0:
+                    chain_height = ceiling_height
 
-            # Handle cases with only 1 or 2 walls
-            if len(points) < 3 or (len(points) <= 3 and not is_closed_loop(points)):
+                name = "Ceiling" if ceilings_created == 0 else f"Ceiling.{ceilings_created:03d}"
+                ceiling_obj = self.create_ceiling_mesh(name, points, chain_height)
+                ceiling_obj['IS_CEILING_BP'] = True
+                ceilings_created += 1
+        else:
+            for chain in open_chains:
                 all_points = []
                 for w in chain:
                     start, end = get_wall_endpoints(w)
                     all_points.append(Vector((start.x, start.y, 0)))
                     all_points.append(Vector((end.x, end.y, 0)))
-
-                if len(all_points) >= 2:
-                    min_x = min(p.x for p in all_points)
-                    max_x = max(p.x for p in all_points)
-                    min_y = min(p.y for p in all_points)
-                    max_y = max(p.y for p in all_points)
-
-                    if abs(max_x - min_x) < 0.01:
-                        max_x = min_x + 3.0
-                    if abs(max_y - min_y) < 0.01:
-                        max_y = min_y + 3.0
-
-                    points = [
-                        Vector((min_x, min_y, 0)),
-                        Vector((max_x, min_y, 0)),
-                        Vector((max_x, max_y, 0)),
-                        Vector((min_x, max_y, 0)),
-                        Vector((min_x, min_y, 0)),
-                    ]
-                else:
+                
+                if len(all_points) < 2:
                     continue
-            else:
-                if not is_closed_loop(points):
-                    points.append(points[0].copy())
+                
+                min_x = min(p.x for p in all_points)
+                max_x = max(p.x for p in all_points)
+                min_y = min(p.y for p in all_points)
+                max_y = max(p.y for p in all_points)
+                
+                if abs(max_x - min_x) < 0.01:
+                    max_x = min_x + 3.0
+                if abs(max_y - min_y) < 0.01:
+                    max_y = min_y + 3.0
+                
+                points = [
+                    Vector((min_x, min_y, 0)),
+                    Vector((max_x, min_y, 0)),
+                    Vector((max_x, max_y, 0)),
+                    Vector((min_x, max_y, 0)),
+                    Vector((min_x, min_y, 0)),
+                ]
 
-            name = "Ceiling" if i == 0 else f"Ceiling.{i:03d}"
+                wall = hb_types.GeoNodeWall(chain[0])
+                chain_height = wall.get_input('Height')
+                if chain_height is None or chain_height == 0:
+                    chain_height = ceiling_height
 
-            ceiling_obj = self.create_ceiling_mesh(name, points, chain_height)
-            ceiling_obj['IS_CEILING_BP'] = True
-
-            ceilings_created += 1
+                name = "Ceiling" if ceilings_created == 0 else f"Ceiling.{ceilings_created:03d}"
+                ceiling_obj = self.create_ceiling_mesh(name, points, chain_height)
+                ceiling_obj['IS_CEILING_BP'] = True
+                ceilings_created += 1
 
         if ceilings_created > 0:
             self.report({'INFO'}, f"Created {ceilings_created} ceiling(s)")
@@ -1936,32 +1972,37 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
             self.report({'WARNING'}, "No connected walls found")
             return {'CANCELLED'}
         
-        total_lights = 0
-        
+        # Separate closed loops from open chains
+        closed_chains = []
+        open_chains = []
         for chain in chains:
             points = get_room_boundary_points(chain)
-            
-            # Handle cases with only 1 or 2 walls - create rectangular boundary from bounding box
-            if len(points) < 3 or (len(points) <= 3 and not is_closed_loop(points)):
+            if len(points) >= 3 and is_closed_loop(points):
+                closed_chains.append((chain, points))
+            else:
+                open_chains.append(chain)
+        
+        # Use closed loops if available, otherwise fall back to bounding boxes
+        use_chains = []
+        if closed_chains:
+            use_chains = [(chain, points) for chain, points in closed_chains]
+        else:
+            for chain in open_chains:
                 all_points = []
-                for wall in chain:
-                    start, end = get_wall_endpoints(wall)
+                for w in chain:
+                    start, end = get_wall_endpoints(w)
                     all_points.append(Vector((start.x, start.y, 0)))
                     all_points.append(Vector((end.x, end.y, 0)))
-                
                 if len(all_points) < 2:
                     continue
-                
                 min_x = min(p.x for p in all_points)
                 max_x = max(p.x for p in all_points)
                 min_y = min(p.y for p in all_points)
                 max_y = max(p.y for p in all_points)
-                
                 if abs(max_x - min_x) < 0.01:
                     max_x = min_x + 3.0
                 if abs(max_y - min_y) < 0.01:
                     max_y = min_y + 3.0
-                
                 points = [
                     Vector((min_x, min_y, 0)),
                     Vector((max_x, min_y, 0)),
@@ -1969,10 +2010,11 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
                     Vector((min_x, max_y, 0)),
                     Vector((min_x, min_y, 0)),
                 ]
-            else:
-                # Close polygon for point-in-polygon test
-                if not is_closed_loop(points):
-                    points.append(points[0].copy())
+                use_chains.append((chain, points))
+        
+        total_lights = 0
+        
+        for chain, points in use_chains:
             
             # Get ceiling height from first wall in chain
             wall = hb_types.GeoNodeWall(chain[0])
@@ -2002,7 +2044,7 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
             self.report({'INFO'}, f"Created {total_lights} light(s)")
             return {'FINISHED'}
         else:
-            self.report({'WARNING'}, "Could not create lights - room too small or invalid")
+            self.report({'WARNING'}, "No closed wall loops found for light placement")
             return {'CANCELLED'}
 
 
