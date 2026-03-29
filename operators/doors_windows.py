@@ -180,54 +180,48 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         raise NotImplementedError
     
     def get_default_typing_target(self):
-        """Default to offset from left."""
-        return hb_placement.TypingTarget.OFFSET_X
+        """Default to width when user starts typing numbers."""
+        return hb_placement.TypingTarget.WIDTH
     
     def handle_typing_event(self, event) -> bool:
-        """Extended to handle arrow keys and W for switching input mode."""
+        """Extended to handle arrow keys and W for switching input mode.
         
-        # Check for mode-switching keys before typing starts
+        Workflow: type 30 → left arrow → type 5 → Enter
+        = set width to 30", then place 5" from left edge.
+        
+        Switching modes (arrow keys, W, H) applies the current value
+        first, then clears and starts the new input mode.
+        """
+        
         if event.value == 'PRESS':
-            # Left arrow - offset from left
+            # Left arrow - apply current value, switch to offset from left
             if event.type == 'LEFT_ARROW':
                 self.offset_from_right = False
-                if self.placement_state == hb_placement.PlacementState.TYPING:
-                    # Already typing, just switch mode
-                    self.typing_target = hb_placement.TypingTarget.OFFSET_X
-                else:
-                    # Start typing offset from left
-                    self.start_typing(hb_placement.TypingTarget.OFFSET_X)
-                self.on_typed_value_changed()
+                if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.OFFSET_X)
                 return True
             
-            # Right arrow - offset from right
+            # Right arrow - apply current value, switch to offset from right
             if event.type == 'RIGHT_ARROW':
                 self.offset_from_right = True
-                if self.placement_state == hb_placement.PlacementState.TYPING:
-                    # Already typing, just switch mode
-                    self.typing_target = hb_placement.TypingTarget.OFFSET_RIGHT
-                else:
-                    # Start typing offset from right
-                    self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
-                self.on_typed_value_changed()
+                if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.OFFSET_RIGHT)
                 return True
             
-            # W - width
+            # W - apply current value, switch to width
             if event.type == 'W':
-                if self.placement_state == hb_placement.PlacementState.TYPING:
-                    self.typing_target = hb_placement.TypingTarget.WIDTH
-                else:
-                    self.start_typing(hb_placement.TypingTarget.WIDTH)
-                self.on_typed_value_changed()
+                if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.WIDTH)
                 return True
             
-            # H - height (for windows/doors)
+            # H - apply current value, switch to height
             if event.type == 'H':
-                if self.placement_state == hb_placement.PlacementState.TYPING:
-                    self.typing_target = hb_placement.TypingTarget.HEIGHT
-                else:
-                    self.start_typing(hb_placement.TypingTarget.HEIGHT)
-                self.on_typed_value_changed()
+                if self.placement_state == hb_placement.PlacementState.TYPING and self.typed_value:
+                    self.apply_typed_value()
+                self.start_typing(hb_placement.TypingTarget.HEIGHT)
                 return True
         
         # Fall back to base typing handler
@@ -542,11 +536,13 @@ class home_builder_doors_windows_OT_place_door(bpy.types.Operator, WallObjectPla
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
 
-        # Update position if not typing and not locked
-        if self.placement_state != hb_placement.PlacementState.TYPING:
+        # Update position - allow mouse movement unless position is locked by offset input
+        typing_offset = (self.placement_state == hb_placement.PlacementState.TYPING
+                         and self.typing_target in (hb_placement.TypingTarget.OFFSET_X,
+                                                    hb_placement.TypingTarget.OFFSET_RIGHT))
+        if not typing_offset and not self.position_locked:
             if self.selected_wall:
-                if not self.position_locked:
-                    self.set_position_on_wall()
+                self.set_position_on_wall()
             else:
                 self.set_position_free()
                 self.position_locked = False  # Reset lock when off wall
@@ -771,11 +767,13 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
 
-        # Update position if not typing and not locked
-        if self.placement_state != hb_placement.PlacementState.TYPING:
+        # Update position - allow mouse movement unless position is locked by offset input
+        typing_offset = (self.placement_state == hb_placement.PlacementState.TYPING
+                         and self.typing_target in (hb_placement.TypingTarget.OFFSET_X,
+                                                    hb_placement.TypingTarget.OFFSET_RIGHT))
+        if not typing_offset and not self.position_locked:
             if self.selected_wall:
-                if not self.position_locked:
-                    self.set_position_on_wall()
+                self.set_position_on_wall()
             else:
                 self.set_position_free()
                 self.position_locked = False  # Reset lock when off wall
