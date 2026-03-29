@@ -336,6 +336,29 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.scale_y = 1.2
         row.operator('home_builder_doors_windows.place_door', text="Door", icon='MESH_CUBE')
         row.operator('home_builder_doors_windows.place_window', text="Window", icon='MESH_PLANE')
+        
+        col = layout.column(align=True)
+        
+        box = col.box()
+        box.label(text="Door Defaults", icon='MESH_CUBE')
+        row = box.row(align=True)
+        row.label(text="Width:")
+        row.prop(hb_scene, 'door_single_width', text="")
+        row = box.row(align=True)
+        row.label(text="Height:")
+        row.prop(hb_scene, 'door_height', text="")
+        
+        box = col.box()
+        box.label(text="Window Defaults", icon='MESH_PLANE')
+        row = box.row(align=True)
+        row.label(text="Width:")
+        row.prop(hb_scene, 'window_width', text="")
+        row = box.row(align=True)
+        row.label(text="Height:")
+        row.prop(hb_scene, 'window_height', text="")
+        row = box.row(align=True)
+        row.label(text="Height From Floor:")
+        row.prop(hb_scene, 'window_height_from_floor', text="")
 
 
 # SUBPANEL: Floor & Ceiling
