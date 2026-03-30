@@ -334,7 +334,11 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         
         row = layout.row(align=True)
         row.scale_y = 1.2
-        row.operator('home_builder_doors_windows.place_door', text="Door", icon='MESH_CUBE')
+        row.operator('home_builder_doors_windows.place_door', text="Single Door", icon='MESH_CUBE')
+        row.operator('home_builder_doors_windows.place_double_door', text="Double Door", icon='MESH_CUBE')
+        row.operator('home_builder_doors_windows.place_open_door', text="Open", icon='MESH_CUBE')
+        row = layout.row(align=True)
+        row.scale_y = 1.2
         row.operator('home_builder_doors_windows.place_window', text="Window", icon='MESH_PLANE')
         
         col = layout.column(align=True)
@@ -342,8 +346,11 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         box = col.box()
         box.label(text="Door Defaults", icon='MESH_CUBE')
         row = box.row(align=True)
-        row.label(text="Width:")
+        row.label(text="Single Width:")
         row.prop(hb_scene, 'door_single_width', text="")
+        row = box.row(align=True)
+        row.label(text="Double Width:")
+        row.prop(hb_scene, 'door_double_width', text="")
         row = box.row(align=True)
         row.label(text="Height:")
         row.prop(hb_scene, 'door_height', text="")
