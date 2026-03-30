@@ -119,6 +119,8 @@ def find_wall_chains():
     """Find connected chains of walls in the current scene, returning list of ordered wall objects.
     
     Handles both open chains (interior walls) and closed loops (room perimeters).
+    Supports junction points where multiple walls share the same start/end location.
+    Closed loops are detected first so interior branches don't steal perimeter walls.
     """
     walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
     
@@ -131,56 +133,77 @@ def find_wall_chains():
         wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
     
     tolerance = 0.01
+    
+    # Build adjacency lists — each wall can have multiple successors
     connections = {}
-    
     for name1, data1 in wall_data.items():
+        succs = []
         for name2, data2 in wall_data.items():
-            if name1 == name2:
-                continue
-            if (data1['end'] - data2['start']).length < tolerance:
-                connections[name1] = name2
-    
-    has_predecessor = set(connections.values())
-    start_walls = [name for name in wall_data.keys() if name not in has_predecessor]
+            if name1 != name2 and (data1['end'] - data2['start']).length < tolerance:
+                succs.append(name2)
+        connections[name1] = succs
     
     chains = []
     used = set()
     
-    # First pass: trace open chains from walls with no predecessor
-    for start_name in start_walls:
-        if start_name in used:
-            continue
-        
-        chain = []
-        current = start_name
-        
-        while current and current not in used:
-            used.add(current)
-            chain.append(wall_data[current]['obj'])
-            current = connections.get(current)
-            if current == start_name:
-                break
-        
-        if chain:
-            chains.append(chain)
-    
-    # Second pass: find closed loops (walls where every member has a predecessor)
+    # --- First pass: find closed loops ---
+    # Try each wall as a potential loop start. Interior branches won't form loops,
+    # so only true perimeters (and closed interior rooms) get claimed here.
     for name in wall_data:
         if name in used:
             continue
         
         chain = []
         current = name
+        trace_visited = set()
+        is_loop = False
         
+        while current and current not in trace_visited and current not in used:
+            trace_visited.add(current)
+            chain.append(current)
+            all_succs = connections.get(current, [])
+            
+            # Check if any successor closes the loop back to the start
+            if name in all_succs and len(chain) > 2:
+                is_loop = True
+                break
+            
+            # Pick an unused successor (not visited in this trace, not globally used)
+            next_succs = [s for s in all_succs if s not in trace_visited and s not in used]
+            current = next_succs[0] if next_succs else None
+        
+        if is_loop:
+            used.update(chain)
+            chains.append([wall_data[n]['obj'] for n in chain])
+    
+    # --- Second pass: trace remaining walls as open chains ---
+    has_predecessor = set()
+    for succs in connections.values():
+        has_predecessor.update(succs)
+    start_walls = [name for name in wall_data if name not in has_predecessor and name not in used]
+    
+    def trace_open_chain(start_name):
+        chain = []
+        current = start_name
         while current and current not in used:
             used.add(current)
             chain.append(wall_data[current]['obj'])
-            current = connections.get(current)
-            if current == name:
-                break  # Completed the loop
-        
-        if chain:
-            chains.append(chain)
+            unused_succs = [s for s in connections.get(current, []) if s not in used]
+            current = unused_succs[0] if unused_succs else None
+        return chain
+    
+    for start_name in start_walls:
+        if start_name not in used:
+            chain = trace_open_chain(start_name)
+            if chain:
+                chains.append(chain)
+    
+    # Third pass: pick up any remaining isolated walls
+    for name in wall_data:
+        if name not in used:
+            chain = trace_open_chain(name)
+            if chain:
+                chains.append(chain)
     
     return chains
 
