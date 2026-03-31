@@ -5,6 +5,8 @@ import os
 import gpu
 import blf
 from mathutils import Vector
+from mathutils.geometry import intersect_line_plane
+from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, units
 
@@ -454,17 +456,17 @@ def draw_wall_snap_indicator(op, context):
 
     if not op.has_start_point:
         # --- Phase 1: Before first point, show indicator at cursor ---
-        if op.hit_location is None:
-            gpu.state.blend_set('NONE')
-            return
-
-        loc_2d = view3d_utils.location_3d_to_region_2d(
-            region, region.data, Vector(op.hit_location))
-        if loc_2d is None:
-            gpu.state.blend_set('NONE')
-            return
-
         if op.snap_wall and (op.snap_endpoint or op.snap_surface):
+            # Snap active — draw indicator at the snap location
+            snap_pos = op.snap_location if op.snap_location else op.hit_location
+            if snap_pos is None:
+                gpu.state.blend_set('NONE')
+                return
+            loc_2d = view3d_utils.location_3d_to_region_2d(
+                region, region.data, Vector(snap_pos))
+            if loc_2d is None:
+                gpu.state.blend_set('NONE')
+                return
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(loc_2d.x, loc_2d.y, color, 12, 8,
                              diamond=bool(op.snap_surface))
@@ -482,7 +484,13 @@ def draw_wall_snap_indicator(op, context):
                     Vector(op.snap_location), op.snap_surface,
                     drawing_gap=draw_thickness, gap_direction=p1_gap_dir)
         else:
-            _draw_snap_point(loc_2d.x, loc_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
+            # No snap — draw indicator at cursor position directly.
+            # Using mouse_pos avoids the XY jump that occurs when the
+            # raycast alternates between hitting the wall top face and
+            # the floor in a slightly tilted plan view.
+            if op.mouse_pos:
+                _draw_snap_point(op.mouse_pos.x, op.mouse_pos.y,
+                                 (1.0, 1.0, 1.0, 0.7), 8, 6)
 
     else:
         # --- Phase 2: During drawing, show indicator at wall endpoint ---
@@ -661,26 +669,36 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def find_wall_surface_snap_2d(self, context, threshold=0.15):
         """
         2D proximity-based wall surface detection for top view.
-        Uses local-space projection with hysteresis to prevent face flicker
-        when the cursor is inside the wall.
-        
+        Uses local-space projection with hysteresis to prevent face flicker.
+
+        Instead of relying on hit_location (which comes from a raycast and
+        shifts with view tilt depending on whether it hit the wall top face
+        or the floor), we project the mouse cursor directly onto z=0 using
+        the view ray.  This gives a stable, consistent XY every frame.
+
         Wall origin is at back face (local Y=0), front face is at Y=thickness.
-        
+
         Returns:
             Tuple of (wall_obj, snap_location, face) or (None, None, None)
         """
-        if not self.hit_location:
-            self._last_surface_wall = None
-            self._last_surface_face = None
+        # Project cursor onto z=0 for a stable 2D position regardless
+        # of what the raycast happened to hit (wall top vs floor).
+        origin = view3d_utils.region_2d_to_origin_3d(
+            self.region, self.region.data, self.mouse_pos)
+        direction = view3d_utils.region_2d_to_vector_3d(
+            self.region, self.region.data, self.mouse_pos)
+        co = intersect_line_plane(
+            origin, origin + direction, Vector((0, 0, 0)), Vector((0, 0, 1)))
+        if co is None:
             return None, None, None
-        
-        mouse_2d = Vector((self.hit_location[0], self.hit_location[1]))
-        
+
+        mouse_2d = Vector((co.x, co.y))
+
         best_wall = None
         best_location = None
         best_face = None
         best_distance = threshold
-        
+
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
@@ -688,48 +706,49 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             if self.previous_wall and obj == self.previous_wall.obj:
                 continue
-            
+
             wall = hb_types.GeoNodeWall(obj)
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
-            
+
             world_matrix = obj.matrix_world
-            
+
             # Wall axes in world space
             wall_dir = Vector((world_matrix[0][0], world_matrix[1][0])).normalized()
             wall_perp = Vector((world_matrix[0][1], world_matrix[1][1])).normalized()
             wall_origin = Vector((world_matrix[0][3], world_matrix[1][3]))
-            
+
             # Project mouse into wall's local 2D space
             to_mouse = mouse_2d - wall_origin
             local_along = to_mouse.dot(wall_dir)
             local_perp = to_mouse.dot(wall_perp)
-            
+
             # Check if cursor is alongside the wall (with threshold margin)
             if local_along < -threshold or local_along > wall_length + threshold:
                 continue
-            
+
             # Determine perpendicular distance to each face
             dist_to_back = abs(local_perp)
             dist_to_front = abs(local_perp - wall_thickness)
-            
+
             # Hysteresis: if we were already snapped to a face on this wall,
-            # only switch when the cursor is clearly past the 70/30 line
-            # toward the other face. This prevents flicker at the centerline.
+            # keep the current face unless cursor clearly crosses to the
+            # other side.  Applied even when the cursor is just outside the
+            # wall boundary so that thin-wall edge jitter doesn't reset it.
             inside_wall = 0 <= local_perp <= wall_thickness
-            
-            if (inside_wall and self._last_surface_wall == obj
+
+            if (self._last_surface_wall == obj
                     and self._last_surface_face is not None):
-                # Bias toward keeping the current face.
-                # Switch only when cursor crosses 70% toward the other face.
-                if self._last_surface_face == 'back':
-                    # Currently on back — switch to front only if past 70% of thickness
+                if local_perp < 0:
+                    face = 'back'
+                elif local_perp > wall_thickness:
+                    face = 'front'
+                elif self._last_surface_face == 'back':
                     if local_perp > wall_thickness * 0.7:
                         face = 'front'
                     else:
                         face = 'back'
                 else:
-                    # Currently on front — switch to back only if below 30% of thickness
                     if local_perp < wall_thickness * 0.3:
                         face = 'back'
                     else:
@@ -740,34 +759,37 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     face = 'back'
                 else:
                     face = 'front'
-            
+
             face_offset = 0 if face == 'back' else wall_thickness
             perp_dist = dist_to_back if face == 'back' else dist_to_front
-            
+
             # Skip if too far from the nearest face
             if perp_dist > threshold:
-                # Also check if we're inside (both faces within threshold)
                 if not inside_wall:
                     continue
                 # Inside the wall — perp_dist to chosen face may exceed threshold
                 # but we still want to snap
                 perp_dist = min(dist_to_back, dist_to_front)
-            
+
             # Snap point: clamp along-position to wall extent, project onto face
             clamped_along = max(0, min(wall_length, local_along))
             snap_world = wall_origin + wall_dir * clamped_along + wall_perp * face_offset
-            
+
             if perp_dist < best_distance:
                 best_distance = perp_dist
                 best_wall = obj
                 best_location = Vector((snap_world.x, snap_world.y, 0))
                 best_face = face
-        
-        # Update hysteresis state
-        self._last_surface_wall = best_wall
-        self._last_surface_face = best_face
-        
+
+        # Update hysteresis state only when a wall is found.
+        # Keeping stale state on a missed frame prevents a single bad
+        # raycast from resetting face memory.
+        if best_wall is not None:
+            self._last_surface_wall = best_wall
+            self._last_surface_face = best_face
+
         return best_wall, best_location, best_face
+
 
     def find_wall_surface_snap(self, context):
         """
@@ -1361,9 +1383,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.snap_location = surface_location
                     self.hit_location = surface_location
                 else:
-                    # No snap - clear any highlighting
+                    # No snap - clear any highlighting and stale snap state
                     if self.highlighted_wall:
                         self.clear_wall_highlight()
+                    self.snap_wall = None
+                    self.snap_endpoint = None
+                    self.snap_surface = None
+                    self.snap_location = None
 
         # Track shift state for fine snap
         self.fine_snap = event.shift
