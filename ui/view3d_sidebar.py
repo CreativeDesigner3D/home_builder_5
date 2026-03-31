@@ -796,14 +796,6 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
         
         col.separator()
         
-        # Generate 2D plan mesh (plan views only)
-        if context.scene.get('IS_PLAN_VIEW'):
-            row = col.row(align=True)
-            row.scale_y = 1.3
-            row.operator("home_builder_layouts.generate_2d_plan",
-                        text="Generate 2D Plan", icon='MESH_GRID')
-            col.separator()
-
         row = col.row(align=True)
         row.scale_y = 1.5
         # row.operator("home_builder_layouts.fit_view_to_content", 
@@ -1094,6 +1086,35 @@ class HOME_BUILDER_PT_annotations_edit(bpy.types.Panel):
                     text="Offset Curve", icon='MOD_OFFSET')
 
 
+
+
+# SUBPANEL: Plan View Tools
+class HOME_BUILDER_PT_annotations_plan_view_tools(bpy.types.Panel):
+    bl_label = "Plan View Tools"
+    bl_idname = "HOME_BUILDER_PT_annotations_plan_view_tools"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_parent_id = "HOME_BUILDER_PT_annotations"
+    
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_PLAN_VIEW')
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator("home_builder_layouts.generate_2d_plan",
+                    text="Generate 2D Plan", icon='MESH_GRID')
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator("home_builder_layouts.place_room_label",
+                    text="Place Room Label", icon='FONT_DATA')
+
+
 # SUBPANEL: Annotation Settings
 class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
     bl_label = "Annotation Settings"
@@ -1241,6 +1262,7 @@ classes = (
     HOME_BUILDER_PT_annotations_drawing,
     HOME_BUILDER_PT_molding_library,
     HOME_BUILDER_PT_annotations_edit,
+    HOME_BUILDER_PT_annotations_plan_view_tools,
     HOME_BUILDER_PT_annotations_settings,
 )
 

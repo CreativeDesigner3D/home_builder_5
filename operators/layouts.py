@@ -4049,6 +4049,244 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
         return obj
 
 
+
+def _meters_to_room_dim(value):
+    """Convert meters to a room dimension string (e.g. 14\'-2\")."""
+    inches_total = abs(value) / 0.0254
+    feet = int(inches_total // 12)
+    inches = round(inches_total % 12)
+    if inches == 12:
+        feet += 1
+        inches = 0
+    return f"{feet}\'-{inches}\""
+
+
+class home_builder_layouts_OT_place_room_label(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.place_room_label"
+    bl_label = "Place Room Label"
+    bl_description = "Click two corners to define a room rectangle. Auto-calculates dimensions"
+    bl_options = {'UNDO'}
+
+    room_name: bpy.props.StringProperty(name="Room Name", default="ROOM NAME")  # type: ignore
+    ceiling_height: bpy.props.StringProperty(name="Ceiling Height", default="")  # type: ignore
+
+    # Modal state
+    first_corner = None
+    _draw_handle = None
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_PLAN_VIEW')
+
+    def _get_world_point(self, context, event):
+        """Convert mouse position to world XY point on Z=0 plane."""
+        region = context.region
+        rv3d = context.region_data
+        if not region or not rv3d:
+            return None
+
+        coord = (event.mouse_region_x, event.mouse_region_y)
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_dir = region_2d_to_vector_3d(region, rv3d, coord)
+
+        # Intersect with Z=0 plane
+        if abs(ray_dir.z) < 0.0001:
+            return None
+        t = -ray_origin.z / ray_dir.z
+        hit = ray_origin + ray_dir * t
+        return Vector((hit.x, hit.y, 0))
+
+    def _draw_preview(self, context):
+        """Draw preview rectangle between first corner and mouse."""
+        if not self.first_corner:
+            return
+
+        region = context.region
+        rv3d = context.region_data
+        if not region or not rv3d:
+            return
+
+        coord = (self._mouse_x, self._mouse_y)
+        ray_origin = region_2d_to_origin_3d(region, rv3d, coord)
+        ray_dir = region_2d_to_vector_3d(region, rv3d, coord)
+        if abs(ray_dir.z) < 0.0001:
+            return
+        t = -ray_origin.z / ray_dir.z
+        mouse_world = ray_origin + ray_dir * t
+
+        c1 = self.first_corner
+        c2 = mouse_world
+
+        # Convert 4 corners to screen space
+        corners_3d = [
+            Vector((c1.x, c1.y, 0)),
+            Vector((c2.x, c1.y, 0)),
+            Vector((c2.x, c2.y, 0)),
+            Vector((c1.x, c2.y, 0)),
+        ]
+        corners_2d = []
+        for c in corners_3d:
+            sp = location_3d_to_region_2d(region, rv3d, c)
+            if sp:
+                corners_2d.append(sp)
+
+        if len(corners_2d) < 4:
+            return
+
+        # Draw dashed rectangle
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('ALPHA')
+
+        verts = corners_2d + [corners_2d[0]]
+        coords = [(v.x, v.y) for v in verts]
+
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": coords})
+        shader.bind()
+        shader.uniform_float("color", (0.0, 0.0, 0.0, 0.6))
+        batch.draw(shader)
+
+        gpu.state.blend_set('NONE')
+        gpu.state.line_width_set(1.0)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'room_name')
+        layout.prop(self, 'ceiling_height')
+
+    def execute(self, context):
+        self.first_corner = None
+        self._mouse_x = 0
+        self._mouse_y = 0
+
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_preview, (context,), 'WINDOW', 'POST_PIXEL')
+
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _cleanup_draw(self):
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+
+    def modal(self, context, event):
+        context.area.tag_redraw()
+
+        if event.type == 'MOUSEMOVE':
+            self._mouse_x = event.mouse_region_x
+            self._mouse_y = event.mouse_region_y
+
+        # Update header
+        if self.first_corner:
+            # Show live dimensions
+            current = self._get_world_point(context, event)
+            if current:
+                w = abs(current.x - self.first_corner.x)
+                h = abs(current.y - self.first_corner.y)
+                w_str = units.unit_to_string(context.scene.unit_settings, w)
+                h_str = units.unit_to_string(context.scene.unit_settings, h)
+                hb_placement.draw_header_text(context,
+                    f"Width: {w_str} x Depth: {h_str} | Click second corner | Esc to cancel")
+        else:
+            hb_placement.draw_header_text(context,
+                "Click first corner of room | Esc to cancel")
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            point = self._get_world_point(context, event)
+            if not point:
+                return {'RUNNING_MODAL'}
+
+            if not self.first_corner:
+                self.first_corner = point
+                return {'RUNNING_MODAL'}
+            else:
+                # Second click — create annotation
+                self._create_room_label(context, self.first_corner, point)
+                self._cleanup_draw()
+                hb_placement.clear_header_text(context)
+                return {'FINISHED'}
+
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._cleanup_draw()
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        if hb_snap.event_is_pass_through(event):
+            return {'PASS_THROUGH'}
+
+        return {'RUNNING_MODAL'}
+
+    def _create_room_label(self, context, corner1, corner2):
+        """Create the room label annotation at the center of the rectangle."""
+        hb_scene = context.scene.home_builder
+
+        # Calculate dimensions
+        width = abs(corner2.x - corner1.x)
+        depth = abs(corner2.y - corner1.y)
+        center_x = (corner1.x + corner2.x) / 2
+        center_y = (corner1.y + corner2.y) / 2
+
+        # Format dimension string
+        unit_settings = context.scene.unit_settings
+        if unit_settings.system == 'IMPERIAL':
+            dim_str = f"{_meters_to_room_dim(width)} x {_meters_to_room_dim(depth)}"
+        else:
+            w_str = units.unit_to_string(unit_settings, width)
+            d_str = units.unit_to_string(unit_settings, depth)
+            dim_str = f"{w_str} x {d_str}"
+
+        # Build label text
+        lines = [self.room_name.upper()]
+        lines.append(dim_str)
+        if self.ceiling_height.strip():
+            lines.append(f"{self.ceiling_height} CLG.")
+        label_text = "\n".join(lines)
+
+        # Create text object
+        text_size = hb_scene.annotation_text_size
+        text_data = bpy.data.curves.new("Room Label", 'FONT')
+        text_data.body = label_text
+        text_data.size = text_size
+        text_data.align_x = 'CENTER'
+        text_data.align_y = 'CENTER'
+        text_data.extrude = 0.001
+
+        obj = bpy.data.objects.new("Room Label", text_data)
+        obj['IS_ROOM_LABEL'] = True
+        obj['IS_DETAIL_TEXT'] = True
+        obj['IS_2D_ANNOTATION'] = True
+        obj.color = (0, 0, 0, 1)
+        obj.location = (center_x, center_y, 0)
+
+        # Rotate to face plan view camera (looking down Z)
+        obj.rotation_euler = context.scene.camera.rotation_euler.copy()
+
+        # Black material
+        mat = bpy.data.materials.new("Room_Label_Mat")
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0, 0, 0, 1)
+        text_data.materials.append(mat)
+
+        # Apply font if available
+        for font in bpy.data.fonts:
+            if 'calibri' in font.name.lower():
+                text_data.font = font
+                break
+
+        context.scene.collection.objects.link(obj)
+
+        # Add to Freestyle Ignore collection
+        ignore_coll = bpy.data.collections.get(f"{context.scene.name}_Freestyle_Ignore")
+        if ignore_coll and obj.name not in ignore_coll.objects:
+            ignore_coll.objects.link(obj)
+
+
 classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
@@ -4070,6 +4308,7 @@ classes = (
     home_builder_layouts_OT_add_detail_to_layout,
     home_builder_layouts_OT_move_layout_view,
     home_builder_layouts_OT_generate_2d_plan,
+    home_builder_layouts_OT_place_room_label,
 )
 
 def register():
