@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import os
 import gpu
 import blf
@@ -3904,6 +3905,150 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.generate_2d_plan"
+    bl_label = "Generate 2D Plan"
+    bl_description = "Generate a 2D floor plan mesh with solid walls and door/window breaks"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.get('IS_PLAN_VIEW')
+
+    def execute(self, context):
+        # Remove any existing 2D plan mesh in this scene
+        for obj in list(context.scene.objects):
+            if obj.get('IS_2D_PLAN_MESH'):
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        plan_obj = self.generate_plan_mesh()
+
+        # Link directly to the plan view scene
+        context.scene.collection.objects.link(plan_obj)
+
+        # Add to Freestyle solid collection if available
+        view = hb_layouts.PlanView(context.scene)
+        solid_coll = view.get_freestyle_collection('SOLID')
+        if solid_coll and plan_obj.name not in solid_coll.objects:
+            solid_coll.objects.link(plan_obj)
+
+        self.report({'INFO'}, f"Generated 2D plan mesh ({len(plan_obj.data.polygons)} faces)")
+        return {'FINISHED'}
+
+    def generate_plan_mesh(self):
+        """Generate a single flat mesh representing all walls in plan view,
+        with gaps cut for doors, windows, and openings."""
+
+        bm = bmesh.new()
+
+        for wall_obj in bpy.data.objects:
+            if not wall_obj.get('IS_WALL_BP'):
+                continue
+
+            wall = hb_types.GeoNodeWall(wall_obj)
+            length = wall.get_input('Length')
+            thickness = wall.get_input('Thickness')
+            wall_matrix = wall_obj.matrix_world
+
+            # Collect openings (doors, windows) on this wall
+            openings = []
+            for child in wall_obj.children:
+                if child.get('IS_ENTRY_DOOR_BP') or child.get('IS_WINDOW_BP'):
+                    try:
+                        cage = hb_types.GeoNodeCage(child)
+                        dim_x = cage.get_input('Dim X')
+                    except:
+                        dim_x = 0
+                    openings.append((child.location.x, dim_x))
+
+            # Sort openings by X position
+            openings.sort(key=lambda o: o[0])
+
+            # Build solid wall segments between openings
+            segments = []
+            current_x = 0.0
+
+            for open_x, open_w in openings:
+                if open_x > current_x + 0.001:
+                    segments.append((current_x, open_x))
+                current_x = open_x + open_w
+
+            # Final segment after last opening
+            if current_x < length - 0.001:
+                segments.append((current_x, length))
+
+            # If no openings, full wall
+            if not openings:
+                segments = [(0.0, length)]
+
+            # Get miter angles for mitered corner geometry
+            try:
+                left_angle = wall.get_input('Left Angle')
+            except:
+                left_angle = 0.0
+            try:
+                right_angle = wall.get_input('Right Angle')
+            except:
+                right_angle = 0.0
+
+            left_offset = thickness * math.tan(left_angle) if abs(left_angle) > 0.001 else 0.0
+            right_offset = thickness * math.tan(right_angle) if abs(right_angle) > 0.001 else 0.0
+
+            # Create quad for each solid segment with mitered ends
+            for seg_start, seg_end in segments:
+                # Inside edge (Y=0): always straight
+                x0_inside = seg_start
+                x1_inside = seg_end
+
+                # Outside edge (Y=thickness): mitered at wall endpoints, straight at openings
+                x0_outside = seg_start
+                x1_outside = seg_end
+
+                if seg_start == 0.0:
+                    x0_outside = left_offset  # Mitered start
+
+                if abs(seg_end - length) < 0.001:
+                    x1_outside = length + right_offset  # Mitered end
+
+                p0 = wall_matrix @ Vector((x0_inside, 0, 0))
+                p1 = wall_matrix @ Vector((x1_inside, 0, 0))
+                p2 = wall_matrix @ Vector((x1_outside, thickness, 0))
+                p3 = wall_matrix @ Vector((x0_outside, thickness, 0))
+
+                # Flatten to Z=0
+                for p in (p0, p1, p2, p3):
+                    p.z = 0
+
+                v0 = bm.verts.new(p0)
+                v1 = bm.verts.new(p1)
+                v2 = bm.verts.new(p2)
+                v3 = bm.verts.new(p3)
+                bm.faces.new((v0, v1, v2, v3))
+
+        # Merge overlapping vertices at corners for clean geometry
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)
+
+        # Create mesh object
+        mesh = bpy.data.meshes.new("2D_Plan_Walls")
+        bm.to_mesh(mesh)
+        bm.free()
+
+        obj = bpy.data.objects.new("2D Plan Walls", mesh)
+        obj['IS_2D_PLAN_MESH'] = True
+        obj.show_in_front = True
+
+        # Black material
+        mat = bpy.data.materials.get("Plan Wall Fill")
+        if not mat:
+            mat = bpy.data.materials.new("Plan Wall Fill")
+        mat.diffuse_color = (0, 0, 0, 1)
+        obj.data.materials.append(mat)
+        obj.color = (0, 0, 0, 1)
+
+        return obj
+
+
 classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
@@ -3924,6 +4069,7 @@ classes = (
     home_builder_layouts_OT_add_dimension_3d,
     home_builder_layouts_OT_add_detail_to_layout,
     home_builder_layouts_OT_move_layout_view,
+    home_builder_layouts_OT_generate_2d_plan,
 )
 
 def register():

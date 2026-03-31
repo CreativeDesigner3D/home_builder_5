@@ -796,6 +796,14 @@ class HOME_BUILDER_PT_layout_views_settings(bpy.types.Panel):
         
         col.separator()
         
+        # Generate 2D plan mesh (plan views only)
+        if context.scene.get('IS_PLAN_VIEW'):
+            row = col.row(align=True)
+            row.scale_y = 1.3
+            row.operator("home_builder_layouts.generate_2d_plan",
+                        text="Generate 2D Plan", icon='MESH_GRID')
+            col.separator()
+
         row = col.row(align=True)
         row.scale_y = 1.5
         # row.operator("home_builder_layouts.fit_view_to_content", 
