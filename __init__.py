@@ -137,6 +137,14 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
             ('3/16"=1\'', '3/16" = 1\'', '1:64'),
             ('1/8"=1\'', '1/8" = 1\'', '1:96 - Common for floor plans'),
             ('1/16"=1\'', '1/16" = 1\'', '1:192'),
+            ('1:1', '1:1', 'Full size'),
+            ('1:5', '1:5', 'Detail drawings'),
+            ('1:10', '1:10', 'Detail drawings'),
+            ('1:20', '1:20', 'Sections and elevations'),
+            ('1:25', '1:25', 'Sections and elevations'),
+            ('1:50', '1:50', 'Common for floor plans'),
+            ('1:100', '1:100', 'Floor plans and site plans'),
+            ('1:200', '1:200', 'Site plans'),
         ],
         default='1/4"=1\''
     )# type: ignore

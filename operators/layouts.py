@@ -30,15 +30,25 @@ def get_addon_prefs():
 
 def apply_default_layout_settings(scene):
     """Apply default paper size and scale from addon preferences to a layout scene."""
+    is_metric = scene.unit_settings.system == 'METRIC'
+
     prefs = get_addon_prefs()
     if prefs:
         scene.hb_paper_size = prefs.default_paper_size
-        scene.hb_layout_scale = prefs.default_layout_scale
         scene.hb_paper_landscape = prefs.default_paper_landscape
+
+        # Use pref scale if it matches the unit system, otherwise pick a default
+        pref_scale = prefs.default_layout_scale
+        pref_is_metric = pref_scale.startswith('1:')
+        if pref_is_metric == is_metric:
+            scene.hb_layout_scale = pref_scale
+        elif is_metric:
+            scene.hb_layout_scale = '1:50'
+        else:
+            scene.hb_layout_scale = '1/4"=1\''
     else:
-        # Fallback defaults if preferences not available
         scene.hb_paper_size = 'LEGAL'
-        scene.hb_layout_scale = '1/4"=1\''
+        scene.hb_layout_scale = '1:50' if is_metric else '1/4"=1\''
         scene.hb_paper_landscape = True
 
 
@@ -61,12 +71,17 @@ DRAWING_SCALES = {
     '1/8"=1\'': (0.125, 1.0),    # 1:96 - common for floor plans
     '1/16"=1\'': (0.0625, 1.0),  # 1:192
     # Metric/ratio scales
-    '1:1': (1.0, 1.0),            # Full scale (inches to inches)
+    '1:1': (1.0, 1.0),
     '1:2': (1.0, 2.0),
-    '1:4': (1.0, 4.0),
+    '1:5': (1.0, 5.0),
     '1:10': (1.0, 10.0),
     '1:20': (1.0, 20.0),
+    '1:25': (1.0, 25.0),
     '1:50': (1.0, 50.0),
+    '1:75': (1.0, 75.0),
+    '1:100': (1.0, 100.0),
+    '1:200': (1.0, 200.0),
+    '1:500': (1.0, 500.0),
 }
 
 # Paper sizes in inches (width, height) - portrait orientation
@@ -4311,6 +4326,44 @@ classes = (
     home_builder_layouts_OT_place_room_label,
 )
 
+# Scale items for imperial and metric unit systems
+IMPERIAL_SCALE_ITEMS = [
+    ('3"=1\'', '3" = 1\'', 'Very detailed - 1:4'),
+    ('1-1/2"=1\'', '1-1/2" = 1\'', '1:8'),
+    ('1"=1\'', '1" = 1\'', '1:12'),
+    ('3/4"=1\'', '3/4" = 1\'', '1:16'),
+    ('1/2"=1\'', '1/2" = 1\'', '1:24'),
+    ('3/8"=1\'', '3/8" = 1\'', '1:32'),
+    ('1/4"=1\'', '1/4" = 1\'', '1:48 - Common for elevations'),
+    ('3/16"=1\'', '3/16" = 1\'', '1:64'),
+    ('1/8"=1\'', '1/8" = 1\'', '1:96 - Common for floor plans'),
+    ('1/16"=1\'', '1/16" = 1\'', '1:192'),
+]
+
+METRIC_SCALE_ITEMS = [
+    ('1:1', '1:1', 'Full size'),
+    ('1:2', '1:2', 'Half size'),
+    ('1:5', '1:5', 'Detail drawings'),
+    ('1:10', '1:10', 'Detail drawings'),
+    ('1:20', '1:20', 'Sections and elevations'),
+    ('1:25', '1:25', 'Sections and elevations'),
+    ('1:50', '1:50', 'Common for floor plans'),
+    ('1:75', '1:75', 'Floor plans'),
+    ('1:100', '1:100', 'Floor plans and site plans'),
+    ('1:200', '1:200', 'Site plans'),
+    ('1:500', '1:500', 'Site plans'),
+]
+
+
+def get_layout_scale_items(self, context):
+    """Return scale items based on the current unit system."""
+    if context and context.scene:
+        unit_system = context.scene.unit_settings.system
+        if unit_system == 'METRIC':
+            return METRIC_SCALE_ITEMS
+    return IMPERIAL_SCALE_ITEMS
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -4319,19 +4372,7 @@ def register():
     bpy.types.Scene.hb_layout_scale = bpy.props.EnumProperty(
         name="Scale",
         description="Drawing scale",
-        items=[
-            ('3"=1\'', '3" = 1\'', 'Very detailed - 1:4'),
-            ('1-1/2"=1\'', '1-1/2" = 1\'', '1:8'),
-            ('1"=1\'', '1" = 1\'', '1:12'),
-            ('3/4"=1\'', '3/4" = 1\'', '1:16'),
-            ('1/2"=1\'', '1/2" = 1\'', '1:24'),
-            ('3/8"=1\'', '3/8" = 1\'', '1:32'),
-            ('1/4"=1\'', '1/4" = 1\'', '1:48 - Common for elevations'),
-            ('3/16"=1\'', '3/16" = 1\'', '1:64'),
-            ('1/8"=1\'', '1/8" = 1\'', '1:96 - Common for floor plans'),
-            ('1/16"=1\'', '1/16" = 1\'', '1:192'),
-        ],
-        default='1/4"=1\'',
+        items=get_layout_scale_items,
         update=update_layout_scale
     )
     
