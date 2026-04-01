@@ -1108,7 +1108,7 @@ class HOME_BUILDER_PT_annotations_plan_view_tools(bpy.types.Panel):
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator("home_builder_layouts.generate_2d_plan",
-                    text="Generate 2D Plan", icon='MESH_GRID')
+                    text="Fill Plan Walls", icon='MESH_GRID')
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator("home_builder_layouts.place_room_label",

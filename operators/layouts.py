@@ -4165,7 +4165,7 @@ class home_builder_layouts_OT_place_room_label(bpy.types.Operator):
         gpu.state.line_width_set(1.0)
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=300)
+        return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
         layout = self.layout
