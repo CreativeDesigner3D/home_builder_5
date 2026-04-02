@@ -380,7 +380,9 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        layout.operator("home_builder_walls.add_floor")
+        row = layout.row()
+        row.operator("home_builder_walls.add_floor")
+        row.operator("home_builder_walls.draw_floor_cutter", icon="MOD_BOOLEAN")
         layout.operator("home_builder_walls.add_ceiling")
 
 

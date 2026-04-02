@@ -1566,7 +1566,7 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
     bl_options = {'UNDO'}
 
     def create_floor_mesh(self,name, points):
-        """Create a floor mesh from boundary points."""
+        """Create a floor mesh from boundary points with thickness for boolean support."""
         
         mesh = bpy.data.meshes.new(name)
         obj = bpy.data.objects.new(name, mesh)
@@ -1580,7 +1580,7 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         if closed:
             points = points[:-1]
         
-        # Add vertices
+        # Add vertices at Z=0 (top surface)
         verts = [bm.verts.new(p) for p in points]
         bm.verts.ensure_lookup_table()
         
@@ -1594,6 +1594,23 @@ class home_builder_walls_OT_add_floor(bpy.types.Operator):
         # Fill to create faces (handles non-convex shapes)
         bmesh.ops.triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=edges)
         
+        # Ensure all normals point upward (+Z) for consistent floor orientation
+        bm.normal_update()
+        for face in bm.faces:
+            if face.normal.z < 0:
+                face.normal_flip()
+        
+        # Extrude downward to give the floor thickness (needed for boolean cuts)
+        floor_thickness = 0.01  # 10mm / ~3/8"
+        top_faces = list(bm.faces)
+        extrude_result = bmesh.ops.extrude_face_region(bm, geom=top_faces)
+        extruded_verts = [g for g in extrude_result['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=extruded_verts, vec=Vector((0, 0, -floor_thickness)))
+        
+        # Recalculate normals outward on the solid
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.normal_update()
+
         # UV unwrap - planar projection from top down (X,Y -> U,V)
         uv_layer = bm.loops.layers.uv.new("UVMap")
         for face in bm.faces:
@@ -2705,6 +2722,348 @@ class home_builder_walls_OT_isolate_selected_walls(bpy.types.Operator):
         self.report({'INFO'}, f"Isolated {len(selected_wall_bps)} wall(s), hid {hidden_count} other(s)")
         return {'FINISHED'}
 
+
+
+# =============================================================================
+# FLOOR CUTTER
+# =============================================================================
+
+def draw_floor_cutter_preview(op, context):
+    """GPU draw callback: renders the polygon preview during floor cutter drawing."""
+    region = op.region
+    if region is None:
+        return
+
+    from bpy_extras import view3d_utils
+
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+
+    confirmed = op.confirmed_points
+    cursor_3d = op.cursor_point
+
+    if not confirmed and cursor_3d is None:
+        gpu.state.blend_set('NONE')
+        return
+
+    # Convert 3D points to 2D screen coords
+    pts_2d = []
+    for p in confirmed:
+        s = view3d_utils.location_3d_to_region_2d(region, region.data, p)
+        if s:
+            pts_2d.append(s)
+        else:
+            pts_2d.append(Vector((0, 0)))
+
+    cursor_2d = None
+    if cursor_3d is not None:
+        cursor_2d = view3d_utils.location_3d_to_region_2d(region, region.data, cursor_3d)
+
+    # --- Draw filled polygon preview (translucent) ---
+    if len(pts_2d) >= 3:
+        # Simple triangle fan from first vertex
+        tri_verts = []
+        for i in range(1, len(pts_2d) - 1):
+            tri_verts.extend([(pts_2d[0].x, pts_2d[0].y),
+                              (pts_2d[i].x, pts_2d[i].y),
+                              (pts_2d[i+1].x, pts_2d[i+1].y)])
+        if tri_verts:
+            shader.uniform_float("color", (1.0, 0.2, 0.2, 0.15))
+            batch = batch_for_shader(shader, 'TRIS', {"pos": tri_verts})
+            batch.draw(shader)
+
+    # --- Draw confirmed edges (solid red) ---
+    gpu.state.line_width_set(2.0)
+    if len(pts_2d) >= 2:
+        edge_verts = []
+        for i in range(len(pts_2d) - 1):
+            edge_verts.append((pts_2d[i].x, pts_2d[i].y))
+            edge_verts.append((pts_2d[i+1].x, pts_2d[i+1].y))
+        shader.uniform_float("color", (1.0, 0.3, 0.3, 0.9))
+        batch = batch_for_shader(shader, 'LINES', {"pos": edge_verts})
+        batch.draw(shader)
+
+    # --- Draw line from last confirmed point to cursor (dashed feel via color) ---
+    if pts_2d and cursor_2d:
+        last = pts_2d[-1]
+        shader.uniform_float("color", (1.0, 0.5, 0.5, 0.7))
+        batch = batch_for_shader(shader, 'LINES', {
+            "pos": [(last.x, last.y), (cursor_2d.x, cursor_2d.y)]
+        })
+        batch.draw(shader)
+
+    # --- Draw closing line from cursor back to first point (if 3+ points) ---
+    if len(pts_2d) >= 2 and cursor_2d:
+        first = pts_2d[0]
+        shader.uniform_float("color", (1.0, 0.5, 0.5, 0.4))
+        batch = batch_for_shader(shader, 'LINES', {
+            "pos": [(cursor_2d.x, cursor_2d.y), (first.x, first.y)]
+        })
+        batch.draw(shader)
+
+    # --- Draw vertex dots ---
+    gpu.state.point_size_set(8.0)
+    if pts_2d:
+        dot_verts = [(p.x, p.y) for p in pts_2d]
+        shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+        batch = batch_for_shader(shader, 'POINTS', {"pos": dot_verts})
+        batch.draw(shader)
+
+    # --- First point highlight (green) for close-loop snapping ---
+    if len(pts_2d) >= 3 and cursor_2d and op.close_snap:
+        first = pts_2d[0]
+        _draw_snap_point(first.x, first.y, (0.0, 1.0, 0.4, 0.9), 14, 10)
+
+    # --- Cursor dot ---
+    if cursor_2d:
+        shader.bind()
+        gpu.state.point_size_set(6.0)
+        shader.uniform_float("color", (1.0, 1.0, 0.0, 0.9))
+        batch = batch_for_shader(shader, 'POINTS', {"pos": [(cursor_2d.x, cursor_2d.y)]})
+        batch.draw(shader)
+
+    gpu.state.point_size_set(1.0)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+
+
+class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_walls.draw_floor_cutter"
+    bl_label = "Draw Floor Cutter"
+    bl_description = "Draw a polygon shape to cut a hole in the floor (stairwells, pass-throughs, etc.)"
+    bl_options = {'UNDO'}
+
+    # State
+    confirmed_points: list = None   # 3D points already clicked
+    cursor_point: Vector = None     # Live 3D cursor position
+    floor_obj: bpy.types.Object = None
+    close_snap: bool = False        # True when cursor is near first point
+    _draw_handle = None
+
+    CLOSE_THRESHOLD = 0.15  # Meters — snap-to-close distance
+
+    @classmethod
+    def poll(cls, context):
+        # Need at least one floor in scene
+        for obj in context.scene.objects:
+            if obj.get('IS_FLOOR_BP'):
+                return True
+        return False
+
+    def find_target_floor(self, context):
+        """Find the floor to cut. Prefer selected, else first found."""
+        # Check active/selected first
+        if context.object and context.object.get('IS_FLOOR_BP'):
+            return context.object
+        for obj in context.selected_objects:
+            if obj.get('IS_FLOOR_BP'):
+                return obj
+        # Fallback: first floor in scene
+        for obj in context.scene.objects:
+            if obj.get('IS_FLOOR_BP'):
+                return obj
+        return None
+
+    def get_floor_plane_point(self, context):
+        """Project the current mouse position onto the floor plane (Z=0)."""
+        if self.region is None:
+            return None
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        rv3d = self.region.data
+        origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
+        # Intersect with Z=0 plane
+        point = intersect_line_plane(origin, origin + direction, Vector((0, 0, 0)), Vector((0, 0, 1)))
+        return point
+
+    def check_close_snap(self):
+        """Check if cursor is close enough to first point to close the polygon."""
+        if len(self.confirmed_points) < 3 or self.cursor_point is None:
+            self.close_snap = False
+            return
+        first = self.confirmed_points[0]
+        dist = (Vector((self.cursor_point.x, self.cursor_point.y, 0))
+                - Vector((first.x, first.y, 0))).length
+        self.close_snap = dist < self.CLOSE_THRESHOLD
+
+    def create_cutter_mesh(self, context, points):
+        """Create a cutter object from confirmed polygon points, extruded on Z."""
+        mesh = bpy.data.meshes.new("Floor_Cutter")
+        obj = bpy.data.objects.new("Floor_Cutter", mesh)
+        context.collection.objects.link(obj)
+
+        bm = bmesh.new()
+
+        # Bottom verts at Z = -0.1
+        bottom_verts = []
+        for p in points:
+            v = bm.verts.new(Vector((p.x, p.y, -0.1)))
+            bottom_verts.append(v)
+        bm.verts.ensure_lookup_table()
+
+        # Top verts at Z = +0.1
+        top_verts = []
+        for p in points:
+            v = bm.verts.new(Vector((p.x, p.y, 0.1)))
+            top_verts.append(v)
+        bm.verts.ensure_lookup_table()
+
+        n = len(points)
+
+        # Bottom face (reversed winding for outward normals)
+        bm.faces.new(list(reversed(bottom_verts)))
+
+        # Top face
+        bm.faces.new(top_verts)
+
+        # Side faces
+        for i in range(n):
+            ni = (i + 1) % n
+            bm.faces.new([bottom_verts[i], bottom_verts[ni],
+                          top_verts[ni], top_verts[i]])
+
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.normal_update()
+        bm.to_mesh(mesh)
+        bm.free()
+
+        # Tag the cutter
+        obj['IS_CUTTING_OBJ'] = True
+        obj['IS_FLOOR_CUTTER'] = True
+        obj.display_type = 'WIRE'
+        obj.hide_render = True
+
+        return obj
+
+    def add_boolean_to_floor(self, floor_obj, cutter_obj):
+        """Add a boolean DIFFERENCE modifier to the floor."""
+        mod_name = f"Cut - {cutter_obj.name}"
+        mod = floor_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter_obj
+        mod.solver = 'EXACT'
+        return mod
+
+    def finish(self, context):
+        """Close polygon, create cutter, apply boolean, clean up."""
+        # Remove draw handler
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+        if len(self.confirmed_points) < 3:
+            self.report({'WARNING'}, "Need at least 3 points to create a cutter")
+            return {'CANCELLED'}
+
+        cutter = self.create_cutter_mesh(context, self.confirmed_points)
+        self.add_boolean_to_floor(self.floor_obj, cutter)
+
+        # Parent cutter to the floor so they stay linked
+        cutter.parent = self.floor_obj
+
+        self.report({'INFO'}, f"Created floor cutter with {len(self.confirmed_points)} points")
+        return {'FINISHED'}
+
+    def cancel(self, context):
+        """Clean up on cancel."""
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def update_header(self, context):
+        n = len(self.confirmed_points)
+        parts = []
+        if n == 0:
+            parts.append("Click to place first point")
+        elif n < 3:
+            parts.append(f"{n} point(s) — click to add more (need {3 - n} more minimum)")
+        else:
+            close_text = " [CLOSE SNAP]" if self.close_snap else ""
+            parts.append(f"{n} points — click to add, Enter to finish{close_text}")
+        parts.append("Backspace: undo point | Esc: cancel")
+        hb_placement.draw_header_text(context, " | ".join(parts))
+
+    def execute(self, context):
+        self.init_placement(context)
+
+        self.confirmed_points = []
+        self.cursor_point = None
+        self.close_snap = False
+
+        self.floor_obj = self.find_target_floor(context)
+        if not self.floor_obj:
+            self.report({'WARNING'}, "No floor found in scene")
+            return {'CANCELLED'}
+
+        # Add GPU draw handler
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_floor_cutter_preview, (self, context), 'WINDOW', 'POST_PIXEL')
+
+        context.window_manager.modal_handler_add(self)
+        self.update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+
+        # Navigation pass-through
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        # Update snap / cursor position
+        self.update_snap(context, event)
+        self.cursor_point = self.get_floor_plane_point(context)
+        self.check_close_snap()
+
+        # Redraw viewport for GPU overlay
+        if context.area:
+            context.area.tag_redraw()
+
+        # --- Left click: place a point ---
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.cursor_point is None:
+                return {'RUNNING_MODAL'}
+
+            # If snapping to close and we have 3+ points, finish
+            if self.close_snap and len(self.confirmed_points) >= 3:
+                return self.finish(context)
+
+            self.confirmed_points.append(self.cursor_point.copy())
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # --- Enter: finish (if enough points) ---
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            if len(self.confirmed_points) >= 3:
+                return self.finish(context)
+            else:
+                self.report({'WARNING'}, f"Need at least 3 points (have {len(self.confirmed_points)})")
+                return {'RUNNING_MODAL'}
+
+        # --- Backspace: remove last point ---
+        if event.type == 'BACK_SPACE' and event.value == 'PRESS':
+            if self.confirmed_points:
+                self.confirmed_points.pop()
+                self.update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # --- Escape / Right-click: cancel ---
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self.cancel(context)
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+
 classes = (
     home_builder_walls_OT_hide_wall,
     home_builder_walls_OT_show_all_walls,
@@ -2713,6 +3072,7 @@ classes = (
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
+    home_builder_walls_OT_draw_floor_cutter,
     home_builder_walls_OT_add_ceiling,
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
