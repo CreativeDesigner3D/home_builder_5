@@ -1234,7 +1234,7 @@ class HOME_BUILDER_PT_room_layout_stairs(bpy.types.Panel):
         col = layout.column(align=True)
         row = col.row(align=True)
         row.scale_y = 1.3
-        row.operator('hb_frameless.place_stairs', text="Place Stairs", icon='MOD_ARRAY')
+        row.operator('home_builder_stairs.place_stairs', text="Place Stairs", icon='MOD_ARRAY')
 
 
 classes = (

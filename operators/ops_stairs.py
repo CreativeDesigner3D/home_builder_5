@@ -2,7 +2,7 @@ import bpy
 import math
 import bmesh
 from mathutils import Vector
-from .... import hb_types, hb_project, hb_snap, hb_utils, units
+from .. import hb_snap, hb_utils, units
 
 
 def create_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_thickness):
@@ -133,9 +133,9 @@ def rebuild_stair_mesh(obj):
     bpy.data.meshes.remove(old_mesh)
 
 
-class hb_frameless_OT_place_stairs(bpy.types.Operator):
+class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
     """Place a straight staircase on the floor"""
-    bl_idname = "hb_frameless.place_stairs"
+    bl_idname = "home_builder_stairs.place_stairs"
     bl_label = "Place Stairs"
     bl_description = "Click on the floor to place a staircase"
     bl_options = {'REGISTER', 'UNDO'}
@@ -198,7 +198,7 @@ class hb_frameless_OT_place_stairs(bpy.types.Operator):
     
     def update_header(self, context):
         num_steps = max(1, round(units.inch(96) / units.inch(7.5)))
-        text = f"Stairs: {num_steps} steps | Click to place | R to rotate 90° | ESC cancel"
+        text = f"Stairs: {num_steps} steps | Click to place | R to rotate 90\u00b0 | ESC cancel"
         context.area.header_text_set(text)
     
     def confirm_placement(self, context):
@@ -241,7 +241,7 @@ class hb_frameless_OT_place_stairs(bpy.types.Operator):
         self.update_preview(context)
         self.update_header(context)
         
-        # R to rotate 90°
+        # R to rotate 90 degrees
         if event.type == 'R' and event.value == 'PRESS':
             if self.preview_obj:
                 self.preview_obj.rotation_euler.z += math.radians(90)
@@ -275,9 +275,9 @@ class hb_frameless_OT_place_stairs(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class hb_frameless_OT_stair_prompts(bpy.types.Operator):
+class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
     """Edit staircase properties"""
-    bl_idname = "hb_frameless.stair_prompts"
+    bl_idname = "home_builder_stairs.stair_prompts"
     bl_label = "Stair Prompts"
     bl_description = "Edit the staircase dimensions"
     bl_options = {'REGISTER', 'UNDO'}
@@ -367,9 +367,9 @@ class hb_frameless_OT_stair_prompts(bpy.types.Operator):
         box.prop(self, 'tread_thickness')
 
 
-class hb_frameless_OT_delete_stairs(bpy.types.Operator):
+class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):
     """Delete the selected staircase"""
-    bl_idname = "hb_frameless.delete_stairs"
+    bl_idname = "home_builder_stairs.delete_stairs"
     bl_label = "Delete Stairs"
     bl_options = {'REGISTER', 'UNDO'}
     
@@ -391,15 +391,15 @@ class HOME_BUILDER_MT_stair_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.stair_prompts", text="Stair Prompts", icon='PREFERENCES')
+        layout.operator("home_builder_stairs.stair_prompts", text="Stair Prompts", icon='PREFERENCES')
         layout.separator()
-        layout.operator("hb_frameless.delete_stairs", text="Delete Stairs", icon='X')
+        layout.operator("home_builder_stairs.delete_stairs", text="Delete Stairs", icon='X')
 
 
 classes = (
-    hb_frameless_OT_place_stairs,
-    hb_frameless_OT_stair_prompts,
-    hb_frameless_OT_delete_stairs,
+    home_builder_stairs_OT_place_stairs,
+    home_builder_stairs_OT_stair_prompts,
+    home_builder_stairs_OT_delete_stairs,
     HOME_BUILDER_MT_stair_commands,
 )
 
