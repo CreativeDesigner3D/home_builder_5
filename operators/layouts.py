@@ -254,7 +254,7 @@ class home_builder_layouts_OT_create_plan_view(bpy.types.Operator):
     
     def execute(self, context):
         view = hb_layouts.PlanView()
-        scene = view.create()
+        scene = view.create(source_scene=context.scene)
 
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=scene.name)
         
@@ -3937,13 +3937,20 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
             if obj.get('IS_2D_PLAN_MESH'):
                 bpy.data.objects.remove(obj, do_unlink=True)
 
-        plan_obj = self.generate_plan_mesh()
+        # Find walls from this plan view's collection instance
+        view = hb_layouts.PlanView(context.scene)
+        wall_objects = []
+        if view.content_collection:
+            for obj in view.content_collection.objects:
+                if obj.get('IS_WALL_BP'):
+                    wall_objects.append(obj)
+
+        plan_obj = self.generate_plan_mesh(wall_objects)
 
         # Link directly to the plan view scene
         context.scene.collection.objects.link(plan_obj)
 
         # Add to Freestyle solid collection if available
-        view = hb_layouts.PlanView(context.scene)
         solid_coll = view.get_freestyle_collection('SOLID')
         if solid_coll and plan_obj.name not in solid_coll.objects:
             solid_coll.objects.link(plan_obj)
@@ -3951,15 +3958,13 @@ class home_builder_layouts_OT_generate_2d_plan(bpy.types.Operator):
         self.report({'INFO'}, f"Generated 2D plan mesh ({len(plan_obj.data.polygons)} faces)")
         return {'FINISHED'}
 
-    def generate_plan_mesh(self):
-        """Generate a single flat mesh representing all walls in plan view,
+    def generate_plan_mesh(self, wall_objects):
+        """Generate a single flat mesh representing walls in plan view,
         with gaps cut for doors, windows, and openings."""
 
         bm = bmesh.new()
 
-        for wall_obj in bpy.data.objects:
-            if not wall_obj.get('IS_WALL_BP'):
-                continue
+        for wall_obj in wall_objects:
 
             wall = hb_types.GeoNodeWall(wall_obj)
             length = wall.get_input('Length')

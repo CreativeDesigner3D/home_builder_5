@@ -855,26 +855,29 @@ class PlanView(LayoutView):
                     self.content_collection = obj.instance_collection
                     break
     
-    def create(self, name: str = "Floor Plan") -> bpy.types.Scene:
+    def create(self, name: str = "Floor Plan", source_scene=None) -> bpy.types.Scene:
         """
-        Create a plan view showing all walls from above.
+        Create a plan view showing walls from a specific room.
         
         Args:
             name: Name for the view
+            source_scene: Scene to pull walls from (current room).
+                          If None, falls back to all walls.
         
         Returns:
             The created scene
         """
-        # Create scene
+        # Create scene (this switches context to the new scene)
         self.create_scene(name)
         self.scene['IS_PLAN_VIEW'] = True
         
-        # Find all walls to determine bounds
+        # Find walls from the source scene (current room) or all objects
         walls = []
         min_x, max_x = float('inf'), float('-inf')
         min_y, max_y = float('inf'), float('-inf')
         
-        for obj in bpy.data.objects:
+        search_objects = source_scene.objects if source_scene else bpy.data.objects
+        for obj in search_objects:
             if 'IS_WALL_BP' in obj:
                 walls.append(obj)
                 wall = hb_types.GeoNodeWall(obj)
