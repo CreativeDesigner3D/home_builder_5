@@ -144,7 +144,7 @@ def add_landing_box(bm, x0, y0, z0, x1, y1, z1):
 
 def create_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_thickness,
                       stair_type='STRAIGHT', turn_direction='LEFT', landing_depth=None,
-                      landing_height=None):
+                      landing_height=None, gap=0):
     """Main dispatch – builds the requested stair type and returns a Mesh."""
 
     if landing_depth is None:
@@ -156,6 +156,10 @@ def create_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_
         return _create_l_stair_mesh(stair_width, total_rise, riser_height,
                                     tread_depth, tread_thickness,
                                     landing_depth, turn_direction, landing_height)
+    if stair_type == 'U_SHAPE':
+        return _create_u_stair_mesh(stair_width, total_rise, riser_height,
+                                    tread_depth, tread_thickness,
+                                    landing_depth, turn_direction, landing_height, gap)
     # Default: straight
     return _create_straight_stair_mesh(stair_width, total_rise, riser_height,
                                        tread_depth, tread_thickness)
@@ -253,6 +257,76 @@ def _create_l_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tre
     return mesh
 
 
+def _create_u_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_thickness,
+                          landing_depth, turn_direction, landing_height, gap=0):
+    """Two flights at 180 degrees connected by a landing platform.
+
+    Flight 1 goes in +Y.  The landing sits at *landing_height*.
+    Flight 2 runs parallel in -Y (back toward the start), offset to one side.
+
+    LEFT  turn -> flight 2 is to the left  (-X side).
+    RIGHT turn -> flight 2 is to the right (+X side).
+    """
+    flight1_rise = max(riser_height, min(landing_height, total_rise - riser_height))
+    flight2_rise = total_rise - flight1_rise
+
+    steps_flight1 = max(1, round(flight1_rise / riser_height))
+    steps_flight2 = max(1, round(flight2_rise / riser_height))
+    actual_riser1 = flight1_rise / steps_flight1
+    actual_riser2 = flight2_rise / steps_flight2
+
+    flight1_run = steps_flight1 * tread_depth
+
+    bm = bmesh.new()
+
+    # ---- Flight 1 (at origin, going +Y) ----
+    add_flight_to_bmesh(bm, steps_flight1, stair_width, actual_riser1,
+                        tread_depth, tread_thickness)
+
+    # ---- Landing ----
+    landing_z_bot = flight1_rise - tread_thickness
+    landing_z_top = flight1_rise
+
+    if turn_direction == 'LEFT':
+        lx0 = -(stair_width + gap)
+        lx1 = stair_width
+    else:
+        lx0 = 0
+        lx1 = stair_width * 2 + gap
+
+    ly0 = flight1_run
+    ly1 = flight1_run + landing_depth
+
+    add_landing_box(bm, lx0, ly0, landing_z_bot, lx1, ly1, landing_z_top)
+
+    # ---- Flight 2 (create at origin then rotate 180 deg and translate) ----
+    flight2_verts = add_flight_to_bmesh(bm, steps_flight2, stair_width, actual_riser2,
+                                        tread_depth, tread_thickness)
+
+    # Rotate 180 deg around Z: (x,y) -> (-x,-y)
+    # After rotation: width in [-W, 0], run in [-R2, 0]
+    rot = Matrix.Rotation(math.radians(180), 4, 'Z')
+
+    if turn_direction == 'LEFT':
+        # Flight 2 sits at x=[-(W+gap), -gap], front at y = ly0
+        xlate = Matrix.Translation(Vector((-gap, ly0, flight1_rise)))
+    else:
+        # Flight 2 sits at x=[W+gap, 2W+gap], front at y = ly0
+        xlate = Matrix.Translation(Vector((stair_width * 2 + gap, ly0, flight1_rise)))
+
+    mat = xlate @ rot
+    bmesh.ops.transform(bm, matrix=mat, verts=flight2_verts)
+
+    # ---- Finalize ----
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+    bm.normal_update()
+    mesh = bpy.data.meshes.new('Stairs')
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
 # ---------------------------------------------------------------------------
 # Rebuild helper
 # ---------------------------------------------------------------------------
@@ -268,10 +342,11 @@ def rebuild_stair_mesh(obj):
     turn_direction  = obj.get('STAIR_TURN_DIRECTION',  'LEFT')
     landing_depth   = obj.get('STAIR_LANDING_DEPTH',   width)
     landing_height  = obj.get('STAIR_LANDING_HEIGHT',  total_rise / 2)
+    gap             = obj.get('STAIR_GAP',             0)
 
     old_mesh = obj.data
     new_mesh = create_stair_mesh(width, total_rise, riser_height, tread_depth, tread_thickness,
-                                 stair_type, turn_direction, landing_depth, landing_height)
+                                 stair_type, turn_direction, landing_depth, landing_height, gap)
     obj.data = new_mesh
     bpy.data.meshes.remove(old_mesh)
 
@@ -292,6 +367,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         items=[
             ('STRAIGHT', "Straight", "Straight staircase"),
             ('L_SHAPE',  "L-Shaped", "90\u00b0 turn with landing"),
+            ('U_SHAPE',  "U-Shaped", "180\u00b0 turn with landing"),
         ],
         default='STRAIGHT',
     )  # type: ignore
@@ -340,6 +416,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         self.preview_obj['STAIR_TURN_DIRECTION']  = self.turn_direction
         self.preview_obj['STAIR_LANDING_DEPTH']   = width
         self.preview_obj['STAIR_LANDING_HEIGHT']  = total_rise / 2
+        self.preview_obj['STAIR_GAP']             = 0
 
         mat = bpy.data.materials.new(name="Stair Material")
         mat.use_nodes = True
@@ -362,7 +439,8 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
             self.preview_obj.hide_set(True)
 
     def update_header(self, context):
-        label = "L-Shaped" if self.stair_type == 'L_SHAPE' else "Straight"
+        types = {'STRAIGHT': "Straight", 'L_SHAPE': "L-Shaped", 'U_SHAPE': "U-Shaped"}
+        label = types.get(self.stair_type, "Straight")
         num_steps = max(1, round(units.inch(96) / units.inch(7.5)))
         text = (f"{label} Stairs: {num_steps} steps | "
                 "Click to place | R rotate | "
@@ -423,12 +501,11 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
                 self.preview_obj.rotation_euler.z += math.radians(90)
             return {'RUNNING_MODAL'}
 
-        # T - toggle stair type
+        # T - cycle stair type
         if event.type == 'T' and event.value == 'PRESS':
-            if self.stair_type == 'STRAIGHT':
-                self.stair_type = 'L_SHAPE'
-            else:
-                self.stair_type = 'STRAIGHT'
+            cycle = ['STRAIGHT', 'L_SHAPE', 'U_SHAPE']
+            idx = cycle.index(self.stair_type) if self.stair_type in cycle else 0
+            self.stair_type = cycle[(idx + 1) % len(cycle)]
             self.rebuild_preview(context)
             return {'RUNNING_MODAL'}
 
@@ -438,7 +515,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
                 self.turn_direction = 'RIGHT'
             else:
                 self.turn_direction = 'LEFT'
-            if self.stair_type == 'L_SHAPE':
+            if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
                 self.rebuild_preview(context)
             return {'RUNNING_MODAL'}
 
@@ -477,6 +554,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         items=[
             ('STRAIGHT', "Straight", "Straight staircase"),
             ('L_SHAPE',  "L-Shaped", "90\u00b0 turn with landing"),
+            ('U_SHAPE',  "U-Shaped", "180\u00b0 turn with landing"),
         ],
         default='STRAIGHT',
     )  # type: ignore
@@ -526,6 +604,12 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         description="Height of the landing platform (splits rise between flights)",
     )  # type: ignore
 
+    gap: bpy.props.FloatProperty(
+        name="Gap", subtype='DISTANCE', unit='LENGTH',
+        default=0, min=0, precision=5,
+        description="Space between the two parallel flights",
+    )  # type: ignore
+
     stair_obj = None
 
     @classmethod
@@ -544,6 +628,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         self.stair_obj['STAIR_TURN_DIRECTION']  = self.turn_direction
         self.stair_obj['STAIR_LANDING_DEPTH']   = self.landing_depth
         self.stair_obj['STAIR_LANDING_HEIGHT']  = self.landing_height
+        self.stair_obj['STAIR_GAP']             = self.gap
         rebuild_stair_mesh(self.stair_obj)
         return True
 
@@ -561,6 +646,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         self.turn_direction  = self.stair_obj.get('STAIR_TURN_DIRECTION',  'LEFT')
         self.landing_depth   = self.stair_obj.get('STAIR_LANDING_DEPTH',   self.stair_width)
         self.landing_height  = self.stair_obj.get('STAIR_LANDING_HEIGHT',  self.total_rise / 2)
+        self.gap             = self.stair_obj.get('STAIR_GAP',             0)
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
@@ -573,14 +659,16 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         # Type selector
         box = layout.box()
         box.prop(self, 'stair_type')
-        if self.stair_type == 'L_SHAPE':
+        if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
             box.prop(self, 'turn_direction')
             box.prop(self, 'landing_depth')
             box.prop(self, 'landing_height')
+            if self.stair_type == 'U_SHAPE':
+                box.prop(self, 'gap')
 
         # Info box
         box = layout.box()
-        if self.stair_type == 'L_SHAPE':
+        if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
             landing_h = max(self.riser_height,
                             min(self.landing_height, self.total_rise - self.riser_height))
             flight2_rise = self.total_rise - landing_h
