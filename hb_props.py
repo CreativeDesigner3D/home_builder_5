@@ -127,6 +127,24 @@ def update_font(self, context):
         if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
             obj.data.font = self.annotation_font
 
+def update_annotation_paper_size(self, context):
+    """Recalculate world annotation sizes when paper-space sizes change."""
+    scene = context.scene
+    if not scene.get('IS_LAYOUT_VIEW'):
+        return
+    if not self.annotation_auto_scale:
+        return
+    from .operators.layouts import recalculate_annotation_sizes_for_scene
+    recalculate_annotation_sizes_for_scene(scene)
+
+
+def update_auto_scale(self, context):
+    """When auto-scale is toggled on, recalculate all annotation sizes."""
+    if self.annotation_auto_scale:
+        from .operators.layouts import recalculate_annotation_sizes_for_scene
+        recalculate_annotation_sizes_for_scene(context.scene)
+
+
 def update_show_entry_door_and_window_cages(self, context):
     for obj in context.scene.objects:
         if obj.get('IS_ENTRY_DOOR_BP'):
@@ -441,7 +459,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Thickness of annotation lines",
         default=inch(.05),
         min=0.0005,
-        max=0.02,
+        max=0.1,
         precision=4,
         unit='LENGTH',
         update=update_line_thickness
@@ -470,7 +488,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Size of text annotations",
         default=0.05,
         min=0.001,
-        max=0.5,
+        max=2.0,
         precision=4,
         unit='LENGTH',
         update=update_text_size
@@ -492,7 +510,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Size of dimension text",
         default=inch(2),
         min=0.001,
-        max=0.5,
+        max=2.0,
         precision=4,
         unit='LENGTH',
         update=update_dimension_text_size
@@ -503,7 +521,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Size of dimension ticks",
         default=inch(1),
         min=0.001,
-        max=0.1,
+        max=1.0,
         precision=4,
         unit='LENGTH',
         update=update_dimension_tick_length
@@ -514,7 +532,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Thickness of dimension lines",
         default=inch(.05),
         min=0.0001,
-        max=0.01,
+        max=0.1,
         precision=4,
         unit='LENGTH',
         update=update_dimension_line_thickness
@@ -525,7 +543,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Thickness of dimension ticks",
         default=inch(.05),
         min=0.0001,
-        max=0.01,
+        max=0.1,
         precision=4,
         unit='LENGTH',
         update=update_dimension_line_thickness
@@ -536,10 +554,78 @@ class Home_Builder_Scene_Props(PropertyGroup):
         description="Size of dimension extend line",
         default=inch(1),
         min=0.001,
-        max=0.1,
+        max=1.0,
         precision=4,
         unit='LENGTH',
         update=update_dimension_tick_length
+    )# type: ignore
+
+    # ==========================================================================
+    # AUTO-SCALE ANNOTATION PROPERTIES (Paper Space)
+    # ==========================================================================
+
+    annotation_auto_scale: BoolProperty(
+        name="Auto Scale",
+        description="Automatically scale annotation sizes to maintain consistent "
+                    "paper appearance when drawing scale changes",
+        default=True,
+        update=update_auto_scale
+    )# type: ignore
+
+    # Paper-space sizes (in inches on paper)
+    annotation_text_paper_height: FloatProperty(
+        name="Text Height (Paper)",
+        description="Text height on paper in inches",
+        default=3/32,  # 3/32" standard architectural text
+        min=0.01,
+        max=1.0,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_line_paper_thickness: FloatProperty(
+        name="Line Thickness (Paper)",
+        description="Annotation line thickness on paper in inches",
+        default=0.01,  # ~0.25mm medium line weight
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_text_paper_height: FloatProperty(
+        name="Dim Text Height (Paper)",
+        description="Dimension text height on paper in inches",
+        default=3/32,  # 3/32" standard
+        min=0.01,
+        max=1.0,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_tick_paper_length: FloatProperty(
+        name="Dim Tick Length (Paper)",
+        description="Dimension tick mark length on paper in inches",
+        default=3/32,  # 3/32"
+        min=0.01,
+        max=0.5,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_line_paper_thickness: FloatProperty(
+        name="Dim Line Thickness (Paper)",
+        description="Dimension line thickness on paper in inches",
+        default=0.008,  # ~0.2mm fine line
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
     )# type: ignore
 
     @classmethod

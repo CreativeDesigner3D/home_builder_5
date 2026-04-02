@@ -51,6 +51,9 @@ def apply_default_layout_settings(scene):
         scene.hb_layout_scale = '1:50' if is_metric else '1/4"=1\''
         scene.hb_paper_landscape = True
 
+    # Apply auto-scaled annotation sizes for the initial scale
+    recalculate_annotation_sizes_for_scene(scene)
+
 
 # =============================================================================
 # SCALE CALCULATION
@@ -188,6 +191,66 @@ def update_layout_scale(self, context):
     
     # Update title block border to match new aspect ratio
     update_title_block_border(scene)
+    
+    # Recalculate annotation sizes for new scale
+    recalculate_annotation_sizes_for_scene(scene)
+
+
+def paper_to_world(paper_inches, scale_str):
+    """Convert a paper-space dimension (inches) to world-space (meters).
+    
+    Args:
+        paper_inches: Size on paper in inches (e.g., 0.09375 for 3/32")
+        scale_str: Drawing scale string (e.g., '1/4"=1\'', '1:50')
+    
+    Returns:
+        Size in meters (Blender world units)
+    """
+    scale_factor = get_scale_factor(scale_str)
+    if scale_str.startswith('1:'):
+        # Metric ratio scale: convert paper inches to meters, then multiply by ratio
+        return (paper_inches * 0.0254) * scale_factor
+    else:
+        # Imperial: paper_inches * scale(feet_per_inch) = feet, then to meters
+        return paper_inches * scale_factor * 0.3048
+
+
+def recalculate_annotation_sizes_for_scene(scene):
+    """Recalculate annotation world sizes from paper-space sizes and current scale.
+    
+    Called when layout scale changes or when auto-scale is enabled.
+    Only acts on layout view scenes with auto-scale enabled.
+    """
+    if not scene.get('IS_LAYOUT_VIEW'):
+        return
+    if not hasattr(scene, 'home_builder'):
+        return
+    
+    hb_scene = scene.home_builder
+    if not hb_scene.annotation_auto_scale:
+        return
+    
+    scale_str = scene.hb_layout_scale
+    
+    # Recalculate text size
+    hb_scene.annotation_text_size = paper_to_world(
+        hb_scene.annotation_text_paper_height, scale_str)
+    
+    # Recalculate line thickness
+    hb_scene.annotation_line_thickness = paper_to_world(
+        hb_scene.annotation_line_paper_thickness, scale_str)
+    
+    # Recalculate dimension text size
+    hb_scene.annotation_dimension_text_size = paper_to_world(
+        hb_scene.annotation_dim_text_paper_height, scale_str)
+    
+    # Recalculate dimension tick length
+    hb_scene.annotation_dimension_tick_length = paper_to_world(
+        hb_scene.annotation_dim_tick_paper_length, scale_str)
+    
+    # Recalculate dimension line thickness
+    hb_scene.annotation_dimension_line_thickness = paper_to_world(
+        hb_scene.annotation_dim_line_paper_thickness, scale_str)
 
 
 def update_title_block_border(scene):
@@ -4307,6 +4370,131 @@ class home_builder_layouts_OT_place_room_label(bpy.types.Operator):
             ignore_coll.objects.link(obj)
 
 
+
+
+# =============================================================================
+# LINK OBJECTS TO LAYOUT VIEW
+# =============================================================================
+
+def get_layout_view_items(self, context):
+    """Dynamic enum callback listing all layout view scenes that have a content collection."""
+    items = []
+    for scene in bpy.data.scenes:
+        if not scene.get('IS_LAYOUT_VIEW'):
+            continue
+        # Find the content collection via the collection instance
+        for obj in scene.objects:
+            if obj.type == 'EMPTY' and obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                items.append((scene.name, scene.name, f"Add to {obj.instance_collection.name}"))
+                break
+    if not items:
+        items.append(('NONE', 'No Layout Views', 'Create a layout view first'))
+    return items
+
+
+class home_builder_layouts_OT_link_objects_to_layout(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.link_objects_to_layout"
+    bl_label = "Link Objects to Layout View"
+    bl_description = "Link the selected objects to a layout view so they appear in that view"
+    bl_options = {'UNDO'}
+
+    target_layout: bpy.props.EnumProperty(
+        name="Layout View",
+        description="Choose which layout view to add the objects to",
+        items=get_layout_view_items,
+    )  # type: ignore
+
+    include_children: bpy.props.BoolProperty(
+        name="Include Children",
+        description="Also link all child objects recursively",
+        default=True,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        if not context.selected_objects:
+            return False
+        # Must have at least one layout view
+        for scene in bpy.data.scenes:
+            if scene.get('IS_LAYOUT_VIEW'):
+                return True
+        return False
+
+    def _get_content_collection(self, scene_name):
+        """Find the content collection for a layout view scene."""
+        scene = bpy.data.scenes.get(scene_name)
+        if not scene:
+            return None
+        for obj in scene.objects:
+            if obj.type == 'EMPTY' and obj.instance_type == 'COLLECTION' and obj.instance_collection:
+                return obj.instance_collection
+        return None
+
+    def _add_object_to_collection(self, obj, collection):
+        """Recursively add object and children to collection, skipping cages and helpers."""
+        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or
+                   obj.get('IS_FRAMELESS_BAY_CAGE') or
+                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
+                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
+
+        is_helper = (obj.get('obj_x') or
+                     'Overlay Prompt Obj' in obj.name)
+
+        if not is_cage and not is_helper:
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
+
+        if self.include_children:
+            for child in obj.children:
+                self._add_object_to_collection(child, collection)
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "target_layout")
+        layout.prop(self, "include_children")
+
+        # Show what will be linked
+        box = layout.box()
+        box.label(text="Objects to link:")
+        for obj in context.selected_objects:
+            row = box.row()
+            row.label(text=obj.name, icon='OBJECT_DATA')
+            child_count = len(obj.children_recursive) if self.include_children else 0
+            if child_count > 0:
+                row.label(text=f"(+{child_count} children)")
+
+    def execute(self, context):
+        if self.target_layout == 'NONE':
+            self.report({'WARNING'}, "No layout views available. Create one first.")
+            return {'CANCELLED'}
+
+        collection = self._get_content_collection(self.target_layout)
+        if not collection:
+            self.report({'ERROR'}, f"Could not find content collection for '{self.target_layout}'")
+            return {'CANCELLED'}
+
+        linked_count = 0
+        already_linked = 0
+        for obj in context.selected_objects:
+            if obj.name in collection.objects:
+                already_linked += 1
+            else:
+                self._add_object_to_collection(obj, collection)
+                linked_count += 1
+
+        parts = []
+        if linked_count > 0:
+            parts.append(f"Linked {linked_count} object(s)")
+        if already_linked > 0:
+            parts.append(f"{already_linked} already linked")
+        self.report({'INFO'}, f"{' | '.join(parts)} → {self.target_layout}")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
@@ -4329,6 +4517,7 @@ classes = (
     home_builder_layouts_OT_move_layout_view,
     home_builder_layouts_OT_generate_2d_plan,
     home_builder_layouts_OT_place_room_label,
+    home_builder_layouts_OT_link_objects_to_layout,
 )
 
 # Scale items for imperial and metric unit systems

@@ -613,6 +613,12 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
         else:
             layout.label(text="No layout views yet", icon='INFO')
 
+        # Link selected objects to a layout view (only in room scenes)
+        if not is_layout_view and context.selected_objects and layout_views:
+            layout.separator()
+            layout.operator("home_builder_layouts.link_objects_to_layout",
+                           text="Link Selected to Layout", icon='LINKED')
+
 
 class HOME_BUILDER_MT_layout_views_create(bpy.types.Menu):
     bl_label = "Create Layout Views"
@@ -1130,39 +1136,67 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         hb_scene = context.scene.home_builder
+        is_layout = context.scene.get('IS_LAYOUT_VIEW', False)
+        auto_scale = hb_scene.annotation_auto_scale and is_layout
         
-        col = layout.column()
-        col.use_property_split = True
-        col.use_property_decorate = False
+        # Auto Scale toggle (only shown in layout views)
+        if is_layout:
+            row = layout.row()
+            row.prop(hb_scene, "annotation_auto_scale", text="Auto Scale with Drawing Scale")
+            layout.separator()
+        
+        # --- Paper-Space Settings (shown when auto-scale is on) ---
+        if auto_scale:
+            box = layout.box()
+            box.label(text="Paper-Space Sizes (inches on paper)", icon='DRIVER_DISTANCE')
+            col = box.column()
+            col.use_property_split = True
+            col.use_property_decorate = False
+            col.prop(hb_scene, "annotation_text_paper_height", text="Text Height")
+            col.prop(hb_scene, "annotation_line_paper_thickness", text="Line Thickness")
+            
+            col.separator()
+            col.prop(hb_scene, "annotation_dim_text_paper_height", text="Dim Text Height")
+            col.prop(hb_scene, "annotation_dim_tick_paper_length", text="Dim Tick Length")
+            col.prop(hb_scene, "annotation_dim_line_paper_thickness", text="Dim Line Thickness")
+        
+        # --- World-Space Overrides (always available) ---
+        header_text = "World-Space Overrides" if auto_scale else "Lines"
         
         # Line Settings
         box = layout.box()
-        box.label(text="Lines", icon='IPO_LINEAR')
+        box.label(text="Lines" if not auto_scale else "Lines (Computed)" , icon='IPO_LINEAR')
         col = box.column()
         col.use_property_split = True
         col.use_property_decorate = False
+        col.enabled = not auto_scale
         col.prop(hb_scene, "annotation_line_thickness", text="Thickness")
+        col.enabled = True
         col.prop(hb_scene, "annotation_line_color", text="Color")
         
         # Text Settings
         box = layout.box()
-        box.label(text="Text", icon='FONT_DATA')
+        box.label(text="Text" if not auto_scale else "Text (Computed)", icon='FONT_DATA')
         col = box.column()
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(hb_scene, "annotation_font", text="Font")
+        col.enabled = not auto_scale
         col.prop(hb_scene, "annotation_text_size", text="Size")
+        col.enabled = True
         col.prop(hb_scene, "annotation_text_color", text="Color")
         
         # Dimension Settings
         box = layout.box()
-        box.label(text="Dimensions", icon='DRIVER_DISTANCE')
+        box.label(text="Dimensions" if not auto_scale else "Dimensions (Computed)", icon='DRIVER_DISTANCE')
         col = box.column()
         col.use_property_split = True
         col.use_property_decorate = False
+        col.enabled = not auto_scale
         col.prop(hb_scene, "annotation_dimension_text_size", text="Text Size")
         col.prop(hb_scene, "annotation_dimension_tick_length", text="Tick Length")
         col.prop(hb_scene, "annotation_dimension_line_thickness", text="Line Thickness")
+        col.enabled = True
         
         # Apply to All button
         layout.separator()
