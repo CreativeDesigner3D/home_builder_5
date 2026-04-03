@@ -312,23 +312,30 @@ class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
         col.use_property_split = True
         col.use_property_decorate = False
         
-        if hb_scene.wall_type in {'Exterior', 'Interior'}:
+        if hb_scene.wall_type == 'Exterior':
             row = col.row()
             row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
             row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
             row = col.row()
-            row.prop(hb_scene, 'wall_thickness')
+            row.prop(hb_scene, 'exterior_wall_thickness', text="Wall Thickness")
+            row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
+        elif hb_scene.wall_type == 'Interior':
+            row = col.row()
+            row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
+            row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+            row = col.row()
+            row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
             row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
         elif hb_scene.wall_type == 'Half':
             row = col.row()
             row.prop(hb_scene, 'half_wall_height', text="Half Wall Height")
             row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
             row = col.row()
-            row.prop(hb_scene, 'wall_thickness')
+            row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
             row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
-        else:
+        elif hb_scene.wall_type == 'Fake':
             row = col.row()
-            row.prop(hb_scene, 'fake_wall_height', text="Fake Wall Height")
+            row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
             row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
         
         row = col.row()

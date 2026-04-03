@@ -1032,12 +1032,37 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.stop_typing()
 
     def create_wall(self, context):
-        """Create a new wall segment."""
+        """Create a new wall segment based on wall_type setting."""
         props = context.scene.home_builder
+        wall_type = props.wall_type
+
+        # Determine height based on wall type
+        if wall_type in {'Exterior', 'Interior'}:
+            height = props.ceiling_height
+        elif wall_type == 'Half':
+            height = props.half_wall_height
+        else:  # Fake
+            height = props.fake_wall_height
+
+        # Determine thickness based on wall type
+        if wall_type == 'Exterior':
+            thickness = props.exterior_wall_thickness
+        elif wall_type in {'Interior', 'Half'}:
+            thickness = props.interior_wall_thickness
+        else:  # Fake — thin decorative panel
+            thickness = units.inch(0.75)
+
         self.current_wall = hb_types.GeoNodeWall()
         self.current_wall.create("Wall")
-        self.current_wall.set_input('Thickness', props.wall_thickness)
-        self.current_wall.set_input('Height', props.ceiling_height)
+        self.current_wall.set_input('Thickness', thickness)
+        self.current_wall.set_input('Height', height)
+
+        # Tag with wall type for identification
+        self.current_wall.obj['WALL_TYPE'] = wall_type
+        if wall_type == 'Half':
+            self.current_wall.obj['IS_HALF_WALL'] = True
+        elif wall_type == 'Fake':
+            self.current_wall.obj['IS_FAKE_WALL'] = True
         
         # Register for cleanup on cancel
         self.register_placement_object(self.current_wall.obj)
@@ -1049,7 +1074,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Parent dimension to wall
         self.dim.obj.parent = self.current_wall.obj
-        self.dim.set_input("Leader Length", props.wall_thickness / 2)
+        self.dim.set_input("Leader Length", thickness / 2)
         self.dim.obj.data.splines[0].points[1].co = (0, 0, 0, 0)
 
     def create_dimension(self):
@@ -2251,28 +2276,63 @@ class home_builder_walls_OT_update_room_lights(bpy.types.Operator):
 class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_wall_height"
     bl_label = "Update Wall Height"
-    bl_description = "This will update all of the wall heights in the room"
+    bl_description = "Update wall heights for walls matching the current wall type"
 
     def execute(self, context):
         props = context.scene.home_builder
+        wall_type = props.wall_type
+        count = 0
+
         for obj in context.scene.objects:
-            if 'IS_WALL_BP' in obj:
-                wall = hb_types.GeoNodeWall(obj)
+            if 'IS_WALL_BP' not in obj:
+                continue
+
+            # Match walls by their stored type (fall back to Exterior for untagged walls)
+            obj_type = obj.get('WALL_TYPE', 'Exterior')
+            if obj_type != wall_type:
+                continue
+
+            wall = hb_types.GeoNodeWall(obj)
+            if wall_type in {'Exterior', 'Interior'}:
                 wall.set_input('Height', props.ceiling_height)
+            elif wall_type == 'Half':
+                wall.set_input('Height', props.half_wall_height)
+            elif wall_type == 'Fake':
+                wall.set_input('Height', props.fake_wall_height)
+            count += 1
+
+        self.report({'INFO'}, f"Updated height on {count} {wall_type} wall(s)")
         return {'FINISHED'}
 
 
 class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_wall_thickness"
     bl_label = "Update Wall Thickness"
-    bl_description = "This will update all of the thickness of all of the walls in the room"
+    bl_description = "Update wall thickness for walls matching the current wall type"
 
     def execute(self, context):
         props = context.scene.home_builder
+        wall_type = props.wall_type
+        count = 0
+
         for obj in context.scene.objects:
-            if 'IS_WALL_BP' in obj:
-                wall = hb_types.GeoNodeWall(obj)
-                wall.set_input('Thickness', props.wall_thickness)
+            if 'IS_WALL_BP' not in obj:
+                continue
+
+            obj_type = obj.get('WALL_TYPE', 'Exterior')
+            if obj_type != wall_type:
+                continue
+
+            wall = hb_types.GeoNodeWall(obj)
+            if wall_type == 'Exterior':
+                wall.set_input('Thickness', props.exterior_wall_thickness)
+            elif wall_type in {'Interior', 'Half'}:
+                wall.set_input('Thickness', props.interior_wall_thickness)
+            elif wall_type == 'Fake':
+                wall.set_input('Thickness', units.inch(0.75))
+            count += 1
+
+        self.report({'INFO'}, f"Updated thickness on {count} {wall_type} wall(s)")
         return {'FINISHED'}
 
 

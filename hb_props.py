@@ -413,9 +413,11 @@ class Home_Builder_Scene_Props(PropertyGroup):
                           default='Exterior')# type: ignore  
 
     ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5,update=update_ceiling_height)
-    half_wall_height: FloatProperty(name="Half Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
+    half_wall_height: FloatProperty(name="Half Wall Height", default=inch(42),subtype='DISTANCE',precision=5)
     fake_wall_height: FloatProperty(name="Fake Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
     wall_thickness: FloatProperty(name="Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)
+    exterior_wall_thickness: FloatProperty(name="Exterior Wall Thickness", default=inch(6),subtype='DISTANCE',precision=5)# type: ignore
+    interior_wall_thickness: FloatProperty(name="Interior Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)# type: ignore
 
     door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5)
     door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5)
