@@ -193,10 +193,55 @@ def build_wall_runs(wall_cabinets):
     return runs
 
 
+def find_adjacent_tall_cabinets(wall_obj, cabinets):
+    """Check if the first/last base cabinet in a run is adjacent to a tall cabinet.
+
+    Returns:
+        (tall_at_left, tall_at_right) - booleans
+    """
+    if not cabinets:
+        return False, False
+
+    cabinets_sorted = sorted(cabinets, key=lambda c: c.location.x)
+    first_cab = cabinets_sorted[0]
+    last_cab = cabinets_sorted[-1]
+    last_cage = hb_types.GeoNodeCage(last_cab)
+    run_left = first_cab.location.x
+    run_right = last_cab.location.x + last_cage.get_input('Dim X')
+
+    tall_at_left = False
+    tall_at_right = False
+    tolerance = 0.005  # 5mm
+
+    for child in wall_obj.children:
+        if not child.get('IS_FRAMELESS_CABINET_CAGE'):
+            continue
+        if child.get('CABINET_TYPE') != 'TALL':
+            continue
+
+        cage = hb_types.GeoNodeCage(child)
+        tall_left = child.location.x
+        tall_right = child.location.x + cage.get_input('Dim X')
+
+        # Tall right edge touches run left edge
+        if abs(tall_right - run_left) < tolerance:
+            tall_at_left = True
+        # Tall left edge touches run right edge
+        if abs(tall_left - run_right) < tolerance:
+            tall_at_right = True
+
+    return tall_at_left, tall_at_right
+
+
 def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right_conn):
-    """Create a straight rectangular countertop for cabinets on a single wall.
-    Connected ends get no side overhang, exposed ends get overhang.
-    Handles both front-side and back-side cabinet placement."""
+    """Create a countertop for cabinets on a single wall.
+
+    Handles:
+    - Connected ends (wall-to-wall): no side overhang
+    - Adjacent tall cabinets: no side overhang on that end
+    - Corner cabinets: L-shaped countertop with deeper section at corner
+    - Front-side and back-side cabinet placement
+    """
     main_scene = hb_project.get_main_scene()
     props = main_scene.hb_frameless
 
@@ -205,13 +250,12 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     overhang_back = props.countertop_overhang_back
     thickness = props.countertop_thickness
 
-    # Detect if cabinets are on the back side of the wall (rotated 180° around Z)
-    first_cab = cabinets[0]
-    is_back_side = (abs(first_cab.rotation_euler.z - math.pi) < 0.1 or 
-                    abs(first_cab.rotation_euler.z + math.pi) < 0.1)
+    # Detect if cabinets are on the back side of the wall
+    first_cab_raw = cabinets[0]
+    is_back_side = (abs(first_cab_raw.rotation_euler.z - math.pi) < 0.1 or
+                    abs(first_cab_raw.rotation_euler.z + math.pi) < 0.1)
 
     if is_back_side:
-        # Back side: location.x is at right edge, cabinet extends left
         x_ranges = []
         for cab in cabinets:
             cage = hb_types.GeoNodeCage(cab)
@@ -223,7 +267,6 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
         start_x = x_ranges[0][0]
         end_x = x_ranges[-1][1]
     else:
-        # Front side: location.x is at left edge, cabinet extends right
         cabinets.sort(key=lambda c: c.location.x)
         first_cab = cabinets[0]
         last_cab = cabinets[-1]
@@ -231,51 +274,201 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
         start_x = first_cab.location.x
         end_x = last_cab.location.x + last_cage.get_input('Dim X')
 
-    depths = [get_cabinet_depth(c) for c in cabinets]
-    max_depth = max(depths) if depths else 0.6
+    # Standard (non-corner) cabinet depths
+    std_depths = [get_cabinet_depth(c) for c in cabinets if not c.get('IS_CORNER_CABINET')]
+    if not std_depths:
+        std_depths = [get_cabinet_depth(c) for c in cabinets]
+    std_depth = max(std_depths) if std_depths else 0.6
 
     first_cage = hb_types.GeoNodeCage(cabinets[0])
     cab_height = first_cage.get_input('Dim Z')
 
-    if is_back_side:
-        # Back side: cabinet back is at wall_thickness, depth extends in +Y
-        wall_node = hb_types.GeoNodeWall(wall_obj)
-        wall_thickness = wall_node.get_input('Thickness')
-        back_y = wall_thickness - overhang_back
-        front_y = wall_thickness + max_depth + overhang_front
-    else:
-        # Front side: cabinet back at Y=0, depth extends in -Y
-        front_y = -(max_depth + overhang_front)
-        back_y = overhang_back
-
     z_bot = cab_height
     z_top = cab_height + thickness
 
-    # Side overhang only on exposed (non-connected) ends
-    if not has_left_conn:
-        start_x -= overhang_sides
-    if not has_right_conn:
-        end_x += overhang_sides
+    # --- Detect adjacent tall cabinets ---
+    tall_at_left, tall_at_right = find_adjacent_tall_cabinets(wall_obj, cabinets)
 
-    verts = [
-        (start_x, back_y,  z_bot),  # 0 back-left bottom
-        (start_x, front_y, z_bot),  # 1 front-left bottom
-        (end_x,   front_y, z_bot),  # 2 front-right bottom
-        (end_x,   back_y,  z_bot),  # 3 back-right bottom
-        (start_x, back_y,  z_top),  # 4 back-left top
-        (start_x, front_y, z_top),  # 5 front-left top
-        (end_x,   front_y, z_top),  # 6 front-right top
-        (end_x,   back_y,  z_top),  # 7 back-right top
-    ]
+    # Suppress side overhang when connected to another wall OR adjacent to a tall
+    suppress_left = has_left_conn or tall_at_left
+    suppress_right = has_right_conn or tall_at_right
 
-    faces = [
-        (0, 1, 2, 3),  # bottom
-        (4, 7, 6, 5),  # top
-        (0, 4, 5, 1),  # left
-        (2, 6, 7, 3),  # right
-        (1, 5, 6, 2),  # front
-        (0, 3, 7, 4),  # back
-    ]
+    # --- Detect corner cabinets at ends ---
+    cabinets_sorted = sorted(cabinets, key=lambda c: c.location.x)
+    left_corner = cabinets_sorted[0] if cabinets_sorted[0].get('IS_CORNER_CABINET') else None
+    right_corner = cabinets_sorted[-1] if cabinets_sorted[-1].get('IS_CORNER_CABINET') else None
+
+    # --- Build the countertop mesh ---
+    if is_back_side:
+        wall_node = hb_types.GeoNodeWall(wall_obj)
+        wall_thickness = wall_node.get_input('Thickness')
+        std_back_y = wall_thickness - overhang_back
+        std_front_y = wall_thickness + std_depth + overhang_front
+    else:
+        std_front_y = -(std_depth + overhang_front)
+        std_back_y = overhang_back
+
+    # Apply side overhang
+    sx = start_x - (overhang_sides if not suppress_left else 0)
+    ex = end_x + (overhang_sides if not suppress_right else 0)
+
+    # Check if we need an L-shape for corner cabinets
+    has_l_shape = False
+    if (left_corner or right_corner) and not is_back_side:
+        has_l_shape = True
+
+    if not has_l_shape:
+        # Simple rectangular countertop
+        verts = [
+            (sx, std_back_y,  z_bot),
+            (sx, std_front_y, z_bot),
+            (ex, std_front_y, z_bot),
+            (ex, std_back_y,  z_bot),
+            (sx, std_back_y,  z_top),
+            (sx, std_front_y, z_top),
+            (ex, std_front_y, z_top),
+            (ex, std_back_y,  z_top),
+        ]
+        faces = [
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (2, 6, 7, 3),
+            (1, 5, 6, 2),
+            (0, 3, 7, 4),
+        ]
+    else:
+        # L-shaped countertop for corner cabinets
+        # Uses Left Depth / Right Depth to determine the L-shape transition
+        #
+        # Corner cabinet L-shape footprint (top view):
+        #   Wing along wall:  x=0 to Dim_X, depth = Right_Depth
+        #   Wing into corner: x=0 to Left_Depth, depth = Dim_Y
+        #
+        # The step happens at Left_Depth (for left corner) or
+        # at Dim_X - Right_Depth from end (for right corner)
+
+        if left_corner:
+            corner_cage = hb_types.GeoNodeCage(left_corner)
+            corner_dim_y = corner_cage.get_input('Dim Y')
+            corner_left_depth = left_corner.get('Left Depth', corner_dim_y)
+
+            # Transition at Left Depth + overhang — step face is exposed
+            corner_transition_x = start_x + corner_left_depth + overhang_front
+
+            # Deep section depth: use Dim Y for corner cabinet's perpendicular wing
+            # Also check if the adjacent wall has base cabinets that the deep section
+            # should reach — extend to meet the nearest cabinet's back edge
+            corner_depth = corner_dim_y
+            if has_left_conn:
+                adj_wall_node = hb_types.GeoNodeWall(wall_obj)
+                adj_wall = adj_wall_node.get_connected_wall('left')
+                if adj_wall:
+                    # Find the nearest base cabinet on the adjacent wall to the corner
+                    adj_length = adj_wall.get_input('Length')
+                    for child in adj_wall.obj.children:
+                        if (child.get('IS_FRAMELESS_CABINET_CAGE')
+                                and child.get('CABINET_TYPE') == 'BASE'
+                                and not child.get('IS_CORNER_CABINET')):
+                            cage_child = hb_types.GeoNodeCage(child)
+                            cab_end = child.location.x + cage_child.get_input('Dim X')
+                            # Distance from corner along adjacent wall
+                            dist_from_corner = adj_length - cab_end
+                            if dist_from_corner <= corner_depth + 0.01:
+                                # Cabinet is within reach of corner wing — extend to meet it
+                                corner_depth = max(corner_depth, adj_length - child.location.x)
+
+            corner_front_y = -(corner_depth + overhang_front)
+
+            # L-shape: deeper on left (corner wing), standard on right
+            #
+            #  Back edge (y = std_back_y)
+            #  +-------+-------------------------+
+            #  |       |   standard depth         |  <- std_front_y
+            #  |       +-------------------------+
+            #  |  corner depth (Dim Y)            |
+            #  +----------------------------------+  <- corner_front_y
+            #  sx   transition(Left Depth)        ex
+
+            verts = [
+                # Bottom face (z_bot)
+                (sx,                   std_back_y,    z_bot),  # 0  back-left
+                (sx,                   corner_front_y, z_bot), # 1  front-left (deep)
+                (corner_transition_x,  corner_front_y, z_bot), # 2  front corner step
+                (corner_transition_x,  std_front_y,    z_bot), # 3  front step-in
+                (ex,                   std_front_y,    z_bot), # 4  front-right
+                (ex,                   std_back_y,     z_bot), # 5  back-right
+                # Top face (z_top) - same XY, different Z
+                (sx,                   std_back_y,    z_top),  # 6
+                (sx,                   corner_front_y, z_top), # 7
+                (corner_transition_x,  corner_front_y, z_top), # 8
+                (corner_transition_x,  std_front_y,    z_top), # 9
+                (ex,                   std_front_y,    z_top), # 10
+                (ex,                   std_back_y,     z_top), # 11
+            ]
+            faces = [
+                (0, 1, 2, 3, 4, 5),     # bottom
+                (6, 11, 10, 9, 8, 7),   # top
+                (0, 6, 7, 1),           # left side
+                (1, 7, 8, 2),           # front-left (deep)
+                (2, 8, 9, 3),           # step face
+                (3, 9, 10, 4),          # front-right (std)
+                (4, 10, 11, 5),         # right side
+                (5, 11, 6, 0),          # back
+            ]
+
+        elif right_corner:
+            corner_cage = hb_types.GeoNodeCage(right_corner)
+            corner_dim_y = corner_cage.get_input('Dim Y')
+            corner_right_depth = right_corner.get('Right Depth', corner_dim_y)
+
+            # Transition at end - Right Depth - overhang — step face is exposed
+            corner_transition_x = end_x - corner_right_depth - overhang_front
+
+            # Deep section depth: check adjacent wall for cabinets to reach
+            corner_depth = corner_dim_y
+            if has_right_conn:
+                adj_wall_node = hb_types.GeoNodeWall(wall_obj)
+                adj_wall = adj_wall_node.get_connected_wall('right')
+                if adj_wall:
+                    for child in adj_wall.obj.children:
+                        if (child.get('IS_FRAMELESS_CABINET_CAGE')
+                                and child.get('CABINET_TYPE') == 'BASE'
+                                and not child.get('IS_CORNER_CABINET')):
+                            cage_child = hb_types.GeoNodeCage(child)
+                            cab_end = child.location.x + cage_child.get_input('Dim X')
+                            if cab_end <= corner_depth + 0.01:
+                                corner_depth = max(corner_depth, cab_end)
+
+            corner_front_y = -(corner_depth + overhang_front)
+
+            # L-shape: standard on left, deeper on right (corner wing)
+            verts = [
+                # Bottom face (z_bot)
+                (sx,                   std_back_y,     z_bot), # 0  back-left
+                (sx,                   std_front_y,    z_bot), # 1  front-left (std)
+                (corner_transition_x,  std_front_y,    z_bot), # 2  front step-out
+                (corner_transition_x,  corner_front_y, z_bot), # 3  front corner step
+                (ex,                   corner_front_y, z_bot), # 4  front-right (deep)
+                (ex,                   std_back_y,     z_bot), # 5  back-right
+                # Top face (z_top)
+                (sx,                   std_back_y,     z_top), # 6
+                (sx,                   std_front_y,    z_top), # 7
+                (corner_transition_x,  std_front_y,    z_top), # 8
+                (corner_transition_x,  corner_front_y, z_top), # 9
+                (ex,                   corner_front_y, z_top), # 10
+                (ex,                   std_back_y,     z_top), # 11
+            ]
+            faces = [
+                (0, 1, 2, 3, 4, 5),     # bottom
+                (6, 11, 10, 9, 8, 7),   # top
+                (0, 6, 7, 1),           # left side
+                (1, 7, 8, 2),           # front-left (std)
+                (2, 8, 9, 3),           # step face
+                (3, 9, 10, 4),          # front-right (deep)
+                (4, 10, 11, 5),         # right side
+                (5, 11, 6, 0),          # back
+            ]
 
     mesh = bpy.data.meshes.new('Countertop')
     mesh.from_pydata(verts, [], faces)
