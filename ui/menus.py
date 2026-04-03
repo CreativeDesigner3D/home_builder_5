@@ -66,10 +66,12 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout.operator("home_builder_walls.isolate_selected_walls", text="Isolate Selected Walls", icon='ZOOM_SELECTED')
         layout.operator("home_builder_walls.show_all_walls", text="Show All Walls", icon='HIDE_OFF')
         layout.separator()
-        layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
+        layout.operator("home_builder_walls.draw_wall_cutter", text="Draw Wall Cutter", icon='MOD_BOOLEAN')
         layout.separator()
         layout.operator("hb_frameless.place_snap_line", text="Place Snap Line", icon='SNAP_MIDPOINT')
         layout.operator("hb_frameless.delete_all_snap_lines", text="Delete All Snap Lines", icon='TRASH')
+        layout.separator()
+        layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
 
 
 class HOME_BUILDER_MT_door_commands(bpy.types.Menu):

@@ -3064,6 +3064,371 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         return {'RUNNING_MODAL'}
 
 
+
+
+# =============================================================================
+# WALL CUTTER
+# =============================================================================
+
+def draw_wall_cutter_preview(op, context):
+    """GPU draw callback: renders the rectangle preview during wall cutter drawing."""
+    region = op.region
+    if region is None:
+        return
+
+    from bpy_extras import view3d_utils
+
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+
+    first_3d = op.first_point
+    cursor_3d = op.cursor_point
+
+    if first_3d is None:
+        # Just draw the cursor dot if we have one
+        if cursor_3d is not None:
+            cursor_2d = view3d_utils.location_3d_to_region_2d(region, region.data, cursor_3d)
+            if cursor_2d:
+                gpu.state.point_size_set(8.0)
+                shader.uniform_float("color", (1.0, 1.0, 0.0, 0.9))
+                batch = batch_for_shader(shader, 'POINTS', {"pos": [(cursor_2d.x, cursor_2d.y)]})
+                batch.draw(shader)
+                gpu.state.point_size_set(1.0)
+        gpu.state.blend_set('NONE')
+        return
+
+    if cursor_3d is None:
+        gpu.state.blend_set('NONE')
+        return
+
+    # We have first_point and cursor — compute the 4 corners of the rectangle
+    # in world space on the wall plane
+    wall_obj = op.target_wall
+    if wall_obj is None:
+        gpu.state.blend_set('NONE')
+        return
+
+    wall_matrix = wall_obj.matrix_world
+    wall_matrix_inv = wall_matrix.inverted()
+
+    # Convert to wall-local space
+    local_first = wall_matrix_inv @ first_3d
+    local_cursor = wall_matrix_inv @ cursor_3d
+
+    # Rectangle corners in wall-local space (X = along wall, Z = height)
+    min_x = min(local_first.x, local_cursor.x)
+    max_x = max(local_first.x, local_cursor.x)
+    min_z = min(local_first.z, local_cursor.z)
+    max_z = max(local_first.z, local_cursor.z)
+
+    # 4 corners on the wall face (Y=0)
+    corners_local = [
+        Vector((min_x, 0, min_z)),
+        Vector((max_x, 0, min_z)),
+        Vector((max_x, 0, max_z)),
+        Vector((min_x, 0, max_z)),
+    ]
+
+    corners_world = [wall_matrix @ c for c in corners_local]
+    corners_2d = []
+    for c in corners_world:
+        s = view3d_utils.location_3d_to_region_2d(region, region.data, c)
+        if s:
+            corners_2d.append(s)
+        else:
+            corners_2d.append(Vector((0, 0)))
+
+    if len(corners_2d) < 4:
+        gpu.state.blend_set('NONE')
+        return
+
+    # Draw filled rectangle (two triangles)
+    tri_verts = [
+        (corners_2d[0].x, corners_2d[0].y),
+        (corners_2d[1].x, corners_2d[1].y),
+        (corners_2d[2].x, corners_2d[2].y),
+        (corners_2d[0].x, corners_2d[0].y),
+        (corners_2d[2].x, corners_2d[2].y),
+        (corners_2d[3].x, corners_2d[3].y),
+    ]
+    shader.uniform_float("color", (1.0, 0.2, 0.2, 0.2))
+    batch = batch_for_shader(shader, 'TRIS', {"pos": tri_verts})
+    batch.draw(shader)
+
+    # Draw rectangle outline
+    gpu.state.line_width_set(2.0)
+    edge_verts = []
+    for i in range(4):
+        ni = (i + 1) % 4
+        edge_verts.append((corners_2d[i].x, corners_2d[i].y))
+        edge_verts.append((corners_2d[ni].x, corners_2d[ni].y))
+    shader.uniform_float("color", (1.0, 0.3, 0.3, 0.9))
+    batch = batch_for_shader(shader, 'LINES', {"pos": edge_verts})
+    batch.draw(shader)
+
+    # Draw corner dots
+    gpu.state.point_size_set(8.0)
+    dot_verts = [(c.x, c.y) for c in corners_2d]
+    shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+    batch = batch_for_shader(shader, 'POINTS', {"pos": dot_verts})
+    batch.draw(shader)
+
+    # Draw first point highlight (green)
+    first_2d = view3d_utils.location_3d_to_region_2d(region, region.data, first_3d)
+    if first_2d:
+        gpu.state.point_size_set(10.0)
+        shader.uniform_float("color", (0.0, 1.0, 0.4, 0.9))
+        batch = batch_for_shader(shader, 'POINTS', {"pos": [(first_2d.x, first_2d.y)]})
+        batch.draw(shader)
+
+    gpu.state.point_size_set(1.0)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+
+
+class home_builder_walls_OT_draw_wall_cutter(bpy.types.Operator, hb_placement.PlacementMixin):
+    bl_idname = "home_builder_walls.draw_wall_cutter"
+    bl_label = "Draw Wall Cutter"
+    bl_description = "Click two points on a wall to cut a rectangular hole through it"
+    bl_options = {'UNDO'}
+
+    # State
+    first_point: Vector = None      # First 3D corner (world space)
+    cursor_point: Vector = None     # Live 3D cursor position (world space)
+    target_wall: bpy.types.Object = None
+    _draw_handle = None
+
+    @classmethod
+    def poll(cls, context):
+        for obj in context.scene.objects:
+            if obj.get('IS_WALL_BP'):
+                return True
+        return False
+
+    def get_wall_hit(self, context):
+        """Raycast from mouse to find a wall and the hit point."""
+        if self.region is None:
+            return None, None
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        rv3d = self.region.data
+        origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
+
+        # Use scene raycast
+        depsgraph = context.evaluated_depsgraph_get()
+        result, location, normal, index, obj, matrix = context.scene.ray_cast(
+            depsgraph, origin, direction)
+
+        if result and obj:
+            # Walk up parent chain to find wall base point
+            check_obj = obj
+            while check_obj:
+                if check_obj.get('IS_WALL_BP'):
+                    return check_obj, location
+                check_obj = check_obj.parent
+
+        return None, None
+
+    def get_wall_plane_point(self, context, wall_obj):
+        """Project mouse onto the wall's front face plane (local Y=0)."""
+        if self.region is None:
+            return None
+        coord = (self.mouse_pos.x, self.mouse_pos.y)
+        rv3d = self.region.data
+        origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
+
+        # Wall plane: passes through wall origin, normal is wall's local +Y in world space
+        wall_matrix = wall_obj.matrix_world
+        plane_point = wall_matrix @ Vector((0, 0, 0))
+        plane_normal = (wall_matrix @ Vector((0, 1, 0)) - plane_point).normalized()
+
+        point = intersect_line_plane(origin, origin + direction, plane_point, plane_normal)
+        return point
+
+    def create_wall_cutter(self, context, wall_obj, p1, p2):
+        """Create a cube cutter from two corner points, extending through the wall."""
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_thickness = wall.get_input('Thickness')
+        wall_matrix = wall_obj.matrix_world
+        wall_matrix_inv = wall_matrix.inverted()
+
+        # Convert to wall-local coordinates
+        local_p1 = wall_matrix_inv @ p1
+        local_p2 = wall_matrix_inv @ p2
+
+        # Rectangle bounds on wall face
+        min_x = min(local_p1.x, local_p2.x)
+        max_x = max(local_p1.x, local_p2.x)
+        min_z = min(local_p1.z, local_p2.z)
+        max_z = max(local_p1.z, local_p2.z)
+
+        # Extend through wall thickness with margin
+        margin = 0.01  # 1cm overshoot
+        min_y = -margin
+        max_y = wall_thickness + margin
+
+        # Create cube mesh in wall-local space
+        mesh = bpy.data.meshes.new("Wall_Cutter")
+        obj = bpy.data.objects.new("Wall_Cutter", mesh)
+        context.collection.objects.link(obj)
+
+        bm = bmesh.new()
+
+        # 8 cube vertices
+        verts = [
+            bm.verts.new(Vector((min_x, min_y, min_z))),  # 0: front-bottom-left
+            bm.verts.new(Vector((max_x, min_y, min_z))),  # 1: front-bottom-right
+            bm.verts.new(Vector((max_x, max_y, min_z))),  # 2: back-bottom-right
+            bm.verts.new(Vector((min_x, max_y, min_z))),  # 3: back-bottom-left
+            bm.verts.new(Vector((min_x, min_y, max_z))),  # 4: front-top-left
+            bm.verts.new(Vector((max_x, min_y, max_z))),  # 5: front-top-right
+            bm.verts.new(Vector((max_x, max_y, max_z))),  # 6: back-top-right
+            bm.verts.new(Vector((min_x, max_y, max_z))),  # 7: back-top-left
+        ]
+        bm.verts.ensure_lookup_table()
+
+        # 6 faces
+        bm.faces.new([verts[0], verts[3], verts[2], verts[1]])  # bottom
+        bm.faces.new([verts[4], verts[5], verts[6], verts[7]])  # top
+        bm.faces.new([verts[0], verts[1], verts[5], verts[4]])  # front
+        bm.faces.new([verts[2], verts[3], verts[7], verts[6]])  # back
+        bm.faces.new([verts[0], verts[4], verts[7], verts[3]])  # left
+        bm.faces.new([verts[1], verts[2], verts[6], verts[5]])  # right
+
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.normal_update()
+        bm.to_mesh(mesh)
+        bm.free()
+
+        # Position the cutter in world space: parent to wall so it stays aligned
+        obj.parent = wall_obj
+        obj.matrix_parent_inverse.identity()
+
+        # Tag the cutter
+        obj['IS_CUTTING_OBJ'] = True
+        obj['IS_WALL_CUTTER'] = True
+        obj.display_type = 'WIRE'
+        obj.hide_render = True
+
+        return obj
+
+    def add_boolean_to_wall(self, wall_obj, cutter_obj):
+        """Add a boolean DIFFERENCE modifier to the wall's mesh children."""
+        wall = hb_types.GeoNodeWall(wall_obj)
+        mod_name = f"Cut - {cutter_obj.name}"
+        mod = wall_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter_obj
+        mod.solver = 'EXACT'
+        return mod
+
+    def finish(self, context):
+        """Create cutter cube, apply boolean, clean up."""
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+        if self.first_point is None or self.cursor_point is None:
+            self.report({'WARNING'}, "Need two points to create a wall cutter")
+            return {'CANCELLED'}
+
+        cutter = self.create_wall_cutter(context, self.target_wall, self.first_point, self.cursor_point)
+        self.add_boolean_to_wall(self.target_wall, cutter)
+
+        self.report({'INFO'}, f"Created wall cutter on {self.target_wall.name}")
+        return {'FINISHED'}
+
+    def cancel_op(self, context):
+        """Clean up on cancel."""
+        if self._draw_handle:
+            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def update_header(self, context):
+        parts = []
+        if self.first_point is None:
+            parts.append("Click on a wall to place first corner")
+        else:
+            parts.append(f"Click to place second corner on {self.target_wall.name}")
+        parts.append("Esc: cancel")
+        hb_placement.draw_header_text(context, " | ".join(parts))
+
+    def execute(self, context):
+        self.init_placement(context)
+
+        self.first_point = None
+        self.cursor_point = None
+        self.target_wall = None
+
+        # Add GPU draw handler
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_wall_cutter_preview, (self, context), 'WINDOW', 'POST_PIXEL')
+
+        context.window_manager.modal_handler_add(self)
+        self.update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        context.window.cursor_set('CROSSHAIR')
+
+        if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+
+        # Navigation pass-through
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        # Update snap / cursor position
+        self.update_snap(context, event)
+
+        # Update cursor position based on state
+        if self.first_point is None:
+            # Before first click — raycast to walls
+            wall_obj, hit_point = self.get_wall_hit(context)
+            if wall_obj and hit_point:
+                self.cursor_point = hit_point
+                self.target_wall = wall_obj
+            else:
+                self.cursor_point = None
+        else:
+            # After first click — project onto the same wall's plane
+            point = self.get_wall_plane_point(context, self.target_wall)
+            if point:
+                self.cursor_point = point
+
+        # Redraw viewport
+        if context.area:
+            context.area.tag_redraw()
+
+        # --- Left click ---
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self.first_point is None:
+                # First click: need a wall hit
+                if self.cursor_point is None or self.target_wall is None:
+                    return {'RUNNING_MODAL'}
+                self.first_point = self.cursor_point.copy()
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+            else:
+                # Second click: finish
+                if self.cursor_point is None:
+                    return {'RUNNING_MODAL'}
+                return self.finish(context)
+
+        # --- Escape / Right-click: cancel ---
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self.cancel_op(context)
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
 classes = (
     home_builder_walls_OT_hide_wall,
     home_builder_walls_OT_show_all_walls,
@@ -3073,6 +3438,7 @@ classes = (
     home_builder_walls_OT_wall_prompts,
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_draw_floor_cutter,
+    home_builder_walls_OT_draw_wall_cutter,
     home_builder_walls_OT_add_ceiling,
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
