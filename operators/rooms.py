@@ -292,17 +292,6 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
 # ROOM LINKING
 # =============================================================================
 
-def get_room_scenes_enum(self, context):
-    """Get enum items for room scenes (excluding current scene)."""
-    scenes = [s for s in bpy.data.scenes
-              if s != context.scene and not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
-    scenes.sort(key=lambda s: s.home_builder.sort_order)
-    items = [(s.name, s.name, f"Link {s.name} into current scene") for s in scenes]
-    if not items:
-        items.append(('NONE', 'No Rooms Available', ''))
-    return items
-
-
 def organize_room_collections(scene):
     """
     Organize a room scene's objects into sub-collections by type.
@@ -413,46 +402,30 @@ def organize_room_collections(scene):
     return collections
 
 
-class home_builder_OT_link_room(bpy.types.Operator):
-    bl_idname = "home_builder.link_room"
-    bl_label = "Link Room"
-    bl_description = "Link a room's objects into the current scene as a collection instance"
+class home_builder_OT_toggle_link_room(bpy.types.Operator):
+    bl_idname = "home_builder.toggle_link_room"
+    bl_label = "Toggle Link Room"
+    bl_description = "Link or unlink a room in the current scene"
     bl_options = {'UNDO'}
     
-    room_scene: bpy.props.EnumProperty(
-        name="Room",
-        description="Room to link",
-        items=get_room_scenes_enum
-    )  # type: ignore
-    
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=350)
-    
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        box.label(text="Select Room to Link", icon='LINKED')
-        box.prop(self, "room_scene", text="")
+    scene_name: bpy.props.StringProperty(name="Scene Name")  # type: ignore
     
     def execute(self, context):
-        if self.room_scene == 'NONE':
-            self.report({'WARNING'}, "No room selected")
-            return {'CANCELLED'}
-        
-        source_scene = bpy.data.scenes.get(self.room_scene)
+        source_scene = bpy.data.scenes.get(self.scene_name)
         if not source_scene:
-            self.report({'WARNING'}, f"Scene '{self.room_scene}' not found")
+            self.report({'WARNING'}, f"Scene '{self.scene_name}' not found")
             return {'CANCELLED'}
         
         target_scene = context.scene
         room_name = source_scene.name
         
-        # Check if already linked
+        # Check if already linked — if so, unlink
         for obj in target_scene.objects:
             if obj.get('IS_LINKED_ROOM') and obj.get('LINKED_ROOM_SOURCE') == room_name:
-                self.report({'WARNING'}, f"'{room_name}' is already linked. Unlink first to re-link.")
-                return {'CANCELLED'}
+                bpy.ops.home_builder.unlink_room(object_name=obj.name)
+                return {'FINISHED'}
         
+        # Not linked yet — link it
         # Step 1: Organize source scene into sub-collections
         sub_collections = organize_room_collections(source_scene)
         
@@ -497,12 +470,10 @@ class home_builder_OT_link_room(bpy.types.Operator):
         empty['LINKED_INCLUDE_LIGHTS'] = True
         empty['LINKED_INCLUDE_PRODUCTS'] = True
         
-        target_scene.collection.objects.link(empty)
+        # Default display color (light gray with transparency)
+        empty.color = (0.5, 0.5, 0.5, 0.6)
         
-        # Select the new empty so user can position it
-        bpy.ops.object.select_all(action='DESELECT')
-        empty.select_set(True)
-        context.view_layer.objects.active = empty
+        target_scene.collection.objects.link(empty)
         
         self.report({'INFO'}, f"Linked '{room_name}' into '{target_scene.name}'")
         return {'FINISHED'}
@@ -613,7 +584,7 @@ classes = (
     home_builder_OT_rename_room,
     home_builder_OT_duplicate_room,
     home_builder_OT_move_room_scene,
-    home_builder_OT_link_room,
+    home_builder_OT_toggle_link_room,
     home_builder_OT_toggle_linked_room_category,
     home_builder_OT_unlink_room,
 )

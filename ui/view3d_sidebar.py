@@ -208,42 +208,63 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
             row.operator("home_builder.duplicate_room", text="Duplicate", icon='DUPLICATE')
 
         # Linked Rooms section
-        linked_rooms = [obj for obj in context.scene.objects if obj.get('IS_LINKED_ROOM')]
+        # Build a lookup of currently linked rooms: source_name -> empty object
+        linked_map = {}
+        for obj in context.scene.objects:
+            if obj.get('IS_LINKED_ROOM'):
+                linked_map[obj.get('LINKED_ROOM_SOURCE', '')] = obj
+
+        # Get all other room scenes
+        other_rooms = [s for s in bpy.data.scenes
+                       if s != context.scene 
+                       and not s.get('IS_LAYOUT_VIEW') 
+                       and not s.get('IS_DETAIL_VIEW')]
+        other_rooms.sort(key=lambda s: s.home_builder.sort_order if hasattr(s, 'home_builder') else 0)
 
         layout.separator()
         box = layout.box()
-        row = box.row()
-        row.label(text='Linked Rooms', icon='LINKED')
+        box.label(text='Linked Rooms', icon='LINKED')
 
-        if linked_rooms:
-            for obj in linked_rooms:
-                source = obj.get('LINKED_ROOM_SOURCE', 'Unknown')
-                inner_box = box.box()
-                row = inner_box.row()
-                row.label(text=source, icon='HOME')
-                op = row.operator('home_builder.unlink_room', text='', icon='X')
-                op.object_name = obj.name
+        if not other_rooms:
+            box.label(text="No other rooms in project", icon='INFO')
+        else:
+            for room_scene in other_rooms:
+                is_linked = room_scene.name in linked_map
+                linked_obj = linked_map.get(room_scene.name)
 
-                row = inner_box.row(align=True)
-                # Walls toggle
-                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_WALLS') else 'CHECKBOX_DEHLT'
-                op = row.operator('home_builder.toggle_linked_room_category', text='Walls', icon=icon)
-                op.object_name = obj.name
-                op.category = 'walls'
-                # Lights toggle
-                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_LIGHTS') else 'CHECKBOX_DEHLT'
-                op = row.operator('home_builder.toggle_linked_room_category', text='Lights', icon=icon)
-                op.object_name = obj.name
-                op.category = 'lights'
-                # Products toggle
-                icon = 'CHECKBOX_HLT' if obj.get('LINKED_INCLUDE_PRODUCTS') else 'CHECKBOX_DEHLT'
-                op = row.operator('home_builder.toggle_linked_room_category', text='Products', icon=icon)
-                op.object_name = obj.name
-                op.category = 'products'
+                # Room header row: checkbox + name + hide/unlink
+                row = box.row(align=True)
+                
+                # Link/unlink toggle checkbox
+                icon = 'CHECKBOX_HLT' if is_linked else 'CHECKBOX_DEHLT'
+                op = row.operator('home_builder.toggle_link_room', text='', icon=icon, depress=is_linked)
+                op.scene_name = room_scene.name
 
-        col = box.column(align=True)
-        col.scale_y = 1.2
-        col.operator('home_builder.link_room', text='Link Room', icon='ADD')
+                if is_linked and linked_obj:
+                    # Room name
+                    row.label(text=room_scene.name)
+
+                    # Hide/show toggle
+                    hide_icon = 'HIDE_ON' if linked_obj.hide_viewport else 'HIDE_OFF'
+                    row.prop(linked_obj, 'hide_viewport', text='', icon=hide_icon, emboss=False)
+
+                    # Expanded section for linked room
+                    inner_box = box.box()
+
+                    # Category toggles
+                    cat_row = inner_box.row(align=True)
+                    for cat_key, cat_label in [('walls', 'Walls'), ('lights', 'Lights'), ('products', 'Products')]:
+                        prop_key = f'LINKED_INCLUDE_{cat_key.upper()}'
+                        cat_icon = 'CHECKBOX_HLT' if linked_obj.get(prop_key) else 'CHECKBOX_DEHLT'
+                        op = cat_row.operator('home_builder.toggle_linked_room_category', text=cat_label, icon=cat_icon)
+                        op.object_name = linked_obj.name
+                        op.category = cat_key
+
+                    # Color picker
+                    color_row = inner_box.row()
+                    color_row.prop(linked_obj, 'color', text='Color')
+                else:
+                    row.label(text=room_scene.name)
 
 
 # -----------------------------------------------------------------------------
