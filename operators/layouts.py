@@ -252,6 +252,10 @@ def recalculate_annotation_sizes_for_scene(scene):
     hb_scene.annotation_dimension_line_thickness = paper_to_world(
         hb_scene.annotation_dim_line_paper_thickness, scale_str)
 
+    # Recalculate dimension tick thickness
+    hb_scene.annotation_dimension_tick_thickness = paper_to_world(
+        hb_scene.annotation_dim_tick_paper_thickness, scale_str)
+
 
 def update_title_block_border(scene):
     """Update title block border to match current page aspect ratio."""

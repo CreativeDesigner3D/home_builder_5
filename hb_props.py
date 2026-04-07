@@ -112,11 +112,12 @@ def update_dimension_tick_length(self, context):
 
 
 def update_dimension_line_thickness(self, context):
-    """Update all dimension line thicknesses in the scene."""
+    """Update all dimension line and tick thicknesses in the scene."""
     for obj in context.scene.objects:
         if obj.get('IS_DIMENSION'):
             dim = hb_types.GeoNodeDimension(obj)
             dim.set_input("Line Thickness", self.annotation_dimension_line_thickness)
+            dim.set_input("Tick Thickness", self.annotation_dimension_tick_thickness)
 
 
 def update_font(self, context):
@@ -623,6 +624,17 @@ class Home_Builder_Scene_Props(PropertyGroup):
         name="Dim Line Thickness (Paper)",
         description="Dimension line thickness on paper in inches",
         default=0.008,  # ~0.2mm fine line
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_tick_paper_thickness: FloatProperty(
+        name="Dim Tick Thickness (Paper)",
+        description="Dimension tick thickness on paper in inches",
+        default=0.012,
         min=0.001,
         max=0.1,
         precision=4,

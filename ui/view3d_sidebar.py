@@ -1187,6 +1187,7 @@ class HOME_BUILDER_PT_annotations_settings(bpy.types.Panel):
             col.prop(hb_scene, "annotation_dim_text_paper_height", text="Dim Text Height")
             col.prop(hb_scene, "annotation_dim_tick_paper_length", text="Dim Tick Length")
             col.prop(hb_scene, "annotation_dim_line_paper_thickness", text="Dim Line Thickness")
+            col.prop(hb_scene, "annotation_dim_tick_paper_thickness", text="Dim Tick Thickness")
         
         # --- World-Space Overrides (always available) ---
         header_text = "World-Space Overrides" if auto_scale else "Lines"
