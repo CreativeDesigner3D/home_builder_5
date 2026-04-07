@@ -444,6 +444,114 @@ def _draw_snap_point(x, y, color, radius, cross_size, diamond=False):
     gpu.state.line_width_set(1.0)
 
 
+def _draw_track_indicators(op, region, context):
+    """Draw acquired track points, hover candidate, and active track lines."""
+    import time
+    rv3d = region.data
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+    tp_color = (1.0, 0.55, 0.0, 0.95)        # orange for acquired track points
+    tp_line_color = (1.0, 0.55, 0.0, 0.7)    # dashed tracking line
+    hover_color = (1.0, 0.55, 0.0, 0.55)     # pending hover
+
+    # Draw acquired track points as orange "+" markers
+    for tp in op.track_points:
+        scr = view3d_utils.location_3d_to_region_2d(region, rv3d, tp)
+        if scr is None:
+            continue
+        size = 7
+        verts = [
+            (scr.x - size, scr.y), (scr.x + size, scr.y),
+            (scr.x, scr.y - size), (scr.x, scr.y + size),
+        ]
+        gpu.state.line_width_set(2.0)
+        shader.bind()
+        shader.uniform_float("color", tp_color)
+        batch = batch_for_shader(shader, 'LINES', {"pos": verts})
+        batch.draw(shader)
+        # Small square outline around the + so it reads as distinct from snap crosshairs
+        s = 9
+        sq = [
+            (scr.x - s, scr.y - s), (scr.x + s, scr.y - s),
+            (scr.x + s, scr.y + s), (scr.x - s, scr.y + s),
+            (scr.x - s, scr.y - s),
+        ]
+        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": sq})
+        batch.draw(shader)
+
+    # Draw hover candidate with dwell-progress arc
+    if op._hover_candidate is not None and op._hover_start_time > 0.0:
+        scr = view3d_utils.location_3d_to_region_2d(region, rv3d, op._hover_candidate)
+        if scr is not None:
+            elapsed = time.time() - op._hover_start_time
+            progress = max(0.0, min(1.0, elapsed / op._hover_dwell))
+            # Full ring (faint)
+            segs = 24
+            ring = []
+            for i in range(segs + 1):
+                a = 2 * math.pi * i / segs
+                ring.append((scr.x + 10 * math.cos(a), scr.y + 10 * math.sin(a)))
+            gpu.state.line_width_set(1.5)
+            shader.bind()
+            shader.uniform_float("color", (1.0, 0.55, 0.0, 0.3))
+            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": ring})
+            batch.draw(shader)
+            # Progress arc (bright, from top, clockwise)
+            arc_segs = max(2, int(segs * progress))
+            arc = []
+            for i in range(arc_segs + 1):
+                a = -math.pi / 2 + 2 * math.pi * (i / segs)
+                arc.append((scr.x + 10 * math.cos(a), scr.y + 10 * math.sin(a)))
+            gpu.state.line_width_set(2.5)
+            shader.uniform_float("color", hover_color)
+            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": arc})
+            batch.draw(shader)
+
+    # Draw dashed lines for active track axes (axis-aligned, fixed in world space)
+    if op._active_track_lines:
+        gpu.state.line_width_set(1.5)
+        for tp, axis in op._active_track_lines:
+            # Build two world points far apart along the relevant world axis
+            # axis 'x' = vertical line of constant world X (varies in Y)
+            # axis 'y' = horizontal line of constant world Y (varies in X)
+            extent = 1000.0  # meters - far enough to cover any view
+            if axis == 'x':
+                wp1 = Vector((tp.x, tp.y - extent, 0))
+                wp2 = Vector((tp.x, tp.y + extent, 0))
+            else:
+                wp1 = Vector((tp.x - extent, tp.y, 0))
+                wp2 = Vector((tp.x + extent, tp.y, 0))
+            sp1 = view3d_utils.location_3d_to_region_2d(region, rv3d, wp1)
+            sp2 = view3d_utils.location_3d_to_region_2d(region, rv3d, wp2)
+            if sp1 is None or sp2 is None:
+                continue
+            p1 = Vector((sp1.x, sp1.y))
+            p2 = Vector((sp2.x, sp2.y))
+            direction = p2 - p1
+            if direction.length < 1:
+                continue
+            direction.normalize()
+            total = (p2 - p1).length
+            # Build dashed segments along the projected line
+            dash = 8
+            gap = 5
+            step = dash + gap
+            verts = []
+            d = 0.0
+            while d < total:
+                a = p1 + direction * d
+                b = p1 + direction * min(d + dash, total)
+                verts.append((a.x, a.y))
+                verts.append((b.x, b.y))
+                d += step
+            shader.bind()
+            shader.uniform_float("color", tp_line_color)
+            batch = batch_for_shader(shader, 'LINES', {"pos": verts})
+            batch.draw(shader)
+
+    gpu.state.line_width_set(1.0)
+
+
 def draw_wall_snap_indicator(op, context):
     """GPU draw callback: renders snap indicators during wall drawing."""
     region = op.region
@@ -530,6 +638,9 @@ def draw_wall_snap_indicator(op, context):
                 drawing_gap=gap, gap_direction=gap_dir)
         else:
             _draw_snap_point(end_2d.x, end_2d.y, (1.0, 1.0, 1.0, 0.7), 8, 6)
+
+    # Track indicators (acquired points, hover candidate, active axis lines)
+    _draw_track_indicators(op, region, context)
 
     gpu.state.blend_set('NONE')
 
@@ -1117,21 +1228,174 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 text_size = max(units.inch(4), min(units.inch(24), text_size))
                 self.dim.set_input("Text Size", text_size)
 
+    # ========== Wall Tracking ==========
+    
+    def find_nearby_endpoint_for_tracking(self, context, threshold=0.15):
+        """Find a nearby wall endpoint for track point acquisition.
+        
+        Like find_nearby_wall_endpoint but only skips the current wall being
+        drawn so we can track off the previously drawn wall too.
+        """
+        if not self.hit_location:
+            return None
+        mouse_loc = Vector((self.hit_location[0], self.hit_location[1], 0))
+        best_loc = None
+        best_dist = threshold
+        for obj in context.view_layer.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            if self.current_wall and obj == self.current_wall.obj:
+                continue
+            start, end = get_wall_endpoints(obj)
+            for pt in (start, end):
+                pt_3d = Vector((pt.x, pt.y, 0))
+                d = (mouse_loc - pt_3d).length
+                if d < best_dist:
+                    best_dist = d
+                    best_loc = pt_3d
+        return best_loc
+    
+    def find_existing_track_point_at(self, loc, eps=0.01):
+        """Return an existing track point near loc, or None."""
+        if loc is None:
+            return None
+        for tp in self.track_points:
+            if (tp - loc).length < eps:
+                return tp
+        return None
+    
+    def update_track_hover(self, context):
+        """Detect dwell-based track point acquisition.
+        
+        Called every modal event. If the cursor stays on an endpoint that
+        is not already a track point for self._hover_dwell seconds, that
+        endpoint is promoted to a track point.
+        """
+        import time
+        now = time.time()
+        candidate = self.find_nearby_endpoint_for_tracking(context)
+        if candidate is None:
+            self._hover_candidate = None
+            self._hover_start_time = 0.0
+            return
+        if self.find_existing_track_point_at(candidate) is not None:
+            # Already acquired - clear hover so we don't try to re-add
+            self._hover_candidate = None
+            self._hover_start_time = 0.0
+            return
+        if self._hover_candidate is None or (self._hover_candidate - candidate).length > 0.001:
+            self._hover_candidate = candidate.copy()
+            self._hover_start_time = now
+            return
+        if now - self._hover_start_time >= self._hover_dwell:
+            self.track_points.append(candidate.copy())
+            self._hover_candidate = None
+            self._hover_start_time = 0.0
+    
+    def acquire_or_remove_track_point_at_cursor(self, context):
+        """T key handler: acquire endpoint at cursor, or remove if already a track point."""
+        candidate = self.find_nearby_endpoint_for_tracking(context)
+        if candidate is None:
+            return False
+        existing = self.find_existing_track_point_at(candidate)
+        if existing is not None:
+            self.track_points.remove(existing)
+        else:
+            self.track_points.append(candidate.copy())
+        self._hover_candidate = None
+        self._hover_start_time = 0.0
+        return True
+    
+    def apply_track_snap_to_position(self, context, world_pos):
+        """Apply tracking to a world position.
+        
+        Returns (new_pos, snapped_axes) where snapped_axes is a list of
+        (track_point, 'x'|'y') tuples describing what was snapped.
+        """
+        if not self.track_points or self.region is None or self.mouse_pos is None:
+            return Vector(world_pos), []
+        region = self.region
+        rv3d = region.data
+        mouse2d = Vector((self.mouse_pos.x, self.mouse_pos.y))
+        threshold = self._track_pixel_threshold
+        
+        best_x = None
+        best_y = None
+        for tp in self.track_points:
+            # Vertical line through tp.x: closest point at (tp.x, world_pos.y, 0)
+            cp = Vector((tp.x, world_pos.y, 0))
+            scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
+            if scr is not None:
+                d = (mouse2d - scr).length
+                if d < threshold and (best_x is None or d < best_x[0]):
+                    best_x = (d, tp)
+            # Horizontal line through tp.y
+            cp = Vector((world_pos.x, tp.y, 0))
+            scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
+            if scr is not None:
+                d = (mouse2d - scr).length
+                if d < threshold and (best_y is None or d < best_y[0]):
+                    best_y = (d, tp)
+        
+        new_pos = Vector(world_pos)
+        snapped_axes = []
+        if best_x is not None:
+            new_pos.x = best_x[1].x
+            snapped_axes.append((best_x[1], 'x'))
+        if best_y is not None:
+            new_pos.y = best_y[1].y
+            snapped_axes.append((best_y[1], 'y'))
+        return new_pos, snapped_axes
+    
+    def clear_track_points(self):
+        """Clear all acquired track points and hover state."""
+        self.track_points = []
+        self._hover_candidate = None
+        self._hover_start_time = 0.0
+        self._active_track_lines = []
+    
+    def _remove_track_timer(self, context):
+        """Remove the modal timer used for dwell detection."""
+        if getattr(self, '_track_timer', None) is not None:
+            try:
+                context.window_manager.event_timer_remove(self._track_timer)
+            except Exception:
+                pass
+            self._track_timer = None
+    
+    # ========== End Wall Tracking ==========
+    
     def set_wall_position_from_mouse(self):
         """Update wall position/rotation based on mouse location."""
+        # Apply track snapping to cursor (skipped if a higher-priority snap is active)
+        higher_priority_snap = bool(self.snap_wall and (self.snap_endpoint or self.snap_surface))
+        if self.hit_location and not higher_priority_snap:
+            eff_vec, axes = self.apply_track_snap_to_position(
+                bpy.context, Vector(self.hit_location))
+            self._active_track_lines = axes
+        else:
+            eff_vec = Vector(self.hit_location) if self.hit_location else None
+            self._active_track_lines = []
+        track_active = bool(self._active_track_lines)
+
         if not self.has_start_point:
             # First point - move wall origin
-            if self.hit_location:
-                if self.snap_wall and (self.snap_endpoint or self.snap_surface):
+            if eff_vec is not None:
+                if higher_priority_snap:
                     # Use exact snap position (no grid snap) for wall face/endpoint snaps
                     self.current_wall.obj.location = Vector(self.hit_location)
+                elif track_active:
+                    # Track snap - use exact tracked position, no grid snap
+                    self.current_wall.obj.location = eff_vec
                 else:
-                    snapped_loc = hb_snap.snap_vector_to_grid(Vector(self.hit_location), fine=self.fine_snap)
+                    snapped_loc = hb_snap.snap_vector_to_grid(eff_vec, fine=self.fine_snap)
                     self.current_wall.obj.location = snapped_loc
         else:
             # Drawing length - calculate from start point
-            x = self.hit_location[0] - self.start_point[0]
-            y = self.hit_location[1] - self.start_point[1]
+            if eff_vec is None:
+                return
+            x = eff_vec.x - self.start_point[0]
+            y = eff_vec.y - self.start_point[1]
             
             if self.free_rotation:
                 # Free rotation mode - snap to 15° increments
@@ -1139,7 +1403,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 snap_angle = round(math.degrees(angle) / 15) * 15
                 self.current_wall.obj.rotation_euler.z = math.radians(snap_angle)
                 length = math.sqrt(x * x + y * y)
-                self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length, fine=self.fine_snap))
+                if track_active:
+                    self.current_wall.set_input('Length', length)
+                else:
+                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(length, fine=self.fine_snap))
             else:
                 # Default mode - snap to orthogonal (90°) directions
                 if abs(x) > abs(y):
@@ -1147,13 +1414,19 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         self.current_wall.obj.rotation_euler.z = math.radians(0)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(180)
-                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x), fine=self.fine_snap))
+                    if track_active:
+                        self.current_wall.set_input('Length', abs(x))
+                    else:
+                        self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(x), fine=self.fine_snap))
                 else:
                     if y > 0:
                         self.current_wall.obj.rotation_euler.z = math.radians(90)
                     else:
                         self.current_wall.obj.rotation_euler.z = math.radians(-90)
-                    self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y), fine=self.fine_snap))
+                    if track_active:
+                        self.current_wall.set_input('Length', abs(y))
+                    else:
+                        self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y), fine=self.fine_snap))
 
             # Check for end snap to existing wall faces
             snap_len, snap_wall_obj, snap_face = self.find_end_wall_snap(bpy.context)
@@ -1254,6 +1527,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if self.confirmed_wall_count == 1:
             self.first_wall = self.current_wall
         self.previous_wall = self.current_wall
+
+        # Auto-clear track points after each wall is confirmed
+        self.clear_track_points()
+
         self.create_wall(bpy.context)
 
     def _show_wall_objects(self):
@@ -1282,14 +1559,22 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             close_hint = " | C: close room" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
             snap_hint = f" [Snap: {self.end_snap_face} face]" if self.end_snap_wall else ""
             fine_hint = " [Fine: 1/16\"]" if self.fine_snap else ""
-            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint}{fine_hint} | {rotation_mode} | Shift: fine snap | Alt: toggle rotation | Type for exact | Click to place{close_hint}"
+            tp_count = len(self.track_points)
+            track_hint = f" [Track: {tp_count}]" if tp_count else ""
+            if self._active_track_lines:
+                track_hint += " [TRACKING]"
+            text = f"Length: {length_str} | Angle: {angle_deg}°{snap_hint}{fine_hint}{track_hint} | {rotation_mode} | Shift: fine | Alt: rotation | T: track | Click to place{close_hint}"
         else:
+            tp_count = len(self.track_points)
+            track_hint = f" [Track: {tp_count}]" if tp_count else ""
+            if self._active_track_lines:
+                track_hint += " [TRACKING]"
             if self.snap_wall and self.snap_endpoint:
-                text = "Click to connect to wall endpoint | Right-click to cancel | Esc to cancel"
+                text = f"Click to connect to wall endpoint{track_hint} | T: track | Esc to cancel"
             elif self.snap_wall and self.snap_surface:
-                text = f"Click to start on wall ({self.snap_surface} face) | Right-click to cancel | Esc to cancel"
+                text = f"Click to start on wall ({self.snap_surface} face){track_hint} | T: track | Esc to cancel"
             else:
-                text = "Click to place first point | Right-click to cancel | Esc to cancel"
+                text = f"Click to place first point{track_hint} | T: track point (hover 0.5s or press T) | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
 
@@ -1343,6 +1628,17 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Add GPU draw handler for snap indicator
         self._snap_draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             draw_wall_snap_indicator, (self, context), 'WINDOW', 'POST_PIXEL')
+
+        # Wall tracking state (object snap tracking)
+        self.track_points = []
+        self._hover_candidate = None
+        self._hover_start_time = 0.0
+        self._hover_dwell = 0.5
+        self._track_pixel_threshold = 8
+        self._active_track_lines = []
+        # Timer for dwell detection (fires even when mouse is still)
+        self._track_timer = context.window_manager.event_timer_add(
+            0.05, window=context.window)
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -1419,6 +1715,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Track shift state for fine snap
         self.fine_snap = event.shift
 
+        # Update wall tracking hover/dwell detection
+        self.update_track_hover(context)
+
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
             self.set_wall_position_from_mouse()
@@ -1456,6 +1755,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Clear any wall highlight
             self.clear_wall_highlight()
             self._remove_snap_indicator()
+            self._remove_track_timer(context)
             # Remove current unfinished wall
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
@@ -1466,6 +1766,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Clear any wall highlight
             self.clear_wall_highlight()
             self._remove_snap_indicator()
+            self._remove_track_timer(context)
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
@@ -1476,9 +1777,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 self.close_room(context)
                 self.clear_wall_highlight()
                 self._remove_snap_indicator()
+                self._remove_track_timer(context)
                 hb_placement.clear_header_text(context)
                 return {'FINISHED'}
             return {'RUNNING_MODAL'}
+
+        # T key - acquire/remove track point at cursor
+        if event.type == 'T' and event.value == 'PRESS':
+            if self.placement_state != hb_placement.PlacementState.TYPING:
+                self.acquire_or_remove_track_point_at_cursor(context)
+                return {'RUNNING_MODAL'}
 
         # Alt key toggles free rotation mode
         if event.type == 'LEFT_ALT' and event.value == 'PRESS':
