@@ -1108,7 +1108,22 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         """Position window on the selected wall with gap-aware snapping."""
         if not self.selected_wall or not self.window:
             return
-            
+
+        # Two-point width mode, phase 2: position is anchored to a captured
+        # start point on a specific wall. If the cursor wandered to a
+        # different wall, do not update — keep the window pinned to the
+        # original wall until the user soft-undoes or confirms.
+        if (self.define_width_mode and self.width_start_set
+                and self.width_start_wall is not None):
+            if self.width_start_wall.name in bpy.data.objects:
+                self.selected_wall = self.width_start_wall
+                self._set_position_two_point_phase2()
+                return
+            # Start wall was deleted out from under us; reset phase
+            self.width_start_set = False
+            self.width_start_wall = None
+            self.width_locked_in_phase2 = False
+
         props = bpy.context.scene.home_builder
         wall = hb_types.GeoNodeWall(self.selected_wall)
         self.wall_length = wall.get_input('Length')
@@ -1155,6 +1170,105 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         # Update placement dimensions (account for window height from floor)
         self.update_placement_dimensions(bpy.context, window_width, window_height, wall_thickness, window_z)
 
+    def _set_position_two_point_phase2(self):
+        """Position the window using start point + cursor/typed end point."""
+        props = bpy.context.scene.home_builder
+        wall = hb_types.GeoNodeWall(self.selected_wall)
+        self.wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        window_height = self.window.get_input('Dim Z')
+        window_z = props.window_height_from_floor
+
+        # Cursor in wall-local X
+        world_loc = Vector(self.hit_location)
+        local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
+        cursor_x = local_loc.x
+
+        # Direction follows the cursor relative to the start point
+        delta = cursor_x - self.width_start_x
+        if abs(delta) > 0.001:
+            self.last_width_direction = 1 if delta > 0 else -1
+
+        # Determine width: cursor-driven unless a typed value locked it
+        if self.width_locked_in_phase2:
+            width = self.get_placed_object_width()
+        else:
+            width = abs(delta)
+            width = hb_snap.snap_value_to_grid(width)
+            if width < 0.001:
+                width = 0.001
+            self.set_placed_object_width(width)
+
+        # Clamp width to the gap that contains the start point
+        gap_start, gap_end = self.width_start_gap
+        max_width = max(0.0, gap_end - gap_start)
+        if width > max_width:
+            width = max_width
+            self.set_placed_object_width(width)
+
+        # Compute placement_x using direction
+        if self.last_width_direction > 0:
+            snap_x = self.width_start_x
+        else:
+            snap_x = self.width_start_x - width
+
+        # Clamp to the gap
+        snap_x = max(gap_start, min(snap_x, gap_end - width))
+
+        self.placement_x = snap_x
+        self.gap_left_boundary = gap_start
+        self.gap_right_boundary = gap_end
+
+        # Parent and position
+        self.window.obj.parent = self.selected_wall
+        self.window.obj.location.x = snap_x
+        self.window.obj.location.y = 0
+        self.window.obj.location.z = window_z
+        self.window.obj.rotation_euler = (0, 0, 0)
+        self.window.set_input("Dim Y", wall_thickness)
+
+        self.update_placement_dimensions(
+            bpy.context, width, window_height, wall_thickness, window_z)
+
+    def _update_phase1_dimensions(self, context):
+        """Show gap-aware offset dimensions at the cursor while picking the
+        start point of a two-point placement. The window itself stays hidden;
+        only the left/right offset dims are drawn so the user can pick an
+        exact start position."""
+        if not self.selected_wall or not self.window:
+            self.hide_placement_dimensions()
+            return
+
+        props = context.scene.home_builder
+        wall = hb_types.GeoNodeWall(self.selected_wall)
+        self.wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        window_height = self.window.get_input('Dim Z')
+        window_z = props.window_height_from_floor
+
+        # Cursor in wall-local X, snapped to grid
+        world_loc = Vector(self.hit_location)
+        local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
+        cursor_x = hb_snap.snap_value_to_grid(local_loc.x)
+
+        # Find the gap that contains the cursor (search with zero width so the
+        # gap boundaries are not shrunk by an imagined object).
+        gap_start, gap_end, _ = self.find_placement_gap(
+            self.selected_wall, cursor_x, 0.0, exclude_obj=self.window.obj)
+        cursor_x = max(gap_start, min(cursor_x, gap_end))
+
+        self.placement_x = cursor_x
+        self.gap_left_boundary = gap_start
+        self.gap_right_boundary = gap_end
+
+        # Reuse update_placement_dimensions with obj_width = 0 so the left and
+        # right offsets are measured from the cursor as a single point.
+        self.update_placement_dimensions(
+            context, 0.0, window_height, wall_thickness, window_z)
+        # The total-width dim is meaningless for a zero-width point; hide it.
+        if self.dim_total_width:
+            self.dim_total_width.obj.hide_set(True)
+
     def set_position_free(self):
         """Position window freely when not over a wall."""
         if self.window and self.hit_location:
@@ -1176,6 +1290,7 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
 
     def update_header(self, context):
         """Update header text with instructions."""
+        mode_tag = " [2-Point]" if self.define_width_mode else ""
         if self.placement_state == hb_placement.PlacementState.TYPING:
             target_name = {
                 hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
@@ -1183,13 +1298,19 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
                 hb_placement.TypingTarget.WIDTH: "Width",
                 hb_placement.TypingTarget.HEIGHT: "Height",
             }.get(self.typing_target, "Value")
-            text = f"{target_name}: {self.typed_value}_ | Enter to confirm | ←/→ offset | W width | H height | Esc cancel"
+            text = f"{target_name}: {self.typed_value}_ | Enter to confirm | W width | H height | Esc cancel{mode_tag}"
+        elif self.define_width_mode and self.width_start_set:
+            width_str = units.unit_to_string(context.scene.unit_settings, self.get_placed_object_width())
+            lock_hint = " [W locked]" if self.width_locked_in_phase2 else ""
+            text = f"{mode_tag} Click end point | Width: {width_str}{lock_hint} | W: type width | Right-click: re-pick start | D: exit 2-point | Esc cancel"
+        elif self.define_width_mode:
+            text = f"{mode_tag} Click start point on wall | W: type width | D: exit 2-point | Esc cancel"
         elif self.selected_wall:
             offset_str = self.get_offset_display(context)
             width_str = units.unit_to_string(context.scene.unit_settings, self.get_placed_object_width())
-            text = f"{offset_str} | Width: {width_str} | ←/→ offset | W width | Click to place | Esc cancel"
+            text = f"{offset_str} | Width: {width_str} | ←/→ offset | W width | D: 2-point width | Click to place | Esc cancel"
         else:
-            text = "Move over a wall to place window | Esc to cancel"
+            text = "Move over a wall to place window | D: 2-point width | Esc to cancel"
         
         hb_placement.draw_header_text(context, text)
 
@@ -1203,6 +1324,15 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         self.offset_from_right = False
         self.position_locked = False
 
+        # Two-point width mode (toggled with D)
+        self.define_width_mode = False
+        self.width_start_set = False
+        self.width_start_x = 0.0
+        self.width_start_wall = None
+        self.width_start_gap = (0.0, 0.0)
+        self.last_width_direction = 1
+        self.width_locked_in_phase2 = False
+
         self.create_window(context)
 
         context.window_manager.modal_handler_add(self)
@@ -1214,8 +1344,19 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
 
-        # Let mixin handle typing events first
+        # Let mixin handle typing events first.
+        # Capture pre/post state so we can detect when the user finishes
+        # typing a WIDTH value during two-point phase 2 — that should lock
+        # the width so the cursor only controls direction, not magnitude.
+        was_typing_width = (
+            self.placement_state == hb_placement.PlacementState.TYPING
+            and self.typing_target == hb_placement.TypingTarget.WIDTH
+        )
         if self.handle_typing_event(event):
+            if (was_typing_width
+                    and self.placement_state != hb_placement.PlacementState.TYPING
+                    and self.define_width_mode and self.width_start_set):
+                self.width_locked_in_phase2 = True
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
@@ -1232,11 +1373,20 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
 
+        # In two-point phase 1 (mode on, no start point yet) hide the window
+        # so the user picks the start without a misleading preview. The
+        # offset dimensions are still shown so the user can see exactly
+        # where the start point will land relative to the gap edges.
+        in_phase1 = self.define_width_mode and not self.width_start_set
+        if in_phase1:
+            self.window.obj.hide_set(True)
+            self._update_phase1_dimensions(context)
+
         # Update position - allow mouse movement unless position is locked by offset input
         typing_offset = (self.placement_state == hb_placement.PlacementState.TYPING
                          and self.typing_target in (hb_placement.TypingTarget.OFFSET_X,
                                                     hb_placement.TypingTarget.OFFSET_RIGHT))
-        if not typing_offset and not self.position_locked:
+        if not typing_offset and not self.position_locked and not in_phase1:
             if self.selected_wall:
                 self.set_position_on_wall()
             else:
@@ -1245,9 +1395,29 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
 
         self.update_header(context)
 
-        # Left click - place window
+        # Left click - place window (or capture start in two-point phase 1)
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.selected_wall:
+                # Two-point mode, phase 1: capture start point and switch to phase 2
+                if self.define_width_mode and not self.width_start_set:
+                    world_loc = Vector(self.hit_location)
+                    local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
+                    start_x = hb_snap.snap_value_to_grid(local_loc.x)
+                    # Find the gap that contains the start point
+                    gap_start, gap_end, _ = self.find_placement_gap(
+                        self.selected_wall, start_x, 0.0,
+                        exclude_obj=self.window.obj)
+                    # Clamp start_x into the gap (in case of edge nudges)
+                    start_x = max(gap_start, min(start_x, gap_end))
+                    self.width_start_x = start_x
+                    self.width_start_wall = self.selected_wall
+                    self.width_start_gap = (gap_start, gap_end)
+                    self.width_start_set = True
+                    self.width_locked_in_phase2 = False
+                    self.last_width_direction = 1
+                    return {'RUNNING_MODAL'}
+
+                # Otherwise: confirm placement (single-click or two-point phase 2)
                 if self.window.obj in self.placement_objects:
                     self.placement_objects.remove(self.window.obj)
                 # Delete placement dimensions
@@ -1261,11 +1431,31 @@ class home_builder_doors_windows_OT_place_window(bpy.types.Operator, WallObjectP
                 self.report({'WARNING'}, "Window must be placed on a wall")
                 return {'RUNNING_MODAL'}
 
+        # Right click in two-point phase 2 = soft undo (re-pick start point)
+        if (event.type == 'RIGHTMOUSE' and event.value == 'PRESS'
+                and self.define_width_mode and self.width_start_set):
+            self.width_start_set = False
+            self.width_start_wall = None
+            self.width_locked_in_phase2 = False
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+
         # Right click or Escape - cancel
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
+
+        # D key toggles two-point width mode
+        if event.type == 'D' and event.value == 'PRESS':
+            if self.placement_state != hb_placement.PlacementState.TYPING:
+                self.define_width_mode = not self.define_width_mode
+                if not self.define_width_mode:
+                    self.width_start_set = False
+                    self.width_start_wall = None
+                    self.width_locked_in_phase2 = False
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
 
         if hb_snap.event_is_pass_through(event):
             return {'PASS_THROUGH'}
