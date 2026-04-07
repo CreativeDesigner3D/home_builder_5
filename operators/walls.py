@@ -620,7 +620,11 @@ def draw_wall_snap_indicator(op, context):
             gpu.state.blend_set('NONE')
             return
 
-        if op.end_snap_wall:
+        if op.close_snap_active:
+            # Closing the room - bright green diamond at the start point
+            color = (0.2, 1.0, 0.2, 0.95)
+            _draw_snap_point(end_2d.x, end_2d.y, color, 14, 9, diamond=True)
+        elif op.end_snap_wall:
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
             # Draw left/right dimensions along the target wall face
@@ -1394,6 +1398,33 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Drawing length - calculate from start point
             if eff_vec is None:
                 return
+
+            # Close-room snap: if cursor is near the first wall's start point
+            # and we have 2+ confirmed walls, snap the end of this wall to it
+            # and arm close-on-click.
+            self.close_snap_active = False
+            if (self.first_start_point is not None
+                    and self.confirmed_wall_count >= 2
+                    and self.first_wall is not None):
+                close_threshold = 0.15
+                d = (Vector((eff_vec.x, eff_vec.y, 0))
+                     - Vector((self.first_start_point.x, self.first_start_point.y, 0))).length
+                if d < close_threshold:
+                    cx = self.first_start_point.x - self.start_point[0]
+                    cy = self.first_start_point.y - self.start_point[1]
+                    close_len = math.sqrt(cx * cx + cy * cy)
+                    if close_len > 0.001:
+                        self.current_wall.obj.rotation_euler.z = math.atan2(cy, cx)
+                        self.current_wall.set_input('Length', close_len)
+                        self.close_snap_active = True
+                        # Clear any face-snap state so close takes priority
+                        if self.end_snap_wall:
+                            self.end_snap_wall = None
+                            self.end_snap_face = None
+                            self.clear_wall_highlight()
+                        self.update_dimension(bpy.context)
+                        return
+
             x = eff_vec.x - self.start_point[0]
             y = eff_vec.y - self.start_point[1]
             
@@ -1556,8 +1587,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             length_str = units.unit_to_string(context.scene.unit_settings, length)
             angle_deg = round(math.degrees(self.current_wall.obj.rotation_euler.z))
             rotation_mode = "Free (15°)" if self.free_rotation else "Ortho (90°)"
-            close_hint = " | C: close room" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
+            close_hint = " | C: close room (or click start)" if self.confirmed_wall_count >= 2 and self.first_wall is not None else ""
             snap_hint = f" [Snap: {self.end_snap_face} face]" if self.end_snap_wall else ""
+            if self.close_snap_active:
+                snap_hint = " [CLOSE]"
             fine_hint = " [Fine: 1/16\"]" if self.fine_snap else ""
             tp_count = len(self.track_points)
             track_hint = f" [Track: {tp_count}]" if tp_count else ""
@@ -1628,6 +1661,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Add GPU draw handler for snap indicator
         self._snap_draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             draw_wall_snap_indicator, (self, context), 'WINDOW', 'POST_PIXEL')
+
+        # Close-room snap state (active when cursor is near first wall's start point)
+        self.close_snap_active = False
 
         # Wall tracking state (object snap tracking)
         self.track_points = []
@@ -1746,6 +1782,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.has_start_point = True
                     self._show_wall_objects()
             else:
+                # If close-snap is active, close the room instead of confirming
+                if self.close_snap_active and self.confirmed_wall_count >= 2 and self.first_wall is not None:
+                    self.close_room(context)
+                    self.clear_wall_highlight()
+                    self._remove_snap_indicator()
+                    self._remove_track_timer(context)
+                    hb_placement.clear_header_text(context)
+                    return {'FINISHED'}
                 # Confirm wall and start next
                 self.confirm_current_wall()
             return {'RUNNING_MODAL'}
