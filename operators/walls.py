@@ -2953,18 +2953,22 @@ class home_builder_walls_OT_apply_wall_material(bpy.types.Operator):
 
 
 class home_builder_walls_OT_delete_wall(bpy.types.Operator):
-    """Delete a wall and properly disconnect from adjacent walls"""
+    """Delete selected walls and properly disconnect from adjacent walls"""
     bl_idname = "home_builder_walls.delete_wall"
     bl_label = "Delete Wall"
-    bl_description = "Delete the selected wall, removing all children and disconnecting from adjacent walls"
+    bl_description = "Delete the selected wall(s), removing all children and disconnecting from adjacent walls"
     bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls, context):
+        for obj in context.selected_objects:
+            if obj.get('IS_WALL_BP'):
+                return True
+            if obj.parent and obj.parent.get('IS_WALL_BP'):
+                return True
         obj = context.active_object
         if obj and obj.get('IS_WALL_BP'):
             return True
-        # Check if parent is a wall
         if obj and obj.parent and obj.parent.get('IS_WALL_BP'):
             return True
         return False
@@ -2977,12 +2981,23 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
             return obj.parent
         return None
 
-    def execute(self, context):
-        wall_bp = self.get_wall_bp(context.active_object)
-        if not wall_bp:
-            self.report({'WARNING'}, "No wall selected")
-            return {'CANCELLED'}
+    def collect_selected_wall_bps(self, context):
+        """Return a list of unique wall BP objects from the current selection."""
+        wall_bps = []
+        seen = set()
+        sources = list(context.selected_objects)
+        if context.active_object and context.active_object not in sources:
+            sources.append(context.active_object)
+        for obj in sources:
+            wall_bp = self.get_wall_bp(obj)
+            if wall_bp is not None and wall_bp.name not in seen:
+                seen.add(wall_bp.name)
+                wall_bps.append(wall_bp)
+        return wall_bps
 
+    def _delete_single_wall(self, wall_bp):
+        """Delete one wall, disconnect neighbors, and return (left, right)
+        adjacent walls (which may have been deleted earlier in the batch)."""
         wall = hb_types.GeoNodeWall(wall_bp)
 
         # Find connected walls before we start deleting
@@ -3015,20 +3030,52 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
         for child in wall_bp.children_recursive:
             objects_to_delete.add(child)
 
-        # Deselect all first
-        bpy.ops.object.select_all(action='DESELECT')
-
         # Delete all collected objects
         for obj in objects_to_delete:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-        # Update miter angles on remaining adjacent walls
-        if left_wall and left_wall.obj.name in bpy.data.objects:
-            calculate_wall_miter_angles(left_wall.obj)
-        if right_wall and right_wall.obj.name in bpy.data.objects:
-            calculate_wall_miter_angles(right_wall.obj)
+        return left_wall, right_wall
 
-        self.report({'INFO'}, "Wall deleted")
+    def execute(self, context):
+        wall_bps = self.collect_selected_wall_bps(context)
+        if not wall_bps:
+            self.report({'WARNING'}, "No wall selected")
+            return {'CANCELLED'}
+
+        # Snapshot the names of walls slated for deletion so we can avoid
+        # recomputing miters on neighbors that are also being deleted.
+        deleting_names = {wbp.name for wbp in wall_bps}
+        neighbors_to_remiter = set()
+
+        # Deselect all once before deleting so per-wall ops do not fight selection
+        bpy.ops.object.select_all(action='DESELECT')
+
+        deleted_count = 0
+        for wall_bp in wall_bps:
+            # Wall may have been removed indirectly (shouldn't happen for top-level
+            # wall BPs, but be defensive).
+            if wall_bp.name not in bpy.data.objects:
+                continue
+            left_wall, right_wall = self._delete_single_wall(wall_bp)
+            deleted_count += 1
+            for nb in (left_wall, right_wall):
+                if nb is None:
+                    continue
+                if nb.obj.name in deleting_names:
+                    continue
+                if nb.obj.name in bpy.data.objects:
+                    neighbors_to_remiter.add(nb.obj.name)
+
+        # Update miter angles on surviving neighbors
+        for name in neighbors_to_remiter:
+            obj = bpy.data.objects.get(name)
+            if obj is not None:
+                calculate_wall_miter_angles(obj)
+
+        if deleted_count == 1:
+            self.report({'INFO'}, "Wall deleted")
+        else:
+            self.report({'INFO'}, f"{deleted_count} walls deleted")
         return {'FINISHED'}
 
     def invoke(self, context, event):
