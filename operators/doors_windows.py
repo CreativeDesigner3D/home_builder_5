@@ -443,6 +443,45 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         
         return mod
 
+    def find_nearest_wall_to_cursor(self, threshold=0.3):
+        """Find the closest wall to the current hit location in 2D plan-view
+        distance. Used as a fallback when the raycast misses a wall directly,
+        which gives placement a softer "snap zone" around each wall and
+        eliminates jitter at the wall's edge.
+
+        Returns the wall BP object or None.
+        """
+        if not self.hit_location:
+            return None
+        cursor_xy = Vector((self.hit_location[0], self.hit_location[1]))
+        best_wall = None
+        best_dist = threshold
+        placed = self.get_placed_object()
+        for obj in bpy.context.view_layer.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            try:
+                wall = hb_types.GeoNodeWall(obj)
+                wall_length = wall.get_input('Length')
+            except Exception:
+                continue
+            wm = obj.matrix_world
+            wall_origin = Vector((wm[0][3], wm[1][3]))
+            wall_dir_2d = Vector((wm[0][0], wm[1][0]))
+            if wall_dir_2d.length < 0.0001:
+                continue
+            wall_dir_2d.normalize()
+            # Project cursor onto wall's local X axis, clamped to wall length
+            to_cursor = cursor_xy - wall_origin
+            along = to_cursor.dot(wall_dir_2d)
+            along_clamped = max(0.0, min(wall_length, along))
+            closest = wall_origin + wall_dir_2d * along_clamped
+            dist = (cursor_xy - closest).length
+            if dist < best_dist:
+                best_dist = dist
+                best_wall = obj
+        return best_wall
+
     # ========== Two-Point Width Mode (D key) ==========
 
     def init_two_point_state(self):
@@ -891,6 +930,15 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
             self.selected_wall = self.hit_object
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
+        else:
+            # 2D proximity fallback: if the raycast missed a wall, snap to the
+            # nearest wall in plan-view distance. Eliminates jitter at the
+            # wall's edge where the raycast may flicker between wall/floor.
+            nearby_wall = self.find_nearest_wall_to_cursor()
+            if nearby_wall is not None:
+                self.selected_wall = nearby_wall
+                wall = hb_types.GeoNodeWall(self.selected_wall)
+                self.wall_length = wall.get_input('Length')
 
         # Two-point phase 2: pin the wall to the captured start wall so the
         # placed object stays anchored even if the cursor wanders off the wall.
