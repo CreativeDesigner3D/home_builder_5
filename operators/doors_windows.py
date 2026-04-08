@@ -1,4 +1,8 @@
 import bpy
+import gpu
+import blf
+from gpu_extras.batch import batch_for_shader
+from bpy_extras import view3d_utils
 from .. import hb_types, hb_snap, hb_placement, units
 import math
 from mathutils import Vector
@@ -17,6 +21,167 @@ DOUBLE_DOOR_SWINGS = [
     ('Inside',  {'Swing Inside': True,  'Is Double': True}),
     ('Outside', {'Swing Inside': False, 'Is Double': True}),
 ]
+
+
+def _draw_placement_dim_text(x, y, text, color):
+    """Draw centered text at screen position for placement dimensions."""
+    font_id = 0
+    blf.size(font_id, 13)
+    blf.color(font_id, *color)
+    w, h = blf.dimensions(font_id, text)
+    blf.position(font_id, x - w / 2, y - h / 2, 0)
+    blf.draw(font_id, text)
+
+
+def _draw_placement_dimensions(op):
+    """GPU draw callback: renders placement preview dimensions for door/window placement.
+    Reads live state from the operator every frame."""
+    if not getattr(op, '_dims_visible', False):
+        return
+    wall_obj = getattr(op, 'selected_wall', None)
+    if wall_obj is None:
+        return
+    try:
+        if wall_obj.name not in bpy.data.objects:
+            return
+    except (ReferenceError, AttributeError):
+        return
+
+    region = getattr(op, 'region', None)
+    if region is None:
+        return
+    rv3d = region.data
+    if rv3d is None:
+        return
+
+    placed = op.get_placed_object()
+    if placed is None:
+        return
+
+    obj_height = op.get_placed_object_height()
+    placement_x = op.placement_x
+    gap_left = op.gap_left_boundary
+    gap_right = op.gap_right_boundary
+    z_offset = op.get_two_point_z_offset(bpy.context)
+    hide_total = bool(getattr(op, '_hide_total_width_dim', False))
+    # In phase 1 of two-point mode the cursor is a single point, not yet
+    # a region — treat width as 0 so left/right offsets measure from cursor.
+    obj_width = 0.0 if hide_total else op.get_placed_object_width()
+
+    wall = hb_types.GeoNodeWall(wall_obj)
+    wall_thickness = wall.get_input('Thickness')
+
+    # Wall coordinate system in world space (XY plane)
+    wm = wall_obj.matrix_world
+    wall_dir = Vector((wm[0][0], wm[1][0])).normalized()
+    wall_perp = Vector((wm[0][1], wm[1][1])).normalized()
+    wall_origin_2d = Vector((wm[0][3], wm[1][3]))
+
+    # Z position for dim drawing: centered on the placed object
+    dim_z_world = wm[2][3] + z_offset + obj_height / 2
+
+    # Front face of the wall (so dims sit just outside the wall body)
+    front_offset = wall_thickness
+
+    def world_pt(local_x):
+        base_2d = wall_origin_2d + wall_dir * local_x + wall_perp * front_offset
+        return Vector((base_2d.x, base_2d.y, dim_z_world))
+
+    placed_left_x = placement_x
+    placed_right_x = placement_x + obj_width
+
+    pt_gap_left = world_pt(gap_left)
+    pt_placed_left = world_pt(placed_left_x)
+    pt_placed_right = world_pt(placed_right_x)
+    pt_gap_right = world_pt(gap_right)
+
+    def proj(p):
+        return view3d_utils.location_3d_to_region_2d(region, rv3d, p)
+
+    s_gap_left = proj(pt_gap_left)
+    s_placed_left = proj(pt_placed_left)
+    s_placed_right = proj(pt_placed_right)
+    s_gap_right = proj(pt_gap_right)
+
+    if any(s is None for s in (s_gap_left, s_placed_left, s_placed_right, s_gap_right)):
+        return
+
+    # Perpendicular offset direction in screen space, away from the wall body
+    face_vec = s_gap_right - s_gap_left
+    if face_vec.length < 2:
+        return
+    face_dir_n = face_vec.normalized()
+    offset_dir = Vector((-face_dir_n.y, face_dir_n.x))
+
+    # Flip offset_dir if needed so it points away from wall mid-line
+    wall_mid_world = Vector((
+        wall_origin_2d.x + wall_perp.x * (wall_thickness / 2),
+        wall_origin_2d.y + wall_perp.y * (wall_thickness / 2),
+        dim_z_world,
+    ))
+    wall_mid_screen = proj(wall_mid_world)
+    if wall_mid_screen is not None:
+        face_mid_screen = (s_gap_left + s_gap_right) / 2
+        if (wall_mid_screen - face_mid_screen).dot(offset_dir) > 0:
+            offset_dir = -offset_dir
+
+    offset_px = 20
+    tick_half = 5
+    dim_color = (0.0, 0.85, 1.0, 0.85)
+    leader_color = (0.0, 0.85, 1.0, 0.3)
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    tick_dir = Vector((-offset_dir.y, offset_dir.x))
+    unit_settings = bpy.context.scene.unit_settings
+
+    # Build dim segment list: (distance_meters, screen_from, screen_to)
+    segments = []
+    left_dist = placed_left_x - gap_left
+    right_dist = gap_right - placed_right_x
+    width_dist = obj_width
+
+    if left_dist > units.inch(0.5):
+        segments.append((left_dist, s_gap_left, s_placed_left))
+    if not hide_total and width_dist > units.inch(0.5):
+        segments.append((width_dist, s_placed_left, s_placed_right))
+    if right_dist > units.inch(0.5):
+        segments.append((right_dist, s_placed_right, s_gap_right))
+
+    gpu.state.blend_set('ALPHA')
+
+    for dist, p_from, p_to in segments:
+        a = p_from + offset_dir * offset_px
+        b = p_to + offset_dir * offset_px
+
+        shader.bind()
+
+        # Leader lines (faint)
+        gpu.state.line_width_set(1.0)
+        shader.uniform_float("color", leader_color)
+        for fp, dp in [(p_from, a), (p_to, b)]:
+            batch = batch_for_shader(shader, 'LINES', {"pos": [(fp.x, fp.y), (dp.x, dp.y)]})
+            batch.draw(shader)
+
+        # Dim line
+        gpu.state.line_width_set(1.5)
+        shader.uniform_float("color", dim_color)
+        batch = batch_for_shader(shader, 'LINES', {"pos": [(a.x, a.y), (b.x, b.y)]})
+        batch.draw(shader)
+
+        # Tick marks
+        for p in [a, b]:
+            t1 = p + tick_dir * tick_half
+            t2 = p - tick_dir * tick_half
+            batch = batch_for_shader(shader, 'LINES', {"pos": [(t1.x, t1.y), (t2.x, t2.y)]})
+            batch.draw(shader)
+
+        # Text label
+        mid = (a + b) / 2 + offset_dir * 12
+        text = units.unit_to_string(unit_settings, dist)
+        _draw_placement_dim_text(mid.x, mid.y, text, dim_color)
+
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
 
 
 class WallObjectPlacementMixin(hb_placement.PlacementMixin):
@@ -40,10 +205,11 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     gap_left_boundary: float = 0
     gap_right_boundary: float = 0
     
-    # Dimensions
-    dim_total_width = None
-    dim_left_offset = None
-    dim_right_offset = None
+    # Placement dimensions GPU draw state
+    _dim_draw_handle = None
+    _dims_visible = False
+    _hide_total_width_dim = False
+
     
     def get_view_distance(self, context):
         """Get the current view distance for scaling UI elements."""
@@ -58,129 +224,36 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         return 10.0
     
     def create_placement_dimensions(self):
-        """Create dimension annotations for placement feedback."""
-        # Total width dimension
-        self.dim_total_width = hb_types.GeoNodeDimension()
-        self.dim_total_width.create("Dim_Total_Width")
-        self.dim_total_width.obj.show_in_front = True
-        self.register_placement_object(self.dim_total_width.obj)
-        
-        # Left offset dimension
-        self.dim_left_offset = hb_types.GeoNodeDimension()
-        self.dim_left_offset.create("Dim_Left_Offset")
-        self.dim_left_offset.obj.show_in_front = True
-        self.register_placement_object(self.dim_left_offset.obj)
-        
-        # Right offset dimension
-        self.dim_right_offset = hb_types.GeoNodeDimension()
-        self.dim_right_offset.create("Dim_Right_Offset")
-        self.dim_right_offset.obj.show_in_front = True
-        self.register_placement_object(self.dim_right_offset.obj)
-    
-    def get_dimension_rotation(self, context, base_rotation_z):
-        """Calculate dimension rotation to face the camera based on view angle.
-        
-        Returns: (rotation_tuple, is_plan_view)
-        """
-        region_3d = None
-        for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
-                region_3d = area.spaces.active.region_3d
-                break
-        
-        if not region_3d:
-            return (0, 0, base_rotation_z), True
-        
-        view_matrix = region_3d.view_matrix
-        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
-        
-        vertical_component = abs(view_dir.z)
-        
-        if vertical_component > 0.7:
-            # Plan view - dimension lies flat
-            return (0, 0, base_rotation_z), True
-        else:
-            # Elevation/3D view - rotate dimension to stand up
-            return (math.radians(90), 0, base_rotation_z), False
+        """Register a GPU draw handler for placement preview dimensions.
+        Replaces the legacy GeoNodeDimension scene-object approach."""
+        self._dim_draw_handle = None
+        self._dims_visible = False
+        self._hide_total_width_dim = False
+        self._dim_draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_placement_dimensions, (self,), 'WINDOW', 'POST_PIXEL')
 
     def update_placement_dimensions(self, context, obj_width, obj_height, wall_thickness, z_offset=0):
-        """Update dimension positions and values."""
-        if not self.dim_total_width or not self.selected_wall:
-            return
-        
-        # Scale text based on view distance
-        view_dist = self.get_view_distance(context)
-        base_size = units.inch(8)
-        text_size = base_size * (view_dist / 10.0)
-        text_size = max(units.inch(4), min(units.inch(24), text_size))
-        
-        self.dim_total_width.set_input("Text Size", text_size)
-        self.dim_left_offset.set_input("Text Size", text_size)
-        self.dim_right_offset.set_input("Text Size", text_size)
-        
-        wall_matrix = self.selected_wall.matrix_world
-        wall_rotation_z = self.selected_wall.rotation_euler.z
-        
-        left_offset = self.placement_x - self.gap_left_boundary
-        right_offset = self.gap_right_boundary - (self.placement_x + obj_width)
-        
-        # Get rotation based on view angle
-        dim_rotation, is_plan_view = self.get_dimension_rotation(context, wall_rotation_z)
-        
-        # Position at mid-height of object, accounting for z offset
-        dim_z = z_offset + obj_height / 2
-        dim_y = wall_thickness + units.inch(2)
-        
-        # Total width dimension
-        local_pos = Vector((self.placement_x, dim_y, dim_z))
-        self.dim_total_width.obj.location = wall_matrix @ local_pos
-        self.dim_total_width.obj.rotation_euler = dim_rotation
-        self.dim_total_width.obj.data.splines[0].points[1].co = (obj_width, 0, 0, 1)
-        self.dim_total_width.set_decimal()
-        self.dim_total_width.obj.hide_set(False)
-        
-        # Left offset dimension
-        if left_offset > units.inch(0.5):
-            local_pos = Vector((self.gap_left_boundary, dim_y, dim_z))
-            self.dim_left_offset.obj.location = wall_matrix @ local_pos
-            self.dim_left_offset.obj.rotation_euler = dim_rotation
-            self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
-            self.dim_left_offset.set_decimal()
-            self.dim_left_offset.obj.hide_set(False)
-        else:
-            self.dim_left_offset.obj.hide_set(True)
-        
-        # Right offset dimension
-        if right_offset > units.inch(0.5):
-            local_pos = Vector((self.placement_x + obj_width, dim_y, dim_z))
-            self.dim_right_offset.obj.location = wall_matrix @ local_pos
-            self.dim_right_offset.obj.rotation_euler = dim_rotation
-            self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
-            self.dim_right_offset.set_decimal()
-            self.dim_right_offset.obj.hide_set(False)
-        else:
-            self.dim_right_offset.obj.hide_set(True)
-    
+        """Mark dimensions as visible. The GPU draw handler reads live state
+        from the operator every frame, so the obj_width / obj_height /
+        wall_thickness / z_offset arguments are unused — preserved for
+        API compatibility with the legacy implementation and with callers."""
+        self._dims_visible = True
+        self._hide_total_width_dim = False
+
     def hide_placement_dimensions(self):
         """Hide all placement dimensions."""
-        if self.dim_total_width:
-            self.dim_total_width.obj.hide_set(True)
-        if self.dim_left_offset:
-            self.dim_left_offset.obj.hide_set(True)
-        if self.dim_right_offset:
-            self.dim_right_offset.obj.hide_set(True)
-    
+        self._dims_visible = False
+
     def delete_placement_dimensions(self):
-        """Delete all placement dimension objects."""
-        for dim in [self.dim_total_width, self.dim_left_offset, self.dim_right_offset]:
-            if dim and dim.obj and dim.obj.name in bpy.data.objects:
-                # Remove from placement_objects if present
-                if dim.obj in self.placement_objects:
-                    self.placement_objects.remove(dim.obj)
-                bpy.data.objects.remove(dim.obj, do_unlink=True)
-        self.dim_total_width = None
-        self.dim_left_offset = None
-        self.dim_right_offset = None
+        """Remove the GPU draw handler."""
+        if getattr(self, '_dim_draw_handle', None) is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(self._dim_draw_handle, 'WINDOW')
+            except (ValueError, RuntimeError):
+                pass
+            self._dim_draw_handle = None
+        self._dims_visible = False
+
     
     def get_placed_object(self):
         """Override this to return the object being placed."""
@@ -474,12 +547,12 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         self.gap_left_boundary = gap_start
         self.gap_right_boundary = gap_end
 
-        # Reuse update_placement_dimensions with width=0 so left/right are
-        # measured from the cursor as a single point.
+        # Reuse update_placement_dimensions to mark dims visible, then set
+        # the hide-total-width flag so the GPU draw handler skips the total
+        # width segment (we only want left/right offsets in phase 1).
         self.update_placement_dimensions(
             context, 0.0, obj_height, wall_thickness, z_offset)
-        if self.dim_total_width:
-            self.dim_total_width.obj.hide_set(True)
+        self._hide_total_width_dim = True
 
     def handle_two_point_phase1_click(self) -> bool:
         """Capture the start point on a left click in phase 1.
@@ -860,6 +933,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
             return {'RUNNING_MODAL'}
 
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self.delete_placement_dimensions()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
