@@ -892,6 +892,14 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
             wall = hb_types.GeoNodeWall(self.selected_wall)
             self.wall_length = wall.get_input('Length')
 
+        # Two-point phase 2: pin the wall to the captured start wall so the
+        # placed object stays anchored even if the cursor wanders off the wall.
+        if self.two_point_in_phase2() and self.width_start_wall is not None:
+            if self.width_start_wall.name in bpy.data.objects:
+                self.selected_wall = self.width_start_wall
+                wall = hb_types.GeoNodeWall(self.selected_wall)
+                self.wall_length = wall.get_input('Length')
+
         # Two-point phase 1: hide the object so the user picks a clean start,
         # but still show the gap-relative offset dimensions.
         in_phase1 = self.two_point_in_phase1()
