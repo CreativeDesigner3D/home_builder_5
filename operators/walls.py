@@ -245,6 +245,116 @@ def _draw_dim_text(x, y, text, color):
     blf.draw(font_id, text)
 
 
+def _draw_wall_length_dim(op):
+    """GPU draw callback: renders the live wall length dimension while
+    drawing walls. Reads state from the operator each frame.
+
+    Replaces the legacy GeoNodeDimension scene-object approach used during
+    wall draw, mirroring the door/window placement dimension pattern.
+    """
+    if not getattr(op, '_wall_dim_visible', False):
+        return
+    wall = getattr(op, 'current_wall', None)
+    if wall is None:
+        return
+    try:
+        wall_obj = wall.obj
+        if wall_obj is None or wall_obj.name not in bpy.data.objects:
+            return
+    except (ReferenceError, AttributeError):
+        return
+
+    try:
+        length = wall.get_input('Length')
+        height = wall.get_input('Height')
+    except Exception:
+        return
+
+    if length is None or length < 0.001:
+        return
+
+    context = bpy.context
+    region = context.region
+    rv3d = context.region_data
+    if region is None or rv3d is None:
+        return
+
+    # Wall local axes in world space (length runs along local +X)
+    wm = wall_obj.matrix_world
+    wall_dir = Vector((wm[0][0], wm[1][0], wm[2][0]))
+    if wall_dir.length < 1e-6:
+        return
+    wall_dir.normalize()
+
+    # Z position: just above the top of the wall (matches legacy 1" offset)
+    base_z = wm[2][3] + (height or 0) + units.inch(1)
+
+    origin_2d = Vector((wm[0][3], wm[1][3], base_z))
+    end_2d = origin_2d + wall_dir * length
+
+    s_start = view3d_utils.location_3d_to_region_2d(region, rv3d, origin_2d)
+    s_end = view3d_utils.location_3d_to_region_2d(region, rv3d, end_2d)
+    if s_start is None or s_end is None:
+        return
+
+    seg = s_end - s_start
+    if seg.length < 2:
+        return
+    seg_dir = seg.normalized()
+    # Perpendicular in screen space — push dim outward (away from wall body)
+    offset_dir = Vector((-seg_dir.y, seg_dir.x))
+
+    # Flip offset_dir so it points away from the wall's body. Use a sample
+    # point on the wall's centerline to decide which side is "inside".
+    wall_mid_world = Vector((wm[0][3], wm[1][3], wm[2][3] + (height or 0) / 2))
+    wall_mid_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, wall_mid_world)
+    if wall_mid_screen is not None:
+        seg_mid = (s_start + s_end) / 2
+        if (wall_mid_screen - seg_mid).dot(offset_dir) > 0:
+            offset_dir = -offset_dir
+
+    offset_px = 20
+    tick_half = 5
+    dim_color = (0.0, 0.85, 1.0, 0.85)
+    leader_color = (0.0, 0.85, 1.0, 0.3)
+
+    a = s_start + offset_dir * offset_px
+    b = s_end + offset_dir * offset_px
+    tick_dir = Vector((-offset_dir.y, offset_dir.x))
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    shader.bind()
+
+    # Leader lines
+    gpu.state.line_width_set(1.0)
+    shader.uniform_float("color", leader_color)
+    for fp, dp in [(s_start, a), (s_end, b)]:
+        batch = batch_for_shader(shader, 'LINES', {"pos": [(fp.x, fp.y), (dp.x, dp.y)]})
+        batch.draw(shader)
+
+    # Dim line
+    gpu.state.line_width_set(1.5)
+    shader.uniform_float("color", dim_color)
+    batch = batch_for_shader(shader, 'LINES', {"pos": [(a.x, a.y), (b.x, b.y)]})
+    batch.draw(shader)
+
+    # Tick marks
+    for p in (a, b):
+        t1 = p + tick_dir * tick_half
+        t2 = p - tick_dir * tick_half
+        batch = batch_for_shader(shader, 'LINES', {"pos": [(t1.x, t1.y), (t2.x, t2.y)]})
+        batch.draw(shader)
+
+    # Text label
+    mid = (a + b) / 2 + offset_dir * 12
+    text = units.unit_to_string(context.scene.unit_settings, length)
+    _draw_dim_text(mid.x, mid.y, text, dim_color)
+
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+
+
 def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face,
                                drawing_gap=0, gap_direction=0):
     """
@@ -1191,17 +1301,23 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if self.previous_wall:
             self.current_wall.connect_to_wall(self.previous_wall)
 
-        # Parent dimension to wall
-        self.dim.obj.parent = self.current_wall.obj
-        self.dim.set_input("Leader Length", thickness / 2)
-        self.dim.obj.data.splines[0].points[1].co = (0, 0, 0, 0)
-
     def create_dimension(self):
-        """Create the dimension annotation."""
-        self.dim = hb_types.GeoNodeDimension()
-        self.dim.create("Dimension")
-        self.dim.obj['HB_CURRENT_DRAW_OBJ'] = True
-        self.register_placement_object(self.dim.obj)
+        """Register the GPU draw handler that renders the live wall length
+        dimension. Replaces the legacy GeoNodeDimension scene-object approach."""
+        self._wall_dim_visible = False
+        if getattr(self, '_wall_dim_handle', None) is None:
+            self._wall_dim_handle = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_wall_length_dim, (self,), 'WINDOW', 'POST_PIXEL')
+
+    def _remove_dim_handler(self):
+        """Remove the wall length dimension GPU draw handler."""
+        if getattr(self, '_wall_dim_handle', None) is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(self._wall_dim_handle, 'WINDOW')
+            except (ValueError, RuntimeError):
+                pass
+            self._wall_dim_handle = None
+        self._wall_dim_visible = False
 
     def get_view_distance(self, context):
         """Get the current view distance for scaling UI elements."""
@@ -1216,25 +1332,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         return 10.0  # Default fallback
 
     def update_dimension(self, context=None):
-        """Update dimension display to match wall length."""
-        if self.current_wall and self.dim:
-            length = self.current_wall.get_input('Length')
-            height = self.current_wall.get_input('Height')
-            self.dim.obj.location.z = height + units.inch(1)
-            self.dim.obj.data.splines[0].points[1].co = (length, 0, 0, 0)
-            
-            # Update decimal precision based on value
-            self.dim.set_decimal(fine=self.fine_snap)
-            
-            # Scale text size based on view distance
-            if context:
-                view_dist = self.get_view_distance(context)
-                # Base size at view distance of 10m, scale proportionally
-                base_size = units.inch(8)
-                text_size = base_size * (view_dist / 10.0)
-                # Clamp to reasonable range
-                text_size = max(units.inch(4), min(units.inch(24), text_size))
-                self.dim.set_input("Text Size", text_size)
+        """Mark the wall length dimension visible. The GPU draw handler
+        reads live length/height from self.current_wall every frame, so
+        there is no per-update state to push here."""
+        if self.current_wall is not None:
+            self._wall_dim_visible = True
 
     # ========== Wall Tracking ==========
     
@@ -1525,11 +1627,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if child in self.placement_objects:
                 self.placement_objects.remove(child)
         
-        # Clean up dimension
-        if self.dim:
-            if self.dim.obj in self.placement_objects:
-                self.placement_objects.remove(self.dim.obj)
-            bpy.data.objects.remove(self.dim.obj, do_unlink=True)
+        # Hide the live wall length dimension — the room is closed
+        self._wall_dim_visible = False
 
     def confirm_current_wall(self):
         """Finalize current wall and prepare for next."""
@@ -1569,12 +1668,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.create_wall(bpy.context)
 
     def _show_wall_objects(self):
-        """Show the wall and dimension objects after first point is placed."""
+        """Show the wall after first point is placed and enable the live
+        length dimension."""
         self.current_wall.obj.hide_set(False)
         for child in self.current_wall.obj.children:
             child.hide_set(False)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(False)
+        self._wall_dim_visible = True
 
     def _remove_snap_indicator(self):
         """Remove the snap indicator draw handler if still active."""
@@ -1624,7 +1723,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.previous_wall = None
         self.start_point = None
         self.has_start_point = False
-        self.dim = None
+        self._wall_dim_handle = None
+        self._wall_dim_visible = False
         self.free_rotation = False
         self.first_start_point = None
         self.first_wall = None
@@ -1655,12 +1755,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.create_dimension()
         self.create_wall(context)
 
-        # Hide wall and dimension until first point is placed
+        # Hide wall until first point is placed (dim handler is gated
+        # by self._wall_dim_visible, which starts False)
         self.current_wall.obj.hide_set(True)
         for child in self.current_wall.obj.children:
             child.hide_set(True)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(True)
 
         # Add GPU draw handler for snap indicator
         self._snap_draw_handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -1695,20 +1794,17 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
-        # Update snap (hide current wall and dimension during raycast)
+        # Update snap (hide current wall during raycast so it does not
+        # block hits on the geometry behind it)
         self.current_wall.obj.hide_set(True)
         for child in self.current_wall.obj.children:
             child.hide_set(True)
-        if self.dim and self.dim.obj:
-            self.dim.obj.hide_set(True)
         self.update_snap(context, event)
         # Only unhide after first point is placed
         if self.has_start_point:
             self.current_wall.obj.hide_set(False)
             for child in self.current_wall.obj.children:
                 child.hide_set(False)
-            if self.dim and self.dim.obj:
-                self.dim.obj.hide_set(False)
 
         # Check for nearby wall endpoints or surfaces (only before first point placed)
         if not self.has_start_point:
@@ -1791,6 +1887,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.close_room(context)
                     self.clear_wall_highlight()
                     self._remove_snap_indicator()
+                    self._remove_dim_handler()
                     self._remove_track_timer(context)
                     hb_placement.clear_header_text(context)
                     return {'FINISHED'}
@@ -1803,6 +1900,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Clear any wall highlight
             self.clear_wall_highlight()
             self._remove_snap_indicator()
+            self._remove_dim_handler()
             self._remove_track_timer(context)
             # Remove current unfinished wall
             self.cancel_placement(context)
@@ -1814,6 +1912,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Clear any wall highlight
             self.clear_wall_highlight()
             self._remove_snap_indicator()
+            self._remove_dim_handler()
             self._remove_track_timer(context)
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
@@ -1825,6 +1924,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 self.close_room(context)
                 self.clear_wall_highlight()
                 self._remove_snap_indicator()
+                self._remove_dim_handler()
                 self._remove_track_timer(context)
                 hb_placement.clear_header_text(context)
                 return {'FINISHED'}
