@@ -660,7 +660,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         box = layout.box()
         box.prop(self, 'stair_type')
         if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
-            box.prop(self, 'turn_direction')
+            box.prop(self, 'turn_direction',text="Direction")
             box.prop(self, 'landing_depth')
             box.prop(self, 'landing_height')
             if self.stair_type == 'U_SHAPE':
