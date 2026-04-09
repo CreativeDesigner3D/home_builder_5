@@ -3082,9 +3082,6 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
             self.report({'INFO'}, f"{deleted_count} walls deleted")
         return {'FINISHED'}
 
-    def invoke(self, context, event):
-        return context.window_manager.invoke_confirm(self, event)
-
 
 
 class home_builder_walls_OT_hide_wall(bpy.types.Operator):
