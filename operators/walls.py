@@ -1118,6 +1118,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if chain_count >= 2:
                 self.first_wall = first_wall_geonode
                 self.confirmed_wall_count = chain_count
+                # Seed first_start_point from the first wall's actual origin so
+                # close-on-click works the same as the C key after a continue.
+                fl = first_wall_geonode.obj.location
+                self.first_start_point = Vector((fl.x, fl.y, 0))
         else:
             # Connect to start of existing wall
             connect_location = Vector((start.x, start.y, 0))
