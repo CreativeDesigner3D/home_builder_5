@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "home_builder_5"
-version = "5.1.1"
+version = "5.1.2"
 name = "Home Builder 5"
 tagline = "Design interior spaces with parametric cabinets"
 maintainer = "Andrew Peel"
