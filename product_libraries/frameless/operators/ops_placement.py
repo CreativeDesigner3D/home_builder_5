@@ -1120,6 +1120,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         Returns (gap_start, gap_end, snap_x)
         """
         wall = hb_types.GeoNodeWall(wall_obj)
+        # Applied walls are not parametric; no gap calculation is possible.
+        if not wall.has_modifier():
+            return None, None, None
         wall_length = wall.get_input('Length')
         
         # Get the Z bounds of the cabinet being placed
@@ -1312,6 +1315,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 continue
             
             wall = hb_types.GeoNodeWall(obj)
+            # Skip walls whose geo node modifier has been applied - they're
+            # static meshes now and can't report Length/Thickness parametrically.
+            if not wall.has_modifier():
+                continue
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
             
@@ -2026,9 +2033,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             current = self.hit_object
             while current:
                 if 'IS_WALL_BP' in current:
-                    self.selected_wall = current
-                    wall = hb_types.GeoNodeWall(self.selected_wall)
-                    self.wall_length = wall.get_input('Length')
+                    # Only accept the wall if it still has its geo node modifier.
+                    # Applied walls can't be used as a parametric placement
+                    # target - reject them so downstream reads are safe.
+                    candidate = hb_types.GeoNodeWall(current)
+                    if candidate.has_modifier():
+                        self.selected_wall = current
+                        self.wall_length = candidate.get_input('Length')
                     break
                 current = current.parent
         
@@ -2037,7 +2048,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.selected_wall = self.find_nearest_wall_from_cursor(context)
             if self.selected_wall:
                 wall = hb_types.GeoNodeWall(self.selected_wall)
-                self.wall_length = wall.get_input('Length')
+                # find_nearest_wall_from_cursor already filters out applied walls,
+                # but re-check defensively in case of edge cases.
+                if wall.has_modifier():
+                    self.wall_length = wall.get_input('Length')
+                else:
+                    self.selected_wall = None
 
         # Update position if not locked
         # Allow position updates while typing WIDTH (but not offsets)

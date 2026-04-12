@@ -34,6 +34,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         cabinet_bp = hb_utils.get_cabinet_bp(context.object)
         self.cabinet = hb_types.GeoNodeCage(cabinet_bp)
+        # Cannot edit dimensions on a cabinet whose geo node modifier has
+        # been applied - it's now a static mesh.
+        if not self.cabinet.has_modifier():
+            self.report({'WARNING'}, "Cabinet has been flattened (modifier applied) and can no longer be edited parametrically.")
+            return {'CANCELLED'}
         self.cabinet_width = self.cabinet.get_input('Dim X')
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
@@ -149,7 +154,11 @@ class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
     def execute(self, context):
         cabinet_bp = hb_utils.get_cabinet_bp(context.object)
         cabinet = hb_types.GeoNodeCage(cabinet_bp)
-        
+
+        if not cabinet.has_modifier():
+            self.report({'WARNING'}, "Cabinet has been flattened (modifier applied) and can no longer be edited parametrically.")
+            return {'CANCELLED'}
+
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
         
@@ -485,6 +494,10 @@ class hb_frameless_OT_create_cabinet_group(bpy.types.Operator):
         max_z = float('-inf')
         
         for cabinet in selected_cabinets:
+            # Skip cabinets whose modifier has been applied - they're static
+            # meshes and we can't read their parametric dimensions.
+            if not cabinet.has_modifier():
+                continue
             # Get cabinet dimensions
             cab_width = cabinet.get_input('Dim X')
             cab_depth = cabinet.get_input('Dim Y')
@@ -625,7 +638,11 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
     def get_cab_x_range(self, cab_obj):
         """Get (x_start, x_end) for a cabinet accounting for back-side rotation."""
         cage = hb_types.GeoNodeCage(cab_obj)
-        dim_x = cage.get_input('Dim X')
+        if cage.has_modifier():
+            dim_x = cage.get_input('Dim X')
+        else:
+            # Applied cabinet - fall back to the baked mesh's X dimension.
+            dim_x = cab_obj.dimensions.x if cab_obj.dimensions.x > 0 else 0
         is_back = (abs(cab_obj.rotation_euler.z - math.pi) < 0.1 or
                    abs(cab_obj.rotation_euler.z + math.pi) < 0.1)
         if is_back:
@@ -881,6 +898,10 @@ class hb_frameless_OT_adjust_multiple_cabinet_widths(bpy.types.Operator):
         self.total_width = 0.0
         for index, obj in enumerate(objs):
             cabinet = hb_types.GeoNodeCage(obj)
+            # Skip applied cabinets - they can't be resized parametrically
+            # through the calculator.
+            if not cabinet.has_modifier():
+                continue
             cab = props.calculator_cabinets.add()
             cab.cabinet_obj = cabinet.obj
             cab.is_equal = True
