@@ -69,6 +69,9 @@ def _draw_placement_dimensions(op):
     obj_width = 0.0 if hide_total else op.get_placed_object_width()
 
     wall = hb_types.GeoNodeWall(wall_obj)
+    # Applied walls are no longer parametric - skip dimension drawing.
+    if not wall.has_modifier():
+        return
     wall_thickness = wall.get_input('Thickness')
 
     # Wall coordinate system in world space (XY plane)
@@ -460,11 +463,10 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         for obj in bpy.context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
-            try:
-                wall = hb_types.GeoNodeWall(obj)
-                wall_length = wall.get_input('Length')
-            except Exception:
+            wall = hb_types.GeoNodeWall(obj)
+            if not wall.has_modifier():
                 continue
+            wall_length = wall.get_input('Length')
             wm = obj.matrix_world
             wall_origin = Vector((wm[0][3], wm[1][3]))
             wall_dir_2d = Vector((wm[0][0], wm[1][0]))
@@ -927,26 +929,32 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         # Check if we're over a wall
         self.selected_wall = None
         if self.hit_object and 'IS_WALL_BP' in self.hit_object:
-            self.selected_wall = self.hit_object
-            wall = hb_types.GeoNodeWall(self.selected_wall)
-            self.wall_length = wall.get_input('Length')
+            # Only accept the wall if its geo node modifier still exists.
+            # Applied walls are static meshes and cannot host doors/windows
+            # parametrically.
+            candidate = hb_types.GeoNodeWall(self.hit_object)
+            if candidate.has_modifier():
+                self.selected_wall = self.hit_object
+                self.wall_length = candidate.get_input('Length')
         else:
             # 2D proximity fallback: if the raycast missed a wall, snap to the
             # nearest wall in plan-view distance. Eliminates jitter at the
             # wall's edge where the raycast may flicker between wall/floor.
             nearby_wall = self.find_nearest_wall_to_cursor()
             if nearby_wall is not None:
-                self.selected_wall = nearby_wall
-                wall = hb_types.GeoNodeWall(self.selected_wall)
-                self.wall_length = wall.get_input('Length')
+                candidate = hb_types.GeoNodeWall(nearby_wall)
+                if candidate.has_modifier():
+                    self.selected_wall = nearby_wall
+                    self.wall_length = candidate.get_input('Length')
 
         # Two-point phase 2: pin the wall to the captured start wall so the
         # placed object stays anchored even if the cursor wanders off the wall.
         if self.two_point_in_phase2() and self.width_start_wall is not None:
             if self.width_start_wall.name in bpy.data.objects:
-                self.selected_wall = self.width_start_wall
-                wall = hb_types.GeoNodeWall(self.selected_wall)
-                self.wall_length = wall.get_input('Length')
+                candidate = hb_types.GeoNodeWall(self.width_start_wall)
+                if candidate.has_modifier():
+                    self.selected_wall = self.width_start_wall
+                    self.wall_length = candidate.get_input('Length')
 
         # Two-point phase 1: hide the object so the user picks a clean start,
         # but still show the gap-relative offset dimensions.
