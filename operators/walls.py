@@ -933,6 +933,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
 
             wall = hb_types.GeoNodeWall(obj)
+            # Skip walls whose geo node modifier has been applied/removed -
+            # they are no longer parametric and cannot report Length/Thickness.
+            if not wall.has_modifier():
+                continue
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
 
@@ -1053,6 +1057,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             return None, None, None
         
         wall = hb_types.GeoNodeWall(wall_obj)
+        # The wall may have had its geo node modifier applied (baked to mesh).
+        # Without the modifier we can't query Length/Thickness, so bail out
+        # and let the caller treat it as a non-snap target.
+        if not wall.has_modifier():
+            return None, None, None
         wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
         
@@ -1114,6 +1123,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
 
             ew = hb_types.GeoNodeWall(obj)
+            if not ew.has_modifier():
+                continue
             el = ew.get_input('Length')
             et = ew.get_input('Thickness')
 
@@ -2749,6 +2760,8 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
                 continue
 
             wall = hb_types.GeoNodeWall(obj)
+            if not wall.has_modifier():
+                continue
             if wall_type in {'Exterior', 'Interior'}:
                 wall.set_input('Height', props.ceiling_height)
             elif wall_type == 'Half':
@@ -2780,6 +2793,8 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
                 continue
 
             wall = hb_types.GeoNodeWall(obj)
+            if not wall.has_modifier():
+                continue
             if wall_type == 'Exterior':
                 wall.set_input('Thickness', props.exterior_wall_thickness)
             elif wall_type in {'Interior', 'Half'}:

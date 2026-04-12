@@ -347,6 +347,26 @@ class GeoNodeObject:
         
         return input_name in mod.node_group.interface.items_tree
 
+    def has_modifier(self):
+        """Check if this object still has its geometry node modifier.
+
+        Returns False if the modifier has been applied (baked to mesh) or is
+        otherwise missing. Callers that want to set_input/get_input on a wall
+        or cabinet should guard with this so applied/static objects are
+        skipped cleanly instead of raising.
+
+        Returns:
+            True if the tracked geometry node modifier exists, False otherwise.
+        """
+        if self.obj is None:
+            return False
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
+            return False
+        mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
+        if not mod or not mod.node_group:
+            return False
+        return True
+
 
 class GeoNodeWall(GeoNodeObject):
 
