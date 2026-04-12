@@ -95,17 +95,8 @@ class HOME_BUILDER_OT_prepare_for_export(bpy.types.Operator):
         for scene in scenes_to_process:
             context.window.scene = scene
 
-            # --- PASS 1: Delete helper objects that shouldnt be exported ---
-            objects_to_delete = []
-            for obj in scene.objects:
-                if should_delete_object(obj):
-                    objects_to_delete.append(obj)
-
-            for obj in objects_to_delete:
-                bpy.data.objects.remove(obj, do_unlink=True)
-                deleted_count += 1
-
-            # --- PASS 2: Remove all drivers from remaining objects ---
+            # --- PASS 1: Remove all drivers ---
+            # Done before conversion so driven values don't interfere with modifier eval.
             for obj in scene.objects:
                 if obj.animation_data:
                     drivers_to_remove = []
@@ -122,12 +113,12 @@ class HOME_BUILDER_OT_prepare_for_export(bpy.types.Operator):
                             except TypeError:
                                 pass
 
-            # --- PASS 3: Remove all constraints ---
+            # --- PASS 2: Remove all constraints ---
             for obj in scene.objects:
                 for constraint in list(obj.constraints):
                     obj.constraints.remove(constraint)
 
-            # --- PASS 4: Bake world transforms and clear parenting ---
+            # --- PASS 3: Bake world transforms and clear parenting ---
             # Store world matrices first since clearing parents changes child transforms
             world_matrices = {}
             for obj in scene.objects:
@@ -139,8 +130,26 @@ class HOME_BUILDER_OT_prepare_for_export(bpy.types.Operator):
                     obj.parent = None
                 obj.matrix_world = world_matrices[obj.name]
 
-            # --- PASS 5: Convert remaining objects to mesh ---
+            # --- PASS 4: Convert KEPT objects to mesh ---
+            # This MUST happen before deleting helper objects so that boolean
+            # modifiers on walls can apply against their cage targets (e.g.
+            # IS_FRAMELESS_OPENING_CAGE for door/window holes) while those
+            # targets still exist in the scene. Deleting cages first causes
+            # the booleans to no-op and door/window holes disappear.
+            #
+            # We also temporarily un-hide cages so the dependency graph
+            # reliably evaluates booleans during conversion, regardless of
+            # viewport visibility.
+            hidden_restore = []
+            for obj in scene.objects:
+                if should_delete_object(obj):
+                    if obj.hide_viewport:
+                        obj.hide_viewport = False
+                        hidden_restore.append(obj)
+
             for obj in list(scene.objects):
+                if should_delete_object(obj):
+                    continue
                 if obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT'}:
                     bpy.ops.object.select_all(action='DESELECT')
                     obj.select_set(True)
@@ -151,6 +160,18 @@ class HOME_BUILDER_OT_prepare_for_export(bpy.types.Operator):
                         converted_count += 1
                     except RuntimeError:
                         pass
+
+            # --- PASS 5: Delete helper objects LAST ---
+            # At this point all booleans have been applied and baked into the
+            # kept geometry, so it is safe to remove the cages and other helpers.
+            objects_to_delete = []
+            for obj in scene.objects:
+                if should_delete_object(obj):
+                    objects_to_delete.append(obj)
+
+            for obj in objects_to_delete:
+                bpy.data.objects.remove(obj, do_unlink=True)
+                deleted_count += 1
 
         context.window.scene = original_scene
 
