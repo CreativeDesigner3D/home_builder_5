@@ -1,0 +1,24 @@
+# Default: normalize all text files to LF in the repo
+* text=auto eol=lf
+
+# Explicit text files (belt-and-braces for Python/config)
+*.py    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+
+# Binary formats: never touch line endings
+*.blend   binary
+*.blend1  binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.zip     binary
+*.whl     binary

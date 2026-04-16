@@ -1,5 +1,6 @@
 import bpy
 import os
+import uuid
 
 BUNDLED_LIBRARY_NAME = "Home Builder"
 USER_LIBRARY_PREFIX = "HB: "
@@ -79,13 +80,30 @@ def get_catalog_map():
     return catalog_map
 
 
-def _get_library_name(user_name):
-    """Get the Blender asset library name for a user library entry."""
-    return USER_LIBRARY_PREFIX + user_name
+def _ensure_internal_id(entry):
+    """Ensure an entry has a stable internal id. Returns the id."""
+    if not entry.internal_id:
+        entry.internal_id = uuid.uuid4().hex[:12]
+    return entry.internal_id
 
 
-def _register_library(name, path):
-    """Register a path as a Blender asset library. Returns the library or None."""
+def _get_library_name(entry):
+    """Get the Blender asset library name for a user library entry.
+    
+    Uses the stable internal_id so the display name can be renamed without
+    orphaning or colliding with the Blender-side registration.
+    """
+    internal_id = _ensure_internal_id(entry)
+    display = entry.name or "Library"
+    return f"{USER_LIBRARY_PREFIX}{display} [{internal_id}]"
+
+
+def _register_library_by_name(name, path):
+    """Register a path as a Blender asset library under an exact name.
+    
+    If a library with that name already exists, its path is updated.
+    Returns the library or None if path is invalid.
+    """
     if not path or not os.path.isdir(path):
         return None
 
@@ -101,7 +119,42 @@ def _register_library(name, path):
     return lib
 
 
-def _remove_library(name):
+def _register_user_entry(entry):
+    """Register (or update) a Blender asset library for the given HB5 entry.
+    
+    Uses the entry's stable internal_id to find an existing Blender library,
+    so renaming the entry just updates the Blender library's display name
+    rather than orphaning it.
+    """
+    if not entry.library_path:
+        return None
+    lib_path = bpy.path.abspath(entry.library_path)
+    if not os.path.isdir(lib_path):
+        return None
+
+    internal_id = _ensure_internal_id(entry)
+    expected_name = _get_library_name(entry)
+    
+    asset_libs = bpy.context.preferences.filepaths.asset_libraries
+    # Find existing library by matching the internal_id tag in the name
+    tag = f"[{internal_id}]"
+    for lib in asset_libs:
+        if lib.name.startswith(USER_LIBRARY_PREFIX) and lib.name.endswith(tag):
+            # Update name (in case display name was renamed) and path
+            if lib.name != expected_name:
+                lib.name = expected_name
+            if lib.path != lib_path:
+                lib.path = lib_path
+            lib.import_method = 'APPEND'
+            return lib
+    
+    # No existing match: create a new one
+    lib = asset_libs.new(name=expected_name, directory=lib_path)
+    lib.import_method = 'APPEND'
+    return lib
+
+
+def _remove_library_exact(name):
     """Remove a named asset library from Blender preferences."""
     asset_libs = bpy.context.preferences.filepaths.asset_libraries
     for i, lib in enumerate(asset_libs):
@@ -110,49 +163,86 @@ def _remove_library(name):
             return
 
 
+def _remove_library_for_entry(entry):
+    """Remove the Blender asset library corresponding to this HB5 entry.
+    
+    Matches by internal_id tag so rename-after-create is handled correctly.
+    """
+    internal_id = entry.internal_id
+    if not internal_id:
+        return
+    tag = f"[{internal_id}]"
+    asset_libs = bpy.context.preferences.filepaths.asset_libraries
+    for i, lib in enumerate(asset_libs):
+        if lib.name.startswith(USER_LIBRARY_PREFIX) and lib.name.endswith(tag):
+            asset_libs.remove(asset_libs[i])
+            return
+
+
+def _cleanup_orphaned_libraries():
+    """Remove any HB:-prefixed libraries whose internal_id is not in the current entries."""
+    valid_ids = set()
+    for entry in get_user_libraries():
+        if entry.internal_id:
+            valid_ids.add(entry.internal_id)
+    
+    asset_libs = bpy.context.preferences.filepaths.asset_libraries
+    to_remove = []
+    for lib in asset_libs:
+        if not lib.name.startswith(USER_LIBRARY_PREFIX):
+            continue
+        # Extract the internal_id tag if present
+        if lib.name.endswith("]") and "[" in lib.name:
+            id_start = lib.name.rfind("[") + 1
+            id_end = lib.name.rfind("]")
+            lib_id = lib.name[id_start:id_end]
+            if lib_id not in valid_ids:
+                to_remove.append(lib.name)
+        else:
+            # Legacy untagged HB: library, remove it
+            to_remove.append(lib.name)
+    
+    for name in to_remove:
+        _remove_library_exact(name)
+
+
 def ensure_asset_libraries():
     """Register bundled and all user asset libraries."""
     # Clean up legacy extended library from previous versions
-    _remove_library("Home Builder Extended")
+    _remove_library_exact("Home Builder Extended")
     
-    _register_library(BUNDLED_LIBRARY_NAME, get_addon_assets_path())
+    _register_library_by_name(BUNDLED_LIBRARY_NAME, get_addon_assets_path())
+    # Ensure every entry has an internal id and register it
     for entry in get_user_libraries():
-        if entry.library_path:
-            lib_path = bpy.path.abspath(entry.library_path)
-            _register_library(_get_library_name(entry.name), lib_path)
+        _ensure_internal_id(entry)
+        _register_user_entry(entry)
+    # Clean up any stale entries
+    _cleanup_orphaned_libraries()
 
 
 def remove_asset_libraries():
     """Remove all Home Builder asset libraries from Blender preferences."""
-    _remove_library(BUNDLED_LIBRARY_NAME)
+    _remove_library_exact(BUNDLED_LIBRARY_NAME)
     for entry in get_user_libraries():
-        _remove_library(_get_library_name(entry.name))
+        _remove_library_for_entry(entry)
 
 
 def refresh_user_libraries():
     """Sync all user libraries - register valid ones, remove invalid ones."""
-    # Remove any HB: prefixed libraries that are no longer in the list
-    asset_libs = bpy.context.preferences.filepaths.asset_libraries
-    user_lib_names = {_get_library_name(e.name) for e in get_user_libraries()}
-    
-    to_remove = []
-    for i, lib in enumerate(asset_libs):
-        if lib.name.startswith(USER_LIBRARY_PREFIX) and lib.name not in user_lib_names:
-            to_remove.append(lib.name)
-    for name in to_remove:
-        _remove_library(name)
-    
-    # Register/update current entries
+    # Register/update all current entries first (assigns internal_ids if missing)
     for entry in get_user_libraries():
-        lib_name = _get_library_name(entry.name)
+        _ensure_internal_id(entry)
         if entry.library_path:
             lib_path = bpy.path.abspath(entry.library_path)
             if os.path.isdir(lib_path):
-                _register_library(lib_name, lib_path)
+                _register_user_entry(entry)
             else:
-                _remove_library(lib_name)
+                _remove_library_for_entry(entry)
         else:
-            _remove_library(lib_name)
+            _remove_library_for_entry(entry)
+    
+    # Remove any orphaned HB: libraries that don't match a current entry
+    _cleanup_orphaned_libraries()
 
 
 class HB_AssetLibraryEntry(bpy.types.PropertyGroup):
@@ -166,6 +256,11 @@ class HB_AssetLibraryEntry(bpy.types.PropertyGroup):
         name="Path",
         description="Path to the asset library folder",
         subtype='DIR_PATH',
+    )  # type: ignore
+    internal_id: bpy.props.StringProperty(
+        name="Internal ID",
+        description="Stable identifier used to track the Blender asset library registration across renames",
+        default="",
     )  # type: ignore
 
 
@@ -188,6 +283,7 @@ class HB_OT_add_asset_library(bpy.types.Operator):
         prefs = context.preferences.addons[__package__].preferences
         entry = prefs.asset_libraries.add()
         entry.name = "New Library"
+        entry.internal_id = uuid.uuid4().hex[:12]
         prefs.asset_libraries_index = len(prefs.asset_libraries) - 1
         return {'FINISHED'}
 
@@ -203,7 +299,7 @@ class HB_OT_remove_asset_library(bpy.types.Operator):
         if 0 <= index < len(prefs.asset_libraries):
             # Remove from Blender's asset libraries first
             entry = prefs.asset_libraries[index]
-            _remove_library(_get_library_name(entry.name))
+            _remove_library_for_entry(entry)
             # Remove from our list
             prefs.asset_libraries.remove(index)
             prefs.asset_libraries_index = min(index, len(prefs.asset_libraries) - 1)
