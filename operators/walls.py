@@ -2216,6 +2216,21 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         row.label(text='Rotation Z:')
         row.prop(self.wall.obj,'rotation_euler',index=2,text="")  
 
+# Module-level helper: re-uses HB5's typed-distance parser (scene units,
+# feet/inches, fractions, explicit units, negatives). We don't want the full
+# PlacementMixin state, just its parse method, so we keep a single shared
+# instance and call parse_typed_distance() on it.
+_crs_typed_parser = hb_placement.PlacementMixin()
+
+
+def _crs_parse_distance(s):
+    """Parse a typed string as a distance in meters. Returns None on failure."""
+    try:
+        return _crs_typed_parser.parse_typed_distance(s)
+    except Exception:
+        return None
+
+
 def _draw_change_room_size_highlight(op):
     """GPU draw callback: highlights the wall under the cursor (idle) or the
     wall currently being dragged (drag). During drag, also renders live
@@ -2291,15 +2306,21 @@ def _draw_change_room_size_highlight(op):
                     perp = -perp
             return perp
 
-        # Offset label near the dragged wall
+        # Offset label near the dragged wall. While typing, show the typed
+        # string with a trailing "_" cursor so the user sees their input
+        # verbatim. Otherwise show the parsed/measured offset in scene units.
         offset = getattr(op, '_current_offset', 0.0)
         outward = getattr(op, '_drag_outward_normal', None)
         if outward is not None:
             perp = _screen_perp_outward(p1_3d, p2_3d, outward)
             if perp is not None:
                 mid = (p1 + p2) * 0.5
+                if getattr(op, '_typing', False):
+                    label_text = f"{getattr(op, '_typed_value', '')}_"
+                else:
+                    label_text = _format_signed(offset)
                 _draw_dim_text((mid + perp * 30).x, (mid + perp * 30).y,
-                               _format_signed(offset), dim_color)
+                               label_text, dim_color)
 
         # Neighbor length labels
         for wall_attr, outward_attr in (('_drag_pred_wall', '_drag_pred_outward'),
@@ -2362,6 +2383,9 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     _drag_succ_wall = None         # affected successor (loop-wise) during drag
     _drag_pred_outward = None      # outward normal of predecessor
     _drag_succ_outward = None      # outward normal of successor
+    _typing = False                # numeric-input mode is active during drag
+    _typed_value = ""              # accumulated keypresses for numeric input
+    _typed_exited = False          # flag: next MOUSEMOVE should re-anchor drag origin
 
     @classmethod
     def poll(cls, context):
@@ -2515,6 +2539,12 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         hit = self._mouse_to_world_z0(context, event)
         if hit is None:
             return
+        # If typing just exited, shift the drag origin so the current cursor
+        # position corresponds to the current (typed-then-kept) offset. This
+        # avoids a visual jump the next time the user moves the mouse.
+        if self._typed_exited:
+            self._drag_origin = hit - self._drag_outward_normal * self._current_offset
+            self._typed_exited = False
         offset = (hit - self._drag_origin).dot(self._drag_outward_normal)
         # Always start from the drag's baseline snapshot before applying
         self._restore_walls(self._drag_snapshot)
@@ -2537,6 +2567,9 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._drag_succ_wall = None
         self._drag_pred_outward = None
         self._drag_succ_outward = None
+        self._typing = False
+        self._typed_value = ""
+        self._typed_exited = False
         self._current_offset = 0.0
         self._last_error = None
 
@@ -2545,18 +2578,75 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
             self._restore_walls(self._drag_snapshot)
         self._commit_drag()
 
+    # ---------- Typed-input helpers ----------
+
+    def _start_typing(self, char):
+        """Enter typing mode with an initial character."""
+        self._typing = True
+        self._typed_value = char
+        self._apply_typed_value_live()
+
+    def _stop_typing(self):
+        """Exit typing mode; the next mouse move will re-anchor drag origin
+        so the wall doesn't jump to a new offset."""
+        self._typing = False
+        self._typed_value = ""
+        self._typed_exited = True
+
+    def _append_typed(self, char):
+        self._typed_value += char
+        self._apply_typed_value_live()
+
+    def _backspace_typed(self):
+        if self._typed_value:
+            self._typed_value = self._typed_value[:-1]
+            if self._typed_value:
+                self._apply_typed_value_live()
+            else:
+                # Empty after backspace: restore baseline, stay in typing mode
+                self._restore_walls(self._drag_snapshot)
+                self._current_offset = 0.0
+                self._last_error = None
+        else:
+            # Already empty: exit typing mode
+            self._stop_typing()
+            self._restore_walls(self._drag_snapshot)
+            self._current_offset = 0.0
+            self._last_error = None
+
+    def _apply_typed_value_live(self):
+        """Parse the current typed_value and apply as the wall's offset."""
+        val = _crs_parse_distance(self._typed_value)
+        self._restore_walls(self._drag_snapshot)
+        if val is None:
+            # Unparseable partial input (e.g. just "-" or ".") — leave at baseline
+            self._current_offset = 0.0
+            self._last_error = None
+            return
+        self._current_offset = val
+        if abs(val) > 1e-6:
+            ok, msg = offset_wall_perpendicular(self._drag_wall, val)
+            if not ok:
+                self._restore_walls(self._drag_snapshot)
+                self._last_error = msg
+                return
+        self._last_error = None
+
     # ---------- UI feedback ----------
 
     def _update_header(self, context):
         area = context.area
         if area is None:
             return
-        if self._drag_active:
+        if self._typing:
+            text = (f"Change Room Size — Typing offset: {self._typed_value}_   |   "
+                    "Enter: commit   |   Backspace: erase   |   Esc: stop typing")
+        elif self._drag_active:
             msg = f"Offset: {self._current_offset:+.3f} m"
             if self._last_error:
                 msg += f"   [{self._last_error}]"
             text = (f"Change Room Size — {msg}   |   "
-                    "Release: commit drag   |   Esc: cancel drag")
+                    "Release: commit drag   |   Type digits for exact value   |   Esc: cancel drag")
         else:
             text = ("Change Room Size — click+drag a wall   |   "
                     "Enter: confirm   |   Esc: cancel all")
@@ -2606,34 +2696,63 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         if context.area is not None:
             context.area.tag_redraw()
 
-        # Let Blender handle viewport navigation without interference
+        # Let Blender handle viewport navigation. We intentionally do NOT
+        # pass through NUMPAD digits / period / minus / slash so they stay
+        # available for typed input (matches the draw_walls convention).
         if event.type in {
             'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
             'WHEELINMOUSE', 'WHEELOUTMOUSE',
             'TRACKPADPAN', 'TRACKPADZOOM',
-            'NUMPAD_0', 'NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4',
-            'NUMPAD_5', 'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9',
-            'NUMPAD_PERIOD', 'NUMPAD_PLUS', 'NUMPAD_MINUS', 'NUMPAD_SLASH',
-            'NUMPAD_ASTERIX', 'HOME',
-            'NDOF_MOTION',
+            'NUMPAD_PLUS', 'NUMPAD_ASTERIX',
+            'HOME', 'NDOF_MOTION',
         }:
             return {'PASS_THROUGH'}
 
-        # Skip the high-frequency "inbetween" movement events
         if event.type == 'INBETWEEN_MOUSEMOVE':
             return {'RUNNING_MODAL'}
 
+        # --- Typing mode (takes priority over mouse/drag handling) ---
+        if self._typing and event.value == 'PRESS':
+            if event.type in hb_placement.NUMBER_KEYS:
+                self._append_typed(hb_placement.NUMBER_KEYS[event.type])
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            if event.type == 'BACK_SPACE':
+                self._backspace_typed()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            if event.type in {'RET', 'NUMPAD_ENTER'}:
+                # Commit the drag at the currently-applied (typed) offset
+                self._commit_drag()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            if event.type == 'ESC':
+                # Exit typing only, stay in drag
+                self._stop_typing()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            # Other keys fall through so the user can still pan/zoom etc.
+
+        # --- MOUSEMOVE ---
         if event.type == 'MOUSEMOVE':
-            if self._drag_active:
+            if self._drag_active and not self._typing:
                 self._update_drag(context, event)
                 self._update_header(context)
-            else:
-                # Idle: refresh which wall is under the cursor for the highlight
+            elif not self._drag_active:
                 new_hover = self._find_wall_under_cursor(context, event)
                 if new_hover is not self._hover_wall:
                     self._hover_wall = new_hover
             return {'RUNNING_MODAL'}
 
+        # --- Start typing: digit / . / - / / pressed during drag ---
+        if (self._drag_active and not self._typing
+                and event.value == 'PRESS'
+                and event.type in hb_placement.NUMBER_KEYS):
+            self._start_typing(hb_placement.NUMBER_KEYS[event.type])
+            self._update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # --- LEFTMOUSE ---
         if event.type == 'LEFTMOUSE':
             if event.value == 'PRESS' and not self._drag_active:
                 wall = self._find_wall_under_cursor(context, event)
@@ -2648,6 +2767,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 self._update_header(context)
                 return {'RUNNING_MODAL'}
 
+        # --- ESC / RIGHTMOUSE (not typing — typing ESC handled above) ---
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             if self._drag_active:
                 self._cancel_drag()
@@ -2658,6 +2778,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
             self._cleanup(context)
             return {'CANCELLED'}
 
+        # --- Enter (not typing) ---
         if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
             if self._drag_active:
                 self._commit_drag()
