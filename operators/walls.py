@@ -234,6 +234,155 @@ def is_closed_loop(points, tolerance=0.01):
 
 
 
+def get_wall_chain_info(wall_obj):
+    """
+    Locate the chain containing wall_obj and, for closed loops, rotate the
+    chain so chain[0] is the constraint-free anchor wall (the one with no
+    COPY_LOCATION constraint targeting another wall in the chain).
+
+    Returns (chain, idx, is_closed) or (None, -1, False) if not found.
+    """
+    chains = find_wall_chains()
+    for chain in chains:
+        if wall_obj not in chain:
+            continue
+
+        boundary_points = get_room_boundary_points(chain)
+        closed = is_closed_loop(boundary_points)
+
+        if closed:
+            # Find the wall with no COPY_LOCATION constraint to another chain wall
+            def has_chain_pred(obj):
+                for con in obj.constraints:
+                    if con.type == 'COPY_LOCATION' and con.target:
+                        tp = con.target.parent
+                        if tp and tp in chain and tp is not obj:
+                            return True
+                return False
+
+            anchor_idx = next((i for i, o in enumerate(chain) if not has_chain_pred(o)), 0)
+            # Rotate chain so anchor is at index 0
+            chain = chain[anchor_idx:] + chain[:anchor_idx]
+
+        idx = chain.index(wall_obj)
+        return chain, idx, closed
+
+    return None, -1, False
+
+
+def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
+    """
+    Offset a wall perpendicular to its own direction by `offset` meters,
+    adjusting neighbor wall lengths (and the chain anchor location, when
+    required) to keep the constraint chain consistent.
+
+    For closed loops: positive offset = outward (away from room interior),
+    auto-detected via signed polygon area.
+    For open chains: positive offset = left of wall direction.
+
+    Requires loop-adjacent neighbor walls to be approximately perpendicular
+    to the dragged wall (within tolerance_deg). Does not change any wall's
+    rotation, nor the dragged wall's length.
+
+    Returns (success: bool, message: str).
+    """
+    import math
+
+    wall = hb_types.GeoNodeWall(wall_obj)
+    chain, idx, is_closed = get_wall_chain_info(wall_obj)
+    if chain is None:
+        return False, "Selected wall is not part of a detected chain"
+
+    n = len(chain)
+    this_rot = wall_obj.rotation_euler.z
+    left_normal = Vector((-math.sin(this_rot), math.cos(this_rot), 0))
+
+    # Determine outward direction
+    if is_closed:
+        pts = get_room_boundary_points(chain)
+        if len(pts) >= 2 and (pts[0] - pts[-1]).length < 0.01:
+            pts = pts[:-1]
+        signed_area = 0.0
+        m = len(pts)
+        for i in range(m):
+            p1 = pts[i]
+            p2 = pts[(i + 1) % m]
+            signed_area += p1.x * p2.y - p2.x * p1.y
+        # CCW (positive area) -> interior on left of travel -> outward on right
+        outward_sign = -1.0 if signed_area > 0 else 1.0
+    else:
+        outward_sign = 1.0  # convention: + = left of direction for open chains
+
+    outward_normal = outward_sign * left_normal
+    delta = offset * outward_normal
+    tol_cos = math.cos(math.radians(tolerance_deg))
+
+    def wall_dir(obj):
+        r = obj.rotation_euler.z
+        return Vector((math.cos(r), math.sin(r), 0))
+
+    planned = []  # list of (GeoNodeWall, new_length, label)
+    translate_anchor = False
+
+    if is_closed:
+        pred_obj = chain[(idx - 1) % n]
+        succ_obj = chain[(idx + 1) % n]
+        for neighbor_obj, sign, label in (
+            (pred_obj, +1.0, "predecessor"),
+            (succ_obj, -1.0, "successor"),
+        ):
+            neighbor = hb_types.GeoNodeWall(neighbor_obj)
+            dot = wall_dir(neighbor_obj).dot(outward_normal)
+            if abs(dot) < tol_cos:
+                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
+                return False, (f"{label.capitalize()} wall is {abs(ang_off):.1f} deg "
+                               f"off perpendicular; only perpendicular neighbors supported")
+            cur = neighbor.get_input('Length')
+            new_len = cur + sign * offset * dot
+            if new_len <= 0.001:
+                return False, (f"Offset would collapse {label} wall "
+                               f"(new length would be {new_len:.3f} m)")
+            planned.append((neighbor, new_len, label))
+        if idx == 0 or idx == n - 1:
+            translate_anchor = True
+    else:
+        if idx > 0:
+            pred_obj = chain[idx - 1]
+            neighbor = hb_types.GeoNodeWall(pred_obj)
+            dot = wall_dir(pred_obj).dot(outward_normal)
+            if abs(dot) < tol_cos:
+                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
+                return False, (f"Predecessor wall is {abs(ang_off):.1f} deg "
+                               f"off perpendicular; only perpendicular neighbors supported")
+            cur = neighbor.get_input('Length')
+            new_len = cur + offset * dot
+            if new_len <= 0.001:
+                return False, (f"Offset would collapse predecessor wall "
+                               f"(new length would be {new_len:.3f} m)")
+            planned.append((neighbor, new_len, "predecessor"))
+        # Open chain head (idx == 0): no length change, translate this wall directly
+
+    # Apply length changes
+    for neighbor, new_len, _ in planned:
+        neighbor.set_input('Length', new_len)
+
+    # Apply anchor / head translation
+    if is_closed and translate_anchor:
+        anchor = chain[0]
+        anchor.location.x += delta.x
+        anchor.location.y += delta.y
+    elif (not is_closed) and idx == 0:
+        wall_obj.location.x += delta.x
+        wall_obj.location.y += delta.y
+
+    # No miter refresh: this operator only changes lengths and anchor location,
+    # never rotations, so miter angles are already correct. Calling
+    # update_connected_wall_miters here would zero out the closure miter on a
+    # closed loop (since calculate_wall_miter_angles can't see the closure
+    # seam via constraints alone).
+    return True, f"Offset wall by {offset:.3f} m"
+
+
 
 def _draw_dim_text(x, y, text, color):
     """Draw centered text at screen position."""
@@ -2049,6 +2198,355 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         row = box.row()
         row.label(text='Rotation Z:')
         row.prop(self.wall.obj,'rotation_euler',index=2,text="")  
+
+def _draw_change_room_size_highlight(op):
+    """GPU draw callback: highlights the wall under the cursor (idle) or the
+    wall currently being dragged (drag). Runs in POST_PIXEL space so line
+    width stays consistent regardless of zoom."""
+    region = getattr(op, 'region', None)
+    if region is None or region.data is None:
+        return
+    # Pick which wall to highlight and choose a color
+    drag_active = getattr(op, '_drag_active', False)
+    wall_obj = getattr(op, '_drag_wall', None) if drag_active else getattr(op, '_hover_wall', None)
+    if wall_obj is None or wall_obj.name not in bpy.data.objects:
+        return
+
+    # Highlight color + thickness
+    if drag_active:
+        color = (0.30, 0.85, 0.30, 0.95)  # green
+        width = 5.0
+    else:
+        color = (1.00, 0.65, 0.15, 0.90)  # orange
+        width = 4.0
+
+    # Wall centerline endpoints (world-space Z=0)
+    start_2d, end_2d = get_wall_endpoints(wall_obj)
+    p1_3d = Vector((start_2d.x, start_2d.y, 0.02))
+    p2_3d = Vector((end_2d.x,   end_2d.y,   0.02))
+    p1 = view3d_utils.location_3d_to_region_2d(region, region.data, p1_3d)
+    p2 = view3d_utils.location_3d_to_region_2d(region, region.data, p2_3d)
+    if p1 is None or p2 is None:
+        return
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    shader.uniform_float("color", color)
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(width)
+    batch = batch_for_shader(shader, 'LINES', {"pos": [(p1.x, p1.y), (p2.x, p2.y)]})
+    batch.draw(shader)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set('NONE')
+
+
+class home_builder_walls_OT_change_room_size(bpy.types.Operator):
+    """Modal operator: click+drag walls to resize a room. Within one modal
+    session, the user can drag multiple walls; each left-click-press on a wall
+    starts a drag, and left-click-release commits that drag. Esc/right-click
+    cancels either the current drag (if dragging) or the whole session
+    (if idle). Enter confirms and exits."""
+
+    bl_idname = "home_builder_walls.change_room_size"
+    bl_label = "Change Room Size"
+    bl_description = (
+        "Click and drag walls to resize the room. Left-click a wall, drag "
+        "perpendicular, release to commit. Drag more walls as needed. "
+        "Enter to confirm, Esc to cancel"
+    )
+    bl_options = {'UNDO'}
+
+    # Session state
+    _session_snapshot = None       # dict: snapshot of all walls at invoke
+    _drag_active = False
+    _drag_wall = None              # bpy.types.Object of wall being dragged
+    _drag_origin = None            # Vector: world-space Z=0 click location
+    _drag_outward_normal = None    # Vector: perpendicular outward direction
+    _drag_snapshot = None          # dict: state at start of current drag
+    _current_offset = 0.0
+    _last_error = None
+    _hover_wall = None             # bpy.types.Object under the cursor while idle
+    _draw_handle = None            # POST_PIXEL GPU draw handler
+    region = None                  # bpy.types.Region captured at invoke
+
+    @classmethod
+    def poll(cls, context):
+        return any('IS_WALL_BP' in o for o in context.scene.objects)
+
+    # ---------- Snapshot / restore ----------
+
+    @staticmethod
+    def _snapshot_walls():
+        snap = {}
+        for obj in bpy.context.scene.objects:
+            if 'IS_WALL_BP' in obj:
+                gw = hb_types.GeoNodeWall(obj)
+                snap[obj.name] = {
+                    'length': gw.get_input('Length'),
+                    'loc': (obj.location.x, obj.location.y, obj.location.z),
+                }
+        return snap
+
+    @staticmethod
+    def _restore_walls(snap):
+        for name, state in snap.items():
+            obj = bpy.data.objects.get(name)
+            if obj is None:
+                continue
+            gw = hb_types.GeoNodeWall(obj)
+            gw.set_input('Length', state['length'])
+            obj.location = state['loc']
+
+    # ---------- Cursor projection / wall picking ----------
+
+    @staticmethod
+    def _mouse_to_world_z0(context, event):
+        """Project the mouse position onto the world Z=0 plane. Returns
+        Vector or None if the projection is invalid (e.g. ray parallel)."""
+        region = context.region
+        rv3d = context.region_data
+        if region is None or rv3d is None:
+            return None
+        co2d = (event.mouse_region_x, event.mouse_region_y)
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co2d)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, co2d)
+        return intersect_line_plane(
+            origin, origin + direction,
+            Vector((0, 0, 0)), Vector((0, 0, 1)),
+        )
+
+    @staticmethod
+    def _point_to_segment_distance_2d(p, a, b):
+        ab = b - a
+        ap = p - a
+        ab_len2 = ab.length_squared
+        if ab_len2 < 1e-8:
+            return (p - a).length
+        t = max(0.0, min(1.0, ab.dot(ap) / ab_len2))
+        proj = a + t * ab
+        return (p - proj).length
+
+    def _find_wall_under_cursor(self, context, event):
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return None
+        p = hit.xy
+        best = None
+        best_dist = 0.3  # meters; generous click tolerance
+        for obj in context.scene.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            start_2d, end_2d = get_wall_endpoints(obj)
+            d = self._point_to_segment_distance_2d(p, start_2d, end_2d)
+            if d < best_dist:
+                best_dist = d
+                best = obj
+        return best
+
+    @staticmethod
+    def _compute_outward_normal(wall_obj):
+        """Compute the outward-facing perpendicular unit vector for wall_obj.
+        Returns (Vector, is_closed) or (None, False) if the chain isn't found."""
+        import math
+        chain, idx, is_closed = get_wall_chain_info(wall_obj)
+        if chain is None:
+            return None, False
+        rot = wall_obj.rotation_euler.z
+        left_normal = Vector((-math.sin(rot), math.cos(rot), 0))
+        if is_closed:
+            pts = get_room_boundary_points(chain)
+            if len(pts) >= 2 and (pts[0] - pts[-1]).length < 0.01:
+                pts = pts[:-1]
+            signed_area = 0.0
+            m = len(pts)
+            for i in range(m):
+                p1 = pts[i]
+                p2 = pts[(i + 1) % m]
+                signed_area += p1.x * p2.y - p2.x * p1.y
+            outward_sign = -1.0 if signed_area > 0 else 1.0
+        else:
+            outward_sign = 1.0
+        return outward_sign * left_normal, is_closed
+
+    # ---------- Drag lifecycle ----------
+
+    def _start_drag(self, context, event, wall_obj):
+        outward, _is_closed = self._compute_outward_normal(wall_obj)
+        if outward is None:
+            return False, "Wall is not part of a detected chain"
+
+        # Feasibility check via a tiny offset, immediately rolled back
+        snap = self._snapshot_walls()
+        ok, msg = offset_wall_perpendicular(wall_obj, 0.001)
+        self._restore_walls(snap)
+        if not ok:
+            return False, msg
+
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return False, "Cannot project cursor onto Z=0 plane"
+
+        self._drag_snapshot = self._snapshot_walls()
+        self._drag_wall = wall_obj
+        self._drag_outward_normal = outward
+        self._drag_origin = hit
+        self._drag_active = True
+        self._current_offset = 0.0
+        self._last_error = None
+        return True, ""
+
+    def _update_drag(self, context, event):
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return
+        offset = (hit - self._drag_origin).dot(self._drag_outward_normal)
+        # Always start from the drag's baseline snapshot before applying
+        self._restore_walls(self._drag_snapshot)
+        self._current_offset = offset
+        self._last_error = None
+        if abs(offset) > 1e-6:
+            ok, msg = offset_wall_perpendicular(self._drag_wall, offset)
+            if not ok:
+                self._restore_walls(self._drag_snapshot)
+                self._last_error = msg
+                # Keep the displayed offset so the user sees why it failed
+
+    def _commit_drag(self):
+        self._drag_active = False
+        self._drag_wall = None
+        self._drag_origin = None
+        self._drag_outward_normal = None
+        self._drag_snapshot = None
+        self._current_offset = 0.0
+        self._last_error = None
+
+    def _cancel_drag(self):
+        if self._drag_snapshot is not None:
+            self._restore_walls(self._drag_snapshot)
+        self._commit_drag()
+
+    # ---------- UI feedback ----------
+
+    def _update_header(self, context):
+        area = context.area
+        if area is None:
+            return
+        if self._drag_active:
+            msg = f"Offset: {self._current_offset:+.3f} m"
+            if self._last_error:
+                msg += f"   [{self._last_error}]"
+            text = (f"Change Room Size — {msg}   |   "
+                    "Release: commit drag   |   Esc: cancel drag")
+        else:
+            text = ("Change Room Size — click+drag a wall   |   "
+                    "Enter: confirm   |   Esc: cancel all")
+        area.header_text_set(text)
+
+    def _cleanup(self, context):
+        if context.area is not None:
+            context.area.header_text_set(None)
+        if context.window is not None:
+            context.window.cursor_modal_restore()
+        if self._draw_handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, 'WINDOW')
+            except (ValueError, RuntimeError):
+                pass
+            self._draw_handle = None
+        self._hover_wall = None
+
+    # ---------- Entry / event loop ----------
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'ERROR'}, "Must be run from a 3D Viewport")
+            return {'CANCELLED'}
+        # Clear selection so Blender's selection outline doesn't compete with
+        # the hover highlight.
+        for obj in context.scene.objects:
+            if obj.select_get():
+                obj.select_set(False)
+        context.view_layer.objects.active = None
+        self._session_snapshot = self._snapshot_walls()
+        self._drag_active = False
+        self._current_offset = 0.0
+        self._last_error = None
+        self._hover_wall = None
+        self.region = context.region
+        context.window.cursor_modal_set('SCROLL_XY')
+        self._update_header(context)
+        # Register the GPU draw handler for hover/drag highlighting
+        if self._draw_handle is None:
+            self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_change_room_size_highlight, (self,), 'WINDOW', 'POST_PIXEL')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if context.area is not None:
+            context.area.tag_redraw()
+
+        # Let Blender handle viewport navigation without interference
+        if event.type in {
+            'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
+            'WHEELINMOUSE', 'WHEELOUTMOUSE',
+            'TRACKPADPAN', 'TRACKPADZOOM',
+            'NUMPAD_0', 'NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4',
+            'NUMPAD_5', 'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9',
+            'NUMPAD_PERIOD', 'NUMPAD_PLUS', 'NUMPAD_MINUS', 'NUMPAD_SLASH',
+            'NUMPAD_ASTERIX', 'HOME',
+            'NDOF_MOTION',
+        }:
+            return {'PASS_THROUGH'}
+
+        # Skip the high-frequency "inbetween" movement events
+        if event.type == 'INBETWEEN_MOUSEMOVE':
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'MOUSEMOVE':
+            if self._drag_active:
+                self._update_drag(context, event)
+                self._update_header(context)
+            else:
+                # Idle: refresh which wall is under the cursor for the highlight
+                new_hover = self._find_wall_under_cursor(context, event)
+                if new_hover is not self._hover_wall:
+                    self._hover_wall = new_hover
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'PRESS' and not self._drag_active:
+                wall = self._find_wall_under_cursor(context, event)
+                if wall is not None:
+                    ok, msg = self._start_drag(context, event, wall)
+                    if not ok:
+                        self.report({'WARNING'}, msg)
+                    self._update_header(context)
+                return {'RUNNING_MODAL'}
+            if event.value == 'RELEASE' and self._drag_active:
+                self._commit_drag()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if self._drag_active:
+                self._cancel_drag()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            if self._session_snapshot is not None:
+                self._restore_walls(self._session_snapshot)
+            self._cleanup(context)
+            return {'CANCELLED'}
+
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            if self._drag_active:
+                self._commit_drag()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+            self._cleanup(context)
+            return {'FINISHED'}
+
+        return {'RUNNING_MODAL'}
 
 
 class home_builder_walls_OT_add_floor(bpy.types.Operator):
@@ -4011,6 +4509,7 @@ classes = (
     home_builder_walls_OT_delete_wall,
     home_builder_walls_OT_draw_walls,
     home_builder_walls_OT_wall_prompts,
+    home_builder_walls_OT_change_room_size,
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_draw_floor_cutter,
     home_builder_walls_OT_draw_wall_cutter,

@@ -61,6 +61,7 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
+        layout.operator("home_builder_walls.change_room_size", text="Change Room Size", icon='ARROW_LEFTRIGHT')
         layout.separator()
         layout.operator("home_builder_walls.hide_wall", text="Hide Wall", icon='HIDE_ON')
         layout.operator("home_builder_walls.isolate_selected_walls", text="Isolate Selected Walls", icon='ZOOM_SELECTED')
