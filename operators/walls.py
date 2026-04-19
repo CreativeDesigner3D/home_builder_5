@@ -2218,12 +2218,14 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
 
 def _draw_change_room_size_highlight(op):
     """GPU draw callback: highlights the wall under the cursor (idle) or the
-    wall currently being dragged (drag). Runs in POST_PIXEL space so line
-    width stays consistent regardless of zoom."""
+    wall currently being dragged (drag). During drag, also renders live
+    dimension text: the signed offset near the dragged wall and each affected
+    neighbor's new length. Runs in POST_PIXEL space so line width and text
+    size stay consistent regardless of zoom."""
     region = getattr(op, 'region', None)
     if region is None or region.data is None:
         return
-    # Pick which wall to highlight and choose a color
+    rv3d = region.data
     drag_active = getattr(op, '_drag_active', False)
     wall_obj = getattr(op, '_drag_wall', None) if drag_active else getattr(op, '_hover_wall', None)
     if wall_obj is None or wall_obj.name not in bpy.data.objects:
@@ -2237,22 +2239,93 @@ def _draw_change_room_size_highlight(op):
         color = (1.00, 0.65, 0.15, 0.90)  # orange
         width = 4.0
 
-    # Wall centerline endpoints (world-space Z=0)
+    # Project the dragged/hovered wall's centerline to screen
     start_2d, end_2d = get_wall_endpoints(wall_obj)
     p1_3d = Vector((start_2d.x, start_2d.y, 0.02))
     p2_3d = Vector((end_2d.x,   end_2d.y,   0.02))
-    p1 = view3d_utils.location_3d_to_region_2d(region, region.data, p1_3d)
-    p2 = view3d_utils.location_3d_to_region_2d(region, region.data, p2_3d)
+    p1 = view3d_utils.location_3d_to_region_2d(region, rv3d, p1_3d)
+    p2 = view3d_utils.location_3d_to_region_2d(region, rv3d, p2_3d)
     if p1 is None or p2 is None:
         return
 
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
-    shader.uniform_float("color", color)
     gpu.state.blend_set('ALPHA')
+
+    # --- Highlight line ---
+    shader.uniform_float("color", color)
     gpu.state.line_width_set(width)
     batch = batch_for_shader(shader, 'LINES', {"pos": [(p1.x, p1.y), (p2.x, p2.y)]})
     batch.draw(shader)
+
+    # --- Live dimensions during drag ---
+    if drag_active:
+        dim_color = (0.0, 0.85, 1.0, 0.95)  # cyan, matches HB5 style
+        unit_settings = bpy.context.scene.unit_settings
+
+        def _format_signed(value):
+            s = units.unit_to_string(unit_settings, value)
+            if value > 0 and not s.startswith('+'):
+                s = '+' + s
+            return s
+
+        def _screen_perp_outward(start_3d, end_3d, outward_3d):
+            """Return a unit screen-space vector perpendicular to the wall,
+            pointing in the outward direction. None if degenerate."""
+            s = view3d_utils.location_3d_to_region_2d(region, rv3d, start_3d)
+            e = view3d_utils.location_3d_to_region_2d(region, rv3d, end_3d)
+            if s is None or e is None:
+                return None
+            seg = e - s
+            if seg.length < 2:
+                return None
+            seg_dir = seg.normalized()
+            perp = Vector((-seg_dir.y, seg_dir.x))
+            mid_3d = (start_3d + end_3d) * 0.5
+            out_sample_3d = mid_3d + outward_3d * 0.1
+            mid_s = view3d_utils.location_3d_to_region_2d(region, rv3d, mid_3d)
+            out_s = view3d_utils.location_3d_to_region_2d(region, rv3d, out_sample_3d)
+            if mid_s is not None and out_s is not None:
+                out_screen = out_s - mid_s
+                if out_screen.length > 1e-6 and out_screen.normalized().dot(perp) < 0:
+                    perp = -perp
+            return perp
+
+        # Offset label near the dragged wall
+        offset = getattr(op, '_current_offset', 0.0)
+        outward = getattr(op, '_drag_outward_normal', None)
+        if outward is not None:
+            perp = _screen_perp_outward(p1_3d, p2_3d, outward)
+            if perp is not None:
+                mid = (p1 + p2) * 0.5
+                _draw_dim_text((mid + perp * 30).x, (mid + perp * 30).y,
+                               _format_signed(offset), dim_color)
+
+        # Neighbor length labels
+        for wall_attr, outward_attr in (('_drag_pred_wall', '_drag_pred_outward'),
+                                         ('_drag_succ_wall', '_drag_succ_outward')):
+            n_wall = getattr(op, wall_attr, None)
+            n_out = getattr(op, outward_attr, None)
+            if n_wall is None or n_out is None or n_wall.name not in bpy.data.objects:
+                continue
+            try:
+                n_length = hb_types.GeoNodeWall(n_wall).get_input('Length')
+            except Exception:
+                continue
+            n_start_2d, n_end_2d = get_wall_endpoints(n_wall)
+            n_p1_3d = Vector((n_start_2d.x, n_start_2d.y, 0.02))
+            n_p2_3d = Vector((n_end_2d.x,   n_end_2d.y,   0.02))
+            n_s = view3d_utils.location_3d_to_region_2d(region, rv3d, n_p1_3d)
+            n_e = view3d_utils.location_3d_to_region_2d(region, rv3d, n_p2_3d)
+            if n_s is None or n_e is None:
+                continue
+            n_perp = _screen_perp_outward(n_p1_3d, n_p2_3d, n_out)
+            if n_perp is None:
+                continue
+            n_mid = (n_s + n_e) * 0.5
+            _draw_dim_text((n_mid + n_perp * 30).x, (n_mid + n_perp * 30).y,
+                           units.unit_to_string(unit_settings, n_length), dim_color)
+
     gpu.state.line_width_set(1.0)
     gpu.state.blend_set('NONE')
 
@@ -2285,6 +2358,10 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     _hover_wall = None             # bpy.types.Object under the cursor while idle
     _draw_handle = None            # POST_PIXEL GPU draw handler
     region = None                  # bpy.types.Region captured at invoke
+    _drag_pred_wall = None         # affected predecessor (loop-wise) during drag
+    _drag_succ_wall = None         # affected successor (loop-wise) during drag
+    _drag_pred_outward = None      # outward normal of predecessor
+    _drag_succ_outward = None      # outward normal of successor
 
     @classmethod
     def poll(cls, context):
@@ -2403,10 +2480,32 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         if hit is None:
             return False, "Cannot project cursor onto Z=0 plane"
 
+        # Identify the loop-adjacent neighbors that will have their lengths
+        # adjusted, and cache their outward normals for the dim text.
+        chain, idx, is_closed = get_wall_chain_info(wall_obj)
+        n_walls = len(chain) if chain else 0
+        pred_wall = None
+        succ_wall = None
+        if chain is not None:
+            if is_closed:
+                pred_wall = chain[(idx - 1) % n_walls]
+                succ_wall = chain[(idx + 1) % n_walls]
+            else:
+                if idx > 0:
+                    pred_wall = chain[idx - 1]
+                if idx < n_walls - 1:
+                    succ_wall = chain[idx + 1]
+        pred_outward = self._compute_outward_normal(pred_wall)[0] if pred_wall else None
+        succ_outward = self._compute_outward_normal(succ_wall)[0] if succ_wall else None
+
         self._drag_snapshot = self._snapshot_walls()
         self._drag_wall = wall_obj
         self._drag_outward_normal = outward
         self._drag_origin = hit
+        self._drag_pred_wall = pred_wall
+        self._drag_succ_wall = succ_wall
+        self._drag_pred_outward = pred_outward
+        self._drag_succ_outward = succ_outward
         self._drag_active = True
         self._current_offset = 0.0
         self._last_error = None
@@ -2434,6 +2533,10 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._drag_origin = None
         self._drag_outward_normal = None
         self._drag_snapshot = None
+        self._drag_pred_wall = None
+        self._drag_succ_wall = None
+        self._drag_pred_outward = None
+        self._drag_succ_outward = None
         self._current_offset = 0.0
         self._last_error = None
 
