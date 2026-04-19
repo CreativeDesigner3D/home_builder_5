@@ -952,6 +952,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     
     # Track if we've placed the first point
     has_start_point: bool = False
+
+    # Tracking-distance typing state: set at typing-start when the cursor is
+    # snapped to a single tracking axis, used to interpret the typed value as
+    # a distance from that track point along that axis.
+    _track_type_anchor = None       # Vector: the tracking point to measure from
+    _track_type_direction = None    # Vector: unit +/-X or +/-Y
     
     # Free rotation mode (Alt toggles, snaps to 15° increments)
     free_rotation: bool = False
@@ -966,6 +972,62 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def get_default_typing_target(self):
         """When user starts typing, they're entering wall length."""
         return hb_placement.TypingTarget.LENGTH
+
+    def _compute_track_type_target(self):
+        """Determine the tracking anchor + measurement direction when typing
+        begins during first-point placement. Returns (anchor, direction) or None.
+
+        Only engages when exactly one track axis is currently snapped (a single
+        horizontal or vertical inference line). If two axes are snapped, the
+        cursor is already pinpointed at the intersection and typed distance
+        would be ambiguous.
+        """
+        if self.has_start_point:
+            return None
+        if not self._active_track_lines or len(self._active_track_lines) != 1:
+            return None
+        if not self.hit_location:
+            return None
+        tp, axis = self._active_track_lines[0]
+        hit = Vector(self.hit_location)
+        anchor = Vector((tp.x, tp.y, 0))
+        if axis == 'y':
+            # Snapped to horizontal line y=tp.y; free axis is X
+            sign = 1.0 if hit.x >= tp.x else -1.0
+            direction = Vector((sign, 0.0, 0.0))
+        else:  # axis == 'x'
+            # Snapped to vertical line x=tp.x; free axis is Y
+            sign = 1.0 if hit.y >= tp.y else -1.0
+            direction = Vector((0.0, sign, 0.0))
+        return anchor, direction
+
+    def handle_typing_event(self, event):
+        """Override: capture the tracking-distance target when typing starts
+        during first-point placement, so on_typed_value_changed / apply_typed_value
+        can place the first point at anchor + distance * direction.
+
+        NOTE: PlacementMixin.handle_typing_event calls on_typed_value_changed()
+        internally during the PLACING->TYPING transition, so we MUST capture
+        the target BEFORE calling super() or on_typed_value_changed will see
+        a stale (None) target and fall through to the length-setting branch.
+        """
+        will_start = (self.placement_state == hb_placement.PlacementState.PLACING
+                      and event.type in hb_placement.NUMBER_KEYS
+                      and event.value == 'PRESS')
+        if will_start:
+            target = self._compute_track_type_target()
+            if target is not None:
+                self._track_type_anchor, self._track_type_direction = target
+            else:
+                self._track_type_anchor = None
+                self._track_type_direction = None
+        return super().handle_typing_event(event)
+
+    def stop_typing(self):
+        """Override: also clear the tracking-distance target."""
+        super().stop_typing()
+        self._track_type_anchor = None
+        self._track_type_direction = None
 
     def find_nearby_wall_endpoint(self, context, threshold=0.15):
         """
@@ -1434,6 +1496,25 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     def on_typed_value_changed(self):
         """Update dimension display as user types."""
+        # First-point placement via tracking anchor + typed distance:
+        # preview the first-point location by moving the hidden wall origin.
+        if (not self.has_start_point
+                and self._track_type_anchor is not None
+                and self._track_type_direction is not None):
+            if self.typed_value:
+                parsed = self.parse_typed_distance()
+                if parsed is not None and self.current_wall:
+                    candidate = self._track_type_anchor + self._track_type_direction * parsed
+                    self.current_wall.obj.location = candidate
+            self.update_header(bpy.context)
+            return
+        # Before first point placement without a tracking target: typing has
+        # nothing meaningful to affect. Just show the buffered value in the
+        # header and skip length-setting to avoid affecting the hidden wall.
+        if not self.has_start_point:
+            self.update_header(bpy.context)
+            return
+        # Existing length-typing behavior (only once a wall is being drawn)
         if self.typed_value:
             parsed = self.parse_typed_distance()
             if parsed is not None and self.current_wall:
@@ -1443,11 +1524,34 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     def apply_typed_value(self):
         """Apply typed length and advance to next wall."""
+        # First-point placement via tracking anchor + typed distance:
+        # place the first point and transition to wall-drawing mode.
+        if (not self.has_start_point
+                and self._track_type_anchor is not None
+                and self._track_type_direction is not None):
+            parsed = self.parse_typed_distance()
+            if parsed is not None and self.current_wall:
+                candidate = self._track_type_anchor + self._track_type_direction * parsed
+                self.start_point = Vector((candidate.x, candidate.y, 0))
+                self.current_wall.obj.location = self.start_point
+                self.has_start_point = True
+                self._show_wall_objects()
+                if self.highlighted_wall:
+                    self.clear_wall_highlight()
+            self.stop_typing()
+            return
+        # Before first point placement with no tracking target: typed value
+        # has no valid target, so just discard it without confirming anything.
+        # (confirm_current_wall() assumes start_point is set; calling it here
+        # would crash on the first_start_point assignment.)
+        if not self.has_start_point:
+            self.stop_typing()
+            return
+        # Existing length-application behavior (only once a wall is being drawn)
         parsed = self.parse_typed_distance()
         if parsed is not None and self.current_wall:
             self.current_wall.set_input('Length', parsed)
             self.update_dimension(bpy.context)
-            # Confirm this wall and start next
             self.confirm_current_wall()
         self.stop_typing()
 
@@ -1668,16 +1772,25 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     
     def set_wall_position_from_mouse(self):
         """Update wall position/rotation based on mouse location."""
-        # Apply track snapping to cursor (skipped if a higher-priority snap is active)
         higher_priority_snap = bool(self.snap_wall and (self.snap_endpoint or self.snap_surface))
-        if self.hit_location and not higher_priority_snap:
-            eff_vec, axes = self.apply_track_snap_to_position(
+        # Always compute track snap axes so typed-distance input can use them
+        # even when a higher-priority snap (wall endpoint / surface) is active
+        # at the cursor.
+        if self.hit_location:
+            track_vec, axes = self.apply_track_snap_to_position(
                 bpy.context, Vector(self.hit_location))
             self._active_track_lines = axes
         else:
-            eff_vec = Vector(self.hit_location) if self.hit_location else None
+            track_vec = None
             self._active_track_lines = []
-        track_active = bool(self._active_track_lines)
+        # Effective cursor position: higher-priority snap wins over track snap
+        if self.hit_location and higher_priority_snap:
+            eff_vec = Vector(self.hit_location)
+        else:
+            eff_vec = track_vec
+        # track_active only affects grid-snap bypass for the visual wall
+        # position, so keep it false when a higher-priority snap wins.
+        track_active = bool(self._active_track_lines) and not higher_priority_snap
 
         if not self.has_start_point:
             # First point - move wall origin
@@ -1875,7 +1988,19 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def update_header(self, context):
         """Update header text with instructions and current value."""
         if self.placement_state == hb_placement.PlacementState.TYPING:
-            text = f"Wall Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
+            if (not self.has_start_point
+                    and self._track_type_anchor is not None
+                    and self._track_type_direction is not None):
+                d = self._track_type_direction
+                if abs(d.x) > 0.5:
+                    axis_label = "+X" if d.x > 0 else "-X"
+                else:
+                    axis_label = "+Y" if d.y > 0 else "-Y"
+                text = (f"Distance from tracked point ({axis_label}): "
+                        f"{self.typed_value}_ | Enter to place first point | "
+                        f"Esc to cancel typing")
+            else:
+                text = f"Wall Length: {self.typed_value}_ | Enter to confirm | Esc to cancel typing"
         elif self.has_start_point:
             length = self.current_wall.get_input('Length')
             length_str = units.unit_to_string(context.scene.unit_settings, length)
