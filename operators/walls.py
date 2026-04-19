@@ -346,6 +346,10 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
         if idx == 0 or idx == n - 1:
             translate_anchor = True
     else:
+        # Open chain: adjust predecessor and/or successor lengths, matching the
+        # closed-loop formulas. Head (idx=0) also translates its location so the
+        # chain's far end stays put; tail (idx=n-1) has no successor so its far
+        # end naturally moves with the drag.
         if idx > 0:
             pred_obj = chain[idx - 1]
             neighbor = hb_types.GeoNodeWall(pred_obj)
@@ -360,7 +364,20 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
                 return False, (f"Offset would collapse predecessor wall "
                                f"(new length would be {new_len:.3f} m)")
             planned.append((neighbor, new_len, "predecessor"))
-        # Open chain head (idx == 0): no length change, translate this wall directly
+        if idx < n - 1:
+            succ_obj = chain[idx + 1]
+            neighbor = hb_types.GeoNodeWall(succ_obj)
+            dot = wall_dir(succ_obj).dot(outward_normal)
+            if abs(dot) < tol_cos:
+                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
+                return False, (f"Successor wall is {abs(ang_off):.1f} deg "
+                               f"off perpendicular; only perpendicular neighbors supported")
+            cur = neighbor.get_input('Length')
+            new_len = cur - offset * dot
+            if new_len <= 0.001:
+                return False, (f"Offset would collapse successor wall "
+                               f"(new length would be {new_len:.3f} m)")
+            planned.append((neighbor, new_len, "successor"))
 
     # Apply length changes
     for neighbor, new_len, _ in planned:
