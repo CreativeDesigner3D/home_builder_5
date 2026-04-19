@@ -270,25 +270,60 @@ def get_wall_chain_info(wall_obj):
     return None, -1, False
 
 
-def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
-    """
-    Offset a wall perpendicular to its own direction by `offset` meters,
-    adjusting neighbor wall lengths (and the chain anchor location, when
-    required) to keep the constraint chain consistent.
+def _miter_between(a_obj, b_obj):
+    """Set the miter angles at the corner where a_obj.end meets b_obj.start.
+    Writes Right Angle on a_obj and Left Angle on b_obj, using the normalized
+    turn angle between their rotations."""
+    import math
+    turn = b_obj.rotation_euler.z - a_obj.rotation_euler.z
+    while turn >  math.pi: turn -= 2 * math.pi
+    while turn < -math.pi: turn += 2 * math.pi
+    hb_types.GeoNodeWall(a_obj).set_input('Right Angle', -turn / 2)
+    hb_types.GeoNodeWall(b_obj).set_input('Left Angle',   turn / 2)
 
-    For closed loops: positive offset = outward (away from room interior),
-    auto-detected via signed polygon area.
+
+def _update_chain_miters(chain, is_closed):
+    """Recompute miter angles at every corner in a chain, including the
+    closure seam of a closed loop. Walks the chain directly rather than
+    following COPY_LOCATION constraints, which is what lets the closure
+    corner (normally invisible to get_connected_wall) get proper miters."""
+    n = len(chain)
+    if n == 0:
+        return
+    if not is_closed:
+        hb_types.GeoNodeWall(chain[0]).set_input('Left Angle', 0.0)
+        hb_types.GeoNodeWall(chain[-1]).set_input('Right Angle', 0.0)
+    corners = n if is_closed else n - 1
+    for i in range(corners):
+        _miter_between(chain[i], chain[(i + 1) % n])
+
+
+def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
+    """
+    Offset a wall perpendicular to its own direction by `offset` meters.
+    Neighbor walls pivot and resize so their corner shared with the dragged
+    wall shifts by offset * outward_normal, while their opposite corner is
+    pinned (by the upstream constraint chain or by loop closure).
+
+    This handles both perpendicular and angled neighbors. For perpendicular
+    neighbors, delta is parallel to the neighbor's direction vector, so the
+    rotation change is zero and only the length changes — equivalent to the
+    earlier perpendicular-only behavior, with no regression.
+
+    For closed loops: positive offset = outward (auto-detected via signed area).
     For open chains: positive offset = left of wall direction.
 
-    Requires loop-adjacent neighbor walls to be approximately perpendicular
-    to the dragged wall (within tolerance_deg). Does not change any wall's
-    rotation, nor the dragged wall's length.
+    The dragged wall itself never rotates and never changes length; it only
+    translates (anchor / chain-head drags) or is passively repositioned by
+    the constraint chain (middle drags).
+
+    The `tolerance_deg` parameter is retained for API compatibility and
+    ignored — Option A accepts any neighbor angle.
 
     Returns (success: bool, message: str).
     """
     import math
 
-    wall = hb_types.GeoNodeWall(wall_obj)
     chain, idx, is_closed = get_wall_chain_info(wall_obj)
     if chain is None:
         return False, "Selected wall is not part of a detected chain"
@@ -297,7 +332,7 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
     this_rot = wall_obj.rotation_euler.z
     left_normal = Vector((-math.sin(this_rot), math.cos(this_rot), 0))
 
-    # Determine outward direction
+    # Outward direction
     if is_closed:
         pts = get_room_boundary_points(chain)
         if len(pts) >= 2 and (pts[0] - pts[-1]).length < 0.01:
@@ -308,83 +343,63 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
             p1 = pts[i]
             p2 = pts[(i + 1) % m]
             signed_area += p1.x * p2.y - p2.x * p1.y
-        # CCW (positive area) -> interior on left of travel -> outward on right
         outward_sign = -1.0 if signed_area > 0 else 1.0
     else:
-        outward_sign = 1.0  # convention: + = left of direction for open chains
+        outward_sign = 1.0  # + = left of direction for open chains
 
     outward_normal = outward_sign * left_normal
     delta = offset * outward_normal
-    tol_cos = math.cos(math.radians(tolerance_deg))
 
-    def wall_dir(obj):
+    def _wall_vector(obj):
         r = obj.rotation_euler.z
-        return Vector((math.cos(r), math.sin(r), 0))
+        L = hb_types.GeoNodeWall(obj).get_input('Length')
+        return Vector((math.cos(r) * L, math.sin(r) * L, 0))
 
-    planned = []  # list of (GeoNodeWall, new_length, label)
-    translate_anchor = False
-
+    # Identify loop neighbors
+    pred_obj = None
+    succ_obj = None
     if is_closed:
         pred_obj = chain[(idx - 1) % n]
         succ_obj = chain[(idx + 1) % n]
-        for neighbor_obj, sign, label in (
-            (pred_obj, +1.0, "predecessor"),
-            (succ_obj, -1.0, "successor"),
-        ):
-            neighbor = hb_types.GeoNodeWall(neighbor_obj)
-            dot = wall_dir(neighbor_obj).dot(outward_normal)
-            if abs(dot) < tol_cos:
-                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
-                return False, (f"{label.capitalize()} wall is {abs(ang_off):.1f} deg "
-                               f"off perpendicular; only perpendicular neighbors supported")
-            cur = neighbor.get_input('Length')
-            new_len = cur + sign * offset * dot
-            if new_len <= 0.001:
-                return False, (f"Offset would collapse {label} wall "
-                               f"(new length would be {new_len:.3f} m)")
-            planned.append((neighbor, new_len, label))
-        if idx == 0 or idx == n - 1:
-            translate_anchor = True
     else:
-        # Open chain: adjust predecessor and/or successor lengths, matching the
-        # closed-loop formulas. Head (idx=0) also translates its location so the
-        # chain's far end stays put; tail (idx=n-1) has no successor so its far
-        # end naturally moves with the drag.
         if idx > 0:
             pred_obj = chain[idx - 1]
-            neighbor = hb_types.GeoNodeWall(pred_obj)
-            dot = wall_dir(pred_obj).dot(outward_normal)
-            if abs(dot) < tol_cos:
-                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
-                return False, (f"Predecessor wall is {abs(ang_off):.1f} deg "
-                               f"off perpendicular; only perpendicular neighbors supported")
-            cur = neighbor.get_input('Length')
-            new_len = cur + offset * dot
-            if new_len <= 0.001:
-                return False, (f"Offset would collapse predecessor wall "
-                               f"(new length would be {new_len:.3f} m)")
-            planned.append((neighbor, new_len, "predecessor"))
         if idx < n - 1:
             succ_obj = chain[idx + 1]
-            neighbor = hb_types.GeoNodeWall(succ_obj)
-            dot = wall_dir(succ_obj).dot(outward_normal)
-            if abs(dot) < tol_cos:
-                ang_off = 90.0 - math.degrees(math.acos(min(1.0, abs(dot))))
-                return False, (f"Successor wall is {abs(ang_off):.1f} deg "
-                               f"off perpendicular; only perpendicular neighbors supported")
-            cur = neighbor.get_input('Length')
-            new_len = cur - offset * dot
-            if new_len <= 0.001:
-                return False, (f"Offset would collapse successor wall "
-                               f"(new length would be {new_len:.3f} m)")
-            planned.append((neighbor, new_len, "successor"))
 
-    # Apply length changes
-    for neighbor, new_len, _ in planned:
-        neighbor.set_input('Length', new_len)
+    # Plan each neighbor's new length + rotation using the Option A formulas.
+    # Predecessor's end is the shared corner (shifts by +delta); start is pinned.
+    # Successor's start is the shared corner (shifts by +delta); end is pinned.
+    # So pred new_vec = old + delta, succ new_vec = old - delta.
+    planned = []
+    for neighbor_obj, sign, label in (
+        (pred_obj, +1.0, "predecessor"),
+        (succ_obj, -1.0, "successor"),
+    ):
+        if neighbor_obj is None:
+            continue
+        old_vec = _wall_vector(neighbor_obj)
+        new_vec = old_vec + sign * delta
+        new_len = new_vec.length
+        if new_len <= 0.001:
+            return False, (f"Offset would collapse {label} wall "
+                           f"(new length would be {new_len:.3f} m)")
+        # Reject drags large enough to reverse a neighbor's direction. The
+        # geometry would still be "valid" but the wall flips, which is almost
+        # never what the user wants.
+        if old_vec.dot(new_vec) <= 0.0:
+            return False, (f"Offset would reverse {label} wall direction "
+                           f"(try a smaller offset)")
+        new_rot = math.atan2(new_vec.y, new_vec.x)
+        planned.append((neighbor_obj, new_len, new_rot, label))
+
+    # Apply planned length + rotation changes
+    for neighbor_obj, new_len, new_rot, _ in planned:
+        hb_types.GeoNodeWall(neighbor_obj).set_input('Length', new_len)
+        neighbor_obj.rotation_euler.z = new_rot
 
     # Apply anchor / head translation
-    if is_closed and translate_anchor:
+    if is_closed and (idx == 0 or idx == n - 1):
         anchor = chain[0]
         anchor.location.x += delta.x
         anchor.location.y += delta.y
@@ -392,11 +407,10 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=5.0):
         wall_obj.location.x += delta.x
         wall_obj.location.y += delta.y
 
-    # No miter refresh: this operator only changes lengths and anchor location,
-    # never rotations, so miter angles are already correct. Calling
-    # update_connected_wall_miters here would zero out the closure miter on a
-    # closed loop (since calculate_wall_miter_angles can't see the closure
-    # seam via constraints alone).
+    # Recompute miter angles at every corner in the chain (includes the
+    # closure seam for closed loops, which update_connected_wall_miters misses).
+    _update_chain_miters(chain, is_closed)
+
     return True, f"Offset wall by {offset:.3f} m"
 
 
@@ -2401,7 +2415,10 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 gw = hb_types.GeoNodeWall(obj)
                 snap[obj.name] = {
                     'length': gw.get_input('Length'),
+                    'left_angle': gw.get_input('Left Angle'),
+                    'right_angle': gw.get_input('Right Angle'),
                     'loc': (obj.location.x, obj.location.y, obj.location.z),
+                    'rot_z': obj.rotation_euler.z,
                 }
         return snap
 
@@ -2413,7 +2430,10 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 continue
             gw = hb_types.GeoNodeWall(obj)
             gw.set_input('Length', state['length'])
+            gw.set_input('Left Angle', state['left_angle'])
+            gw.set_input('Right Angle', state['right_angle'])
             obj.location = state['loc']
+            obj.rotation_euler.z = state['rot_z']
 
     # ---------- Cursor projection / wall picking ----------
 
