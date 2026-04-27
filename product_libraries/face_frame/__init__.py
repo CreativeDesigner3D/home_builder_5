@@ -1,10 +1,15 @@
-from . import props_face_frame
+from . import props_hb_face_frame
+from . import operators
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
 
+
 def register():
-    props_face_frame.register()
+    props_hb_face_frame.register()
+    operators.register()
+
 
 def unregister():
-    props_face_frame.unregister()
+    operators.unregister()
+    props_hb_face_frame.unregister()
