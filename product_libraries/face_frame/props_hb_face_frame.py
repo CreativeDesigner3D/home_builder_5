@@ -124,8 +124,12 @@ def update_top_cabinet_clearance(self, context):
 
 
 def update_face_frame_selection_mode(self, context):
-    """Hook for Phase 3 - will toggle outliner visibility / select filters."""
-    pass
+    """Apply visibility highlighting for the active selection mode.
+
+    Calls the hb_face_frame.toggle_mode operator which iterates all scene
+    objects and highlights/dims them based on which mode is active.
+    """
+    bpy.ops.hb_face_frame.toggle_mode(search_obj_name="")
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +191,378 @@ class HB_UL_face_frame_cabinet_styles(UIList):
 
 
 # ---------------------------------------------------------------------------
+# Object-level PropertyGroups - face frame cabinet & bay state
+# ---------------------------------------------------------------------------
+def _update_cabinet_dim(self, context):
+    """Triggered when a cabinet-level dimension changes. Walks back to the
+    cabinet root (works even if the prop is on a descendant somehow) and
+    runs recalculate() to push values to all parts.
+
+    Imported lazily to avoid any chance of a circular import at module load.
+    """
+    from . import types_face_frame
+    types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+def _update_bay_width(self, context):
+    """Update callback for Face_Frame_Bay_Props.width.
+
+    Distinguishes user edits from system writes:
+    - System writes (during the cabinet's _distribute_bay_widths) are
+      bracketed by _DISTRIBUTING_WIDTHS. We exit immediately for those.
+    - User edits flip unlock_width=True so the new width holds during
+      future redistributions, then trigger a recalc. Setting unlock_width
+      itself fires _update_cabinet_dim which runs the recalc, so we don't
+      need to call it again here.
+    """
+    from . import types_face_frame
+    root = types_face_frame.find_cabinet_root(self.id_data)
+    if root is None:
+        return
+    if id(root) in types_face_frame._DISTRIBUTING_WIDTHS:
+        return  # system write - skip auto-lock and skip recalc
+    # User edit
+    if not self.unlock_width:
+        # Auto-lock. Setting unlock_width fires _update_cabinet_dim
+        # which triggers recalc, so we don't call recalc directly here.
+        self.unlock_width = True
+    else:
+        # Already locked - user is just nudging the value. Run recalc
+        # so other unlocked bays redistribute around the new locked value.
+        types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+class Face_Frame_Mid_Stile_Width(PropertyGroup):
+    """Width of the mid stile that sits between two adjacent bays.
+
+    Lives in a CollectionProperty on Face_Frame_Cabinet_Props.
+    Index N is the mid stile between bay N and bay N+1.
+    """
+    width: FloatProperty(
+        name="Width",
+        default=units.inch(2.0),
+        unit='LENGTH',
+        precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    unlock: BoolProperty(
+        name="Unlock",
+        description="Hold this mid stile width independent of cabinet defaults",
+        default=False,
+    )  # type: ignore
+
+    extend_up_amount: FloatProperty(
+        name="Extend Up Amount",
+        default=0.0,
+        unit='LENGTH',
+        precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    extend_down_amount: FloatProperty(
+        name="Extend Down Amount",
+        default=0.0,
+        unit='LENGTH',
+        precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Cabinet_Props(PropertyGroup):
+    """Cabinet-level face frame state. Attached to the cabinet's root object
+    as bpy.types.Object.face_frame_cabinet.
+
+    Holds everything that describes the cabinet as a whole: type, finished
+    end conditions, blind setup, stile/rail defaults, toe kick, optional
+    parts, mid stile collection. Per-bay data lives on each bay child object.
+    """
+
+    # ---- Live dimensions (single source of truth; cage Dim X/Y/Z is mirrored from these) ----
+    width: FloatProperty(
+        name="Width",
+        description="Cabinet width (X dimension)",
+        default=units.inch(36.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    height: FloatProperty(
+        name="Height",
+        description="Cabinet height (Z dimension)",
+        default=units.inch(34.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    depth: FloatProperty(
+        name="Depth",
+        description="Cabinet depth (Y dimension)",
+        default=units.inch(24.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    cabinet_type: EnumProperty(
+        name="Cabinet Type",
+        items=[
+            ('BASE', "Base", "Base cabinet"),
+            ('TALL', "Tall", "Tall cabinet"),
+            ('UPPER', "Upper", "Upper cabinet"),
+            ('LAP_DRAWER', "Lap Drawer", "Lap drawer cabinet"),
+        ],
+        default='BASE',
+    )  # type: ignore
+
+    is_sink: BoolProperty(name="Is Sink Cabinet", default=False)  # type: ignore
+    is_built_in_appliance: BoolProperty(name="Is Built-in Appliance", default=False)  # type: ignore
+    is_double: BoolProperty(name="Is Stacked / Double", default=False)  # type: ignore
+
+    FIN_END_ITEMS = [
+        ('NONE', "None", "No finished end"),
+        ('THREE_QUARTER', '3/4 Finished', "Three-quarter finished end"),
+        ('HALF', '1/2 Finished', "Half finished end"),
+        ('QUARTER', '1/4 Finished', "Quarter finished end"),
+        ('PANELED', "Paneled", "Paneled finished end"),
+        ('FALSE_FF', "False Face Frame", "False face frame end"),
+        ('WORKING_FF', "Working Face Frame", "Working face frame end"),
+        ('SOLID_BEADBOARD', "Solid Beadboard", "Solid beadboard finished end"),
+        ('MDF_BEADBOARD', "MDF Beadboard", "MDF beadboard finished end"),
+        ('FLUSH_X', "Finished Flush X Inches", "Finished flush x inches"),
+    ]
+
+    left_finished_end_condition: EnumProperty(
+        name="Left Finished End", items=FIN_END_ITEMS, default='NONE'
+    )  # type: ignore
+    right_finished_end_condition: EnumProperty(
+        name="Right Finished End", items=FIN_END_ITEMS, default='NONE'
+    )  # type: ignore
+    back_finished_end_condition: EnumProperty(
+        name="Back Finished End", items=FIN_END_ITEMS, default='NONE'
+    )  # type: ignore
+
+    blind_left: BoolProperty(name="Blind Left", default=False)  # type: ignore
+    blind_right: BoolProperty(name="Blind Right", default=False)  # type: ignore
+    blind_amount_left: FloatProperty(
+        name="Blind Amount Left", default=units.inch(24.0), unit='LENGTH', precision=4
+    )  # type: ignore
+    blind_amount_right: FloatProperty(
+        name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4
+    )  # type: ignore
+    blind_reveal: FloatProperty(
+        name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4
+    )  # type: ignore
+
+    left_stile_width: FloatProperty(
+        name="Left Stile Width", default=units.inch(2.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_stile_width: FloatProperty(
+        name="Right Stile Width", default=units.inch(2.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_left_stile: BoolProperty(name="Unlock Left Stile", default=False)  # type: ignore
+    unlock_right_stile: BoolProperty(name="Unlock Right Stile", default=False)  # type: ignore
+    turn_off_left_stile: BoolProperty(name="Turn Off Left Stile", default=False)  # type: ignore
+    turn_off_right_stile: BoolProperty(name="Turn Off Right Stile", default=False)  # type: ignore
+
+    LEFT_STILE_TYPE_ITEMS = [
+        ('STANDARD', "Standard", "Standard stile"),
+        ('WALL', "Wall", "Wall stile (extends past carcass)"),
+        ('BLIND', "Blind", "Blind corner stile"),
+    ]
+    left_stile_type: EnumProperty(
+        name="Left Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD'
+    )  # type: ignore
+    right_stile_type: EnumProperty(
+        name="Right Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD'
+    )  # type: ignore
+
+    extend_left_stile_up: BoolProperty(name="Extend Left Stile Up", default=False)  # type: ignore
+    extend_left_stile_down: BoolProperty(name="Extend Left Stile Down", default=False)  # type: ignore
+    extend_right_stile_up: BoolProperty(name="Extend Right Stile Up", default=False)  # type: ignore
+    extend_right_stile_down: BoolProperty(name="Extend Right Stile Down", default=False)  # type: ignore
+    extend_left_stile_up_amount: FloatProperty(
+        name="Extend Left Stile Up Amount", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    extend_left_stile_down_amount: FloatProperty(
+        name="Extend Left Stile Down Amount", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    extend_right_stile_up_amount: FloatProperty(
+        name="Extend Right Stile Up Amount", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    extend_right_stile_down_amount: FloatProperty(
+        name="Extend Right Stile Down Amount", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+
+    extend_left: FloatProperty(
+        name="Extend Left", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    extend_right: FloatProperty(
+        name="Extend Right", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    left_offset: FloatProperty(
+        name="Left Offset", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    right_offset: FloatProperty(
+        name="Right Offset", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+
+    top_rail_width: FloatProperty(
+        name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bottom_rail_width: FloatProperty(
+        name="Bottom Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_top_rail: BoolProperty(name="Unlock Top Rail (Cabinet)", default=False)  # type: ignore
+    unlock_bottom_rail: BoolProperty(name="Unlock Bottom Rail (Cabinet)", default=False)  # type: ignore
+
+    material_thickness: FloatProperty(
+        name="Material Thickness", default=units.inch(0.75), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    face_frame_thickness: FloatProperty(
+        name="Face Frame Thickness", default=units.inch(0.75), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    back_thickness: FloatProperty(
+        name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_toe_kick_thickness: FloatProperty(
+        name="Finish Toe Kick Thickness", default=units.inch(0.25), unit='LENGTH', precision=4
+    )  # type: ignore
+
+    toe_kick_type: EnumProperty(
+        name="Toe Kick Type",
+        items=[
+            ('NOTCH', "Notch Ends to Floor", "Sides notch to floor; toe kick recessed"),
+            ('LADDER', "Ladder Style", "Ladder-style toe kick; sides start above floor"),
+            ('BASE_ASSEMBLY', "Base Assembly Each Box", "Each box has its own base"),
+        ],
+        default='NOTCH',
+    )  # type: ignore
+    toe_kick_height: FloatProperty(
+        name="Toe Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_setback: FloatProperty(
+        name="Toe Kick Setback", default=units.inch(3.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    toe_kick_thickness: FloatProperty(
+        name="Toe Kick Thickness", default=units.inch(0.75), unit='LENGTH', precision=4
+    )  # type: ignore
+    inset_toe_kick_left: FloatProperty(
+        name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    inset_toe_kick_right: FloatProperty(
+        name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4
+    )  # type: ignore
+    flush_toe_kick: BoolProperty(name="Flush Toe Kick", default=False)  # type: ignore
+    loose_toe_kick: BoolProperty(name="Loose Toe Kick", default=False)  # type: ignore
+    include_finish_toe_kick: BoolProperty(name="Include Finish Toe Kick", default=True)  # type: ignore
+
+    include_external_nailer: BoolProperty(name="Include External Nailer", default=False)  # type: ignore
+    include_internal_nailer: BoolProperty(name="Include Internal Nailer", default=False)  # type: ignore
+    include_thin_finished_bottom: BoolProperty(name="Include 1/4 Finished Bottom", default=False)  # type: ignore
+    include_thick_finished_bottom: BoolProperty(name="Include 3/4 Finished Bottom", default=False)  # type: ignore
+    include_blocking: BoolProperty(name="Include Blocking", default=False)  # type: ignore
+
+    mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
+
+
+class Face_Frame_Bay_Props(PropertyGroup):
+    """Per-bay state for face frame cabinets. Attached to each bay's cage
+    object as bpy.types.Object.face_frame_bay.
+
+    Each bay carries its own width, height, depth, kick height, top offset,
+    plus per-bay rail widths. Unlock toggles mark bays that hold their values
+    independently of cabinet-level defaults.
+    """
+
+    bay_index: IntProperty(
+        name="Bay Index",
+        description="Position in the parent cabinet's bay list (0-based)",
+        default=0,
+    )  # type: ignore
+
+    width: FloatProperty(
+        name="Width", default=units.inch(18.0), unit='LENGTH', precision=4,
+        update=_update_bay_width,
+    )  # type: ignore
+    height: FloatProperty(
+        name="Height", default=units.inch(34.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    depth: FloatProperty(
+        name="Depth", default=units.inch(24.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    kick_height: FloatProperty(
+        name="Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    top_offset: FloatProperty(
+        name="Top Offset",
+        description="Distance from cabinet top to top of this bay's opening",
+        default=0.0,
+        unit='LENGTH',
+        precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    top_rail_width: FloatProperty(
+        name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bottom_rail_width: FloatProperty(
+        name="Bottom Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    delete_bay: BoolProperty(
+        name="Delete Bay",
+        description="Skip this bay during construction (used for appliance cutouts)",
+        default=False,
+    )  # type: ignore
+    remove_bottom: BoolProperty(
+        name="Remove Bottom", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
+    finish_bay: BoolProperty(name="Finish Bay", default=False)  # type: ignore
+
+    unlock_width: BoolProperty(
+        name="Unlock Width",
+        description="Hold this bay's width during gang-construction redistribution",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_height: BoolProperty(
+        name="Unlock Height", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_depth: BoolProperty(
+        name="Unlock Depth", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_kick_height: BoolProperty(
+        name="Unlock Kick Height", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_top_offset: BoolProperty(
+        name="Unlock Top Offset", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_top_rail: BoolProperty(
+        name="Unlock Top Rail", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_bottom_rail: BoolProperty(
+        name="Unlock Bottom Rail", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+# ---------------------------------------------------------------------------
 # Main scene props
 # ---------------------------------------------------------------------------
 class Face_Frame_Scene_Props(PropertyGroup):
@@ -194,15 +570,23 @@ class Face_Frame_Scene_Props(PropertyGroup):
     styles, and the library/options UI.
     """
 
+    # ---- Test drop (development-time bay_qty exercise) ----
+    test_bay_qty: IntProperty(
+        name="Test Bay Qty",
+        description="Number of bays for cabinets dropped via the Test Drop panel",
+        default=1, min=1, max=10,
+    )  # type: ignore
+
     # ---- Selection mode (mirrors frameless) ----
     face_frame_selection_mode: EnumProperty(
         name="Face Frame Selection Mode",
         items=[
-            ('Cabinets', "Cabinets", "Cabinets"),
-            ('Bays', "Bays", "Bays"),
-            ('Openings', "Openings", "Openings"),
-            ('Interiors', "Interiors", "Interiors"),
-            ('Parts', "Parts", "Parts"),
+            ('Cabinets', "Cabinets", "Select cabinet roots"),
+            ('Bays', "Bays", "Select bay cages"),
+            ('Face Frame', "Face Frame", "Select face frame members (rails and stiles)"),
+            ('Openings', "Openings", "Select opening cages"),
+            ('Interiors', "Interiors", "Select interior parts"),
+            ('Parts', "Parts", "Select all individual cuttable parts"),
         ],
         default='Cabinets',
         update=update_face_frame_selection_mode,
@@ -812,6 +1196,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
 classes = (
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
+    Face_Frame_Mid_Stile_Width,
+    Face_Frame_Cabinet_Props,
+    Face_Frame_Bay_Props,
     Face_Frame_Scene_Props,
 )
 
@@ -821,12 +1208,24 @@ _register_classes, _unregister_classes = bpy.utils.register_classes_factory(clas
 
 def register():
     _register_classes()
+
+    # Object-level pointer properties: face frame cabinets and bays carry
+    # their state on the cage object directly. Only objects that get tagged
+    # by the construction code populate these.
+    bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
+    bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
+
     # Initialize preview collections so thumbnails load on first sidebar draw
     get_library_previews()
     get_cabinet_previews()
 
 
 def unregister():
+    if hasattr(bpy.types.Object, 'face_frame_bay'):
+        del bpy.types.Object.face_frame_bay
+    if hasattr(bpy.types.Object, 'face_frame_cabinet'):
+        del bpy.types.Object.face_frame_cabinet
+
     _unregister_classes()
     for pcoll in preview_collections.values():
         bpy.utils.previews.remove(pcoll)
