@@ -188,22 +188,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
         # Bottom is segment-keyed; created lazily by _reconcile_carcass_bottoms.
 
-        top = CabinetPart()
-        top.create('Top')
-        top.obj.parent = self.obj
-        top.obj['hb_part_role'] = PART_ROLE_TOP
-        top.obj['CABINET_PART'] = True
-        top.set_input('Mirror Y', True)
-        top.set_input('Mirror Z', True)
+        # Top is segment-keyed; created lazily by _reconcile_carcass_tops.
 
-        back = CabinetPart()
-        back.create('Back')
-        back.obj.parent = self.obj
-        back.obj['hb_part_role'] = PART_ROLE_BACK
-        back.obj['CABINET_PART'] = True
-        back.obj.rotation_euler.x = math.radians(90)
-        back.obj.rotation_euler.y = math.radians(-90)
-        back.set_input('Mirror Y', True)
+        # Back is segment-keyed; created lazily by _reconcile_carcass_backs.
 
         # ----- End stiles -----
         left_stile = CabinetPart()
@@ -238,7 +225,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         for i in range(bay_qty):
             bay = FaceFrameBay()
-            bay.create(f'Bay {i}')
+            bay.create(f'Bay {i + 1}')
             bay.obj.parent = self.obj
             bay.obj['hb_bay_index'] = i
             bp = bay.obj.face_frame_bay
@@ -259,7 +246,7 @@ class FaceFrameCabinet(GeoNodeCage):
             ms_entry.width = inch(2.0)
 
             mid_stile = CabinetPart()
-            mid_stile.create(f'Mid Stile {i}')
+            mid_stile.create(f'Mid Stile {i + 1}')
             mid_stile.obj.parent = self.obj
             mid_stile.obj['hb_part_role'] = PART_ROLE_MID_STILE
             mid_stile.obj['CABINET_PART'] = True
@@ -271,7 +258,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
             # Mid Division: carcass partition behind this mid stile.
             mid_div = CabinetPart()
-            mid_div.create(f'Mid Division {i}')
+            mid_div.create(f'Mid Division {i + 1}')
             mid_div.obj.parent = self.obj
             mid_div.obj['hb_part_role'] = PART_ROLE_MID_DIVISION
             mid_div.obj['CABINET_PART'] = True
@@ -367,13 +354,19 @@ class FaceFrameCabinet(GeoNodeCage):
         top_segments = solver.top_rail_segments(layout)
         bottom_segments = solver.bottom_rail_segments(layout)
         carcass_bottom_segs = solver.carcass_bottom_segments(layout)
+        carcass_back_segs = solver.carcass_back_segments(layout)
+        carcass_top_segs = solver.carcass_top_segments(layout)
         self._reconcile_rails(PART_ROLE_TOP_RAIL, top_segments)
         self._reconcile_rails(PART_ROLE_BOTTOM_RAIL, bottom_segments)
         self._reconcile_carcass_bottoms(carcass_bottom_segs)
+        self._reconcile_carcass_backs(carcass_back_segs)
+        self._reconcile_carcass_tops(carcass_top_segs)
 
         top_seg_by_start = {s['start_bay']: s for s in top_segments}
         bot_seg_by_start = {s['start_bay']: s for s in bottom_segments}
         carc_bot_by_start = {s['start_bay']: s for s in carcass_bottom_segs}
+        carc_back_by_start = {s['start_bay']: s for s in carcass_back_segs}
+        carc_top_by_start = {s['start_bay']: s for s in carcass_top_segs}
 
         for child in self.obj.children:
             role = child.get('hb_part_role')
@@ -391,16 +384,20 @@ class FaceFrameCabinet(GeoNodeCage):
 
             # ---- Carcass (sides shrink to leave room for the face frame at front) ----
             if role == PART_ROLE_LEFT_SIDE:
-                child.location = (0.0, 0.0, layout.tkh)
-                part.set_input('Length', layout.dim_z - layout.tkh)
-                part.set_input('Width', carcass_depth)
-                part.set_input('Thickness', layout.mt)
+                pos = solver.left_side_position(layout)
+                length, width, thickness = solver.left_side_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
 
             elif role == PART_ROLE_RIGHT_SIDE:
-                child.location = (layout.dim_x, 0.0, layout.tkh)
-                part.set_input('Length', layout.dim_z - layout.tkh)
-                part.set_input('Width', carcass_depth)
-                part.set_input('Thickness', layout.mt)
+                pos = solver.right_side_position(layout)
+                length, width, thickness = solver.right_side_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
 
             elif role == PART_ROLE_BOTTOM:
                 seg = carc_bot_by_start.get(child.get('hb_segment_start_bay'))
@@ -412,16 +409,22 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Thickness', seg['thickness'])
 
             elif role == PART_ROLE_TOP:
-                child.location = (layout.mt, -layout.mt, layout.dim_z)
-                part.set_input('Length', layout.dim_x - 2 * layout.mt)
-                part.set_input('Width', carcass_depth - layout.mt)
-                part.set_input('Thickness', layout.mt)
+                seg = carc_top_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['panel_dim_y'])
+                part.set_input('Thickness', seg['thickness'])
 
             elif role == PART_ROLE_BACK:
-                child.location = (layout.mt, 0.0, layout.tkh + layout.mt)
-                part.set_input('Length', layout.dim_z - layout.tkh - layout.mt)
-                part.set_input('Width', layout.dim_x - 2 * layout.mt)
-                part.set_input('Thickness', layout.bt)
+                seg = carc_back_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['vertical_length'])
+                part.set_input('Width', seg['horizontal_length'])
+                part.set_input('Thickness', seg['thickness'])
 
             # ---- End stiles ----
             elif role == PART_ROLE_LEFT_STILE:
@@ -554,7 +557,7 @@ class FaceFrameCabinet(GeoNodeCage):
     def _create_carcass_bottom_part(self, start_bay_index):
         """Create one carcass bottom part (bay floor) keyed to its segment."""
         bottom = CabinetPart()
-        bottom.create(f'Bottom {start_bay_index}')
+        bottom.create(f'Bottom {start_bay_index + 1}')
         bottom.obj.parent = self.obj
         bottom.obj['hb_part_role'] = PART_ROLE_BOTTOM
         bottom.obj['CABINET_PART'] = True
@@ -563,12 +566,96 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom.set_input('Mirror Z', False)
         return bottom
 
+    def _reconcile_carcass_backs(self, segments):
+        """Match Back carcass children against segments. Same three-pass
+        delete/match/create as _reconcile_carcass_bottoms.
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_BACK:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_BACK
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_carcass_back_part(seg['start_bay'])
+
+    def _create_carcass_back_part(self, start_bay_index):
+        """Create one carcass back panel keyed to its segment."""
+        back = CabinetPart()
+        back.create(f'Back {start_bay_index + 1}')
+        back.obj.parent = self.obj
+        back.obj['hb_part_role'] = PART_ROLE_BACK
+        back.obj['CABINET_PART'] = True
+        back.obj['hb_segment_start_bay'] = start_bay_index
+        back.obj.rotation_euler.x = math.radians(90)
+        back.obj.rotation_euler.y = math.radians(-90)
+        back.set_input('Mirror Y', True)
+        return back
+
+
+    def _reconcile_carcass_tops(self, segments):
+        """Match Top carcass children against segments. Same three-pass
+        delete/match/create as _reconcile_carcass_bottoms / _backs. Also
+        cleans up any legacy non-segment Top (its hb_segment_start_bay is
+        None which is never in wanted_starts).
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_TOP:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_TOP
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_carcass_top_part(seg['start_bay'])
+
+    def _create_carcass_top_part(self, start_bay_index):
+        """Create one carcass top part keyed to its segment.
+
+        Mirror Y/Z to match the existing single-top convention so the
+        panel extends in -Y (front) and -Z (down) from its origin.
+        """
+        top = CabinetPart()
+        top.create(f'Top {start_bay_index + 1}')
+        top.obj.parent = self.obj
+        top.obj['hb_part_role'] = PART_ROLE_TOP
+        top.obj['CABINET_PART'] = True
+        top.obj['hb_segment_start_bay'] = start_bay_index
+        top.set_input('Mirror Y', True)
+        top.set_input('Mirror Z', True)
+        return top
+
     def _create_rail_part(self, role, start_bay_index):
         """Create a single rail part with the given role and start_bay key."""
         if role == PART_ROLE_TOP_RAIL:
-            name = f'Top Rail {start_bay_index}'
+            name = f'Top Rail {start_bay_index + 1}'
         else:
-            name = f'Bottom Rail {start_bay_index}'
+            name = f'Bottom Rail {start_bay_index + 1}'
 
         rail = CabinetPart()
         rail.create(name)

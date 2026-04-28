@@ -312,22 +312,59 @@ def bottom_rail_segments(layout):
 # End stiles (left and right) - always exist
 # ---------------------------------------------------------------------------
 def left_end_stile_position(layout):
-    return (0.0, -layout.dim_y, layout.tkh)
+    """Left end stile follows bay 0's vertical extent. If bay 0 drops below
+    the cabinet's nominal floor (taller upper bay) or rises above (different
+    kick on a base), the stile origin moves with it so it covers the
+    bay's full height face.
+    """
+    return (0.0, -layout.dim_y, bay_bottom_z(layout, 0))
 
 
 def left_end_stile_dims(layout):
-    return (layout.dim_z - layout.tkh, layout.lsw, layout.fft)
+    bottom_z = bay_bottom_z(layout, 0)
+    top_z = bay_top_z(layout, 0)
+    return (top_z - bottom_z, layout.lsw, layout.fft)
 
 
 def right_end_stile_position(layout):
-    """Right end stile sits at x=dim_x. With z rotation 90 and the part's
-    Mirror settings, the geometry extends in -X by rsw amount.
-    """
-    return (layout.dim_x, -layout.dim_y, layout.tkh)
+    """Right end stile follows the LAST bay's vertical extent."""
+    last = layout.bay_count - 1
+    return (layout.dim_x, -layout.dim_y, bay_bottom_z(layout, last))
 
 
 def right_end_stile_dims(layout):
-    return (layout.dim_z - layout.tkh, layout.rsw, layout.fft)
+    last = layout.bay_count - 1
+    bottom_z = bay_bottom_z(layout, last)
+    top_z = bay_top_z(layout, last)
+    return (top_z - bottom_z, layout.rsw, layout.fft)
+
+
+# ---------------------------------------------------------------------------
+# Carcass side panels - extend with first/last bay's vertical range
+# ---------------------------------------------------------------------------
+def left_side_position(layout):
+    """Left carcass side matches bay 0's vertical range exactly. Shorter
+    bay 0 -> shorter side; taller bay 0 -> longer side.
+    """
+    return (0.0, 0.0, bay_bottom_z(layout, 0))
+
+
+def left_side_dims(layout):
+    bottom_z = bay_bottom_z(layout, 0)
+    top_z = bay_top_z(layout, 0)
+    return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
+
+
+def right_side_position(layout):
+    last = layout.bay_count - 1
+    return (layout.dim_x, 0.0, bay_bottom_z(layout, last))
+
+
+def right_side_dims(layout):
+    last = layout.bay_count - 1
+    bottom_z = bay_bottom_z(layout, last)
+    top_z = bay_top_z(layout, last)
+    return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
 
 
 # ---------------------------------------------------------------------------
@@ -422,33 +459,166 @@ def _carcass_bottom_passthrough(layout, gap_index):
     return True
 
 
+def _mid_division_x(layout, gap_index):
+    """X position of the mid division panel at gap_index. Matches the
+    placement logic in mid_division_position so bottoms/backs can align
+    their edges to it.
+    """
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    ms = layout.mid_stiles[gap_index]
+    msw = ms['width']
+    base_x = bay_x_position(layout, gap_index) + bay_a['width']
+    if _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return base_x + msw / 2.0 - layout.mt / 2.0
+    return base_x + msw / 2.0
+
+
+def _carcass_meeting_x(layout, gap_index):
+    """X coordinate where two adjacent carcass bottom (or back) segments
+    meet at gap_index. The HIGHER bay's panel abuts the mid division at
+    its near face; the LOWER bay's panel passes UNDER the mid division to
+    its far face. Both meet at the same X - the higher bay's near face.
+    """
+    mid_div_x = _mid_division_x(layout, gap_index)
+    if bay_bottom_z(layout, gap_index) > bay_bottom_z(layout, gap_index + 1):
+        # Higher bay is on the LEFT - meet at mid div left face
+        return mid_div_x
+    else:
+        # Higher bay is on the RIGHT (or same Z) - meet at mid div right face
+        return mid_div_x + layout.mt
+
+
+def _segment_x_bounds(layout, start, end):
+    """Left and right X for a segment that should fill from cabinet inner
+    side wall to cabinet inner side wall, meeting adjacent segments at
+    the mid division on internal gaps.
+    """
+    if start == 0:
+        left_x = layout.mt
+    else:
+        left_x = _carcass_meeting_x(layout, start - 1)
+    if end == layout.bay_count - 1:
+        right_x = layout.dim_x - layout.mt
+    else:
+        right_x = _carcass_meeting_x(layout, end)
+    return left_x, right_x
+
+
 def carcass_bottom_segments(layout):
     """Per-segment bay floor panels.
 
-    Each segment becomes one carcass-bottom object positioned to support
-    the bay or run of bays. Position matches the bay's bottom_z + bottom
-    rail width offset so the panel TOP aligns with where the bay cage sits.
+    Length spans from carcass inner side (or previous mid division) to
+    next mid division (or carcass inner side). The HIGHER neighbor's
+    panel abuts the mid division; the LOWER neighbor passes underneath
+    so the mid division can rest on top of it.
     """
     segments = []
     for start, end in _compute_segments(layout, _carcass_bottom_passthrough):
         first_bay = layout.bays[start]
-        x = bay_x_position(layout, start)
-        length = first_bay['width']
-        for k in range(start, end):
-            length += layout.mid_stiles[k]['width']
-            length += layout.bays[k + 1]['width']
-        # Origin Y is at the front face of the back panel; Mirror Y on the
-        # part extends the panel in -Y toward the face frame. Z origin is
-        # one panel-thickness below the bay's floor (so the panel's TOP
-        # surface lands at bay_bottom_z + bottom_rail_width).
+        left_x, right_x = _segment_x_bounds(layout, start, end)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
-            'x':          x,
+            'x':          left_x,
             'y':          -layout.dim_y + first_bay['depth'] - layout.bt,
             'z':          bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt,
-            'length':     length,
+            'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft,
+            'thickness':  layout.mt,
+        })
+    return segments
+
+
+def _carcass_back_passthrough(layout, gap_index):
+    """Back panel breaks when bay floors, ceilings, or depths differ."""
+    if gap_index >= len(layout.mid_stiles):
+        return False
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_bottom_z(layout, gap_index),
+                       bay_bottom_z(layout, gap_index + 1)):
+        return False
+    if not _epsilon_eq(bay_top_z(layout, gap_index),
+                       bay_top_z(layout, gap_index + 1)):
+        return False
+    if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return False
+    if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
+        return False
+    if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
+        return False
+    return True
+
+
+def carcass_back_segments(layout):
+    """Per-segment back panels.
+
+    Same X span as the bottom segments (from mid division to mid division
+    or carcass side). Z origin matches the bay's floor (top of bottom
+    panel); vertical extent reaches up to the cabinet ceiling.
+    """
+    segments = []
+    for start, end in _compute_segments(layout, _carcass_back_passthrough):
+        first_bay = layout.bays[start]
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        segments.append({
+            'start_bay':       start,
+            'end_bay':         end,
+            'x':               left_x,
+            'y':               0.0,
+            'z':               z_origin,
+            'horizontal_length': right_x - left_x,
+            'vertical_length':   bay_top_z(layout, start) - z_origin,
+            'thickness':       layout.bt,
+        })
+    return segments
+
+
+def _carcass_top_passthrough(layout, gap_index):
+    """True if the carcass top spans uninterrupted across gap_index.
+
+    HB5 solid-top convention: the top sits at the cabinet ceiling (dim_z),
+    so it does NOT need to break on bay_top_z / top_offset / height the way
+    Pulito's stretchers do (Pulito's UTL breaks on top_offset because its
+    stretchers drop with the bay; HB5's solid top stays at dim_z regardless).
+
+    Break conditions (subset of back's):
+    - bay depths differ (panel Y dimension differs per segment)
+    - either bay has delete_bay set
+    """
+    if gap_index >= len(layout.mid_stiles):
+        return False
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return False
+    if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
+        return False
+    return True
+
+
+def carcass_top_segments(layout):
+    """Per-segment carcass top panels.
+
+    X span same as the bottom/back segments (mid division to mid division
+    or carcass inner side). Sits at z = dim_z (cabinet ceiling) with
+    Mirror Z = True so the panel extends down by mt thickness, matching
+    the existing single-top convention for HB5.
+    """
+    segments = []
+    for start, end in _compute_segments(layout, _carcass_top_passthrough):
+        first_bay = layout.bays[start]
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          -layout.mt,
+            'z':          layout.dim_z,
+            'length':     right_x - left_x,
+            'panel_dim_y': first_bay['depth'] - layout.mt,
             'thickness':  layout.mt,
         })
     return segments
@@ -460,8 +630,9 @@ def carcass_bottom_segments(layout):
 def mid_division_position(layout, gap_index):
     """X, Y, Z position for the partition behind mid stile N.
 
-    Sits centered on the mid stile (X), at the back-panel front face (Y),
-    and at the same Z as the mid stile bottom (so length matches).
+    Z = top of the LOWER bay's bottom rail, regardless of whether the
+    rail breaks at this gap. The mid div sits on the lower bay's bottom
+    rail and extends up behind the top rail to the cabinet top.
     """
     if gap_index >= len(layout.mid_stiles):
         return (0.0, 0.0, 0.0)
@@ -474,43 +645,47 @@ def mid_division_position(layout, gap_index):
     if _epsilon_eq(bay_a['depth'], bay_b['depth']):
         x = base_x + msw / 2.0 - layout.mt / 2.0
     else:
-        # Asymmetric depths - sit on the deeper-bay side
         x = base_x + msw / 2.0
 
-    # Y at the back panel front face of the deeper bay (max depth)
     use_depth = max(bay_a['depth'], bay_b['depth'])
     y = -layout.dim_y + use_depth - layout.bt
 
-    # Z matches the mid stile's bottom
-    z = min(bay_bottom_z(layout, gap_index),
-            bay_bottom_z(layout, gap_index + 1))
-    if bottom_rail_passthrough(layout, gap_index):
-        z += bay_a['bottom_rail_width']
+    # Z: top of LOWER bay's bottom rail (matches Pulito UDZ)
+    if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
+        lower_idx = gap_index
+    else:
+        lower_idx = gap_index + 1
+    lower_brw = layout.bays[lower_idx]['bottom_rail_width']
+    z = bay_bottom_z(layout, lower_idx) + lower_brw
     z -= ms['extend_down_amount']
 
     return (x, y, z)
 
 
 def mid_division_dims(layout, gap_index):
-    """Length (vertical), Width (depth into cabinet), Thickness."""
+    """Length (vertical), Width (depth into cabinet), Thickness.
+
+    The mid div extends from the top of the lower bay's bottom rail up
+    to the underside of the cabinet's carcass top (dim_z - mt). It runs
+    BEHIND the top rail rather than stopping under it.
+    """
     if gap_index >= len(layout.mid_stiles):
         return (0.0, 0.0, layout.mt)
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
     ms = layout.mid_stiles[gap_index]
 
-    # Length matches mid stile length (same logic as mid_stile_dims)
-    bottom_z = min(bay_bottom_z(layout, gap_index),
-                   bay_bottom_z(layout, gap_index + 1))
-    if bottom_rail_passthrough(layout, gap_index):
-        bottom_z += bay_a['bottom_rail_width']
-    bottom_z -= ms['extend_down_amount']
+    # Bottom Z: top of LOWER bay's bottom rail (matches mid_division_position)
+    if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
+        lower_idx = gap_index
+    else:
+        lower_idx = gap_index + 1
+    lower_brw = layout.bays[lower_idx]['bottom_rail_width']
+    bottom_z = bay_bottom_z(layout, lower_idx) + lower_brw - ms['extend_down_amount']
 
-    top_z = max(bay_top_z(layout, gap_index),
-                bay_top_z(layout, gap_index + 1))
-    if top_rail_passthrough(layout, gap_index):
-        top_z -= bay_a['top_rail_width']
-    top_z += ms['extend_up_amount']
+    # Top Z: cabinet ceiling minus carcass top thickness. Mid div butts up
+    # against the underside of the carcass top panel.
+    top_z = layout.dim_z - layout.mt + ms['extend_up_amount']
 
     length = top_z - bottom_z
     width = max(bay_a['depth'], bay_b['depth']) - layout.bt - layout.fft

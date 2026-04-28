@@ -77,7 +77,7 @@ def draw_cabinet_properties(layout, root):
         for bay_obj in bays:
             bp = bay_obj.face_frame_bay
             sub = box.box()
-            sub.label(text=f"Bay {bp.bay_index}")
+            sub.label(text=f"Bay {bp.bay_index + 1}")
             col = sub.column(align=True)
 
             # Width row: field is disabled when the value is auto-calculated.
@@ -108,7 +108,7 @@ def draw_cabinet_properties(layout, root):
         box.label(text=f"Mid Stiles ({len(mid_stiles)})", icon='SNAP_EDGE')
         for i, ms in enumerate(mid_stiles):
             sub = box.box()
-            sub.label(text=f"Mid Stile {i}")
+            sub.label(text=f"Mid Stile {i + 1}")
             col = sub.column(align=True)
             col.prop(ms, 'width', text="Width")
             col.prop(ms, 'extend_up_amount', text="Extend Up")
