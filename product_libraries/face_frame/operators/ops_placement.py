@@ -1,0 +1,732 @@
+"""Modal placement operator for face frame cabinets.
+
+Drags a wireframe preview cage around the scene during placement; the
+real cabinet is built only on commit, so cancel cleanly removes the
+preview without leaving construction debris.
+
+Behaviors:
+  * Cursor follows mouse; wall is detected by raycast, with a fallback
+    to nearest-wall-by-floor-projection so a missed raycast at a
+    grazing angle doesn't unstick from the wall (prevents flicker).
+  * Front/back side decision uses hysteresis - a 1" tolerance band
+    around the wall centerline before flipping sides. Without this,
+    sub-pixel cursor wobble at the wall surface flickers between front
+    and back placement.
+  * On a wall: cabinet width = available gap (between neighbors and
+    wall ends), parented to wall, slid along its X axis. Bay quantity
+    auto-fits the gap unless the user has overridden it via arrow keys.
+  * Off a wall: cabinet width = scene's default_cabinet_width, bay
+    quantity stays at the user's last value.
+  * Up/down arrows: manually adjust bay quantity (1-10).
+  * Click commits, Esc/right-click cancels.
+
+The cage uses Mirror Y on its GeoNodeCage input. Default cage extends
++Y from origin, but face-frame cabinets extend -Y from origin (origin
+at the back face). Mirror Y flips the cage to extend -Y too, so cage
+position == cabinet position with no offset gymnastics.
+
+The cage is flagged HB_CURRENT_DRAW_OBJ so hb_snap raycasts skip it
+(prevents self-snap).
+"""
+
+import bpy
+import math
+from mathutils import Vector
+from mathutils.geometry import intersect_line_plane, intersect_point_line
+from bpy_extras import view3d_utils
+
+from .. import types_face_frame
+from .... import hb_placement, hb_types, units
+
+
+_TARGET_BAY_WIDTH = units.inch(18.0)
+_BAY_QTY_MIN = 1
+_BAY_QTY_MAX = 10
+
+# Hysteresis band for front/back side detection. Cursor must cross the
+# wall centerline by this distance before the side flips. Without it,
+# a cursor pressed against the wall surface flickers between sides
+# every frame (each tiny mouse jitter changes which side of the wall
+# centerline the cursor is on).
+_FRONT_BACK_HYSTERESIS = units.inch(1.0)
+
+# Plan-view detection threshold. abs(view_z) > 0.7 means the camera is
+# looking mostly down, so we should project the cursor onto the floor
+# plane to decide front/back side rather than using raycast hit Y
+# directly. (In plan view, the raycast usually hits the wall's top
+# face, not its front/back faces.)
+_PLAN_VIEW_THRESHOLD = 0.7
+
+# Wall snap distance for the floor-projection fallback. If the cursor
+# (projected onto the floor plane) is within this distance of any
+# wall's centerline, that wall is selected even if the raycast missed.
+_WALL_SNAP_DISTANCE = units.inch(6.0)
+
+
+def _find_wall_root(obj):
+    """Walk obj's parent chain to the nearest object tagged IS_WALL_BP.
+
+    Raycasts often land on a child mesh of the wall (cage geometry,
+    decoration parts) rather than the wall root itself, so we walk up.
+    """
+    current = obj
+    while current is not None:
+        if 'IS_WALL_BP' in current:
+            return current
+        current = current.parent
+    return None
+
+
+def _cabinet_type_for_name(cabinet_name):
+    """Map a library cabinet name to its cabinet_type code.
+
+    Mirrors types_face_frame.get_cabinet_class's dispatch logic so the
+    preview cage's dimensions match what cabinet.create() will build.
+    """
+    if 'Upper' in cabinet_name:
+        return 'UPPER'
+    if 'Tall' in cabinet_name or 'Refrigerator Cabinet' in cabinet_name:
+        return 'TALL'
+    if 'Lap Drawer' in cabinet_name:
+        return 'LAP_DRAWER'
+    return 'BASE'
+
+
+def _cage_dimensions(scene_props, cabinet_type):
+    """Return (depth, height) per the relevant scene defaults."""
+    if cabinet_type == 'UPPER':
+        return (scene_props.upper_cabinet_depth,
+                scene_props.upper_cabinet_height)
+    if cabinet_type == 'TALL':
+        return (scene_props.tall_cabinet_depth,
+                scene_props.tall_cabinet_height)
+    return (scene_props.base_cabinet_depth,
+            scene_props.base_cabinet_height)
+
+
+def _auto_bay_qty(cabinet_width):
+    """Pick a bay quantity that gives ~_TARGET_BAY_WIDTH per bay."""
+    qty = round(cabinet_width / _TARGET_BAY_WIDTH)
+    return max(_BAY_QTY_MIN, min(qty, _BAY_QTY_MAX))
+
+
+class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
+                                     hb_placement.PlacementMixin):
+    """Modal: cursor drags a face-frame preview cage, click to commit."""
+    bl_idname = "hb_face_frame.place_cabinet"
+    bl_label = "Place Face Frame Cabinet"
+    bl_description = (
+        "Place a face frame cabinet on a wall or on the floor. "
+        "Up/Down arrows adjust bay quantity, Esc cancels."
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(
+        name="Cabinet Name",
+        description="Face frame cabinet type to place",
+        default="",
+    )  # type: ignore
+
+    bay_qty: bpy.props.IntProperty(
+        name="Bay Quantity",
+        description="Number of bays (1-10)",
+        default=1, min=_BAY_QTY_MIN, max=_BAY_QTY_MAX,
+    )  # type: ignore
+
+    # Live state during modal session. Reset on FINISHED/CANCELLED.
+    _preview_cage = None
+    _array_modifier = None
+    _cabinet_width: float = 0.0     # total cabinet width (m)
+    _auto_bay_qty: bool = True      # True until user presses arrow keys
+    _place_on_front: bool = True    # which side of the wall
+    _fill_mode: bool = True         # False after the user types a width
+
+    # ---------------- invoke / modal ----------------
+
+    def invoke(self, context, event):
+        if not self.cabinet_name:
+            self.report({'WARNING'}, "No cabinet name supplied")
+            return {'CANCELLED'}
+        if types_face_frame.get_cabinet_class(self.cabinet_name) is None:
+            self.report({'WARNING'},
+                        f"Unknown cabinet name: {self.cabinet_name}")
+            return {'CANCELLED'}
+
+        scene_props = context.scene.hb_face_frame
+        self._cabinet_width = scene_props.default_cabinet_width
+        self._auto_bay_qty = True
+        self._place_on_front = True
+        self._fill_mode = True
+
+        try:
+            self._create_preview_cage(context)
+        except Exception as e:
+            self.report({'ERROR'}, f"Preview creation failed: {e}")
+            return {'CANCELLED'}
+
+        # Initial position: 3D cursor (XY); Z follows cabinet_type
+        cage_obj = self._preview_cage.obj
+        cursor_loc = context.scene.cursor.location
+        cage_obj.location.x = cursor_loc.x
+        cage_obj.location.y = cursor_loc.y
+        cabinet_type = _cabinet_type_for_name(self.cabinet_name)
+        if cabinet_type == 'UPPER':
+            cage_obj.location.z = scene_props.default_wall_cabinet_location
+        else:
+            cage_obj.location.z = cursor_loc.z
+
+        self.init_placement(context)
+        if self.region is None:
+            self._delete_preview()
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self.register_placement_object(cage_obj)
+
+        context.window_manager.modal_handler_add(self)
+        self._update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if self._preview_cage is None:
+            return self._cancel(context)
+
+        # Pass through viewport navigation. Numpad digit keys are
+        # intentionally NOT in this list - they're needed for typed
+        # input (the mixin's NUMBER_KEYS dict maps NUMPAD_0..9 to
+        # digits). Sacrificing the numpad-view shortcuts during
+        # placement is acceptable; orbit/pan/zoom still work via
+        # middle mouse + wheel.
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        # While typing, route input through the mixin's typing handler
+        # FIRST. It owns ESC (cancel typing) and ENTER (commit width)
+        # in this state - we mustn't let our own ESC handler eat the
+        # event and cancel the whole modal.
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.handle_typing_event(event):
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
+        # 'W' key starts typing width explicitly. Matches the frameless
+        # convention. Number keys also start typing (via mixin auto-
+        # start) but default to WIDTH because get_default_typing_target
+        # returns WIDTH below.
+        if (event.type == 'W' and event.value == 'PRESS'
+                and self.placement_state == hb_placement.PlacementState.PLACING):
+            self.start_typing(hb_placement.TypingTarget.WIDTH)
+            self._update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # Mixin handles number keys (auto-starts typing).
+        if (event.type in hb_placement.NUMBER_KEYS
+                and event.value == 'PRESS'
+                and self.placement_state == hb_placement.PlacementState.PLACING):
+            if self.handle_typing_event(event):
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            return self._cancel(context)
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            return self._finalize(context)
+
+        if event.type == 'UP_ARROW' and event.value == 'PRESS':
+            new_qty = min(self.bay_qty + 1, _BAY_QTY_MAX)
+            if new_qty != self.bay_qty:
+                self.bay_qty = new_qty
+                self._auto_bay_qty = False
+                self._update_cage()
+                self._update_header(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
+            new_qty = max(self.bay_qty - 1, _BAY_QTY_MIN)
+            if new_qty != self.bay_qty:
+                self.bay_qty = new_qty
+                self._auto_bay_qty = False
+                self._update_cage()
+                self._update_header(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'MOUSEMOVE':
+            # Hide the cage during the raycast so the ray passes through
+            # to the wall/floor behind it. HB_CURRENT_DRAW_OBJ filters
+            # the cage out of the snap result, but it doesn't stop the
+            # ray from hitting the cage's mesh - which forces the
+            # radial fallback search to return wall hits at random
+            # offset angles, flickering the position. Hiding the cage
+            # avoids that entirely. (Frameless uses the same pattern.)
+            cage_obj = self._preview_cage.obj
+            cage_obj.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                cage_obj.hide_set(False)
+            self._position_from_hit(context)
+
+        return {'RUNNING_MODAL'}
+
+    # ---------------- preview cage ----------------
+
+    def _create_preview_cage(self, context):
+        """Build the wireframe cage matching face-frame cabinet conventions.
+
+        Mirror Y = True flips the cage to extend in -Y direction from
+        origin, matching how face-frame cabinets are built (origin at
+        the back face, geometry extending into the room).
+
+        HB_CURRENT_DRAW_OBJ excludes the cage from hb_snap raycasts so
+        the cursor can't catch on the cage and trigger self-snap.
+        """
+        scene_props = context.scene.hb_face_frame
+        cabinet_type = _cabinet_type_for_name(self.cabinet_name)
+        depth, height = _cage_dimensions(scene_props, cabinet_type)
+        cabinet_width = scene_props.default_cabinet_width
+
+        cage = hb_types.GeoNodeCage()
+        cage.create('FaceFramePlacementPreview')
+        cage.set_input('Dim X', cabinet_width / max(self.bay_qty, 1))
+        cage.set_input('Dim Y', depth)
+        cage.set_input('Dim Z', height)
+        cage.set_input('Mirror Y', True)
+
+        mod = cage.obj.modifiers.new(name='BayQty', type='ARRAY')
+        mod.use_relative_offset = True
+        mod.relative_offset_displace = (1, 0, 0)
+        mod.use_constant_offset = False
+        mod.count = self.bay_qty
+
+        cage.obj.display_type = 'WIRE'
+        cage.obj.show_in_front = True
+        cage.obj['HB_CURRENT_DRAW_OBJ'] = True
+
+        self._preview_cage = cage
+        self._array_modifier = mod
+
+    def _update_cage(self):
+        if self._preview_cage is None:
+            return
+        cell_width = self._cabinet_width / max(self.bay_qty, 1)
+        self._preview_cage.set_input('Dim X', cell_width)
+        if self._array_modifier is not None:
+            self._array_modifier.count = self.bay_qty
+
+    # ---------------- typed input ----------------
+    #
+    # The PlacementMixin owns the typing state machine (typed_value
+    # buffer, ENTER/ESC/BACKSPACE, NUMBER_KEYS auto-start). We just
+    # provide the three integration points it expects subclasses to
+    # override:
+    #
+    #   get_default_typing_target  - which TypingTarget number keys
+    #                                 should default to (WIDTH for us)
+    #   on_typed_value_changed     - live preview as user types
+    #   apply_typed_value          - commit on ENTER
+
+    def get_default_typing_target(self):
+        return hb_placement.TypingTarget.WIDTH
+
+    def on_typed_value_changed(self):
+        """Live preview: parse typed_value and resize cage every keystroke.
+
+        Errors are silent (incomplete typing like "5'" briefly fails to
+        parse, which is fine - we just skip live preview until the
+        value parses).
+        """
+        if not self.typed_value:
+            return
+        if self.typing_target != hb_placement.TypingTarget.WIDTH:
+            return
+        parsed = self.parse_typed_distance()
+        if parsed is None or parsed <= 0:
+            return
+        self._apply_width(parsed, fill_mode=False)
+
+    def apply_typed_value(self):
+        """Commit the typed value on ENTER. Disables fill mode."""
+        if self.typing_target == hb_placement.TypingTarget.WIDTH:
+            parsed = self.parse_typed_distance()
+            if parsed is not None and parsed > 0:
+                self._apply_width(parsed, fill_mode=False)
+        self.stop_typing()
+
+    def _apply_width(self, width, fill_mode):
+        """Set cabinet width and refresh derived state.
+
+        fill_mode=False is the typed-width path: width comes from the
+        user, not from a wall gap, so we shouldn't let the next
+        wall-hover overwrite it.
+
+        fill_mode=True is the auto-fill path: width comes from the
+        wall gap and changes naturally as the cursor moves.
+        """
+        if abs(width - self._cabinet_width) < 1e-5 and fill_mode == self._fill_mode:
+            return
+        self._cabinet_width = width
+        self._fill_mode = fill_mode
+        if self._auto_bay_qty:
+            new_qty = _auto_bay_qty(self._cabinet_width)
+            if new_qty != self.bay_qty:
+                self.bay_qty = new_qty
+        self._update_cage()
+
+    def _update_header(self, context):
+        bay_label = f"{self.bay_qty} bay" + ("" if self.bay_qty == 1 else "s")
+        mode = "auto" if self._auto_bay_qty else "manual"
+        side = "front" if self._place_on_front else "back"
+        width_in = self._cabinet_width * 39.37008
+
+        # When the user is typing, show the live buffer prominently so
+        # they can see what they've entered. Otherwise show the static
+        # state (size, side, key hints).
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            typed = self.get_typed_display_string()
+            hb_placement.draw_header_text(
+                context,
+                f"{self.cabinet_name}  -  {typed}  -  "
+                "Enter: apply   Esc: cancel typing   Backspace: delete"
+            )
+        else:
+            hb_placement.draw_header_text(
+                context,
+                f"{self.cabinet_name}  -  {bay_label} ({mode})  -  "
+                f"width: {width_in:.1f}\"  -  side: {side}  -  "
+                "W/numbers: type width   Up/Down: bays   "
+                "Click: place   Esc: cancel"
+            )
+
+    # ---------------- wall detection ----------------
+
+    def _detect_wall(self, context):
+        """Find a wall via raycast or floor-projection fallback.
+
+        Returns the wall object or None. May update self.hit_location
+        to a projected floor point if the fallback path is used.
+
+        The fallback exists so cursor flicker on wall surfaces (which
+        causes raycasts to occasionally miss the wall) doesn't kick the
+        cabinet off the wall mid-placement. Frameless uses the same
+        pattern.
+        """
+        # Try raycast hit first
+        if self.hit_object is not None:
+            wall = _find_wall_root(self.hit_object)
+            if wall is not None:
+                return wall
+
+        # Fallback: project cursor onto floor and find nearest wall
+        return self._find_nearest_wall_from_cursor(context)
+
+    def _find_nearest_wall_from_cursor(self, context):
+        """Project cursor onto floor plane and find nearest wall within snap.
+
+        Side effect: updates self.hit_location to the projected floor
+        point on the wall so downstream positioning math still has a
+        valid hit location even though the raycast missed.
+        """
+        region = self.region
+        if region is None:
+            return None
+        rv3d = region.data
+        if rv3d is None:
+            return None
+
+        view_origin = view3d_utils.region_2d_to_origin_3d(
+            region, rv3d, self.mouse_pos)
+        view_dir = view3d_utils.region_2d_to_vector_3d(
+            region, rv3d, self.mouse_pos)
+        floor_point = intersect_line_plane(
+            view_origin,
+            view_origin + view_dir * 10000,
+            Vector((0, 0, 0)),
+            Vector((0, 0, 1)),
+        )
+        if not floor_point:
+            return None
+
+        cursor_2d = Vector((floor_point.x, floor_point.y))
+        nearest_wall = None
+        nearest_distance = _WALL_SNAP_DISTANCE
+
+        for obj in context.scene.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            try:
+                wall = hb_types.GeoNodeWall(obj)
+                if not wall.has_modifier():
+                    continue
+                wall_length = wall.get_input('Length')
+                wall_thickness = wall.get_input('Thickness')
+            except Exception:
+                continue
+
+            wall_matrix = obj.matrix_world
+            local_start = Vector((0, wall_thickness / 2, 0))
+            local_end = Vector((wall_length, wall_thickness / 2, 0))
+            world_start = wall_matrix @ local_start
+            world_end = wall_matrix @ local_end
+            start_2d = Vector((world_start.x, world_start.y))
+            end_2d = Vector((world_end.x, world_end.y))
+
+            closest, percent = intersect_point_line(
+                cursor_2d, start_2d, end_2d)
+            closest_2d = Vector(closest[:2])
+            if percent < 0:
+                closest_2d = start_2d
+            elif percent > 1:
+                closest_2d = end_2d
+
+            distance = (cursor_2d - closest_2d).length
+            if distance < nearest_distance and 0 <= percent <= 1:
+                nearest_distance = distance
+                nearest_wall = obj
+                # Update hit_location so downstream code has a valid
+                # world-space point on/near the wall to work with.
+                self.hit_location = Vector(
+                    (floor_point.x, floor_point.y, 0))
+
+        return nearest_wall
+
+    def _update_place_on_front(self, context, wall, local_hit_y, wall_thickness):
+        """Decide which side of the wall the cursor is on, with hysteresis.
+
+        Plan view: project cursor onto floor and use floor_point.y in
+        wall-local space (raycasts in plan view often hit the wall's
+        top face, where Y has no front/back signal).
+
+        3D view: use the raycast hit's wall-local Y directly.
+
+        Hysteresis prevents flicker: cursor must cross the wall
+        centerline by _FRONT_BACK_HYSTERESIS before the side flips.
+        """
+        wall_center_y = wall_thickness / 2.0
+
+        region = self.region
+        rv3d = region.data if region is not None else None
+        if rv3d is None:
+            return
+
+        view_matrix = rv3d.view_matrix
+        view_z = view_matrix[2][2]
+        is_plan_view = abs(view_z) > _PLAN_VIEW_THRESHOLD
+
+        if is_plan_view:
+            view_origin = view3d_utils.region_2d_to_origin_3d(
+                region, rv3d, self.mouse_pos)
+            view_dir = view3d_utils.region_2d_to_vector_3d(
+                region, rv3d, self.mouse_pos)
+            floor_point = intersect_line_plane(
+                view_origin,
+                view_origin + view_dir * 10000,
+                Vector((0, 0, 0)),
+                Vector((0, 0, 1)),
+            )
+            if floor_point is None:
+                cursor_y = local_hit_y
+            else:
+                local_cursor = wall.matrix_world.inverted() @ floor_point
+                cursor_y = local_cursor.y
+        else:
+            cursor_y = local_hit_y
+
+        if cursor_y < wall_center_y - _FRONT_BACK_HYSTERESIS:
+            self._place_on_front = True
+        elif cursor_y > wall_center_y + _FRONT_BACK_HYSTERESIS:
+            self._place_on_front = False
+        # else: cursor is inside the hysteresis band - keep current side
+
+    # ---------------- positioning ----------------
+
+    def _position_from_hit(self, context):
+        if self.hit_location is None:
+            # No raycast hit and no fallback could even start - keep
+            # cage where it is (don't jump to a stale or zero location).
+            return
+
+        wall = self._detect_wall(context)
+        if wall is not None:
+            self._position_on_wall(context, wall)
+        else:
+            self._position_free(context)
+
+    def _position_on_wall(self, context, wall):
+        """Parent the cage to the wall and fill the available gap.
+
+        Width auto-grows to fill the gap between the cabinet's neighbors
+        on this wall. Bay quantity auto-fits the new width unless the
+        user has manually locked it via arrow keys.
+
+        Side handling:
+          * Front: cage local y=0, no rotation.
+          * Back: cage local y=wall_thickness, rotation=pi around Z,
+            x offset by total cabinet width (because the rotation
+            around the cabinet origin shifts the geometry).
+        """
+        cage_obj = self._preview_cage.obj
+
+        # Fetch wall geometry
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+        except Exception:
+            wall_thickness = 0.0
+
+        if cage_obj.parent is not wall:
+            cage_obj.parent = wall
+            cage_obj.matrix_parent_inverse.identity()
+
+        # Cursor in wall-local coordinates
+        local_hit = wall.matrix_world.inverted() @ self.hit_location
+        cursor_x = local_hit.x
+
+        # Decide which side (with hysteresis)
+        self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
+
+        # Find the gap at this cursor X. Pass the cabinet's actual
+        # width so find_placement_gap returns a sensible snap_x: when
+        # the cursor is near a gap edge it snaps to that edge, when
+        # in the middle the cabinet centers on the cursor.
+        try:
+            gap_start, gap_end, snap_x = self.find_placement_gap(
+                wall, cursor_x, object_width=self._cabinet_width,
+                exclude_obj=cage_obj,
+            )
+        except Exception:
+            gap_start, gap_end = 0.0, wall_geo.get_input('Length')
+            snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
+
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
+
+        # In fill mode, cabinet width follows the gap. With typed width
+        # (fill_mode=False), the user controls the width and we just
+        # need to clamp it so the cabinet doesn't overflow the gap.
+        if self._fill_mode:
+            self._apply_width(gap_width, fill_mode=True)
+            placement_x = gap_start
+            cabinet_width = gap_width
+        else:
+            cabinet_width = min(self._cabinet_width, gap_width)
+            placement_x = max(gap_start, min(snap_x, gap_end - cabinet_width))
+
+        # Position based on which side. The Mirror Y cage extends in -Y
+        # from origin (front-side convention). For back-side placement,
+        # rotate 180 around Z (cage now extends +Y from origin) and
+        # offset Y by wall_thickness. The X offset accounts for the
+        # rotation around origin shifting the geometry by total width.
+        if self._place_on_front:
+            cage_obj.location.x = placement_x
+            cage_obj.location.y = 0
+            cage_obj.rotation_euler = (0, 0, 0)
+        else:
+            cage_obj.location.x = placement_x + cabinet_width
+            cage_obj.location.y = wall_thickness
+            cage_obj.rotation_euler = (0, 0, math.pi)
+
+    def _position_free(self, context):
+        """Drop the cage at the world hit point (no wall snap)."""
+        cage_obj = self._preview_cage.obj
+        if cage_obj.parent is not None:
+            world = cage_obj.matrix_world.copy()
+            cage_obj.parent = None
+            cage_obj.matrix_world = world
+            cage_obj.rotation_euler = (0, 0, 0)
+
+        # In fill mode, off-wall placement returns the cage to the
+        # scene default width. With a typed width, the user's value
+        # sticks and we don't touch _cabinet_width.
+        if self._fill_mode:
+            scene_props = context.scene.hb_face_frame
+            default_w = scene_props.default_cabinet_width
+            self._apply_width(default_w, fill_mode=True)
+            self._update_header(context)
+
+        cage_obj.location.x = self.hit_location.x
+        cage_obj.location.y = self.hit_location.y
+        cabinet_type = _cabinet_type_for_name(self.cabinet_name)
+        if cabinet_type != 'UPPER':
+            cage_obj.location.z = self.hit_location.z
+
+    # ---------------- finalize / cancel ----------------
+
+    def _finalize(self, context):
+        """Commit: capture cage transform, delete cage, build real cabinet."""
+        cage_obj = self._preview_cage.obj
+        captured_parent = cage_obj.parent
+        captured_world = cage_obj.matrix_world.copy()
+        captured_local_loc = cage_obj.location.copy()
+        captured_local_rot = cage_obj.rotation_euler.copy()
+        captured_width = self._cabinet_width
+        captured_bay_qty = self.bay_qty
+
+        self._delete_preview()
+
+        cls = types_face_frame.get_cabinet_class(self.cabinet_name)
+        try:
+            cabinet = cls()
+            cabinet.create(self.cabinet_name, bay_qty=captured_bay_qty)
+        except Exception as e:
+            self.report({'ERROR'}, f"Cabinet creation failed: {e}")
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        cab_obj = cabinet.obj
+
+        if captured_parent is not None:
+            cab_obj.parent = captured_parent
+            cab_obj.matrix_parent_inverse.identity()
+            cab_obj.location = captured_local_loc
+            cab_obj.rotation_euler = captured_local_rot
+        else:
+            cab_obj.matrix_world = captured_world
+
+        # Resize to match cage width via the property update callback
+        cab_props = cab_obj.face_frame_cabinet
+        cab_props.width = captured_width
+
+        # Active selection
+        for o in context.selected_objects:
+            o.select_set(False)
+        cab_obj.select_set(True)
+        context.view_layer.objects.active = cab_obj
+
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=cab_obj.name)
+            cab_obj.select_set(True)
+            context.view_layer.objects.active = cab_obj
+        except RuntimeError:
+            pass
+
+        hb_placement.clear_header_text(context)
+        bay_label = f"{captured_bay_qty} bay" + ("" if captured_bay_qty == 1 else "s")
+        self.report({'INFO'},
+                    f"Placed {self.cabinet_name} ({bay_label}, "
+                    f"{captured_width * 39.37008:.1f}\" wide)")
+        return {'FINISHED'}
+
+    def _cancel(self, context):
+        self._delete_preview()
+        hb_placement.clear_header_text(context)
+        return {'CANCELLED'}
+
+    def _delete_preview(self):
+        if self._preview_cage is None:
+            return
+        try:
+            self._delete_object_and_children(self._preview_cage.obj)
+        except Exception:
+            try:
+                bpy.data.objects.remove(self._preview_cage.obj, do_unlink=True)
+            except Exception:
+                pass
+        self._preview_cage = None
+        self._array_modifier = None
+
+
+classes = (
+    hb_face_frame_OT_place_cabinet,
+)
+
+
+register, unregister = bpy.utils.register_classes_factory(classes)

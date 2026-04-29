@@ -407,6 +407,19 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+
+    stretcher_width: FloatProperty(
+        name="Stretcher Width",
+        description="Front-to-back depth of the top stretchers (typical 3.5 in)",
+        default=units.inch(3.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    stretcher_thickness: FloatProperty(
+        name="Stretcher Thickness",
+        description="Vertical thickness of the top stretchers (typical 1/2 in)",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     bottom_rail_width: FloatProperty(
         name="Bottom Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -569,13 +582,6 @@ class Face_Frame_Scene_Props(PropertyGroup):
     """Scene-level face frame settings: defaults, library state, cabinet
     styles, and the library/options UI.
     """
-
-    # ---- Test drop (development-time bay_qty exercise) ----
-    test_bay_qty: IntProperty(
-        name="Test Bay Qty",
-        description="Number of bays for cabinets dropped via the Test Drop panel",
-        default=1, min=1, max=10,
-    )  # type: ignore
 
     # ---- Selection mode (mirrors frameless) ----
     face_frame_selection_mode: EnumProperty(

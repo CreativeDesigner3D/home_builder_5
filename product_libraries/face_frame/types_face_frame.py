@@ -48,7 +48,9 @@ _DISTRIBUTING_WIDTHS = set()
 # Single string-enum role for parts.
 PART_ROLE_LEFT_SIDE = 'LEFT_SIDE'
 PART_ROLE_RIGHT_SIDE = 'RIGHT_SIDE'
-PART_ROLE_TOP = 'TOP'
+PART_ROLE_TOP = 'TOP'  # solid top panel for Upper / Tall (Base / Lap use stretchers)
+PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
+PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
 
@@ -251,6 +253,7 @@ class FaceFrameCabinet(GeoNodeCage):
             mid_stile.obj['hb_part_role'] = PART_ROLE_MID_STILE
             mid_stile.obj['CABINET_PART'] = True
             mid_stile.obj['hb_mid_stile_index'] = i
+            mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
             mid_stile.obj.rotation_euler.y = math.radians(-90)
             mid_stile.obj.rotation_euler.z = math.radians(90)
             mid_stile.set_input('Mirror Y', True)
@@ -355,17 +358,37 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom_segments = solver.bottom_rail_segments(layout)
         carcass_bottom_segs = solver.carcass_bottom_segments(layout)
         carcass_back_segs = solver.carcass_back_segments(layout)
-        carcass_top_segs = solver.carcass_top_segments(layout)
         self._reconcile_rails(PART_ROLE_TOP_RAIL, top_segments)
         self._reconcile_rails(PART_ROLE_BOTTOM_RAIL, bottom_segments)
         self._reconcile_carcass_bottoms(carcass_bottom_segs)
         self._reconcile_carcass_backs(carcass_back_segs)
-        self._reconcile_carcass_tops(carcass_top_segs)
+
+        # Top construction branches on cabinet type:
+        #   BASE / LAP_DRAWER -> Front + Rear stretchers
+        #   UPPER / TALL      -> Solid top panel
+        # Cleanup the other style's parts in case of cabinet-type change
+        # or migration from a previous architecture.
+        if layout.uses_stretchers:
+            front_stretcher_segs = solver.front_stretcher_segments(layout)
+            rear_stretcher_segs = solver.rear_stretcher_segments(layout)
+            self._cleanup_role(PART_ROLE_TOP)
+            self._reconcile_stretchers(PART_ROLE_FRONT_STRETCHER, front_stretcher_segs)
+            self._reconcile_stretchers(PART_ROLE_REAR_STRETCHER, rear_stretcher_segs)
+            carcass_top_segs = []
+        else:
+            carcass_top_segs = solver.carcass_top_segments(layout)
+            self._cleanup_role(PART_ROLE_FRONT_STRETCHER)
+            self._cleanup_role(PART_ROLE_REAR_STRETCHER)
+            self._reconcile_carcass_tops(carcass_top_segs)
+            front_stretcher_segs = []
+            rear_stretcher_segs = []
 
         top_seg_by_start = {s['start_bay']: s for s in top_segments}
         bot_seg_by_start = {s['start_bay']: s for s in bottom_segments}
         carc_bot_by_start = {s['start_bay']: s for s in carcass_bottom_segs}
         carc_back_by_start = {s['start_bay']: s for s in carcass_back_segs}
+        front_str_by_start = {s['start_bay']: s for s in front_stretcher_segs}
+        rear_str_by_start = {s['start_bay']: s for s in rear_stretcher_segs}
         carc_top_by_start = {s['start_bay']: s for s in carcass_top_segs}
 
         for child in self.obj.children:
@@ -406,6 +429,24 @@ class FaceFrameCabinet(GeoNodeCage):
                 child.location = (seg['x'], seg['y'], seg['z'])
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
+                part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_FRONT_STRETCHER:
+                seg = front_str_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
+                part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_REAR_STRETCHER:
+                seg = rear_str_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
 
             elif role == PART_ROLE_TOP:
@@ -464,6 +505,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
             # ---- Mid stiles (gap-keyed) ----
             elif role == PART_ROLE_MID_STILE:
+                # Backfill MENU_ID for cabinets created before right-click was added
+                if not child.get('MENU_ID'):
+                    child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
                 msi = child.get('hb_mid_stile_index', 0)
                 if msi >= len(layout.mid_stiles):
                     child.hide_viewport = True
@@ -606,11 +650,25 @@ class FaceFrameCabinet(GeoNodeCage):
         return back
 
 
+    def _cleanup_role(self, role):
+        """Remove all children with the given hb_part_role.
+
+        Used when the cabinet's top-construction style differs from what
+        was previously built (e.g., a base cabinet that has leftover
+        solid TOP parts from the old architecture, or a tall cabinet
+        with stretcher leftovers from a type change).
+        """
+        to_delete = [
+            child for child in list(self.obj.children)
+            if child.get('hb_part_role') == role
+        ]
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
     def _reconcile_carcass_tops(self, segments):
-        """Match Top carcass children against segments. Same three-pass
-        delete/match/create as _reconcile_carcass_bottoms / _backs. Also
-        cleans up any legacy non-segment Top (its hb_segment_start_bay is
-        None which is never in wanted_starts).
+        """Match solid Top carcass children against segments. Same
+        three-pass delete/match/create as _reconcile_carcass_bottoms /
+        _backs. Used for Upper / Tall cabinets only.
         """
         wanted_starts = {seg['start_bay'] for seg in segments}
 
@@ -635,10 +693,11 @@ class FaceFrameCabinet(GeoNodeCage):
             self._create_carcass_top_part(seg['start_bay'])
 
     def _create_carcass_top_part(self, start_bay_index):
-        """Create one carcass top part keyed to its segment.
+        """Create one solid carcass top part keyed to its segment.
 
-        Mirror Y/Z to match the existing single-top convention so the
-        panel extends in -Y (front) and -Z (down) from its origin.
+        Mirror Y = True so the panel extends from y=-mt back into the
+        cabinet by panel_dim_y. Mirror Z = True so it extends down by
+        thickness from its z=bay_top_z origin.
         """
         top = CabinetPart()
         top.create(f'Top {start_bay_index + 1}')
@@ -649,6 +708,58 @@ class FaceFrameCabinet(GeoNodeCage):
         top.set_input('Mirror Y', True)
         top.set_input('Mirror Z', True)
         return top
+
+    def _reconcile_stretchers(self, role, segments):
+        """Match stretcher children against segments. Generic over front
+        vs rear: caller passes PART_ROLE_FRONT_STRETCHER or
+        PART_ROLE_REAR_STRETCHER. Same three-pass delete/match/create
+        shape as _reconcile_carcass_bottoms / _backs.
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != role:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == role
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_stretcher_part(role, seg['start_bay'])
+
+    def _create_stretcher_part(self, role, start_bay_index):
+        """Create one stretcher part keyed to its segment.
+
+        Front and rear differ only in name prefix and Mirror Y. Both
+        sit at z = bay_top_z(start) and extend down (-Z) by thickness.
+          - Front: Mirror Y = False (depth extends back into cabinet)
+          - Rear:  Mirror Y = True  (depth extends forward into cabinet)
+        """
+        if role == PART_ROLE_FRONT_STRETCHER:
+            name = f'Front Stretcher {start_bay_index + 1}'
+            mirror_y = False
+        else:
+            name = f'Rear Stretcher {start_bay_index + 1}'
+            mirror_y = True
+        s = CabinetPart()
+        s.create(name)
+        s.obj.parent = self.obj
+        s.obj['hb_part_role'] = role
+        s.obj['CABINET_PART'] = True
+        s.obj['hb_segment_start_bay'] = start_bay_index
+        s.set_input('Mirror Y', mirror_y)
+        s.set_input('Mirror Z', True)
+        return s
 
     def _create_rail_part(self, role, start_bay_index):
         """Create a single rail part with the given role and start_bay key."""

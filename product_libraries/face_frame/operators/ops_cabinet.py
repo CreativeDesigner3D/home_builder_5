@@ -26,42 +26,19 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
     )  # type: ignore
 
     def execute(self, context):
+        # Thin wrapper over the modal placement operator. Lets the
+        # catalog browser keep calling hb_face_frame.draw_cabinet while
+        # the actual placement (cursor follow, wall snap, click-to-
+        # commit) lives in hb_face_frame.place_cabinet. Same pattern
+        # frameless uses (see ops_placement.py in that library).
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
-
-        cls = types_face_frame.get_cabinet_class(self.cabinet_name)
-        if cls is None:
-            self.report({'WARNING'}, f"Unknown cabinet name: {self.cabinet_name}")
-            return {'CANCELLED'}
-
-        cabinet = cls()
-        cabinet.create(self.cabinet_name, bay_qty=self.bay_qty)
-
-        cursor_loc = context.scene.cursor.location
-        cabinet.obj.location.x = cursor_loc.x
-        cabinet.obj.location.y = cursor_loc.y
-        cab_props = cabinet.obj.face_frame_cabinet
-        if cab_props.cabinet_type != 'UPPER':
-            cabinet.obj.location.z = cursor_loc.z
-
-        for obj in context.selected_objects:
-            obj.select_set(False)
-        cabinet.obj.select_set(True)
-        context.view_layer.objects.active = cabinet.obj
-
-        # Apply the active selection mode so the new cabinet's parts/cages
-        # have the right visibility (cages hidden, cabinet root selectable
-        # by default in 'Cabinets' mode).
-        try:
-            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=cabinet.obj.name)
-            # toggle_mode deselects everything; re-select just the new cabinet
-            cabinet.obj.select_set(True)
-            context.view_layer.objects.active = cabinet.obj
-        except RuntimeError:
-            pass  # poll/context issue - safe to skip
-
-        self.report({'INFO'}, f"Created {self.cabinet_name} ({cls.__name__})")
+        bpy.ops.hb_face_frame.place_cabinet(
+            'INVOKE_DEFAULT',
+            cabinet_name=self.cabinet_name,
+            bay_qty=self.bay_qty,
+        )
         return {'FINISHED'}
 
 
@@ -162,15 +139,16 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
 # Operator: cabinet prompts popup (right-click -> Cabinet Prompts)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
-    """Open the face frame cabinet properties dialog.
+    """Open the cabinet-wide properties dialog.
 
-    Same draw layout as the sidebar panel (HB_FACE_FRAME_PT_active_cabinet),
-    just rendered as a popup. Property changes fire the cabinet's update
-    callbacks live - no separate apply step needed.
+    Shows ONLY cabinet-wide settings (dimensions, construction, face
+    frame defaults) - not per-bay properties. Per-bay editing goes
+    through hb_face_frame.bay_prompts; per-mid-stile editing goes
+    through hb_face_frame.mid_stile_prompts.
     """
     bl_idname = "hb_face_frame.cabinet_prompts"
     bl_label = "Cabinet Properties"
-    bl_description = "Edit face frame cabinet properties"
+    bl_description = "Edit cabinet-wide properties (dimensions, construction, face frame defaults)"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -178,19 +156,92 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
         return types_face_frame.find_cabinet_root(context.active_object) is not None
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=350)
+        return context.window_manager.invoke_props_dialog(self, width=320)
 
     def execute(self, context):
         return {'FINISHED'}
 
     def draw(self, context):
-        # Lazy import to avoid circular import at module load
         from .. import ui_face_frame
         root = types_face_frame.find_cabinet_root(context.active_object)
         if root is None:
             self.layout.label(text="No face frame cabinet selected", icon='INFO')
             return
-        ui_face_frame.draw_cabinet_properties(self.layout, root)
+        ui_face_frame.draw_cabinet_wide(self.layout, root)
+
+
+class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
+    """Open a focused properties dialog for a single bay.
+
+    Operates on the active object - which must be a bay cage (i.e., the
+    user right-clicked on a bay or has it selected). Shows only that
+    bay's properties: width, height, depth, kick height, top offset,
+    rail width overrides, remove_bottom, delete_bay.
+    """
+    bl_idname = "hb_face_frame.bay_prompts"
+    bl_label = "Bay Properties"
+    bl_description = "Edit a single bay's properties"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return bool(obj.get(types_face_frame.TAG_BAY_CAGE))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        bay_obj = context.active_object
+        if bay_obj is None or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+            self.layout.label(text="No bay selected", icon='INFO')
+            return
+        ui_face_frame.draw_bay_properties(self.layout, bay_obj)
+
+
+class hb_face_frame_OT_mid_stile_prompts(bpy.types.Operator):
+    """Open a focused properties dialog for a single mid stile.
+
+    Operates on the active object - which must be a mid stile face frame
+    part (hb_part_role == PART_ROLE_MID_STILE). Shows just that mid
+    stile's width, extend up, and extend down.
+    """
+    bl_idname = "hb_face_frame.mid_stile_prompts"
+    bl_label = "Mid Stile Properties"
+    bl_description = "Edit a single mid stile's properties"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return obj.get('hb_part_role') == types_face_frame.PART_ROLE_MID_STILE
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=260)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        obj = context.active_object
+        if obj is None or obj.get('hb_part_role') != types_face_frame.PART_ROLE_MID_STILE:
+            self.layout.label(text="No mid stile selected", icon='INFO')
+            return
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is None:
+            self.layout.label(text="No cabinet root found", icon='ERROR')
+            return
+        msi = obj.get('hb_mid_stile_index', 0)
+        ui_face_frame.draw_mid_stile_properties(self.layout, root, msi)
 
 
 classes = (
@@ -198,6 +249,8 @@ classes = (
     hb_face_frame_OT_recalculate_cabinet,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
+    hb_face_frame_OT_bay_prompts,
+    hb_face_frame_OT_mid_stile_prompts,
 )
 
 

@@ -17,6 +17,10 @@ from .operators import ops_stairs
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
+# Catalog browser - intentionally disabled. The package lives at
+# home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
+# the import here plus the register()/unregister() calls below.
+# from . import catalog
 from . import hb_layouts
 from . import hb_assets
 
@@ -216,6 +220,7 @@ def register():
     closets.register()
     face_frame.register()
     frameless.register()
+    # catalog.register()
 
     hb_assets.ensure_asset_libraries()
 
@@ -246,6 +251,7 @@ def unregister():
     view3d_sidebar.unregister()
     menu_apend.unregister()
     menus.unregister()
+    # catalog.unregister()
     closets.unregister()
     face_frame.unregister()
     frameless.unregister()

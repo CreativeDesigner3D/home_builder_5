@@ -55,6 +55,9 @@ class FaceFrameLayout:
 
         # Toe kick (cabinet baseline; bay kick_height adds on top)
         self.has_toe_kick = self.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER')
+        # Top construction style: bases and lap drawers use front + rear
+        # stretchers; uppers and talls use a solid top panel.
+        self.uses_stretchers = self.cabinet_type in ('BASE', 'LAP_DRAWER')
         self.tkh = cab.toe_kick_height if self.has_toe_kick else 0.0
         self.tks = cab.toe_kick_setback if self.has_toe_kick else 0.0
         self.tkt = cab.toe_kick_thickness if self.has_toe_kick else 0.0
@@ -66,6 +69,9 @@ class FaceFrameLayout:
         # Rail width defaults (used when populating a fresh bay)
         self.default_top_rail_width = cab.top_rail_width
         self.default_bottom_rail_width = cab.bottom_rail_width
+        # Stretcher dimensions for stretcher-based top construction
+        self.stretcher_w = getattr(cab, 'stretcher_width', None) or 0.0889
+        self.stretcher_t = getattr(cab, 'stretcher_thickness', None) or 0.0127
 
         # Walk bay children
         bay_children = sorted(
@@ -505,6 +511,27 @@ def _segment_x_bounds(layout, start, end):
     return left_x, right_x
 
 
+def _stretcher_x_bounds(layout, start, end):
+    """X bounds for stretchers (and any panel that meets adjacent
+    segments SYMMETRICALLY at the mid division's inside faces, rather
+    than asymmetrically like carcass bottoms which have a higher/lower
+    bay relationship).
+
+    For an internal boundary at gap_index:
+      - segment on the LEFT  (right edge): meets at mid_div left face = mid_div_x
+      - segment on the RIGHT (left edge):  meets at mid_div right face = mid_div_x + mt
+    """
+    if start == 0:
+        left_x = layout.mt
+    else:
+        left_x = _mid_division_x(layout, start - 1) + layout.mt
+    if end == layout.bay_count - 1:
+        right_x = layout.dim_x - layout.mt
+    else:
+        right_x = _mid_division_x(layout, end)
+    return left_x, right_x
+
+
 def carcass_bottom_segments(layout):
     """Per-segment bay floor panels.
 
@@ -576,22 +603,25 @@ def carcass_back_segments(layout):
     return segments
 
 
-def _carcass_top_passthrough(layout, gap_index):
-    """True if the carcass top spans uninterrupted across gap_index.
+def _top_stretcher_passthrough(layout, gap_index):
+    """True if a top stretcher spans uninterrupted across gap_index.
 
-    HB5 solid-top convention: the top sits at the cabinet ceiling (dim_z),
-    so it does NOT need to break on bay_top_z / top_offset / height the way
-    Pulito's stretchers do (Pulito's UTL breaks on top_offset because its
-    stretchers drop with the bay; HB5's solid top stays at dim_z regardless).
+    Stretchers (front and rear) are placed per-bay at each bay's top
+    edge. They merge across adjacent bays only when nothing about the
+    geometry differs between the two bays.
 
-    Break conditions (subset of back's):
-    - bay depths differ (panel Y dimension differs per segment)
+    Break conditions:
+    - bay top Z's differ (top_offset for uppers; kick + height for bases)
+    - bay depths differ (front stretcher Y position depends on depth)
     - either bay has delete_bay set
     """
     if gap_index >= len(layout.mid_stiles):
         return False
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_top_z(layout, gap_index),
+                       bay_top_z(layout, gap_index + 1)):
+        return False
     if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
         return False
     if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
@@ -600,26 +630,98 @@ def _carcass_top_passthrough(layout, gap_index):
 
 
 def carcass_top_segments(layout):
-    """Per-segment carcass top panels.
+    """Per-segment SOLID carcass top panels for Upper / Tall cabinets.
 
-    X span same as the bottom/back segments (mid division to mid division
-    or carcass inner side). Sits at z = dim_z (cabinet ceiling) with
-    Mirror Z = True so the panel extends down by mt thickness, matching
-    the existing single-top convention for HB5.
+    Bases and lap drawers use front + rear stretchers instead — see
+    front_stretcher_segments / rear_stretcher_segments. This function
+    produces a closed top panel sitting between the carcass sides /
+    mid divisions, dropping with each bay's bay_top_z.
+
+    Geometry:
+      - origin x: segment left_x (symmetric meeting at mid div inside faces)
+      - origin y: -mt  (just inside the face frame face)
+      - origin z: bay_top_z(start)
+      - Length:  segment X span
+      - Width:   bay.depth - bt - fft - mt   (front to back interior)
+      - Thickness: mt   (Mirror Z = True so panel extends down by mt)
     """
     segments = []
-    for start, end in _compute_segments(layout, _carcass_top_passthrough):
+    for start, end in _compute_segments(layout, _top_stretcher_passthrough):
         first_bay = layout.bays[start]
-        left_x, right_x = _segment_x_bounds(layout, start, end)
+        left_x, right_x = _stretcher_x_bounds(layout, start, end)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.mt,
-            'z':          layout.dim_z,
+            'z':          bay_top_z(layout, start),
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - layout.mt,
+            'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft - layout.mt,
             'thickness':  layout.mt,
+        })
+    return segments
+
+
+def front_stretcher_segments(layout):
+    """Per-segment front-of-cabinet top stretchers.
+
+    Sits just behind the face frame at each bay's top edge. Replaces
+    the older solid carcass top with stretcher-based face frame
+    construction (no closed top panel, just front + rear stretchers).
+
+    Geometry:
+      - rotation: none (Cutpart with default axes)
+      - origin x: segment left_x (= mt for the leftmost bay segment)
+      - origin y: -dim_y + fft  (just behind the face frame)
+      - origin z: bay_top_z(start)
+      - Length:  segment X span (right_x - left_x)
+      - Width:   stretcher depth (Y axis, extends in +Y; Mirror Y = False)
+      - Thickness: stretcher thickness (Z axis, extends in -Z; Mirror Z = True)
+    """
+    segments = []
+    for start, end in _compute_segments(layout, _top_stretcher_passthrough):
+        left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          -layout.dim_y + layout.fft,
+            'z':          bay_top_z(layout, start),
+            'length':     right_x - left_x,
+            'width':      layout.stretcher_w,
+            'thickness':  layout.stretcher_t,
+        })
+    return segments
+
+
+def rear_stretcher_segments(layout):
+    """Per-segment back-of-cabinet top stretchers.
+
+    Sits just inside the carcass back panel, mirrored from the front
+    stretcher. Same X bounds and Z origin as the front; differs only
+    in Y position and Mirror Y direction.
+
+    Geometry:
+      - rotation: none
+      - origin x: segment left_x
+      - origin y: -bt  (just inside back panel)
+      - origin z: bay_top_z(start)
+      - Length:  segment X span
+      - Width:   stretcher depth (Mirror Y = True so it extends in -Y)
+      - Thickness: stretcher thickness (Mirror Z = True)
+    """
+    segments = []
+    for start, end in _compute_segments(layout, _top_stretcher_passthrough):
+        left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          -layout.bt,
+            'z':          bay_top_z(layout, start),
+            'length':     right_x - left_x,
+            'width':      layout.stretcher_w,
+            'thickness':  layout.stretcher_t,
         })
     return segments
 
@@ -650,7 +752,7 @@ def mid_division_position(layout, gap_index):
     use_depth = max(bay_a['depth'], bay_b['depth'])
     y = -layout.dim_y + use_depth - layout.bt
 
-    # Z: top of LOWER bay's bottom rail (matches Pulito UDZ)
+    # Z: top of LOWER bay's bottom rail
     if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
         lower_idx = gap_index
     else:
@@ -683,9 +785,19 @@ def mid_division_dims(layout, gap_index):
     lower_brw = layout.bays[lower_idx]['bottom_rail_width']
     bottom_z = bay_bottom_z(layout, lower_idx) + lower_brw - ms['extend_down_amount']
 
-    # Top Z: cabinet ceiling minus carcass top thickness. Mid div butts up
-    # against the underside of the carcass top panel.
-    top_z = layout.dim_z - layout.mt + ms['extend_up_amount']
+    # Top Z: depends on top construction style.
+    #   Stretchers (Base / Lap Drawer) - division extends fully to the
+    #     taller neighbor's bay_top_z. Top edge flush with top rails and
+    #     stretchers, providing structural attachment.
+    #   Solid top  (Upper / Tall) - division stops mt below the taller
+    #     neighbor's bay_top_z to butt against the underside of the
+    #     carcass top panel.
+    higher_top_z = max(bay_top_z(layout, gap_index),
+                       bay_top_z(layout, gap_index + 1))
+    if layout.uses_stretchers:
+        top_z = higher_top_z + ms['extend_up_amount']
+    else:
+        top_z = higher_top_z - layout.mt + ms['extend_up_amount']
 
     length = top_z - bottom_z
     width = max(bay_a['depth'], bay_b['depth']) - layout.bt - layout.fft
