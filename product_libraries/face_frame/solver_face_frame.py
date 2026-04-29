@@ -807,25 +807,66 @@ def mid_division_dims(layout, gap_index):
 # ---------------------------------------------------------------------------
 # Bay cage (the opening behind the face frame)
 # ---------------------------------------------------------------------------
+def _cage_x_bounds(layout, bay_index):
+    """Carcass interior X bounds for a single bay - left face to right
+    face of the cavity between sides / mid divisions.
+
+    Differs from _segment_x_bounds in the stepped-cabinet case: the
+    cage always stops at the mid division's near face from this bay's
+    perspective, regardless of which neighbor's bottom panel passes
+    under or over the division.
+    """
+    if bay_index == 0:
+        left_x = layout.mt
+    else:
+        left_x = _mid_division_x(layout, bay_index - 1) + layout.mt
+    if bay_index == layout.bay_count - 1:
+        right_x = layout.dim_x - layout.mt
+    else:
+        right_x = _mid_division_x(layout, bay_index)
+    return left_x, right_x
+
+
 def bay_cage_position(layout, bay_index):
+    """Origin of the bay cage in cabinet-local space.
+
+    Anchored at the back-left-bottom corner of the carcass column for
+    this bay: top of the bottom panel (= top of the bottom rail), back
+    face of the face frame, and the inner face of either the left side
+    panel (for bay 0) or the mid division to its left.
+    """
     bay = layout.bays[bay_index]
-    x = bay_x_position(layout, bay_index)
+    left_x, _ = _cage_x_bounds(layout, bay_index)
     y = -layout.dim_y + layout.fft
     z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
-    return (x, y, z)
+    return (left_x, y, z)
 
 
 def bay_cage_dims(layout, bay_index):
     """Dim X (width), Dim Y (depth back-to-front), Dim Z (height).
 
-    Bay's depth field is independent: the cage Y dim is bay depth minus
-    face frame thickness (since the cage starts behind the face frame).
+    Cage spans the full carcass column behind the face frame for this
+    bay - it represents the interior cavity, not the door/drawer
+    opening. Interior parts (shelves, dividers) span the full cage
+    width; door/drawer fronts overlay the face frame opening and
+    extend outward into the cage's margin between opening and side /
+    mid division.
+
+    - X: between cabinet sides / adjacent mid divisions (carcass
+      interior, wider than the face frame opening by lsw/rsw - mt on
+      end bays and msw/2 - mt/2 on shared mid div bays)
+    - Y: from the back face of the face frame to the front face of the
+      back panel (bay depth minus fft minus bt)
+    - Z: top of the bay's bottom panel up to the underside of the
+      cabinet top - stretcher underside for BASE / LAP_DRAWER, solid
+      top underside for UPPER / TALL.
     """
     bay = layout.bays[bay_index]
-    cage_dim_x = bay['width']
-    cage_dim_y = bay['depth'] - layout.fft
-    cage_dim_z = (bay['height']
-                  - bay['top_rail_width']
-                  - bay['bottom_rail_width']
-                  - bay['top_offset'])
+    left_x, right_x = _cage_x_bounds(layout, bay_index)
+    cage_dim_x = right_x - left_x
+    cage_dim_y = bay['depth'] - layout.fft - layout.bt
+    top_thickness = layout.stretcher_t if layout.uses_stretchers else layout.mt
+    cage_top_z = bay_top_z(layout, bay_index) - top_thickness
+    cage_bottom_z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
+    cage_dim_z = cage_top_z - cage_bottom_z
     return (cage_dim_x, cage_dim_y, cage_dim_z)
