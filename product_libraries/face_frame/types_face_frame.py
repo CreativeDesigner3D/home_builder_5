@@ -28,6 +28,7 @@ from . import solver_face_frame as solver
 # ---------------------------------------------------------------------------
 TAG_CABINET_CAGE = 'IS_FACE_FRAME_CABINET_CAGE'
 TAG_BAY_CAGE = 'IS_FACE_FRAME_BAY_CAGE'
+TAG_OPENING_CAGE = 'IS_FACE_FRAME_OPENING_CAGE'
 
 # Reentrance guards. Bay-level prop writes inside recalculate() (such as
 # the width redistribution in _distribute_bay_widths) fire those props'
@@ -73,6 +74,34 @@ FACE_FRAME_PART_ROLES = frozenset({
 # Carcass interior partition behind each mid stile (one per gap).
 PART_ROLE_MID_DIVISION = 'MID_DIVISION'
 
+# Front parts (children of opening cages). Roles are reserved here so
+# selection-mode filtering can pick them up; only DOOR is implemented in
+# this pass. Drawer fronts and pullouts will use their own roles when
+# they land.
+PART_ROLE_DOOR = 'DOOR'
+PART_ROLE_DRAWER_FRONT = 'DRAWER_FRONT'
+PART_ROLE_PULLOUT_FRONT = 'PULLOUT_FRONT'
+
+# Pivot empty parent of every front part. Holds the swing rotation
+# (door / pullout) or the slide translation (drawer front) so the front
+# part itself stays at a fixed local transform relative to the pivot.
+PART_ROLE_FRONT_PIVOT = 'FRONT_PIVOT'
+
+# Front roles that share the same panel geometry today. Keeping them
+# grouped here so reconciliation can iterate the set instead of
+# spelling each role out.
+FRONT_PART_ROLES = frozenset({
+    PART_ROLE_DOOR,
+    PART_ROLE_DRAWER_FRONT,
+    PART_ROLE_PULLOUT_FRONT,
+})
+
+FRONT_TYPE_TO_ROLE = {
+    'DOOR':         PART_ROLE_DOOR,
+    'DRAWER_FRONT': PART_ROLE_DRAWER_FRONT,
+    'PULLOUT':      PART_ROLE_PULLOUT_FRONT,
+}
+
 
 # ---------------------------------------------------------------------------
 # Bay cage
@@ -85,6 +114,29 @@ class FaceFrameBay(GeoNodeCage):
         super().create(name)
         self.obj[TAG_BAY_CAGE] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_bay_commands'
+        self.obj.display_type = 'WIRE'
+
+
+# ---------------------------------------------------------------------------
+# Opening cage
+# ---------------------------------------------------------------------------
+class FaceFrameOpening(GeoNodeCage):
+    """Opening cage: a child of a FaceFrameBay that defines one face frame
+    opening's volume. Each bay starts with a single opening filling its
+    face frame opening; splitter operations subdivide a bay by adding
+    more openings.
+
+    The cage is positioned in the face frame plane (Y depth = fft) and
+    spans the opening width / height between the bay's bounding stiles
+    and rails. Doors, drawer fronts, and pullouts attach to the opening
+    and overlay it by the opening's per-side overlay values (or the
+    cabinet defaults when an overlay side is locked).
+    """
+
+    def create(self, name="Opening"):
+        super().create(name)
+        self.obj[TAG_OPENING_CAGE] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_opening_commands'
         self.obj.display_type = 'WIRE'
 
 
@@ -240,6 +292,15 @@ class FaceFrameCabinet(GeoNodeCage):
             bp.top_offset = 0.0
             bp.top_rail_width = cab_props.top_rail_width
             bp.bottom_rail_width = cab_props.bottom_rail_width
+
+            # One opening per bay at create time - fills the bay's face
+            # frame opening. Splitter operations subdivide a bay later by
+            # adding more opening children.
+            opening = FaceFrameOpening()
+            opening.create('Opening 1')
+            opening.obj.parent = bay.obj
+            opening.obj['hb_opening_index'] = 0
+            opening.obj.face_frame_opening.opening_index = 0
 
         # ----- Mid stile parts + width collection (one per gap) -----
         cab_props.mid_stile_widths.clear()
@@ -783,9 +844,15 @@ class FaceFrameCabinet(GeoNodeCage):
         return rail
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
-        """Position and size a single bay cage from the solver."""
+        """Position and size a single bay cage from the solver. Cascades
+        to the bay's opening cage children so they stay in sync with the
+        bay's face frame opening dimensions.
+        """
         if bay_index >= layout.bay_count:
             bay_obj.hide_viewport = True
+            for child in bay_obj.children:
+                if child.get(TAG_OPENING_CAGE):
+                    child.hide_viewport = True
             return
         bay_obj.hide_viewport = False
         bay = FaceFrameBay(bay_obj)
@@ -796,6 +863,120 @@ class FaceFrameCabinet(GeoNodeCage):
         bay.set_input('Dim Y', dim_y)
         bay.set_input('Dim Z', dim_z)
         bay.set_input('Mirror Y', False)
+        self._update_openings_in_bay(bay_obj, layout, bay_index)
+
+    def _update_openings_in_bay(self, bay_obj, layout, bay_index):
+        """Reconcile opening cages under a bay. v1: at most one opening
+        per bay - any extras get hidden, the first is sized to the bay's
+        face frame opening. Splitter logic in a future phase will replace
+        this with a proper add / match / delete reconciliation keyed on
+        hb_opening_index, the same shape as _reconcile_rails for rails.
+        """
+        openings = sorted(
+            [c for c in bay_obj.children if c.get(TAG_OPENING_CAGE)],
+            key=lambda c: c.get('hb_opening_index', 0),
+        )
+        expected_count = solver.opening_count(layout, bay_index)
+        for i, opening_obj in enumerate(openings):
+            if i >= expected_count:
+                opening_obj.hide_viewport = True
+                continue
+            opening_obj.hide_viewport = False
+            op = FaceFrameOpening(opening_obj)
+            pos = solver.opening_position(layout, bay_index, i)
+            dim_x, dim_y, dim_z = solver.opening_dims(layout, bay_index, i)
+            opening_obj.location = pos
+            op.set_input('Dim X', dim_x)
+            op.set_input('Dim Y', dim_y)
+            op.set_input('Dim Z', dim_z)
+            op.set_input('Mirror Y', False)
+            self._update_fronts_in_opening(opening_obj, layout, bay_index, i)
+
+    def _update_fronts_in_opening(self, opening_obj, layout, bay_index,
+                                  opening_index):
+        """Reconcile front parts under an opening cage.
+
+        Structure: opening cage -> front pivot empty -> front part.
+        The pivot holds the swing rotation (DOOR / PULLOUT-as-door) or
+        slide translation (DRAWER_FRONT / PULLOUT slide) so the front
+        part itself sits at a fixed local transform inside the pivot.
+        Pulling the visual open state out of the part keeps the part's
+        geometry math independent of swing_percent.
+
+        v1 strategy: delete-and-recreate the pivot + part on every
+        recalc. Front parts hold no user state, so identity loss is
+        cheap. Once front parts grow editable per-part props (style,
+        material override) this can switch to in-place reconciliation.
+        Also handles legacy doors that were direct children of the
+        opening (pre-pivot) by deleting them.
+        """
+        op_props = opening_obj.face_frame_opening
+        front_type = op_props.front_type
+        cab_props = self.obj.face_frame_cabinet
+
+        # Wipe existing pivots, parts, and any legacy direct-child fronts
+        for child in list(opening_obj.children):
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_FRONT_PIVOT:
+                for sub in list(child.children):
+                    bpy.data.objects.remove(sub, do_unlink=True)
+                bpy.data.objects.remove(child, do_unlink=True)
+            elif role in FRONT_PART_ROLES:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+        if front_type == 'NONE':
+            return
+
+        for leaf in solver.front_leaves(
+            layout, bay_index, opening_index, cab_props, op_props
+        ):
+            pivot = self._create_front_pivot(opening_obj)
+            pivot.location = leaf['pivot_position']
+            pivot.rotation_euler = leaf['pivot_rotation']
+
+            front = self._create_front_part(
+                pivot, leaf['role'], leaf['name']
+            )
+            front.obj.location = leaf['part_position']
+            length, width, thickness = leaf['part_dims']
+            front.set_input('Length', length)
+            front.set_input('Width', width)
+            front.set_input('Thickness', thickness)
+
+    def _create_front_pivot(self, opening_obj):
+        """Create an Empty parented to the opening cage, used as the
+        rotation/translation pivot for one front leaf. The empty is
+        kept very small in the viewport - the user drives the swing
+        through the opening's swing_percent slider, not by grabbing the
+        empty directly, so the gizmo doesn't need to be prominent.
+        """
+        pivot = bpy.data.objects.new('Front Pivot', None)
+        bpy.context.scene.collection.objects.link(pivot)
+        pivot.empty_display_type = 'PLAIN_AXES'
+        pivot.empty_display_size = 0.001
+        pivot.parent = opening_obj
+        pivot['hb_part_role'] = PART_ROLE_FRONT_PIVOT
+        return pivot
+
+    def _create_front_part(self, pivot_obj, role, name):
+        """Create a front CabinetPart parented to the given pivot empty.
+
+        Orientation matches the left end stile pattern: rotation y=-90,
+        z=90 with Mirror Y=True and Mirror Z=True. With those flags
+        Length goes +Z, Width goes +X, Thickness goes +Y from the
+        part's origin - the leaf's part_position picks the X / Z
+        offsets so the panel anchors against the pivot's hinge corner.
+        """
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = pivot_obj
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj.rotation_euler.y = math.radians(-90)
+        part.obj.rotation_euler.z = math.radians(90)
+        part.set_input('Mirror Y', True)
+        part.set_input('Mirror Z', True)
+        return part
 
     def _has_toe_kick(self):
         """Whether this cabinet sits on a toe kick. Subclasses override."""

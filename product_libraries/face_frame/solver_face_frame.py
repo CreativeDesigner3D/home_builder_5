@@ -21,6 +21,8 @@ existing rail objects, creating/destroying as needed. No hidden parts.
 Mid stiles are always one-per-gap and never destroyed. Their length and Z
 position adapt based on whether adjacent rails pass through the gap.
 """
+import math
+
 from ...units import inch
 
 
@@ -870,3 +872,316 @@ def bay_cage_dims(layout, bay_index):
     cage_bottom_z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
     cage_dim_z = cage_top_z - cage_bottom_z
     return (cage_dim_x, cage_dim_y, cage_dim_z)
+
+
+# ---------------------------------------------------------------------------
+# Opening cage (the face frame opening; child of a bay cage)
+# ---------------------------------------------------------------------------
+# Each bay starts with a single opening filling its face frame opening.
+# Splitter operations subdivide a bay by adding more openings.
+def opening_count(layout, bay_index):
+    """Number of openings in bay N. v1: always 1 - one opening fills
+    the bay's full carcass interior. Splitter logic in a future phase
+    will replace this with the bay's stored opening collection.
+    """
+    return 1
+
+
+def opening_position(layout, bay_index, opening_index):
+    """Origin of opening cage in PARENT BAY-local coords.
+
+    v1: opening fills the bay - origin matches the bay cage origin
+    exactly so an interior part (shelf, divider) parented to the
+    opening occupies the same volume as the bay.
+    """
+    return (0.0, 0.0, 0.0)
+
+
+def opening_dims(layout, bay_index, opening_index):
+    """Dim X / Y / Z for the opening cage. v1 mirrors bay_cage_dims:
+    the opening is the full carcass interior. The face frame opening
+    (the smaller rectangle on the cage's front face that the door
+    overlays) is described separately by face_frame_reveal_*.
+
+    Splitter logic in a future phase will produce sub-openings smaller
+    than the bay; the reveal helpers will derive their values from the
+    sub-opening's bounding rails / stiles instead of the bay's.
+    """
+    return bay_cage_dims(layout, bay_index)
+
+
+# ---------------------------------------------------------------------------
+# Face frame reveal: how far the face frame opening is inset from each
+# edge of the opening cage. The cage extends to the carcass interior
+# (between sides / mid divisions / bottom panel / underside of top); the
+# face frame opening sits inside that, framed by stiles and rails.
+# Reveal_bottom is always 0 because the top of the bottom rail is flush
+# with the top of the bottom panel by construction.
+# ---------------------------------------------------------------------------
+def face_frame_reveal_left(layout, bay_index):
+    """Distance from cage left edge (inner face of left side panel or
+    mid division) to the face frame opening's left edge (inner face of
+    the bay's left bounding stile)."""
+    cage_left_x, _ = _cage_x_bounds(layout, bay_index)
+    ff_opening_left_x = bay_x_position(layout, bay_index)
+    return ff_opening_left_x - cage_left_x
+
+
+def face_frame_reveal_right(layout, bay_index):
+    """Distance from face frame opening's right edge to the cage's
+    right edge."""
+    bay = layout.bays[bay_index]
+    _, cage_right_x = _cage_x_bounds(layout, bay_index)
+    ff_opening_right_x = bay_x_position(layout, bay_index) + bay['width']
+    return cage_right_x - ff_opening_right_x
+
+
+def face_frame_reveal_top(layout, bay_index):
+    """Distance from cage top (underside of carcass top) down to the
+    face frame opening's top (bottom edge of the top rail)."""
+    bay = layout.bays[bay_index]
+    _, _, cage_dim_z = bay_cage_dims(layout, bay_index)
+    opening_height = (
+        bay['height'] - bay['top_rail_width'] - bay['bottom_rail_width']
+    )
+    return cage_dim_z - opening_height
+
+
+def face_frame_reveal_bottom(layout, bay_index):
+    """Always 0: the top of the bottom rail is flush with the top of
+    the bottom panel by construction. Kept as a function for symmetry
+    with the other three sides and to give splitter logic an obvious
+    place to plug in once mid rails create non-zero bottom reveals on
+    sub-openings."""
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Door / drawer front geometry (children of opening cage)
+# ---------------------------------------------------------------------------
+def resolved_overlay(cab_props, opening_props, side):
+    """Return the effective overlay for one side of an opening.
+
+    side is one of 'top', 'bottom', 'left', 'right'. If the opening
+    unlocks that side, its own value wins; otherwise the cabinet-level
+    default is used.
+    """
+    if getattr(opening_props, f'unlock_{side}_overlay'):
+        return getattr(opening_props, f'{side}_overlay')
+    return getattr(cab_props, f'default_{side}_overlay')
+
+
+# Construction constants for visual open state. Cabinet-level
+# customization can come later; for now the values match typical
+# residential hinge / slide hardware.
+DOOR_MAX_SWING_ANGLE = math.radians(100.0)
+DOUBLE_DOOR_REVEAL = inch(0.125)
+
+
+def _door_panel_size(layout, bay_index, cab_props, opening_props):
+    """Width and height of the door panel covering the face frame
+    opening plus per-side overlay. For DOUBLE this is the combined
+    width across both leaves; the per-leaf width is derived in the
+    leaf builder by subtracting the reveal and halving.
+    """
+    cage_dim_x, _, cage_dim_z = bay_cage_dims(layout, bay_index)
+    opening_width = (
+        cage_dim_x
+        - face_frame_reveal_left(layout, bay_index)
+        - face_frame_reveal_right(layout, bay_index)
+    )
+    opening_height = (
+        cage_dim_z
+        - face_frame_reveal_top(layout, bay_index)
+        - face_frame_reveal_bottom(layout, bay_index)
+    )
+    width = (
+        opening_width
+        + resolved_overlay(cab_props, opening_props, 'left')
+        + resolved_overlay(cab_props, opening_props, 'right')
+    )
+    height = (
+        opening_height
+        + resolved_overlay(cab_props, opening_props, 'top')
+        + resolved_overlay(cab_props, opening_props, 'bottom')
+    )
+    return width, height
+
+
+def _drawer_max_slide(layout, cab_props):
+    """Maximum forward translation for a drawer/pullout front. Aimed at
+    "near full extension": cabinet depth minus face frame thickness
+    minus 1 inch of clearance. Becomes a cabinet prop later if
+    customization is wanted.
+    """
+    return max(0.0, layout.dim_y - layout.fft - inch(1.0))
+
+
+# ---------------------------------------------------------------------------
+# Front leaves: per-opening descriptor of each front panel + its pivot.
+#
+# Most front configurations have a single leaf. DOUBLE doors have two
+# (left + right half-width leaves meeting in the middle with a small
+# reveal gap). The type code iterates this list and creates one
+# (pivot, part) pair per leaf.
+#
+# Each leaf is a dict with keys:
+#   'role'           PART_ROLE_DOOR / _DRAWER_FRONT / _PULLOUT_FRONT
+#   'name'           Human-readable part name ("Door", "Door (Left)", ...)
+#   'pivot_position' (x, y, z) in OPENING-local coords
+#   'pivot_rotation' (rx, ry, rz)
+#   'part_position'  (x, y, z) in PIVOT-local coords
+#   'part_dims'      (length, width, thickness)
+# ---------------------------------------------------------------------------
+_FRONT_TYPE_TO_ROLE_NAME = {
+    'DOOR':         ('DOOR',          'Door'),
+    'DRAWER_FRONT': ('DRAWER_FRONT',  'Drawer Front'),
+    'PULLOUT':      ('PULLOUT_FRONT', 'Pullout Front'),
+}
+
+
+def _single_door_leaf_pivot(layout, bay_index, cab_props, opening_props):
+    """Pivot position + rotation for a single-leaf door (LEFT / RIGHT /
+    TOP / BOTTOM hinge), and the door's offset inside the pivot.
+    Shared between DOOR and PULLOUT (PULLOUT in v1 uses door geometry
+    but its pivot rotation is forced to identity by the caller).
+    """
+    door_thickness = cab_props.door_thickness
+    width, height = _door_panel_size(
+        layout, bay_index, cab_props, opening_props
+    )
+    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    reveal_left = face_frame_reveal_left(layout, bay_index)
+    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
+
+    base_x = reveal_left - left_overlay
+    base_y = -layout.fft - door_thickness
+    base_z = reveal_bottom - bottom_overlay
+
+    angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
+    hinge = opening_props.hinge_side
+
+    if hinge == 'RIGHT':
+        return {
+            'pivot_position': (base_x + width, base_y, base_z),
+            'pivot_rotation': (0.0, 0.0, +angle),
+            'part_position':  (-width, 0.0, 0.0),
+        }
+    if hinge == 'TOP':
+        return {
+            'pivot_position': (base_x, base_y, base_z + height),
+            'pivot_rotation': (-angle, 0.0, 0.0),
+            'part_position':  (0.0, 0.0, -height),
+        }
+    if hinge == 'BOTTOM':
+        return {
+            'pivot_position': (base_x, base_y, base_z),
+            'pivot_rotation': (+angle, 0.0, 0.0),
+            'part_position':  (0.0, 0.0, 0.0),
+        }
+    # LEFT (and DOUBLE doesn't reach here - handled separately)
+    return {
+        'pivot_position': (base_x, base_y, base_z),
+        'pivot_rotation': (0.0, 0.0, -angle),
+        'part_position':  (0.0, 0.0, 0.0),
+    }
+
+
+def _double_door_leaves(layout, bay_index, cab_props, opening_props, role):
+    """Two leaves for a DOUBLE door: left half hinged on its outer-left
+    edge, right half hinged on its outer-right edge, with a small
+    DOUBLE_DOOR_REVEAL gap where they meet in the middle.
+    """
+    door_thickness = cab_props.door_thickness
+    width, height = _door_panel_size(
+        layout, bay_index, cab_props, opening_props
+    )
+    leaf_width = (width - DOUBLE_DOOR_REVEAL) / 2.0
+    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    reveal_left = face_frame_reveal_left(layout, bay_index)
+    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
+
+    base_x = reveal_left - left_overlay
+    base_y = -layout.fft - door_thickness
+    base_z = reveal_bottom - bottom_overlay
+    angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
+
+    return [
+        {
+            'role': role, 'name': 'Door (Left)',
+            'pivot_position': (base_x, base_y, base_z),
+            'pivot_rotation': (0.0, 0.0, -angle),
+            'part_position':  (0.0, 0.0, 0.0),
+            'part_dims':      (height, leaf_width, door_thickness),
+        },
+        {
+            'role': role, 'name': 'Door (Right)',
+            'pivot_position': (base_x + width, base_y, base_z),
+            'pivot_rotation': (0.0, 0.0, +angle),
+            'part_position':  (-leaf_width, 0.0, 0.0),
+            'part_dims':      (height, leaf_width, door_thickness),
+        },
+    ]
+
+
+def _drawer_or_pullout_slide_leaf(layout, bay_index, cab_props,
+                                  opening_props, role, name):
+    """Single-leaf slide-out front. Pivot translates in -Y by
+    swing_percent * max_slide; no rotation."""
+    door_thickness = cab_props.door_thickness
+    width, height = _door_panel_size(
+        layout, bay_index, cab_props, opening_props
+    )
+    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    reveal_left = face_frame_reveal_left(layout, bay_index)
+    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
+
+    base_x = reveal_left - left_overlay
+    base_y = -layout.fft - door_thickness
+    base_z = reveal_bottom - bottom_overlay
+    slide = opening_props.swing_percent * _drawer_max_slide(layout, cab_props)
+
+    return {
+        'role': role, 'name': name,
+        'pivot_position': (base_x, base_y - slide, base_z),
+        'pivot_rotation': (0.0, 0.0, 0.0),
+        'part_position':  (0.0, 0.0, 0.0),
+        'part_dims':      (height, width, door_thickness),
+    }
+
+
+def front_leaves(layout, bay_index, opening_index, cab_props, opening_props):
+    """List of leaf descriptors for an opening's front parts.
+
+    Empty list when front_type is NONE. Single-element for most
+    configurations; two elements for DOUBLE doors (one per leaf).
+    """
+    front_type = opening_props.front_type
+    if front_type == 'NONE':
+        return []
+    role, base_name = _FRONT_TYPE_TO_ROLE_NAME[front_type]
+
+    if front_type in ('DRAWER_FRONT', 'PULLOUT'):
+        return [_drawer_or_pullout_slide_leaf(
+            layout, bay_index, cab_props, opening_props, role, base_name
+        )]
+
+    # DOOR
+    if opening_props.hinge_side == 'DOUBLE':
+        return _double_door_leaves(
+            layout, bay_index, cab_props, opening_props, role
+        )
+
+    width, height = _door_panel_size(
+        layout, bay_index, cab_props, opening_props
+    )
+    leaf = _single_door_leaf_pivot(
+        layout, bay_index, cab_props, opening_props
+    )
+    leaf['role'] = role
+    leaf['name'] = base_name
+    leaf['part_dims'] = (height, width, cab_props.door_thickness)
+    return [leaf]

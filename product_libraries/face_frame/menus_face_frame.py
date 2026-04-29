@@ -45,10 +45,21 @@ class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
                         text="Mid Stile Properties...", icon='WINDOW')
 
 
+class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
+    """Right-click menu for a face frame opening cage."""
+    bl_label = "Face Frame Opening Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
+
+
 classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_mid_stile_commands,
+    HOME_BUILDER_MT_face_frame_opening_commands,
 )
 
 

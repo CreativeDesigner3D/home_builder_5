@@ -427,12 +427,37 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     unlock_top_rail: BoolProperty(name="Unlock Top Rail (Cabinet)", default=False)  # type: ignore
     unlock_bottom_rail: BoolProperty(name="Unlock Bottom Rail (Cabinet)", default=False)  # type: ignore
 
+    # Cabinet-level overlay defaults. Applied to every opening unless the
+    # opening unlocks the corresponding side and supplies its own value.
+    default_top_overlay: FloatProperty(
+        name="Default Top Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    default_bottom_overlay: FloatProperty(
+        name="Default Bottom Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    default_left_overlay: FloatProperty(
+        name="Default Left Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    default_right_overlay: FloatProperty(
+        name="Default Right Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     face_frame_thickness: FloatProperty(
         name="Face Frame Thickness", default=units.inch(0.75), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    door_thickness: FloatProperty(
+        name="Door Thickness",
+        description="Thickness of doors and drawer fronts attached to openings",
+        default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     back_thickness: FloatProperty(
@@ -572,6 +597,102 @@ class Face_Frame_Bay_Props(PropertyGroup):
     unlock_bottom_rail: BoolProperty(
         name="Unlock Bottom Rail", default=False,
         update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Opening_Props(PropertyGroup):
+    """Per-opening state for face frame cabinets. Attached to each
+    opening's cage object as bpy.types.Object.face_frame_opening.
+
+    A bay starts with one opening filling its face frame opening.
+    Splitter operations subdivide a bay by adding more openings to it.
+
+    Each opening carries its front type and per-side overlay overrides.
+    Unlocked overlays use the opening's own value; locked overlays fall
+    back to the cabinet-level default (Face_Frame_Cabinet_Props.default_*_overlay).
+    """
+
+    opening_index: IntProperty(
+        name="Opening Index",
+        description="Position in the parent bay's opening list (0-based)",
+        default=0,
+    )  # type: ignore
+
+    FRONT_TYPE_ITEMS = [
+        ('NONE', "None", "No front (open shelving)"),
+        ('DOOR', "Door", "Hinged door"),
+        ('DRAWER_FRONT', "Drawer Front", "Drawer front"),
+        ('PULLOUT', "Pullout", "Door front on a pullout slide; supports pullout accessories"),
+    ]
+    front_type: EnumProperty(
+        name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    HINGE_SIDE_ITEMS = [
+        ('LEFT', "Left", "Single door, hinged on the left edge"),
+        ('RIGHT', "Right", "Single door, hinged on the right edge"),
+        ('DOUBLE', "Double", "Pair of doors meeting in the middle, hinged on outer edges"),
+        ('TOP', "Top", "Flip-up door, hinged on the top edge"),
+        ('BOTTOM', "Bottom", "Flip-down door, hinged on the bottom edge"),
+    ]
+    hinge_side: EnumProperty(
+        name="Hinge Side", items=HINGE_SIDE_ITEMS, default='RIGHT',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Visual open state. 0 = closed, 1 = fully open. For DOOR / PULLOUT
+    # with a vertical hinge it drives a swing rotation; for DRAWER_FRONT
+    # and PULLOUT slide-out it drives a forward translation. The "fully
+    # open" reference (max swing angle, max slide distance) lives in the
+    # solver, not in props - they're construction constants for now and
+    # become cabinet props later if customization is wanted.
+    swing_percent: FloatProperty(
+        name="Swing Percent",
+        description="How far the door / drawer front is opened (0 = closed, 1 = fully open)",
+        default=0.0, min=0.0, max=1.0,
+        subtype='FACTOR', precision=2,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Per-side overlay overrides. Used only when the matching unlock flag
+    # is True; otherwise the cabinet-level default is applied.
+    top_overlay: FloatProperty(
+        name="Top Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bottom_overlay: FloatProperty(
+        name="Bottom Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    left_overlay: FloatProperty(
+        name="Left Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_overlay: FloatProperty(
+        name="Right Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    unlock_top_overlay: BoolProperty(
+        name="Unlock Top Overlay",
+        description="Use this opening's own top overlay value instead of the cabinet default",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_bottom_overlay: BoolProperty(
+        name="Unlock Bottom Overlay",
+        description="Use this opening's own bottom overlay value instead of the cabinet default",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_left_overlay: BoolProperty(
+        name="Unlock Left Overlay",
+        description="Use this opening's own left overlay value instead of the cabinet default",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_right_overlay: BoolProperty(
+        name="Unlock Right Overlay",
+        description="Use this opening's own right overlay value instead of the cabinet default",
+        default=False, update=_update_cabinet_dim,
     )  # type: ignore
 
 
@@ -1205,6 +1326,7 @@ classes = (
     Face_Frame_Mid_Stile_Width,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
+    Face_Frame_Opening_Props,
     Face_Frame_Scene_Props,
 )
 
@@ -1220,6 +1342,7 @@ def register():
     # by the construction code populate these.
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
+    bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
 
     # Initialize preview collections so thumbnails load on first sidebar draw
     get_library_previews()
@@ -1227,6 +1350,8 @@ def register():
 
 
 def unregister():
+    if hasattr(bpy.types.Object, 'face_frame_opening'):
+        del bpy.types.Object.face_frame_opening
     if hasattr(bpy.types.Object, 'face_frame_bay'):
         del bpy.types.Object.face_frame_bay
     if hasattr(bpy.types.Object, 'face_frame_cabinet'):

@@ -30,6 +30,7 @@ def find_active_selection(context):
         ('none',)
         ('cabinet',   root)
         ('bay',       bay_obj, root)
+        ('opening',   opening_obj, bay_obj, root)
         ('mid_stile', stile_obj, msi, root)
         ('end_stile', stile_obj, role, root)
         ('rail',      rail_obj, role, root)
@@ -45,6 +46,9 @@ def find_active_selection(context):
         return ('cabinet', root)
     if obj.get(types_face_frame.TAG_BAY_CAGE):
         return ('bay', obj, root)
+    if obj.get(types_face_frame.TAG_OPENING_CAGE):
+        bay_obj = obj.parent
+        return ('opening', obj, bay_obj, root)
     role = obj.get('hb_part_role')
     if role == types_face_frame.PART_ROLE_MID_STILE:
         msi = obj.get('hb_mid_stile_index', 0)
@@ -98,7 +102,9 @@ def draw_construction(layout, cab_props):
 
 
 def draw_face_frame_defaults(layout, cab_props):
-    """Frame thickness + default stile and rail widths."""
+    """Frame thickness + default stile and rail widths + front part
+    defaults (door thickness, per-side overlay defaults). Per-opening
+    overrides live on each opening object."""
     col = layout.column(align=True)
     col.prop(cab_props, 'face_frame_thickness', text="Frame Thickness")
     col.separator()
@@ -107,6 +113,14 @@ def draw_face_frame_defaults(layout, cab_props):
     col.separator()
     col.prop(cab_props, 'top_rail_width', text="Top Rail")
     col.prop(cab_props, 'bottom_rail_width', text="Bottom Rail")
+    col.separator()
+    col.prop(cab_props, 'door_thickness', text="Door Thickness")
+    col.separator()
+    col.label(text="Default Overlays")
+    col.prop(cab_props, 'default_top_overlay', text="Top")
+    col.prop(cab_props, 'default_bottom_overlay', text="Bottom")
+    col.prop(cab_props, 'default_left_overlay', text="Left")
+    col.prop(cab_props, 'default_right_overlay', text="Right")
 
 
 def draw_bay_properties(layout, bay_obj):
@@ -135,6 +149,32 @@ def draw_bay_properties(layout, bay_obj):
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'delete_bay', text="Delete Bay (cutout)")
+
+
+def draw_opening_properties(layout, opening_obj):
+    """All editable properties of a single opening: front type, hinge
+    side, and the four per-side overlays. Each overlay row has an
+    unlock toggle (off = use cabinet default, on = use this opening's
+    own value) and an overlay field that's only enabled when unlocked.
+    """
+    op = opening_obj.face_frame_opening
+    layout.label(text=f"Opening {op.opening_index + 1}", icon='MESH_PLANE')
+    col = layout.column(align=True)
+    col.prop(op, 'front_type', text="Front Type")
+    if op.front_type in ('DOOR', 'PULLOUT'):
+        col.prop(op, 'hinge_side', text="Hinge Side")
+    if op.front_type != 'NONE':
+        col.prop(op, 'swing_percent', text="Open", slider=True)
+    col.separator()
+    col.label(text="Overlays")
+    for side in ('top', 'bottom', 'left', 'right'):
+        unlocked = getattr(op, f'unlock_{side}_overlay')
+        row = col.row(align=True)
+        field = row.row(align=True)
+        field.enabled = unlocked
+        field.prop(op, f'{side}_overlay', text=side.capitalize())
+        lock_icon = 'UNLOCKED' if unlocked else 'LOCKED'
+        row.prop(op, f'unlock_{side}_overlay', text="", icon=lock_icon)
 
 
 def draw_mid_stile_properties(layout, root, msi):
@@ -245,8 +285,11 @@ class HB_FACE_FRAME_PT_active_cabinet(bpy.types.Panel):
             return
         layout = self.layout
         draw_identity(layout, root)
-        layout.operator('hb_face_frame.recalculate_cabinet',
-                        text="Recalculate", icon='FILE_REFRESH')
+        row = layout.row(align=True)
+        row.operator('hb_face_frame.recalculate_cabinet',
+                     text="Recalculate", icon='FILE_REFRESH')
+        row.operator('hb_face_frame.backfill_openings',
+                     text="Backfill Openings", icon='ADD')
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +355,15 @@ class HB_FACE_FRAME_PT_selection(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         kind = find_active_selection(context)[0]
-        return kind in ('bay', 'mid_stile', 'end_stile', 'rail')
+        return kind in ('bay', 'opening', 'mid_stile', 'end_stile', 'rail')
 
     def draw(self, context):
         sel = find_active_selection(context)
         kind = sel[0]
         if kind == 'bay':
             draw_bay_properties(self.layout, sel[1])
+        elif kind == 'opening':
+            draw_opening_properties(self.layout, sel[1])
         elif kind == 'mid_stile':
             draw_mid_stile_properties(self.layout, sel[3], sel[2])
         elif kind == 'end_stile':
