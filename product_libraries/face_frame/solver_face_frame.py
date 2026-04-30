@@ -75,6 +75,12 @@ class FaceFrameLayout:
         self.stretcher_w = getattr(cab, 'stretcher_width', None) or 0.0889
         self.stretcher_t = getattr(cab, 'stretcher_thickness', None) or 0.0127
 
+        # Bay-level mid rail / mid stile widths (face frame members
+        # created by H/V splits inside a bay). Cabinet-level defaults
+        # used as starting values; per-member overrides come later.
+        self.bay_mid_rail_width = cab.bay_mid_rail_width
+        self.bay_mid_stile_width = cab.bay_mid_stile_width
+
         # Walk bay children
         bay_children = sorted(
             [c for c in cabinet_obj.children if c.get(self._cabinet_tag)],
@@ -121,6 +127,58 @@ class FaceFrameLayout:
             'bottom_rail_width':  bp.bottom_rail_width,
             'remove_bottom':      bp.remove_bottom,
             'delete_bay':         bp.delete_bay,
+            'tree':               self._read_tree_root(bay_obj),
+        }
+
+    def _read_tree_root(self, bay_obj):
+        """Find the bay's root tree node (single direct opening or split
+        child) and recursively snapshot it. Returns None if the bay has
+        no tree yet (during initial creation, before _build_carcass_parts
+        adds the first opening)."""
+        from . import types_face_frame
+        candidates = [
+            c for c in bay_obj.children
+            if c.get(types_face_frame.TAG_OPENING_CAGE)
+            or c.get(types_face_frame.TAG_SPLIT_NODE)
+        ]
+        if not candidates:
+            return None
+        # Prefer a child explicitly tagged as the bay's root if there's
+        # ever ambiguity. With the current model there's exactly one
+        # tree-node child of a bay; we just take the first.
+        return self._read_tree_node(candidates[0])
+
+    def _read_tree_node(self, obj):
+        """Recursively snapshot a tree node. Leaves carry opening props;
+        internal nodes carry axis + a list of child snapshots (sorted
+        by hb_split_child_index for stable ordering)."""
+        from . import types_face_frame
+        if obj.get(types_face_frame.TAG_SPLIT_NODE):
+            sp = obj.face_frame_split
+            children = sorted(
+                [c for c in obj.children
+                 if c.get(types_face_frame.TAG_OPENING_CAGE)
+                 or c.get(types_face_frame.TAG_SPLIT_NODE)],
+                key=lambda c: c.get('hb_split_child_index', 0),
+            )
+            return {
+                'kind':            'split',
+                'obj_name':        obj.name,
+                'axis':            sp.axis,
+                'size':            sp.size,
+                'unlock_size':     sp.unlock_size,
+                'splitter_width':  sp.splitter_width,
+                'add_backing':     sp.add_backing,
+                'children':        [self._read_tree_node(c) for c in children],
+            }
+        # Leaf opening
+        op = obj.face_frame_opening
+        return {
+            'kind':         'leaf',
+            'obj_name':     obj.name,
+            'size':         op.size,
+            'unlock_size':  op.unlock_size,
+            'opening_index': op.opening_index,
         }
 
     def _make_default_bay(self):
@@ -134,6 +192,7 @@ class FaceFrameLayout:
             'bottom_rail_width':  self.default_bottom_rail_width,
             'remove_bottom':      False,
             'delete_bay':         False,
+            'tree':               None,
         }
 
 
@@ -879,81 +938,341 @@ def bay_cage_dims(layout, bay_index):
 # ---------------------------------------------------------------------------
 # Each bay starts with a single opening filling its face frame opening.
 # Splitter operations subdivide a bay by adding more openings.
-def opening_count(layout, bay_index):
-    """Number of openings in bay N. v1: always 1 - one opening fills
-    the bay's full carcass interior. Splitter logic in a future phase
-    will replace this with the bay's stored opening collection.
+# ---------------------------------------------------------------------------
+# Bay opening tree walk
+#
+# bay_openings(layout, bay_index) is the entry point: it walks the
+# bay's tree of openings and split nodes (snapshotted into
+# layout.bays[i]['tree']) and returns one rect per LEAF opening.
+#
+# Each rect carries the cage geometry (position + dimensions in
+# bay-local coords), the four reveals (distance from cage edge to face
+# frame opening edge on each side), and the leaf's identity
+# (obj_name, opening_index) so the type-side reconciliation can match
+# leaves back to live Blender objects.
+#
+# A reveal of 0 on a side means the cage edge is flush with the face
+# frame opening edge on that side - which happens whenever a face
+# frame member sits flush against a panel boundary (top of bottom rail
+# = top of bottom panel; mid rail edges = sub-opening cage edges).
+# Non-zero reveals come from members whose width exceeds the adjacent
+# panel thickness (top rail wider than the carcass top thickness) or
+# from stiles wider than the side panel thickness.
+# ---------------------------------------------------------------------------
+def _bay_root_reveals(layout, bay_index):
+    """Reveals on each side of the bay's full cage rect, from the bay's
+    perimeter face frame (top rail, bottom rail, end stile, mid div).
+    These are inherited downward through the tree on edges that touch
+    the bay's perimeter; internal split boundaries reset reveals to 0
+    on the perpendicular side because a mid rail / mid stile edge is
+    flush with its neighboring sub-cage's edge.
     """
-    return 1
+    bay = layout.bays[bay_index]
+    cage_left_x, cage_right_x = _cage_x_bounds(layout, bay_index)
+    ff_opening_left_x = bay_x_position(layout, bay_index)
+    ff_opening_right_x = ff_opening_left_x + bay['width']
+
+    _, _, cage_dim_z = bay_cage_dims(layout, bay_index)
+    ff_opening_height = (
+        bay['height'] - bay['top_rail_width'] - bay['bottom_rail_width']
+    )
+
+    return {
+        'top':    cage_dim_z - ff_opening_height,
+        'bottom': 0.0,
+        'left':   ff_opening_left_x - cage_left_x,
+        'right':  cage_right_x - ff_opening_right_x,
+    }
+
+
+def _redistribute_sizes(children, available, splitter_count, splitter_width):
+    """Distribute `available` along children; siblings with unlock_size
+    hold their stored value, the rest evenly share the remainder. This
+    is the same algorithm as _distribute_bay_widths, just running over
+    a tree node's children instead of the cabinet's bays.
+    """
+    consumed_by_splitters = splitter_count * splitter_width
+    locked_total = sum(
+        c['size'] for c in children if c['unlock_size']
+    )
+    unlocked = [c for c in children if not c['unlock_size']]
+    remainder = available - consumed_by_splitters - locked_total
+    share = remainder / len(unlocked) if unlocked else 0.0
+    return [c['size'] if c['unlock_size'] else share for c in children]
+
+
+# Backing kind is implied by the split's axis: H-splits (mid rails)
+# always get a shelf, V-splits (mid stiles) always get a division.
+_AXIS_TO_BACKING_ROLE = {
+    'H': 'BAY_SHELF',
+    'V': 'BAY_DIVISION',
+}
+
+
+def _backing_thickness_for_role(layout, role):
+    """Material thickness for a carcass backing. Divisions match the
+    cabinet's standard carcass material thickness; shelves are fixed at
+    3/4" per HB5 carcass conventions."""
+    if role == 'BAY_DIVISION':
+        return layout.mt
+    if role == 'BAY_SHELF':
+        return inch(0.75)
+    return 0.0
+
+
+def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                     reveals, splitter_top_z, splitter_bottom_z,
+                     splitter_index, layout, splitters, backings):
+    """Append the mid rail rect for an H-split between two consecutive
+    children, plus the matching backing rect if backing_kind isn't
+    NONE. All coords are BAY-local."""
+    ff_left_x = cage_x + reveals['left']
+    ff_width = cage_dim_x - reveals['left'] - reveals['right']
+    splitter_w = node['splitter_width']
+    splitters.append({
+        'role':            'BAY_MID_RAIL',
+        'split_node_name': node['obj_name'],
+        'splitter_index':  splitter_index,
+        'x':               ff_left_x,
+        'y':               -layout.fft,
+        'z':               splitter_bottom_z,
+        'length':          ff_width,
+        'splitter_width':  splitter_w,
+        'thickness':       layout.fft,
+    })
+    if not node.get('add_backing', False):
+        return
+    role = _AXIS_TO_BACKING_ROLE['H']
+    bt_thickness = _backing_thickness_for_role(layout, role)
+    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    # Backing's TOP face flush with mid rail's TOP edge; backing
+    # thickness extends downward from there. Length spans the full
+    # carcass interior X (parent cage_dim_x), Width spans full carcass
+    # depth, Thickness = backing_thickness on Z.
+    backings.append({
+        'role':            role,
+        'split_node_name': node['obj_name'],
+        'splitter_index':  splitter_index,
+        'axis':            'H',
+        'x':               cage_x,
+        'y':               0.0,
+        'z':               splitter_top_z - bt_thickness,
+        'length':          cage_dim_x,
+        'width':           cage_dim_y,
+        'thickness':       bt_thickness,
+    })
+
+
+def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                     reveals, splitter_left_x, splitter_index, layout,
+                     splitters, backings):
+    """Append the mid stile rect for a V-split between two consecutive
+    children, plus the matching backing rect if backing_kind isn't
+    NONE. All coords are BAY-local."""
+    ff_bottom_z = cage_z + reveals['bottom']
+    ff_height = cage_dim_z - reveals['top'] - reveals['bottom']
+    splitter_w = node['splitter_width']
+    splitters.append({
+        'role':            'BAY_MID_STILE',
+        'split_node_name': node['obj_name'],
+        'splitter_index':  splitter_index,
+        'x':               splitter_left_x,
+        'y':               -layout.fft,
+        'z':               ff_bottom_z,
+        'length':          ff_height,
+        'splitter_width':  splitter_w,
+        'thickness':       layout.fft,
+    })
+    if not node.get('add_backing', False):
+        return
+    role = _AXIS_TO_BACKING_ROLE['V']
+    bt_thickness = _backing_thickness_for_role(layout, role)
+    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    # Vertical division centered on the mid stile (X-wise). Spans full
+    # carcass interior Z (parent cage_dim_z) and full depth.
+    stile_center_x = splitter_left_x + splitter_w / 2.0
+    backing_left_x = stile_center_x - bt_thickness / 2.0
+    backings.append({
+        'role':            role,
+        'split_node_name': node['obj_name'],
+        'splitter_index':  splitter_index,
+        'axis':            'V',
+        'x':               backing_left_x,
+        'y':               0.0,
+        'z':               cage_z,
+        'length':          cage_dim_z,
+        'width':           cage_dim_y,
+        'thickness':       bt_thickness,
+    })
+
+
+def _walk_tree(node, layout, bay_index,
+               cage_x, cage_z, cage_dim_x, cage_dim_z,
+               reveals, leaves, splitters, backings):
+    """Recursively descend a tree node. Emits leaf rects, splitter
+    rects (mid rails / mid stiles), and backing rects (divisions /
+    shelves) into the three lists provided by the caller."""
+    if node['kind'] == 'leaf':
+        leaves.append({
+            'obj_name':       node['obj_name'],
+            'opening_index':  node.get('opening_index', 0),
+            'cage_x':         cage_x,
+            'cage_z':         cage_z,
+            'cage_dim_x':     cage_dim_x,
+            'cage_dim_z':     cage_dim_z,
+            'reveal_top':     reveals['top'],
+            'reveal_bottom':  reveals['bottom'],
+            'reveal_left':    reveals['left'],
+            'reveal_right':   reveals['right'],
+        })
+        return
+
+    children = node['children']
+    if not children:
+        return
+    n_children = len(children)
+    n_splitters = n_children - 1
+    splitter_w = node['splitter_width']
+
+    if node['axis'] == 'H':
+        ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
+        sizes = _redistribute_sizes(
+            children, ff_avail_z, n_splitters, splitter_w
+        )
+        ff_opening_top_z = cage_z + cage_dim_z - reveals['top']
+        cur_z_top = ff_opening_top_z
+        for i, child in enumerate(children):
+            child_size = sizes[i]
+            child_ff_bottom_z = cur_z_top - child_size
+            child_reveal_top = reveals['top'] if i == 0 else 0.0
+            child_reveal_bottom = reveals['bottom'] if i == n_children - 1 else 0.0
+            child_cage_top_z = cur_z_top + child_reveal_top
+            child_cage_bottom_z = child_ff_bottom_z - child_reveal_bottom
+            child_cage_dim_z = child_cage_top_z - child_cage_bottom_z
+
+            child_reveals = {
+                'top':    child_reveal_top,
+                'bottom': child_reveal_bottom,
+                'left':   reveals['left'],
+                'right':  reveals['right'],
+            }
+            _walk_tree(
+                child, layout, bay_index,
+                cage_x=cage_x,
+                cage_z=child_cage_bottom_z,
+                cage_dim_x=cage_dim_x,
+                cage_dim_z=child_cage_dim_z,
+                reveals=child_reveals,
+                leaves=leaves, splitters=splitters, backings=backings,
+            )
+            if i < n_children - 1:
+                # Mid rail sits below this child's FF bottom edge.
+                splitter_top_z = child_ff_bottom_z
+                splitter_bottom_z = splitter_top_z - splitter_w
+                _emit_h_splitter(
+                    node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                    reveals, splitter_top_z, splitter_bottom_z,
+                    splitter_index=i, layout=layout,
+                    splitters=splitters, backings=backings,
+                )
+            cur_z_top = child_ff_bottom_z - splitter_w
+    else:
+        ff_avail_x = cage_dim_x - reveals['left'] - reveals['right']
+        sizes = _redistribute_sizes(
+            children, ff_avail_x, n_splitters, splitter_w
+        )
+        ff_opening_left_x = cage_x + reveals['left']
+        cur_x_left = ff_opening_left_x
+        for i, child in enumerate(children):
+            child_size = sizes[i]
+            child_ff_right_x = cur_x_left + child_size
+            child_reveal_left = reveals['left'] if i == 0 else 0.0
+            child_reveal_right = reveals['right'] if i == n_children - 1 else 0.0
+            child_cage_left_x = cur_x_left - child_reveal_left
+            child_cage_right_x = child_ff_right_x + child_reveal_right
+            child_cage_dim_x = child_cage_right_x - child_cage_left_x
+
+            child_reveals = {
+                'top':    reveals['top'],
+                'bottom': reveals['bottom'],
+                'left':   child_reveal_left,
+                'right':  child_reveal_right,
+            }
+            _walk_tree(
+                child, layout, bay_index,
+                cage_x=child_cage_left_x,
+                cage_z=cage_z,
+                cage_dim_x=child_cage_dim_x,
+                cage_dim_z=cage_dim_z,
+                reveals=child_reveals,
+                leaves=leaves, splitters=splitters, backings=backings,
+            )
+            if i < n_children - 1:
+                splitter_left_x = child_ff_right_x
+                _emit_v_splitter(
+                    node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                    reveals, splitter_left_x,
+                    splitter_index=i, layout=layout,
+                    splitters=splitters, backings=backings,
+                )
+            cur_x_left = child_ff_right_x + splitter_w
+
+
+def bay_openings(layout, bay_index):
+    """Walk one bay's tree and return its parts.
+
+    Returns a dict with three lists in BAY-local coords:
+      - 'leaves':    opening rects (cage geometry + reveals + identity)
+      - 'splitters': mid rail / mid stile rects (face frame members
+                     between consecutive children of each split node)
+      - 'backings':  division / shelf rects (carcass-deep panels behind
+                     each splitter, only present when the split's
+                     backing_kind is SHELF or DIVISION)
+
+    With no splits in the bay's tree the result is a single leaf and
+    empty splitter / backing lists - same as the pre-tree behavior.
+    """
+    bay = layout.bays[bay_index]
+    tree = bay.get('tree')
+    empty = {'leaves': [], 'splitters': [], 'backings': []}
+    if tree is None:
+        return empty
+    cage_dim_x_, _, cage_dim_z_ = bay_cage_dims(layout, bay_index)
+    leaves, splitters, backings = [], [], []
+    _walk_tree(
+        tree, layout, bay_index,
+        cage_x=0.0, cage_z=0.0,
+        cage_dim_x=cage_dim_x_, cage_dim_z=cage_dim_z_,
+        reveals=_bay_root_reveals(layout, bay_index),
+        leaves=leaves, splitters=splitters, backings=backings,
+    )
+    return {'leaves': leaves, 'splitters': splitters, 'backings': backings}
+
+
+# ---------------------------------------------------------------------------
+# Compatibility wrappers - thin shims that route through bay_openings.
+# Kept so existing callers (and any external tools) don't break; new
+# code should consume bay_openings() directly.
+# ---------------------------------------------------------------------------
+def opening_count(layout, bay_index):
+    return len(bay_openings(layout, bay_index)['leaves'])
 
 
 def opening_position(layout, bay_index, opening_index):
-    """Origin of opening cage in PARENT BAY-local coords.
-
-    v1: opening fills the bay - origin matches the bay cage origin
-    exactly so an interior part (shelf, divider) parented to the
-    opening occupies the same volume as the bay.
-    """
-    return (0.0, 0.0, 0.0)
+    leaves = bay_openings(layout, bay_index)['leaves']
+    if opening_index >= len(leaves):
+        return (0.0, 0.0, 0.0)
+    r = leaves[opening_index]
+    return (r['cage_x'], 0.0, r['cage_z'])
 
 
 def opening_dims(layout, bay_index, opening_index):
-    """Dim X / Y / Z for the opening cage. v1 mirrors bay_cage_dims:
-    the opening is the full carcass interior. The face frame opening
-    (the smaller rectangle on the cage's front face that the door
-    overlays) is described separately by face_frame_reveal_*.
-
-    Splitter logic in a future phase will produce sub-openings smaller
-    than the bay; the reveal helpers will derive their values from the
-    sub-opening's bounding rails / stiles instead of the bay's.
-    """
-    return bay_cage_dims(layout, bay_index)
-
-
-# ---------------------------------------------------------------------------
-# Face frame reveal: how far the face frame opening is inset from each
-# edge of the opening cage. The cage extends to the carcass interior
-# (between sides / mid divisions / bottom panel / underside of top); the
-# face frame opening sits inside that, framed by stiles and rails.
-# Reveal_bottom is always 0 because the top of the bottom rail is flush
-# with the top of the bottom panel by construction.
-# ---------------------------------------------------------------------------
-def face_frame_reveal_left(layout, bay_index):
-    """Distance from cage left edge (inner face of left side panel or
-    mid division) to the face frame opening's left edge (inner face of
-    the bay's left bounding stile)."""
-    cage_left_x, _ = _cage_x_bounds(layout, bay_index)
-    ff_opening_left_x = bay_x_position(layout, bay_index)
-    return ff_opening_left_x - cage_left_x
-
-
-def face_frame_reveal_right(layout, bay_index):
-    """Distance from face frame opening's right edge to the cage's
-    right edge."""
-    bay = layout.bays[bay_index]
-    _, cage_right_x = _cage_x_bounds(layout, bay_index)
-    ff_opening_right_x = bay_x_position(layout, bay_index) + bay['width']
-    return cage_right_x - ff_opening_right_x
-
-
-def face_frame_reveal_top(layout, bay_index):
-    """Distance from cage top (underside of carcass top) down to the
-    face frame opening's top (bottom edge of the top rail)."""
-    bay = layout.bays[bay_index]
-    _, _, cage_dim_z = bay_cage_dims(layout, bay_index)
-    opening_height = (
-        bay['height'] - bay['top_rail_width'] - bay['bottom_rail_width']
-    )
-    return cage_dim_z - opening_height
-
-
-def face_frame_reveal_bottom(layout, bay_index):
-    """Always 0: the top of the bottom rail is flush with the top of
-    the bottom panel by construction. Kept as a function for symmetry
-    with the other three sides and to give splitter logic an obvious
-    place to plug in once mid rails create non-zero bottom reveals on
-    sub-openings."""
-    return 0.0
+    leaves = bay_openings(layout, bay_index)['leaves']
+    cage_dim_y = bay_cage_dims(layout, bay_index)[1]
+    if opening_index >= len(leaves):
+        return (0.0, cage_dim_y, 0.0)
+    r = leaves[opening_index]
+    return (r['cage_dim_x'], cage_dim_y, r['cage_dim_z'])
 
 
 # ---------------------------------------------------------------------------
@@ -978,22 +1297,21 @@ DOOR_MAX_SWING_ANGLE = math.radians(100.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
 
 
-def _door_panel_size(layout, bay_index, cab_props, opening_props):
-    """Width and height of the door panel covering the face frame
-    opening plus per-side overlay. For DOUBLE this is the combined
-    width across both leaves; the per-leaf width is derived in the
-    leaf builder by subtracting the reveal and halving.
+def _door_panel_size(rect, cab_props, opening_props):
+    """Width and height of the door panel covering this opening's face
+    frame opening plus per-side overlay. For DOUBLE this is the
+    combined width across both leaves; the per-leaf width is derived
+    in the leaf builder by subtracting the reveal gap and halving.
+
+    `rect` is one entry from bay_openings() - it carries the cage
+    dimensions and the four reveals for this specific opening, which
+    fully determines the face frame opening size on each axis.
     """
-    cage_dim_x, _, cage_dim_z = bay_cage_dims(layout, bay_index)
     opening_width = (
-        cage_dim_x
-        - face_frame_reveal_left(layout, bay_index)
-        - face_frame_reveal_right(layout, bay_index)
+        rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
     )
     opening_height = (
-        cage_dim_z
-        - face_frame_reveal_top(layout, bay_index)
-        - face_frame_reveal_bottom(layout, bay_index)
+        rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
     )
     width = (
         opening_width
@@ -1040,24 +1358,25 @@ _FRONT_TYPE_TO_ROLE_NAME = {
 }
 
 
-def _single_door_leaf_pivot(layout, bay_index, cab_props, opening_props):
+def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     """Pivot position + rotation for a single-leaf door (LEFT / RIGHT /
     TOP / BOTTOM hinge), and the door's offset inside the pivot.
     Shared between DOOR and PULLOUT (PULLOUT in v1 uses door geometry
     but its pivot rotation is forced to identity by the caller).
     """
     door_thickness = cab_props.door_thickness
-    width, height = _door_panel_size(
-        layout, bay_index, cab_props, opening_props
-    )
+    width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = resolved_overlay(cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
-    reveal_left = face_frame_reveal_left(layout, bay_index)
-    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
 
-    base_x = reveal_left - left_overlay
+    # Door pivot lives in OPENING-local coords. The opening cage origin
+    # for this leaf is at (rect['cage_x'], 0, rect['cage_z']) in bay
+    # local coords; in OPENING local that's (0, 0, 0). The face frame
+    # opening's left edge is at opening-local X = reveal_left, bottom
+    # at Z = reveal_bottom.
+    base_x = rect['reveal_left'] - left_overlay
     base_y = -layout.fft - door_thickness
-    base_z = reveal_bottom - bottom_overlay
+    base_z = rect['reveal_bottom'] - bottom_overlay
 
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
     hinge = opening_props.hinge_side
@@ -1088,24 +1407,20 @@ def _single_door_leaf_pivot(layout, bay_index, cab_props, opening_props):
     }
 
 
-def _double_door_leaves(layout, bay_index, cab_props, opening_props, role):
+def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     """Two leaves for a DOUBLE door: left half hinged on its outer-left
     edge, right half hinged on its outer-right edge, with a small
     DOUBLE_DOOR_REVEAL gap where they meet in the middle.
     """
     door_thickness = cab_props.door_thickness
-    width, height = _door_panel_size(
-        layout, bay_index, cab_props, opening_props
-    )
+    width, height = _door_panel_size(rect, cab_props, opening_props)
     leaf_width = (width - DOUBLE_DOOR_REVEAL) / 2.0
     left_overlay = resolved_overlay(cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
-    reveal_left = face_frame_reveal_left(layout, bay_index)
-    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
 
-    base_x = reveal_left - left_overlay
+    base_x = rect['reveal_left'] - left_overlay
     base_y = -layout.fft - door_thickness
-    base_z = reveal_bottom - bottom_overlay
+    base_z = rect['reveal_bottom'] - bottom_overlay
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
 
     return [
@@ -1126,22 +1441,18 @@ def _double_door_leaves(layout, bay_index, cab_props, opening_props, role):
     ]
 
 
-def _drawer_or_pullout_slide_leaf(layout, bay_index, cab_props,
+def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
                                   opening_props, role, name):
     """Single-leaf slide-out front. Pivot translates in -Y by
     swing_percent * max_slide; no rotation."""
     door_thickness = cab_props.door_thickness
-    width, height = _door_panel_size(
-        layout, bay_index, cab_props, opening_props
-    )
+    width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = resolved_overlay(cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
-    reveal_left = face_frame_reveal_left(layout, bay_index)
-    reveal_bottom = face_frame_reveal_bottom(layout, bay_index)
 
-    base_x = reveal_left - left_overlay
+    base_x = rect['reveal_left'] - left_overlay
     base_y = -layout.fft - door_thickness
-    base_z = reveal_bottom - bottom_overlay
+    base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, cab_props)
 
     return {
@@ -1153,8 +1464,12 @@ def _drawer_or_pullout_slide_leaf(layout, bay_index, cab_props,
     }
 
 
-def front_leaves(layout, bay_index, opening_index, cab_props, opening_props):
-    """List of leaf descriptors for an opening's front parts.
+def front_leaves(layout, rect, cab_props, opening_props):
+    """List of leaf descriptors for one opening's front parts.
+
+    `rect` is the opening's entry from bay_openings() - it provides
+    cage geometry and reveals so leaves don't need to be told which
+    bay/opening_index they belong to.
 
     Empty list when front_type is NONE. Single-element for most
     configurations; two elements for DOUBLE doors (one per leaf).
@@ -1166,21 +1481,17 @@ def front_leaves(layout, bay_index, opening_index, cab_props, opening_props):
 
     if front_type in ('DRAWER_FRONT', 'PULLOUT'):
         return [_drawer_or_pullout_slide_leaf(
-            layout, bay_index, cab_props, opening_props, role, base_name
+            layout, rect, cab_props, opening_props, role, base_name
         )]
 
     # DOOR
     if opening_props.hinge_side == 'DOUBLE':
         return _double_door_leaves(
-            layout, bay_index, cab_props, opening_props, role
+            layout, rect, cab_props, opening_props, role
         )
 
-    width, height = _door_panel_size(
-        layout, bay_index, cab_props, opening_props
-    )
-    leaf = _single_door_leaf_pivot(
-        layout, bay_index, cab_props, opening_props
-    )
+    width, height = _door_panel_size(rect, cab_props, opening_props)
+    leaf = _single_door_leaf_pivot(layout, rect, cab_props, opening_props)
     leaf['role'] = role
     leaf['name'] = base_name
     leaf['part_dims'] = (height, width, cab_props.door_thickness)

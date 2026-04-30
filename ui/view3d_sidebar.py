@@ -62,15 +62,32 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
 
         if product_tab == 'FACE FRAME':
             hb_face_frame = context.scene.hb_face_frame
-            selection_mod_box.label(text="Face Frame Selection Mode")
-            row = selection_mod_box.row(align=True)
-            row.scale_y = 1.5
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Cabinets', icon='MESH_CUBE')
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Bays', icon='MESH_CUBE')
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Face Frame', icon='MESH_GRID')
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Openings', icon='OBJECT_DATAMODE')
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Interiors', icon='OBJECT_HIDDEN')
-            row.prop_enum(hb_face_frame, "face_frame_selection_mode", 'Parts', icon='EDITMODE_HLT')
+            # Header: label on the left, master enable checkbox on the right
+            header = selection_mod_box.row(align=True)
+            header.label(text="Face Frame Selection Mode")
+            header.prop(hb_face_frame, "face_frame_selection_mode_enabled",
+                        text="")
+            # Mode buttons - two aligned rows of three. Disabled (greyed)
+            # when the master toggle is off so it's clear the picks
+            # aren't doing anything.
+            modes_col = selection_mod_box.column(align=True)
+            modes_col.enabled = hb_face_frame.face_frame_selection_mode_enabled
+            row1 = modes_col.row(align=True)
+            row1.scale_y = 1.5
+            row1.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Cabinets', icon='MESH_CUBE')
+            row1.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Bays', icon='MESH_CUBE')
+            row1.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Openings', icon='OBJECT_DATAMODE')
+            row2 = modes_col.row(align=True)
+            row2.scale_y = 1.5
+            row2.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Face Frame', icon='MESH_GRID')
+            row2.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Interiors', icon='OBJECT_HIDDEN')
+            row2.prop_enum(hb_face_frame, "face_frame_selection_mode",
+                           'Parts', icon='EDITMODE_HLT')
         elif product_tab == 'CLOSETS':
             # Closets selection mode lands when the closets library port begins.
             selection_mod_box.label(text="Closets selection mode coming soon", icon='INFO')

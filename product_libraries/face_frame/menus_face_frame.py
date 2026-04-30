@@ -53,6 +53,13 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+        layout.separator()
+        op = layout.operator("hb_face_frame.split_opening",
+                             text="Split Horizontal", icon='SNAP_EDGE')
+        op.axis = 'H'
+        op = layout.operator("hb_face_frame.split_opening",
+                             text="Split Vertical", icon='PAUSE')
+        op.axis = 'V' 
 
 
 classes = (

@@ -427,6 +427,22 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     unlock_top_rail: BoolProperty(name="Unlock Top Rail (Cabinet)", default=False)  # type: ignore
     unlock_bottom_rail: BoolProperty(name="Unlock Bottom Rail (Cabinet)", default=False)  # type: ignore
 
+    # Mid rails / mid stiles INSIDE a bay (face frame members created by
+    # splitting an opening). Cabinet-level defaults; per-member override
+    # comes later if needed.
+    bay_mid_rail_width: FloatProperty(
+        name="Bay Mid Rail Width",
+        description="Vertical extent of mid rails created by horizontal splits inside a bay",
+        default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bay_mid_stile_width: FloatProperty(
+        name="Bay Mid Stile Width",
+        description="Horizontal extent of mid stiles created by vertical splits inside a bay",
+        default=units.inch(2.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Cabinet-level overlay defaults. Applied to every opening unless the
     # opening unlocks the corresponding side and supplies its own value.
     default_top_overlay: FloatProperty(
@@ -618,6 +634,22 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=0,
     )  # type: ignore
 
+    # Size along the parent split's axis (height when parent is an
+    # H-split, width when parent is a V-split). Meaningful only when
+    # this opening is a child of a Face_Frame_Split node; ignored when
+    # the opening is the bay's root tree node. Behaves like
+    # Face_Frame_Bay_Props.width: equally redistributed by default,
+    # held during redistribution when unlocked.
+    size: FloatProperty(
+        name="Size", default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Size",
+        description="Hold this opening's size during gang-construction redistribution",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
     FRONT_TYPE_ITEMS = [
         ('NONE', "None", "No front (open shelving)"),
         ('DOOR', "Door", "Hinged door"),
@@ -696,6 +728,60 @@ class Face_Frame_Opening_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Split_Props(PropertyGroup):
+    """Per-split-node state. Attached to each split node Empty as
+    bpy.types.Object.face_frame_split.
+
+    Split nodes are internal nodes of the bay's opening tree; their
+    children are either openings (leaves) or other split nodes. The
+    split's axis dictates how the children are arranged: H = stacked
+    vertically (children differ in Z), V = side by side (children
+    differ in X). The split node is also a tree node itself, so it has
+    its own size / unlock_size for the redistribution logic when it's
+    a child of a parent split.
+    """
+
+    SPLIT_AXIS_ITEMS = [
+        ('H', "Horizontal", "Children stacked vertically; mid rail between them"),
+        ('V', "Vertical",   "Children side by side; mid stile between them"),
+    ]
+    axis: EnumProperty(
+        name="Axis", items=SPLIT_AXIS_ITEMS, default='H',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    size: FloatProperty(
+        name="Size", default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Size",
+        description="Hold this split's size during gang-construction redistribution",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Width of THIS split's mid rail / mid stile members. Initialized
+    # from the cabinet's bay_mid_rail_width / bay_mid_stile_width when
+    # the split is created; per-split override afterwards.
+    splitter_width: FloatProperty(
+        name="Splitter Width",
+        description="Width of mid rails (H-split) or mid stiles (V-split) inside this split node",
+        default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Carcass part rendered BEHIND each splitter member. The KIND of
+    # backing is implied by the split's axis: H-splits (mid rails)
+    # always get a shelf; V-splits (mid stiles) always get a division.
+    # The user just toggles whether one is present at all.
+    add_backing: BoolProperty(
+        name="Add Backing",
+        description="Add a carcass shelf (H-split) or division (V-split) behind each splitter",
+        default=True,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
 # ---------------------------------------------------------------------------
 # Main scene props
 # ---------------------------------------------------------------------------
@@ -716,6 +802,12 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ('Parts', "Parts", "Select all individual cuttable parts"),
         ],
         default='Cabinets',
+        update=update_face_frame_selection_mode,
+    )  # type: ignore
+    face_frame_selection_mode_enabled: BoolProperty(
+        name="Selection Mode Shading",
+        description="When off, selection-mode highlighting is disabled: cages stay hidden and every part renders plain regardless of which mode is picked",
+        default=True,
         update=update_face_frame_selection_mode,
     )  # type: ignore
 
@@ -1327,6 +1419,7 @@ classes = (
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
     Face_Frame_Opening_Props,
+    Face_Frame_Split_Props,
     Face_Frame_Scene_Props,
 )
 
@@ -1343,6 +1436,7 @@ def register():
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
+    bpy.types.Object.face_frame_split = PointerProperty(type=Face_Frame_Split_Props)
 
     # Initialize preview collections so thumbnails load on first sidebar draw
     get_library_previews()
@@ -1350,6 +1444,8 @@ def register():
 
 
 def unregister():
+    if hasattr(bpy.types.Object, 'face_frame_split'):
+        del bpy.types.Object.face_frame_split
     if hasattr(bpy.types.Object, 'face_frame_opening'):
         del bpy.types.Object.face_frame_opening
     if hasattr(bpy.types.Object, 'face_frame_bay'):

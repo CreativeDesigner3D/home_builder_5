@@ -1,6 +1,7 @@
 import bpy
 
 from .. import types_face_frame
+from ....units import inch
 from ...frameless.operators.ops_placement import toggle_cabinet_color
 
 
@@ -166,7 +167,14 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
             toggle_cabinet_color(obj, False, type_name=self.MODE_TAGS.get(mode, ''))
 
     def execute(self, context):
-        mode = context.scene.hb_face_frame.face_frame_selection_mode
+        ff_scene = context.scene.hb_face_frame
+        mode = ff_scene.face_frame_selection_mode
+        # When the master toggle is off, route every object through the
+        # "not highlighted" branch by passing a sentinel mode that no
+        # _matches_mode case recognizes - keeps all face frame parts in
+        # their default render state and hides the cages.
+        if not ff_scene.face_frame_selection_mode_enabled:
+            mode = '__off__'
 
         if self.search_obj_name and self.search_obj_name in bpy.data.objects:
             root_obj = bpy.data.objects[self.search_obj_name]
@@ -214,6 +222,216 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             self.layout.label(text="No face frame cabinet selected", icon='INFO')
             return
         ui_face_frame.draw_cabinet_wide(self.layout, root)
+
+
+# Maximum count of openings the split dialog can produce in one shot.
+# Bounded by the FloatVectorProperty / BoolVectorProperty fixed sizes
+# below; raise both if more is needed.
+MAX_SPLIT_OPENINGS = 8
+
+
+class hb_face_frame_OT_split_opening(bpy.types.Operator):
+    """Subdivide an opening with N-1 horizontal or vertical splitters,
+    producing `count` total openings inside one new split node.
+
+    Inserts a new split-node Empty between the active opening and its
+    current parent (bay or another split node). The active opening is
+    moved under the split node as the LAST child; (count - 1) fresh
+    openings are inserted before it.
+
+    Convention: original is at the highest child index (bottom for
+    H-split, right for V-split); new openings fill the lower indices
+    (top for H-split, left for V-split). Drawer-on-top-of-door is the
+    canonical use case with count = 2.
+
+    Per-opening size + unlock can be set in the dialog: unlocked
+    openings hold their typed size during recalc, locked (the default)
+    share evenly. The mid rail / mid stile width for THIS split is
+    also configurable; it overrides the cabinet-level default for
+    this split only.
+    """
+    bl_idname = "hb_face_frame.split_opening"
+    bl_label = "Split Opening"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    axis: bpy.props.EnumProperty(
+        name="Axis",
+        items=[
+            ('H', "Horizontal", "Add mid rails; new openings above, original below"),
+            ('V', "Vertical",   "Add mid stiles; new openings on the left, original on the right"),
+        ],
+        default='H',
+    )  # type: ignore
+    count: bpy.props.IntProperty(
+        name="Openings",
+        description="Total number of openings the split should produce (including the original)",
+        default=2, min=2, max=MAX_SPLIT_OPENINGS,
+    )  # type: ignore
+    mid_rail_width: bpy.props.FloatProperty(
+        name="Mid Rail Width",
+        description="Width of mid rails for this split (H-axis only)",
+        default=inch(1.5), unit='LENGTH', precision=4,
+    )  # type: ignore
+    mid_stile_width: bpy.props.FloatProperty(
+        name="Mid Stile Width",
+        description="Width of mid stiles for this split (V-axis only)",
+        default=inch(2.0), unit='LENGTH', precision=4,
+    )  # type: ignore
+    add_backing: bpy.props.BoolProperty(
+        name="Add Backing",
+        description="Add a carcass shelf (H-split) or division (V-split) behind each splitter",
+        default=True,
+    )  # type: ignore
+    sizes: bpy.props.FloatVectorProperty(
+        name="Sizes",
+        description="Per-opening size (used only when the matching unlock flag is on)",
+        size=MAX_SPLIT_OPENINGS,
+        default=(0.0,) * MAX_SPLIT_OPENINGS,
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    unlocks: bpy.props.BoolVectorProperty(
+        name="Unlocks",
+        description="When on, the opening's size is held at the typed value during redistribution",
+        size=MAX_SPLIT_OPENINGS,
+        default=(False,) * MAX_SPLIT_OPENINGS,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get(types_face_frame.TAG_OPENING_CAGE))
+
+    def invoke(self, context, event):
+        # Initialize axis-specific defaults from the cabinet so the
+        # dialog opens with sensible starting values rather than the
+        # operator's hard-coded class defaults.
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None:
+            cab_props = root.face_frame_cabinet
+            self.mid_rail_width = cab_props.bay_mid_rail_width
+            self.mid_stile_width = cab_props.bay_mid_stile_width
+        # Reset per-opening fields so previous invocations don't leak in
+        zeros = (0.0,) * MAX_SPLIT_OPENINGS
+        falses = (False,) * MAX_SPLIT_OPENINGS
+        self.sizes = zeros
+        self.unlocks = falses
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'axis', expand=True)
+        layout.prop(self, 'count')
+        if self.axis == 'H':
+            layout.prop(self, 'mid_rail_width')
+            layout.prop(self, 'add_backing', text="Add Shelf Behind Mid Rail")
+            first_label, last_label = 'Top', 'Bottom'
+        else:
+            layout.prop(self, 'mid_stile_width')
+            layout.prop(self, 'add_backing', text="Add Division Behind Mid Stile")
+            first_label, last_label = 'Left', 'Right'
+
+        layout.separator()
+        layout.label(text="Opening Sizes")
+        for i in range(self.count):
+            if i == 0:
+                label = first_label
+            elif i == self.count - 1:
+                label = last_label
+            else:
+                label = f"#{i + 1}"
+            row = layout.row(align=True)
+            field = row.row(align=True)
+            field.enabled = self.unlocks[i]
+            field.prop(self, 'sizes', index=i, text=label)
+            lock_icon = 'UNLOCKED' if self.unlocks[i] else 'LOCKED'
+            row.prop(self, 'unlocks', index=i, text="", icon=lock_icon)
+
+    def execute(self, context):
+        original = context.active_object
+        root = types_face_frame.find_cabinet_root(original)
+        if root is None:
+            self.report({'WARNING'}, "Active opening is not in a face frame cabinet")
+            return {'CANCELLED'}
+
+        old_parent = original.parent
+        old_index = original.get('hb_split_child_index', 0)
+
+        # Snapshot original's current size + unlock for handing to the
+        # split node (which will now occupy original's slot in the
+        # parent tree).
+        op_props = original.face_frame_opening
+        inherited_size = op_props.size
+        inherited_unlock = op_props.unlock_size
+
+        # Create split node empty
+        split_obj = bpy.data.objects.new('Split Node', None)
+        bpy.context.scene.collection.objects.link(split_obj)
+        split_obj.empty_display_type = 'PLAIN_AXES'
+        split_obj.empty_display_size = 0.001
+        split_obj[types_face_frame.TAG_SPLIT_NODE] = True
+        split_obj.parent = old_parent
+        split_obj['hb_split_child_index'] = old_index
+        sp = split_obj.face_frame_split
+        sp.axis = self.axis
+        sp.size = inherited_size
+        sp.unlock_size = inherited_unlock
+        sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
+                             else self.mid_stile_width)
+        sp.add_backing = self.add_backing
+
+        # Find the bay (for opening_index counter) before re-parenting.
+        bay = original
+        while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
+            bay = bay.parent
+        if bay is not None:
+            existing = [c for c in bay.children_recursive
+                        if c.get(types_face_frame.TAG_OPENING_CAGE)]
+            next_idx = 1 + max(
+                (c.face_frame_opening.opening_index for c in existing),
+                default=-1,
+            )
+        else:
+            next_idx = 1
+
+        # Create (count - 1) new sibling openings at indices 0 .. count-2.
+        # The dialog's per-opening size + unlock arrays cover all `count`
+        # children; the original takes the last slot (index count - 1).
+        new_count = max(0, self.count - 1)
+        new_openings = []
+        for i in range(new_count):
+            new_op = types_face_frame.FaceFrameOpening()
+            new_op.create('Opening')
+            new_op.obj.parent = split_obj
+            new_op.obj['hb_split_child_index'] = i
+            new_op.obj.face_frame_opening.opening_index = next_idx + i
+            new_op.obj.face_frame_opening.size = self.sizes[i]
+            new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
+            new_openings.append(new_op.obj)
+
+        # Re-parent original under split as the last child.
+        original.parent = split_obj
+        original['hb_split_child_index'] = new_count
+        op_props.size = self.sizes[new_count]
+        op_props.unlock_size = self.unlocks[new_count]
+
+        types_face_frame.recalculate_face_frame_cabinet(root)
+
+        # Apply current selection mode's visual treatment to the new
+        # cages and the split node so they appear correctly highlighted
+        # / dimmed instead of stuck on default colors. Scoped to this
+        # cabinet via search_obj_name to avoid touching unrelated scene
+        # geometry.
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
+        except RuntimeError:
+            # toggle_mode poll might fail in unusual contexts; not
+            # fatal, the new cages are still functionally valid.
+            pass
+
+        self.report({'INFO'},
+                    f"Split {original.name} into {self.count} along {self.axis}-axis")
+        return {'FINISHED'}
 
 
 class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
@@ -332,6 +550,7 @@ classes = (
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
+    hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
 )
 

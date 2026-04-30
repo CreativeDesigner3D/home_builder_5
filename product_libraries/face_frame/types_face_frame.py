@@ -29,6 +29,7 @@ from . import solver_face_frame as solver
 TAG_CABINET_CAGE = 'IS_FACE_FRAME_CABINET_CAGE'
 TAG_BAY_CAGE = 'IS_FACE_FRAME_BAY_CAGE'
 TAG_OPENING_CAGE = 'IS_FACE_FRAME_OPENING_CAGE'
+TAG_SPLIT_NODE = 'IS_FACE_FRAME_SPLIT_NODE'
 
 # Reentrance guards. Bay-level prop writes inside recalculate() (such as
 # the width redistribution in _distribute_bay_widths) fire those props'
@@ -65,10 +66,27 @@ PART_ROLE_RIGHT_STILE = 'RIGHT_STILE'
 PART_ROLE_MID_STILE = 'MID_STILE'
 PART_ROLE_MID_RAIL = 'MID_RAIL'
 
+# Splitter members and backings created by H/V splits inside a single
+# bay. Mid rail / mid stile sit in the face frame plane; division /
+# shelf are carcass-deep panels behind them. Defined here (above the
+# FACE_FRAME_PART_ROLES set) so they're in scope when the set is built.
+PART_ROLE_BAY_MID_RAIL = 'BAY_MID_RAIL'
+PART_ROLE_BAY_MID_STILE = 'BAY_MID_STILE'
+PART_ROLE_BAY_DIVISION = 'BAY_DIVISION'
+PART_ROLE_BAY_SHELF = 'BAY_SHELF'
+
 FACE_FRAME_PART_ROLES = frozenset({
     PART_ROLE_TOP_RAIL, PART_ROLE_BOTTOM_RAIL,
     PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE,
     PART_ROLE_MID_STILE, PART_ROLE_MID_RAIL,
+    PART_ROLE_BAY_MID_RAIL, PART_ROLE_BAY_MID_STILE,
+})
+
+BAY_SPLITTER_ROLES = frozenset({
+    PART_ROLE_BAY_MID_RAIL, PART_ROLE_BAY_MID_STILE,
+})
+BAY_BACKING_ROLES = frozenset({
+    PART_ROLE_BAY_DIVISION, PART_ROLE_BAY_SHELF,
 })
 
 # Carcass interior partition behind each mid stile (one per gap).
@@ -393,6 +411,102 @@ class FaceFrameCabinet(GeoNodeCage):
     # Layout / dimension propagation - source of truth is the prop group.
     # No drivers; the solver writes resolved values directly to parts.
     # =====================================================================
+    def _distribute_split_sizes(self):
+        """Redistribute sizes among siblings inside every split node in
+        every bay's tree. Walks the tree top-down: at each split node,
+        the parent FF opening dim along the split's axis is divided
+        into (n - 1) splitter widths plus n child sizes; locked
+        children hold their stored value, unlocked share the rest.
+
+        Mirrors _distribute_bay_widths but operates per-bay-tree
+        instead of per-cabinet. System writes go through the
+        _DISTRIBUTING_WIDTHS guard so update callbacks know not to
+        auto-lock.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        for bay_obj in [c for c in self.obj.children
+                        if c.get(TAG_BAY_CAGE)]:
+            bp = bay_obj.face_frame_bay
+            roots = [c for c in bay_obj.children
+                     if c.get(TAG_OPENING_CAGE)
+                     or c.get(TAG_SPLIT_NODE)]
+            if not roots:
+                continue
+            root = roots[0]
+            # Bay's tree root has no size of its own; it fills the bay's
+            # face frame opening rect.
+            ff_height = bp.height - bp.top_rail_width - bp.bottom_rail_width
+            ff_width = bp.width
+            self._redistribute_split_node(root, ff_width, ff_height, cab_props)
+
+    def _redistribute_split_node(self, node, parent_ff_width,
+                                 parent_ff_height, cab_props):
+        """If `node` is a split, redistribute among its children and
+        recurse into each child. The parent_ff_* args describe the FF
+        opening dim of the rect this node occupies (which is what its
+        children share). Leaves end the recursion.
+        """
+        if not node.get(TAG_SPLIT_NODE):
+            return
+        sp = node.face_frame_split
+        children = sorted(
+            [c for c in node.children
+             if c.get(TAG_OPENING_CAGE) or c.get(TAG_SPLIT_NODE)],
+            key=lambda c: c.get('hb_split_child_index', 0),
+        )
+        if not children:
+            return
+
+        is_h = (sp.axis == 'H')
+        parent_dim = parent_ff_height if is_h else parent_ff_width
+        splitter_w = sp.splitter_width
+        n_splitters = len(children) - 1
+
+        locked_total = 0.0
+        unlocked = []
+        for c in children:
+            size_val, unlock = self._read_node_size(c)
+            if unlock:
+                locked_total += size_val
+            else:
+                unlocked.append(c)
+
+        remainder = parent_dim - n_splitters * splitter_w - locked_total
+        share = remainder / len(unlocked) if unlocked else 0.0
+
+        _DISTRIBUTING_WIDTHS.add(id(self.obj))
+        try:
+            for c in unlocked:
+                self._write_node_size(c, share)
+        finally:
+            _DISTRIBUTING_WIDTHS.discard(id(self.obj))
+
+        for c in children:
+            size_val, _ = self._read_node_size(c)
+            if is_h:
+                child_w, child_h = parent_ff_width, size_val
+            else:
+                child_w, child_h = size_val, parent_ff_height
+            self._redistribute_split_node(c, child_w, child_h, cab_props)
+
+    def _read_node_size(self, obj):
+        """Return (size, unlock_size) for any tree node (leaf opening
+        or internal split node)."""
+        if obj.get(TAG_OPENING_CAGE):
+            op = obj.face_frame_opening
+            return op.size, op.unlock_size
+        if obj.get(TAG_SPLIT_NODE):
+            sp = obj.face_frame_split
+            return sp.size, sp.unlock_size
+        return 0.0, False
+
+    def _write_node_size(self, obj, value):
+        """Write redistributed size to a tree node."""
+        if obj.get(TAG_OPENING_CAGE):
+            obj.face_frame_opening.size = value
+        elif obj.get(TAG_SPLIT_NODE):
+            obj.face_frame_split.size = value
+
     def recalculate(self):
         """Recompute all part dimensions and positions from props.
 
@@ -410,6 +524,10 @@ class FaceFrameCabinet(GeoNodeCage):
 
         # Run the width calculator before the solver reads bay widths.
         self._distribute_bay_widths()
+        # Then redistribute sizes inside each bay's tree of openings /
+        # splits. Order matters: bay widths need to be settled first
+        # because each bay's tree's available width comes from bp.width.
+        self._distribute_split_sizes()
 
         layout = solver.FaceFrameLayout(self.obj)
         carcass_depth = solver.carcass_inner_depth(layout)
@@ -866,34 +984,188 @@ class FaceFrameCabinet(GeoNodeCage):
         self._update_openings_in_bay(bay_obj, layout, bay_index)
 
     def _update_openings_in_bay(self, bay_obj, layout, bay_index):
-        """Reconcile opening cages under a bay. v1: at most one opening
-        per bay - any extras get hidden, the first is sized to the bay's
-        face frame opening. Splitter logic in a future phase will replace
-        this with a proper add / match / delete reconciliation keyed on
-        hb_opening_index, the same shape as _reconcile_rails for rails.
-        """
-        openings = sorted(
-            [c for c in bay_obj.children if c.get(TAG_OPENING_CAGE)],
-            key=lambda c: c.get('hb_opening_index', 0),
-        )
-        expected_count = solver.opening_count(layout, bay_index)
-        for i, opening_obj in enumerate(openings):
-            if i >= expected_count:
-                opening_obj.hide_viewport = True
-                continue
-            opening_obj.hide_viewport = False
-            op = FaceFrameOpening(opening_obj)
-            pos = solver.opening_position(layout, bay_index, i)
-            dim_x, dim_y, dim_z = solver.opening_dims(layout, bay_index, i)
-            opening_obj.location = pos
-            op.set_input('Dim X', dim_x)
-            op.set_input('Dim Y', dim_y)
-            op.set_input('Dim Z', dim_z)
-            op.set_input('Mirror Y', False)
-            self._update_fronts_in_opening(opening_obj, layout, bay_index, i)
+        """Reconcile a bay's tree against the solver's parts list.
 
-    def _update_fronts_in_opening(self, opening_obj, layout, bay_index,
-                                  opening_index):
+        bay_openings() returns three lists:
+          - leaves: each maps to an opening cage object (matched by name)
+          - splitters: each maps to a bay mid rail or mid stile part
+          - backings: each maps to a bay division or shelf part
+
+        Opening cages are matched in place (by obj.name) so their props
+        survive across recalcs. Splitters and backings are deleted and
+        recreated each pass since they hold no user state - all of
+        their parameters are derived from the split node's props.
+
+        Split-node empties are forced to local origin so opening cage
+        bay-local coords stay accurate at any tree depth.
+        """
+        parts = solver.bay_openings(layout, bay_index)
+        leaves_by_name = {r['obj_name']: r for r in parts['leaves']}
+        cage_dim_y = solver.bay_cage_dims(layout, bay_index)[1]
+
+        # Snapshot descendants by tag UP FRONT. The opening loop below
+        # calls _update_fronts_in_opening, which removes pivot and
+        # front-part children of each cage; if we walked
+        # children_recursive directly, those removed refs would still
+        # be in our iteration and the next .get() would raise
+        # "StructRNA of type Object has been removed". Filtering down
+        # to cages and split nodes (neither of which is touched by the
+        # inner deletions) keeps every ref live across the loop.
+        all_descendants = list(bay_obj.children_recursive)
+        split_nodes = [d for d in all_descendants
+                       if d.get(TAG_SPLIT_NODE)]
+        opening_cages = [d for d in all_descendants
+                         if d.get(TAG_OPENING_CAGE)]
+
+        # Pass 1a: pin split-node empties to local origin
+        for sn in split_nodes:
+            sn.location = (0.0, 0.0, 0.0)
+
+        # Pass 1b: opening cages - in-place match by obj.name
+        for cage in opening_cages:
+            rect = leaves_by_name.get(cage.name)
+            if rect is None:
+                cage.hide_viewport = True
+                continue
+            cage.hide_viewport = False
+            op = FaceFrameOpening(cage)
+            cage.location = (rect['cage_x'], 0.0, rect['cage_z'])
+            op.set_input('Dim X', rect['cage_dim_x'])
+            op.set_input('Dim Y', cage_dim_y)
+            op.set_input('Dim Z', rect['cage_dim_z'])
+            op.set_input('Mirror Y', False)
+            self._update_fronts_in_opening(cage, layout, rect)
+
+        # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
+        self._reconcile_bay_splitters(bay_obj, parts['splitters'])
+        # Pass 3: backings (divisions / shelves) - delete & recreate
+        self._reconcile_bay_backings(bay_obj, parts['backings'])
+
+    def _reconcile_bay_splitters(self, bay_obj, splitter_rects):
+        """Delete every existing bay splitter (mid rail / mid stile)
+        anywhere under the bay, then rebuild from `splitter_rects`.
+
+        Each rect carries the parent split-node name; the new part is
+        parented to that split node so cleanup cascades when the split
+        is removed. Coords from the rect are bay-local; with the split
+        node defensively pinned at (0,0,0), bay-local equals
+        split-node-local for these parts.
+        """
+        for descendant in list(bay_obj.children_recursive):
+            if descendant.get('hb_part_role') in BAY_SPLITTER_ROLES:
+                bpy.data.objects.remove(descendant, do_unlink=True)
+
+        for rect in splitter_rects:
+            split_obj = bpy.data.objects.get(rect['split_node_name'])
+            if split_obj is None:
+                continue
+            if rect['role'] == 'BAY_MID_RAIL':
+                self._create_bay_mid_rail(split_obj, rect)
+            else:
+                self._create_bay_mid_stile(split_obj, rect)
+
+    def _reconcile_bay_backings(self, bay_obj, backing_rects):
+        """Delete every existing bay backing part anywhere under the
+        bay, then rebuild from `backing_rects`. Same pattern as
+        _reconcile_bay_splitters; backings are parented to their split
+        node so cleanup cascades naturally."""
+        for descendant in list(bay_obj.children_recursive):
+            if descendant.get('hb_part_role') in BAY_BACKING_ROLES:
+                bpy.data.objects.remove(descendant, do_unlink=True)
+
+        for rect in backing_rects:
+            split_obj = bpy.data.objects.get(rect['split_node_name'])
+            if split_obj is None:
+                continue
+            self._create_bay_backing(split_obj, rect)
+
+    def _create_bay_mid_rail(self, split_obj, rect):
+        """Mid rail orientation matches the bay's bottom rail (rotation
+        X=90, Mirror Z=True): Length goes +X, Width goes +Z, Thickness
+        goes +Y from the part origin. Origin sits at the rail's
+        bottom-front-left corner in bay-local coords."""
+        rail = CabinetPart()
+        idx = rect['splitter_index'] + 1
+        rail.create(f'Bay Mid Rail {idx}')
+        rail.obj.parent = split_obj
+        rail.obj['hb_part_role'] = PART_ROLE_BAY_MID_RAIL
+        rail.obj['CABINET_PART'] = True
+        rail.obj['hb_split_node_name'] = rect['split_node_name']
+        rail.obj['hb_splitter_index'] = rect['splitter_index']
+        rail.obj.rotation_euler.x = math.radians(90)
+        rail.set_input('Mirror Z', True)
+        rail.obj.location = (rect['x'], rect['y'], rect['z'])
+        rail.set_input('Length', rect['length'])
+        rail.set_input('Width', rect['splitter_width'])
+        rail.set_input('Thickness', rect['thickness'])
+        return rail
+
+    def _create_bay_mid_stile(self, split_obj, rect):
+        """Mid stile orientation matches the cabinet-level left end
+        stile (rotation y=-90, z=90, Mirror Y=True, Mirror Z=True):
+        Length goes +Z, Width goes +X, Thickness goes +Y. Origin at
+        the stile's bottom-front-left corner in bay-local coords."""
+        stile = CabinetPart()
+        idx = rect['splitter_index'] + 1
+        stile.create(f'Bay Mid Stile {idx}')
+        stile.obj.parent = split_obj
+        stile.obj['hb_part_role'] = PART_ROLE_BAY_MID_STILE
+        stile.obj['CABINET_PART'] = True
+        stile.obj['hb_split_node_name'] = rect['split_node_name']
+        stile.obj['hb_splitter_index'] = rect['splitter_index']
+        stile.obj.rotation_euler.y = math.radians(-90)
+        stile.obj.rotation_euler.z = math.radians(90)
+        stile.set_input('Mirror Y', True)
+        stile.set_input('Mirror Z', True)
+        stile.obj.location = (rect['x'], rect['y'], rect['z'])
+        stile.set_input('Length', rect['length'])
+        stile.set_input('Width', rect['splitter_width'])
+        stile.set_input('Thickness', rect['thickness'])
+        return stile
+
+    def _create_bay_backing(self, split_obj, rect):
+        """Backing (division / shelf) - carcass-deep panel behind a
+        splitter. For H-splits (rect['axis'] == 'H') the backing is a
+        horizontal panel: no rotation, Length+X, Width+Y, Thickness+Z.
+        For V-splits the backing is a vertical panel: rotation y=-90
+        with Mirror Y=True and Mirror Z=True (matches cabinet-level
+        mid division), Length+Z, Width+Y, Thickness+X.
+        """
+        part = CabinetPart()
+        kind_label = 'Division' if rect['role'] == 'BAY_DIVISION' else 'Shelf'
+        idx = rect['splitter_index'] + 1
+        part.create(f'Bay {kind_label} {idx}')
+        part.obj.parent = split_obj
+        role = (PART_ROLE_BAY_DIVISION if rect['role'] == 'BAY_DIVISION'
+                else PART_ROLE_BAY_SHELF)
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj['hb_split_node_name'] = rect['split_node_name']
+        part.obj['hb_splitter_index'] = rect['splitter_index']
+        if rect['axis'] == 'H':
+            # Horizontal panel - no rotation, default mirror flags
+            part.obj.location = (rect['x'], rect['y'], rect['z'])
+            part.set_input('Length', rect['length'])
+            part.set_input('Width', rect['width'])
+            part.set_input('Thickness', rect['thickness'])
+        else:
+            # Vertical division panel: rotation Y=-90 with Mirror Z=True
+            # gives Length+Z, Width+Y, Thickness+X. Mirror Y is left
+            # off so Width extends +Y from the origin (back of face
+            # frame in bay-local toward the back panel) - the cabinet-
+            # level mid division uses Mirror Y=True, but in a bay-
+            # internal context that flips depth backward and lands the
+            # division outside the carcass.
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', False)
+            part.set_input('Mirror Z', True)
+            part.obj.location = (rect['x'], rect['y'], rect['z'])
+            part.set_input('Length', rect['length'])
+            part.set_input('Width', rect['width'])
+            part.set_input('Thickness', rect['thickness'])
+        return part
+
+    def _update_fronts_in_opening(self, opening_obj, layout, rect):
         """Reconcile front parts under an opening cage.
 
         Structure: opening cage -> front pivot empty -> front part.
@@ -902,6 +1174,10 @@ class FaceFrameCabinet(GeoNodeCage):
         part itself sits at a fixed local transform inside the pivot.
         Pulling the visual open state out of the part keeps the part's
         geometry math independent of swing_percent.
+
+        `rect` is the opening's solver rect (from bay_openings) - it
+        provides cage size and reveals so the solver can size the
+        front without re-walking the bay tree.
 
         v1 strategy: delete-and-recreate the pivot + part on every
         recalc. Front parts hold no user state, so identity loss is
@@ -928,7 +1204,7 @@ class FaceFrameCabinet(GeoNodeCage):
             return
 
         for leaf in solver.front_leaves(
-            layout, bay_index, opening_index, cab_props, op_props
+            layout, rect, cab_props, op_props
         ):
             pivot = self._create_front_pivot(opening_obj)
             pivot.location = leaf['pivot_position']

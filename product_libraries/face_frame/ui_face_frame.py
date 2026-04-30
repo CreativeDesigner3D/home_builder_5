@@ -160,6 +160,18 @@ def draw_opening_properties(layout, opening_obj):
     op = opening_obj.face_frame_opening
     layout.label(text=f"Opening {op.opening_index + 1}", icon='MESH_PLANE')
     col = layout.column(align=True)
+
+    # Size + unlock - meaningful when the opening is a child of a split
+    # node. For the bay's root opening this still shows but is ignored
+    # by the redistributor (root fills the bay).
+    size_row = col.row(align=True)
+    field = size_row.row(align=True)
+    field.enabled = op.unlock_size
+    field.prop(op, 'size', text="Size")
+    lock_icon = 'UNLOCKED' if op.unlock_size else 'LOCKED'
+    size_row.prop(op, 'unlock_size', text="", icon=lock_icon)
+    col.separator()
+
     col.prop(op, 'front_type', text="Front Type")
     if op.front_type in ('DOOR', 'PULLOUT'):
         col.prop(op, 'hinge_side', text="Hinge Side")
