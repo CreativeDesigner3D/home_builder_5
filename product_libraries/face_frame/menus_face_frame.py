@@ -23,6 +23,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.recalculate_cabinet",
                         text="Recalculate", icon='FILE_REFRESH')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Cabinet", icon='X')
 
 
 class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):

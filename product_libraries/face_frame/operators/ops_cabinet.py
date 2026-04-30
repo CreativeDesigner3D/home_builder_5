@@ -2,6 +2,7 @@ import bpy
 
 from .. import types_face_frame
 from ....units import inch
+from .... import hb_utils
 from ...frameless.operators.ops_placement import toggle_cabinet_color
 
 
@@ -63,6 +64,45 @@ class hb_face_frame_OT_recalculate_cabinet(bpy.types.Operator):
             return {'CANCELLED'}
         types_face_frame.recalculate_face_frame_cabinet(root)
         self.report({'INFO'}, f"Recalculated {root.name}")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Operator: delete the active face frame cabinet (and any others selected)
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_delete_cabinet(bpy.types.Operator):
+    """Delete every face frame cabinet currently selected."""
+    bl_idname = "hb_face_frame.delete_cabinet"
+    bl_label = "Delete Face Frame Cabinet"
+    bl_description = "Delete the selected cabinet(s) and all their parts"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return types_face_frame.find_cabinet_root(context.active_object) is not None
+
+    def execute(self, context):
+        # Collect distinct cabinet roots from the selection so that
+        # selecting any descendant (bay, opening, mid stile, part)
+        # still resolves to the cabinet, and selecting multiple parts
+        # of the same cabinet only triggers one delete.
+        roots = []
+        seen = set()
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is None or root.name in seen:
+                continue
+            seen.add(root.name)
+            roots.append(root)
+
+        if not roots:
+            self.report({'WARNING'}, "No face frame cabinet selected")
+            return {'CANCELLED'}
+
+        for root in roots:
+            hb_utils.delete_obj_and_children(root)
+
+        self.report({'INFO'}, f"Deleted {len(roots)} cabinet(s)")
         return {'FINISHED'}
 
 
@@ -545,6 +585,7 @@ class hb_face_frame_OT_mid_stile_prompts(bpy.types.Operator):
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_recalculate_cabinet,
+    hb_face_frame_OT_delete_cabinet,
     hb_face_frame_OT_backfill_openings,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
