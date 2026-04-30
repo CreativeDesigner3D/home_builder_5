@@ -99,6 +99,7 @@ PART_ROLE_MID_DIVISION = 'MID_DIVISION'
 PART_ROLE_DOOR = 'DOOR'
 PART_ROLE_DRAWER_FRONT = 'DRAWER_FRONT'
 PART_ROLE_PULLOUT_FRONT = 'PULLOUT_FRONT'
+PART_ROLE_FALSE_FRONT = 'FALSE_FRONT'
 
 # Pivot empty parent of every front part. Holds the swing rotation
 # (door / pullout) or the slide translation (drawer front) so the front
@@ -112,12 +113,33 @@ FRONT_PART_ROLES = frozenset({
     PART_ROLE_DOOR,
     PART_ROLE_DRAWER_FRONT,
     PART_ROLE_PULLOUT_FRONT,
+    PART_ROLE_FALSE_FRONT,
 })
 
 FRONT_TYPE_TO_ROLE = {
     'DOOR':         PART_ROLE_DOOR,
     'DRAWER_FRONT': PART_ROLE_DRAWER_FRONT,
     'PULLOUT':      PART_ROLE_PULLOUT_FRONT,
+    'FALSE_FRONT':  PART_ROLE_FALSE_FRONT,
+}
+
+# ---------------------------------------------------------------------------
+# Interior parts (children of opening cages; sit behind the face frame).
+# Orthogonal to front_type - any front_type can carry interior items, and
+# 'open' openings (front_type = NONE) get all of their visual content from
+# this list.
+# ---------------------------------------------------------------------------
+PART_ROLE_ADJUSTABLE_SHELF = 'ADJUSTABLE_SHELF'
+PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+
+INTERIOR_PART_ROLES = frozenset({
+    PART_ROLE_ADJUSTABLE_SHELF,
+    PART_ROLE_ACCESSORY_LABEL,
+})
+
+INTERIOR_KIND_TO_ROLE = {
+    'ADJUSTABLE_SHELF': PART_ROLE_ADJUSTABLE_SHELF,
+    'ACCESSORY':        PART_ROLE_ACCESSORY_LABEL,
 }
 
 
@@ -1035,6 +1057,7 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Dim Z', rect['cage_dim_z'])
             op.set_input('Mirror Y', False)
             self._update_fronts_in_opening(cage, layout, rect)
+            self._update_interior_items_in_opening(cage, layout, rect)
 
         # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
         self._reconcile_bay_splitters(bay_obj, parts['splitters'])
@@ -1253,6 +1276,82 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Mirror Y', True)
         part.set_input('Mirror Z', True)
         return part
+
+    def _update_interior_items_in_opening(self, opening_obj, layout, rect):
+        """Rebuild the opening's interior parts (shelves, accessory
+        labels, ...). Same wipe-and-recreate strategy as fronts:
+        interior parts hold no user state worth preserving across
+        recalcs - their geometry is fully derived from the InteriorItem
+        collection on the opening props.
+        """
+        op_props = opening_obj.face_frame_opening
+
+        # Wipe existing interior children. Match either by role tag or
+        # by the explicit ACCESSORY marker we set on text objects, since
+        # text-data objects can't carry the same custom prop conventions
+        # quite as cleanly as mesh parts.
+        for child in list(opening_obj.children):
+            if child.get('hb_part_role') in INTERIOR_PART_ROLES:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+        # Sync auto-computed shelf counts for any unlocked items before
+        # the solver reads them. Writing shelf_qty fires its update
+        # callback which would re-enter recalculate_face_frame_cabinet,
+        # but the _RECALCULATING guard short-circuits that.
+        auto_qty = solver.auto_shelf_qty(rect['cage_dim_z'])
+        for item in op_props.interior_items:
+            if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
+                if item.shelf_qty != auto_qty:
+                    item.shelf_qty = auto_qty
+
+        for desc in solver.interior_item_descriptors(
+            layout, rect, self.obj.face_frame_cabinet, op_props
+        ):
+            kind = desc['kind']
+            if kind == 'ADJUSTABLE_SHELF':
+                self._create_shelf_part(opening_obj, desc)
+            elif kind == 'ACCESSORY':
+                self._create_accessory_label(opening_obj, desc)
+
+    def _create_shelf_part(self, opening_obj, desc):
+        """Horizontal panel oriented as Length+X, Width+Y, Thickness+Z
+        (matches the carcass bottom panel and H-axis bay backings - no
+        rotation, no mirror flags beyond the GeoNodeCage default).
+
+        Tagged IS_FACE_FRAME_INTERIOR_PART so the 'Interiors' selection
+        mode picks shelves up alongside any future interior parts.
+        """
+        part = CabinetPart()
+        part.create(desc['name'])
+        part.obj.parent = opening_obj
+        part.obj['hb_part_role'] = desc['role']
+        part.obj['CABINET_PART'] = True
+        part.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        part.obj.location = desc['position']
+        length, width, thickness = desc['dims']
+        part.set_input('Length', length)
+        part.set_input('Width', width)
+        part.set_input('Thickness', thickness)
+        return part
+
+    def _create_accessory_label(self, opening_obj, desc):
+        """Blender text object centered in the opening, rotated to face
+        the front of the cabinet. The hb_part_role tag lets the wipe
+        pass find and remove it on the next recalc, same way it finds
+        shelves.
+        """
+        font_curve = bpy.data.curves.new(type='FONT', name=desc['name'])
+        font_curve.body = desc['text']
+        font_curve.size = desc['size']
+        font_curve.align_x = 'CENTER'
+        font_curve.align_y = 'CENTER'
+        text_obj = bpy.data.objects.new(desc['name'], font_curve)
+        bpy.context.scene.collection.objects.link(text_obj)
+        text_obj.parent = opening_obj
+        text_obj.location = desc['position']
+        text_obj.rotation_euler = desc['rotation']
+        text_obj['hb_part_role'] = desc['role']
+        return text_obj
 
     def _has_toe_kick(self):
         """Whether this cabinet sits on a toe kick. Subclasses override."""

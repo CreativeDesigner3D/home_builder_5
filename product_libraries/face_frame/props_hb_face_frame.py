@@ -203,6 +203,25 @@ def _update_cabinet_dim(self, context):
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
+def _update_front_type(self, context):
+    """Front-type write hook: when a user picks DOOR, ensure the opening
+    carries an ADJUSTABLE_SHELF interior item. If the user later removes
+    the shelves manually, switching front_type away and back to DOOR
+    re-adds them; switching to any other front_type leaves the
+    interior_items collection untouched.
+    """
+    if self.front_type == 'DOOR':
+        has_shelves = any(
+            item.kind == 'ADJUSTABLE_SHELF' for item in self.interior_items
+        )
+        if not has_shelves:
+            # .add() picks up the EnumProperty default ('ADJUSTABLE_SHELF')
+            # without firing the kind update. Quantity is left at the
+            # IntProperty default (1) and gets recomputed by the recalc
+            # below since unlock_shelf_qty defaults to False.
+            self.interior_items.add()
+    _update_cabinet_dim(self, context)
+
 
 def _update_bay_width(self, context):
     """Update callback for Face_Frame_Bay_Props.width.
@@ -616,6 +635,47 @@ class Face_Frame_Bay_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
+    """One interior item attached to an opening - shelf, accessory, etc.
+    Holds every kind's data side-by-side; the recalc reads only the
+    fields relevant to the active kind. New kinds add their own fields
+    here and a mapping in INTERIOR_KIND_TO_ROLE.
+    """
+
+    INTERIOR_KIND_ITEMS = [
+        ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Set of evenly-spaced shelves on shelf pins"),
+        ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),
+    ]
+    kind: EnumProperty(
+        name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # ADJUSTABLE_SHELF: count is auto-seeded on creation from the
+    # opening's interior height, then becomes a plain user-editable
+    # number. The auto rule lives in the operator that creates the
+    # item, not here, so changing the rule later doesn't migrate
+    # existing data.
+    # ADJUSTABLE_SHELF: auto-recomputed from opening height every recalc
+    # while unlocked is False. Set unlock_shelf_qty to True to pin a
+    # specific count and stop the auto-recompute.
+    shelf_qty: IntProperty(
+        name="Shelf Qty", default=1, min=0, max=20,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_shelf_qty: BoolProperty(
+        name="Unlock Shelf Qty",
+        description="When on, hold the shelf count at the value above instead of auto-computing it from the opening's height",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # ACCESSORY: free-text label (e.g., 'Lazy Susan', 'Trash Pullout').
+    accessory_label: StringProperty(
+        name="Accessory Label", default="Accessory",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
 class Face_Frame_Opening_Props(PropertyGroup):
     """Per-opening state for face frame cabinets. Attached to each
     opening's cage object as bpy.types.Object.face_frame_opening.
@@ -655,10 +715,11 @@ class Face_Frame_Opening_Props(PropertyGroup):
         ('DOOR', "Door", "Hinged door"),
         ('DRAWER_FRONT', "Drawer Front", "Drawer front"),
         ('PULLOUT', "Pullout", "Door front on a pullout slide; supports pullout accessories"),
+        ('FALSE_FRONT', "False Front", "Decorative drawer-style panel; fixed (does not open)"),
     ]
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
-        update=_update_cabinet_dim,
+        update=_update_front_type,
     )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
@@ -725,6 +786,16 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Unlock Right Overlay",
         description="Use this opening's own right overlay value instead of the cabinet default",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Interior items: shelves, accessory labels, and (future) glass
+    # shelves, half shelves, pullouts, tray dividers, rollouts. Order
+    # in this collection is the visual order from bottom to top inside
+    # the opening for items that stack (shelves); accessory labels
+    # ignore order.
+    interior_items: CollectionProperty(type=Face_Frame_Interior_Item)  # type: ignore
+    interior_items_index: IntProperty(
+        name="Active Interior Item Index", default=0, min=0,
     )  # type: ignore
 
 
@@ -1418,6 +1489,7 @@ classes = (
     Face_Frame_Mid_Stile_Width,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
+    Face_Frame_Interior_Item,
     Face_Frame_Opening_Props,
     Face_Frame_Split_Props,
     Face_Frame_Scene_Props,

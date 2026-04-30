@@ -582,6 +582,92 @@ class hb_face_frame_OT_mid_stile_prompts(bpy.types.Operator):
         ui_face_frame.draw_mid_stile_properties(self.layout, root, msi)
 
 
+class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
+    """Append a new interior item to the active opening's collection.
+    Auto-seeds shelf_qty for ADJUSTABLE_SHELF based on the opening's
+    current interior height; the user can edit the count afterward.
+    """
+    bl_idname = "hb_face_frame.add_interior_item"
+    bl_label = "Add Interior Item"
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        name="Kind",
+        items=[
+            ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Auto-spaced shelves on shelf pins"),
+            ('ACCESSORY',        "Accessory",          "Free-text accessory label"),
+        ],
+        default='ADJUSTABLE_SHELF',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.TAG_OPENING_CAGE))
+
+    def execute(self, context):
+        opening_obj = context.active_object
+        if not opening_obj or not opening_obj.get(types_face_frame.TAG_OPENING_CAGE):
+            self.report({'WARNING'}, "Select an opening first")
+            return {'CANCELLED'}
+
+        op_props = opening_obj.face_frame_opening
+        item = op_props.interior_items.add()
+        item.kind = self.kind
+
+        # ADJUSTABLE_SHELF: shelf_qty is left at the IntProperty default
+        # (1) and gets recomputed by the recalc since unlock_shelf_qty
+        # defaults to False. ACCESSORY: label stays at its default until
+        # the user edits it.
+
+        op_props.interior_items_index = len(op_props.interior_items) - 1
+        # Property writes above already trigger update_cabinet_dim,
+        # but call recalc explicitly so the new parts appear even if
+        # the update path was suppressed by a re-entrance guard.
+        root = types_face_frame.find_cabinet_root(opening_obj)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
+    """Remove an interior item from the active opening. Targets the
+    item at `index` when set explicitly (per-row remove buttons), or
+    falls back to interior_items_index when called without args.
+    """
+    bl_idname = "hb_face_frame.remove_interior_item"
+    bl_label = "Remove Interior Item"
+    bl_options = {'UNDO'}
+
+    index: bpy.props.IntProperty(
+        name="Index",
+        description="Item index to remove (-1 uses the active index)",
+        default=-1,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or not obj.get(types_face_frame.TAG_OPENING_CAGE):
+            return False
+        return len(obj.face_frame_opening.interior_items) > 0
+
+    def execute(self, context):
+        opening_obj = context.active_object
+        op_props = opening_obj.face_frame_opening
+        idx = self.index if self.index >= 0 else op_props.interior_items_index
+        if 0 <= idx < len(op_props.interior_items):
+            op_props.interior_items.remove(idx)
+            if op_props.interior_items_index >= len(op_props.interior_items):
+                op_props.interior_items_index = max(
+                    0, len(op_props.interior_items) - 1
+                )
+        root = types_face_frame.find_cabinet_root(opening_obj)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_recalculate_cabinet,
@@ -593,6 +679,8 @@ classes = (
     hb_face_frame_OT_opening_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
+    hb_face_frame_OT_add_interior_item,
+    hb_face_frame_OT_remove_interior_item,
 )
 
 

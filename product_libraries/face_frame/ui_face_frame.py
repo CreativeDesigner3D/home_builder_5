@@ -188,6 +188,51 @@ def draw_opening_properties(layout, opening_obj):
         lock_icon = 'UNLOCKED' if unlocked else 'LOCKED'
         row.prop(op, f'unlock_{side}_overlay', text="", icon=lock_icon)
 
+    layout.separator()
+    layout.label(text="Interior Items")
+
+    # Add buttons up top; list grows downward.
+    add_row = layout.row(align=True)
+    add_shelf = add_row.operator(
+        "hb_face_frame.add_interior_item",
+        text="Add Shelves", icon='ADD',
+    )
+    add_shelf.kind = 'ADJUSTABLE_SHELF'
+    add_acc = add_row.operator(
+        "hb_face_frame.add_interior_item",
+        text="Add Accessory", icon='ADD',
+    )
+    add_acc.kind = 'ACCESSORY'
+
+    if not op.interior_items:
+        layout.label(text="(none)")
+        return
+
+    # One inline block per item. Each row carries its own remove
+    # button keyed by index so the operator doesn't have to consult
+    # interior_items_index.
+    box = layout.box()
+    for i, item in enumerate(op.interior_items):
+        sub = box.column(align=True)
+        header = sub.row(align=True)
+        header.prop(item, 'kind', text="")
+        rm = header.operator(
+            "hb_face_frame.remove_interior_item",
+            text="", icon='X',
+        )
+        rm.index = i
+        if item.kind == 'ADJUSTABLE_SHELF':
+            qty_row = sub.row(align=True)
+            field = qty_row.row(align=True)
+            # Greyed out when on auto - the recalc owns the value.
+            field.enabled = item.unlock_shelf_qty
+            field.prop(item, 'shelf_qty', text="Qty")
+            lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
+            qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
+        elif item.kind == 'ACCESSORY':
+            sub.prop(item, 'accessory_label', text="Label")
+        if i < len(op.interior_items) - 1:
+            box.separator()
 
 def draw_mid_stile_properties(layout, root, msi):
     """All editable properties of a single mid stile."""

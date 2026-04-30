@@ -1359,6 +1359,7 @@ _FRONT_TYPE_TO_ROLE_NAME = {
     'DOOR':         ('DOOR',          'Door'),
     'DRAWER_FRONT': ('DRAWER_FRONT',  'Drawer Front'),
     'PULLOUT':      ('PULLOUT_FRONT', 'Pullout Front'),
+    'FALSE_FRONT':  ('FALSE_FRONT',   'False Front'),
 }
 
 
@@ -1468,6 +1469,20 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     }
 
 
+class _ZeroSwingProxy:
+    """Wraps an opening_props instance and reports swing_percent as 0.
+    Used for FALSE_FRONT so the leaf builder can be reused without
+    branching on slide behavior inside it.
+    """
+    __slots__ = ('_inner',)
+    def __init__(self, inner):
+        object.__setattr__(self, '_inner', inner)
+    def __getattr__(self, name):
+        if name == 'swing_percent':
+            return 0.0
+        return getattr(self._inner, name)
+
+
 def front_leaves(layout, rect, cab_props, opening_props):
     """List of leaf descriptors for one opening's front parts.
 
@@ -1483,9 +1498,16 @@ def front_leaves(layout, rect, cab_props, opening_props):
         return []
     role, base_name = _FRONT_TYPE_TO_ROLE_NAME[front_type]
 
-    if front_type in ('DRAWER_FRONT', 'PULLOUT'):
+    if front_type in ('DRAWER_FRONT', 'PULLOUT', 'FALSE_FRONT'):
+        # FALSE_FRONT shares drawer geometry but is fixed - we hand the
+        # leaf builder a synthetic opening_props with swing_percent
+        # zeroed so the panel never translates forward, regardless of
+        # any stale value left on the real props.
+        leaf_props = opening_props
+        if front_type == 'FALSE_FRONT':
+            leaf_props = _ZeroSwingProxy(opening_props)
         return [_drawer_or_pullout_slide_leaf(
-            layout, rect, cab_props, opening_props, role, base_name
+            layout, rect, cab_props, leaf_props, role, base_name
         )]
 
     # DOOR
@@ -1500,3 +1522,112 @@ def front_leaves(layout, rect, cab_props, opening_props):
     leaf['name'] = base_name
     leaf['part_dims'] = (height, width, cab_props.door_thickness)
     return [leaf]
+
+
+# ---------------------------------------------------------------------------
+# Interior items (shelves, accessory labels, ...). Lives behind the face
+# frame, inside the bay carcass cavity.
+#
+# Coordinate space for every descriptor is OPENING-LOCAL: x in [0, cage_dim_x],
+# y in [0, cage_dim_y] (y = 0 at back face of face frame, growing into the
+# cabinet), z in [0, cage_dim_z] (z = 0 at top of bay's bottom panel).
+# ---------------------------------------------------------------------------
+SHELF_THICKNESS = inch(0.75)
+SHELF_X_CLEARANCE = inch(1.0 / 16.0)   # side gap for shelf-pin clearance
+SHELF_FRONT_SETBACK = inch(0.25)       # tucked behind the face frame plane
+SHELF_BACK_SETBACK = inch(0.25)        # finger gap to the back panel
+
+ACCESSORY_TEXT_SIZE = inch(1.5)
+ACCESSORY_Y_OFFSET = inch(1.0)         # nudge into the cavity so it reads
+                                       # cleanly against the cabinet back
+
+
+def auto_shelf_qty(opening_height):
+    """Default count of adjustable shelves for an opening of `opening_height`
+    interior height: one shelf per ~12 inches, with a one-shelf floor.
+    Used for both initial seeding (when an interior item is added) and
+    live recompute (when unlock_shelf_qty is False).
+    """
+    return max(1, int((opening_height or 0.0) / inch(12.0)))
+
+
+def _adjustable_shelf_descriptors(rect, cage_dim_y, qty):
+    """Build descriptors for `qty` evenly-spaced shelves in this opening.
+    Returns an empty list if qty <= 0 or the cage is too short to hold
+    a single shelf at the requested thickness.
+    """
+    if qty <= 0:
+        return []
+    cage_dim_x = rect['cage_dim_x']
+    cage_dim_z = rect['cage_dim_z']
+
+    interior_h = cage_dim_z - qty * SHELF_THICKNESS
+    if interior_h <= 0:
+        return []
+    spacing = interior_h / (qty + 1)
+
+    length = max(0.0, cage_dim_x - 2 * SHELF_X_CLEARANCE)
+    width = max(0.0, cage_dim_y - SHELF_FRONT_SETBACK - SHELF_BACK_SETBACK)
+
+    items = []
+    for k in range(qty):
+        # Shelf k bottom-face Z: stack from the bottom with one spacing
+        # gap before the first shelf and one after the last.
+        z = (k + 1) * spacing + k * SHELF_THICKNESS
+        items.append({
+            'kind':     'ADJUSTABLE_SHELF',
+            'role':     'ADJUSTABLE_SHELF',
+            'name':     f'Adjustable Shelf {k + 1}',
+            'position': (SHELF_X_CLEARANCE, SHELF_FRONT_SETBACK, z),
+            'dims':     (length, width, SHELF_THICKNESS),
+        })
+    return items
+
+
+def _accessory_label_descriptor(rect, cage_dim_y, label):
+    """Build a single text-label descriptor centered in the opening,
+    facing -Y (readable from the front of the cabinet). Position is the
+    text origin; the recalc applies rotation and font size from the
+    descriptor.
+    """
+    cage_dim_x = rect['cage_dim_x']
+    cage_dim_z = rect['cage_dim_z']
+    return {
+        'kind':     'ACCESSORY',
+        'role':     'ACCESSORY_LABEL',
+        'name':     f'Accessory Label - {label}' if label else 'Accessory Label',
+        'position': (cage_dim_x / 2.0,
+                     min(ACCESSORY_Y_OFFSET, max(0.0, cage_dim_y - inch(0.25))),
+                     cage_dim_z / 2.0),
+        # Rotation around X by +90 degrees turns a default text
+        # object's front face (+Z) toward -Y so it's readable from the
+        # cabinet front. Centering (align_x = CENTER, align_y = CENTER)
+        # is applied in the recalc since it's font-data, not transform.
+        'rotation': (math.radians(90.0), 0.0, 0.0),
+        'text':     label or 'Accessory',
+        'size':     ACCESSORY_TEXT_SIZE,
+    }
+
+
+def interior_item_descriptors(layout, rect, cab_props, opening_props):
+    """Flatten one opening's interior_items collection into a list of
+    geometry descriptors for the recalc to materialize. One InteriorItem
+    can produce many descriptors (e.g., ADJUSTABLE_SHELF with qty=3 ->
+    three shelf descriptors).
+
+    Each descriptor carries a 'kind' field so the recalc can pick the
+    right Blender object type (mesh part vs text object) without
+    re-reading the source collection.
+    """
+    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    out = []
+    for item in opening_props.interior_items:
+        if item.kind == 'ADJUSTABLE_SHELF':
+            out.extend(_adjustable_shelf_descriptors(
+                rect, cage_dim_y, item.shelf_qty
+            ))
+        elif item.kind == 'ACCESSORY':
+            out.append(_accessory_label_descriptor(
+                rect, cage_dim_y, item.accessory_label
+            ))
+    return out
