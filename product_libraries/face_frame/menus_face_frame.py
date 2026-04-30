@@ -56,6 +56,8 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+        layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
+                    text="Change Opening")
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Horizontal", icon='SNAP_EDGE')
@@ -65,11 +67,42 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         op.axis = 'V' 
 
 
+class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
+    """Submenu of opening configuration presets. Each entry calls
+    hb_face_frame.change_opening with the appropriate config; the
+    operator drives front_type, hinge_side, and the ADJUSTABLE_SHELF
+    interior item to match.
+    """
+    bl_label = "Change Opening"
+
+    # (config_value, display_text). Order matches the user-facing list.
+    ENTRIES = [
+        ('OPEN',              "Open"),
+        ('OPEN_WITH_SHELVES', "Open with Shelves"),
+        ('LEFT_DOOR',         "Left Door"),
+        ('RIGHT_DOOR',        "Right Door"),
+        ('DOUBLE_DOOR',       "Double Door"),
+        ('FLIP_UP_DOOR',      "Flip Up Door"),
+        ('FLIP_DOWN_DOOR',    "Flip Down Door"),
+        ('DRAWER',            "Drawer"),
+        ('PULLOUT',           "Pullout"),
+        ('FALSE_FRONT',       "False Front"),
+        ('APPLIANCE',         "Appliance"),
+    ]
+
+    def draw(self, context):
+        layout = self.layout
+        for config, label in self.ENTRIES:
+            op = layout.operator("hb_face_frame.change_opening", text=label)
+            op.config = config
+
+
 classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_mid_stile_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
+    HOME_BUILDER_MT_face_frame_change_opening,
 )
 
 

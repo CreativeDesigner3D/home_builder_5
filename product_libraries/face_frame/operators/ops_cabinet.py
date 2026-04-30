@@ -668,6 +668,126 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Operator: change opening configuration (right-click quick presets)
+# ---------------------------------------------------------------------------
+# Each preset is a dict of actions the operator runs on the active
+# opening. Recognized keys:
+#   'front_type'      - required, written to op_props.front_type
+#   'hinge_side'      - optional, written when present
+#   'shelves'         - 'CLEAR' to remove ADJUSTABLE_SHELF items, or
+#                       'ENSURE' to add one if missing. Omitted means
+#                       leave shelves alone (the front_type callback
+#                       still auto-adds for DOOR).
+#   'appliance_label' - True to ensure an ACCESSORY item with label
+#                       'Appliance' is present
+_OPENING_PRESETS = {
+    'OPEN':              {'front_type': 'NONE',         'shelves': 'CLEAR'},
+    'OPEN_WITH_SHELVES': {'front_type': 'NONE',         'shelves': 'ENSURE'},
+    'LEFT_DOOR':         {'front_type': 'DOOR',         'hinge_side': 'LEFT'},
+    'RIGHT_DOOR':        {'front_type': 'DOOR',         'hinge_side': 'RIGHT'},
+    'DOUBLE_DOOR':       {'front_type': 'DOOR',         'hinge_side': 'DOUBLE'},
+    'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
+    'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
+    'DRAWER':            {'front_type': 'DRAWER_FRONT'},
+    'PULLOUT':           {'front_type': 'PULLOUT'},
+    'FALSE_FRONT':       {'front_type': 'FALSE_FRONT'},
+    # APPLIANCE: open opening with no shelves and an 'Appliance' label.
+    # Reuses the ACCESSORY interior kind for the label until a dedicated
+    # APPLIANCE front_type or interior kind lands.
+    'APPLIANCE':         {'front_type': 'NONE',
+                          'shelves': 'CLEAR',
+                          'appliance_label': True},
+}
+
+
+class hb_face_frame_OT_change_opening(bpy.types.Operator):
+    """Apply a named opening preset to the active opening cage.
+
+    Drives front_type, hinge_side, and the ADJUSTABLE_SHELF interior
+    item in one click. Used by the right-click 'Change Opening' submenu.
+    Lets the user reach the common configurations without opening the
+    full opening properties dialog.
+    """
+    bl_idname = "hb_face_frame.change_opening"
+    bl_label = "Change Opening"
+    bl_options = {'UNDO'}
+
+    config: bpy.props.EnumProperty(
+        name="Configuration",
+        items=[
+            ('OPEN',              "Open",              "Open opening with no interior items"),
+            ('OPEN_WITH_SHELVES', "Open with Shelves", "Open opening with adjustable shelves"),
+            ('LEFT_DOOR',         "Left Door",         "Single door hinged on the left"),
+            ('RIGHT_DOOR',        "Right Door",        "Single door hinged on the right"),
+            ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
+            ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
+            ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
+            ('DRAWER',            "Drawer",            "Drawer front"),
+            ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
+            ('FALSE_FRONT',       "False Front",       "Decorative drawer-style panel; fixed"),
+            ('APPLIANCE',         "Appliance",         "Opening reserved for an appliance"),
+        ],
+        default='OPEN',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.TAG_OPENING_CAGE))
+
+    def execute(self, context):
+        opening_obj = context.active_object
+        if not opening_obj or not opening_obj.get(types_face_frame.TAG_OPENING_CAGE):
+            self.report({'WARNING'}, "Select an opening first")
+            return {'CANCELLED'}
+
+        preset = _OPENING_PRESETS[self.config]
+        op_props = opening_obj.face_frame_opening
+
+        # Mutate interior_items BEFORE writing front_type so the recalc
+        # kicked off by the front_type write sees the final state in
+        # one pass rather than two.
+        shelves = preset.get('shelves')
+        if shelves == 'CLEAR':
+            for i in range(len(op_props.interior_items) - 1, -1, -1):
+                if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+                    op_props.interior_items.remove(i)
+        elif shelves == 'ENSURE':
+            has_shelves = any(
+                item.kind == 'ADJUSTABLE_SHELF'
+                for item in op_props.interior_items
+            )
+            if not has_shelves:
+                op_props.interior_items.add()
+
+        if preset.get('appliance_label'):
+            # Idempotent: only add a label if there isn't already an
+            # ACCESSORY item. If the user previously customized an
+            # accessory label we leave it alone rather than stomping it.
+            has_accessory = any(
+                item.kind == 'ACCESSORY'
+                for item in op_props.interior_items
+            )
+            if not has_accessory:
+                new_item = op_props.interior_items.add()
+                new_item.kind = 'ACCESSORY'
+                new_item.accessory_label = "Appliance"
+
+        op_props.front_type = preset['front_type']
+        if 'hinge_side' in preset:
+            op_props.hinge_side = preset['hinge_side']
+
+        # Belt-and-suspenders: collection mutations don't fire callbacks,
+        # so a CLEAR with the same front_type as before would otherwise
+        # leave stale shelf objects around. An explicit recalc closes
+        # the gap.
+        root = types_face_frame.find_cabinet_root(opening_obj)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_recalculate_cabinet,
@@ -681,6 +801,7 @@ classes = (
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
     hb_face_frame_OT_remove_interior_item,
+    hb_face_frame_OT_change_opening,
 )
 
 
