@@ -1295,6 +1295,10 @@ def resolved_overlay(cab_props, opening_props, side):
 # residential hinge / slide hardware.
 DOOR_MAX_SWING_ANGLE = math.radians(100.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
+# Forward offset of door / drawer front from the face frame face.
+# Mirrors the visible reveal between the back of an overlay door and
+# the front of the frame on real cabinetry.
+DOOR_TO_FRAME_GAP = inch(0.125)
 
 
 def _door_panel_size(rect, cab_props, opening_props):
@@ -1375,7 +1379,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     # opening's left edge is at opening-local X = reveal_left, bottom
     # at Z = reveal_bottom.
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - door_thickness
+    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
 
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
@@ -1419,7 +1423,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - door_thickness
+    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
 
@@ -1451,7 +1455,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - door_thickness
+    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, cab_props)
 
