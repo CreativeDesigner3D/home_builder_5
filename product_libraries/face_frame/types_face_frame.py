@@ -222,6 +222,15 @@ class FaceFrameCabinet(GeoNodeCage):
         cab_props = self.obj.face_frame_cabinet
         cab_props.cabinet_type = self.default_cabinet_type
 
+        # Type-specific top scribe defaults: amount the carcass top is
+        # held down from bay_top_z. Uppers get a small cosmetic gap;
+        # talls get a larger one for ceiling scribing on the side.
+        # Sides drop with the carcass top unless flagged finished.
+        cab_props.top_scribe = {
+            'UPPER': inch(0.125),
+            'TALL':  inch(0.5),
+        }.get(self.default_cabinet_type, 0.0)
+
         if hasattr(scene, 'hb_face_frame'):
             ff_scene = scene.hb_face_frame
             cab_props.left_stile_width = ff_scene.ff_end_stile_width

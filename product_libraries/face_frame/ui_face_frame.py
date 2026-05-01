@@ -113,6 +113,7 @@ def draw_face_frame_defaults(layout, cab_props):
     col.separator()
     col.prop(cab_props, 'left_scribe', text="Left Scribe")
     col.prop(cab_props, 'right_scribe', text="Right Scribe")
+    col.prop(cab_props, 'top_scribe', text="Top Scribe")
     col.separator()
     col.prop(cab_props, 'top_rail_width', text="Top Rail")
     col.prop(cab_props, 'bottom_rail_width', text="Bottom Rail")

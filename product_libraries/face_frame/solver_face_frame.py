@@ -75,6 +75,7 @@ class FaceFrameLayout:
         self.r_scribe = cab.right_scribe
         self.l_fin_end = cab.left_finished_end_condition
         self.r_fin_end = cab.right_finished_end_condition
+        self.top_scribe = cab.top_scribe
 
         # Rail width defaults (used when populating a fresh bay)
         self.default_top_rail_width = cab.top_rail_width
@@ -248,6 +249,33 @@ def carcass_inner_left_x(layout):
 def carcass_inner_right_x(layout):
     """X of the right side panel's inner face."""
     return layout.dim_x - right_scribe_offset(layout) - layout.mt
+
+
+# ---------------------------------------------------------------------------
+# Top Z: carcass top vs side top
+# ---------------------------------------------------------------------------
+# bay_top_z is the bay opening top (= bottom of top rail = top of side
+# in the no-scribe case). With top_scribe, the carcass top (top panel
+# for Upper/Tall, stretchers for Base/LapDrawer) drops by top_scribe.
+# Sides that aren't the visible finished face drop with it; THREE_QUARTER
+# finished sides stay at bay_top_z to keep their visible face full-height.
+# Face frame members (stiles, top rail) are unaffected.
+def carcass_top_z(layout, bay_index):
+    """Z of the carcass top's top face. Held down by top_scribe."""
+    return bay_top_z(layout, bay_index) - layout.top_scribe
+
+
+def left_side_top_z(layout):
+    if layout.l_fin_end == 'THREE_QUARTER':
+        return bay_top_z(layout, 0)
+    return carcass_top_z(layout, 0)
+
+
+def right_side_top_z(layout):
+    last = layout.bay_count - 1
+    if layout.r_fin_end == 'THREE_QUARTER':
+        return bay_top_z(layout, last)
+    return carcass_top_z(layout, last)
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +493,7 @@ def left_side_position(layout):
 
 def left_side_dims(layout):
     bottom_z = bay_bottom_z(layout, 0)
-    top_z = bay_top_z(layout, 0)
+    top_z = left_side_top_z(layout)
     return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
 
 
@@ -478,7 +506,7 @@ def right_side_position(layout):
 def right_side_dims(layout):
     last = layout.bay_count - 1
     bottom_z = bay_bottom_z(layout, last)
-    top_z = bay_top_z(layout, last)
+    top_z = right_side_top_z(layout)
     return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
 
 
@@ -706,7 +734,7 @@ def carcass_back_segments(layout):
             'y':               0.0,
             'z':               z_origin,
             'horizontal_length': right_x - left_x,
-            'vertical_length':   bay_top_z(layout, start) - z_origin,
+            'vertical_length':   carcass_top_z(layout, start) - z_origin,
             'thickness':       layout.bt,
         })
     return segments
@@ -744,12 +772,12 @@ def carcass_top_segments(layout):
     Bases and lap drawers use front + rear stretchers instead — see
     front_stretcher_segments / rear_stretcher_segments. This function
     produces a closed top panel sitting between the carcass sides /
-    mid divisions, dropping with each bay's bay_top_z.
+    mid divisions, dropping with each bay's carcass_top_z.
 
     Geometry:
       - origin x: segment left_x (symmetric meeting at mid div inside faces)
       - origin y: -mt  (just inside the face frame face)
-      - origin z: bay_top_z(start)
+      - origin z: carcass_top_z(start)  (= bay_top_z - top_scribe)
       - Length:  segment X span
       - Width:   bay.depth - bt - fft - mt   (front to back interior)
       - Thickness: mt   (Mirror Z = True so panel extends down by mt)
@@ -763,7 +791,7 @@ def carcass_top_segments(layout):
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.mt,
-            'z':          bay_top_z(layout, start),
+            'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft - layout.mt,
             'thickness':  layout.mt,
@@ -782,7 +810,7 @@ def front_stretcher_segments(layout):
       - rotation: none (Cutpart with default axes)
       - origin x: segment left_x (= mt for the leftmost bay segment)
       - origin y: -dim_y + fft  (just behind the face frame)
-      - origin z: bay_top_z(start)
+      - origin z: carcass_top_z(start)  (held down by top_scribe)
       - Length:  segment X span (right_x - left_x)
       - Width:   stretcher depth (Y axis, extends in +Y; Mirror Y = False)
       - Thickness: stretcher thickness (Z axis, extends in -Z; Mirror Z = True)
@@ -795,7 +823,7 @@ def front_stretcher_segments(layout):
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.dim_y + layout.fft,
-            'z':          bay_top_z(layout, start),
+            'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
             'width':      layout.stretcher_w,
             'thickness':  layout.stretcher_t,
@@ -814,7 +842,7 @@ def rear_stretcher_segments(layout):
       - rotation: none
       - origin x: segment left_x
       - origin y: -bt  (just inside back panel)
-      - origin z: bay_top_z(start)
+      - origin z: carcass_top_z(start)  (held down by top_scribe)
       - Length:  segment X span
       - Width:   stretcher depth (Mirror Y = True so it extends in -Y)
       - Thickness: stretcher thickness (Mirror Z = True)
@@ -827,7 +855,7 @@ def rear_stretcher_segments(layout):
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.bt,
-            'z':          bay_top_z(layout, start),
+            'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
             'width':      layout.stretcher_w,
             'thickness':  layout.stretcher_t,
@@ -901,8 +929,8 @@ def mid_division_dims(layout, gap_index):
     #   Solid top  (Upper / Tall) - division stops mt below the taller
     #     neighbor's bay_top_z to butt against the underside of the
     #     carcass top panel.
-    higher_top_z = max(bay_top_z(layout, gap_index),
-                       bay_top_z(layout, gap_index + 1))
+    higher_top_z = max(carcass_top_z(layout, gap_index),
+                       carcass_top_z(layout, gap_index + 1))
     if layout.uses_stretchers:
         top_z = higher_top_z + ms['extend_up_amount']
     else:
@@ -975,7 +1003,7 @@ def bay_cage_dims(layout, bay_index):
     cage_dim_x = right_x - left_x
     cage_dim_y = bay['depth'] - layout.fft - layout.bt
     top_thickness = layout.stretcher_t if layout.uses_stretchers else layout.mt
-    cage_top_z = bay_top_z(layout, bay_index) - top_thickness
+    cage_top_z = carcass_top_z(layout, bay_index) - top_thickness
     cage_bottom_z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
     cage_dim_z = cage_top_z - cage_bottom_z
     return (cage_dim_x, cage_dim_y, cage_dim_z)

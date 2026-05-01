@@ -384,6 +384,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Top scribe = amount the carcass top (top panel or stretchers) is
+    # held down from the bay's top opening. Sides matching the held-down
+    # top drop with it; sides flagged as the finished face stay
+    # full-height to provide a visible end face. Type defaults are
+    # seeded in create_cabinet_root: Upper 1/8", Tall 1/2", Base 0.
+    top_scribe: FloatProperty(
+        name="Top Scribe", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     blind_left: BoolProperty(name="Blind Left", default=False)  # type: ignore
     blind_right: BoolProperty(name="Blind Right", default=False)  # type: ignore
     blind_amount_left: FloatProperty(
