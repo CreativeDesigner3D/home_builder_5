@@ -94,6 +94,17 @@ def update_ceiling_height(self, context):
     frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance
     frameless_props.upper_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance - frameless_props.default_wall_cabinet_location
 
+    # Mirror for face_frame's parallel scene props. Each library owns
+    # its own clearance + wall_location, so the formulas are applied
+    # against face_frame's values, not frameless's.
+    if hasattr(context.scene, 'hb_face_frame'):
+        ff_props = context.scene.hb_face_frame
+        ff_props.tall_cabinet_height = (self.ceiling_height
+                                        - ff_props.default_top_cabinet_clearance)
+        ff_props.upper_cabinet_height = (self.ceiling_height
+                                         - ff_props.default_top_cabinet_clearance
+                                         - ff_props.default_wall_cabinet_location)
+
 
 def update_dimension_text_size(self, context):
     """Update all dimension text sizes in the scene."""

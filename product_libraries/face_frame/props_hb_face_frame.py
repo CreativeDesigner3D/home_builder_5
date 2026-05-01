@@ -115,12 +115,26 @@ def update_cabinet_style_name(self, context):
 
 
 def update_top_cabinet_clearance(self, context):
-    """Recompute upper cabinet location when clearance changes.
+    """Recompute the derived cabinet heights when either the top
+    clearance or the wall cabinet location changes. Same callback is
+    wired to default_top_cabinet_clearance and default_wall_cabinet_location
+    since both formulas read both source props.
 
-    Mirrors the frameless behaviour - this is a hook point for Phase 3 when
-    we wire it to existing cabinets.
+    Formulas:
+        tall_cabinet_height  = ceiling - top_clearance
+        upper_cabinet_height = ceiling - top_clearance - wall_location
+
+    Ceiling height lives on scene.home_builder (the addon-wide scene
+    props). Skip silently if it isn't present - the addon may not be
+    fully registered yet during initial load.
     """
-    pass
+    if not hasattr(context.scene, 'home_builder'):
+        return
+    ceiling = context.scene.home_builder.ceiling_height
+    self.tall_cabinet_height = ceiling - self.default_top_cabinet_clearance
+    self.upper_cabinet_height = (ceiling
+                                 - self.default_top_cabinet_clearance
+                                 - self.default_wall_cabinet_location)
 
 
 def update_face_frame_selection_mode(self, context):
@@ -1194,11 +1208,18 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'tall_cabinet_depth', text="")
         row.prop(self, 'upper_cabinet_depth', text="")
 
+        # Tall and upper heights are derived from ceiling, top clearance,
+        # and wall cabinet location - disable their fields so the user
+        # edits the source values instead. Base height stays editable.
         row = layout.row()
         row.label(text="Height:")
         row.prop(self, 'base_cabinet_height', text="")
-        row.prop(self, 'tall_cabinet_height', text="")
-        row.prop(self, 'upper_cabinet_height', text="")
+        sub = row.row()
+        sub.enabled = False
+        sub.prop(self, 'tall_cabinet_height', text="")
+        sub = row.row()
+        sub.enabled = False
+        sub.prop(self, 'upper_cabinet_height', text="")
 
         row = layout.row()
         row.label(text="Tall Split Height:")
