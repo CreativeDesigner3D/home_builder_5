@@ -21,6 +21,7 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from ...units import inch
 from ..frameless.types_frameless import CabinetPart
 from . import solver_face_frame as solver
+from . import pulls
 
 
 # ---------------------------------------------------------------------------
@@ -1268,12 +1269,16 @@ class FaceFrameCabinet(GeoNodeCage):
         front_type = op_props.front_type
         cab_props = self.obj.face_frame_cabinet
 
-        # Wipe existing pivots, parts, and any legacy direct-child fronts
+        # Wipe existing pivots, parts, and any legacy direct-child fronts.
+        # Use children_recursive so pull instances parented under the door
+        # part (grandchildren of the pivot) also get cleaned.
         for child in list(opening_obj.children):
             role = child.get('hb_part_role')
             if role == PART_ROLE_FRONT_PIVOT:
-                for sub in list(child.children):
-                    bpy.data.objects.remove(sub, do_unlink=True)
+                # Reverse so deeper descendants unparent before ancestors.
+                for sub in reversed(list(child.children_recursive)):
+                    if sub.name in bpy.data.objects:
+                        bpy.data.objects.remove(sub, do_unlink=True)
                 bpy.data.objects.remove(child, do_unlink=True)
             elif role in FRONT_PART_ROLES:
                 bpy.data.objects.remove(child, do_unlink=True)
@@ -1296,6 +1301,8 @@ class FaceFrameCabinet(GeoNodeCage):
             front.set_input('Length', length)
             front.set_input('Width', width)
             front.set_input('Thickness', thickness)
+
+            self._create_pull_for_front(front, leaf['role'], leaf)
 
     def _create_front_pivot(self, opening_obj):
         """Create an Empty parented to the opening cage, used as the
@@ -1331,6 +1338,123 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Mirror Y', True)
         part.set_input('Mirror Z', True)
         return part
+
+    def _z_in_cabinet(self, obj):
+        """Walk obj's parent chain up to (but not including) the cabinet
+        root, summing each parent's local Z. Returns the Z position of
+        obj's local origin in cabinet-local space.
+
+        Reads obj.location directly rather than matrix_world so the
+        result is correct mid-recalc, before the depsgraph evaluates
+        any newly-set transforms. Valid because none of the ancestors
+        on this chain (pivot, opening, split, bay) carry rotations
+        that translate Z at recalc-time (pivots are at swing 0).
+        """
+        z = 0.0
+        cur = obj
+        while cur is not None and cur is not self.obj:
+            z += cur.location.z
+            cur = cur.parent
+        return z
+
+    def _create_pull_for_front(self, front_part, role, leaf):
+        """Attach a pull instance to `front_part` based on the cabinet's
+        type and the front's role (DOOR / DRAWER_FRONT / PULLOUT_FRONT).
+        FALSE_FRONT skips - false fronts are decorative and don't carry
+        a pull. Returns the pull Object (or None if no pull is selected
+        or the asset can't be loaded).
+
+        The pull is parented to `front_part` so it inherits the swing /
+        slide animation. Position is computed in front-part local space
+        (X = Length axis, -Y = Width axis, -Z = out of cabinet). Pull
+        rotation_euler.x = +90 deg maps the asset's bar axis along
+        the door's vertical and orients its body in -Z (outward).
+        """
+        if role == PART_ROLE_FALSE_FRONT:
+            return None
+        scene_props = bpy.context.scene.hb_face_frame
+        kind = 'drawer' if role in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT) else 'door'
+        pull_obj = pulls.resolve_pull_object(scene_props, kind)
+        if pull_obj is None:
+            return None
+
+        cabinet_type = self.obj.face_frame_cabinet.cabinet_type
+        length, width, thickness = leaf['part_dims']
+        h_offset = scene_props.pull_horizontal_offset
+
+        # Vertical (X axis on door): zone-dependent.
+        if kind == 'drawer':
+            if scene_props.center_pulls_on_drawer_front:
+                x = length / 2.0
+            else:
+                # Off-center moves the pull toward the top of the
+                # drawer. Reuse the base vertical offset so the user
+                # only has one offset to tune.
+                x = length - scene_props.pull_vertical_location_base
+        elif cabinet_type == 'UPPER':
+            x = scene_props.pull_vertical_location_upper
+        elif cabinet_type == 'TALL':
+            # Three-way decision based on the door's vertical position
+            # AND its length:
+            #   - High door (bottom above the tall threshold) -> UPPER:
+            #     small offset from door bottom, like an upper cabinet.
+            #   - Door long enough to fit the tall offset -> TALL:
+            #     offset from door bottom (~36" reach height).
+            #   - Short door (offset would land past the door top) ->
+            #     BASE: offset from door TOP, so the pull stays on the
+            #     door regardless of how short it is.
+            door_bottom_z = self._z_in_cabinet(front_part.obj)
+            tall_offset = scene_props.pull_vertical_location_tall
+            if door_bottom_z >= tall_offset:
+                x = scene_props.pull_vertical_location_upper
+            elif length >= tall_offset:
+                x = tall_offset
+            else:
+                x = length - scene_props.pull_vertical_location_base
+        else:
+            # BASE / LAP_DRAWER: measure DOWN from top of door.
+            x = length - scene_props.pull_vertical_location_base
+
+        # Horizontal (Y axis on door): the leaf builder positions a
+        # right-hinged door's local origin at the UNHINGED corner
+        # (door.location.x is offset by -width so the door extends
+        # back across the cabinet). Detecting that lets us flip the
+        # pull to the correct edge without needing to thread
+        # hinge_side through the leaf descriptor.
+        if kind == 'drawer':
+            # Drawers always horizontally centered. center_pulls_on_drawer_front
+            # controls the vertical position, not horizontal.
+            y = -width / 2.0
+        elif front_part.obj.location.x < 0.0:
+            # Right-hinged door: hinge at Y = -width, unhinged at Y = 0.
+            y = -h_offset
+        else:
+            # Left-hinged door (incl. DOUBLE Left leaf): hinge at Y = 0,
+            # unhinged at Y = -width.
+            y = -(width - h_offset)
+
+        # Mounting plane: pull sits flush against the door front face.
+        # Door's local Z=0 is the front (maps to most negative world Y);
+        # Z=-thickness is the back (toward cabinet). The cage's Mirror Z
+        # makes geometry extend -Z from origin, but the origin itself is
+        # the front face.
+        z = 0.0
+
+        instance = bpy.data.objects.new(f"Pull - {front_part.obj.name}", pull_obj.data)
+        bpy.context.scene.collection.objects.link(instance)
+        instance.parent = front_part.obj
+        instance.location = (x, y, z)
+        # rotation_x = -90 deg: pull body (modeled in -Y) ends up extending
+        # in door-local +Z, which is away from the cabinet (beyond the
+        # door front). Bar axis stays along door-local +X = vertical for
+        # doors. For drawers (and pullouts) we add rotation_z = 90 deg
+        # so the bar runs horizontal across the drawer front.
+        rot_z = math.radians(90.0) if kind == 'drawer' else 0.0
+        instance.rotation_euler = (math.radians(-90.0), 0.0, rot_z)
+        instance['hb_part_role'] = 'PULL'
+        instance['IS_CABINET_PULL'] = True
+        return instance
+
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory

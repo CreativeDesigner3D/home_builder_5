@@ -870,6 +870,46 @@ class Face_Frame_Split_Props(PropertyGroup):
 # ---------------------------------------------------------------------------
 # Main scene props
 # ---------------------------------------------------------------------------
+def _pull_category_enum_items(self, context):
+    # Deferred import to avoid a circular dependency: pulls.py imports
+    # this module for the thumbnail preview collection.
+    from . import pulls
+    return pulls.get_pull_categories()
+
+
+def _pull_enum_items(self, context):
+    """Items for door/drawer pull selection. Filtered to the currently
+    chosen category. Real pulls come first (so the EnumProperty defaults
+    to the first one) with 'NONE' appended at the end as an opt-out.
+    """
+    from . import pulls
+    items = []
+    cat = self.door_pull_category
+    if cat != 'NONE':
+        # Category id is uppercased; resolve back to on-disk folder name.
+        real_cat = None
+        for entry in pulls.get_pull_categories():
+            if entry[0] == cat:
+                real_cat = entry[1]
+                break
+        if real_cat is not None:
+            items.extend(pulls.get_pulls_in_category(real_cat))
+    items.append(('NONE', "None", "No pull"))
+    return items
+
+
+def _update_pulls_on_selection_change(self, context):
+    """Selection change -> trigger recalc on every face frame cabinet
+    so the new pull (or NONE) shows up. Cached pull objects are NOT
+    invalidated here; the front-builder reloads from the new selection
+    on its next pass.
+    """
+    from . import types_face_frame
+    for obj in context.scene.objects:
+        if obj.get(types_face_frame.TAG_CABINET_CAGE):
+            types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
 class Face_Frame_Scene_Props(PropertyGroup):
     """Scene-level face frame settings: defaults, library state, cabinet
     styles, and the library/options UI.
@@ -1023,6 +1063,64 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=units.inch(30.0),
         unit='LENGTH',
         precision=4,
+    )  # type: ignore
+
+    # ---- Pulls: scene-level selection ----
+    door_pull_category: EnumProperty(
+        name="Pull Category",
+        items=_pull_category_enum_items,
+    )  # type: ignore
+    door_pull_selection: EnumProperty(
+        name="Door Pull",
+        items=_pull_enum_items,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+    drawer_pull_selection: EnumProperty(
+        name="Drawer Pull",
+        items=_pull_enum_items,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+
+    # Cached pull objects. Once the user picks a pull we load the .blend
+    # once and link the same Object to every cabinet's pull instances.
+    # Cleared / repopulated by the front-builder when selection or
+    # category changes.
+    current_door_pull_object: PointerProperty(type=bpy.types.Object)  # type: ignore
+    current_drawer_pull_object: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+    # ---- Pulls: positioning controls ----
+    # Door pulls measure horizontally from the unhinged edge of the door
+    # (the side opposite the hinge). Drawer pulls use this offset as a
+    # margin from one end when not centered.
+    pull_horizontal_offset: FloatProperty(
+        name="Pull Horizontal Offset",
+        description="Distance from the door's unhinged edge to the pull center",
+        default=units.inch(2.0), unit='LENGTH', precision=4,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+    # Vertical placement is per cabinet zone:
+    #   Base: distance from TOP of door down to pull (reach from above)
+    #   Tall: distance from BOTTOM of door up to pull
+    #   Upper: distance from BOTTOM of door up to pull (reach from below)
+    pull_vertical_location_base: FloatProperty(
+        name="Base Pull Vertical Location",
+        default=units.inch(2.5), unit='LENGTH', precision=4,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+    pull_vertical_location_tall: FloatProperty(
+        name="Tall Pull Vertical Location",
+        default=units.inch(36.0), unit='LENGTH', precision=4,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+    pull_vertical_location_upper: FloatProperty(
+        name="Upper Pull Vertical Location",
+        default=units.inch(2.5), unit='LENGTH', precision=4,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+    center_pulls_on_drawer_front: BoolProperty(
+        name="Center Pulls on Drawer Front",
+        default=True,
+        update=_update_pulls_on_selection_change,
     )  # type: ignore
 
     upper_top_stacked_cabinet_height: FloatProperty(
@@ -1400,6 +1498,45 @@ class Face_Frame_Scene_Props(PropertyGroup):
         box.label(text="Saved cabinet groups will appear here")
 
     # =====================================================================
+    # UI: pulls (Options tab)
+    # =====================================================================
+    def draw_pulls_ui(self, layout, context):
+        from . import pulls
+
+        col = layout.column(align=True)
+        col.prop(self, 'door_pull_category', text="Category")
+
+        # Door pull row + thumbnail beneath
+        col.label(text="Door Pull:")
+        col.prop(self, 'door_pull_selection', text="")
+        if self.door_pull_selection not in ('NONE', ''):
+            icon_id = pulls.load_pull_thumbnail_icon(
+                self.door_pull_selection,
+                pulls._resolve_real_category(self.door_pull_category),
+            )
+            if icon_id:
+                col.template_icon(icon_value=icon_id, scale=4.0)
+
+        col.separator()
+        col.label(text="Drawer Pull:")
+        col.prop(self, 'drawer_pull_selection', text="")
+        if self.drawer_pull_selection not in ('NONE', ''):
+            icon_id = pulls.load_pull_thumbnail_icon(
+                self.drawer_pull_selection,
+                pulls._resolve_real_category(self.door_pull_category),
+            )
+            if icon_id:
+                col.template_icon(icon_value=icon_id, scale=4.0)
+
+        col.separator()
+        col.label(text="Position:")
+        col.prop(self, 'pull_horizontal_offset', text="Horizontal Offset")
+        col.prop(self, 'pull_vertical_location_base', text="Base Vertical")
+        col.prop(self, 'pull_vertical_location_tall', text="Tall Vertical")
+        col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
+        col.prop(self, 'center_pulls_on_drawer_front', text="Center Drawer Pulls")
+
+    # =====================================================================
     # UI: cabinet styles (Options tab, placeholder for Phase 4)
     # =====================================================================
     def draw_cabinet_styles_ui(self, layout, context):
@@ -1493,8 +1630,12 @@ class Face_Frame_Scene_Props(PropertyGroup):
                 self.draw_cabinet_styles_ui(box, context)
 
             box = col.box()
-            box.label(text="Additional options sections will arrive with Phase 3-5 work.",
-                      icon='INFO')
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self, 'show_handle_options', text="Pulls",
+                     icon='TRIA_DOWN' if self.show_handle_options else 'TRIA_RIGHT', emboss=False)
+            if self.show_handle_options:
+                self.draw_pulls_ui(box, context)
 
     # =====================================================================
     # Registration
