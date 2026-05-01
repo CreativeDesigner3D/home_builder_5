@@ -987,6 +987,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
         precision=4,
     )  # type: ignore
 
+    top_drawer_opening_height: FloatProperty(
+        name="Top Drawer Opening Height",
+        description="Height of the top drawer opening in base cabinet drawer presets (1 Drawer x Door, 3 Drawers, 4 Drawers, etc.)",
+        default=units.inch(4.5),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
     upper_cabinet_depth: FloatProperty(
         name="Upper Cabinet Depth",
         description="Default depth for upper cabinets",
@@ -1195,6 +1203,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row = layout.row()
         row.label(text="Tall Split Height:")
         row.prop(self, 'tall_cabinet_split_height', text="")
+
+        row = layout.row()
+        row.label(text="Top Drawer Opening Height:")
+        row.prop(self, 'top_drawer_opening_height', text="")
 
         row = layout.row()
         row.label(text="Upper Stacked Top Height:")

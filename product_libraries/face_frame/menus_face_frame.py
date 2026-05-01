@@ -11,6 +11,9 @@ later pass once those operators are implemented.
 """
 import bpy
 
+from . import bay_presets
+from . import types_face_frame
+
 
 class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
     """Right-click menu for a face frame cabinet root."""
@@ -36,6 +39,16 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
+        # Hide the Change Bay submenu for cabinet types we have no
+        # presets for (currently LAP_DRAWER).
+        bay_obj = context.active_object
+        cab_root = (types_face_frame.find_cabinet_root(bay_obj)
+                    if bay_obj is not None else None)
+        if cab_root is not None:
+            cabinet_type = cab_root.face_frame_cabinet.cabinet_type
+            if cabinet_type in bay_presets.MENU_ENTRIES:
+                layout.menu("HOME_BUILDER_MT_face_frame_change_bay",
+                            text="Change Bay")
 
 
 class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
@@ -97,12 +110,43 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
             op.config = config
 
 
+class HOME_BUILDER_MT_face_frame_change_bay(bpy.types.Menu):
+    """Submenu of bay configuration presets. Reads the active bay's
+    cabinet type to pick which entry list to render. Each entry calls
+    hb_face_frame.change_bay with the right config string; the
+    operator looks the recipe up in bay_presets.PRESETS.
+    """
+    bl_label = "Change Bay"
+
+    def draw(self, context):
+        layout = self.layout
+        bay_obj = context.active_object
+        cab_root = (types_face_frame.find_cabinet_root(bay_obj)
+                    if bay_obj is not None else None)
+        if cab_root is None:
+            layout.label(text="No cabinet selected")
+            return
+        cabinet_type = cab_root.face_frame_cabinet.cabinet_type
+        entries = bay_presets.MENU_ENTRIES.get(cabinet_type)
+        if not entries:
+            layout.label(text=f"No presets for {cabinet_type}")
+            return
+        for entry in entries:
+            if entry[0] == 'SEP':
+                layout.separator()
+                continue
+            config, label = entry
+            op = layout.operator("hb_face_frame.change_bay", text=label)
+            op.config = config
+
+
 classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_mid_stile_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
+    HOME_BUILDER_MT_face_frame_change_bay,
 )
 
 

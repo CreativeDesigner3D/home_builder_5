@@ -1,6 +1,7 @@
 import bpy
 
 from .. import types_face_frame
+from .. import bay_presets
 from ....units import inch
 from .... import hb_utils
 from ...frameless.operators.ops_placement import toggle_cabinet_color
@@ -669,6 +670,103 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Bay rebuild helpers (used by change_bay)
+# ---------------------------------------------------------------------------
+def _wipe_bay_children(bay_obj):
+    """Delete every descendant of bay_obj. The bay cage itself and its
+    parent (the cabinet root) are untouched. Cabinet-level face frame
+    parts (left/right stiles, top/bottom rails) are children of the
+    cabinet root, not the bay, so they're safe.
+    """
+    import bpy
+    descendants = list(bay_obj.children_recursive)
+    # Reverse so deeper objects unparent before their ancestors.
+    for child in reversed(descendants):
+        if child.name in bpy.data.objects:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+
+def _build_recipe_into(recipe, parent_obj, child_index,
+                       opening_idx_counter, cab_props):
+    """Materialize a bay_presets recipe tree as objects under parent_obj.
+
+    Leaf -> creates one Opening cage and applies its opening preset.
+    Split -> creates a Split Node empty with the right axis and splitter
+             width, then recurses into each child.
+
+    opening_idx_counter is a single-element mutable list used as a
+    shared counter across recursive calls so opening_index values are
+    unique within the bay.
+    """
+    import bpy
+    kind = recipe[0]
+    # size_role lives in slot 3 for both leaf and split tuples (added
+    # for top-drawer pinning in BASE drawer presets). Older 3-tuples
+    # default to None so callers that haven't been updated still work.
+    size_role = recipe[3] if len(recipe) > 3 else None
+
+    def apply_size_role(props):
+        """Pin a node's size + unlock_size based on its size_role.
+        New roles get added here; the cabinet-level value they map to
+        lives on Face_Frame_Cabinet_Props.
+
+        Order matters: unlock_size MUST be written before size. Each
+        prop write fires a recalc, and a recalc with this node still
+        marked unlocked will redistribute and overwrite size with the
+        node's share of the available space. Writing unlock_size first
+        means the recalc triggered by the size write sees a locked
+        node and leaves the value alone.
+        """
+        if size_role == 'TOP_DRAWER':
+            # Scene-level preference, not per-cabinet.
+            props.unlock_size = True
+            props.size = bpy.context.scene.hb_face_frame.top_drawer_opening_height
+        elif size_role == 'TALL_SPLIT_BOTTOM':
+            # Scene-level preference, not per-cabinet.
+            props.unlock_size = True
+            props.size = bpy.context.scene.hb_face_frame.tall_cabinet_split_height
+        elif size_role == 'UPPER_STACKED_TOP':
+            # Scene-level preference, not per-cabinet.
+            props.unlock_size = True
+            props.size = bpy.context.scene.hb_face_frame.upper_top_stacked_cabinet_height
+
+    if kind == 'leaf':
+        config = recipe[1]
+        overrides = recipe[2] if len(recipe) > 2 else {}
+        opening = types_face_frame.FaceFrameOpening()
+        opening.create('Opening')
+        opening.obj.parent = parent_obj
+        opening.obj['hb_split_child_index'] = child_index
+        opening.obj.face_frame_opening.opening_index = opening_idx_counter[0]
+        opening_idx_counter[0] += 1
+        apply_opening_preset(opening.obj, config, **overrides)
+        apply_size_role(opening.obj.face_frame_opening)
+        return
+
+    if kind == 'split':
+        axis = recipe[1]
+        children = recipe[2]
+        split_obj = bpy.data.objects.new('Split Node', None)
+        bpy.context.scene.collection.objects.link(split_obj)
+        split_obj.empty_display_type = 'PLAIN_AXES'
+        split_obj.empty_display_size = 0.001
+        split_obj[types_face_frame.TAG_SPLIT_NODE] = True
+        split_obj.parent = parent_obj
+        split_obj['hb_split_child_index'] = child_index
+        sp = split_obj.face_frame_split
+        sp.axis = axis
+        sp.splitter_width = (cab_props.bay_mid_rail_width if axis == 'H'
+                             else cab_props.bay_mid_stile_width)
+        apply_size_role(sp)
+        for i, child_recipe in enumerate(children):
+            _build_recipe_into(child_recipe, split_obj, i,
+                               opening_idx_counter, cab_props)
+        return
+
+    raise ValueError(f"Unknown recipe node kind: {kind!r}")
+
+
+# ---------------------------------------------------------------------------
 # Operator: change opening configuration (right-click quick presets)
 # ---------------------------------------------------------------------------
 # Each preset is a dict of actions the operator runs on the active
@@ -699,6 +797,61 @@ _OPENING_PRESETS = {
                           'shelves': 'CLEAR',
                           'appliance_label': True},
 }
+
+
+def apply_opening_preset(opening_obj, config, **overrides):
+    """Programmatic version of hb_face_frame.change_opening - applies the
+    named preset's prop changes to a specific opening object without
+    going through bpy.ops. The caller is responsible for triggering a
+    recalc when it's done batching changes.
+
+    Recognized overrides:
+      accessory_label  - replaces the label on the (typically just-added)
+                         ACCESSORY interior item. Used by the bay
+                         presets to set 'Microwave' instead of the
+                         default 'Appliance' on appliance labels.
+    """
+    preset = _OPENING_PRESETS[config]
+    op_props = opening_obj.face_frame_opening
+
+    # Mutate interior_items first so the recalc kicked off by the
+    # front_type write below sees the final state in one pass.
+    shelves = preset.get('shelves')
+    if shelves == 'CLEAR':
+        for i in range(len(op_props.interior_items) - 1, -1, -1):
+            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+                op_props.interior_items.remove(i)
+    elif shelves == 'ENSURE':
+        has_shelves = any(
+            item.kind == 'ADJUSTABLE_SHELF'
+            for item in op_props.interior_items
+        )
+        if not has_shelves:
+            op_props.interior_items.add()
+
+    if preset.get('appliance_label'):
+        has_accessory = any(
+            item.kind == 'ACCESSORY' for item in op_props.interior_items
+        )
+        if not has_accessory:
+            new_item = op_props.interior_items.add()
+            new_item.kind = 'ACCESSORY'
+            new_item.accessory_label = "Appliance"
+
+    op_props.front_type = preset['front_type']
+    if 'hinge_side' in preset:
+        op_props.hinge_side = preset['hinge_side']
+
+    # Apply post-preset overrides. accessory_label targets the most
+    # recent ACCESSORY item - for fresh openings the preset just added
+    # one; for re-applied presets we deliberately retarget the existing
+    # item so the user's named appliance reflects the new preset.
+    accessory_label = overrides.get('accessory_label')
+    if accessory_label is not None:
+        for item in reversed(op_props.interior_items):
+            if item.kind == 'ACCESSORY':
+                item.accessory_label = accessory_label
+                break
 
 
 class hb_face_frame_OT_change_opening(bpy.types.Operator):
@@ -742,41 +895,7 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             self.report({'WARNING'}, "Select an opening first")
             return {'CANCELLED'}
 
-        preset = _OPENING_PRESETS[self.config]
-        op_props = opening_obj.face_frame_opening
-
-        # Mutate interior_items BEFORE writing front_type so the recalc
-        # kicked off by the front_type write sees the final state in
-        # one pass rather than two.
-        shelves = preset.get('shelves')
-        if shelves == 'CLEAR':
-            for i in range(len(op_props.interior_items) - 1, -1, -1):
-                if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
-                    op_props.interior_items.remove(i)
-        elif shelves == 'ENSURE':
-            has_shelves = any(
-                item.kind == 'ADJUSTABLE_SHELF'
-                for item in op_props.interior_items
-            )
-            if not has_shelves:
-                op_props.interior_items.add()
-
-        if preset.get('appliance_label'):
-            # Idempotent: only add a label if there isn't already an
-            # ACCESSORY item. If the user previously customized an
-            # accessory label we leave it alone rather than stomping it.
-            has_accessory = any(
-                item.kind == 'ACCESSORY'
-                for item in op_props.interior_items
-            )
-            if not has_accessory:
-                new_item = op_props.interior_items.add()
-                new_item.kind = 'ACCESSORY'
-                new_item.accessory_label = "Appliance"
-
-        op_props.front_type = preset['front_type']
-        if 'hinge_side' in preset:
-            op_props.hinge_side = preset['hinge_side']
+        apply_opening_preset(opening_obj, self.config)
 
         # Belt-and-suspenders: collection mutations don't fire callbacks,
         # so a CLEAR with the same front_type as before would otherwise
@@ -785,6 +904,96 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
         root = types_face_frame.find_cabinet_root(opening_obj)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Operator: change bay configuration (right-click quick presets per
+# cabinet type). Wipes the bay's existing tree and rebuilds it from a
+# preset recipe in bay_presets.PRESETS.
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_change_bay(bpy.types.Operator):
+    """Apply a named bay configuration preset to the active bay cage.
+
+    The preset's available configurations differ by cabinet type. The
+    operator looks up bay_presets.PRESETS[cabinet_type][config] and
+    materializes its tree of split nodes and openings under the bay,
+    replacing whatever was there.
+
+    The two CUSTOM_* configs are special: they reset the bay to a
+    single opening and route to the existing split_opening dialog so
+    the user picks count and per-opening sizes.
+    """
+    bl_idname = "hb_face_frame.change_bay"
+    bl_label = "Change Bay"
+    bl_options = {'UNDO'}
+
+    config: bpy.props.StringProperty(
+        name="Configuration",
+        description="Bay preset id from bay_presets (or CUSTOM_VERTICAL / CUSTOM_HORIZONTAL)",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.TAG_BAY_CAGE))
+
+    def execute(self, context):
+        bay_obj = context.active_object
+        if not bay_obj or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+            self.report({'WARNING'}, "Select a bay first")
+            return {'CANCELLED'}
+        root = types_face_frame.find_cabinet_root(bay_obj)
+        if root is None:
+            self.report({'WARNING'}, "Bay is not part of a cabinet")
+            return {'CANCELLED'}
+        cabinet_type = root.face_frame_cabinet.cabinet_type
+        if cabinet_type not in bay_presets.PRESETS:
+            self.report({'WARNING'}, f"No bay presets for cabinet type {cabinet_type}")
+            return {'CANCELLED'}
+
+        # Custom routes: wipe to one opening, then hand off to the
+        # split dialog.
+        if self.config in ('CUSTOM_VERTICAL', 'CUSTOM_HORIZONTAL'):
+            _wipe_bay_children(bay_obj)
+            opening_idx = [0]
+            _build_recipe_into(
+                bay_presets.L('OPEN'), bay_obj, 0,
+                opening_idx, root.face_frame_cabinet,
+            )
+            types_face_frame.recalculate_face_frame_cabinet(root)
+            new_opening = next(
+                (c for c in bay_obj.children
+                 if c.get(types_face_frame.TAG_OPENING_CAGE)), None
+            )
+            if new_opening is None:
+                return {'FINISHED'}
+            bpy.ops.object.select_all(action='DESELECT')
+            new_opening.select_set(True)
+            context.view_layer.objects.active = new_opening
+            axis = 'V' if self.config == 'CUSTOM_VERTICAL' else 'H'
+            return bpy.ops.hb_face_frame.split_opening('INVOKE_DEFAULT', axis=axis)
+
+        presets = bay_presets.PRESETS[cabinet_type]
+        if self.config not in presets:
+            self.report({'WARNING'},
+                        f"Unknown bay config {self.config!r} for {cabinet_type}")
+            return {'CANCELLED'}
+        recipe = presets[self.config]
+
+        _wipe_bay_children(bay_obj)
+        opening_idx = [0]
+        _build_recipe_into(
+            recipe, bay_obj, 0, opening_idx, root.face_frame_cabinet,
+        )
+        types_face_frame.recalculate_face_frame_cabinet(root)
+
+        # Re-apply selection mode so the new objects render correctly
+        # instead of staying in their default colors.
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
+        except RuntimeError:
+            pass
         return {'FINISHED'}
 
 
@@ -802,6 +1011,7 @@ classes = (
     hb_face_frame_OT_add_interior_item,
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_change_opening,
+    hb_face_frame_OT_change_bay,
 )
 
 
