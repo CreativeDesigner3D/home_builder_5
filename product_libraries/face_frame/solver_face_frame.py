@@ -68,6 +68,14 @@ class FaceFrameLayout:
         self.lsw = cab.left_stile_width
         self.rsw = cab.right_stile_width
 
+        # Side scribe + finish end condition. The pair determines how
+        # far the side panel sits inboard of the face frame outer face
+        # via left_scribe_offset / right_scribe_offset.
+        self.l_scribe = cab.left_scribe
+        self.r_scribe = cab.right_scribe
+        self.l_fin_end = cab.left_finished_end_condition
+        self.r_fin_end = cab.right_finished_end_condition
+
         # Rail width defaults (used when populating a fresh bay)
         self.default_top_rail_width = cab.top_rail_width
         self.default_bottom_rail_width = cab.bottom_rail_width
@@ -202,6 +210,44 @@ class FaceFrameLayout:
 def carcass_inner_depth(layout):
     """Available depth from cabinet front to back, behind the face frame."""
     return layout.dim_y - layout.fft
+
+
+# ---------------------------------------------------------------------------
+# Side X offset (scribe / finish end condition)
+# ---------------------------------------------------------------------------
+# Face frame outer face stays at X=0 (left) and X=dim_x (right). Side
+# panels can sit inboard of the face frame outer face by left/right
+# scribe offsets. The offset comes from finish end condition first, then
+# the user's typed scribe:
+#   - THREE_QUARTER: side IS the outer face -> offset = 0
+#   - PANELED: reserve 3/4" outboard for an applied panel
+#   - everything else: use the typed scribe value (default 0)
+def left_scribe_offset(layout):
+    if layout.l_fin_end == 'THREE_QUARTER':
+        return 0.0
+    if layout.l_fin_end == 'PANELED':
+        return inch(0.75)
+    return layout.l_scribe
+
+
+def right_scribe_offset(layout):
+    if layout.r_fin_end == 'THREE_QUARTER':
+        return 0.0
+    if layout.r_fin_end == 'PANELED':
+        return inch(0.75)
+    return layout.r_scribe
+
+
+def carcass_inner_left_x(layout):
+    """X of the left side panel's inner face - the left bound of the
+    cabinet's interior cavity. Sides are mt thick; outer face sits at
+    left_scribe_offset."""
+    return left_scribe_offset(layout) + layout.mt
+
+
+def carcass_inner_right_x(layout):
+    """X of the right side panel's inner face."""
+    return layout.dim_x - right_scribe_offset(layout) - layout.mt
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +457,10 @@ def right_end_stile_dims(layout):
 # ---------------------------------------------------------------------------
 def left_side_position(layout):
     """Left carcass side matches bay 0's vertical range exactly. Shorter
-    bay 0 -> shorter side; taller bay 0 -> longer side.
+    bay 0 -> shorter side; taller bay 0 -> longer side. X reflects the
+    scribe offset so the side can sit inboard of the stile.
     """
-    return (0.0, 0.0, bay_bottom_z(layout, 0))
+    return (left_scribe_offset(layout), 0.0, bay_bottom_z(layout, 0))
 
 
 def left_side_dims(layout):
@@ -424,7 +471,8 @@ def left_side_dims(layout):
 
 def right_side_position(layout):
     last = layout.bay_count - 1
-    return (layout.dim_x, 0.0, bay_bottom_z(layout, last))
+    return (layout.dim_x - right_scribe_offset(layout),
+            0.0, bay_bottom_z(layout, last))
 
 
 def right_side_dims(layout):
@@ -562,11 +610,11 @@ def _segment_x_bounds(layout, start, end):
     the mid division on internal gaps.
     """
     if start == 0:
-        left_x = layout.mt
+        left_x = carcass_inner_left_x(layout)
     else:
         left_x = _carcass_meeting_x(layout, start - 1)
     if end == layout.bay_count - 1:
-        right_x = layout.dim_x - layout.mt
+        right_x = carcass_inner_right_x(layout)
     else:
         right_x = _carcass_meeting_x(layout, end)
     return left_x, right_x
@@ -583,11 +631,11 @@ def _stretcher_x_bounds(layout, start, end):
       - segment on the RIGHT (left edge):  meets at mid_div right face = mid_div_x + mt
     """
     if start == 0:
-        left_x = layout.mt
+        left_x = carcass_inner_left_x(layout)
     else:
         left_x = _mid_division_x(layout, start - 1) + layout.mt
     if end == layout.bay_count - 1:
-        right_x = layout.dim_x - layout.mt
+        right_x = carcass_inner_right_x(layout)
     else:
         right_x = _mid_division_x(layout, end)
     return left_x, right_x
@@ -878,11 +926,11 @@ def _cage_x_bounds(layout, bay_index):
     under or over the division.
     """
     if bay_index == 0:
-        left_x = layout.mt
+        left_x = carcass_inner_left_x(layout)
     else:
         left_x = _mid_division_x(layout, bay_index - 1) + layout.mt
     if bay_index == layout.bay_count - 1:
-        right_x = layout.dim_x - layout.mt
+        right_x = carcass_inner_right_x(layout)
     else:
         right_x = _mid_division_x(layout, bay_index)
     return left_x, right_x

@@ -369,6 +369,21 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Back Finished End", items=FIN_END_ITEMS, default='NONE'
     )  # type: ignore
 
+    # Scribe = inset from the face frame outer face to the side panel
+    # outer face. The solver multiplexes this against the finish end
+    # condition (3/4 finished forces 0 since the side IS the outer face;
+    # paneled reserves 3/4" for the panel; others use the typed value),
+    # so this prop holds the user setpoint for the unfinished /
+    # against-a-wall case (~1/2" typical, 0 for an adjacent cabinet).
+    left_scribe: FloatProperty(
+        name="Left Scribe", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_scribe: FloatProperty(
+        name="Right Scribe", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     blind_left: BoolProperty(name="Blind Left", default=False)  # type: ignore
     blind_right: BoolProperty(name="Blind Right", default=False)  # type: ignore
     blind_amount_left: FloatProperty(
