@@ -138,8 +138,21 @@ def draw_bay_properties(layout, bay_obj):
     lock_icon = 'UNLOCKED' if bp.unlock_width else 'LOCKED'
     width_row.prop(bp, 'unlock_width', text="", icon=lock_icon)
 
-    col.prop(bp, 'height', text="Height")
-    col.prop(bp, 'depth', text="Depth")
+    # Height with unlock toggle - same pattern as width. Greyed out on
+    # auto since the recalc owns the value (= cabinet height - toe kick).
+    height_row = col.row(align=True)
+    field = height_row.row(align=True)
+    field.enabled = bp.unlock_height
+    field.prop(bp, 'height', text="Height")
+    lock_icon = 'UNLOCKED' if bp.unlock_height else 'LOCKED'
+    height_row.prop(bp, 'unlock_height', text="", icon=lock_icon)
+
+    depth_row = col.row(align=True)
+    field = depth_row.row(align=True)
+    field.enabled = bp.unlock_depth
+    field.prop(bp, 'depth', text="Depth")
+    lock_icon = 'UNLOCKED' if bp.unlock_depth else 'LOCKED'
+    depth_row.prop(bp, 'unlock_depth', text="", icon=lock_icon)
     col.separator()
     col.prop(bp, 'kick_height', text="Kick Height")
     col.prop(bp, 'top_offset', text="Top Offset")

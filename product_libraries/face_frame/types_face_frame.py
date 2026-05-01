@@ -377,6 +377,56 @@ class FaceFrameCabinet(GeoNodeCage):
     # =====================================================================
     # Calculators - dimension distribution among peers (bay widths)
     # =====================================================================
+    def _distribute_bay_depths(self):
+        """For each bay where unlock_depth is False, sync the bay's
+        depth to the cabinet depth. Bays with unlock_depth=True keep
+        their stored value, allowing per-bay overrides.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        bays = sorted(
+            [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+        for bay_obj in bays:
+            bp = bay_obj.face_frame_bay
+            if bp.unlock_depth:
+                continue
+            if abs(bp.depth - cab_props.depth) > 1e-6:
+                bp.depth = cab_props.depth
+
+    def _distribute_bay_heights(self):
+        """For each bay where unlock_height is False, sync the bay's
+        height to the cabinet height minus the effective toe kick. Bays
+        with unlock_height=True keep their stored value, allowing
+        per-bay overrides without losing the user's value.
+
+        Unlike width, height isn't shared across bays - each bay gets
+        the full carcass height. So this function just pushes the
+        cabinet's value onto unlocked bays; no redistribution math.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        bays = sorted(
+            [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+        if not bays:
+            return
+        has_toe_kick = self._has_toe_kick()
+        for bay_obj in bays:
+            bp = bay_obj.face_frame_bay
+            if bp.unlock_height:
+                continue
+            # Effective kick: per-bay override when its own unlock is
+            # set, else the cabinet default.
+            if has_toe_kick:
+                kick = (bp.kick_height if bp.unlock_kick_height
+                        else cab_props.toe_kick_height)
+            else:
+                kick = 0.0
+            target = cab_props.height - kick
+            if abs(bp.height - target) > 1e-6:
+                bp.height = target
+
     def _distribute_bay_widths(self):
         """Redistribute available width among bays whose unlock_width is False.
 
@@ -544,7 +594,12 @@ class FaceFrameCabinet(GeoNodeCage):
         self.set_input('Dim Y', cab_props.depth)
         self.set_input('Dim Z', cab_props.height)
 
-        # Run the width calculator before the solver reads bay widths.
+        # Depths and heights first - each bay's tree redistribution
+        # reads bp.height to compute the available FF rect, and the
+        # solver reads bp.depth for carcass parts.
+        self._distribute_bay_depths()
+        self._distribute_bay_heights()
+        # Then the width calculator before the solver reads bay widths.
         self._distribute_bay_widths()
         # Then redistribute sizes inside each bay's tree of openings /
         # splits. Order matters: bay widths need to be settled first
