@@ -236,15 +236,28 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
 class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
     """Open the cabinet-wide properties dialog.
 
-    Shows ONLY cabinet-wide settings (dimensions, construction, face
-    frame defaults) - not per-bay properties. Per-bay editing goes
-    through hb_face_frame.bay_prompts; per-mid-stile editing goes
-    through hb_face_frame.mid_stile_prompts.
+    Tabbed: General (dimensions), Construction (material / toe kick /
+    stretchers), Face Frame (stile / rail / overlay defaults). Only
+    cabinet-wide settings here - per-bay editing goes through
+    hb_face_frame.bay_prompts; per-mid-stile editing through
+    hb_face_frame.mid_stile_prompts.
     """
     bl_idname = "hb_face_frame.cabinet_prompts"
     bl_label = "Cabinet Properties"
     bl_description = "Edit cabinet-wide properties (dimensions, construction, face frame defaults)"
     bl_options = {'UNDO'}
+
+    # Tab state lives on the operator instance so it persists across
+    # the dialog's draw calls. Default lands on General each open.
+    active_tab: bpy.props.EnumProperty(
+        name="Tab",
+        items=[
+            ('GENERAL',      "General",      "Dimensions"),
+            ('CONSTRUCTION', "Construction", "Material, toe kick, stretchers"),
+            ('FACE_FRAME',   "Face Frame",   "Frame thickness, stiles, rails, default overlays"),
+        ],
+        default='GENERAL',
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -262,7 +275,24 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
         if root is None:
             self.layout.label(text="No face frame cabinet selected", icon='INFO')
             return
-        ui_face_frame.draw_cabinet_wide(self.layout, root)
+        layout = self.layout
+        cab_props = root.face_frame_cabinet
+
+        ui_face_frame.draw_identity(layout, root)
+        layout.separator()
+
+        # Tab strip - expand=True renders the enum as a row of toggle
+        # buttons rather than a dropdown.
+        row = layout.row()
+        row.prop(self, 'active_tab', expand=True)
+        layout.separator()
+
+        if self.active_tab == 'GENERAL':
+            ui_face_frame.draw_dimensions(layout, cab_props)
+        elif self.active_tab == 'CONSTRUCTION':
+            ui_face_frame.draw_construction(layout, cab_props)
+        elif self.active_tab == 'FACE_FRAME':
+            ui_face_frame.draw_face_frame_defaults(layout, cab_props)
 
 
 # Maximum count of openings the split dialog can produce in one shot.
