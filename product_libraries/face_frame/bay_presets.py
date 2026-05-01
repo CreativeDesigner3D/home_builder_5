@@ -23,6 +23,8 @@ operator wipes the bay to one opening and routes to the existing
 split_opening dialog.
 """
 
+from ...units import inch
+
 
 # Recipe tuples carry a trailing `size_role` slot. The size_role tells
 # the bay builder to look up a cabinet-level size preference and pin
@@ -240,3 +242,34 @@ MENU_ENTRIES = {
     'TALL': TALL_MENU_ENTRIES,
     'UPPER': UPPER_MENU_ENTRIES,
 }
+
+
+
+# ---------------------------------------------------------------------------
+# Default bay configuration on cabinet placement
+# ---------------------------------------------------------------------------
+DOUBLE_DOOR_WIDTH_THRESHOLD = inch(18.0)
+
+
+def default_bay_config(cabinet_name, bay_width):
+    """Return the bay preset id to apply when a fresh cabinet is dropped,
+    or None if the cabinet has no automatic default (e.g., LAP_DRAWER).
+    Width-based picks use DOUBLE_DOOR_WIDTH_THRESHOLD; below it use the
+    single-door variant, at or above it use the double / stacked variant.
+    """
+    is_wide = bay_width >= DOUBLE_DOOR_WIDTH_THRESHOLD
+    if cabinet_name == 'Base Door':
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
+    if cabinet_name == 'Base Door Drw':
+        return 'DRAWER_DOUBLE_DOOR' if is_wide else 'DRAWER_DOOR'
+    if cabinet_name == 'Base Drawer':
+        return 'THREE_DRAWERS'
+    if cabinet_name == 'Upper':
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
+    if cabinet_name == 'Upper Stacked':
+        return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
+    if cabinet_name == 'Tall':
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
+    if cabinet_name == 'Tall Stacked':
+        return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
+    return None

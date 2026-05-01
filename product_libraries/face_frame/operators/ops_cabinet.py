@@ -907,6 +907,35 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def apply_bay_preset(bay_obj, config):
+    """Wipe `bay_obj`'s contents and rebuild from a bay preset.
+    Programmatic equivalent of hb_face_frame.change_bay's execute body,
+    minus the user-feedback bits (active object, report, selection
+    mode toggle). The caller is responsible for triggering selection
+    refresh if needed; the recalc itself runs here.
+
+    Returns True on success, False if the bay's cabinet type has no
+    presets or `config` isn't recognized for that type.
+    """
+    if not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        return False
+    root = types_face_frame.find_cabinet_root(bay_obj)
+    if root is None:
+        return False
+    cabinet_type = root.face_frame_cabinet.cabinet_type
+    presets = bay_presets.PRESETS.get(cabinet_type)
+    if not presets or config not in presets:
+        return False
+
+    _wipe_bay_children(bay_obj)
+    opening_idx = [0]
+    _build_recipe_into(
+        presets[config], bay_obj, 0, opening_idx, root.face_frame_cabinet,
+    )
+    types_face_frame.recalculate_face_frame_cabinet(root)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Operator: change bay configuration (right-click quick presets per
 # cabinet type). Wipes the bay's existing tree and rebuilds it from a
@@ -974,19 +1003,10 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
             axis = 'V' if self.config == 'CUSTOM_VERTICAL' else 'H'
             return bpy.ops.hb_face_frame.split_opening('INVOKE_DEFAULT', axis=axis)
 
-        presets = bay_presets.PRESETS[cabinet_type]
-        if self.config not in presets:
+        if not apply_bay_preset(bay_obj, self.config):
             self.report({'WARNING'},
                         f"Unknown bay config {self.config!r} for {cabinet_type}")
             return {'CANCELLED'}
-        recipe = presets[self.config]
-
-        _wipe_bay_children(bay_obj)
-        opening_idx = [0]
-        _build_recipe_into(
-            recipe, bay_obj, 0, opening_idx, root.face_frame_cabinet,
-        )
-        types_face_frame.recalculate_face_frame_cabinet(root)
 
         # Re-apply selection mode so the new objects render correctly
         # instead of staying in their default colors.

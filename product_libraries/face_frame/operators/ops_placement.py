@@ -36,6 +36,8 @@ from mathutils.geometry import intersect_line_plane, intersect_point_line
 from bpy_extras import view3d_utils
 
 from .. import types_face_frame
+from .. import bay_presets
+from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
 
@@ -684,6 +686,23 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Resize to match cage width via the property update callback
         cab_props = cab_obj.face_frame_cabinet
         cab_props.width = captured_width
+
+        # Auto-apply a sensible default bay configuration so cabinets
+        # come in populated instead of empty. All bays in a multi-bay
+        # cabinet receive the same config; the user changes any of
+        # them via the right-click 'Change Bay' menu after.
+        bays = sorted(
+            [c for c in cab_obj.children if c.get(types_face_frame.TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+        if bays:
+            sample_width = bays[0].face_frame_bay.width
+            default_config = bay_presets.default_bay_config(
+                self.cabinet_name, sample_width
+            )
+            if default_config is not None:
+                for bay_obj in bays:
+                    ops_cabinet.apply_bay_preset(bay_obj, default_config)
 
         # Active selection
         for o in context.selected_objects:
