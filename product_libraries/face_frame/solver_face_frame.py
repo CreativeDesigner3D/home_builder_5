@@ -776,10 +776,11 @@ def carcass_top_segments(layout):
 
     Geometry:
       - origin x: segment left_x (symmetric meeting at mid div inside faces)
-      - origin y: -mt  (just inside the face frame face)
+      - origin y: -bt  (front face of the back panel)
       - origin z: carcass_top_z(start)  (= bay_top_z - top_scribe)
       - Length:  segment X span
-      - Width:   bay.depth - bt - fft - mt   (front to back interior)
+      - Width:   bay.depth - bt - fft   (back-panel front face to
+        face-frame back face; Mirror Y = True so width extends in -Y)
       - Thickness: mt   (Mirror Z = True so panel extends down by mt)
     """
     segments = []
@@ -790,10 +791,10 @@ def carcass_top_segments(layout):
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.mt,
+            'y':          -layout.bt,
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft - layout.mt,
+            'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft,
             'thickness':  layout.mt,
         })
     return segments
