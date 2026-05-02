@@ -985,10 +985,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
     # ---- Library section toggles ----
     show_cabinet_sizes: BoolProperty(name="Show Cabinet Sizes", default=True)  # type: ignore
-    show_cabinet_library: BoolProperty(name="Show Cabinet Library", default=True)  # type: ignore
-    show_corner_cabinet_library: BoolProperty(name="Show Corner Cabinet Library", default=False)  # type: ignore
-    show_appliance_library: BoolProperty(name="Show Appliance Library", default=False)  # type: ignore
-    show_part_library: BoolProperty(name="Show Part Library", default=False)  # type: ignore
+    show_cabinet_library: BoolProperty(name="Show Standard Cabinets", default=True)  # type: ignore
+    show_corner_cabinet_library: BoolProperty(name="Show Corner Cabinets", default=False)  # type: ignore
+    show_appliance_library: BoolProperty(name="Show Appliance Products", default=False)  # type: ignore
+    show_vanity_library: BoolProperty(name="Show Vanities", default=False)  # type: ignore
+    show_part_library: BoolProperty(name="Show Parts", default=False)  # type: ignore
+    show_specialty_bath_library: BoolProperty(name="Show Specialty Bath", default=False)  # type: ignore
+    show_bedroom_bookcase_library: BoolProperty(name="Show Specialty Bedroom & Bookcases", default=False)  # type: ignore
+    show_angled_library: BoolProperty(name="Show Angled", default=False)  # type: ignore
+    show_misc_library: BoolProperty(name="Show Misc", default=False)  # type: ignore
     show_user_library: BoolProperty(name="Show User Library", default=False)  # type: ignore
 
     # ---- Options section toggles ----
@@ -1375,44 +1380,36 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'default_cabinet_width', text="Default Width")
 
     # =====================================================================
-    # UI: cabinet library section
+    # UI: shared helper - draw a grid of catalog buttons
+    # =====================================================================
+    def _draw_catalog_grid(self, layout, products, columns=3):
+        """Render a grid_flow of catalog buttons. `products` is an
+        iterable of names; each name is used identically as the display
+        label, the cabinet_name passed to draw_cabinet, and the
+        thumbnail filename in face_frame_thumbnails/. Folding all three
+        into one string keeps placeholder lists short - real renders
+        and per-product dispatch routing can deviate later by switching
+        to (display, cabinet_name, thumb_name) triples.
+        """
+        flow = layout.grid_flow(row_major=True, columns=columns,
+                                even_columns=True, even_rows=True, align=True)
+        for name in products:
+            box = flow.box()
+            box.scale_y = 0.9
+            icon_id = load_cabinet_thumbnail(name)
+            if icon_id:
+                box.template_icon(icon_value=icon_id, scale=4.0)
+            op = box.operator('hb_face_frame.draw_cabinet', text=name)
+            op.cabinet_name = name
+
+    # =====================================================================
+    # UI: standard cabinet library
     # =====================================================================
     def draw_cabinet_library_ui(self, layout, context):
-        # (display_name, cabinet_name passed to operator, thumbnail_name)
-        base_cabinets = [
-            ("Door", "Base Door", "Base Door"),
-            ("Door Drw", "Base Door Drw", "Base Door Drw"),
-            ("Drawer", "Base Drawer", "Base Drw"),
-            ("Lap Drawer", "Lap Drawer", "Lap Drw"),
-        ]
-        upper_and_tall_cabinets = [
-            ("Upper", "Upper", "Upper"),
-            ("Upper Stacked", "Upper Stacked", "Upper Stacked"),
-            ("Tall", "Tall", "Tall"),
-            ("Tall Stacked", "Tall Stacked", "Tall Stacked"),
-        ]
-
-        layout.label(text="Base Cabinets:")
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in base_cabinets:
-            box = flow.box()
-            box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                box.template_icon(icon_value=icon_id, scale=4.0)
-            op = box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
-
-        layout.label(text="Upper & Tall Cabinets:")
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in upper_and_tall_cabinets:
-            box = flow.box()
-            box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                box.template_icon(icon_value=icon_id, scale=4.0)
-            op = box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+        self._draw_catalog_grid(layout, [
+            "Base", "Tall", "Upper", "Upper Stacked",
+            "Lap Drawer", "Floating Base Cabinet",
+        ], columns=3)
 
     # =====================================================================
     # UI: corner cabinet library
@@ -1424,39 +1421,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'base_inside_corner_size', text="Base")
         row.prop(self, 'tall_inside_corner_size', text="Tall")
         row.prop(self, 'upper_inside_corner_size', text="Upper")
-
-        layout.label(text="Pie Cut Corner")
-        piecut_cabinets = [
-            ("Base", "Pie Cut Corner Base", "Frameless Base Corner"),
-            ("Tall", "Pie Cut Corner Tall", "Frameless Tall Corner"),
-            ("Upper", "Pie Cut Corner Upper", "Frameless Upper Corner"),
-        ]
-        flow = layout.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in piecut_cabinets:
-            cab_box = flow.box()
-            cab_box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                cab_box.template_icon(icon_value=icon_id, scale=4.0)
-            op = cab_box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
-
-        layout.label(text="Diagonal Corner")
-        diagonal_cabinets = [
-            ("Base", "Diagonal Corner Base", "Frameless Base Corner"),
-            ("Tall", "Diagonal Corner Tall", "Frameless Tall Corner"),
-            ("Upper", "Diagonal Corner Upper", "Frameless Upper Corner"),
-        ]
-        flow = layout.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in diagonal_cabinets:
-            cab_box = flow.box()
-            cab_box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                cab_box.template_icon(icon_value=icon_id, scale=4.0)
-            op = cab_box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
-
+        layout.separator()
+        self._draw_catalog_grid(layout, [
+            "Pie Cut Door", "Diagonal", "Diagonal Sink", "Pie Cut Drawer",
+        ], columns=2)
         layout.separator()
         row = layout.row()
         row.label(text="Blind Corner Widths")
@@ -1466,13 +1434,12 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'upper_width_blind', text="Upper")
 
     # =====================================================================
-    # UI: appliance library
+    # UI: appliance products library
     # =====================================================================
     def draw_appliance_library_ui(self, layout, context):
         row = layout.row()
         row.label(text="Refrigerator Height")
         row.prop(self, 'refrigerator_height', text="")
-
         row = layout.row()
         row.label(text="Widths")
         row = layout.row()
@@ -1483,48 +1450,66 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row = layout.row()
         row.prop(self, 'sink_cabinet_width', text="Sink")
         row.prop(self, 'oven_cabinet_width', text="Oven")
-
-        appliance_cabinets = [
-            ("Sink", "Sink Cabinet", "Sink Cabinet"),
-            ("Fridge Cab", "Refrigerator Cabinet", "Refrigerator Frameless Cabinet"),
-            ("Dishwasher", "Dishwasher", "Dishwasher"),
-            ("Range", "Range", "Range"),
-            ("Range Hood", "Range Hood", "Range Hood"),
-            ("Refrigerator", "Refrigerator", "Refrigerator"),
-        ]
-
-        flow = layout.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in appliance_cabinets:
-            app_box = flow.box()
-            app_box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                app_box.template_icon(icon_value=icon_id, scale=4.0)
-            op = app_box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+        layout.separator()
+        self._draw_catalog_grid(layout, [
+            "Elevated Dishwasher", "Dishwasher", "Built in Tall",
+            "Range", "Standalone Refrigerator",
+        ], columns=3)
 
     # =====================================================================
-    # UI: parts & misc library
+    # UI: vanities library
+    # =====================================================================
+    def draw_vanity_library_ui(self, layout, context):
+        self._draw_catalog_grid(layout, [
+            "Special", "Combination", "Deluxe",
+        ], columns=3)
+
+    # =====================================================================
+    # UI: parts library
     # =====================================================================
     def draw_part_library_ui(self, layout, context):
-        parts = [
-            ("Floating Shelves", "Floating Shelves", "Floating Shelves"),
-            ("Valance", "Valance", "Valance"),
-            ("Applied Panel", "Applied Panel", "Panel"),
-            ("Half Wall", "Half Wall", "Half Wall"),
-            ("Leg", "Leg", "Leg"),
-            ("Misc Part", "Misc Part", "Misc Part"),
-        ]
+        self._draw_catalog_grid(layout, [
+            "Loose Stile", "End Leg", "Intermediate Leg",
+            "Vanity End Leg Assembly", "Vanity Support Leg",
+            "Vanity Fixed Shelf", "Floating Shelves",
+        ], columns=3)
 
-        flow = layout.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in parts:
-            part_box = flow.box()
-            part_box.scale_y = 0.9
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                part_box.template_icon(icon_value=icon_id, scale=4.0)
-            op = part_box.operator('hb_face_frame.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+    # =====================================================================
+    # UI: specialty bath library
+    # =====================================================================
+    def draw_specialty_bath_library_ui(self, layout, context):
+        self._draw_catalog_grid(layout, [
+            "Recessed Medicine Cabinet", "Tri-View Medicine Cabinet",
+            "Overstool", "Mirror Frame", "Tub Skirt",
+        ], columns=2)
+
+    # =====================================================================
+    # UI: specialty bedroom & bookcases library
+    # =====================================================================
+    def draw_bedroom_bookcase_library_ui(self, layout, context):
+        self._draw_catalog_grid(layout, [
+            "Bookcase", "Bookcase Upper", "Bookcase Corner",
+            "Bookcase Corner Upper", "Window Seat", "Dresser",
+            "Night Stand",
+        ], columns=2)
+
+    # =====================================================================
+    # UI: angled library
+    # =====================================================================
+    def draw_angled_library_ui(self, layout, context):
+        self._draw_catalog_grid(layout, [
+            "Angled Ends with Doors", "Double Angled Ends",
+            "Angled Finished Ends",
+        ], columns=2)
+
+    # =====================================================================
+    # UI: misc library
+    # =====================================================================
+    def draw_misc_library_ui(self, layout, context):
+        self._draw_catalog_grid(layout, [
+            "Half Wall", "Support Frame", "Face Frame and Doors",
+            "X-Frame Ends",
+        ], columns=2)
 
     # =====================================================================
     # UI: user library (placeholder for Phase 5)
@@ -1617,45 +1602,32 @@ class Face_Frame_Scene_Props(PropertyGroup):
             if self.show_cabinet_sizes:
                 self.draw_cabinet_sizes_ui(box, context)
 
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'
-            row.prop(self, 'show_cabinet_library', text="Cabinets",
-                     icon='TRIA_DOWN' if self.show_cabinet_library else 'TRIA_RIGHT', emboss=False)
-            if self.show_cabinet_library:
-                self.draw_cabinet_library_ui(box, context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'
-            row.prop(self, 'show_corner_cabinet_library', text="Corner Cabinets",
-                     icon='TRIA_DOWN' if self.show_corner_cabinet_library else 'TRIA_RIGHT', emboss=False)
-            if self.show_corner_cabinet_library:
-                self.draw_corner_cabinet_library_ui(box, context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'
-            row.prop(self, 'show_appliance_library', text="Appliances",
-                     icon='TRIA_DOWN' if self.show_appliance_library else 'TRIA_RIGHT', emboss=False)
-            if self.show_appliance_library:
-                self.draw_appliance_library_ui(box, context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'
-            row.prop(self, 'show_part_library', text="Parts & Miscellaneous",
-                     icon='TRIA_DOWN' if self.show_part_library else 'TRIA_RIGHT', emboss=False)
-            if self.show_part_library:
-                self.draw_part_library_ui(box, context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'
-            row.prop(self, 'show_user_library', text="User",
-                     icon='TRIA_DOWN' if self.show_user_library else 'TRIA_RIGHT', emboss=False)
-            if self.show_user_library:
-                self.draw_user_library_ui(box, context)
+            # Each section is one collapsible box; default state matches
+            # the "Standard Cabinets open, rest closed" hierarchy of the
+            # catalog. Order mirrors the canonical product-list order so
+            # users can scan top-down.
+            sections = [
+                ('show_cabinet_library',          "Standard Cabinets",            self.draw_cabinet_library_ui),
+                ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
+                ('show_appliance_library',        "Appliance Products",           self.draw_appliance_library_ui),
+                ('show_vanity_library',           "Vanities",                     self.draw_vanity_library_ui),
+                ('show_part_library',             "Parts",                        self.draw_part_library_ui),
+                ('show_specialty_bath_library',   "Specialty Bath",               self.draw_specialty_bath_library_ui),
+                ('show_bedroom_bookcase_library', "Specialty Bedroom & Bookcases", self.draw_bedroom_bookcase_library_ui),
+                ('show_angled_library',           "Angled",                       self.draw_angled_library_ui),
+                ('show_misc_library',             "Misc",                         self.draw_misc_library_ui),
+                ('show_user_library',             "User",                         self.draw_user_library_ui),
+            ]
+            for prop_name, label, draw_fn in sections:
+                expanded = getattr(self, prop_name)
+                box = col.box()
+                row = box.row()
+                row.alignment = 'LEFT'
+                row.prop(self, prop_name, text=label,
+                         icon='TRIA_DOWN' if expanded else 'TRIA_RIGHT',
+                         emboss=False)
+                if expanded:
+                    draw_fn(box, context)
 
         else:  # OPTIONS tab
             box = col.box()
