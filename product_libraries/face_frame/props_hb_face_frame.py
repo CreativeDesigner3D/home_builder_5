@@ -538,6 +538,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Mid-division panels are typically thinner than carcass sides /
+    # tops / bottoms (1/2" plywood) - exposed as its own prop so it can
+    # diverge from material_thickness without changing other parts.
+    division_thickness: FloatProperty(
+        name="Division Thickness", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     finish_toe_kick_thickness: FloatProperty(
         name="Finish Toe Kick Thickness", default=units.inch(0.25), unit='LENGTH', precision=4
     )  # type: ignore

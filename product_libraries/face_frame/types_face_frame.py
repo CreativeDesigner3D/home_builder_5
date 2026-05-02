@@ -370,16 +370,60 @@ class FaceFrameCabinet(GeoNodeCage):
             mid_stile.set_input('Mirror Y', True)
             mid_stile.set_input('Mirror Z', True)
 
-            # Mid Division: carcass partition behind this mid stile.
-            mid_div = CabinetPart()
-            mid_div.create(f'Mid Division {i + 1}')
-            mid_div.obj.parent = self.obj
-            mid_div.obj['hb_part_role'] = PART_ROLE_MID_DIVISION
-            mid_div.obj['CABINET_PART'] = True
-            mid_div.obj['hb_mid_stile_index'] = i
-            mid_div.obj.rotation_euler.y = math.radians(-90)
-            mid_div.set_input('Mirror Y', True)
-            mid_div.set_input('Mirror Z', True)
+            # Mid Division panels: carcass partition behind this mid
+            # stile. Two slots per gap so we can show one centered panel
+            # for matching bay depths or two face-to-face panels for
+            # differing depths without create/delete during recalc. Slot
+            # 1 starts hidden; recalc toggles it based on the panel list
+            # returned by solver.mid_division_panels.
+            for slot in (0, 1):
+                mid_div = CabinetPart()
+                mid_div.create(f'Mid Division {i + 1}.{slot}')
+                mid_div.obj.parent = self.obj
+                mid_div.obj['hb_part_role'] = PART_ROLE_MID_DIVISION
+                mid_div.obj['CABINET_PART'] = True
+                mid_div.obj['hb_mid_stile_index'] = i
+                mid_div.obj['hb_mid_div_slot'] = slot
+                mid_div.obj.rotation_euler.y = math.radians(-90)
+                mid_div.set_input('Mirror Y', True)
+                mid_div.set_input('Mirror Z', True)
+                if slot == 1:
+                    mid_div.obj.hide_viewport = True
+                    mid_div.obj.hide_render = True
+                else:
+                    # Slot 0 may need stretcher notches at top-front and
+                    # top-back when this gap has a single shared panel
+                    # AND the stretcher segment passes through. Two
+                    # CPM_CORNERNOTCH modifiers are added once at build
+                    # time; recalc drives their X / Y / Route Depth and
+                    # toggles show_viewport based on solver flags.
+                    #
+                    # Local-axis mapping after rot Y=-90, Mirror Y=True,
+                    # Mirror Z=True:
+                    #   local +X (Length) -> world +Z  (panel vertical)
+                    #   local +Y (Width)  -> world +Y  (back is local +Y end)
+                    #   local +Z (Thick)  -> world +X
+                    # CPM_CORNERNOTCH operates in local space with X
+                    # cutting along Length (vertical depth from one X
+                    # end), Y cutting along Width (horizontal depth from
+                    # one Y end), Route Depth cutting along Thickness.
+                    # Top corner -> Flip X = True (X-far end = top).
+                    # Front corner (world -Y) -> Flip Y = True (the
+                    # Mirror-Y-driven far end = front face).
+                    # Back corner (world +Y, the local-Y origin face)
+                    # -> Flip Y = False (default end).
+                    notch_front = mid_div.add_part_modifier(
+                        'CPM_CORNERNOTCH', 'Notch Top Front')
+                    notch_front.set_input('Flip X', True)
+                    notch_front.set_input('Flip Y', True)
+                    notch_front.mod.show_viewport = False
+                    notch_front.mod.show_render = False
+                    notch_back = mid_div.add_part_modifier(
+                        'CPM_CORNERNOTCH', 'Notch Top Back')
+                    notch_back.set_input('Flip X', True)
+                    notch_back.set_input('Flip Y', False)
+                    notch_back.mod.show_viewport = False
+                    notch_back.mod.show_render = False
 
         # Rails and per-bay carcass bottoms get created lazily by the segment reconciliation step inside
         # recalculate(). No initial rail objects needed here.
@@ -788,16 +832,26 @@ class FaceFrameCabinet(GeoNodeCage):
 
             elif role == PART_ROLE_MID_DIVISION:
                 msi = child.get('hb_mid_stile_index', 0)
-                if msi >= len(layout.mid_stiles):
+                slot = child.get('hb_mid_div_slot', 0)
+                panels = solver.mid_division_panels(layout, msi)
+                # Pick the panel whose slot matches this child. Slot 0
+                # is always present when the gap exists; slot 1 only
+                # when bay depths differ (2-panel diff-depth case).
+                panel = next((p for p in panels if p['slot'] == slot), None)
+                if panel is None:
                     child.hide_viewport = True
+                    child.hide_render = True
                     continue
                 child.hide_viewport = False
-                pos = solver.mid_division_position(layout, msi)
-                length, width, thickness = solver.mid_division_dims(layout, msi)
-                child.location = pos
-                part.set_input('Length', length)
-                part.set_input('Width', width)
-                part.set_input('Thickness', thickness)
+                child.hide_render = False
+                child.location = (panel['x'], panel['y'], panel['z'])
+                part.set_input('Length',    panel['length'])
+                part.set_input('Width',     panel['width'])
+                part.set_input('Thickness', panel['thickness'])
+                # Drive top stretcher notches (slot 0 only - slot 1 has
+                # no notch modifiers and panel['notch_active'] is False
+                # there anyway).
+                self._update_mid_div_notches(child, panel)
 
     # =====================================================================
     # Helpers - rail reconciliation + bay cage update
@@ -1047,6 +1101,37 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             rail.set_input('Mirror Z', True)
         return rail
+
+    def _update_mid_div_notches(self, mid_div_obj, panel):
+        """Drive the two CPM_CORNERNOTCH modifiers on a slot-0 mid-div.
+
+        The build path adds 'Notch Top Front' and 'Notch Top Back' with
+        their Flip flags pre-set. Each recalc updates X / Y / Route Depth
+        and toggles show_viewport / show_render based on the solver's
+        notch_active flag. Slot-1 mid-divs (diff-depth case) have no
+        notch modifiers and silently no-op here.
+        """
+        active = panel.get('notch_active', False)
+        size_x = panel.get('notch_x', 0.0)
+        size_y = panel.get('notch_y', 0.0)
+        route = panel.get('notch_route_depth', 0.0)
+        for name in ('Notch Top Front', 'Notch Top Back'):
+            mod = mid_div_obj.modifiers.get(name)
+            if mod is None:
+                continue  # slot 1 lacks these modifiers
+            ng = mod.node_group
+            if ng is None:
+                continue
+            for input_name, value in (
+                ('X', size_x),
+                ('Y', size_y),
+                ('Route Depth', route),
+            ):
+                node_input = ng.interface.items_tree.get(input_name)
+                if node_input is not None:
+                    mod[node_input.identifier] = value
+            mod.show_viewport = active
+            mod.show_render = active
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
         """Position and size a single bay cage from the solver. Cascades

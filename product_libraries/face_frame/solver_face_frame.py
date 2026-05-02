@@ -76,6 +76,7 @@ class FaceFrameLayout:
         self.l_fin_end = cab.left_finished_end_condition
         self.r_fin_end = cab.right_finished_end_condition
         self.top_scribe = cab.top_scribe
+        self.division_thickness = cab.division_thickness
 
         # Rail width defaults (used when populating a fresh bay)
         self.default_top_rail_width = cab.top_rail_width
@@ -484,30 +485,38 @@ def right_end_stile_dims(layout):
 # Carcass side panels - extend with first/last bay's vertical range
 # ---------------------------------------------------------------------------
 def left_side_position(layout):
-    """Left carcass side matches bay 0's vertical range exactly. Shorter
-    bay 0 -> shorter side; taller bay 0 -> longer side. X reflects the
+    """Left carcass side matches bay 0's vertical range and bay 0's
+    depth. Shorter bay 0 -> shorter side AND side back edge sits forward
+    of the cabinet's back edge by (dim_y - bay 0 depth). X reflects the
     scribe offset so the side can sit inboard of the stile.
     """
-    return (left_scribe_offset(layout), 0.0, bay_bottom_z(layout, 0))
+    first_depth = layout.bays[0]['depth']
+    return (left_scribe_offset(layout),
+            -layout.dim_y + first_depth,
+            bay_bottom_z(layout, 0))
 
 
 def left_side_dims(layout):
+    first_depth = layout.bays[0]['depth']
     bottom_z = bay_bottom_z(layout, 0)
     top_z = left_side_top_z(layout)
-    return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
+    return (top_z - bottom_z, first_depth - layout.fft, layout.mt)
 
 
 def right_side_position(layout):
     last = layout.bay_count - 1
+    last_depth = layout.bays[last]['depth']
     return (layout.dim_x - right_scribe_offset(layout),
-            0.0, bay_bottom_z(layout, last))
+            -layout.dim_y + last_depth,
+            bay_bottom_z(layout, last))
 
 
 def right_side_dims(layout):
     last = layout.bay_count - 1
+    last_depth = layout.bays[last]['depth']
     bottom_z = bay_bottom_z(layout, last)
     top_z = right_side_top_z(layout)
-    return (top_z - bottom_z, carcass_inner_depth(layout), layout.mt)
+    return (top_z - bottom_z, last_depth - layout.fft, layout.mt)
 
 
 # ---------------------------------------------------------------------------
@@ -602,34 +611,64 @@ def _carcass_bottom_passthrough(layout, gap_index):
     return True
 
 
-def _mid_division_x(layout, gap_index):
-    """X position of the mid division panel at gap_index. Matches the
-    placement logic in mid_division_position so bottoms/backs can align
-    their edges to it.
+def _mid_stile_center_x(layout, gap_index):
+    """World-X of the mid-stile centerline at this gap. The mid-div
+    setup is mirrored about this line: same-depth = single panel
+    centered here; diff-depth = two panels meeting face-to-face here.
     """
     bay_a = layout.bays[gap_index]
-    bay_b = layout.bays[gap_index + 1]
     ms = layout.mid_stiles[gap_index]
     msw = ms['width']
     base_x = bay_x_position(layout, gap_index) + bay_a['width']
-    if _epsilon_eq(bay_a['depth'], bay_b['depth']):
-        return base_x + msw / 2.0 - layout.mt / 2.0
     return base_x + msw / 2.0
 
 
-def _carcass_meeting_x(layout, gap_index):
-    """X coordinate where two adjacent carcass bottom (or back) segments
-    meet at gap_index. The HIGHER bay's panel abuts the mid division at
-    its near face; the LOWER bay's panel passes UNDER the mid division to
-    its far face. Both meet at the same X - the higher bay's near face.
+def _mid_div_left_outer_x(layout, gap_index):
+    """X of the LEFT-facing outer face of the mid-div setup. For
+    matching bay depths this is the single centered panel's left face;
+    for differing depths this is panel A's (bay A's right wall) left
+    face.
     """
-    mid_div_x = _mid_division_x(layout, gap_index)
+    center = _mid_stile_center_x(layout, gap_index)
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    dt = layout.division_thickness
+    if _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return center - dt / 2.0
+    return center - dt
+
+
+def _mid_div_right_outer_x(layout, gap_index):
+    """X of the RIGHT-facing outer face of the mid-div setup. Mirror
+    of _mid_div_left_outer_x."""
+    center = _mid_stile_center_x(layout, gap_index)
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    dt = layout.division_thickness
+    if _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return center + dt / 2.0
+    return center + dt
+
+
+def _carcass_meeting_x(layout, gap_index):
+    """X coordinate where two adjacent carcass bottom (or back)
+    segments meet at gap_index.
+
+    Same-depth gap (one panel): the HIGHER bay's panel abuts the mid div
+    at its near face; the LOWER bay's panel passes UNDER the mid div to
+    the far face. Both segments meet at that single X.
+
+    Diff-depth gap (two panels): segments cannot pass under since each
+    bay has its own wall at its own depth. Both terminate at the
+    touching face between panel A and panel B (= mid-stile center).
+    """
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return _mid_stile_center_x(layout, gap_index)
     if bay_bottom_z(layout, gap_index) > bay_bottom_z(layout, gap_index + 1):
-        # Higher bay is on the LEFT - meet at mid div left face
-        return mid_div_x
-    else:
-        # Higher bay is on the RIGHT (or same Z) - meet at mid div right face
-        return mid_div_x + layout.mt
+        return _mid_div_left_outer_x(layout, gap_index)
+    return _mid_div_right_outer_x(layout, gap_index)
 
 
 def _segment_x_bounds(layout, start, end):
@@ -661,11 +700,11 @@ def _stretcher_x_bounds(layout, start, end):
     if start == 0:
         left_x = carcass_inner_left_x(layout)
     else:
-        left_x = _mid_division_x(layout, start - 1) + layout.mt
+        left_x = _mid_div_right_outer_x(layout, start - 1)
     if end == layout.bay_count - 1:
         right_x = carcass_inner_right_x(layout)
     else:
-        right_x = _mid_division_x(layout, end)
+        right_x = _mid_div_left_outer_x(layout, end)
     return left_x, right_x
 
 
@@ -727,11 +766,15 @@ def carcass_back_segments(layout):
         first_bay = layout.bays[start]
         left_x, right_x = _segment_x_bounds(layout, start, end)
         z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        # Per-bay back: segments break at depth changes (passthrough returns
+        # False), so each segment's bays share a single depth -> use start
+        # bay's depth to position the back at this bay group's back edge.
+        back_y = -layout.dim_y + first_bay['depth']
         segments.append({
             'start_bay':       start,
             'end_bay':         end,
             'x':               left_x,
-            'y':               0.0,
+            'y':               back_y,
             'z':               z_origin,
             'horizontal_length': right_x - left_x,
             'vertical_length':   carcass_top_z(layout, start) - z_origin,
@@ -776,7 +819,7 @@ def carcass_top_segments(layout):
 
     Geometry:
       - origin x: segment left_x (symmetric meeting at mid div inside faces)
-      - origin y: -bt  (front face of the back panel)
+      - origin y: -dim_y + bay.depth - bt  (front face of this bay's back panel)
       - origin z: carcass_top_z(start)  (= bay_top_z - top_scribe)
       - Length:  segment X span
       - Width:   bay.depth - bt - fft   (back-panel front face to
@@ -791,7 +834,7 @@ def carcass_top_segments(layout):
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.bt,
+            'y':          -layout.dim_y + first_bay['depth'] - layout.bt,
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft,
@@ -850,12 +893,18 @@ def rear_stretcher_segments(layout):
     """
     segments = []
     for start, end in _compute_segments(layout, _top_stretcher_passthrough):
+        first_bay = layout.bays[start]
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        # Rear stretcher sits just inside the bay's back panel, so its Y
+        # tracks the bay's back panel front face: -dim_y + bay_depth - bt.
+        # Segment passthrough already breaks on depth change, so all bays
+        # in a segment share a depth and the start bay drives Y.
+        rear_y = -layout.dim_y + first_bay['depth'] - layout.bt
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.bt,
+            'y':          rear_y,
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
             'width':      layout.stretcher_w,
@@ -867,79 +916,159 @@ def rear_stretcher_segments(layout):
 # ---------------------------------------------------------------------------
 # Mid division - the carcass partition behind each mid stile
 # ---------------------------------------------------------------------------
-def mid_division_position(layout, gap_index):
-    """X, Y, Z position for the partition behind mid stile N.
+def mid_division_notch_active(layout, gap_index):
+    """Whether the slot-0 mid-div panel at this gap needs stretcher
+    notches at its top-front and top-back corners. Only the same-depth
+    single panel ever gets notches: differing depths produce two panels
+    each ending under its own bay's stretcher segment, so nothing
+    crosses the panel.
 
-    Z = top of the LOWER bay's bottom rail, regardless of whether the
-    rail breaks at this gap. The mid div sits on the lower bay's bottom
-    rail and extends up behind the top rail to the cabinet top.
+    True iff:
+      - cabinet uses stretchers (Base / LapDrawer), and
+      - bay depths match (single panel at this gap), and
+      - the stretcher segment actually passes through this gap
+        (matching heights, no delete_bay, etc.)
+    """
+    if not layout.uses_stretchers:
+        return False
+    if gap_index >= len(layout.mid_stiles):
+        return False
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return False
+    return _top_stretcher_passthrough(layout, gap_index)
+
+
+def mid_division_panels(layout, gap_index):
+    """Per-gap mid-division panel data.
+
+    Returns a list of one or two panel dicts. Bay depths matching ->
+    a single panel centered on the mid-stile. Bay depths differing ->
+    two panels face-to-face at the mid-stile center, each sized to
+    its own bay's depth.
+
+    Each dict has:
+      slot      - 0 (always present) or 1 (only when depths differ)
+      bay_side  - 'CENTER', 'A' (bay_a's right wall), 'B' (bay_b's left wall)
+      x, y, z   - origin position
+      length    - vertical extent (top_z - bottom_z)
+      width     - depth into cabinet (front-to-back), per its bay
+      thickness - panel thickness (= layout.mt)
     """
     if gap_index >= len(layout.mid_stiles):
-        return (0.0, 0.0, 0.0)
+        return []
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
     ms = layout.mid_stiles[gap_index]
 
-    msw = ms['width']
-    base_x = bay_x_position(layout, gap_index) + bay_a['width']
+    center_x = _mid_stile_center_x(layout, gap_index)
+    dt = layout.division_thickness
+
+    def _panel_y(depth):
+        # Mirror Y=True extends width in -Y; origin sits at the panel's
+        # back face (= front face of carcass back panel). Width spans
+        # forward to the face frame's back face.
+        return -layout.dim_y + depth - layout.bt
+
+    def _panel_width(depth):
+        return depth - layout.bt - layout.fft
+
+    def _bay_z_range(bay_idx):
+        """Bottom and top Z of a single-bay mid-div panel: from this
+        bay's bottom rail top to this bay's carcass top (with the
+        construction-style adjustment + per-mid-stile extend amounts)."""
+        bay = layout.bays[bay_idx]
+        bottom_z = (bay_bottom_z(layout, bay_idx)
+                    + bay['bottom_rail_width']
+                    - ms['extend_down_amount'])
+        top = carcass_top_z(layout, bay_idx)
+        # Stretchers: division flush with stretcher tops for structural
+        # attachment. Solid top: division stops mt below carcass top to
+        # butt against the underside of the top panel.
+        if layout.uses_stretchers:
+            top_z = top + ms['extend_up_amount']
+        else:
+            top_z = top - layout.mt + ms['extend_up_amount']
+        return bottom_z, top_z
+
     if _epsilon_eq(bay_a['depth'], bay_b['depth']):
-        x = base_x + msw / 2.0 - layout.mt / 2.0
-    else:
-        x = base_x + msw / 2.0
+        # One shared panel. Spans the union of the two bays' vertical
+        # ranges - bottom = lower bay's floor (rail top), top = higher
+        # carcass top - so the single wall covers both bays whatever
+        # their heights.
+        if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
+            lower_idx = gap_index
+        else:
+            lower_idx = gap_index + 1
+        lower_brw = layout.bays[lower_idx]['bottom_rail_width']
+        bottom_z = (bay_bottom_z(layout, lower_idx) + lower_brw
+                    - ms['extend_down_amount'])
+        higher_top_z = max(carcass_top_z(layout, gap_index),
+                           carcass_top_z(layout, gap_index + 1))
+        if layout.uses_stretchers:
+            top_z = higher_top_z + ms['extend_up_amount']
+        else:
+            top_z = higher_top_z - layout.mt + ms['extend_up_amount']
+        # Mirror Z=True extends in +X from origin, so origin x = panel's
+        # left face = center - dt/2.
+        return [{
+            'slot':      0,
+            'bay_side':  'CENTER',
+            'x':         center_x - dt / 2.0,
+            'y':         _panel_y(bay_a['depth']),
+            'z':         bottom_z,
+            'length':    top_z - bottom_z,
+            'width':     _panel_width(bay_a['depth']),
+            'thickness': dt,
+            # Stretcher notches at top-front + top-back of the panel.
+            # Active when stretchers actually cross this gap; sized to
+            # the stretcher's own width and thickness for a flush fit.
+            'notch_active':       mid_division_notch_active(layout, gap_index),
+            'notch_x':            layout.stretcher_t,
+            'notch_y':            layout.stretcher_w,
+            'notch_route_depth':  dt,
+        }]
 
-    use_depth = max(bay_a['depth'], bay_b['depth'])
-    y = -layout.dim_y + use_depth - layout.bt
-
-    # Z: top of LOWER bay's bottom rail
-    if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
-        lower_idx = gap_index
-    else:
-        lower_idx = gap_index + 1
-    lower_brw = layout.bays[lower_idx]['bottom_rail_width']
-    z = bay_bottom_z(layout, lower_idx) + lower_brw
-    z -= ms['extend_down_amount']
-
-    return (x, y, z)
-
-
-def mid_division_dims(layout, gap_index):
-    """Length (vertical), Width (depth into cabinet), Thickness.
-
-    The mid div extends from the top of the lower bay's bottom rail up
-    to the underside of the cabinet's carcass top (dim_z - mt). It runs
-    BEHIND the top rail rather than stopping under it.
-    """
-    if gap_index >= len(layout.mid_stiles):
-        return (0.0, 0.0, layout.mt)
-    bay_a = layout.bays[gap_index]
-    bay_b = layout.bays[gap_index + 1]
-    ms = layout.mid_stiles[gap_index]
-
-    # Bottom Z: top of LOWER bay's bottom rail (matches mid_division_position)
-    if bay_bottom_z(layout, gap_index) <= bay_bottom_z(layout, gap_index + 1):
-        lower_idx = gap_index
-    else:
-        lower_idx = gap_index + 1
-    lower_brw = layout.bays[lower_idx]['bottom_rail_width']
-    bottom_z = bay_bottom_z(layout, lower_idx) + lower_brw - ms['extend_down_amount']
-
-    # Top Z: depends on top construction style.
-    #   Stretchers (Base / Lap Drawer) - division extends fully to the
-    #     taller neighbor's bay_top_z. Top edge flush with top rails and
-    #     stretchers, providing structural attachment.
-    #   Solid top  (Upper / Tall) - division stops mt below the taller
-    #     neighbor's bay_top_z to butt against the underside of the
-    #     carcass top panel.
-    higher_top_z = max(carcass_top_z(layout, gap_index),
-                       carcass_top_z(layout, gap_index + 1))
-    if layout.uses_stretchers:
-        top_z = higher_top_z + ms['extend_up_amount']
-    else:
-        top_z = higher_top_z - layout.mt + ms['extend_up_amount']
-
-    length = top_z - bottom_z
-    width = max(bay_a['depth'], bay_b['depth']) - layout.bt - layout.fft
-    return (length, width, layout.mt)
+    # Two panels, face-to-face at center_x. Each is its own bay's
+    # interior wall - sized to its own bay's depth AND height. Panel A
+    # is bay A's right wall (left face at center_x - dt, right face at
+    # center_x). Panel B is bay B's left wall (left face at center_x,
+    # right face at center_x + dt).
+    a_bottom_z, a_top_z = _bay_z_range(gap_index)
+    b_bottom_z, b_top_z = _bay_z_range(gap_index + 1)
+    return [
+        {
+            'slot':      0,
+            'bay_side':  'A',
+            'x':         center_x - dt,
+            'y':         _panel_y(bay_a['depth']),
+            'z':         a_bottom_z,
+            'length':    a_top_z - a_bottom_z,
+            'width':     _panel_width(bay_a['depth']),
+            'thickness': dt,
+            # Diff-depth: each bay's stretcher segment terminates at its
+            # own panel face, so nothing crosses - notches never apply.
+            'notch_active':       False,
+            'notch_x':            layout.stretcher_t,
+            'notch_y':            layout.stretcher_w,
+            'notch_route_depth':  dt,
+        },
+        {
+            'slot':      1,
+            'bay_side':  'B',
+            'x':         center_x,
+            'y':         _panel_y(bay_b['depth']),
+            'z':         b_bottom_z,
+            'length':    b_top_z - b_bottom_z,
+            'width':     _panel_width(bay_b['depth']),
+            'thickness': dt,
+            'notch_active':       False,
+            'notch_x':            layout.stretcher_t,
+            'notch_y':            layout.stretcher_w,
+            'notch_route_depth':  dt,
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -957,11 +1086,11 @@ def _cage_x_bounds(layout, bay_index):
     if bay_index == 0:
         left_x = carcass_inner_left_x(layout)
     else:
-        left_x = _mid_division_x(layout, bay_index - 1) + layout.mt
+        left_x = _mid_div_right_outer_x(layout, bay_index - 1)
     if bay_index == layout.bay_count - 1:
         right_x = carcass_inner_right_x(layout)
     else:
-        right_x = _mid_division_x(layout, bay_index)
+        right_x = _mid_div_left_outer_x(layout, bay_index)
     return left_x, right_x
 
 
@@ -1097,7 +1226,7 @@ def _backing_thickness_for_role(layout, role):
     return 0.0
 
 
-def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                      reveals, splitter_top_z, splitter_bottom_z,
                      splitter_index, layout, splitters, backings):
     """Append the mid rail rect for an H-split between two consecutive
@@ -1121,7 +1250,8 @@ def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
         return
     role = _AXIS_TO_BACKING_ROLE['H']
     bt_thickness = _backing_thickness_for_role(layout, role)
-    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    # cage_dim_y comes in as a parameter (bay-uniform); was previously
+    # recomputed from layout.dim_y, which broke for varying bay depths.
     # Backing's TOP face flush with mid rail's TOP edge; backing
     # thickness extends downward from there. Length spans the full
     # carcass interior X (parent cage_dim_x), Width spans full carcass
@@ -1140,7 +1270,7 @@ def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
     })
 
 
-def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                      reveals, splitter_left_x, splitter_index, layout,
                      splitters, backings):
     """Append the mid stile rect for a V-split between two consecutive
@@ -1164,7 +1294,8 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
         return
     role = _AXIS_TO_BACKING_ROLE['V']
     bt_thickness = _backing_thickness_for_role(layout, role)
-    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    # cage_dim_y comes in as a parameter (bay-uniform); was previously
+    # recomputed from layout.dim_y, which broke for varying bay depths.
     # Vertical division centered on the mid stile (X-wise). Spans full
     # carcass interior Z (parent cage_dim_z) and full depth.
     stile_center_x = splitter_left_x + splitter_w / 2.0
@@ -1184,7 +1315,7 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_z,
 
 
 def _walk_tree(node, layout, bay_index,
-               cage_x, cage_z, cage_dim_x, cage_dim_z,
+               cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                reveals, leaves, splitters, backings):
     """Recursively descend a tree node. Emits leaf rects, splitter
     rects (mid rails / mid stiles), and backing rects (divisions /
@@ -1196,6 +1327,10 @@ def _walk_tree(node, layout, bay_index,
             'cage_x':         cage_x,
             'cage_z':         cage_z,
             'cage_dim_x':     cage_dim_x,
+            # cage_dim_y is bay-uniform; threaded down from bay_openings
+            # so interior items size to the bay's depth, not the
+            # cabinet's overall dim_y.
+            'cage_dim_y':     cage_dim_y,
             'cage_dim_z':     cage_dim_z,
             'reveal_top':     reveals['top'],
             'reveal_bottom':  reveals['bottom'],
@@ -1238,6 +1373,7 @@ def _walk_tree(node, layout, bay_index,
                 cage_x=cage_x,
                 cage_z=child_cage_bottom_z,
                 cage_dim_x=cage_dim_x,
+                cage_dim_y=cage_dim_y,
                 cage_dim_z=child_cage_dim_z,
                 reveals=child_reveals,
                 leaves=leaves, splitters=splitters, backings=backings,
@@ -1247,7 +1383,7 @@ def _walk_tree(node, layout, bay_index,
                 splitter_top_z = child_ff_bottom_z
                 splitter_bottom_z = splitter_top_z - splitter_w
                 _emit_h_splitter(
-                    node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                    node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                     reveals, splitter_top_z, splitter_bottom_z,
                     splitter_index=i, layout=layout,
                     splitters=splitters, backings=backings,
@@ -1280,6 +1416,7 @@ def _walk_tree(node, layout, bay_index,
                 cage_x=child_cage_left_x,
                 cage_z=cage_z,
                 cage_dim_x=child_cage_dim_x,
+                cage_dim_y=cage_dim_y,
                 cage_dim_z=cage_dim_z,
                 reveals=child_reveals,
                 leaves=leaves, splitters=splitters, backings=backings,
@@ -1287,7 +1424,7 @@ def _walk_tree(node, layout, bay_index,
             if i < n_children - 1:
                 splitter_left_x = child_ff_right_x
                 _emit_v_splitter(
-                    node, cage_x, cage_z, cage_dim_x, cage_dim_z,
+                    node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                     reveals, splitter_left_x,
                     splitter_index=i, layout=layout,
                     splitters=splitters, backings=backings,
@@ -1314,12 +1451,12 @@ def bay_openings(layout, bay_index):
     empty = {'leaves': [], 'splitters': [], 'backings': []}
     if tree is None:
         return empty
-    cage_dim_x_, _, cage_dim_z_ = bay_cage_dims(layout, bay_index)
+    cage_dim_x_, cage_dim_y_, cage_dim_z_ = bay_cage_dims(layout, bay_index)
     leaves, splitters, backings = [], [], []
     _walk_tree(
         tree, layout, bay_index,
         cage_x=0.0, cage_z=0.0,
-        cage_dim_x=cage_dim_x_, cage_dim_z=cage_dim_z_,
+        cage_dim_x=cage_dim_x_, cage_dim_y=cage_dim_y_, cage_dim_z=cage_dim_z_,
         reveals=_bay_root_reveals(layout, bay_index),
         leaves=leaves, splitters=splitters, backings=backings,
     )
@@ -1407,13 +1544,14 @@ def _door_panel_size(rect, cab_props, opening_props):
     return width, height
 
 
-def _drawer_max_slide(layout, cab_props):
+def _drawer_max_slide(layout, rect):
     """Maximum forward translation for a drawer/pullout front. Aimed at
-    "near full extension": cabinet depth minus face frame thickness
-    minus 1 inch of clearance. Becomes a cabinet prop later if
-    customization is wanted.
+    "near full extension": bay depth minus face frame thickness minus
+    1 inch of clearance. Sourced from the leaf rect's cage_dim_y so the
+    slide tracks per-bay depth, not the cabinet's overall dim_y.
     """
-    return max(0.0, layout.dim_y - layout.fft - inch(1.0))
+    # cage_dim_y = bay_depth - fft - bt; bay_depth - fft = cage_dim_y + bt.
+    return max(0.0, rect['cage_dim_y'] + layout.bt - inch(1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -1535,7 +1673,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     base_x = rect['reveal_left'] - left_overlay
     base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
-    slide = opening_props.swing_percent * _drawer_max_slide(layout, cab_props)
+    slide = opening_props.swing_percent * _drawer_max_slide(layout, rect)
 
     return {
         'role': role, 'name': name,
@@ -1696,7 +1834,10 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
     right Blender object type (mesh part vs text object) without
     re-reading the source collection.
     """
-    cage_dim_y = layout.dim_y - layout.fft - layout.bt
+    # Per-bay depth - threaded onto each leaf rect by bay_openings.
+    # Used to be computed here from layout.dim_y, which broke when bay
+    # depths diverged from the cabinet's overall depth.
+    cage_dim_y = rect['cage_dim_y']
     out = []
     for item in opening_props.interior_items:
         if item.kind == 'ADJUSTABLE_SHELF':
