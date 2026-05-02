@@ -1476,6 +1476,16 @@ class FaceFrameCabinet(GeoNodeCage):
         length, width, thickness = leaf['part_dims']
         h_offset = scene_props.pull_horizontal_offset
 
+        # The pull asset's origin sits at the bar's center, so naive
+        # placement at "X from edge" puts the pull's CENTER at that
+        # distance and the pull spills half-its-length past the edge.
+        # User-facing offsets are edge-to-nearest-pull-edge, so subtract
+        # half the bar length on edge-anchored vertical formulas.
+        # Centered placements (length/2 etc) keep their middle anchor
+        # and don't shift. Bar axis maps to part-X on doors and part-Y
+        # on drawers; the asset's X span is the right dim either way.
+        half_pull_len = pulls.pull_length(pull_obj) / 2.0
+
         # Vertical (X axis on door): zone-dependent.
         if kind == 'drawer':
             if scene_props.center_pulls_on_drawer_front:
@@ -1484,9 +1494,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 # Off-center moves the pull toward the top of the
                 # drawer. Reuse the base vertical offset so the user
                 # only has one offset to tune.
-                x = length - scene_props.pull_vertical_location_base
+                x = length - scene_props.pull_vertical_location_base - half_pull_len
         elif cabinet_type == 'UPPER':
-            x = scene_props.pull_vertical_location_upper
+            x = scene_props.pull_vertical_location_upper + half_pull_len
         elif cabinet_type == 'TALL':
             # Three-way decision based on the door's vertical position
             # AND its length:
@@ -1500,14 +1510,14 @@ class FaceFrameCabinet(GeoNodeCage):
             door_bottom_z = self._z_in_cabinet(front_part.obj)
             tall_offset = scene_props.pull_vertical_location_tall
             if door_bottom_z >= tall_offset:
-                x = scene_props.pull_vertical_location_upper
+                x = scene_props.pull_vertical_location_upper + half_pull_len
             elif length >= tall_offset:
-                x = tall_offset
+                x = tall_offset + half_pull_len
             else:
-                x = length - scene_props.pull_vertical_location_base
+                x = length - scene_props.pull_vertical_location_base - half_pull_len
         else:
             # BASE / LAP_DRAWER: measure DOWN from top of door.
-            x = length - scene_props.pull_vertical_location_base
+            x = length - scene_props.pull_vertical_location_base - half_pull_len
 
         # Horizontal (Y axis on door): the leaf builder positions a
         # right-hinged door's local origin at the UNHINGED corner

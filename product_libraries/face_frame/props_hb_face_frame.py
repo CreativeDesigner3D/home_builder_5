@@ -1126,8 +1126,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # margin from one end when not centered.
     pull_horizontal_offset: FloatProperty(
         name="Pull Horizontal Offset",
-        description="Distance from the door's unhinged edge to the pull center",
-        default=units.inch(2.0), unit='LENGTH', precision=4,
+        description="Distance from the door's unhinged edge to the pull's nearest edge",
+        default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_pulls_on_selection_change,
     )  # type: ignore
     # Vertical placement is per cabinet zone:
@@ -1136,7 +1136,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     #   Upper: distance from BOTTOM of door up to pull (reach from below)
     pull_vertical_location_base: FloatProperty(
         name="Base Pull Vertical Location",
-        default=units.inch(2.5), unit='LENGTH', precision=4,
+        default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_pulls_on_selection_change,
     )  # type: ignore
     pull_vertical_location_tall: FloatProperty(
@@ -1146,7 +1146,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     )  # type: ignore
     pull_vertical_location_upper: FloatProperty(
         name="Upper Pull Vertical Location",
-        default=units.inch(2.5), unit='LENGTH', precision=4,
+        default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_pulls_on_selection_change,
     )  # type: ignore
     center_pulls_on_drawer_front: BoolProperty(

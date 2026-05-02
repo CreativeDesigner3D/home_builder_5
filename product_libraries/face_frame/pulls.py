@@ -159,3 +159,23 @@ def resolve_pull_object(scene_props, kind):
     else:
         scene_props.current_drawer_pull_object = pull_obj
     return pull_obj
+
+
+def pull_length(pull_obj):
+    """Length of `pull_obj` along its asset-local X axis - the bar's
+    long dimension for bar pulls, the diameter for round knobs. Returns
+    0.0 for None / non-mesh / empty meshes so callers can use the
+    result unconditionally as a placement offset.
+
+    Asset convention: pull origin is at the geometric center of the
+    mounting face, with the bar axis running along asset X. Reading
+    raw vertex coords (rather than obj.dimensions) avoids any object-
+    level scale skewing the result.
+    """
+    if pull_obj is None or pull_obj.data is None:
+        return 0.0
+    verts = getattr(pull_obj.data, 'vertices', None)
+    if not verts:
+        return 0.0
+    xs = [v.co.x for v in verts]
+    return max(xs) - min(xs)
