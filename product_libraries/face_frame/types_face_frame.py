@@ -266,6 +266,250 @@ class FaceFrameCabinet(GeoNodeCage):
         # All parts and props in place - run the layout once.
         self.recalculate()
 
+    # =====================================================================
+    # Insert / Delete bay (structural mutation)
+    # =====================================================================
+    def insert_bay(self, anchor_index, direction):
+        """Insert a new bay relative to an existing one.
+
+        anchor_index: index of the existing bay we're inserting next to.
+        direction: 'BEFORE' (new bay takes anchor's slot, anchor shifts
+        right) or 'AFTER' (new bay goes one past anchor, everything
+        beyond shifts right).
+
+        Adds one bay object (with a single fresh opening), one
+        mid_stile_widths entry, one mid stile part, and a slot-0 / slot-1
+        mid div pair. Existing bay / mid stile / mid div parts whose
+        index sits at or past the insertion point have their hb_*_index
+        bumped by one. width=0 + unlock_width=False on the new bay so
+        the redistributor immediately gives it an equal share.
+        """
+        bays = self._sorted_bays()
+        if not bays:
+            return
+        anchor_index = max(0, min(anchor_index, len(bays) - 1))
+        new_bay_index = anchor_index if direction == 'BEFORE' else anchor_index + 1
+        # Inserting AT new_bay_index means existing bays at new_bay_index
+        # and beyond shift up by one. The new mid-stile sits at gap
+        # new_bay_index - 1 if inserting at position > 0, else at gap 0.
+        # Concretely: if new_bay_index < new_bay_count - 1 there's a gap
+        # to the right of the new bay; else gap to the left.
+        new_gap_index = new_bay_index - 1 if new_bay_index > 0 else 0
+        # When inserting at position > 0 the new gap sits BETWEEN the
+        # bay-to-the-left and the new bay. When inserting at position 0
+        # (BEFORE bay 0) the new gap sits between the new bay and old
+        # bay 0, which is gap 0 in the new numbering. Either way, gap
+        # ranges shift up by one for any old gap whose index >= new_gap_index.
+
+        cab_props = self.obj.face_frame_cabinet
+        cabinet_id = id(self.obj)
+        _RECALCULATING.add(cabinet_id)
+        _DISTRIBUTING_WIDTHS.add(cabinet_id)
+        try:
+            # 1) Reindex existing bays at/after new_bay_index.
+            for bay_obj in self._sorted_bays():
+                idx = bay_obj.get('hb_bay_index', 0)
+                if idx >= new_bay_index:
+                    bay_obj['hb_bay_index'] = idx + 1
+                    bay_obj.face_frame_bay.bay_index = idx + 1
+
+            # 2) Reindex existing mid-stile / mid-div parts at/after new_gap_index.
+            for child in self._sorted_mid_parts():
+                idx = child.get('hb_mid_stile_index', 0)
+                if idx >= new_gap_index:
+                    child['hb_mid_stile_index'] = idx + 1
+
+            # 3) Insert mid_stile_widths entry at new_gap_index by
+            #    add()-then-shuffle, since CollectionProperty has no
+            #    insert(at). Shift values from new_gap_index forward.
+            self._insert_mid_stile_width_entry(new_gap_index, inch(2.0))
+
+            # 4) Build the new bay object + opening.
+            new_bay = self._create_bay_at(new_bay_index)
+
+            # 5) Build the new mid-stile + mid-div pair at new_gap_index.
+            self._create_mid_parts_at(new_gap_index)
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+            _DISTRIBUTING_WIDTHS.discard(cabinet_id)
+
+        self.recalculate()
+        return new_bay
+
+    def delete_bay(self, bay_index):
+        """Delete the bay at bay_index. Refuses if it would leave zero
+        bays. Cleans up the bay's subtree (openings, fronts, pulls,
+        interior items), removes one gap (mid_stile_widths entry plus
+        the matching mid-stile and mid-div pair), and reindexes the
+        rest. When deleting bay i:
+          - if i < n_bays - 1: gap i is removed (right-of-bay)
+          - else (last bay): gap n_gaps - 1 is removed (left-of-bay)
+        """
+        bays = self._sorted_bays()
+        if len(bays) <= 1:
+            return False
+        bay_index = max(0, min(bay_index, len(bays) - 1))
+        target_bay = bays[bay_index]
+
+        n_bays_before = len(bays)
+        n_gaps_before = max(0, n_bays_before - 1)
+        if bay_index < n_bays_before - 1:
+            removed_gap_index = bay_index
+        else:
+            removed_gap_index = n_gaps_before - 1
+
+        cabinet_id = id(self.obj)
+        _RECALCULATING.add(cabinet_id)
+        _DISTRIBUTING_WIDTHS.add(cabinet_id)
+        try:
+            # 1) Wipe the bay's entire subtree (openings -> fronts ->
+            #    pulls -> interior items, plus the bay cage itself).
+            for descendant in list(target_bay.children_recursive):
+                bpy.data.objects.remove(descendant, do_unlink=True)
+            bpy.data.objects.remove(target_bay, do_unlink=True)
+
+            # 2) Remove mid-stile + mid-div pair at removed_gap_index.
+            for child in list(self._sorted_mid_parts()):
+                if child.get('hb_mid_stile_index', 0) == removed_gap_index:
+                    bpy.data.objects.remove(child, do_unlink=True)
+
+            # 3) Remove the mid_stile_widths entry at removed_gap_index.
+            self._remove_mid_stile_width_entry(removed_gap_index)
+
+            # 4) Reindex remaining bays past bay_index down by one.
+            for bay_obj in self._sorted_bays():
+                idx = bay_obj.get('hb_bay_index', 0)
+                if idx > bay_index:
+                    bay_obj['hb_bay_index'] = idx - 1
+                    bay_obj.face_frame_bay.bay_index = idx - 1
+
+            # 5) Reindex remaining mid parts past removed_gap_index down
+            #    by one.
+            for child in self._sorted_mid_parts():
+                idx = child.get('hb_mid_stile_index', 0)
+                if idx > removed_gap_index:
+                    child['hb_mid_stile_index'] = idx - 1
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+            _DISTRIBUTING_WIDTHS.discard(cabinet_id)
+
+        self.recalculate()
+        return True
+
+    # ----- Helpers used by insert_bay / delete_bay -----------------------
+    def _sorted_bays(self):
+        return sorted(
+            [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+
+    def _sorted_mid_parts(self):
+        """Cabinet children that participate in gap indexing: mid-stile
+        plus the slot-0 / slot-1 mid-div pair per gap."""
+        roles = (PART_ROLE_MID_STILE, PART_ROLE_MID_DIVISION)
+        return sorted(
+            [c for c in self.obj.children if c.get('hb_part_role') in roles],
+            key=lambda c: (c.get('hb_mid_stile_index', 0),
+                           0 if c.get('hb_part_role') == PART_ROLE_MID_STILE else 1,
+                           c.get('hb_mid_div_slot', 0)),
+        )
+
+    def _insert_mid_stile_width_entry(self, index, width_value):
+        """Insert a mid_stile_widths entry by add()+ripple-shift, since
+        CollectionProperty doesn't expose insert-at. After this the
+        entry at `index` carries width_value (and zeroed extends)."""
+        coll = self.obj.face_frame_cabinet.mid_stile_widths
+        coll.add()
+        n = len(coll)
+        for i in range(n - 2, index - 1, -1):
+            coll[i + 1].width = coll[i].width
+            coll[i + 1].extend_up_amount = coll[i].extend_up_amount
+            coll[i + 1].extend_down_amount = coll[i].extend_down_amount
+        coll[index].width = width_value
+        coll[index].extend_up_amount = 0.0
+        coll[index].extend_down_amount = 0.0
+
+    def _remove_mid_stile_width_entry(self, index):
+        coll = self.obj.face_frame_cabinet.mid_stile_widths
+        n = len(coll)
+        for i in range(index, n - 1):
+            coll[i].width = coll[i + 1].width
+            coll[i].extend_up_amount = coll[i + 1].extend_up_amount
+            coll[i].extend_down_amount = coll[i + 1].extend_down_amount
+        coll.remove(n - 1)
+
+    def _create_bay_at(self, bay_index):
+        """Build a fresh bay + single opening with hb_bay_index set.
+        Width=0 + unlock_width=False -> recalc redistributor gives it an
+        equal share among unlocked bays. Other defaults pulled from
+        cabinet props (matching the initial _build_carcass_parts path).
+        """
+        cab_props = self.obj.face_frame_cabinet
+        bay = FaceFrameBay()
+        bay.create(f'Bay {bay_index + 1}')
+        bay.obj.parent = self.obj
+        bay.obj['hb_bay_index'] = bay_index
+        bp = bay.obj.face_frame_bay
+        bp.bay_index = bay_index
+        bp.width = 0.0   # redistributor fills it
+        bp.height = cab_props.height - (cab_props.toe_kick_height
+                                        if self._has_toe_kick() else 0.0)
+        bp.depth = cab_props.depth
+        bp.kick_height = 0.0
+        bp.top_offset = 0.0
+        bp.top_rail_width = cab_props.top_rail_width
+        bp.bottom_rail_width = cab_props.bottom_rail_width
+
+        opening = FaceFrameOpening()
+        opening.create('Opening 1')
+        opening.obj.parent = bay.obj
+        opening.obj['hb_opening_index'] = 0
+        opening.obj.face_frame_opening.opening_index = 0
+        return bay.obj
+
+    def _create_mid_parts_at(self, gap_index):
+        """Build a mid stile and a slot-0 / slot-1 mid div pair at
+        gap_index. Mirrors the initial loop in _build_carcass_parts."""
+        mid_stile = CabinetPart()
+        mid_stile.create(f'Mid Stile {gap_index + 1}')
+        mid_stile.obj.parent = self.obj
+        mid_stile.obj['hb_part_role'] = PART_ROLE_MID_STILE
+        mid_stile.obj['CABINET_PART'] = True
+        mid_stile.obj['hb_mid_stile_index'] = gap_index
+        mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
+        mid_stile.obj.rotation_euler.y = math.radians(-90)
+        mid_stile.obj.rotation_euler.z = math.radians(90)
+        mid_stile.set_input('Mirror Y', True)
+        mid_stile.set_input('Mirror Z', True)
+
+        for slot in (0, 1):
+            mid_div = CabinetPart()
+            mid_div.create(f'Mid Division {gap_index + 1}.{slot}')
+            mid_div.obj.parent = self.obj
+            mid_div.obj['hb_part_role'] = PART_ROLE_MID_DIVISION
+            mid_div.obj['CABINET_PART'] = True
+            mid_div.obj['hb_mid_stile_index'] = gap_index
+            mid_div.obj['hb_mid_div_slot'] = slot
+            mid_div.obj.rotation_euler.y = math.radians(-90)
+            mid_div.set_input('Mirror Y', True)
+            mid_div.set_input('Mirror Z', True)
+            if slot == 1:
+                mid_div.obj.hide_viewport = True
+                mid_div.obj.hide_render = True
+            else:
+                notch_front = mid_div.add_part_modifier(
+                    'CPM_CORNERNOTCH', 'Notch Top Front')
+                notch_front.set_input('Flip X', True)
+                notch_front.set_input('Flip Y', True)
+                notch_front.mod.show_viewport = False
+                notch_front.mod.show_render = False
+                notch_back = mid_div.add_part_modifier(
+                    'CPM_CORNERNOTCH', 'Notch Top Back')
+                notch_back.set_input('Flip X', True)
+                notch_back.set_input('Flip Y', False)
+                notch_back.mod.show_viewport = False
+                notch_back.mod.show_render = False
+
     def _build_carcass_parts(self, bay_qty):
         """Body of create_carcass, factored out so the guard wrapping above
         is easy to read. Creates carcass parts, end stiles, bay cages, and

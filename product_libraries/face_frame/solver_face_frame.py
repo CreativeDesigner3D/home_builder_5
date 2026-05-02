@@ -136,7 +136,6 @@ class FaceFrameLayout:
             'top_rail_width':     bp.top_rail_width,
             'bottom_rail_width':  bp.bottom_rail_width,
             'remove_bottom':      bp.remove_bottom,
-            'delete_bay':         bp.delete_bay,
             'tree':               self._read_tree_root(bay_obj),
         }
 
@@ -201,7 +200,6 @@ class FaceFrameLayout:
             'top_rail_width':     self.default_top_rail_width,
             'bottom_rail_width':  self.default_bottom_rail_width,
             'remove_bottom':      False,
-            'delete_bay':         False,
             'tree':               None,
         }
 
@@ -591,7 +589,6 @@ def _carcass_bottom_passthrough(layout, gap_index):
     - bay depths differ (each panel sized to its bay's depth)
     - bottom rail widths differ (panel Z computed from bay_bottom_z + brw)
     - either bay has remove_bottom set
-    - either bay has delete_bay set
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -605,8 +602,6 @@ def _carcass_bottom_passthrough(layout, gap_index):
     if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
     if bay_a.get('remove_bottom') or bay_b.get('remove_bottom'):
-        return False
-    if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
         return False
     return True
 
@@ -749,8 +744,6 @@ def _carcass_back_passthrough(layout, gap_index):
         return False
     if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
-    if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
-        return False
     return True
 
 
@@ -793,7 +786,6 @@ def _top_stretcher_passthrough(layout, gap_index):
     Break conditions:
     - bay top Z's differ (top_offset for uppers; kick + height for bases)
     - bay depths differ (front stretcher Y position depends on depth)
-    - either bay has delete_bay set
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -803,8 +795,6 @@ def _top_stretcher_passthrough(layout, gap_index):
                        bay_top_z(layout, gap_index + 1)):
         return False
     if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
-        return False
-    if bay_a.get('delete_bay') or bay_b.get('delete_bay'):
         return False
     return True
 
@@ -927,7 +917,7 @@ def mid_division_notch_active(layout, gap_index):
       - cabinet uses stretchers (Base / LapDrawer), and
       - bay depths match (single panel at this gap), and
       - the stretcher segment actually passes through this gap
-        (matching heights, no delete_bay, etc.)
+        (matching heights, depths, rail widths)
     """
     if not layout.uses_stretchers:
         return False

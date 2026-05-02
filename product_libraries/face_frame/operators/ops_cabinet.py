@@ -1052,6 +1052,85 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_insert_bay(bpy.types.Operator):
+    """Insert a new bay before or after the bay at bay_index. The new
+    bay starts width=0 + unlock_width=False so the recalc redistributor
+    immediately gives it an equal share of unlocked space; height and
+    depth follow the cabinet's defaults."""
+    bl_idname = "hb_face_frame.insert_bay"
+    bl_label = "Insert Bay"
+    bl_description = "Insert a new bay before or after the chosen bay"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    bay_index: bpy.props.IntProperty(
+        name="Bay Index",
+        description="Index of the existing bay this insert is anchored to",
+        default=0, min=0,
+    )  # type: ignore
+    direction: bpy.props.EnumProperty(
+        name="Direction",
+        items=[
+            ('BEFORE', "Before", "Insert to the left of the anchor bay"),
+            ('AFTER',  "After",  "Insert to the right of the anchor bay"),
+        ],
+        default='AFTER',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return types_face_frame.find_cabinet_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.report({'ERROR'}, "No face frame cabinet selected")
+            return {'CANCELLED'}
+        cab = types_face_frame._wrap_cabinet(root)
+        cab.insert_bay(self.bay_index, self.direction)
+
+        # Reapply the cabinet's current selection mode so the new bay's
+        # cage / opening / parts inherit the right visual treatment
+        # instead of staying on default colors. Scoped via
+        # search_obj_name. Same pattern split_opening uses.
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
+        except RuntimeError:
+            pass
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_delete_bay(bpy.types.Operator):
+    """Delete the bay at bay_index. Refuses if the cabinet would be
+    left with zero bays. Removes the bay's full subtree (openings,
+    fronts, pulls, interior items) and one mid-stile + mid-div pair."""
+    bl_idname = "hb_face_frame.delete_bay"
+    bl_label = "Delete Bay"
+    bl_description = "Delete a bay and its mid stile / mid division"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    bay_index: bpy.props.IntProperty(
+        name="Bay Index",
+        description="Index of the bay to remove",
+        default=0, min=0,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return types_face_frame.find_cabinet_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.report({'ERROR'}, "No face frame cabinet selected")
+            return {'CANCELLED'}
+        cab = types_face_frame._wrap_cabinet(root)
+        ok = cab.delete_bay(self.bay_index)
+        if not ok:
+            self.report({'ERROR'}, "Cannot delete the only remaining bay")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_recalculate_cabinet,
@@ -1067,6 +1146,8 @@ classes = (
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
+    hb_face_frame_OT_insert_bay,
+    hb_face_frame_OT_delete_bay,
 )
 
 

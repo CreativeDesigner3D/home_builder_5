@@ -637,11 +637,6 @@ class Face_Frame_Bay_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
-    delete_bay: BoolProperty(
-        name="Delete Bay",
-        description="Skip this bay during construction (used for appliance cutouts)",
-        default=False,
-    )  # type: ignore
     remove_bottom: BoolProperty(
         name="Remove Bottom", default=False,
         update=_update_cabinet_dim,

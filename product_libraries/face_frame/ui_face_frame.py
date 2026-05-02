@@ -129,9 +129,30 @@ def draw_face_frame_defaults(layout, cab_props):
 
 def draw_bay_properties(layout, bay_obj):
     """All editable properties of a single bay. Used by both the
-    sidebar Selection sub-panel and the bay_prompts popup."""
+    sidebar Selection sub-panel and the bay_prompts popup. Includes a
+    structural-edits row up top (insert before / after, delete)."""
     bp = bay_obj.face_frame_bay
     layout.label(text=f"Bay {bp.bay_index + 1}", icon='MESH_CUBE')
+
+    # Structural edit strip: insert next to / delete this bay. Operators
+    # take the bay index explicitly so they don't depend on selection.
+    edits = layout.row(align=True)
+    op = edits.operator(
+        'hb_face_frame.insert_bay', text="Insert Before", icon='TRIA_LEFT',
+    )
+    op.bay_index = bp.bay_index
+    op.direction = 'BEFORE'
+    op = edits.operator(
+        'hb_face_frame.insert_bay', text="Insert After", icon='TRIA_RIGHT',
+    )
+    op.bay_index = bp.bay_index
+    op.direction = 'AFTER'
+    op = edits.operator(
+        'hb_face_frame.delete_bay', text="Delete", icon='X',
+    )
+    op.bay_index = bp.bay_index
+    layout.separator()
+
     col = layout.column(align=True)
 
     # Width with unlock toggle - field disabled when auto, unlocked when manual
@@ -168,7 +189,6 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
-    col.prop(bp, 'delete_bay', text="Delete Bay (cutout)")
 
 
 def draw_opening_properties(layout, opening_obj):
@@ -338,7 +358,7 @@ def draw_bay_in_prompts(layout, bay_obj):
     """
     bp = bay_obj.face_frame_bay
 
-    # Header row: index + size summary + expand arrow, all inline.
+    # Header row: expand arrow + label + size summary + delete X.
     expand_icon = 'TRIA_DOWN' if bp.prompts_expanded else 'TRIA_RIGHT'
     header = layout.row(align=True)
     header.prop(
@@ -347,6 +367,10 @@ def draw_bay_in_prompts(layout, bay_obj):
     )
     header.label(text=f"Bay {bp.bay_index + 1}", icon='MESH_PLANE')
     header.label(text=_bay_size_summary(bp))
+    rm = header.operator(
+        'hb_face_frame.delete_bay', text="", icon='X', emboss=False,
+    )
+    rm.bay_index = bp.bay_index
 
     if not bp.prompts_expanded:
         return
@@ -373,7 +397,6 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
-    col.prop(bp, 'delete_bay', text="Delete Bay (cutout)")
 
 
 def draw_bays_in_prompts(layout, root):
@@ -395,10 +418,17 @@ def draw_bays_in_prompts(layout, root):
         row = box.row()
         row.label(text=f"Bay {bp.bay_index + 1}")
         row.label(text=_bay_size_summary(bp))
-        return
-    for i, bay_obj in enumerate(bays):
-        bay_box = box.box()
-        draw_bay_in_prompts(bay_box, bay_obj)
+    else:
+        for bay_obj in bays:
+            bay_box = box.box()
+            draw_bay_in_prompts(bay_box, bay_obj)
+    # Footer: add a new bay at the end of the run.
+    last_index = bays[-1].face_frame_bay.bay_index
+    add = box.operator(
+        'hb_face_frame.insert_bay', text="Add Bay", icon='ADD',
+    )
+    add.bay_index = last_index
+    add.direction = 'AFTER'
 
 
 # ---------------------------------------------------------------------------

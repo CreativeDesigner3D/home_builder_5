@@ -39,8 +39,10 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
-        # Hide the Change Bay submenu for cabinet types we have no
-        # presets for (currently LAP_DRAWER).
+
+        # Change Bay submenu (preset swaps) sits right under Properties
+        # so type-changing edits stay grouped with property edits. Hidden
+        # for cabinet types with no presets (currently LAP_DRAWER).
         bay_obj = context.active_object
         cab_root = (types_face_frame.find_cabinet_root(bay_obj)
                     if bay_obj is not None else None)
@@ -49,6 +51,26 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
             if cabinet_type in bay_presets.MENU_ENTRIES:
                 layout.menu("HOME_BUILDER_MT_face_frame_change_bay",
                             text="Change Bay")
+
+        # Structural edits live below in their own group. Anchored on
+        # the right-clicked bay's index since the bay cage is the active
+        # object when this menu opens.
+        bay_index = (bay_obj.face_frame_bay.bay_index
+                     if bay_obj is not None
+                     and bay_obj.get(types_face_frame.TAG_BAY_CAGE)
+                     else 0)
+        layout.separator()
+        op = layout.operator("hb_face_frame.insert_bay",
+                             text="Insert Bay Before", icon='TRIA_LEFT')
+        op.bay_index = bay_index
+        op.direction = 'BEFORE'
+        op = layout.operator("hb_face_frame.insert_bay",
+                             text="Insert Bay After", icon='TRIA_RIGHT')
+        op.bay_index = bay_index
+        op.direction = 'AFTER'
+        op = layout.operator("hb_face_frame.delete_bay",
+                             text="Delete Bay", icon='X')
+        op.bay_index = bay_index
 
 
 class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
