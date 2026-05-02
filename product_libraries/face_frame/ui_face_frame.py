@@ -158,8 +158,11 @@ def draw_bay_properties(layout, bay_obj):
     lock_icon = 'UNLOCKED' if bp.unlock_depth else 'LOCKED'
     depth_row.prop(bp, 'unlock_depth', text="", icon=lock_icon)
     col.separator()
-    col.prop(bp, 'kick_height', text="Kick Height")
-    col.prop(bp, 'top_offset', text="Top Offset")
+    cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
+    if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
+        col.prop(bp, 'kick_height', text="Kick Height")
+    if cab_type == 'UPPER':
+        col.prop(bp, 'top_offset', text="Top Offset")
     col.separator()
     col.prop(bp, 'top_rail_width', text="Top Rail Width")
     col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
@@ -315,13 +318,97 @@ def draw_all_bays_summary(layout, root):
         row.label(text=f"{w:.0f} x {h:.0f} x {d:.0f} in")
 
 
+def _bay_size_summary(bp):
+    """Compact 'W x H x D in' string for read-only bay display. Uses
+    inches with one-decimal precision to match the All Bays summary
+    style."""
+    M_TO_IN = 39.3700787
+    w = bp.width * M_TO_IN
+    h = bp.height * M_TO_IN
+    d = bp.depth * M_TO_IN
+    return f"{w:.1f} x {h:.1f} x {d:.1f} in"
+
+
+def draw_bay_in_prompts(layout, bay_obj):
+    """Compact bay block for the cabinet_prompts popup. Collapsed
+    state: a single header row 'Bay N   W x H x D in' plus an expand
+    arrow. Expanded state: editable W / H / D with locks, then the
+    secondary properties (kick, top offset, rails, flags). Single-bay
+    cabinets bypass this and use a fully read-only summary.
+    """
+    bp = bay_obj.face_frame_bay
+
+    # Header row: index + size summary + expand arrow, all inline.
+    expand_icon = 'TRIA_DOWN' if bp.prompts_expanded else 'TRIA_RIGHT'
+    header = layout.row(align=True)
+    header.prop(
+        bp, 'prompts_expanded',
+        text="", icon=expand_icon, emboss=False,
+    )
+    header.label(text=f"Bay {bp.bay_index + 1}", icon='MESH_PLANE')
+    header.label(text=_bay_size_summary(bp))
+
+    if not bp.prompts_expanded:
+        return
+
+    col = layout.column(align=True)
+    # Width / Height / Depth - same lock-and-field pattern as the full
+    # draw_bay_properties helper.
+    for attr in ('width', 'height', 'depth'):
+        unlocked = getattr(bp, f'unlock_{attr}')
+        row = col.row(align=True)
+        field = row.row(align=True)
+        field.enabled = unlocked
+        field.prop(bp, attr, text=attr.capitalize())
+        lock_icon = 'UNLOCKED' if unlocked else 'LOCKED'
+        row.prop(bp, f'unlock_{attr}', text="", icon=lock_icon)
+    col.separator()
+    cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
+    if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
+        col.prop(bp, 'kick_height', text="Kick Height")
+    if cab_type == 'UPPER':
+        col.prop(bp, 'top_offset', text="Top Offset")
+    col.separator()
+    col.prop(bp, 'top_rail_width', text="Top Rail Width")
+    col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
+    col.separator()
+    col.prop(bp, 'remove_bottom', text="Remove Bottom")
+    col.prop(bp, 'delete_bay', text="Delete Bay (cutout)")
+
+
+def draw_bays_in_prompts(layout, root):
+    """Bays section for the cabinet_prompts popup. Single-bay cabinets
+    get a read-only size summary - the cabinet's Dimensions section above
+    IS the editor for that bay. Multi-bay cabinets get one compact box
+    per bay with editable size + an expand toggle for secondary props.
+    """
+    bays = sorted(
+        [c for c in root.children if c.get(types_face_frame.TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+    if not bays:
+        return
+    box = layout.box()
+    box.label(text="Bays", icon='MESH_GRID')
+    if len(bays) == 1:
+        bp = bays[0].face_frame_bay
+        row = box.row()
+        row.label(text=f"Bay {bp.bay_index + 1}")
+        row.label(text=_bay_size_summary(bp))
+        return
+    for i, bay_obj in enumerate(bays):
+        bay_box = box.box()
+        draw_bay_in_prompts(bay_box, bay_obj)
+
+
 # ---------------------------------------------------------------------------
 # Cabinet-wide content (used by both sidebar parent and cabinet_prompts popup)
 # ---------------------------------------------------------------------------
 def draw_cabinet_wide(layout, root):
     """Cabinet-level content only - identity, dimensions, construction,
-    face frame defaults. Used by the cabinet_prompts popup. The sidebar
-    splits these across sub-panels for collapsible browsing.
+    face frame defaults, and a Bays section. Used by the cabinet_prompts
+    popup. The sidebar splits these across sub-panels for collapsible
+    browsing.
     """
     cab_props = root.face_frame_cabinet
     draw_identity(layout, root)
@@ -335,6 +422,7 @@ def draw_cabinet_wide(layout, root):
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)
+    draw_bays_in_prompts(layout, root)
 
 
 # ---------------------------------------------------------------------------

@@ -289,6 +289,11 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
 
         if self.active_tab == 'GENERAL':
             ui_face_frame.draw_dimensions(layout, cab_props)
+            # Bay section sits under cabinet dimensions on the same tab.
+            # Single-bay collapses to a one-line size readout (cabinet
+            # dims above are the editor); multi-bay gets a compact box
+            # per bay with editable size + an expand toggle for more.
+            ui_face_frame.draw_bays_in_prompts(layout, root)
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
         elif self.active_tab == 'FACE_FRAME':

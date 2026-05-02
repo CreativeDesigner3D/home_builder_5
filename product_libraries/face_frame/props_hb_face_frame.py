@@ -649,6 +649,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
     finish_bay: BoolProperty(name="Finish Bay", default=False)  # type: ignore
 
+    # UI-only toggle: in the cabinet_prompts popup each bay shows just
+    # its size by default; flipping this expands the bay's secondary
+    # properties (kick height, top offset, rails, flags) inline. Per-
+    # bay so each bay collapses independently.
+    prompts_expanded: BoolProperty(
+        name="Show More Bay Properties",
+        description="Expand secondary properties for this bay in the cabinet prompts popup",
+        default=False,
+    )  # type: ignore
+
     unlock_width: BoolProperty(
         name="Unlock Width",
         description="Hold this bay's width during gang-construction redistribution",
