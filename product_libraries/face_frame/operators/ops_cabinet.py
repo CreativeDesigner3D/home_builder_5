@@ -138,6 +138,9 @@ class hb_face_frame_OT_backfill_openings(bpy.types.Operator):
                 opening.obj.parent = bay_obj
                 opening.obj['hb_opening_index'] = 0
                 opening.obj.face_frame_opening.opening_index = 0
+                opening.obj.face_frame_opening.front_type = (
+                    types_face_frame.default_front_type_for_root(cab_obj)
+                )
                 cabinet_added += 1
             if cabinet_added:
                 touched_cabinets.append(cab_obj)
@@ -475,6 +478,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         # children; the original takes the last slot (index count - 1).
         new_count = max(0, self.count - 1)
         new_openings = []
+        default_front = types_face_frame.default_front_type_for_root(root)
         for i in range(new_count):
             new_op = types_face_frame.FaceFrameOpening()
             new_op.create('Opening')
@@ -483,6 +487,10 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             new_op.obj.face_frame_opening.opening_index = next_idx + i
             new_op.obj.face_frame_opening.size = self.sizes[i]
             new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
+            # New openings inherit the root's default front type. Splits
+            # don't copy from the original opening - the original keeps
+            # its own front_type, the new siblings get the default.
+            new_op.obj.face_frame_opening.front_type = default_front
             new_openings.append(new_op.obj)
 
         # Re-parent original under split as the last child.

@@ -339,27 +339,28 @@ def draw_rail_properties(layout, root, rail_obj, role):
 def draw_finished_ends(layout, cab_props):
     """Per-cabinet finished ends + exposed flags.
 
-    Three blocks (Left / Right / Back). Each shows: exposed toggle, type
-    dropdown, scribe (when type is NONE), and flush-X amount (when type
-    is FLUSH_X). Back has no FLUSH_X. Lives in the Construction section
-    rather than its own sub-panel so the active cabinet's finish state
-    stays visible alongside the rest of the carcass settings.
+    One row per side (Left / Right / Back): label, exposed toggle, type
+    dropdown, and a context field that only appears when relevant -
+    scribe when type is UNFINISHED (left/right), flush-X amount when
+    type is FLUSH_X (left/right). Back has neither. Lives in the
+    Construction section so the active cabinet's finish state stays
+    visible alongside the rest of the carcass settings.
     """
+    col = layout.column(align=True)
     for side, label, has_flush_x in (
         ('left', 'Left', True),
         ('right', 'Right', True),
         ('back', 'Back', False),
     ):
-        box = layout.box()
-        box.label(text=label)
-        col = box.column(align=True)
-        col.prop(cab_props, f'{side}_exposed', text="Exposed")
-        col.prop(cab_props, f'{side}_finished_end_condition', text="Type")
+        row = col.row(align=True)
+        row.label(text=label)
+        row.prop(cab_props, f'{side}_exposed', text="")
+        row.prop(cab_props, f'{side}_finished_end_condition', text="")
         fin_type = getattr(cab_props, f'{side}_finished_end_condition')
-        if fin_type == 'UNFINISHED' and side != 'back':
-            col.prop(cab_props, f'{side}_scribe', text="Scribe")
         if has_flush_x and fin_type == 'FLUSH_X':
-            col.prop(cab_props, f'{side}_flush_x_amount', text="Flush X Amount")
+            row.prop(cab_props, f'{side}_flush_x_amount', text="")
+        elif fin_type == 'UNFINISHED' and side != 'back':
+            row.prop(cab_props, f'{side}_scribe', text="")
 
 
 def draw_all_bays_summary(layout, root):

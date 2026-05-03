@@ -568,7 +568,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
 
     material_thickness: FloatProperty(
-        name="Material Thickness", default=units.inch(0.75), unit='LENGTH', precision=4,
+        name="Material Thickness", default=units.inch(0.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     face_frame_thickness: FloatProperty(

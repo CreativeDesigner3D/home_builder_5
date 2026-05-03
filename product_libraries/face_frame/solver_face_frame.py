@@ -75,6 +75,7 @@ class FaceFrameLayout:
         self.r_scribe = cab.right_scribe
         self.l_fin_end = cab.left_finished_end_condition
         self.r_fin_end = cab.right_finished_end_condition
+        self.b_fin_end = cab.back_finished_end_condition
         self.top_scribe = cab.top_scribe
         self.division_thickness = cab.division_thickness
 
@@ -227,7 +228,20 @@ def left_scribe_offset(layout):
         return 0.0
     if layout.l_fin_end == 'PANELED':
         return inch(0.75)
+    if layout.l_fin_end == 'FLUSH_X':
+        return inch(0.25)
     return layout.l_scribe
+
+
+def left_side_thickness(layout):
+    """Left side panel thickness. FINISHED sides are 3/4 stock (the
+    side IS the visible outer face); other conditions use the cabinet's
+    material_thickness (typically 1/2). Tops, bottoms, and dividers
+    stay at material_thickness in all cases.
+    """
+    if layout.l_fin_end == 'FINISHED':
+        return inch(0.75)
+    return layout.mt
 
 
 def right_scribe_offset(layout):
@@ -235,19 +249,39 @@ def right_scribe_offset(layout):
         return 0.0
     if layout.r_fin_end == 'PANELED':
         return inch(0.75)
+    if layout.r_fin_end == 'FLUSH_X':
+        return inch(0.25)
     return layout.r_scribe
+
+
+def right_side_thickness(layout):
+    """See left_side_thickness."""
+    if layout.r_fin_end == 'FINISHED':
+        return inch(0.75)
+    return layout.mt
+
+
+def back_thickness(layout):
+    """Carcass back panel thickness. Always the cabinet's back_thickness
+    prop (typically 1/4) regardless of finish condition - the FINISHED
+    back is rendered as a SEPARATE 3/4 applied panel layered on top of
+    the carcass back, not by thickening the carcass back itself. See
+    _reconcile_finished_back for the applied piece.
+    """
+    return layout.bt
 
 
 def carcass_inner_left_x(layout):
     """X of the left side panel's inner face - the left bound of the
-    cabinet's interior cavity. Sides are mt thick; outer face sits at
-    left_scribe_offset."""
-    return left_scribe_offset(layout) + layout.mt
+    cabinet's interior cavity. Outer face sits at left_scribe_offset;
+    thickness depends on the finish condition (3/4 for FINISHED,
+    material_thickness otherwise)."""
+    return left_scribe_offset(layout) + left_side_thickness(layout)
 
 
 def carcass_inner_right_x(layout):
     """X of the right side panel's inner face."""
-    return layout.dim_x - right_scribe_offset(layout) - layout.mt
+    return layout.dim_x - right_scribe_offset(layout) - right_side_thickness(layout)
 
 
 # ---------------------------------------------------------------------------
@@ -265,14 +299,14 @@ def carcass_top_z(layout, bay_index):
 
 
 def left_side_top_z(layout):
-    if layout.l_fin_end == 'THREE_QUARTER':
+    if layout.l_fin_end == 'FINISHED':
         return bay_top_z(layout, 0)
     return carcass_top_z(layout, 0)
 
 
 def right_side_top_z(layout):
     last = layout.bay_count - 1
-    if layout.r_fin_end == 'THREE_QUARTER':
+    if layout.r_fin_end == 'FINISHED':
         return bay_top_z(layout, last)
     return carcass_top_z(layout, last)
 
@@ -498,7 +532,7 @@ def left_side_dims(layout):
     first_depth = layout.bays[0]['depth']
     bottom_z = bay_bottom_z(layout, 0)
     top_z = left_side_top_z(layout)
-    return (top_z - bottom_z, first_depth - layout.fft, layout.mt)
+    return (top_z - bottom_z, first_depth - layout.fft, left_side_thickness(layout))
 
 
 def right_side_position(layout):
@@ -514,7 +548,7 @@ def right_side_dims(layout):
     last_depth = layout.bays[last]['depth']
     bottom_z = bay_bottom_z(layout, last)
     top_z = right_side_top_z(layout)
-    return (top_z - bottom_z, last_depth - layout.fft, layout.mt)
+    return (top_z - bottom_z, last_depth - layout.fft, right_side_thickness(layout))
 
 
 # ---------------------------------------------------------------------------
@@ -719,10 +753,10 @@ def carcass_bottom_segments(layout):
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.dim_y + first_bay['depth'] - layout.bt,
+            'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
             'z':          bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt,
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft,
+            'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
             'thickness':  layout.mt,
         })
     return segments
@@ -771,7 +805,7 @@ def carcass_back_segments(layout):
             'z':               z_origin,
             'horizontal_length': right_x - left_x,
             'vertical_length':   carcass_top_z(layout, start) - z_origin,
-            'thickness':       layout.bt,
+            'thickness':       back_thickness(layout),
         })
     return segments
 
@@ -824,10 +858,10 @@ def carcass_top_segments(layout):
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.dim_y + first_bay['depth'] - layout.bt,
+            'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - layout.bt - layout.fft,
+            'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
             'thickness':  layout.mt,
         })
     return segments
@@ -889,7 +923,7 @@ def rear_stretcher_segments(layout):
         # tracks the bay's back panel front face: -dim_y + bay_depth - bt.
         # Segment passthrough already breaks on depth change, so all bays
         # in a segment share a depth and the start bay drives Y.
-        rear_y = -layout.dim_y + first_bay['depth'] - layout.bt
+        rear_y = -layout.dim_y + first_bay['depth'] - back_thickness(layout)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
@@ -959,10 +993,10 @@ def mid_division_panels(layout, gap_index):
         # Mirror Y=True extends width in -Y; origin sits at the panel's
         # back face (= front face of carcass back panel). Width spans
         # forward to the face frame's back face.
-        return -layout.dim_y + depth - layout.bt
+        return -layout.dim_y + depth - back_thickness(layout)
 
     def _panel_width(depth):
-        return depth - layout.bt - layout.fft
+        return depth - back_thickness(layout) - layout.fft
 
     def _bay_z_range(bay_idx):
         """Bottom and top Z of a single-bay mid-div panel: from this
@@ -1135,7 +1169,7 @@ def bay_cage_dims(layout, bay_index):
 
     left_x, right_x = _cage_x_bounds(layout, bay_index)
     cage_dim_x = right_x - left_x
-    cage_dim_y = bay['depth'] - layout.fft - layout.bt
+    cage_dim_y = bay['depth'] - layout.fft - back_thickness(layout)
     top_thickness = layout.stretcher_t if layout.uses_stretchers else layout.mt
     cage_top_z = carcass_top_z(layout, bay_index) - top_thickness
     cage_bottom_z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
@@ -1591,7 +1625,7 @@ def _drawer_max_slide(layout, rect):
     slide tracks per-bay depth, not the cabinet's overall dim_y.
     """
     # cage_dim_y = bay_depth - fft - bt; bay_depth - fft = cage_dim_y + bt.
-    return max(0.0, rect['cage_dim_y'] + layout.bt - inch(1.0))
+    return max(0.0, rect['cage_dim_y'] + back_thickness(layout) - inch(1.0))
 
 
 # ---------------------------------------------------------------------------

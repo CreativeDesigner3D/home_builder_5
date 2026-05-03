@@ -103,6 +103,32 @@ PART_ROLE_PULLOUT_FRONT = 'PULLOUT_FRONT'
 PART_ROLE_FALSE_FRONT = 'FALSE_FRONT'
 PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 
+# Applied finished-back part: a 3/4 panel layered on top of the carcass
+# back when back_finished_end_condition is FINISHED. Carcass back stays
+# at its normal back_thickness (1/4 typically); this part adds the
+# visible finish surface behind it.
+PART_ROLE_FINISHED_BACK = 'FINISHED_BACK'
+
+# Applied flush-X strip: a 1/4 part covering the front portion of a
+# cabinet side when LEFT/RIGHT_finished_end_condition is FLUSH_X. The
+# strip's outer face is flush with the FF outer face; its width along
+# the cabinet depth is the user's *_flush_x_amount value (typically
+# 4"). Used for sides that abut a dishwasher / appliance where a full
+# applied panel isn't wanted.
+PART_ROLE_FLUSH_X = 'FLUSH_X'
+TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
+
+# Applied panel side tag - written on a panel root that's been spawned
+# by a cabinet to serve as its left/right/back finished end. Drives
+# reconciliation (find / resize / remove on cabinet recalc).
+TAG_APPLIED_PANEL_SIDE = 'hb_applied_to_cabinet_side'
+
+# Cabinet-side finished_end_condition values that spawn an applied panel
+# child. PANELED is the simplest case (just an inset-panel face frame);
+# FALSE_FF and WORKING_FF will eventually drive the panel's openings to
+# carry false / working drawer fronts (deferred to a later pass).
+APPLIED_PANEL_END_TYPES = frozenset({'PANELED', 'FALSE_FF', 'WORKING_FF'})
+
 # Pivot empty parent of every front part. Holds the swing rotation
 # (door / pullout) or the slide translation (drawer front) so the front
 # part itself stays at a fixed local transform relative to the pivot.
@@ -467,6 +493,9 @@ class FaceFrameCabinet(GeoNodeCage):
         opening.obj.parent = bay.obj
         opening.obj['hb_opening_index'] = 0
         opening.obj.face_frame_opening.opening_index = 0
+        opening.obj.face_frame_opening.front_type = (
+            default_front_type_for_root(self.obj)
+        )
         return bay.obj
 
     def _create_mid_parts_at(self, gap_index):
@@ -601,6 +630,9 @@ class FaceFrameCabinet(GeoNodeCage):
             opening.obj.parent = bay.obj
             opening.obj['hb_opening_index'] = 0
             opening.obj.face_frame_opening.opening_index = 0
+            opening.obj.face_frame_opening.front_type = (
+                default_front_type_for_root(self.obj)
+            )
 
         # ----- Mid stile parts + width collection (one per gap) -----
         cab_props.mid_stile_widths.clear()
@@ -1117,6 +1149,212 @@ class FaceFrameCabinet(GeoNodeCage):
                 # no notch modifiers and panel['notch_active'] is False
                 # there anyway).
                 self._update_mid_div_notches(child, panel)
+
+        # Spawn / resize / remove applied finished-end panels last so
+        # they pick up the most recent cabinet dimensions. Skipped for
+        # panel roots (a panel never carries another panel as its end).
+        if self._has_carcass():
+            self._reconcile_applied_panels(layout)
+            self._reconcile_finished_back(layout)
+            self._reconcile_flush_x_strips(layout)
+
+    # =====================================================================
+    # Applied finished-end panels (parented panel roots covering a side)
+    # =====================================================================
+    def _reconcile_applied_panels(self, layout):
+        """Sync applied panel children to the cabinet's three side
+        finished-end conditions. For each side whose condition is in
+        APPLIED_PANEL_END_TYPES, ensure a panel root exists, parented
+        and tagged with the side. Resize / reposition existing panels
+        without rebuilding their bay/opening structure - so user edits
+        (splits, front-type changes, mid-stile widths) survive.
+        """
+        cab = self.obj.face_frame_cabinet
+        side_conditions = {
+            'LEFT':  cab.left_finished_end_condition,
+            'RIGHT': cab.right_finished_end_condition,
+            'BACK':  cab.back_finished_end_condition,
+        }
+
+        # Index existing applied panels by side. Multiple per side
+        # shouldn't happen, but if it does we keep the first and remove
+        # extras to converge on a clean state.
+        existing = {}
+        extras = []
+        for child in self.obj.children:
+            side = child.get(TAG_APPLIED_PANEL_SIDE)
+            if not side:
+                continue
+            if side in existing:
+                extras.append(child)
+            else:
+                existing[side] = child
+        for child in extras:
+            _remove_root_with_children(child)
+
+        for side, condition in side_conditions.items():
+            wants_panel = condition in APPLIED_PANEL_END_TYPES
+            panel_obj = existing.get(side)
+
+            if not wants_panel:
+                if panel_obj is not None:
+                    _remove_root_with_children(panel_obj)
+                continue
+
+            if panel_obj is None:
+                panel = PanelFaceFrameCabinet()
+                panel.create(f'Applied Panel {side[0]}', bay_qty=1)
+                panel_obj = panel.obj
+                panel_obj.parent = self.obj
+                panel_obj[TAG_APPLIED_PANEL_SIDE] = side
+
+            location, rotation_z, width, height, depth = (
+                applied_panel_geometry(layout, side)
+            )
+            panel_obj.location = location
+            panel_obj.rotation_euler = (0.0, 0.0, rotation_z)
+            panel_props = panel_obj.face_frame_cabinet
+            # Writing width / height / depth fires _update_cabinet_dim
+            # on the panel root which calls recalculate_face_frame_cabinet
+            # on IT. The _RECALCULATING guard is keyed by id(root), so
+            # the cabinet's outer recalc isn't blocked - the panel runs
+            # its own recalc. Three writes -> three panel recalcs; cheap,
+            # panels are small.
+            panel_props.width = width
+            panel_props.height = height
+            panel_props.depth = depth
+
+    # =====================================================================
+    # Applied finished back (single 3/4 part layered on the carcass back)
+    # =====================================================================
+    def _reconcile_finished_back(self, layout):
+        """Spawn / resize / remove the FINISHED back applied panel.
+
+        Triggered only when back_finished_end_condition == 'FINISHED'.
+        The carcass back itself stays at its normal back_thickness;
+        this method just adds (or removes) a single 3/4 panel sitting
+        directly behind it. Same delete-on-condition-change /
+        resize-in-place pattern as the applied panels - the part holds
+        no user state, so reuse-when-present keeps it stable across
+        recalcs without rebuilding.
+
+        Spans the full cabinet width and full cabinet height. Refining
+        for stepped cabinets or excluding the toe kick is deferred.
+        """
+        cab = self.obj.face_frame_cabinet
+        wants = cab.back_finished_end_condition == 'FINISHED'
+        existing = next(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == PART_ROLE_FINISHED_BACK),
+            None,
+        )
+
+        if not wants:
+            if existing is not None:
+                bpy.data.objects.remove(existing, do_unlink=True)
+            return
+
+        thickness = inch(0.75)
+        if existing is None:
+            part = CabinetPart()
+            part.create('Finished Back')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_FINISHED_BACK
+            part.obj['CABINET_PART'] = True
+            # Same orientation as the carcass back: rotation x=90 / y=-90
+            # with Mirror Y=True extrudes Thickness in -Y from origin.
+            # Origin sits at Y=+thickness so the part fills [0, thickness]
+            # in cabinet Y - flush against the carcass back's outer face,
+            # extending behind the cabinet by 3/4.
+            part.obj.rotation_euler.x = math.radians(90)
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+            existing = part.obj
+        else:
+            part = GeoNodeCutpart(existing)
+
+        existing.location = (0.0, thickness, 0.0)
+        part.set_input('Length',    layout.dim_z)
+        part.set_input('Width',     layout.dim_x)
+        part.set_input('Thickness', thickness)
+
+    # =====================================================================
+    # Applied flush-X strips (single 1/4 part on the front of a side)
+    # =====================================================================
+    def _reconcile_flush_x_strips(self, layout):
+        """Spawn / resize / remove the FLUSH_X applied strip on each
+        side. Triggered when *_finished_end_condition == 'FLUSH_X'.
+
+        The strip is a single 1/4 thick part. Outer face flush with
+        the cabinet's exterior side plane (X=0 on left, dim_x on
+        right); inner face touches the side panel since FLUSH_X auto-
+        scribes to 1/4 in the solver. Y starts at the back of the
+        face frame (lined up with the side panel) and extends back
+        into the cabinet by *_flush_x_amount. Z span matches the side
+        panel.
+        """
+        cab = self.obj.face_frame_cabinet
+        side_specs = (
+            ('LEFT',  cab.left_finished_end_condition,
+             cab.left_flush_x_amount, 0),
+            ('RIGHT', cab.right_finished_end_condition,
+             cab.right_flush_x_amount, layout.bay_count - 1),
+        )
+
+        existing = {
+            child.get(TAG_FLUSH_X_SIDE): child
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_FLUSH_X
+            and child.get(TAG_FLUSH_X_SIDE) in ('LEFT', 'RIGHT')
+        }
+
+        for side, condition, amount, bay_index in side_specs:
+            wants = condition == 'FLUSH_X'
+            strip = existing.get(side)
+
+            if not wants:
+                if strip is not None:
+                    bpy.data.objects.remove(strip, do_unlink=True)
+                continue
+
+            thickness = inch(0.25)
+            bottom_z = solver.bay_bottom_z(layout, bay_index)
+            top_z = (solver.left_side_top_z(layout)
+                     if side == 'LEFT'
+                     else solver.right_side_top_z(layout))
+            length = top_z - bottom_z
+            # Width along cabinet -Y from origin (Mirror Y=True flips
+            # +Y to -Y). Strip's front edge sits at the back of the
+            # face frame (-dim_y + fft) so it aligns with the side
+            # panel; from there it extends back into the cabinet by
+            # `amount`. Origin Y is the strip's back edge:
+            #   origin_y - amount = -dim_y + fft   (front edge)
+            #   origin_y         = -dim_y + fft + amount (back edge)
+            origin_y = -layout.dim_y + layout.fft + amount
+            origin_x = 0.0 if side == 'LEFT' else layout.dim_x
+
+            if strip is None:
+                part = CabinetPart()
+                part.create(f'Flush X {side[0]}')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = PART_ROLE_FLUSH_X
+                part.obj['CABINET_PART'] = True
+                part.obj[TAG_FLUSH_X_SIDE] = side
+                # Match the carcass side rotation/mirror flags so the
+                # strip's Length axis goes +Z, Width goes -Y, Thickness
+                # goes +X (left) or -X (right). Mirror Z differs between
+                # sides exactly as the carcass sides do.
+                part.obj.rotation_euler.y = math.radians(-90)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', side == 'LEFT')
+                strip = part.obj
+            else:
+                part = GeoNodeCutpart(strip)
+
+            strip.location = (origin_x, origin_y, bottom_z)
+            part.set_input('Length',    length)
+            part.set_input('Width',     amount)
+            part.set_input('Thickness', thickness)
 
     # =====================================================================
     # Helpers - rail reconciliation + bay cage update
@@ -2093,6 +2331,78 @@ def find_cabinet_root(obj):
     return None
 
 
+def default_front_type_for_root(root):
+    """Default front_type for a freshly created opening under `root`.
+
+    Panels default to INSET_PANEL so a new panel reads as a paneled
+    door out of the box - the user can change individual openings
+    afterward via the Change Opening menu or the Selection sub-panel.
+    Cabinets stay NONE (open shelving) and let the user pick.
+    """
+    if root is None:
+        return 'NONE'
+    if root.face_frame_cabinet.cabinet_type == 'PANEL':
+        return 'INSET_PANEL'
+    return 'NONE'
+
+
+def applied_panel_geometry(layout, side):
+    """Transform + dimensions for an applied panel covering one side of
+    a cabinet. Returns (location, rotation_z, width, height, depth).
+
+    Cabinet conventions: X=0 is the left exterior face, X=dim_x is the
+    right exterior face; Y=0 is the back, Y=-dim_y is the front; Z=0
+    is the floor, Z=dim_z is the cabinet top.
+
+    LEFT and RIGHT panels sit in the scribe gap between the cabinet's
+    exterior face and the side panel's outer face. The panel's outer
+    (visible) face is flush with the face frame's outer face; its inner
+    face touches the side panel. Y range matches the side panel
+    (between back of FF and back of cabinet); Z range matches the bay's
+    vertical extent so the applied panel and the side panel align.
+
+    BACK uses simple full-extent positioning for now; refining is
+    deferred until applied-back behavior is settled.
+
+    The standalone panel's local axes are: +X = width, +Y points INTO
+    the panel (back face Y=0, front Y=-depth), +Z = up. Each side's
+    rotation around Z aims the front face outward from the cabinet.
+    """
+    if side == 'LEFT':
+        scribe = solver.left_scribe_offset(layout)
+        bottom_z = solver.bay_bottom_z(layout, 0)
+        top_z = solver.left_side_top_z(layout)
+        # Rz(-pi/2): panel +X -> cabinet -Y, panel +Y -> cabinet +X.
+        # Origin x = scribe (panel back face touches side outer face);
+        # panel front face lands at cabinet x = 0 (flush with FF outer
+        # face) when depth = scribe.
+        location = (scribe, 0.0, bottom_z)
+        rotation_z = -math.pi / 2.0
+        width = layout.dim_y - layout.fft
+        height = top_z - bottom_z
+        return (location, rotation_z, width, height, scribe)
+    if side == 'RIGHT':
+        scribe = solver.right_scribe_offset(layout)
+        last = layout.bay_count - 1
+        bottom_z = solver.bay_bottom_z(layout, last)
+        top_z = solver.right_side_top_z(layout)
+        # Rz(+pi/2): panel +X -> cabinet +Y, panel +Y -> cabinet -X.
+        # Origin x = dim_x - scribe; front face lands at dim_x (flush
+        # with FF outer face) when depth = scribe.
+        location = (layout.dim_x - scribe,
+                    -layout.dim_y + layout.fft, bottom_z)
+        rotation_z = math.pi / 2.0
+        width = layout.dim_y - layout.fft
+        height = top_z - bottom_z
+        return (location, rotation_z, width, height, scribe)
+    # BACK: rotate +pi around Z. Front face -> +Y. Origin at
+    # back-right-bottom; width spans cabinet x from dim_x down to 0.
+    # Full cabinet height for now - refine when applied-back behavior
+    # is settled.
+    return ((layout.dim_x, 0.0, 0.0), math.pi,
+            layout.dim_x, layout.dim_z, inch(0.75))
+
+
 def _wrap_cabinet(obj):
     """Wrap a cabinet root Object as the appropriate FaceFrameCabinet subclass."""
     class_name = obj.get('CLASS_NAME', 'FaceFrameCabinet')
@@ -2107,6 +2417,18 @@ def _wrap_cabinet(obj):
     instance = cls.__new__(cls)
     GeoNodeCage.__init__(instance, obj)
     return instance
+
+
+def _remove_root_with_children(root_obj):
+    """Delete a cabinet/panel root and every descendant. Iterates the
+    descendant list in reverse so deeper objects unparent before their
+    ancestors, avoiding "StructRNA has been removed" errors when a
+    later iteration would try to read a freed Object.
+    """
+    for desc in reversed(list(root_obj.children_recursive)):
+        if desc.name in bpy.data.objects:
+            bpy.data.objects.remove(desc, do_unlink=True)
+    bpy.data.objects.remove(root_obj, do_unlink=True)
 
 
 def recalculate_face_frame_cabinet(obj):
