@@ -22,6 +22,20 @@ from bpy.props import (
 from ... import units
 
 
+# Finish-end / back conditions. Module-level so both Cabinet_Props and
+# Scene_Props can reference the same enum items list.
+FIN_END_ITEMS = [
+    ('UNFINISHED', "Unfinished", "Side is unfinished (against a wall or hidden)"),
+    ('FINISHED', "Finished", "Side IS the outer face (3/4 stock)"),
+    ('PANELED', "Paneled", "Applied panel with rails and stiles"),
+    ('FALSE_FF', "False Face Frame", "Applied frame with non-working fronts"),
+    ('WORKING_FF', "Working Face Frame", "Applied frame with working fronts"),
+    ('BEADBOARD', "Beadboard", "Beadboard finished end"),
+    ('SHIPLAP', "Shiplap", "Shiplap finished end"),
+    ('FLUSH_X', "Finished Flush X Inches", "Finished strip running the front X inches of the side"),
+]
+
+
 # ---------------------------------------------------------------------------
 # Preview collection management - mirrors frameless lifecycle
 # ---------------------------------------------------------------------------
@@ -338,6 +352,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('TALL', "Tall", "Tall cabinet"),
             ('UPPER', "Upper", "Upper cabinet"),
             ('LAP_DRAWER', "Lap Drawer", "Lap drawer cabinet"),
+            ('PANEL', "Panel", "Standalone face frame panel (no carcass)"),
         ],
         default='BASE',
     )  # type: ignore
@@ -346,27 +361,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     is_built_in_appliance: BoolProperty(name="Is Built-in Appliance", default=False)  # type: ignore
     is_double: BoolProperty(name="Is Stacked / Double", default=False)  # type: ignore
 
-    FIN_END_ITEMS = [
-        ('NONE', "None", "No finished end"),
-        ('THREE_QUARTER', '3/4 Finished', "Three-quarter finished end"),
-        ('HALF', '1/2 Finished', "Half finished end"),
-        ('QUARTER', '1/4 Finished', "Quarter finished end"),
-        ('PANELED', "Paneled", "Paneled finished end"),
-        ('FALSE_FF', "False Face Frame", "False face frame end"),
-        ('WORKING_FF', "Working Face Frame", "Working face frame end"),
-        ('SOLID_BEADBOARD', "Solid Beadboard", "Solid beadboard finished end"),
-        ('MDF_BEADBOARD', "MDF Beadboard", "MDF beadboard finished end"),
-        ('FLUSH_X', "Finished Flush X Inches", "Finished flush x inches"),
-    ]
-
     left_finished_end_condition: EnumProperty(
-        name="Left Finished End", items=FIN_END_ITEMS, default='NONE'
+        name="Left Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
+        update=_update_cabinet_dim,
     )  # type: ignore
     right_finished_end_condition: EnumProperty(
-        name="Right Finished End", items=FIN_END_ITEMS, default='NONE'
+        name="Right Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
+        update=_update_cabinet_dim,
     )  # type: ignore
     back_finished_end_condition: EnumProperty(
-        name="Back Finished End", items=FIN_END_ITEMS, default='NONE'
+        name="Back Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # Scribe = inset from the face frame outer face to the side panel
@@ -382,6 +387,48 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     right_scribe: FloatProperty(
         name="Right Scribe", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Exposure flags. Manually toggled today; a future scene-update pass
+    # will compute these from neighbor / wall geometry. Drives the
+    # "Apply to All Exposed" bulk operator and signals to the solver
+    # which sides need finished treatment.
+    left_exposed: BoolProperty(name="Left Exposed", default=False)  # type: ignore
+    right_exposed: BoolProperty(name="Right Exposed", default=False)  # type: ignore
+    back_exposed: BoolProperty(name="Back Exposed", default=False)  # type: ignore
+
+    # FLUSH_X writes a finished strip running the front X inches of the
+    # side panel; per-side because adjacent-appliance widths can differ.
+    # Back has no FLUSH_X by design.
+    left_flush_x_amount: FloatProperty(
+        name="Left Flush X Amount", default=units.inch(4),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_flush_x_amount: FloatProperty(
+        name="Right Flush X Amount", default=units.inch(4),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Applied-panel frame member sizes. Used when a side's finish type is
+    # PANELED / FALSE_FF / WORKING_FF. panel_frame_auto=True (default)
+    # asks the parts builder to compute widths from opening/cabinet
+    # dimensions; turning it off uses the explicit values below. One set
+    # per cabinet rather than per-side - builder style is uniform within
+    # a cabinet in practice. Easy to split later if that doesn't hold.
+    panel_frame_auto: BoolProperty(name="Auto Panel Frame Widths", default=True)  # type: ignore
+    panel_top_rail_width: FloatProperty(
+        name="Panel Top Rail Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    panel_bottom_rail_width: FloatProperty(
+        name="Panel Bottom Rail Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    panel_stile_width: FloatProperty(
+        name="Panel Stile Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
     )  # type: ignore
 
     # Top scribe = amount the carcass top (top panel or stretchers) is
@@ -767,6 +814,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
         ('DRAWER_FRONT', "Drawer Front", "Drawer front"),
         ('PULLOUT', "Pullout", "Door front on a pullout slide; supports pullout accessories"),
         ('FALSE_FRONT', "False Front", "Decorative drawer-style panel; fixed (does not open)"),
+        ('INSET_PANEL', "Inset Panel", "1/4\" panel filling the face frame opening; no overlay, no swing"),
     ]
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
@@ -998,9 +1046,42 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
     # ---- Options section toggles ----
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles", default=False)  # type: ignore
+    show_finished_ends_options: BoolProperty(name="Show Finished Ends and Backs", default=False)  # type: ignore
     show_general_options: BoolProperty(name="Show General Options", default=False)  # type: ignore
     show_face_frame_options: BoolProperty(name="Show Face Frame Options", default=False)  # type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options", default=False)  # type: ignore
+
+    # ---- Finished Ends and Backs defaults ----
+    # Drives the "Apply to All Exposed" bulk operator and seeds new
+    # cabinets at create_cabinet_root time. Cabinet-level overrides
+    # live on Face_Frame_Cabinet_Props.
+    default_finished_end_type: EnumProperty(
+        name="Default Finished End Type",
+        items=FIN_END_ITEMS, default='FINISHED',
+    )  # type: ignore
+    default_scribe: FloatProperty(
+        name="Default Scribe", default=units.inch(0.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    default_flush_x_amount: FloatProperty(
+        name="Default Flush X Amount", default=units.inch(4),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    default_panel_frame_auto: BoolProperty(
+        name="Default Auto Panel Frame Widths", default=True,
+    )  # type: ignore
+    default_panel_top_rail_width: FloatProperty(
+        name="Default Panel Top Rail Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    default_panel_bottom_rail_width: FloatProperty(
+        name="Default Panel Bottom Rail Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
+    default_panel_stile_width: FloatProperty(
+        name="Default Panel Stile Width", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+    )  # type: ignore
     show_front_options: BoolProperty(name="Show Front Options", default=False)  # type: ignore
     show_drawer_options: BoolProperty(name="Show Drawer Options", default=False)  # type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options", default=False)  # type: ignore
@@ -1469,6 +1550,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     def draw_part_library_ui(self, layout, context):
         self._draw_catalog_grid(layout, [
+            "Panel",
             "Loose Stile", "End Leg", "Intermediate Leg",
             "Vanity End Leg Assembly", "Vanity Support Leg",
             "Vanity Fixed Shelf", "Floating Shelves",
@@ -1522,6 +1604,31 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: pulls (Options tab)
     # =====================================================================
+    def draw_finished_ends_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'default_finished_end_type', text="Type")
+        col.separator()
+        col.prop(self, 'default_scribe', text="Default Scribe")
+        if self.default_finished_end_type == 'FLUSH_X':
+            col.prop(self, 'default_flush_x_amount', text="Flush X Amount")
+        col.separator()
+        col.prop(self, 'default_panel_frame_auto', text="Auto Panel Frame Widths")
+        if not self.default_panel_frame_auto:
+            sub = col.column(align=True)
+            sub.prop(self, 'default_panel_top_rail_width', text="Top Rail")
+            sub.prop(self, 'default_panel_bottom_rail_width', text="Bottom Rail")
+            sub.prop(self, 'default_panel_stile_width', text="Stile")
+        col.separator()
+        # The bulk operator walks every cabinet in the scene and writes
+        # default_finished_end_type to any side flagged exposed. Type
+        # only - scribe / flush_x / panel-frame defaults are read by the
+        # solver per cabinet, so changing them here propagates without a
+        # sweep.
+        col.operator(
+            "hb_face_frame.apply_finished_ends_to_exposed",
+            text="Apply to All Exposed", icon='CHECKMARK',
+        )
+
     def draw_pulls_ui(self, layout, context):
         from . import pulls
 
@@ -1637,6 +1744,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
                      icon='TRIA_DOWN' if self.show_cabinet_styles else 'TRIA_RIGHT', emboss=False)
             if self.show_cabinet_styles:
                 self.draw_cabinet_styles_ui(box, context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self, 'show_finished_ends_options', text="Finished Ends and Backs",
+                     icon='TRIA_DOWN' if self.show_finished_ends_options else 'TRIA_RIGHT', emboss=False)
+            if self.show_finished_ends_options:
+                self.draw_finished_ends_ui(box, context)
 
             box = col.box()
             row = box.row()

@@ -121,6 +121,7 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
         ('DRAWER',            "Drawer"),
         ('PULLOUT',           "Pullout"),
+        ('INSET_PANEL',       "Inset Panel"),
         ('FALSE_FRONT',       "False Front"),
         ('APPLIANCE',         "Appliance"),
     ]

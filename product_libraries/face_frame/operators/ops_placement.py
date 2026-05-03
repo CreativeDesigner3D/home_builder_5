@@ -30,6 +30,7 @@ The cage is flagged HB_CURRENT_DRAW_OBJ so hb_snap raycasts skip it
 """
 
 import bpy
+from .... import units
 import math
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane, intersect_point_line
@@ -85,6 +86,8 @@ def _cabinet_type_for_name(cabinet_name):
     Mirrors types_face_frame.get_cabinet_class's dispatch logic so the
     preview cage's dimensions match what cabinet.create() will build.
     """
+    if cabinet_name == 'Panel':
+        return 'PANEL'
     if 'Upper' in cabinet_name:
         return 'UPPER'
     if 'Tall' in cabinet_name or 'Refrigerator Cabinet' in cabinet_name:
@@ -95,7 +98,12 @@ def _cabinet_type_for_name(cabinet_name):
 
 
 def _cage_dimensions(scene_props, cabinet_type):
-    """Return (depth, height) per the relevant scene defaults."""
+    """Return (depth, height) per the relevant scene defaults. Panel
+    uses fixed defaults rather than scene props - it's a fixed library
+    size, not a configurable cabinet class.
+    """
+    if cabinet_type == 'PANEL':
+        return (units.inch(0.75), units.inch(30.0))
     if cabinet_type == 'UPPER':
         return (scene_props.upper_cabinet_depth,
                 scene_props.upper_cabinet_height)

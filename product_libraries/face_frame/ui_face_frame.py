@@ -82,7 +82,13 @@ def draw_dimensions(layout, cab_props):
 
 def draw_construction(layout, cab_props):
     """Material thickness, back thickness, toe kick (if applicable),
-    stretchers (if applicable)."""
+    stretchers (if applicable). Panel roots have no carcass - the
+    section collapses to just the finished-ends block (which itself
+    is irrelevant for panels but harmless to leave visible)."""
+    if cab_props.cabinet_type == 'PANEL':
+        layout.label(text="No carcass - face frame only", icon='INFO')
+        return
+
     col = layout.column(align=True)
     col.prop(cab_props, 'material_thickness', text="Material")
     col.prop(cab_props, 'back_thickness', text="Back")
@@ -99,6 +105,10 @@ def draw_construction(layout, cab_props):
         col.label(text="Top Stretchers")
         col.prop(cab_props, 'stretcher_width', text="Width")
         col.prop(cab_props, 'stretcher_thickness', text="Thickness")
+
+    layout.separator()
+    layout.label(text="Finished Ends and Backs")
+    draw_finished_ends(layout, cab_props)
 
 
 def draw_face_frame_defaults(layout, cab_props):
@@ -215,7 +225,9 @@ def draw_opening_properties(layout, opening_obj):
     col.prop(op, 'front_type', text="Front Type")
     if op.front_type in ('DOOR', 'PULLOUT'):
         col.prop(op, 'hinge_side', text="Hinge Side")
-    if op.front_type != 'NONE':
+    # INSET_PANEL has no motion - skip the swing slider for it (and
+    # NONE which has no front to animate).
+    if op.front_type not in ('NONE', 'INSET_PANEL'):
         col.prop(op, 'swing_percent', text="Open", slider=True)
     col.separator()
     col.label(text="Overlays")
@@ -227,6 +239,13 @@ def draw_opening_properties(layout, opening_obj):
         field.prop(op, f'{side}_overlay', text=side.capitalize())
         lock_icon = 'UNLOCKED' if unlocked else 'LOCKED'
         row.prop(op, f'unlock_{side}_overlay', text="", icon=lock_icon)
+
+    # Interior Items: hidden for panel roots - panels never have
+    # interior objects (no carcass to hold them). Walk up to the root
+    # to read the cabinet_type; opening -> bay -> root.
+    root = types_face_frame.find_cabinet_root(opening_obj)
+    if root is not None and root.face_frame_cabinet.cabinet_type == 'PANEL':
+        return
 
     layout.separator()
     layout.label(text="Interior Items")
@@ -315,6 +334,32 @@ def draw_rail_properties(layout, root, rail_obj, role):
     attr = 'top_rail_width' if is_top else 'bottom_rail_width'
     layout.label(text=f"{label} (Bay {seg_start + 1})", icon='SNAP_EDGE')
     layout.prop(bp, attr, text="Width")
+
+
+def draw_finished_ends(layout, cab_props):
+    """Per-cabinet finished ends + exposed flags.
+
+    Three blocks (Left / Right / Back). Each shows: exposed toggle, type
+    dropdown, scribe (when type is NONE), and flush-X amount (when type
+    is FLUSH_X). Back has no FLUSH_X. Lives in the Construction section
+    rather than its own sub-panel so the active cabinet's finish state
+    stays visible alongside the rest of the carcass settings.
+    """
+    for side, label, has_flush_x in (
+        ('left', 'Left', True),
+        ('right', 'Right', True),
+        ('back', 'Back', False),
+    ):
+        box = layout.box()
+        box.label(text=label)
+        col = box.column(align=True)
+        col.prop(cab_props, f'{side}_exposed', text="Exposed")
+        col.prop(cab_props, f'{side}_finished_end_condition', text="Type")
+        fin_type = getattr(cab_props, f'{side}_finished_end_condition')
+        if fin_type == 'UNFINISHED' and side != 'back':
+            col.prop(cab_props, f'{side}_scribe', text="Scribe")
+        if has_flush_x and fin_type == 'FLUSH_X':
+            col.prop(cab_props, f'{side}_flush_x_amount', text="Flush X Amount")
 
 
 def draw_all_bays_summary(layout, root):

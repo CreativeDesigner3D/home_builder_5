@@ -101,6 +101,7 @@ PART_ROLE_DOOR = 'DOOR'
 PART_ROLE_DRAWER_FRONT = 'DRAWER_FRONT'
 PART_ROLE_PULLOUT_FRONT = 'PULLOUT_FRONT'
 PART_ROLE_FALSE_FRONT = 'FALSE_FRONT'
+PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 
 # Pivot empty parent of every front part. Holds the swing rotation
 # (door / pullout) or the slide translation (drawer front) so the front
@@ -115,6 +116,7 @@ FRONT_PART_ROLES = frozenset({
     PART_ROLE_DRAWER_FRONT,
     PART_ROLE_PULLOUT_FRONT,
     PART_ROLE_FALSE_FRONT,
+    PART_ROLE_INSET_PANEL,
 })
 
 FRONT_TYPE_TO_ROLE = {
@@ -516,23 +518,27 @@ class FaceFrameCabinet(GeoNodeCage):
         mid stile parts. Initializes per-bay PropertyGroups.
         """
         # ----- Carcass -----
-        left = CabinetPart()
-        left.create('Left Side')
-        left.obj.parent = self.obj
-        left.obj['hb_part_role'] = PART_ROLE_LEFT_SIDE
-        left.obj['CABINET_PART'] = True
-        left.obj.rotation_euler.y = math.radians(-90)
-        left.set_input('Mirror Y', True)
-        left.set_input('Mirror Z', True)
+        # Skipped for face-frame-only roots (panels). Bottom / top / back
+        # are already segment-keyed and lazy; only the side panels are
+        # created up-front and need the explicit gate.
+        if self._has_carcass():
+            left = CabinetPart()
+            left.create('Left Side')
+            left.obj.parent = self.obj
+            left.obj['hb_part_role'] = PART_ROLE_LEFT_SIDE
+            left.obj['CABINET_PART'] = True
+            left.obj.rotation_euler.y = math.radians(-90)
+            left.set_input('Mirror Y', True)
+            left.set_input('Mirror Z', True)
 
-        right = CabinetPart()
-        right.create('Right Side')
-        right.obj.parent = self.obj
-        right.obj['hb_part_role'] = PART_ROLE_RIGHT_SIDE
-        right.obj['CABINET_PART'] = True
-        right.obj.rotation_euler.y = math.radians(-90)
-        right.set_input('Mirror Y', True)
-        right.set_input('Mirror Z', False)
+            right = CabinetPart()
+            right.create('Right Side')
+            right.obj.parent = self.obj
+            right.obj['hb_part_role'] = PART_ROLE_RIGHT_SIDE
+            right.obj['CABINET_PART'] = True
+            right.obj.rotation_euler.y = math.radians(-90)
+            right.set_input('Mirror Y', True)
+            right.set_input('Mirror Z', False)
 
         # Bottom is segment-keyed; created lazily by _reconcile_carcass_bottoms.
 
@@ -615,11 +621,14 @@ class FaceFrameCabinet(GeoNodeCage):
             mid_stile.set_input('Mirror Z', True)
 
             # Mid Division panels: carcass partition behind this mid
-            # stile. Two slots per gap so we can show one centered panel
-            # for matching bay depths or two face-to-face panels for
+            # stile. Skipped for face-frame-only roots (panels). Two
+            # slots per gap so we can show one centered panel for
+            # matching bay depths or two face-to-face panels for
             # differing depths without create/delete during recalc. Slot
             # 1 starts hidden; recalc toggles it based on the panel list
             # returned by solver.mid_division_panels.
+            if not self._has_carcass():
+                continue
             for slot in (0, 1):
                 mid_div = CabinetPart()
                 mid_div.create(f'Mid Division {i + 1}.{slot}')
@@ -910,30 +919,42 @@ class FaceFrameCabinet(GeoNodeCage):
         # Compute and reconcile rail segments before the dispatch loop
         top_segments = solver.top_rail_segments(layout)
         bottom_segments = solver.bottom_rail_segments(layout)
-        carcass_bottom_segs = solver.carcass_bottom_segments(layout)
-        carcass_back_segs = solver.carcass_back_segments(layout)
         self._reconcile_rails(PART_ROLE_TOP_RAIL, top_segments)
         self._reconcile_rails(PART_ROLE_BOTTOM_RAIL, bottom_segments)
-        self._reconcile_carcass_bottoms(carcass_bottom_segs)
-        self._reconcile_carcass_backs(carcass_back_segs)
 
-        # Top construction branches on cabinet type:
-        #   BASE / LAP_DRAWER -> Front + Rear stretchers
-        #   UPPER / TALL      -> Solid top panel
-        # Cleanup the other style's parts in case of cabinet-type change
-        # or migration from a previous architecture.
-        if layout.uses_stretchers:
-            front_stretcher_segs = solver.front_stretcher_segments(layout)
-            rear_stretcher_segs = solver.rear_stretcher_segments(layout)
-            self._cleanup_role(PART_ROLE_TOP)
-            self._reconcile_stretchers(PART_ROLE_FRONT_STRETCHER, front_stretcher_segs)
-            self._reconcile_stretchers(PART_ROLE_REAR_STRETCHER, rear_stretcher_segs)
-            carcass_top_segs = []
+        # Carcass branch - skipped for face-frame-only roots (panels).
+        # Empty segment lists make the dispatch loop's carcass branches
+        # no-ops, since _build_carcass_parts also skipped creating those
+        # children.
+        if self._has_carcass():
+            carcass_bottom_segs = solver.carcass_bottom_segments(layout)
+            carcass_back_segs = solver.carcass_back_segments(layout)
+            self._reconcile_carcass_bottoms(carcass_bottom_segs)
+            self._reconcile_carcass_backs(carcass_back_segs)
+
+            # Top construction branches on cabinet type:
+            #   BASE / LAP_DRAWER -> Front + Rear stretchers
+            #   UPPER / TALL      -> Solid top panel
+            # Cleanup the other style's parts in case of cabinet-type
+            # change or migration from a previous architecture.
+            if layout.uses_stretchers:
+                front_stretcher_segs = solver.front_stretcher_segments(layout)
+                rear_stretcher_segs = solver.rear_stretcher_segments(layout)
+                self._cleanup_role(PART_ROLE_TOP)
+                self._reconcile_stretchers(PART_ROLE_FRONT_STRETCHER, front_stretcher_segs)
+                self._reconcile_stretchers(PART_ROLE_REAR_STRETCHER, rear_stretcher_segs)
+                carcass_top_segs = []
+            else:
+                carcass_top_segs = solver.carcass_top_segments(layout)
+                self._cleanup_role(PART_ROLE_FRONT_STRETCHER)
+                self._cleanup_role(PART_ROLE_REAR_STRETCHER)
+                self._reconcile_carcass_tops(carcass_top_segs)
+                front_stretcher_segs = []
+                rear_stretcher_segs = []
         else:
-            carcass_top_segs = solver.carcass_top_segments(layout)
-            self._cleanup_role(PART_ROLE_FRONT_STRETCHER)
-            self._cleanup_role(PART_ROLE_REAR_STRETCHER)
-            self._reconcile_carcass_tops(carcass_top_segs)
+            carcass_bottom_segs = []
+            carcass_back_segs = []
+            carcass_top_segs = []
             front_stretcher_segs = []
             rear_stretcher_segs = []
 
@@ -1455,8 +1476,13 @@ class FaceFrameCabinet(GeoNodeCage):
 
         # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
         self._reconcile_bay_splitters(bay_obj, parts['splitters'])
-        # Pass 3: backings (divisions / shelves) - delete & recreate
-        self._reconcile_bay_backings(bay_obj, parts['backings'])
+        # Pass 3: backings (divisions / shelves) - delete & recreate.
+        # Backings are carcass-deep partitions; for face-frame only
+        # roots (panels) we still call the reconcile with an empty
+        # rect list so its internal wipe cleans up any stale backings
+        # (e.g. on a panel that had splits before this gate landed).
+        backing_rects = parts['backings'] if self._has_carcass() else []
+        self._reconcile_bay_backings(bay_obj, backing_rects)
 
     def _reconcile_bay_splitters(self, bay_obj, splitter_rects):
         """Delete every existing bay splitter (mid rail / mid stile)
@@ -1698,9 +1724,9 @@ class FaceFrameCabinet(GeoNodeCage):
     def _create_pull_for_front(self, front_part, role, leaf):
         """Attach a pull instance to `front_part` based on the cabinet's
         type and the front's role (DOOR / DRAWER_FRONT / PULLOUT_FRONT).
-        FALSE_FRONT skips - false fronts are decorative and don't carry
-        a pull. Returns the pull Object (or None if no pull is selected
-        or the asset can't be loaded).
+        FALSE_FRONT and INSET_PANEL skip - both are decorative
+        and don't carry a pull. Returns the pull Object (or None if no
+        pull is selected or the asset can't be loaded).
 
         The pull is parented to `front_part` so it inherits the swing /
         slide animation. Position is computed in front-part local space
@@ -1708,7 +1734,7 @@ class FaceFrameCabinet(GeoNodeCage):
         rotation_euler.x = +90 deg maps the asset's bar axis along
         the door's vertical and orients its body in -Z (outward).
         """
-        if role == PART_ROLE_FALSE_FRONT:
+        if role in (PART_ROLE_FALSE_FRONT, PART_ROLE_INSET_PANEL):
             return None
         scene_props = bpy.context.scene.hb_face_frame
         kind = 'drawer' if role in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT) else 'door'
@@ -1810,6 +1836,10 @@ class FaceFrameCabinet(GeoNodeCage):
         interior parts hold no user state worth preserving across
         recalcs - their geometry is fully derived from the InteriorItem
         collection on the opening props.
+
+        Panel roots (face-frame only) never have interior parts; we
+        still run the wipe to clean up anything stale, then clear the
+        collection and return before the spawn loop.
         """
         op_props = opening_obj.face_frame_opening
 
@@ -1820,6 +1850,11 @@ class FaceFrameCabinet(GeoNodeCage):
         for child in list(opening_obj.children):
             if child.get('hb_part_role') in INTERIOR_PART_ROLES:
                 bpy.data.objects.remove(child, do_unlink=True)
+
+        if not self._has_carcass():
+            if len(op_props.interior_items) > 0:
+                op_props.interior_items.clear()
+            return
 
         # Sync auto-computed shelf counts for any unlocked items before
         # the solver reads them. Writing shelf_qty fires its update
@@ -1883,6 +1918,13 @@ class FaceFrameCabinet(GeoNodeCage):
     def _has_toe_kick(self):
         """Whether this cabinet sits on a toe kick. Subclasses override."""
         return False
+
+    def _has_carcass(self):
+        """Whether this root has carcass parts (sides, top, bottom, back,
+        stretchers, mid divisions). False for panel-only roots that are
+        just a face frame. Subclasses override.
+        """
+        return True
 
     def add_temporary_parts(self):
         """Phase 3a stub. Phase 3d implements lazy add/remove of optional
@@ -1984,6 +2026,31 @@ class LapDrawerFaceFrameCabinet(FaceFrameCabinet):
 # ---------------------------------------------------------------------------
 # Helpers - cabinet lookup and recalc-from-prop-update
 # ---------------------------------------------------------------------------
+class PanelFaceFrameCabinet(FaceFrameCabinet):
+    """Standalone face frame panel: no carcass, just rails / stiles /
+    bays / openings. Same machinery as a cabinet, with carcass parts
+    gated off. Default 24" x 30" x 0.75" matches a typical applied
+    panel size.
+    """
+    default_cabinet_type = 'PANEL'
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = inch(24.0)
+        self.default_height = inch(30.0)
+        self.default_depth = inch(0.75)
+
+    def _has_toe_kick(self):
+        return False
+
+    def _has_carcass(self):
+        return False
+
+    def create(self, name="Panel", bay_qty=1):
+        self.create_cabinet_root(name)
+        self.create_carcass(has_toe_kick=False, bay_qty=bay_qty)
+
+
 CABINET_NAME_DISPATCH = {
     "Base Door": BaseFaceFrameCabinet,
     "Base Door Drw": BaseFaceFrameCabinet,
@@ -1993,6 +2060,7 @@ CABINET_NAME_DISPATCH = {
     "Upper Stacked": UpperFaceFrameCabinet,
     "Tall": TallFaceFrameCabinet,
     "Tall Stacked": TallFaceFrameCabinet,
+    "Panel": PanelFaceFrameCabinet,
 }
 
 
@@ -2033,6 +2101,7 @@ def _wrap_cabinet(obj):
         'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
         'TallFaceFrameCabinet': TallFaceFrameCabinet,
         'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
+        'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
     }
     cls = cls_lookup.get(class_name, FaceFrameCabinet)
     instance = cls.__new__(cls)

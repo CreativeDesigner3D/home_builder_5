@@ -824,6 +824,7 @@ _OPENING_PRESETS = {
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
+    'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
     'FALSE_FRONT':       {'front_type': 'FALSE_FRONT'},
     # APPLIANCE: open opening with no shelves and an 'Appliance' label.
     # Reuses the ACCESSORY interior kind for the label until a dedicated
@@ -913,6 +914,7 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('DRAWER',            "Drawer",            "Drawer front"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
+            ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),
             ('FALSE_FRONT',       "False Front",       "Decorative drawer-style panel; fixed"),
             ('APPLIANCE',         "Appliance",         "Opening reserved for an appliance"),
         ],

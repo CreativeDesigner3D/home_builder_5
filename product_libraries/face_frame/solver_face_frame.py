@@ -223,7 +223,7 @@ def carcass_inner_depth(layout):
 #   - PANELED: reserve 3/4" outboard for an applied panel
 #   - everything else: use the typed scribe value (default 0)
 def left_scribe_offset(layout):
-    if layout.l_fin_end == 'THREE_QUARTER':
+    if layout.l_fin_end == 'FINISHED':
         return 0.0
     if layout.l_fin_end == 'PANELED':
         return inch(0.75)
@@ -231,7 +231,7 @@ def left_scribe_offset(layout):
 
 
 def right_scribe_offset(layout):
-    if layout.r_fin_end == 'THREE_QUARTER':
+    if layout.r_fin_end == 'FINISHED':
         return 0.0
     if layout.r_fin_end == 'PANELED':
         return inch(0.75)
@@ -1087,12 +1087,21 @@ def _cage_x_bounds(layout, bay_index):
 def bay_cage_position(layout, bay_index):
     """Origin of the bay cage in cabinet-local space.
 
-    Anchored at the back-left-bottom corner of the carcass column for
-    this bay: top of the bottom panel (= top of the bottom rail), back
-    face of the face frame, and the inner face of either the left side
-    panel (for bay 0) or the mid division to its left.
+    Cabinet mode: back-left-bottom corner of the carcass column for
+    this bay - top of bottom panel, back face of face frame, inner
+    face of left side / mid division.
+
+    Panel mode: back-left-bottom corner of the face frame opening for
+    this bay. X = bay's left FF edge. Y = back face of panel. Z = top
+    of bottom rail.
     """
     bay = layout.bays[bay_index]
+    if layout.cabinet_type == 'PANEL':
+        x = bay_x_position(layout, bay_index)
+        y = -layout.dim_y
+        z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
+        return (x, y, z)
+
     left_x, _ = _cage_x_bounds(layout, bay_index)
     y = -layout.dim_y + layout.fft
     z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
@@ -1102,23 +1111,28 @@ def bay_cage_position(layout, bay_index):
 def bay_cage_dims(layout, bay_index):
     """Dim X (width), Dim Y (depth back-to-front), Dim Z (height).
 
-    Cage spans the full carcass column behind the face frame for this
-    bay - it represents the interior cavity, not the door/drawer
-    opening. Interior parts (shelves, dividers) span the full cage
-    width; door/drawer fronts overlay the face frame opening and
-    extend outward into the cage's margin between opening and side /
-    mid division.
+    Cabinet mode: cage spans the full carcass column behind the face
+    frame for this bay - interior cavity, wider than the face frame
+    opening on every axis to capture overlay door/drawer extents.
 
-    - X: between cabinet sides / adjacent mid divisions (carcass
-      interior, wider than the face frame opening by lsw/rsw - mt on
-      end bays and msw/2 - mt/2 on shared mid div bays)
-    - Y: from the back face of the face frame to the front face of the
-      back panel (bay depth minus fft minus bt)
-    - Z: top of the bay's bottom panel up to the underside of the
-      cabinet top - stretcher underside for BASE / LAP_DRAWER, solid
-      top underside for UPPER / TALL.
+    Panel mode (cabinet_type == 'PANEL'): cage exactly matches the
+    face frame opening rectangle. No carcass behind the frame, so no
+    interior cavity to enclose. Y collapses to the panel's own depth.
+
+    - X: between cabinet sides / adjacent mid divisions (cabinet) or
+      between this bay's stiles (panel)
+    - Y: bay depth minus fft minus bt (cabinet) or full panel depth
+      (panel)
+    - Z: top of bottom panel to underside of top construction
+      (cabinet) or face frame opening height (panel)
     """
     bay = layout.bays[bay_index]
+    if layout.cabinet_type == 'PANEL':
+        ff_opening_height = (
+            bay['height'] - bay['top_rail_width'] - bay['bottom_rail_width']
+        )
+        return (bay['width'], layout.dim_y, ff_opening_height)
+
     left_x, right_x = _cage_x_bounds(layout, bay_index)
     cage_dim_x = right_x - left_x
     cage_dim_y = bay['depth'] - layout.fft - layout.bt
@@ -1162,7 +1176,13 @@ def _bay_root_reveals(layout, bay_index):
     the bay's perimeter; internal split boundaries reset reveals to 0
     on the perpendicular side because a mid rail / mid stile edge is
     flush with its neighboring sub-cage's edge.
+
+    Panel mode: cage already matches the face frame opening, so all
+    perimeter reveals are zero.
     """
+    if layout.cabinet_type == 'PANEL':
+        return {'top': 0.0, 'bottom': 0.0, 'left': 0.0, 'right': 0.0}
+
     bay = layout.bays[bay_index]
     cage_left_x, cage_right_x = _cage_x_bounds(layout, bay_index)
     ff_opening_left_x = bay_x_position(layout, bay_index)
@@ -1225,12 +1245,19 @@ def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     ff_left_x = cage_x + reveals['left']
     ff_width = cage_dim_x - reveals['left'] - reveals['right']
     splitter_w = node['splitter_width']
+    # Cabinet: bay cage origin sits at the back of the face frame, so a
+    # mid splitter (a face-frame member) lives one fft in -Y from the
+    # origin to land in the FF plane. Panel: bay cage origin sits at
+    # the panel's front face and the cage spans the full panel depth,
+    # so the splitter sits at bay-local y=0 to land flush with the
+    # panel's front face.
+    splitter_y = _ff_front_y_bay_local(layout)
     splitters.append({
         'role':            'BAY_MID_RAIL',
         'split_node_name': node['obj_name'],
         'splitter_index':  splitter_index,
         'x':               ff_left_x,
-        'y':               -layout.fft,
+        'y':               splitter_y,
         'z':               splitter_bottom_z,
         'length':          ff_width,
         'splitter_width':  splitter_w,
@@ -1269,12 +1296,14 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     ff_bottom_z = cage_z + reveals['bottom']
     ff_height = cage_dim_z - reveals['top'] - reveals['bottom']
     splitter_w = node['splitter_width']
+    # See _emit_h_splitter for the cabinet vs panel y rationale.
+    splitter_y = _ff_front_y_bay_local(layout)
     splitters.append({
         'role':            'BAY_MID_STILE',
         'split_node_name': node['obj_name'],
         'splitter_index':  splitter_index,
         'x':               splitter_left_x,
-        'y':               -layout.fft,
+        'y':               splitter_y,
         'z':               ff_bottom_z,
         'length':          ff_height,
         'splitter_width':  splitter_w,
@@ -1505,6 +1534,27 @@ DOUBLE_DOOR_REVEAL = inch(0.125)
 DOOR_TO_FRAME_GAP = inch(0.125)
 
 
+def _ff_front_y_bay_local(layout):
+    """Bay-local Y of the face frame's front (outer) face.
+
+    Cabinet mode: bay cage origin sits at the BACK of the face frame,
+    so the front face is one fft in -Y. Panel mode: cage origin sits
+    at the panel's front face (which is the FF front), so it's 0.
+    Used by every front leaf and splitter to anchor against the FF
+    plane regardless of cabinet vs panel context.
+    """
+    return 0.0 if layout.cabinet_type == 'PANEL' else -layout.fft
+
+
+def _ff_back_y_bay_local(layout):
+    """Bay-local Y of the face frame's back (inner) face.
+
+    Cabinet mode: 0 (bay cage origin = FF back). Panel mode: layout.dim_y
+    (cage spans panel front -> back).
+    """
+    return layout.dim_y if layout.cabinet_type == 'PANEL' else 0.0
+
+
 def _door_panel_size(rect, cab_props, opening_props):
     """Width and height of the door panel covering this opening's face
     frame opening plus per-side overlay. For DOUBLE this is the
@@ -1565,6 +1615,7 @@ _FRONT_TYPE_TO_ROLE_NAME = {
     'DRAWER_FRONT': ('DRAWER_FRONT',  'Drawer Front'),
     'PULLOUT':      ('PULLOUT_FRONT', 'Pullout Front'),
     'FALSE_FRONT':  ('FALSE_FRONT',   'False Front'),
+    'INSET_PANEL':  ('INSET_PANEL',   'Inset Panel'),
 }
 
 
@@ -1585,7 +1636,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     # opening's left edge is at opening-local X = reveal_left, bottom
     # at Z = reveal_bottom.
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
 
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
@@ -1629,7 +1680,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
 
@@ -1661,7 +1712,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = -layout.fft - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
     base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, rect)
 
@@ -1671,6 +1722,38 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
         'pivot_rotation': (0.0, 0.0, 0.0),
         'part_position':  (0.0, 0.0, 0.0),
         'part_dims':      (height, width, door_thickness),
+    }
+
+
+def _inset_panel_leaf(layout, rect, role, name):
+    """Single-leaf inset panel that fills the face frame opening.
+    Sits IN the opening (not in front of it like an overlay door),
+    with its back face flush with the back of the face frame plane.
+    Thickness fixed at 1/4".
+
+    The pivot is the part's front face; the part extends +Y by
+    thickness from there. To place the back face on the FF back plane:
+    pivot_y = ff_back_y_bay_local - thickness. In bay-local Y the FF
+    back is at 0 for cabinets (cage origin = back of FF) and at
+    layout.dim_y for panels (cage spans panel front -> back).
+    """
+    panel_thickness = inch(0.25)
+    width = (
+        rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
+    )
+    height = (
+        rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
+    )
+    base_x = rect['reveal_left']
+    base_y = _ff_back_y_bay_local(layout) - panel_thickness
+    base_z = rect['reveal_bottom']
+    return {
+        'role': role,
+        'name': name,
+        'pivot_position': (base_x, base_y, base_z),
+        'pivot_rotation': (0.0, 0.0, 0.0),
+        'part_position':  (0.0, 0.0, 0.0),
+        'part_dims':      (height, width, panel_thickness),
     }
 
 
@@ -1702,6 +1785,9 @@ def front_leaves(layout, rect, cab_props, opening_props):
     if front_type == 'NONE':
         return []
     role, base_name = _FRONT_TYPE_TO_ROLE_NAME[front_type]
+
+    if front_type == 'INSET_PANEL':
+        return [_inset_panel_leaf(layout, rect, role, base_name)]
 
     if front_type in ('DRAWER_FRONT', 'PULLOUT', 'FALSE_FRONT'):
         # FALSE_FRONT shares drawer geometry but is fixed - we hand the
