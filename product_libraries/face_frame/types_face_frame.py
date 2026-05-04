@@ -118,6 +118,19 @@ PART_ROLE_FINISHED_BACK = 'FINISHED_BACK'
 PART_ROLE_FLUSH_X = 'FLUSH_X'
 TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
 
+# Textured-finish applied panels: 1/4 flat parts representing beadboard
+# or shiplap finishes on a side (LEFT / RIGHT / BACK). Distinct roles
+# so a future material pass can shade them differently; geometry is
+# identical between the two for now (later: a modifier could carve
+# bead profiles / plank reveals into the part).
+PART_ROLE_BEADBOARD = 'BEADBOARD'
+PART_ROLE_SHIPLAP = 'SHIPLAP'
+TAG_TEXTURED_PANEL_SIDE = 'hb_textured_panel_side'
+TEXTURED_PANEL_ROLES = {
+    'BEADBOARD': PART_ROLE_BEADBOARD,
+    'SHIPLAP':   PART_ROLE_SHIPLAP,
+}
+
 # Applied panel side tag - written on a panel root that's been spawned
 # by a cabinet to serve as its left/right/back finished end. Drives
 # reconciliation (find / resize / remove on cabinet recalc).
@@ -1157,6 +1170,7 @@ class FaceFrameCabinet(GeoNodeCage):
             self._reconcile_applied_panels(layout)
             self._reconcile_finished_back(layout)
             self._reconcile_flush_x_strips(layout)
+            self._reconcile_textured_panels(layout)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)
@@ -1354,6 +1368,101 @@ class FaceFrameCabinet(GeoNodeCage):
             strip.location = (origin_x, origin_y, bottom_z)
             part.set_input('Length',    length)
             part.set_input('Width',     amount)
+            part.set_input('Thickness', thickness)
+
+    # =====================================================================
+    # Applied textured panels (BEADBOARD / SHIPLAP, 1/4 flat parts)
+    # =====================================================================
+    def _reconcile_textured_panels(self, layout):
+        """Spawn / resize / remove BEADBOARD or SHIPLAP applied panels.
+
+        One reconciler covers all three sides. Geometry is a single
+        1/4 flat part per side - same overall position as a PANELED
+        applied panel (LEFT / RIGHT) or FINISHED back (BACK), without
+        the face frame structure. Distinct roles per condition so a
+        future material pass can shade beadboard and shiplap
+        differently; a future modifier pass can carve bead profiles /
+        plank reveals into the geometry.
+
+        Resize-in-place when the role is unchanged. Condition flips
+        between BEADBOARD <-> SHIPLAP rebuild the part since the role
+        changes.
+        """
+        cab = self.obj.face_frame_cabinet
+        side_specs = (
+            ('LEFT',  cab.left_finished_end_condition),
+            ('RIGHT', cab.right_finished_end_condition),
+            ('BACK',  cab.back_finished_end_condition),
+        )
+
+        existing = {
+            child.get(TAG_TEXTURED_PANEL_SIDE): child
+            for child in self.obj.children
+            if child.get(TAG_TEXTURED_PANEL_SIDE) in ('LEFT', 'RIGHT', 'BACK')
+        }
+
+        for side, condition in side_specs:
+            desired_role = TEXTURED_PANEL_ROLES.get(condition)
+            part_obj = existing.get(side)
+
+            if desired_role is None:
+                if part_obj is not None:
+                    bpy.data.objects.remove(part_obj, do_unlink=True)
+                continue
+
+            # Role mismatch -> drop and recreate so material assignment
+            # tracks the chosen condition cleanly.
+            if (part_obj is not None
+                    and part_obj.get('hb_part_role') != desired_role):
+                bpy.data.objects.remove(part_obj, do_unlink=True)
+                part_obj = None
+
+            thickness = inch(0.25)
+
+            if side == 'LEFT':
+                bottom_z = solver.bay_bottom_z(layout, 0)
+                location = (0.0, 0.0, bottom_z)
+                length = solver.left_side_top_z(layout) - bottom_z
+                width = layout.dim_y - layout.fft
+                rot_x, rot_y = 0.0, math.radians(-90)
+                mirror_y, mirror_z = True, True
+            elif side == 'RIGHT':
+                last = layout.bay_count - 1
+                bottom_z = solver.bay_bottom_z(layout, last)
+                location = (layout.dim_x, 0.0, bottom_z)
+                length = solver.right_side_top_z(layout) - bottom_z
+                width = layout.dim_y - layout.fft
+                rot_x, rot_y = 0.0, math.radians(-90)
+                mirror_y, mirror_z = True, False
+            else:  # BACK
+                # Origin sits at Y=+thickness so the part fills [0, thickness]
+                # in cabinet Y - directly behind the carcass back, same as
+                # FINISHED_BACK but 1/4 thick.
+                location = (0.0, thickness, 0.0)
+                length = layout.dim_z
+                width = layout.dim_x
+                rot_x, rot_y = math.radians(90), math.radians(-90)
+                mirror_y, mirror_z = True, False  # no z-mirror needed
+
+            if part_obj is None:
+                part = CabinetPart()
+                label = 'Beadboard' if condition == 'BEADBOARD' else 'Shiplap'
+                part.create(f'{label} {side[0]}')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = desired_role
+                part.obj['CABINET_PART'] = True
+                part.obj[TAG_TEXTURED_PANEL_SIDE] = side
+                part.obj.rotation_euler.x = rot_x
+                part.obj.rotation_euler.y = rot_y
+                part.set_input('Mirror Y', mirror_y)
+                part.set_input('Mirror Z', mirror_z)
+                part_obj = part.obj
+            else:
+                part = GeoNodeCutpart(part_obj)
+
+            part_obj.location = location
+            part.set_input('Length',    length)
+            part.set_input('Width',     width)
             part.set_input('Thickness', thickness)
 
     # =====================================================================
