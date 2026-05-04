@@ -279,6 +279,27 @@ def _update_bay_width(self, context):
         types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_bay_kick_height(self, context):
+    """Auto-lock-on-edit for Face_Frame_Bay_Props.kick_height.
+
+    Mirrors _update_bay_width. Without this, _distribute_bay_kick_heights
+    overwrites the user's edit on the recalc that fires from the prop
+    update, because unlock_kick_height is still False at that point.
+    Reuses _DISTRIBUTING_WIDTHS as the system-write guard since recalc
+    already adds the cabinet id to it for the entire body.
+    """
+    from . import types_face_frame
+    root = types_face_frame.find_cabinet_root(self.id_data)
+    if root is None:
+        return
+    if id(root) in types_face_frame._DISTRIBUTING_WIDTHS:
+        return  # system write - skip auto-lock and skip recalc
+    if not self.unlock_kick_height:
+        self.unlock_kick_height = True
+    else:
+        types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
 class Face_Frame_Mid_Stile_Width(PropertyGroup):
     """Width of the mid stile that sits between two adjacent bays.
 
@@ -665,7 +686,7 @@ class Face_Frame_Bay_Props(PropertyGroup):
     )  # type: ignore
     kick_height: FloatProperty(
         name="Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_bay_kick_height,
     )  # type: ignore
     top_offset: FloatProperty(
         name="Top Offset",

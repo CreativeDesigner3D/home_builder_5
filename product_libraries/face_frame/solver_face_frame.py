@@ -194,9 +194,9 @@ class FaceFrameLayout:
     def _make_default_bay(self):
         return {
             'width':              self.dim_x - self.lsw - self.rsw,
-            'height':             self.dim_z - self.tkh,
+            'height':             self.dim_z,
             'depth':              self.dim_y,
-            'kick_height':        0.0,
+            'kick_height':        self.tkh,
             'top_offset':         0.0,
             'top_rail_width':     self.default_top_rail_width,
             'bottom_rail_width':  self.default_bottom_rail_width,
@@ -329,29 +329,29 @@ def bay_x_position(layout, bay_index):
 # ---------------------------------------------------------------------------
 # Per-bay vertical anchors - the key abstraction for base vs upper cabinets
 # ---------------------------------------------------------------------------
-# Bases anchor at the floor: bay_bottom_z is fixed by toe kick + bay kick,
-# and a taller bay_height extends UPWARD past the cabinet ceiling.
+# Bases / talls anchor at the floor. bay.height is floor to top of top rail;
+# bay.kick_height is floor to bottom of bottom rail (the toe kick recess
+# height). bay_bottom_z / bay_top_z map directly to these.
 # Uppers anchor at the cabinet top: bay_top_z is fixed by dim_z - top_offset,
-# and a taller bay_height extends DOWNWARD past the cabinet floor.
+# and bay_height extends downward from there. Uppers carry kick_height = 0.
 #
 # All Z positions for bottom rails, bay cages, mid stile bottoms, and the
-# bottom-rail passthrough check go through these helpers. Top rails and the
-# top-rail passthrough always anchor at dim_z - top_offset for now (matches
-# both cabinet types in the common case).
+# bottom-rail passthrough check go through these helpers.
 def bay_bottom_z(layout, bay_index):
-    """Z of the bay's bottom edge (top surface of the bay's bottom rail)."""
+    """Z of the bay's bottom edge (bottom of the bottom rail / top of
+    toe kick recess for base / tall)."""
     bay = layout.bays[bay_index]
     if layout.cabinet_type == 'UPPER':
         return layout.dim_z - bay['top_offset'] - bay['height']
-    return layout.tkh + bay['kick_height']
+    return bay['kick_height']
 
 
 def bay_top_z(layout, bay_index):
-    """Z of the bay's top edge (bottom surface of the bay's top rail)."""
+    """Z of the bay's top edge (top of the top rail)."""
     bay = layout.bays[bay_index]
     if layout.cabinet_type == 'UPPER':
         return layout.dim_z - bay['top_offset']
-    return layout.tkh + bay['kick_height'] + bay['height']
+    return bay['height']
 
 
 # ---------------------------------------------------------------------------
