@@ -60,6 +60,8 @@ PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
 PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
+PART_ROLE_LEFT_KICK_RETURN = 'LEFT_KICK_RETURN'
+PART_ROLE_RIGHT_KICK_RETURN = 'RIGHT_KICK_RETURN'
 
 # Face frame member roles (rails and stiles). Phase 3a doesn't create any
 # of these yet; defined here so the "Face Frame" selection mode has a known
@@ -1020,6 +1022,12 @@ class FaceFrameCabinet(GeoNodeCage):
                     PART_ROLE_LEFT_CORNER_FINISH_KICK, 'Finish Toe Kick Left')
                 self._ensure_corner_finish_kick(
                     PART_ROLE_RIGHT_CORNER_FINISH_KICK, 'Finish Toe Kick Right')
+                self._ensure_kick_return(
+                    PART_ROLE_LEFT_KICK_RETURN, 'Toe Kick Return Left',
+                    mirror_z=True)
+                self._ensure_kick_return(
+                    PART_ROLE_RIGHT_KICK_RETURN, 'Toe Kick Return Right',
+                    mirror_z=False)
             else:
                 kick_subfront_segs = []
                 finish_kick_segs = []
@@ -1219,6 +1227,32 @@ class FaceFrameCabinet(GeoNodeCage):
                     continue
                 pos = solver.right_corner_finish_kick_position(layout)
                 length, width, thickness = solver.right_corner_finish_kick_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_LEFT_KICK_RETURN:
+                visible = solver.has_left_kick_return(layout)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.left_kick_return_position(layout)
+                length, width, thickness = solver.left_kick_return_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_RIGHT_KICK_RETURN:
+                visible = solver.has_right_kick_return(layout)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.right_kick_return_position(layout)
+                length, width, thickness = solver.right_kick_return_dims(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -1745,6 +1779,26 @@ class FaceFrameCabinet(GeoNodeCage):
         fk.set_input('Mirror Z', True)
         return fk.obj
 
+    def _ensure_kick_return(self, role, name, mirror_z):
+        """Lazy-create a left or right kick return - a vertical
+        closeout panel at the inset X position running full carcass
+        depth from cabinet back to main kick front. Rotation X=90 +
+        Z=-90 so Length runs -Y; mirror_z flips Thickness direction
+        (+X for left, -X for right).
+        """
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        ret = CabinetPart()
+        ret.create(name)
+        ret.obj.parent = self.obj
+        ret.obj['hb_part_role'] = role
+        ret.obj['CABINET_PART'] = True
+        ret.obj.rotation_euler.x = math.radians(90)
+        ret.obj.rotation_euler.z = math.radians(-90)
+        ret.set_input('Mirror Z', mirror_z)
+        return ret.obj
+
     def _reconcile_carcass_backs(self, segments):
         """Match Back carcass children against segments. Same three-pass
         delete/match/create as _reconcile_carcass_bottoms.
@@ -1939,12 +1993,19 @@ class FaceFrameCabinet(GeoNodeCage):
         if mod.node_group is None:
             return
         role = side_obj.get('hb_part_role')
-        stile_to_floor = (solver.left_stile_to_floor(layout)
-                          if role == PART_ROLE_LEFT_SIDE
-                          else solver.right_stile_to_floor(layout))
+        if role == PART_ROLE_LEFT_SIDE:
+            stile_to_floor = solver.left_stile_to_floor(layout)
+            has_inset = layout.kick_inset_left > 0
+        else:
+            stile_to_floor = solver.right_stile_to_floor(layout)
+            has_inset = layout.kick_inset_right > 0
+        # Side already floats by kick_height when there's an inset on
+        # this side, so the notch (which only existed to clear the
+        # recess in a floor-anchored side) becomes redundant.
         active = (layout.has_toe_kick
                   and layout.toe_kick_type == 'NOTCH'
                   and not stile_to_floor
+                  and not has_inset
                   and 0 <= bay_index < len(layout.bays))
         if active:
             bay = layout.bays[bay_index]

@@ -658,10 +658,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Toe Kick Thickness", default=units.inch(0.75), unit='LENGTH', precision=4
     )  # type: ignore
     inset_toe_kick_left: FloatProperty(
-        name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4
+        name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     inset_toe_kick_right: FloatProperty(
-        name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4
+        name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     include_finish_toe_kick: BoolProperty(
         name="Include Finish Toe Kick", default=True,

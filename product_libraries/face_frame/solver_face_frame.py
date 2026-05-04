@@ -364,17 +364,28 @@ def bay_top_z(layout, bay_index):
     return bay['height']
 
 
-def side_bottom_z(layout, bay_index):
+def side_bottom_z(layout, bay_index, side='LEFT'):
     """Z of the carcass side panel's bottom edge.
 
     NOTCH and FLUSH run sides to the floor (a corner notch handles the
     recess for NOTCH; the wide bottom rail handles it for FLUSH).
     FLOATING and uppers anchor the side at the bay bottom.
+
+    Inset exception: kick_inset_left / kick_inset_right > 0 means a
+    return part is wrapping the kick at that end and the side floats
+    by kick_height on that side, so the inset region is open from
+    the floor up to the cabinet bottom panel.
     """
-    if (layout.has_toe_kick
-            and layout.toe_kick_type in ('NOTCH', 'FLUSH')):
-        return 0.0
-    return bay_bottom_z(layout, bay_index)
+    if not layout.has_toe_kick:
+        return bay_bottom_z(layout, bay_index)
+    if layout.toe_kick_type == 'FLOATING':
+        return bay_bottom_z(layout, bay_index)
+    # NOTCH / FLUSH default to floor unless this side has a kick inset.
+    if side == 'LEFT' and layout.kick_inset_left > 0:
+        return bay_bottom_z(layout, bay_index)
+    if side == 'RIGHT' and layout.kick_inset_right > 0:
+        return bay_bottom_z(layout, bay_index)
+    return 0.0
 
 
 def left_stile_to_floor(layout):
@@ -438,9 +449,15 @@ def kick_subfront_segments(layout):
         first_bay = layout.bays[start]
         left_x, right_x = _segment_x_bounds(layout, start, end)
         if start == 0:
-            left_x += layout.kick_inset_left
+            if layout.kick_inset_left > 0:
+                # Inset with return: main kick butts against the return's
+                # inboard face at (inset + tkt).
+                left_x = layout.kick_inset_left + layout.tkt
+            # else: kick captured between sides at carcass_inner_left_x
         if end == last_bay:
-            right_x -= layout.kick_inset_right
+            if layout.kick_inset_right > 0:
+                right_x = (layout.dim_x - layout.kick_inset_right
+                           - layout.tkt)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
@@ -489,14 +506,20 @@ def finish_kick_segments(layout):
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
         if start == 0:
-            if left_stile_to_floor(layout):
+            if layout.kick_inset_left > 0:
+                # Inset with return: finish kick covers the return's
+                # front face, so it starts at the return's outer X.
+                left_x = layout.kick_inset_left
+            elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
             else:
                 left_x = 0.0
         else:
             left_x = _carcass_meeting_x(layout, start - 1)
         if end == last_bay:
-            if right_stile_to_floor(layout):
+            if layout.kick_inset_right > 0:
+                right_x = layout.dim_x - layout.kick_inset_right
+            elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
             else:
                 right_x = layout.dim_x
@@ -568,6 +591,58 @@ def right_corner_finish_kick_dims(layout):
     width = layout.bays[layout.bay_count - 1]['kick_height']
     thickness = (layout.tks + layout.tkt
                  - layout.finish_kick_thickness - layout.fft)
+    return (length, width, thickness)
+
+
+# ---------------------------------------------------------------------------
+# Kick returns - vertical closeout panels at the inset ends
+# ---------------------------------------------------------------------------
+# When kick_inset_left / right > 0, the side floats up by kick_height
+# and the kick is "wrapped" at that end by a return panel running the
+# full carcass depth, sitting tkt-thick at the inset X position. The
+# main kick subfront butts against the return's inboard face.
+# ---------------------------------------------------------------------------
+def has_left_kick_return(layout):
+    return (has_kick_subfront(layout)
+            and layout.kick_inset_left > 0)
+
+
+def has_right_kick_return(layout):
+    return (has_kick_subfront(layout)
+            and layout.kick_inset_right > 0)
+
+
+def left_kick_return_position(layout):
+    """Origin at the cabinet back, X at the inset distance from the
+    cabinet outer, on the floor. Length runs -Y toward the front,
+    Thickness extends +X toward the cabinet interior.
+    """
+    return (layout.kick_inset_left, 0.0, 0.0)
+
+
+def left_kick_return_dims(layout):
+    """Length spans from cabinet back to main kick front. Width is bay
+    0's kick height. Thickness is the toe kick board thickness.
+    """
+    length = layout.dim_y - layout.tks - layout.tkt
+    width = layout.bays[0]['kick_height']
+    thickness = layout.tkt
+    return (length, width, thickness)
+
+
+def right_kick_return_position(layout):
+    """Origin at the right end at X = dim_x - kick_inset_right; Thickness
+    extends -X toward the cabinet interior (Mirror Z = False on the
+    part flips the Thickness direction relative to the left return).
+    """
+    return (layout.dim_x - layout.kick_inset_right, 0.0, 0.0)
+
+
+def right_kick_return_dims(layout):
+    """Mirror of left_kick_return_dims; uses the LAST bay's kick height."""
+    length = layout.dim_y - layout.tks - layout.tkt
+    width = layout.bays[layout.bay_count - 1]['kick_height']
+    thickness = layout.tkt
     return (length, width, thickness)
 
 
@@ -760,12 +835,12 @@ def left_side_position(layout):
     first_depth = layout.bays[0]['depth']
     return (left_scribe_offset(layout),
             -layout.dim_y + first_depth,
-            side_bottom_z(layout, 0))
+            side_bottom_z(layout, 0, 'LEFT'))
 
 
 def left_side_dims(layout):
     first_depth = layout.bays[0]['depth']
-    bottom_z = side_bottom_z(layout, 0)
+    bottom_z = side_bottom_z(layout, 0, 'LEFT')
     top_z = left_side_top_z(layout)
     return (top_z - bottom_z, first_depth - layout.fft, left_side_thickness(layout))
 
@@ -775,13 +850,13 @@ def right_side_position(layout):
     last_depth = layout.bays[last]['depth']
     return (layout.dim_x - right_scribe_offset(layout),
             -layout.dim_y + last_depth,
-            side_bottom_z(layout, last))
+            side_bottom_z(layout, last, 'RIGHT'))
 
 
 def right_side_dims(layout):
     last = layout.bay_count - 1
     last_depth = layout.bays[last]['depth']
-    bottom_z = side_bottom_z(layout, last)
+    bottom_z = side_bottom_z(layout, last, 'RIGHT')
     top_z = right_side_top_z(layout)
     return (top_z - bottom_z, last_depth - layout.fft, right_side_thickness(layout))
 
