@@ -389,13 +389,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
-    # Exposure flags. Manually toggled today; a future scene-update pass
-    # will compute these from neighbor / wall geometry. Drives the
-    # "Apply to All Exposed" bulk operator and signals to the solver
-    # which sides need finished treatment.
-    left_exposed: BoolProperty(name="Left Exposed", default=False)  # type: ignore
-    right_exposed: BoolProperty(name="Right Exposed", default=False)  # type: ignore
-    back_exposed: BoolProperty(name="Back Exposed", default=False)  # type: ignore
+    # Exposure flags. Default True for testing - placement logic will
+    # eventually compute these from neighbor / wall geometry and flip
+    # them to False where a side is hidden against an adjacent cabinet
+    # or wall. Drives the "Apply to All Exposed" bulk operator and
+    # signals to the solver which sides need finished treatment.
+    left_exposed: BoolProperty(name="Left Exposed", default=True)  # type: ignore
+    right_exposed: BoolProperty(name="Right Exposed", default=True)  # type: ignore
+    back_exposed: BoolProperty(name="Back Exposed", default=True)  # type: ignore
 
     # FLUSH_X writes a finished strip running the front X inches of the
     # side panel; per-side because adjacent-appliance widths can differ.
