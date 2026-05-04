@@ -99,6 +99,9 @@ def draw_construction(layout, cab_props):
         col.prop(cab_props, 'toe_kick_type', text="Type")
         col.prop(cab_props, 'toe_kick_height', text="Height")
         col.prop(cab_props, 'toe_kick_setback', text="Setback")
+        col.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
+        if cab_props.include_finish_toe_kick:
+            col.prop(cab_props, 'finish_toe_kick_thickness', text="Finish Thickness")
 
     if cab_props.cabinet_type in ('BASE', 'LAP_DRAWER'):
         col.separator()
@@ -120,6 +123,9 @@ def draw_face_frame_defaults(layout, cab_props):
     col.separator()
     col.prop(cab_props, 'left_stile_width', text="Left Stile")
     col.prop(cab_props, 'right_stile_width', text="Right Stile")
+    if cab_props.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER'):
+        col.prop(cab_props, 'extend_left_stile_to_floor', text="Left Stile to Floor")
+        col.prop(cab_props, 'extend_right_stile_to_floor', text="Right Stile to Floor")
     col.separator()
     col.prop(cab_props, 'left_scribe', text="Left Scribe")
     col.prop(cab_props, 'right_scribe', text="Right Scribe")

@@ -63,6 +63,16 @@ class FaceFrameLayout:
         self.tkh = cab.toe_kick_height if self.has_toe_kick else 0.0
         self.tks = cab.toe_kick_setback if self.has_toe_kick else 0.0
         self.tkt = cab.toe_kick_thickness if self.has_toe_kick else 0.0
+        self.toe_kick_type = (cab.toe_kick_type
+                              if self.has_toe_kick else 'FLOATING')
+        self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
+        self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
+        self.kick_inset_left = (cab.inset_toe_kick_left
+                                if self.has_toe_kick else 0.0)
+        self.kick_inset_right = (cab.inset_toe_kick_right
+                                 if self.has_toe_kick else 0.0)
+        self.finish_kick_thickness = cab.finish_toe_kick_thickness
+        self.include_finish_kick = cab.include_finish_toe_kick
 
         # End stile widths
         self.lsw = cab.left_stile_width
@@ -354,6 +364,213 @@ def bay_top_z(layout, bay_index):
     return bay['height']
 
 
+def side_bottom_z(layout, bay_index):
+    """Z of the carcass side panel's bottom edge.
+
+    NOTCH and FLUSH run sides to the floor (a corner notch handles the
+    recess for NOTCH; the wide bottom rail handles it for FLUSH).
+    FLOATING and uppers anchor the side at the bay bottom.
+    """
+    if (layout.has_toe_kick
+            and layout.toe_kick_type in ('NOTCH', 'FLUSH')):
+        return 0.0
+    return bay_bottom_z(layout, bay_index)
+
+
+def left_stile_to_floor(layout):
+    """End stile extends past the bay bottom down to the floor when the
+    user enables it explicitly, or when FLUSH is on (a wide bottom rail
+    butts into a full-height stile rather than the other way around).
+    Uppers don't have a kick to fill, so the option no-ops there.
+    """
+    if not layout.has_toe_kick:
+        return False
+    if layout.toe_kick_type == 'FLUSH':
+        return True
+    return layout.extend_left_stile_to_floor
+
+
+def right_stile_to_floor(layout):
+    if not layout.has_toe_kick:
+        return False
+    if layout.toe_kick_type == 'FLUSH':
+        return True
+    return layout.extend_right_stile_to_floor
+
+
+# ---------------------------------------------------------------------------
+# Toe kick subfront - the visible front face of the recess
+# ---------------------------------------------------------------------------
+def has_kick_subfront(layout):
+    """Subfront only exists for NOTCH (recessed kick). FLUSH replaces
+    it with the wide bottom rail; FLOATING leaves the kick to a separate
+    base assembly; uppers have no kick.
+    """
+    return layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'
+
+
+def _kick_subfront_passthrough(layout, gap_index):
+    """True if a single kick subfront spans gap_index uninterrupted.
+    Breaks where adjacent bays have different kick_heights.
+    """
+    if gap_index >= len(layout.mid_stiles):
+        return False
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    if not _epsilon_eq(bay_a['kick_height'], bay_b['kick_height']):
+        return False
+    return True
+
+
+def kick_subfront_segments(layout):
+    """Toe kick subfront segments. Captured between the carcass sides
+    (and between mid divisions at interior breaks via _segment_x_bounds).
+    Breaks where adjacent bays have different kick_heights so each
+    segment can take its bay's kick_height as its Width. Insets are
+    only honored at the cabinet ends - interior breaks butt against
+    the meeting plane.
+    """
+    if not has_kick_subfront(layout):
+        return []
+    segments = []
+    last_bay = layout.bay_count - 1
+    for start, end in _compute_segments(layout, _kick_subfront_passthrough):
+        first_bay = layout.bays[start]
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        if start == 0:
+            left_x += layout.kick_inset_left
+        if end == last_bay:
+            right_x -= layout.kick_inset_right
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            # Y sits at the notch's back wall: tks back from the cabinet
+            # front, plus tkt so the kick's FRONT face is flush with the
+            # notch back. Without the +tkt the kick straddles the
+            # notched-out side region and its X ends meet missing side
+            # material.
+            'y':          -layout.dim_y + layout.tks + layout.tkt,
+            'z':          0.0,
+            'length':     right_x - left_x,
+            'width':      first_bay['kick_height'],
+            'thickness':  layout.tkt,
+        })
+    return segments
+
+
+def has_finish_kick(layout):
+    """Finish toe kick is the visible 1/4 face board applied to the
+    front of the kick subfront. Requires include_finish_kick on
+    cab_props plus a subfront to apply to.
+    """
+    return has_kick_subfront(layout) and layout.include_finish_kick
+
+
+def finish_kick_segments(layout):
+    """Finish toe kick segments. Same passthrough as the subfront so a
+    segmented subfront gets a matching segmented finish, but X spans
+    the FULL cabinet width at the ends (not captured between sides) -
+    interior breaks still meet at the carcass meeting plane to line up
+    with the subfront break behind them. Y sits in front of the
+    subfront so its back face is flush with the subfront's front.
+
+    Stile-to-floor exception: that side's carcass panel has no notch
+    and is solid through the kick Y range, so a full-width finish kick
+    would intersect it. Inset the cabinet-end X by the side's thickness
+    on that side; the corner finish kick part fills the X stretch
+    behind the stile separately.
+    """
+    if not has_finish_kick(layout):
+        return []
+    segments = []
+    last_bay = layout.bay_count - 1
+    finish_t = layout.finish_kick_thickness
+    for start, end in _compute_segments(layout, _kick_subfront_passthrough):
+        first_bay = layout.bays[start]
+        if start == 0:
+            if left_stile_to_floor(layout):
+                left_x = carcass_inner_left_x(layout)
+            else:
+                left_x = 0.0
+        else:
+            left_x = _carcass_meeting_x(layout, start - 1)
+        if end == last_bay:
+            if right_stile_to_floor(layout):
+                right_x = carcass_inner_right_x(layout)
+            else:
+                right_x = layout.dim_x
+        else:
+            right_x = _carcass_meeting_x(layout, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          (-layout.dim_y + layout.tks + layout.tkt
+                           - finish_t),
+            'z':          0.0,
+            'length':     right_x - left_x,
+            'width':      first_bay['kick_height'],
+            'thickness':  finish_t,
+        })
+    return segments
+
+
+def has_left_corner_finish_kick(layout):
+    """Filler at the left corner behind the stile - only when stile-to-
+    floor is on for that side AND the user hasn't disabled the finish.
+    """
+    return has_finish_kick(layout) and left_stile_to_floor(layout)
+
+
+def has_right_corner_finish_kick(layout):
+    return has_finish_kick(layout) and right_stile_to_floor(layout)
+
+
+def left_corner_finish_kick_position(layout):
+    """Origin at the inside face of the left side panel (carcass_inner_
+    left_x already folds in scribe + side_thickness), at the back of
+    the stile, on the floor. Starting here keeps the corner kick from
+    intersecting the side and from overlapping the main finish kick,
+    which begins at the same X.
+    """
+    return (carcass_inner_left_x(layout),
+            -layout.dim_y + layout.fft, 0.0)
+
+
+def left_corner_finish_kick_dims(layout):
+    """Length spans from inside-of-side to inside-of-stile, so it adjusts
+    automatically with scribe and side_thickness (both folded into
+    carcass_inner_left_x). Width is bay 0's kick height. Thickness fills
+    the gap from stile back to main finish kick front.
+    """
+    length = layout.lsw - carcass_inner_left_x(layout)
+    width = layout.bays[0]['kick_height']
+    thickness = (layout.tks + layout.tkt
+                 - layout.finish_kick_thickness - layout.fft)
+    return (length, width, thickness)
+
+
+def right_corner_finish_kick_position(layout):
+    """Origin at the inside face of the right stile (X = dim_x - rsw),
+    extending +X toward the side's inner face.
+    """
+    return (layout.dim_x - layout.rsw,
+            -layout.dim_y + layout.fft, 0.0)
+
+
+def right_corner_finish_kick_dims(layout):
+    """Mirror of the left corner: length runs from inside-of-stile to
+    inside-of-side. Uses the LAST bay's kick height since this corner
+    abuts the rightmost main-finish segment.
+    """
+    length = carcass_inner_right_x(layout) - (layout.dim_x - layout.rsw)
+    width = layout.bays[layout.bay_count - 1]['kick_height']
+    thickness = (layout.tks + layout.tkt
+                 - layout.finish_kick_thickness - layout.fft)
+    return (length, width, thickness)
+
+
 # ---------------------------------------------------------------------------
 # Pass-through predicates - "does the rail/something cross gap N?"
 # ---------------------------------------------------------------------------
@@ -462,8 +679,12 @@ def top_rail_segments(layout):
 
 
 def bottom_rail_segments(layout):
-    """Compute bottom rail segments."""
+    """Compute bottom rail segments. FLUSH extends the rail down to the
+    floor and grows its width by kick_height so a single wide rail fills
+    the space the recess would otherwise occupy.
+    """
     segments = []
+    flush = (layout.has_toe_kick and layout.toe_kick_type == 'FLUSH')
     for start, end in _compute_segments(layout, bottom_rail_passthrough):
         first_bay = layout.bays[start]
         x = bay_x_position(layout, start)
@@ -471,14 +692,20 @@ def bottom_rail_segments(layout):
         for k in range(start, end):
             length += layout.mid_stiles[k]['width']
             length += layout.bays[k + 1]['width']
+        if flush:
+            z = 0.0
+            width = first_bay['kick_height'] + first_bay['bottom_rail_width']
+        else:
+            z = bay_bottom_z(layout, start)
+            width = first_bay['bottom_rail_width']
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          x,
             'y':          -layout.dim_y,
-            'z':          bay_bottom_z(layout, start),
+            'z':          z,
             'length':     length,
-            'width':      first_bay['bottom_rail_width'],
+            'width':      width,
             'thickness':  layout.fft,
         })
     return segments
@@ -488,29 +715,34 @@ def bottom_rail_segments(layout):
 # End stiles (left and right) - always exist
 # ---------------------------------------------------------------------------
 def left_end_stile_position(layout):
-    """Left end stile follows bay 0's vertical extent. If bay 0 drops below
-    the cabinet's nominal floor (taller upper bay) or rises above (different
-    kick on a base), the stile origin moves with it so it covers the
-    bay's full height face.
+    """Left end stile follows bay 0's vertical extent unless the user
+    has asked for a stile-to-floor or FLUSH forces it - in those cases
+    the stile drops to Z = 0 and gets longer.
     """
-    return (0.0, -layout.dim_y, bay_bottom_z(layout, 0))
+    bottom_z = 0.0 if left_stile_to_floor(layout) else bay_bottom_z(layout, 0)
+    return (0.0, -layout.dim_y, bottom_z)
 
 
 def left_end_stile_dims(layout):
-    bottom_z = bay_bottom_z(layout, 0)
+    bottom_z = 0.0 if left_stile_to_floor(layout) else bay_bottom_z(layout, 0)
     top_z = bay_top_z(layout, 0)
     return (top_z - bottom_z, layout.lsw, layout.fft)
 
 
 def right_end_stile_position(layout):
-    """Right end stile follows the LAST bay's vertical extent."""
+    """Right end stile follows the LAST bay's vertical extent unless the
+    user has asked for a stile-to-floor or FLUSH forces it.
+    """
     last = layout.bay_count - 1
-    return (layout.dim_x, -layout.dim_y, bay_bottom_z(layout, last))
+    bottom_z = (0.0 if right_stile_to_floor(layout)
+                else bay_bottom_z(layout, last))
+    return (layout.dim_x, -layout.dim_y, bottom_z)
 
 
 def right_end_stile_dims(layout):
     last = layout.bay_count - 1
-    bottom_z = bay_bottom_z(layout, last)
+    bottom_z = (0.0 if right_stile_to_floor(layout)
+                else bay_bottom_z(layout, last))
     top_z = bay_top_z(layout, last)
     return (top_z - bottom_z, layout.rsw, layout.fft)
 
@@ -522,17 +754,18 @@ def left_side_position(layout):
     """Left carcass side matches bay 0's vertical range and bay 0's
     depth. Shorter bay 0 -> shorter side AND side back edge sits forward
     of the cabinet's back edge by (dim_y - bay 0 depth). X reflects the
-    scribe offset so the side can sit inboard of the stile.
+    scribe offset so the side can sit inboard of the stile. Z anchor
+    depends on toe_kick_type via side_bottom_z.
     """
     first_depth = layout.bays[0]['depth']
     return (left_scribe_offset(layout),
             -layout.dim_y + first_depth,
-            bay_bottom_z(layout, 0))
+            side_bottom_z(layout, 0))
 
 
 def left_side_dims(layout):
     first_depth = layout.bays[0]['depth']
-    bottom_z = bay_bottom_z(layout, 0)
+    bottom_z = side_bottom_z(layout, 0)
     top_z = left_side_top_z(layout)
     return (top_z - bottom_z, first_depth - layout.fft, left_side_thickness(layout))
 
@@ -542,13 +775,13 @@ def right_side_position(layout):
     last_depth = layout.bays[last]['depth']
     return (layout.dim_x - right_scribe_offset(layout),
             -layout.dim_y + last_depth,
-            bay_bottom_z(layout, last))
+            side_bottom_z(layout, last))
 
 
 def right_side_dims(layout):
     last = layout.bay_count - 1
     last_depth = layout.bays[last]['depth']
-    bottom_z = bay_bottom_z(layout, last)
+    bottom_z = side_bottom_z(layout, last)
     top_z = right_side_top_z(layout)
     return (top_z - bottom_z, last_depth - layout.fft, right_side_thickness(layout))
 
@@ -1225,8 +1458,15 @@ def _bay_root_reveals(layout, bay_index):
     ff_opening_right_x = ff_opening_left_x + bay['width']
 
     _, _, cage_dim_z = bay_cage_dims(layout, bay_index)
+    # bay.height now spans floor to top of top rail, so subtracting just
+    # the rails leaves both the FF opening AND the kick recess. Subtract
+    # kick_height too so the result is the FF opening only. Uppers carry
+    # kick_height = 0 so this is a no-op there.
     ff_opening_height = (
-        bay['height'] - bay['top_rail_width'] - bay['bottom_rail_width']
+        bay['height']
+        - bay['top_rail_width']
+        - bay['bottom_rail_width']
+        - bay['kick_height']
     )
 
     return {

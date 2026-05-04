@@ -56,6 +56,10 @@ PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
+PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
+PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
+PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
+PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
 
 # Face frame member roles (rails and stiles). Phase 3a doesn't create any
 # of these yet; defined here so the "Face Frame" selection mode has a known
@@ -573,6 +577,16 @@ class FaceFrameCabinet(GeoNodeCage):
             left.obj.rotation_euler.y = math.radians(-90)
             left.set_input('Mirror Y', True)
             left.set_input('Mirror Z', True)
+            # Front-bottom corner notch for NOTCH toe kick type. Both
+            # sides have Mirror Y = True so Flip Y = True targets the
+            # front face. Flip X = False targets the bottom (origin end
+            # of Length axis). Driven and toggled per recalc; defaults
+            # off so FLUSH / FLOATING / uppers see no cut.
+            l_notch = left.add_part_modifier('CPM_CORNERNOTCH', 'Notch Front Bottom')
+            l_notch.set_input('Flip X', False)
+            l_notch.set_input('Flip Y', True)
+            l_notch.mod.show_viewport = False
+            l_notch.mod.show_render = False
 
             right = CabinetPart()
             right.create('Right Side')
@@ -582,6 +596,11 @@ class FaceFrameCabinet(GeoNodeCage):
             right.obj.rotation_euler.y = math.radians(-90)
             right.set_input('Mirror Y', True)
             right.set_input('Mirror Z', False)
+            r_notch = right.add_part_modifier('CPM_CORNERNOTCH', 'Notch Front Bottom')
+            r_notch.set_input('Flip X', False)
+            r_notch.set_input('Flip Y', True)
+            r_notch.mod.show_viewport = False
+            r_notch.mod.show_render = False
 
         # Bottom is segment-keyed; created lazily by _reconcile_carcass_bottoms.
 
@@ -992,6 +1011,20 @@ class FaceFrameCabinet(GeoNodeCage):
             carcass_back_segs = solver.carcass_back_segments(layout)
             self._reconcile_carcass_bottoms(carcass_bottom_segs)
             self._reconcile_carcass_backs(carcass_back_segs)
+            if self._has_toe_kick():
+                kick_subfront_segs = solver.kick_subfront_segments(layout)
+                self._reconcile_kick_subfronts(kick_subfront_segs)
+                finish_kick_segs = solver.finish_kick_segments(layout)
+                self._reconcile_finish_kicks(finish_kick_segs)
+                self._ensure_corner_finish_kick(
+                    PART_ROLE_LEFT_CORNER_FINISH_KICK, 'Finish Toe Kick Left')
+                self._ensure_corner_finish_kick(
+                    PART_ROLE_RIGHT_CORNER_FINISH_KICK, 'Finish Toe Kick Right')
+            else:
+                kick_subfront_segs = []
+                finish_kick_segs = []
+                self._reconcile_kick_subfronts([])
+                self._reconcile_finish_kicks([])
 
             # Top construction branches on cabinet type:
             #   BASE / LAP_DRAWER -> Front + Rear stretchers
@@ -1018,9 +1051,13 @@ class FaceFrameCabinet(GeoNodeCage):
             carcass_top_segs = []
             front_stretcher_segs = []
             rear_stretcher_segs = []
+            kick_subfront_segs = []
+            finish_kick_segs = []
 
         top_seg_by_start = {s['start_bay']: s for s in top_segments}
         bot_seg_by_start = {s['start_bay']: s for s in bottom_segments}
+        kick_seg_by_start = {s['start_bay']: s for s in kick_subfront_segs}
+        finish_kick_seg_by_start = {s['start_bay']: s for s in finish_kick_segs}
         carc_bot_by_start = {s['start_bay']: s for s in carcass_bottom_segs}
         carc_back_by_start = {s['start_bay']: s for s in carcass_back_segs}
         front_str_by_start = {s['start_bay']: s for s in front_stretcher_segs}
@@ -1049,6 +1086,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._update_side_corner_notch(child, layout, 0)
 
             elif role == PART_ROLE_RIGHT_SIDE:
                 pos = solver.right_side_position(layout)
@@ -1057,6 +1095,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._update_side_corner_notch(
+                    child, layout, layout.bay_count - 1)
 
             elif role == PART_ROLE_BOTTOM:
                 seg = carc_bot_by_start.get(child.get('hb_segment_start_bay'))
@@ -1138,6 +1178,51 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_TOE_KICK_SUBFRONT:
+                seg = kick_seg_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
+                part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_FINISH_TOE_KICK:
+                seg = finish_kick_seg_by_start.get(
+                    child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
+                part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_LEFT_CORNER_FINISH_KICK:
+                visible = solver.has_left_corner_finish_kick(layout)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.left_corner_finish_kick_position(layout)
+                length, width, thickness = solver.left_corner_finish_kick_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_RIGHT_CORNER_FINISH_KICK:
+                visible = solver.has_right_corner_finish_kick(layout)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.right_corner_finish_kick_position(layout)
+                length, width, thickness = solver.right_corner_finish_kick_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
 
             # ---- Mid stiles (gap-keyed) ----
             elif role == PART_ROLE_MID_STILE:
@@ -1558,6 +1643,108 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom.set_input('Mirror Z', False)
         return bottom
 
+    def _reconcile_kick_subfronts(self, segments):
+        """Match Toe Kick Subfront children against segments. Three-pass
+        delete/match/create keyed by hb_segment_start_bay - same shape
+        as _reconcile_carcass_bottoms. Also deletes any legacy single-
+        piece kick subfront (no hb_segment_start_bay marker).
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_TOE_KICK_SUBFRONT:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_TOE_KICK_SUBFRONT
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_kick_subfront_part(seg['start_bay'])
+
+    def _create_kick_subfront_part(self, start_bay_index):
+        """Create one toe kick subfront part keyed to its segment.
+        Same orientation as the bottom rail: rotation X=90 + Mirror Z
+        so Length=X, Width=Z, Thickness extends +Y into the cabinet.
+        """
+        kick = CabinetPart()
+        kick.create(f'Toe Kick Subfront {start_bay_index + 1}')
+        kick.obj.parent = self.obj
+        kick.obj['hb_part_role'] = PART_ROLE_TOE_KICK_SUBFRONT
+        kick.obj['CABINET_PART'] = True
+        kick.obj['hb_segment_start_bay'] = start_bay_index
+        kick.obj.rotation_euler.x = math.radians(90)
+        kick.set_input('Mirror Z', True)
+        return kick
+
+    def _reconcile_finish_kicks(self, segments):
+        """Match Finish Toe Kick children against segments. Three-pass
+        delete/match/create keyed by hb_segment_start_bay - same shape
+        as _reconcile_kick_subfronts.
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_FINISH_TOE_KICK:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_FINISH_TOE_KICK
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_finish_kick_part(seg['start_bay'])
+
+    def _create_finish_kick_part(self, start_bay_index):
+        """Create one finish toe kick part keyed to its segment. Same
+        orientation as the kick subfront.
+        """
+        fk = CabinetPart()
+        fk.create(f'Finish Toe Kick {start_bay_index + 1}')
+        fk.obj.parent = self.obj
+        fk.obj['hb_part_role'] = PART_ROLE_FINISH_TOE_KICK
+        fk.obj['CABINET_PART'] = True
+        fk.obj['hb_segment_start_bay'] = start_bay_index
+        fk.obj.rotation_euler.x = math.radians(90)
+        fk.set_input('Mirror Z', True)
+        return fk
+
+    def _ensure_corner_finish_kick(self, role, name):
+        """Lazy-create a corner finish kick (left or right) if absent.
+        Single piece per corner - filler that varies in Thickness to
+        bridge the stile back to the main finish kick front when stile-
+        to-floor is on. Same orientation as the main finish kick.
+        """
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        fk = CabinetPart()
+        fk.create(name)
+        fk.obj.parent = self.obj
+        fk.obj['hb_part_role'] = role
+        fk.obj['CABINET_PART'] = True
+        fk.obj.rotation_euler.x = math.radians(90)
+        fk.set_input('Mirror Z', True)
+        return fk.obj
+
     def _reconcile_carcass_backs(self, segments):
         """Match Back carcass children against segments. Same three-pass
         delete/match/create as _reconcile_carcass_bottoms.
@@ -1729,6 +1916,54 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             rail.set_input('Mirror Z', True)
         return rail
+
+    def _update_side_corner_notch(self, side_obj, layout, bay_index):
+        """Drive the side's 'Notch Front Bottom' modifier from the
+        cabinet's toe kick type. Active only for NOTCH and only when
+        that side's stile is NOT extending to the floor - a stile-to-
+        floor stile already encloses the kick corner from the front,
+        so a notched side would leave an exposed gap behind it. FLUSH
+        / FLOATING / uppers also leave the notch inactive. Adds the
+        modifier lazily so cabinets built before NOTCH support are
+        upgraded in place on the next recalc.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        mod = side_obj.modifiers.get('Notch Front Bottom')
+        if mod is None:
+            wrapper = GeoNodeCutpart(side_obj)
+            cpm = wrapper.add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Front Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', True)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        role = side_obj.get('hb_part_role')
+        stile_to_floor = (solver.left_stile_to_floor(layout)
+                          if role == PART_ROLE_LEFT_SIDE
+                          else solver.right_stile_to_floor(layout))
+        active = (layout.has_toe_kick
+                  and layout.toe_kick_type == 'NOTCH'
+                  and not stile_to_floor
+                  and 0 <= bay_index < len(layout.bays))
+        if active:
+            bay = layout.bays[bay_index]
+            kick = bay['kick_height']
+            setback = cab_props.toe_kick_setback
+            thickness = cab_props.material_thickness
+        else:
+            kick = setback = thickness = 0.0
+        ng = mod.node_group
+        for input_name, value in (
+            ('X', kick),
+            ('Y', setback),
+            ('Route Depth', thickness),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                mod[node_input.identifier] = value
+        mod.show_viewport = active
+        mod.show_render = active
 
     def _update_mid_div_notches(self, mid_div_obj, panel):
         """Drive the two CPM_CORNERNOTCH modifiers on a slot-0 mid-div.

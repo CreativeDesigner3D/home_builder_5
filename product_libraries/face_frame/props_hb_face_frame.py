@@ -500,6 +500,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Right Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD'
     )  # type: ignore
 
+    # End stile drops to the floor instead of stopping at the bay bottom,
+    # filling the area beside the kick recess. Solver also forces this on
+    # for FLUSH so the wide bottom rail butts into a full-height stile.
+    extend_left_stile_to_floor: BoolProperty(
+        name="Extend Left Stile To Floor", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    extend_right_stile_to_floor: BoolProperty(
+        name="Extend Right Stile To Floor", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     extend_left_stile_up: BoolProperty(name="Extend Left Stile Up", default=False)  # type: ignore
     extend_left_stile_down: BoolProperty(name="Extend Left Stile Down", default=False)  # type: ignore
     extend_right_stile_up: BoolProperty(name="Extend Right Stile Up", default=False)  # type: ignore
@@ -615,17 +627,24 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     finish_toe_kick_thickness: FloatProperty(
-        name="Finish Toe Kick Thickness", default=units.inch(0.25), unit='LENGTH', precision=4
+        name="Finish Toe Kick Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     toe_kick_type: EnumProperty(
         name="Toe Kick Type",
         items=[
-            ('NOTCH', "Notch Ends to Floor", "Sides notch to floor; toe kick recessed"),
-            ('LADDER', "Ladder Style", "Ladder-style toe kick; sides start above floor"),
-            ('BASE_ASSEMBLY', "Base Assembly Each Box", "Each box has its own base"),
+            ('NOTCH', "Notched Ends to Floor",
+             "Sides extend to the floor with a front-bottom notch sized "
+             "by toe_kick_height x toe_kick_setback"),
+            ('FLUSH', "Flush (Wide Bottom Rail)",
+             "No recess; the face frame's bottom rail extends to the floor"),
+            ('FLOATING', "Floating",
+             "Sides start above the floor by toe_kick_height; toe kick is a "
+             "separate base assembly the cabinet sits on"),
         ],
         default='NOTCH',
+        update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_height: FloatProperty(
         name="Toe Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
@@ -644,9 +663,10 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     inset_toe_kick_right: FloatProperty(
         name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4
     )  # type: ignore
-    flush_toe_kick: BoolProperty(name="Flush Toe Kick", default=False)  # type: ignore
-    loose_toe_kick: BoolProperty(name="Loose Toe Kick", default=False)  # type: ignore
-    include_finish_toe_kick: BoolProperty(name="Include Finish Toe Kick", default=True)  # type: ignore
+    include_finish_toe_kick: BoolProperty(
+        name="Include Finish Toe Kick", default=True,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     include_external_nailer: BoolProperty(name="Include External Nailer", default=False)  # type: ignore
     include_internal_nailer: BoolProperty(name="Include Internal Nailer", default=False)  # type: ignore
