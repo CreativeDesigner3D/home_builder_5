@@ -207,6 +207,7 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
+    col.prop(bp, 'remove_carcass', text="Remove Carcass")
 
 
 def draw_opening_properties(layout, opening_obj):
@@ -451,6 +452,7 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'bottom_rail_width', text="Bottom Rail Width")
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
+    col.prop(bp, 'remove_carcass', text="Remove Carcass")
 
 
 def draw_bays_in_prompts(layout, root):

@@ -147,6 +147,7 @@ class FaceFrameLayout:
             'top_rail_width':     bp.top_rail_width,
             'bottom_rail_width':  bp.bottom_rail_width,
             'remove_bottom':      bp.remove_bottom,
+            'remove_carcass':     bp.remove_carcass,
             'tree':               self._read_tree_root(bay_obj),
         }
 
@@ -211,6 +212,7 @@ class FaceFrameLayout:
             'top_rail_width':     self.default_top_rail_width,
             'bottom_rail_width':  self.default_bottom_rail_width,
             'remove_bottom':      False,
+            'remove_carcass':     False,
             'tree':               None,
         }
 
@@ -422,13 +424,18 @@ def has_kick_subfront(layout):
 
 def _kick_subfront_passthrough(layout, gap_index):
     """True if a single kick subfront spans gap_index uninterrupted.
-    Breaks where adjacent bays have different kick_heights.
+    Breaks where adjacent bays have different kick_heights, or where
+    either bay has remove_bottom or remove_carcass set (no kick parts
+    emitted at that bay).
     """
     if gap_index >= len(layout.mid_stiles):
         return False
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
     if not _epsilon_eq(bay_a['kick_height'], bay_b['kick_height']):
+        return False
+    if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
+            or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
         return False
     return True
 
@@ -447,6 +454,8 @@ def kick_subfront_segments(layout):
     last_bay = layout.bay_count - 1
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
+        if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
+            continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         if start == 0:
             if layout.kick_inset_left > 0:
@@ -505,6 +514,8 @@ def finish_kick_segments(layout):
     finish_t = layout.finish_kick_thickness
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
+        if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
+            continue
         if start == 0:
             if layout.kick_inset_left > 0:
                 # Inset with return: finish kick covers the return's
@@ -539,14 +550,28 @@ def finish_kick_segments(layout):
     return segments
 
 
+def _end_bay_drops_kick(layout, bay_index):
+    """End-bay convenience: True if that bay omits its kick parts via
+    remove_bottom or remove_carcass. Used to suppress corner finish
+    kicks and kick returns at a cabinet end whose bay is carcass-free.
+    """
+    bay = layout.bays[bay_index]
+    return bool(bay.get('remove_bottom') or bay.get('remove_carcass'))
+
+
 def has_left_corner_finish_kick(layout):
     """Filler at the left corner behind the stile - only when stile-to-
     floor is on for that side AND the user hasn't disabled the finish.
+    Suppressed when bay 0 omits its kick parts.
     """
+    if _end_bay_drops_kick(layout, 0):
+        return False
     return has_finish_kick(layout) and left_stile_to_floor(layout)
 
 
 def has_right_corner_finish_kick(layout):
+    if _end_bay_drops_kick(layout, layout.bay_count - 1):
+        return False
     return has_finish_kick(layout) and right_stile_to_floor(layout)
 
 
@@ -603,11 +628,15 @@ def right_corner_finish_kick_dims(layout):
 # main kick subfront butts against the return's inboard face.
 # ---------------------------------------------------------------------------
 def has_left_kick_return(layout):
+    if _end_bay_drops_kick(layout, 0):
+        return False
     return (has_kick_subfront(layout)
             and layout.kick_inset_left > 0)
 
 
 def has_right_kick_return(layout):
+    if _end_bay_drops_kick(layout, layout.bay_count - 1):
+        return False
     return (has_kick_subfront(layout)
             and layout.kick_inset_right > 0)
 
@@ -684,7 +713,7 @@ def bottom_rail_passthrough(layout, gap_index):
     - bay bottom Z's differ (caused by kick height differences for bases,
       or bay height differences for uppers)
     - bay bottom rail widths differ
-    - the right-side bay has remove_bottom set
+    - either bay has remove_bottom set (the flagged bay omits its rail)
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -698,7 +727,7 @@ def bottom_rail_passthrough(layout, gap_index):
         return False
     if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
-    if bay_b.get('remove_bottom', False):
+    if bay_a.get('remove_bottom') or bay_b.get('remove_bottom'):
         return False
     return True
 
@@ -762,6 +791,11 @@ def bottom_rail_segments(layout):
     flush = (layout.has_toe_kick and layout.toe_kick_type == 'FLUSH')
     for start, end in _compute_segments(layout, bottom_rail_passthrough):
         first_bay = layout.bays[start]
+        # Passthrough breaks at bays with remove_bottom, so any flagged
+        # bay arrives here as a (i, i) segment we drop. remove_carcass
+        # is intentionally not gated here - the face frame stays.
+        if first_bay.get('remove_bottom'):
+            continue
         x = bay_x_position(layout, start)
         length = first_bay['width']
         for k in range(start, end):
@@ -932,7 +966,7 @@ def _carcass_bottom_passthrough(layout, gap_index):
     - bay bottom Z's differ (different floor heights)
     - bay depths differ (each panel sized to its bay's depth)
     - bottom rail widths differ (panel Z computed from bay_bottom_z + brw)
-    - either bay has remove_bottom set
+    - either bay has remove_bottom or remove_carcass set
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -945,7 +979,8 @@ def _carcass_bottom_passthrough(layout, gap_index):
         return False
     if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
-    if bay_a.get('remove_bottom') or bay_b.get('remove_bottom'):
+    if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
+            or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
         return False
     return True
 
@@ -1058,6 +1093,10 @@ def carcass_bottom_segments(layout):
     segments = []
     for start, end in _compute_segments(layout, _carcass_bottom_passthrough):
         first_bay = layout.bays[start]
+        # Passthrough breaks at bays with remove_bottom or remove_carcass,
+        # so any flagged bay arrives here as a (i, i) segment we drop.
+        if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
+            continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         segments.append({
             'start_bay':  start,
@@ -1073,7 +1112,10 @@ def carcass_bottom_segments(layout):
 
 
 def _carcass_back_passthrough(layout, gap_index):
-    """Back panel breaks when bay floors, ceilings, or depths differ."""
+    """Back panel breaks when bay floors, ceilings, or depths differ,
+    when either bay has remove_carcass set, or when either bay has
+    remove_bottom set (the flagged bay's back drops to the cabinet
+    floor and so can't share a Z origin with its neighbours)."""
     if gap_index >= len(layout.mid_stiles):
         return False
     bay_a = layout.bays[gap_index]
@@ -1088,6 +1130,10 @@ def _carcass_back_passthrough(layout, gap_index):
         return False
     if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
+    if bay_a.get('remove_carcass') or bay_b.get('remove_carcass'):
+        return False
+    if bay_a.get('remove_bottom') or bay_b.get('remove_bottom'):
+        return False
     return True
 
 
@@ -1101,8 +1147,17 @@ def carcass_back_segments(layout):
     segments = []
     for start, end in _compute_segments(layout, _carcass_back_passthrough):
         first_bay = layout.bays[start]
+        # Passthrough breaks at bays with remove_carcass, so flagged bays
+        # arrive as (i, i) segments we drop.
+        if first_bay.get('remove_carcass'):
+            continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
-        z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        if first_bay.get('remove_bottom'):
+            # No bottom panel here, so the back wraps the missing
+            # bottom and toe-kick area by dropping to the cabinet floor.
+            z_origin = 0.0
+        else:
+            z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
         # Per-bay back: segments break at depth changes (passthrough returns
         # False), so each segment's bays share a single depth -> use start
         # bay's depth to position the back at this bay group's back edge.
@@ -1130,6 +1185,7 @@ def _top_stretcher_passthrough(layout, gap_index):
     Break conditions:
     - bay top Z's differ (top_offset for uppers; kick + height for bases)
     - bay depths differ (front stretcher Y position depends on depth)
+    - either bay has remove_carcass set
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -1139,6 +1195,8 @@ def _top_stretcher_passthrough(layout, gap_index):
                        bay_top_z(layout, gap_index + 1)):
         return False
     if not _epsilon_eq(bay_a['depth'], bay_b['depth']):
+        return False
+    if bay_a.get('remove_carcass') or bay_b.get('remove_carcass'):
         return False
     return True
 
@@ -1163,6 +1221,8 @@ def carcass_top_segments(layout):
     segments = []
     for start, end in _compute_segments(layout, _top_stretcher_passthrough):
         first_bay = layout.bays[start]
+        if first_bay.get('remove_carcass'):
+            continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
         segments.append({
             'start_bay':  start,
@@ -1195,6 +1255,8 @@ def front_stretcher_segments(layout):
     """
     segments = []
     for start, end in _compute_segments(layout, _top_stretcher_passthrough):
+        if layout.bays[start].get('remove_carcass'):
+            continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
         segments.append({
             'start_bay':  start,
@@ -1228,6 +1290,8 @@ def rear_stretcher_segments(layout):
     segments = []
     for start, end in _compute_segments(layout, _top_stretcher_passthrough):
         first_bay = layout.bays[start]
+        if first_bay.get('remove_carcass'):
+            continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
         # Rear stretcher sits just inside the bay's back panel, so its Y
         # tracks the bay's back panel front face: -dim_y + bay_depth - bt.
@@ -1311,10 +1375,15 @@ def mid_division_panels(layout, gap_index):
     def _bay_z_range(bay_idx):
         """Bottom and top Z of a single-bay mid-div panel: from this
         bay's bottom rail top to this bay's carcass top (with the
-        construction-style adjustment + per-mid-stile extend amounts)."""
+        construction-style adjustment + per-mid-stile extend amounts).
+
+        remove_bottom on this bay drops the brw term so the panel's
+        bottom matches the mid-stile's bottom (which itself drops by
+        brw via bottom_rail_passthrough returning False)."""
         bay = layout.bays[bay_idx]
+        brw_term = 0.0 if bay.get('remove_bottom') else bay['bottom_rail_width']
         bottom_z = (bay_bottom_z(layout, bay_idx)
-                    + bay['bottom_rail_width']
+                    + brw_term
                     - ms['extend_down_amount'])
         top = carcass_top_z(layout, bay_idx)
         # Stretchers: division flush with stretcher tops for structural
@@ -1335,7 +1404,15 @@ def mid_division_panels(layout, gap_index):
             lower_idx = gap_index
         else:
             lower_idx = gap_index + 1
-        lower_brw = layout.bays[lower_idx]['bottom_rail_width']
+        # If either adjacent bay has remove_bottom, the mid-stile drops
+        # by brw (rail-passthrough returns False); the shared division
+        # panel follows so its bottom aligns with the mid-stile.
+        either_remove_bottom = (bay_a.get('remove_bottom')
+                                or bay_b.get('remove_bottom'))
+        if either_remove_bottom:
+            lower_brw = 0.0
+        else:
+            lower_brw = layout.bays[lower_idx]['bottom_rail_width']
         bottom_z = (bay_bottom_z(layout, lower_idx) + lower_brw
                     - ms['extend_down_amount'])
         higher_top_z = max(carcass_top_z(layout, gap_index),

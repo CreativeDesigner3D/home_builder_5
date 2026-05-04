@@ -258,6 +258,10 @@ def default_bay_config(cabinet_name, bay_width):
     single-door variant, at or above it use the double / stacked variant.
     """
     is_wide = bay_width >= DOUBLE_DOOR_WIDTH_THRESHOLD
+    if cabinet_name in ('Base', 'Base Cabinet'):
+        # Generic Base cabinet defaults to drawer-on-top-of-door, the
+        # most common base configuration in residential kitchens.
+        return 'DRAWER_DOUBLE_DOOR' if is_wide else 'DRAWER_DOOR'
     if cabinet_name == 'Base Door':
         return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Base Door Drw':

@@ -1087,7 +1087,18 @@ class FaceFrameCabinet(GeoNodeCage):
             part = GeoNodeCutpart(child)
 
             # ---- Carcass (sides shrink to leave room for the face frame at front) ----
+            # End-side suppression: when the adjacent end bay has
+            # remove_carcass set, the side panel becomes an orphan
+            # (no back / bottom / top to attach to at that bay), so
+            # hide it. The neighbouring bay's enclosure is provided by
+            # the gap mid-division. remove_bottom is not enough to
+            # warrant suppression - the carcass shell remains.
             if role == PART_ROLE_LEFT_SIDE:
+                visible = not layout.bays[0].get('remove_carcass')
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
                 pos = solver.left_side_position(layout)
                 length, width, thickness = solver.left_side_dims(layout)
                 child.location = pos
@@ -1097,14 +1108,19 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._update_side_corner_notch(child, layout, 0)
 
             elif role == PART_ROLE_RIGHT_SIDE:
+                last = layout.bay_count - 1
+                visible = not layout.bays[last].get('remove_carcass')
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
                 pos = solver.right_side_position(layout)
                 length, width, thickness = solver.right_side_dims(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
-                self._update_side_corner_notch(
-                    child, layout, layout.bay_count - 1)
+                self._update_side_corner_notch(child, layout, last)
 
             elif role == PART_ROLE_BOTTOM:
                 seg = carc_bot_by_start.get(child.get('hb_segment_start_bay'))
@@ -2140,7 +2156,13 @@ class FaceFrameCabinet(GeoNodeCage):
         # roots (panels) we still call the reconcile with an empty
         # rect list so its internal wipe cleans up any stale backings
         # (e.g. on a panel that had splits before this gate landed).
-        backing_rects = parts['backings'] if self._has_carcass() else []
+        # remove_carcass on this bay also drops backings - same wipe
+        # path so existing ones are cleaned up when the flag is set.
+        bay_drops_carcass = bay_obj.face_frame_bay.remove_carcass
+        if not self._has_carcass() or bay_drops_carcass:
+            backing_rects = []
+        else:
+            backing_rects = parts['backings']
         self._reconcile_bay_backings(bay_obj, backing_rects)
 
     def _reconcile_bay_splitters(self, bay_obj, splitter_rects):

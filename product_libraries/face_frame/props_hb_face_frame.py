@@ -732,6 +732,10 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Remove Bottom", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    remove_carcass: BoolProperty(
+        name="Remove Carcass", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
     finish_bay: BoolProperty(name="Finish Bay", default=False)  # type: ignore
 
