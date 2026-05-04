@@ -99,6 +99,11 @@ BAY_BACKING_ROLES = frozenset({
 # Carcass interior partition behind each mid stile (one per gap).
 PART_ROLE_MID_DIVISION = 'MID_DIVISION'
 
+# Filler attached to a mid-div on the shallower bay's side, covering
+# the mid-stile back-face overhang in the Z range between adjacent
+# bays' floors when those floors differ.
+PART_ROLE_PARTITION_SKIN = 'PARTITION_SKIN'
+
 # Front parts (children of opening cages). Roles are reserved here so
 # selection-mode filtering can pick them up; only DOOR is implemented in
 # this pass. Drawer fronts and pullouts will use their own roles when
@@ -561,6 +566,23 @@ class FaceFrameCabinet(GeoNodeCage):
                 notch_back.mod.show_viewport = False
                 notch_back.mod.show_render = False
 
+        # Partition skins: two slots per gap (slot 0 = bottom step,
+        # slot 1 = top step, Upper/Tall only). Both start hidden;
+        # recalc reveals + sizes them based on partition_skin_panels.
+        for slot in (0, 1):
+            skin = CabinetPart()
+            skin.create(f'Partition Skin {gap_index + 1}.{slot}')
+            skin.obj.parent = self.obj
+            skin.obj['hb_part_role'] = PART_ROLE_PARTITION_SKIN
+            skin.obj['CABINET_PART'] = True
+            skin.obj['hb_mid_stile_index'] = gap_index
+            skin.obj['hb_partition_skin_slot'] = slot
+            skin.obj.rotation_euler.y = math.radians(-90)
+            skin.set_input('Mirror Y', True)
+            skin.set_input('Mirror Z', True)
+            skin.obj.hide_viewport = True
+            skin.obj.hide_render = True
+
     def _build_carcass_parts(self, bay_qty):
         """Body of create_carcass, factored out so the guard wrapping above
         is easy to read. Creates carcass parts, end stiles, bay cages, and
@@ -749,6 +771,23 @@ class FaceFrameCabinet(GeoNodeCage):
                     notch_back.set_input('Flip Y', False)
                     notch_back.mod.show_viewport = False
                     notch_back.mod.show_render = False
+
+            # Partition skins: two slots per gap (slot 0 = bottom step,
+            # slot 1 = top step, Upper/Tall only). Both start hidden;
+            # recalc reveals + sizes them based on partition_skin_panels.
+            for slot in (0, 1):
+                skin = CabinetPart()
+                skin.create(f'Partition Skin {i + 1}.{slot}')
+                skin.obj.parent = self.obj
+                skin.obj['hb_part_role'] = PART_ROLE_PARTITION_SKIN
+                skin.obj['CABINET_PART'] = True
+                skin.obj['hb_mid_stile_index'] = i
+                skin.obj['hb_partition_skin_slot'] = slot
+                skin.obj.rotation_euler.y = math.radians(-90)
+                skin.set_input('Mirror Y', True)
+                skin.set_input('Mirror Z', True)
+                skin.obj.hide_viewport = True
+                skin.obj.hide_render = True
 
         # Rails and per-bay carcass bottoms get created lazily by the segment reconciliation step inside
         # recalculate(). No initial rail objects needed here.
@@ -1313,6 +1352,22 @@ class FaceFrameCabinet(GeoNodeCage):
                 # no notch modifiers and panel['notch_active'] is False
                 # there anyway).
                 self._update_mid_div_notches(child, panel)
+
+            elif role == PART_ROLE_PARTITION_SKIN:
+                msi = child.get('hb_mid_stile_index', 0)
+                slot = child.get('hb_partition_skin_slot', 0)
+                skins = solver.partition_skin_panels(layout, msi)
+                skin = next((s for s in skins if s['slot'] == slot), None)
+                if skin is None:
+                    child.hide_viewport = True
+                    child.hide_render = True
+                    continue
+                child.hide_viewport = False
+                child.hide_render = False
+                child.location = (skin['x'], skin['y'], skin['z'])
+                part.set_input('Length',    skin['length'])
+                part.set_input('Width',     skin['width'])
+                part.set_input('Thickness', skin['thickness'])
 
         # Spawn / resize / remove applied finished-end panels last so
         # they pick up the most recent cabinet dimensions. Skipped for

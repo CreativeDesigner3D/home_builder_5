@@ -1362,6 +1362,15 @@ def mid_division_panels(layout, gap_index):
 
     center_x = _mid_stile_center_x(layout, gap_index)
     dt = layout.division_thickness
+    # When adjacent bay tops differ (top_offset change at this gap),
+    # the partition extends an extra mt past the carcass top so it
+    # sits flush with the top panel's top face instead of stopping at
+    # its underside. Mirrors how the partition skin reaches the top
+    # face of the shallower bay's top panel.
+    tops_differ = not _epsilon_eq(
+        bay_top_z(layout, gap_index),
+        bay_top_z(layout, gap_index + 1),
+    )
 
     def _panel_y(depth):
         # Mirror Y=True extends width in -Y; origin sits at the panel's
@@ -1389,7 +1398,7 @@ def mid_division_panels(layout, gap_index):
         # Stretchers: division flush with stretcher tops for structural
         # attachment. Solid top: division stops mt below carcass top to
         # butt against the underside of the top panel.
-        if layout.uses_stretchers:
+        if layout.uses_stretchers or tops_differ:
             top_z = top + ms['extend_up_amount']
         else:
             top_z = top - layout.mt + ms['extend_up_amount']
@@ -1417,7 +1426,7 @@ def mid_division_panels(layout, gap_index):
                     - ms['extend_down_amount'])
         higher_top_z = max(carcass_top_z(layout, gap_index),
                            carcass_top_z(layout, gap_index + 1))
-        if layout.uses_stretchers:
+        if layout.uses_stretchers or tops_differ:
             top_z = higher_top_z + ms['extend_up_amount']
         else:
             top_z = higher_top_z - layout.mt + ms['extend_up_amount']
@@ -1480,6 +1489,118 @@ def mid_division_panels(layout, gap_index):
             'notch_route_depth':  dt,
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# Partition skin - filler at the bottom of the mid-division covering the
+# mid-stile back-face overhang on the shallower bay's side when adjacent
+# bays have different floors.
+# ---------------------------------------------------------------------------
+def partition_skin_panels(layout, gap_index):
+    """Per-gap partition skins. Returns 0, 1, or 2 panel dicts.
+
+    A skin is a filler attached to the partition on the shallower
+    bay's side, covering the mid-stile back-face overhang where one
+    bay's interior doesn't extend as far as the other's. Up to two
+    skins emit per gap:
+
+      slot 0 - bottom step: floors differ. Skin fills the X overhang
+        in Z range from the deeper bay's floor up to the shallower
+        bay's bottom panel underside (= floor + brw - mt).
+
+      slot 1 - top step: tops differ. Only meaningful for cabinets
+        with a solid top panel (Upper / Tall). Skin fills the X
+        overhang in Z range from the shallower bay's top panel top
+        face (= bay_top_z - top_scribe) up to the deeper bay's top.
+
+    Same-depth gap thickness is (msw - dt) / 2; diff-depth (two-panel
+    partition meeting face-to-face at center) is msw / 2 - dt. Y wraps
+    the back panel so origin sits at the bay's back-panel back face
+    and width spans forward to the face frame's back face.
+    """
+    skins = []
+    if gap_index >= len(layout.mid_stiles):
+        return skins
+
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    msw = layout.mid_stiles[gap_index]['width']
+    dt = layout.division_thickness
+    same_depth = _epsilon_eq(bay_a['depth'], bay_b['depth'])
+    if same_depth:
+        thickness = (msw - dt) / 2.0
+    else:
+        thickness = msw / 2.0 - dt
+    if thickness <= 0.0:
+        return skins
+
+    center_x = _mid_stile_center_x(layout, gap_index)
+
+    def _x_origin(side):
+        if side == 'LEFT':
+            return center_x - msw / 2.0
+        return center_x + (dt / 2.0 if same_depth else dt)
+
+    def _y_and_width(skin_bay):
+        d = skin_bay['depth']
+        return (-layout.dim_y + d, d - layout.fft)
+
+    # ----- Slot 0: bottom step -----
+    floor_a = bay_bottom_z(layout, gap_index)
+    floor_b = bay_bottom_z(layout, gap_index + 1)
+    if not _epsilon_eq(floor_a, floor_b):
+        if floor_a > floor_b:
+            side = 'LEFT'
+            skin_bay_idx = gap_index
+            bottom_z, top_z = floor_b, floor_a
+        else:
+            side = 'RIGHT'
+            skin_bay_idx = gap_index + 1
+            bottom_z, top_z = floor_a, floor_b
+        skin_bay = layout.bays[skin_bay_idx]
+        top_z += skin_bay['bottom_rail_width'] - layout.mt
+        y, width = _y_and_width(skin_bay)
+        skins.append({
+            'slot':      0,
+            'side':      side,
+            'x':         _x_origin(side),
+            'y':         y,
+            'z':         bottom_z,
+            'length':    top_z - bottom_z,
+            'width':     width,
+            'thickness': thickness,
+        })
+
+    # ----- Slot 1: top step (Upper / Tall only - solid top panel) -----
+    if layout.cabinet_type in {'UPPER', 'TALL'}:
+        top_a = bay_top_z(layout, gap_index)
+        top_b = bay_top_z(layout, gap_index + 1)
+        if not _epsilon_eq(top_a, top_b):
+            # Bay with the LOWER top is the shallower-at-top one.
+            if top_a < top_b:
+                side = 'LEFT'
+                skin_bay_idx = gap_index
+                lower_top, upper_top = top_a, top_b
+            else:
+                side = 'RIGHT'
+                skin_bay_idx = gap_index + 1
+                lower_top, upper_top = top_b, top_a
+            skin_bay = layout.bays[skin_bay_idx]
+            bottom_z = lower_top - layout.top_scribe
+            top_z = upper_top
+            y, width = _y_and_width(skin_bay)
+            skins.append({
+                'slot':      1,
+                'side':      side,
+                'x':         _x_origin(side),
+                'y':         y,
+                'z':         bottom_z,
+                'length':    top_z - bottom_z,
+                'width':     width,
+                'thickness': thickness,
+            })
+
+    return skins
 
 
 # ---------------------------------------------------------------------------
