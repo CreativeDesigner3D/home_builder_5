@@ -676,6 +676,70 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     include_thick_finished_bottom: BoolProperty(name="Include 3/4 Finished Bottom", default=False)  # type: ignore
     include_blocking: BoolProperty(name="Include Blocking", default=False)  # type: ignore
 
+    # ---- Corner cabinet props (PIE_CUT / DIAGONAL / CORNER_DRAWER) ----
+    # corner_type defaults to NONE on regular cabinets. left_depth and
+    # right_depth are the perpendicular stub-side lengths for pie cut;
+    # equivalent geometry hooks for diagonal / corner drawer when those
+    # variants land. Width / depth tweaks propagate through recalc via
+    # _update_cabinet_dim.
+    corner_type: EnumProperty(
+        name="Corner Type",
+        items=[
+            ('NONE', "None", "Not a corner cabinet"),
+            ('PIE_CUT', "Pie Cut", "Pie cut corner cabinet"),
+        ],
+        default='NONE',
+    )  # type: ignore
+    left_depth: FloatProperty(
+        name="Left Depth", default=units.inch(24.0),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_depth: FloatProperty(
+        name="Right Depth", default=units.inch(24.0),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # ---- Pie cut corner options ----
+    # exterior_option: door / front configuration on the L-front faces.
+    # interior_option: rotating-shelf accessory inside the cabinet.
+    # tray_compartment: optional partitioned tray storage on one side.
+    # All three are wired to recalc but only the LEFT/RIGHT door-opens-
+    # first variants currently affect geometry; the rest are UI stubs.
+    exterior_option: EnumProperty(
+        name="Exterior Option",
+        items=[
+            ('LEFT_DOOR_OPENS_FIRST',  "Left Door Opens First",  "Left door tucks behind right at the corner"),
+            ('RIGHT_DOOR_OPENS_FIRST', "Right Door Opens First", "Right door tucks behind left at the corner"),
+            ('BIFOLD_DOORS',           "Bi-fold Doors",          "Pair of bi-fold doors per face"),
+            ('REVOLVING_DOORS',        "Revolving Doors",        "Door rotates with the susan inside"),
+        ],
+        default='LEFT_DOOR_OPENS_FIRST',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    interior_option: EnumProperty(
+        name="Interior Option",
+        items=[
+            ('NONE',               "None",                "No interior accessory"),
+            ('KIDNEY_SUSANS',      "Kidney Susans",       "Kidney-shaped rotating shelves"),
+            ('SUPER_SUSANS',       "Super Susans",        "Round rotating shelves on bearings"),
+            ('NOT_SO_LAZY_SUSANS', "Not So Lazy Susans",  "Pan storage with hooks plus a lower tray"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_compartment: EnumProperty(
+        name="Tray Compartment",
+        items=[
+            ('NONE',  "None",  "No tray compartment"),
+            ('LEFT',  "Left",  "Tray compartment on the left side"),
+            ('RIGHT', "Right", "Tray compartment on the right side"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
 
 
@@ -1552,7 +1616,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'upper_inside_corner_size', text="Upper")
         layout.separator()
         self._draw_catalog_grid(layout, [
-            "Pie Cut Door", "Diagonal", "Diagonal Sink", "Pie Cut Drawer",
+            "Pie Cut Base", "Pie Cut Upper", "Pie Cut Drawer",
+            "Diagonal Base", "Diagonal Upper", "Diagonal Tall",
         ], columns=2)
         layout.separator()
         row = layout.row()

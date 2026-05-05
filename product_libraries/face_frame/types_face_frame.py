@@ -2901,20 +2901,29 @@ def applied_panel_geometry(layout, side):
             layout.dim_x, layout.dim_z, inch(0.75))
 
 
+# Registry of CLASS_NAME -> FaceFrameCabinet subclass for _wrap_cabinet.
+# Modules that introduce new cabinet subclasses (e.g. corner cabinets)
+# register their classes into this dict at import time so the prop
+# update callback dispatches to the right recalculate() override.
+WRAP_CLASS_REGISTRY = {}
+
+
 def _wrap_cabinet(obj):
     """Wrap a cabinet root Object as the appropriate FaceFrameCabinet subclass."""
     class_name = obj.get('CLASS_NAME', 'FaceFrameCabinet')
-    cls_lookup = {
-        'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
-        'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
-        'TallFaceFrameCabinet': TallFaceFrameCabinet,
-        'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
-        'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
-    }
-    cls = cls_lookup.get(class_name, FaceFrameCabinet)
+    cls = WRAP_CLASS_REGISTRY.get(class_name, FaceFrameCabinet)
     instance = cls.__new__(cls)
     GeoNodeCage.__init__(instance, obj)
     return instance
+
+
+WRAP_CLASS_REGISTRY.update({
+    'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
+    'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
+    'TallFaceFrameCabinet': TallFaceFrameCabinet,
+    'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
+    'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
+})
 
 
 def _remove_root_with_children(root_obj):

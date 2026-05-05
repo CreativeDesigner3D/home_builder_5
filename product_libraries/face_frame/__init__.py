@@ -1,5 +1,6 @@
 from . import props_hb_face_frame
 from . import types_face_frame
+from . import types_face_frame_corner
 from . import menus_face_frame
 from . import operators
 from . import ui_face_frame

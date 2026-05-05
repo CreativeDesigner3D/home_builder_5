@@ -78,6 +78,19 @@ def draw_dimensions(layout, cab_props):
     col.prop(cab_props, 'width', text="Width")
     col.prop(cab_props, 'depth', text="Depth")
     col.prop(cab_props, 'height', text="Height")
+    # Corner cabinets: stub-side lengths perpendicular to each wall.
+    # Drive the L-shape of the carcass and the inset of each face frame
+    # from the wall corner. width / depth here is the full bounding
+    # square; left_depth / right_depth carve the L back out of it.
+    if cab_props.corner_type != 'NONE':
+        col.separator()
+        col.prop(cab_props, 'left_depth', text="Left Depth")
+        col.prop(cab_props, 'right_depth', text="Right Depth")
+        col.separator()
+        col.label(text="Pie Cut Options")
+        col.prop(cab_props, 'exterior_option',  text="Exterior")
+        col.prop(cab_props, 'interior_option',  text="Interior")
+        col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
 
 
 def draw_construction(layout, cab_props):
