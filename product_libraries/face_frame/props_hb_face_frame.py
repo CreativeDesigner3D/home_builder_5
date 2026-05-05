@@ -687,6 +687,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         items=[
             ('NONE', "None", "Not a corner cabinet"),
             ('PIE_CUT', "Pie Cut", "Pie cut corner cabinet"),
+            ('DIAGONAL', "Diagonal", "Diagonal corner cabinet with angled front face"),
         ],
         default='NONE',
     )  # type: ignore
