@@ -1026,8 +1026,15 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             root = roots[0]
             # Bay's tree root has no size of its own; it fills the bay's
-            # face frame opening rect.
-            ff_height = bp.height - bp.top_rail_width - bp.bottom_rail_width
+            # face frame opening rect. bp.height spans floor to top of
+            # top rail, so subtract both rails AND kick_height to leave
+            # the FF opening only (uppers carry kick_height = 0 so this
+            # is a no-op there). Same correction applied in
+            # _bay_root_reveals; without it the children sum to a total
+            # that's too large by kick_height and the bottom child
+            # overflows when laid out against cage_dim_z.
+            ff_height = (bp.height - bp.top_rail_width
+                         - bp.bottom_rail_width - bp.kick_height)
             ff_width = bp.width
             self._redistribute_split_node(root, ff_width, ff_height, cab_props)
 

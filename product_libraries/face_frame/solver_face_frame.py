@@ -22,6 +22,7 @@ Mid stiles are always one-per-gap and never destroyed. Their length and Z
 position adapt based on whether adjacent rails pass through the gap.
 """
 import math
+import bpy
 
 from ...units import inch
 
@@ -2680,3 +2681,283 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
                 rect, cage_dim_y, item.accessory_label
             ))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Modify-cabinet support: world-space FF basis + boundary enumeration
+# ---------------------------------------------------------------------------
+# These helpers exist for the modify_cabinet modal operator. They convert
+# between the FF-local (ff_x, ff_z) coordinate system used by every other
+# solver function and Blender world space, accounting for the cabinet's
+# location, Z rotation, and (for angled cabinets) face_frame_angle.
+
+def face_frame_world_basis(cabinet_obj, layout):
+    """Return (origin_w, x_axis_w, z_axis_w, normal_w) for the cabinet's
+    FF outer plane, all in world space.
+
+    - origin_w: world position of (ff_x=0, ff_z=0). This is the FF outer
+      face's left endpoint at floor level.
+    - x_axis_w: unit vector along the FF, in the direction of increasing
+      ff_x (left endpoint to right endpoint).
+    - z_axis_w: world +Z (cabinets stand vertical; FF is always plumb).
+    - normal_w: unit vector pointing outward (away from the cabinet
+      interior, into the room).
+
+    Used by the modify-cabinet operator both to project mouse rays onto
+    the FF plane and to project FF-local boundary positions back to
+    screen space for GPU drawing.
+    """
+    from mathutils import Vector
+    # ff_outer_world_pos returns cabinet-local coords. Two endpoints
+    # define the FF line: ff_x=0 (left) and ff_x=face_frame_length (right),
+    # both at world_z=0. Transform through the cabinet's matrix_world to
+    # get world-space anchors.
+    ff_len = face_frame_length(layout)
+    p_left_local = Vector(ff_outer_world_pos(layout, 0.0, 0.0))
+    p_right_local = Vector(ff_outer_world_pos(layout, ff_len, 0.0))
+    mw = cabinet_obj.matrix_world
+    origin_w = mw @ p_left_local
+    p_right_w = mw @ p_right_local
+    x_axis_w = (p_right_w - origin_w)
+    if x_axis_w.length < 1e-8:
+        x_axis_w = Vector((1.0, 0.0, 0.0))
+    else:
+        x_axis_w.normalize()
+    z_axis_w = Vector((0.0, 0.0, 1.0))
+    # Outward normal: cross of x_axis and z_axis, pointing away from
+    # cabinet interior. The FF inner plane sits at +Y in cabinet-local
+    # (carcass side); outer plane is at -Y. So outward in cabinet-local
+    # is -Y, which under matrix_world rotation becomes -mw.col[1].xyz.
+    # Easier: take the cross of x_axis_w and z_axis_w, then flip if it
+    # points the wrong way (toward cabinet interior).
+    normal_w = x_axis_w.cross(z_axis_w)
+    if normal_w.length < 1e-8:
+        normal_w = Vector((0.0, -1.0, 0.0))
+    else:
+        normal_w.normalize()
+    # Test orientation: the cabinet's local +Y points into the carcass
+    # interior. Outward should be opposite. mw.col[1].xyz is local +Y in
+    # world space; if normal_w dots positive with it, flip.
+    local_y_in_world = Vector((mw[0][1], mw[1][1], mw[2][1]))
+    if normal_w.dot(local_y_in_world) > 0.0:
+        normal_w = -normal_w
+    return origin_w, x_axis_w, z_axis_w, normal_w
+
+
+def ff_local_to_world(cabinet_obj, layout, ff_x, ff_z):
+    """Map (ff_x, ff_z) on the FF outer plane to a world-space Vector.
+
+    Wraps face_frame_world_basis for callers that just want a point.
+    """
+    origin_w, x_axis_w, z_axis_w, _normal_w = face_frame_world_basis(
+        cabinet_obj, layout)
+    return origin_w + x_axis_w * ff_x + z_axis_w * ff_z
+
+
+def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
+    """Project a mouse position onto the cabinet's FF outer plane and
+    return (ff_x, ff_z) plus the world-space hit point.
+
+    Returns (ff_x, ff_z, world_hit) on success, None on failure (parallel
+    ray, projection failed, or behind viewer).
+
+    ff_x is along the FF (0 at left endpoint, face_frame_length at right);
+    ff_z is vertical (matches world Z relative to cabinet's floor).
+    """
+    from bpy_extras import view3d_utils
+    from mathutils import Vector
+    from mathutils.geometry import intersect_line_plane
+    if region is None or rv3d is None:
+        return None
+    co2d = (mouse_xy[0], mouse_xy[1])
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co2d)
+    ray_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, co2d)
+    if ray_origin is None or ray_dir is None:
+        return None
+    origin_w, x_axis_w, z_axis_w, normal_w = face_frame_world_basis(
+        cabinet_obj, layout)
+    hit = intersect_line_plane(
+        ray_origin, ray_origin + ray_dir, origin_w, normal_w,
+    )
+    if hit is None:
+        return None
+    rel = hit - origin_w
+    ff_x = rel.dot(x_axis_w)
+    ff_z = rel.dot(z_axis_w)
+    return (ff_x, ff_z, hit)
+
+
+def bay_edge_ff_x(layout, edge_index):
+    """FF-local X of the centerline of the mid-stile separating bays
+    edge_index and edge_index+1.
+
+    Valid edge_index range: 0 .. bay_count - 2. The drag handle for
+    resizing two adjacent bays sits on this centerline.
+    """
+    if edge_index < 0 or edge_index >= layout.bay_count - 1:
+        raise IndexError(f"bay edge {edge_index} out of range")
+    x = layout.lsw
+    for i in range(edge_index):
+        x += layout.bays[i]['width']
+        x += layout.mid_stiles[i]['width']
+    x += layout.bays[edge_index]['width']
+    x += layout.mid_stiles[edge_index]['width'] * 0.5
+    return x
+
+
+def editable_boundaries_v1(cabinet_obj, layout):
+    """Yield boundary records for the modify-cabinet operator.
+
+    Three kinds, all carrying axis = 'X' or 'Z' so the operator can
+    branch on drag direction without re-inspecting kind:
+      BAY_EDGE   - axis 'X', vertical line, drag horizontal,
+                   commits via Face_Frame_Bay_Props.width
+      MID_STILE  - axis 'X', vertical line, drag horizontal,
+                   commits via the two child nodes' size + unlock_size
+      MID_RAIL   - axis 'Z', horizontal line, drag vertical,
+                   commits via the two child nodes' size + unlock_size
+    """
+    from . import types_face_frame
+    bay_objs = sorted(
+        [c for c in cabinet_obj.children if c.get(types_face_frame.TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+    # BAY_EDGE pass
+    if layout.bay_count >= 2:
+        for i in range(layout.bay_count - 1):
+            ff_x = bay_edge_ff_x(layout, i)
+            zl_left = bay_bottom_z(layout, i)
+            zh_left = bay_top_z(layout, i)
+            zl_right = bay_bottom_z(layout, i + 1)
+            zh_right = bay_top_z(layout, i + 1)
+            ff_z_low = min(zl_left, zl_right)
+            ff_z_high = max(zh_left, zh_right)
+            locked_left = False
+            locked_right = False
+            if i < len(bay_objs):
+                locked_left = bool(bay_objs[i].face_frame_bay.unlock_width)
+            if i + 1 < len(bay_objs):
+                locked_right = bool(bay_objs[i + 1].face_frame_bay.unlock_width)
+            yield {
+                'kind': 'BAY_EDGE',
+                'axis': 'X',
+                'cabinet_obj': cabinet_obj,
+                'edge_index': i,
+                'ff_x': ff_x,
+                'ff_z_low': ff_z_low,
+                'ff_z_high': ff_z_high,
+                'left_bay_idx': i,
+                'right_bay_idx': i + 1,
+                'locked_left': locked_left,
+                'locked_right': locked_right,
+            }
+    # MID_STILE / MID_RAIL pass per bay
+    for bi in range(layout.bay_count):
+        for b in intra_bay_boundaries(cabinet_obj, layout, bi):
+            yield b
+
+def intra_bay_boundaries(cabinet_obj, layout, bay_index):
+    """Yield MID_STILE and MID_RAIL boundary records for one bay.
+
+    Walks the splitter rects emitted by bay_openings() and converts them
+    from bay-local coords to FF-local coords. For non-angled cabinets the
+    bay's cage X origin in cabinet-local equals its FF-local X origin, so
+    the conversion is an additive offset. Angled cabinets use the same
+    relation since bay-local X aligns with the FF direction (see
+    bay_cage_position).
+
+    Each yielded record carries enough context for the modify-cabinet
+    operator to commit a drag without re-deriving geometry: the parent
+    split node's name, the splitter's gap index, and the two adjacent
+    children's object names plus current lock state.
+    """
+    from . import types_face_frame
+    bo = bay_openings(layout, bay_index)
+    splitters = bo.get('splitters', [])
+    if not splitters:
+        return
+    bay = layout.bays[bay_index]
+    cage_left_x, _ = _cage_x_bounds(layout, bay_index)
+    cage_bottom_z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
+
+    for s in splitters:
+        node_name = s.get('split_node_name')
+        node_obj = bpy.data.objects.get(node_name) if node_name else None
+        if node_obj is None:
+            continue
+        # Children of the split node, sorted to match the tree's
+        # iteration order so splitter_index lines up with the gap.
+        kids = sorted(
+            [c for c in node_obj.children
+             if c.get(types_face_frame.TAG_OPENING_CAGE)
+             or c.get(types_face_frame.TAG_SPLIT_NODE)],
+            key=lambda c: c.get('hb_split_child_index', 0),
+        )
+        gi = s['splitter_index']
+        if gi < 0 or gi + 1 >= len(kids):
+            continue
+        left_kid = kids[gi]
+        right_kid = kids[gi + 1]
+        locked_left = _kid_unlock_size(left_kid)
+        locked_right = _kid_unlock_size(right_kid)
+        if s['role'] == 'BAY_MID_STILE':
+            # Vertical line on the FF outer plane. Drag axis: FF-X.
+            ff_x = cage_left_x + s['x'] + s['splitter_width'] * 0.5
+            ff_z_low = cage_bottom_z + s['z']
+            ff_z_high = ff_z_low + s['length']
+            yield {
+                'kind': 'MID_STILE',
+                'axis': 'X',
+                'cabinet_obj': cabinet_obj,
+                'bay_index': bay_index,
+                'split_node_name': node_name,
+                'splitter_index': gi,
+                'left_child_name': left_kid.name,
+                'right_child_name': right_kid.name,
+                'ff_x': ff_x,
+                'ff_z_low': ff_z_low,
+                'ff_z_high': ff_z_high,
+                'locked_left': locked_left,
+                'locked_right': locked_right,
+            }
+        elif s['role'] == 'BAY_MID_RAIL':
+            # Horizontal line on the FF outer plane. Drag axis: FF-Z.
+            # 'top' / 'bottom' wording mirrors how the user sees them:
+            # left_kid (lower hb_split_child_index) sits at the TOP of
+            # the rail because _walk_tree allocates H-split children
+            # top-down (cur_z_top decreases each iteration).
+            ff_z = cage_bottom_z + s['z'] + s['splitter_width'] * 0.5
+            ff_x_low = cage_left_x + s['x']
+            ff_x_high = ff_x_low + s['length']
+            yield {
+                'kind': 'MID_RAIL',
+                'axis': 'Z',
+                'cabinet_obj': cabinet_obj,
+                'bay_index': bay_index,
+                'split_node_name': node_name,
+                'splitter_index': gi,
+                'top_child_name': left_kid.name,
+                'bottom_child_name': right_kid.name,
+                'ff_z': ff_z,
+                'ff_x_low': ff_x_low,
+                'ff_x_high': ff_x_high,
+                'locked_top': locked_left,
+                'locked_bottom': locked_right,
+            }
+
+
+def _kid_unlock_size(kid_obj):
+    """Read unlock_size from a tree-child object (opening leaf or split
+    node). Both PropertyGroups expose unlock_size with the same name."""
+    if hasattr(kid_obj, 'face_frame_opening') and kid_obj.face_frame_opening is not None:
+        try:
+            return bool(kid_obj.face_frame_opening.unlock_size)
+        except AttributeError:
+            pass
+    if hasattr(kid_obj, 'face_frame_split') and kid_obj.face_frame_split is not None:
+        try:
+            return bool(kid_obj.face_frame_split.unlock_size)
+        except AttributeError:
+            pass
+    return False
+

@@ -23,6 +23,8 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.cabinet_prompts",
                         text="Cabinet Properties...", icon='WINDOW')
+        layout.operator("hb_face_frame.modify_cabinet",
+                        text="Modify Cabinet", icon='MOD_EDGESPLIT')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')
