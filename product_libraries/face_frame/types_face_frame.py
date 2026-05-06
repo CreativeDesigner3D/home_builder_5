@@ -901,8 +901,12 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _distribute_bay_kick_heights(self):
         """Sync each bay's kick_height to cabinet toe_kick_height when
-        unlock_kick_height is False. Mirrors _distribute_bay_heights.
+        unlock_kick_height is False. Mirrors _distribute_bay_widths.
         Uppers (no toe kick) get 0.
+
+        System writes are bracketed by _DISTRIBUTING_WIDTHS so the bay's
+        kick_height update callback knows not to treat them as user edits
+        and auto-lock the bay.
         """
         cab_props = self.obj.face_frame_cabinet
         bays = sorted(
@@ -913,12 +917,16 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         target = (cab_props.toe_kick_height
                   if self._has_toe_kick() else 0.0)
-        for bay_obj in bays:
-            bp = bay_obj.face_frame_bay
-            if bp.unlock_kick_height:
-                continue
-            if abs(bp.kick_height - target) > 1e-6:
-                bp.kick_height = target
+        _DISTRIBUTING_WIDTHS.add(id(self.obj))
+        try:
+            for bay_obj in bays:
+                bp = bay_obj.face_frame_bay
+                if bp.unlock_kick_height:
+                    continue
+                if abs(bp.kick_height - target) > 1e-6:
+                    bp.kick_height = target
+        finally:
+            _DISTRIBUTING_WIDTHS.discard(id(self.obj))
 
     def _distribute_bay_widths(self):
         """Redistribute available width among bays whose unlock_width is False.

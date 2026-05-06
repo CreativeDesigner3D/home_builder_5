@@ -66,10 +66,10 @@ def find_active_selection(context):
 # Focused draw helpers - reused by sidebar sub-panels AND popup operators
 # ---------------------------------------------------------------------------
 def draw_identity(layout, root):
-    """Cabinet name + type. Compact."""
+    """Editable cabinet name + read-only type. Compact."""
     cab_props = root.face_frame_cabinet
     row = layout.row()
-    row.label(text=root.name, icon='MESH_CUBE')
+    row.prop(root, 'name', text='', icon='MESH_CUBE')
     row.label(text=cab_props.cabinet_type)
 
 
@@ -117,20 +117,16 @@ def draw_dimensions(layout, root):
 
 
 def draw_construction(layout, cab_props):
-    """Material thickness, back thickness, toe kick (if applicable),
-    stretchers (if applicable). Panel roots have no carcass - the
+    """Toe kick (if applicable). Panel roots have no carcass - the
     section collapses to just the finished-ends block (which itself
     is irrelevant for panels but harmless to leave visible)."""
     if cab_props.cabinet_type == 'PANEL':
         layout.label(text="No carcass - face frame only", icon='INFO')
         return
 
-    col = layout.column(align=True)
-    col.prop(cab_props, 'material_thickness', text="Material")
-    col.prop(cab_props, 'back_thickness', text="Back")
-
     if cab_props.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER'):
-        col.separator()
+        box = layout.box()
+        col = box.column(align=True)
         col.label(text="Toe Kick")
         col.prop(cab_props, 'toe_kick_type', text="Type")
         col.prop(cab_props, 'toe_kick_height', text="Height")
@@ -138,27 +134,16 @@ def draw_construction(layout, cab_props):
         col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
         col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
         col.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
-        if cab_props.include_finish_toe_kick:
-            col.prop(cab_props, 'finish_toe_kick_thickness', text="Finish Thickness")
 
-    if cab_props.cabinet_type in ('BASE', 'LAP_DRAWER'):
-        col.separator()
-        col.label(text="Top Stretchers")
-        col.prop(cab_props, 'stretcher_width', text="Width")
-        col.prop(cab_props, 'stretcher_thickness', text="Thickness")
-
-    layout.separator()
-    layout.label(text="Finished Ends and Backs")
-    draw_finished_ends(layout, cab_props)
+    box = layout.box()
+    box.label(text="Finished Ends and Backs")
+    draw_finished_ends(box, cab_props)
 
 
 def draw_face_frame_defaults(layout, cab_props):
-    """Frame thickness + default stile and rail widths + front part
-    defaults (door thickness, per-side overlay defaults). Per-opening
-    overrides live on each opening object."""
+    """Default stile and rail widths + per-side overlay defaults.
+    Per-opening overrides live on each opening object."""
     col = layout.column(align=True)
-    col.prop(cab_props, 'face_frame_thickness', text="Frame Thickness")
-    col.separator()
     col.prop(cab_props, 'left_stile_width', text="Left Stile")
     col.prop(cab_props, 'right_stile_width', text="Right Stile")
     if cab_props.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER'):
@@ -171,8 +156,6 @@ def draw_face_frame_defaults(layout, cab_props):
     col.separator()
     col.prop(cab_props, 'top_rail_width', text="Top Rail")
     col.prop(cab_props, 'bottom_rail_width', text="Bottom Rail")
-    col.separator()
-    col.prop(cab_props, 'door_thickness', text="Door Thickness")
     col.separator()
     col.label(text="Default Overlays")
     col.prop(cab_props, 'default_top_overlay', text="Top")
@@ -235,7 +218,12 @@ def draw_bay_properties(layout, bay_obj):
     col.separator()
     cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
-        col.prop(bp, 'kick_height', text="Kick Height")
+        kick_row = col.row(align=True)
+        field = kick_row.row(align=True)
+        field.enabled = bp.unlock_kick_height
+        field.prop(bp, 'kick_height', text="Kick Height")
+        lock_icon = 'UNLOCKED' if bp.unlock_kick_height else 'LOCKED'
+        kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
     col.separator()
@@ -480,7 +468,12 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.separator()
     cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
-        col.prop(bp, 'kick_height', text="Kick Height")
+        kick_row = col.row(align=True)
+        field = kick_row.row(align=True)
+        field.enabled = bp.unlock_kick_height
+        field.prop(bp, 'kick_height', text="Kick Height")
+        lock_icon = 'UNLOCKED' if bp.unlock_kick_height else 'LOCKED'
+        kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
     col.separator()
@@ -569,11 +562,6 @@ class HB_FACE_FRAME_PT_active_cabinet(bpy.types.Panel):
             return
         layout = self.layout
         draw_identity(layout, root)
-        row = layout.row(align=True)
-        row.operator('hb_face_frame.recalculate_cabinet',
-                     text="Recalculate", icon='FILE_REFRESH')
-        row.operator('hb_face_frame.backfill_openings',
-                     text="Backfill Openings", icon='ADD')
 
 
 # ---------------------------------------------------------------------------

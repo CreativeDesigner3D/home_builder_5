@@ -75,29 +75,6 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
-# Operator: force a recalc on the active cabinet
-# ---------------------------------------------------------------------------
-class hb_face_frame_OT_recalculate_cabinet(bpy.types.Operator):
-    """Force-recalculate the active face frame cabinet."""
-    bl_idname = "hb_face_frame.recalculate_cabinet"
-    bl_label = "Recalculate Face Frame Cabinet"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return types_face_frame.find_cabinet_root(context.active_object) is not None
-
-    def execute(self, context):
-        root = types_face_frame.find_cabinet_root(context.active_object)
-        if root is None:
-            self.report({'WARNING'}, "No face frame cabinet selected")
-            return {'CANCELLED'}
-        types_face_frame.recalculate_face_frame_cabinet(root)
-        self.report({'INFO'}, f"Recalculated {root.name}")
-        return {'FINISHED'}
-
-
-# ---------------------------------------------------------------------------
 # Operator: delete the active face frame cabinet (and any others selected)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_delete_cabinet(bpy.types.Operator):
@@ -133,55 +110,6 @@ class hb_face_frame_OT_delete_cabinet(bpy.types.Operator):
             hb_utils.delete_obj_and_children(root)
 
         self.report({'INFO'}, f"Deleted {len(roots)} cabinet(s)")
-        return {'FINISHED'}
-
-
-# ---------------------------------------------------------------------------
-# Operator: backfill missing opening cages on existing face frame cabinets
-# ---------------------------------------------------------------------------
-# Used when the data model gains new per-bay structures (openings here;
-# possibly more later). Walks every face frame cabinet in the scene and
-# creates an Opening 1 child on any bay that lacks one, then recalculates
-# each touched cabinet so the new openings get sized.
-class hb_face_frame_OT_backfill_openings(bpy.types.Operator):
-    """Add an opening cage to any face frame bay missing one."""
-    bl_idname = "hb_face_frame.backfill_openings"
-    bl_label = "Backfill Face Frame Openings"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        added = 0
-        touched_cabinets = []
-        for cab_obj in bpy.data.objects:
-            if not cab_obj.get(types_face_frame.TAG_CABINET_CAGE):
-                continue
-            cabinet_added = 0
-            for bay_obj in cab_obj.children:
-                if not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
-                    continue
-                if any(c.get(types_face_frame.TAG_OPENING_CAGE)
-                       for c in bay_obj.children):
-                    continue
-                opening = types_face_frame.FaceFrameOpening()
-                opening.create('Opening 1')
-                opening.obj.parent = bay_obj
-                opening.obj['hb_opening_index'] = 0
-                opening.obj.face_frame_opening.opening_index = 0
-                opening.obj.face_frame_opening.front_type = (
-                    types_face_frame.default_front_type_for_root(cab_obj)
-                )
-                cabinet_added += 1
-            if cabinet_added:
-                touched_cabinets.append(cab_obj)
-                added += cabinet_added
-
-        for cab_obj in touched_cabinets:
-            types_face_frame.recalculate_face_frame_cabinet(cab_obj)
-
-        self.report(
-            {'INFO'},
-            f"Added {added} opening(s) across {len(touched_cabinets)} cabinet(s)",
-        )
         return {'FINISHED'}
 
 
@@ -1176,9 +1104,7 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
 
 classes = (
     hb_face_frame_OT_draw_cabinet,
-    hb_face_frame_OT_recalculate_cabinet,
     hb_face_frame_OT_delete_cabinet,
-    hb_face_frame_OT_backfill_openings,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_bay_prompts,
