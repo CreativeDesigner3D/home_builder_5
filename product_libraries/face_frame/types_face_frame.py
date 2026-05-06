@@ -16,6 +16,7 @@ Carcass conventions match frameless (same CabinetPart GeoNode setup):
 """
 import bpy
 import math
+from contextlib import contextmanager
 
 from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from ...units import inch
@@ -44,8 +45,45 @@ TAG_SPLIT_NODE = 'IS_FACE_FRAME_SPLIT_NODE'
 #     being written by _distribute_bay_widths. The bay width update callback
 #     consults this to distinguish system writes (no auto-lock) from user
 #     edits (auto-lock so the value holds during future redistributions).
+# _RECALC_SUSPEND_DEPTH: refcounted suspend of recalculate_face_frame_cabinet.
+#     While > 0, recalcs are coalesced by cabinet name into _PENDING_RECALC_NAMES
+#     instead of executing. The outermost resume drains the pending set and
+#     runs each cabinet's recalc exactly once. Use the suspend_recalc() context
+#     manager - inner suspends stack and only the outermost exit drains.
 _RECALCULATING = set()
 _DISTRIBUTING_WIDTHS = set()
+_RECALC_SUSPEND_DEPTH = 0
+_PENDING_RECALC_NAMES = set()
+
+
+@contextmanager
+def suspend_recalc():
+    """Suspend cabinet recalcs across a block of property writes.
+
+    Pending recalcs (whether from update callbacks or explicit calls) are
+    coalesced and run once when the outermost suspend exits. Use this
+    around any operation that performs many property writes that would
+    each trigger a full cabinet recalc - the actual layout work happens
+    once at the end instead of N times during.
+    """
+    global _RECALC_SUSPEND_DEPTH
+    _RECALC_SUSPEND_DEPTH += 1
+    try:
+        yield
+    finally:
+        _RECALC_SUSPEND_DEPTH -= 1
+        if _RECALC_SUSPEND_DEPTH == 0:
+            pending = list(_PENDING_RECALC_NAMES)
+            _PENDING_RECALC_NAMES.clear()
+            for cab_name in pending:
+                cab = bpy.data.objects.get(cab_name)
+                if cab is None:
+                    continue
+                # Don't let one cabinet's recalc failure block the rest.
+                try:
+                    recalculate_face_frame_cabinet(cab)
+                except Exception:
+                    pass
 
 
 # Single string-enum role for parts.
@@ -3119,9 +3157,15 @@ def recalculate_face_frame_cabinet(obj):
     cabinet (because a bay/cabinet prop write inside recalculate fired its
     update callback), this call exits immediately. The outer recalc will
     pick up the new value when it reads from props.
+
+    Also honors suspend_recalc(): when active, the request is queued by name
+    and drained once at the outermost resume.
     """
     root = find_cabinet_root(obj)
     if root is None:
+        return
+    if _RECALC_SUSPEND_DEPTH > 0:
+        _PENDING_RECALC_NAMES.add(root.name)
         return
     if id(root) in _RECALCULATING:
         return

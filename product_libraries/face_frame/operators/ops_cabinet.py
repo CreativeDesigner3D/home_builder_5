@@ -1001,12 +1001,16 @@ def apply_bay_preset(bay_obj, config):
     if not presets or config not in presets:
         return False
 
-    _wipe_bay_children(bay_obj)
-    opening_idx = [0]
-    _build_recipe_into(
-        presets[config], bay_obj, 0, opening_idx, root.face_frame_cabinet,
-    )
-    types_face_frame.recalculate_face_frame_cabinet(root)
+    # Wipe + rebuild fires update callbacks on every front_type / overlay /
+    # hinge write, and each one triggers a full cabinet recalc. Suspend so
+    # the explicit final recalc below is the only one that actually runs.
+    with types_face_frame.suspend_recalc():
+        _wipe_bay_children(bay_obj)
+        opening_idx = [0]
+        _build_recipe_into(
+            presets[config], bay_obj, 0, opening_idx, root.face_frame_cabinet,
+        )
+        types_face_frame.recalculate_face_frame_cabinet(root)
     return True
 
 

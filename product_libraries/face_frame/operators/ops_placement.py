@@ -709,8 +709,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self.cabinet_name, sample_width
             )
             if default_config is not None:
-                for bay_obj in bays:
-                    ops_cabinet.apply_bay_preset(bay_obj, default_config)
+                # Each apply_bay_preset already suspends internally; nesting
+                # the whole loop folds all 8 bays' recalcs (including the
+                # per-bay explicit recalc inside apply_bay_preset) into a
+                # single recalc at the outer resume.
+                with types_face_frame.suspend_recalc():
+                    for bay_obj in bays:
+                        ops_cabinet.apply_bay_preset(bay_obj, default_config)
 
         # Active selection
         for o in context.selected_objects:
