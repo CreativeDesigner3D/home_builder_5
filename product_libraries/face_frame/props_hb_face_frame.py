@@ -676,11 +676,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     include_thick_finished_bottom: BoolProperty(name="Include 3/4 Finished Bottom", default=False)  # type: ignore
     include_blocking: BoolProperty(name="Include Blocking", default=False)  # type: ignore
 
-    # ---- Corner cabinet props (PIE_CUT / DIAGONAL / CORNER_DRAWER) ----
+    # ---- Corner cabinet props (PIE_CUT / DIAGONAL / CORNER_DRAWER) and
+    # angled standard cabinets ----
     # corner_type defaults to NONE on regular cabinets. left_depth and
-    # right_depth are the perpendicular stub-side lengths for pie cut;
-    # equivalent geometry hooks for diagonal / corner drawer when those
-    # variants land. Width / depth tweaks propagate through recalc via
+    # right_depth serve two roles:
+    #   - Corner cabinets: perpendicular stub-side lengths along each
+    #     wall (always authoritative when corner_type != NONE).
+    #   - Standard single-bay cabinets: per-side depths used when
+    #     unlock_left_depth / unlock_right_depth is on, producing an
+    #     angled face frame plane (face frame becomes the hypotenuse;
+    #     back stays at cab_props.depth between the sides).
+    # Width / depth tweaks propagate through recalc via
     # _update_cabinet_dim.
     corner_type: EnumProperty(
         name="Corner Type",
@@ -699,6 +705,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     right_depth: FloatProperty(
         name="Right Depth", default=units.inch(24.0),
         unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Angled standard cabinet unlocks. Single-bay only (UI hides them
+    # when bay count > 1). When on, the matching left_depth / right_depth
+    # drives that side's depth; when off, the side falls back to
+    # cab_props.depth and the face frame stays square to the back.
+    unlock_left_depth: BoolProperty(
+        name="Unlock Left Depth", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_right_depth: BoolProperty(
+        name="Unlock Right Depth", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
 

@@ -44,11 +44,22 @@ class FaceFrameLayout:
 
         cab = cabinet_obj.face_frame_cabinet
         self.cabinet_type = cab.cabinet_type
+        self.corner_type = cab.corner_type
 
         # Cabinet dimensions
         self.dim_x = cab.width
         self.dim_y = cab.depth
         self.dim_z = cab.height
+
+        # Angled standard cabinet (single-bay only): per-side depths drive
+        # the front face frame plane, leaving the back at dim_y. Captured
+        # here so the side / face frame solvers branch on a single flag
+        # without re-reading cab props. is_angled gates the branch and is
+        # finalized below once bay_count is known.
+        self.unlock_left_depth = cab.unlock_left_depth
+        self.unlock_right_depth = cab.unlock_right_depth
+        self.cab_left_depth = cab.left_depth
+        self.cab_right_depth = cab.right_depth
 
         # Material thicknesses
         self.mt = cab.material_thickness
@@ -115,6 +126,22 @@ class FaceFrameLayout:
             # the initial create_carcass call before bays are added).
             self.bay_count = 1
             self.bays = [self._make_default_bay()]
+
+        # Angled mode is exclusive with corner cabinets and only valid on
+        # single-bay carcasses (UI hides the unlocks otherwise).
+        self.is_angled = (
+            self.corner_type == 'NONE'
+            and self.bay_count == 1
+            and (self.unlock_left_depth or self.unlock_right_depth)
+        )
+
+        # Angled cabinets always use a solid top regardless of cabinet
+        # type. The boolean cutter that produces the trapezoidal top /
+        # bottom / shelves operates on full panels; stretchers would
+        # need separate per-strip trimming and would defeat the point
+        # of a single uniform cutter.
+        if self.is_angled:
+            self.uses_stretchers = False
 
         # Mid stile widths from the cabinet's collection (one per gap)
         ms_coll = cab.mid_stile_widths
@@ -467,18 +494,23 @@ def kick_subfront_segments(layout):
             if layout.kick_inset_right > 0:
                 right_x = (layout.dim_x - layout.kick_inset_right
                            - layout.tkt)
+        wx, wy, wz = ff_perpendicular_offset_at_world_x(
+            layout, left_x, layout.tks + layout.tkt, 0.0
+        )
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
-            'x':          left_x,
+            'x':          wx,
             # Y sits at the notch's back wall: tks back from the cabinet
             # front, plus tkt so the kick's FRONT face is flush with the
-            # notch back. Without the +tkt the kick straddles the
-            # notched-out side region and its X ends meet missing side
-            # material.
-            'y':          -layout.dim_y + layout.tks + layout.tkt,
-            'z':          0.0,
-            'length':     right_x - left_x,
+            # notch back. The kick is captured between the side panels
+            # at world X = left_x and right_x, so we anchor at world X
+            # (not FF-x). Length is along the kick's own +X axis (FF-
+            # aligned after rotation), which spans 1/cos farther than
+            # the world X delta in angled mode.
+            'y':          wy,
+            'z':          wz,
+            'length':     ff_world_x_span_to_length(layout, right_x - left_x),
             'width':      first_bay['kick_height'],
             'thickness':  layout.tkt,
         })
@@ -536,14 +568,23 @@ def finish_kick_segments(layout):
                 right_x = layout.dim_x
         else:
             right_x = _carcass_meeting_x(layout, end)
+        # Finish kick lives just IN FRONT of the subfront (its back face
+        # flush with the subfront's front face), so its perpendicular
+        # offset from the FF outer plane is (tks + tkt - finish_t).
+        # Like the subfront, it spans world-X between the side panels,
+        # so we use the world-X helper and convert to FF-aligned length.
+        wx, wy, wz = ff_perpendicular_offset_at_world_x(
+            layout, left_x,
+            layout.tks + layout.tkt - finish_t,
+            0.0,
+        )
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
-            'x':          left_x,
-            'y':          (-layout.dim_y + layout.tks + layout.tkt
-                           - finish_t),
-            'z':          0.0,
-            'length':     right_x - left_x,
+            'x':          wx,
+            'y':          wy,
+            'z':          wz,
+            'length':     ff_world_x_span_to_length(layout, right_x - left_x),
             'width':      first_bay['kick_height'],
             'thickness':  finish_t,
         })
@@ -763,18 +804,21 @@ def top_rail_segments(layout):
     segments = []
     for start, end in _compute_segments(layout, top_rail_passthrough):
         first_bay = layout.bays[start]
-        x = bay_x_position(layout, start)
+        ff_x = bay_x_position(layout, start)
         # Length: sum of bay widths within segment + intermediate mid stile widths
         length = first_bay['width']
         for k in range(start, end):
             length += layout.mid_stiles[k]['width']
             length += layout.bays[k + 1]['width']
+        wx, wy, wz = ff_outer_world_pos(
+            layout, ff_x, bay_top_z(layout, start)
+        )
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
-            'x':          x,
-            'y':          -layout.dim_y,
-            'z':          bay_top_z(layout, start),
+            'x':          wx,
+            'y':          wy,
+            'z':          wz,
             'length':     length,
             'width':      first_bay['top_rail_width'],
             'thickness':  layout.fft,
@@ -796,7 +840,7 @@ def bottom_rail_segments(layout):
         # is intentionally not gated here - the face frame stays.
         if first_bay.get('remove_bottom'):
             continue
-        x = bay_x_position(layout, start)
+        ff_x = bay_x_position(layout, start)
         length = first_bay['width']
         for k in range(start, end):
             length += layout.mid_stiles[k]['width']
@@ -807,12 +851,13 @@ def bottom_rail_segments(layout):
         else:
             z = bay_bottom_z(layout, start)
             width = first_bay['bottom_rail_width']
+        wx, wy, wz = ff_outer_world_pos(layout, ff_x, z)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
-            'x':          x,
-            'y':          -layout.dim_y,
-            'z':          z,
+            'x':          wx,
+            'y':          wy,
+            'z':          wz,
             'length':     length,
             'width':      width,
             'thickness':  layout.fft,
@@ -826,10 +871,12 @@ def bottom_rail_segments(layout):
 def left_end_stile_position(layout):
     """Left end stile follows bay 0's vertical extent unless the user
     has asked for a stile-to-floor or FLUSH forces it - in those cases
-    the stile drops to Z = 0 and gets longer.
+    the stile drops to Z = 0 and gets longer. Anchored at the LEFT
+    endpoint of the FF outer plane (FF-x = 0); in angled mode that
+    sits at world (0, -effective_left_depth) instead of (0, -dim_y).
     """
     bottom_z = 0.0 if left_stile_to_floor(layout) else bay_bottom_z(layout, 0)
-    return (0.0, -layout.dim_y, bottom_z)
+    return ff_outer_world_pos(layout, 0.0, bottom_z)
 
 
 def left_end_stile_dims(layout):
@@ -840,12 +887,14 @@ def left_end_stile_dims(layout):
 
 def right_end_stile_position(layout):
     """Right end stile follows the LAST bay's vertical extent unless the
-    user has asked for a stile-to-floor or FLUSH forces it.
+    user has asked for a stile-to-floor or FLUSH forces it. Anchored
+    at the RIGHT endpoint of the FF outer plane (FF-x = ff_length);
+    in angled mode that sits at world (dim_x, -effective_right_depth).
     """
     last = layout.bay_count - 1
     bottom_z = (0.0 if right_stile_to_floor(layout)
                 else bay_bottom_z(layout, last))
-    return (layout.dim_x, -layout.dim_y, bottom_z)
+    return ff_outer_world_pos(layout, face_frame_length(layout), bottom_z)
 
 
 def right_end_stile_dims(layout):
@@ -859,40 +908,192 @@ def right_end_stile_dims(layout):
 # ---------------------------------------------------------------------------
 # Carcass side panels - extend with first/last bay's vertical range
 # ---------------------------------------------------------------------------
-def left_side_position(layout):
-    """Left carcass side matches bay 0's vertical range and bay 0's
-    depth. Shorter bay 0 -> shorter side AND side back edge sits forward
-    of the cabinet's back edge by (dim_y - bay 0 depth). X reflects the
-    scribe offset so the side can sit inboard of the stile. Z anchor
-    depends on toe_kick_type via side_bottom_z.
+def effective_left_depth(layout):
+    """Left side's front-to-back length budget. In angled mode the
+    unlocked side reads cab.left_depth; otherwise it falls back to the
+    first bay's depth (which equals dim_y on single-bay carcasses)."""
+    if layout.is_angled and layout.unlock_left_depth:
+        return layout.cab_left_depth
+    return layout.bays[0]['depth']
+
+
+def effective_right_depth(layout):
+    """Mirror of effective_left_depth for the right side."""
+    if layout.is_angled and layout.unlock_right_depth:
+        return layout.cab_right_depth
+    last = layout.bay_count - 1
+    return layout.bays[last]['depth']
+
+
+def face_frame_angle(layout):
+    """Z rotation (radians) that maps the original square face frame
+    direction (+X) to the angled FF plane's direction, going from the
+    left endpoint to the right endpoint of the FF inner plane.
+
+    Negative when the left side is shallower than the right: the right
+    endpoint sits at more-negative Y, so rotating +X clockwise (negative
+    Z in right-handed coords) is needed to align with the FF line.
+    Returns 0.0 when not angled.
+
+    Used directly as rotation_euler.z on FF parts that lie in the FF
+    plane (stiles, rails, kick subfront, opening front pivots) and on
+    the angled cutter.
     """
-    first_depth = layout.bays[0]['depth']
-    return (left_scribe_offset(layout),
-            -layout.dim_y + first_depth,
+    if not layout.is_angled:
+        return 0.0
+    dy = effective_left_depth(layout) - effective_right_depth(layout)
+    return math.atan2(dy, layout.dim_x)
+
+
+def face_frame_length(layout):
+    """Length of the face frame plane along its own X axis. Equals the
+    hypotenuse spanning the two front edges in angled mode, dim_x in
+    the square case."""
+    if not layout.is_angled:
+        return layout.dim_x
+    dy = effective_right_depth(layout) - effective_left_depth(layout)
+    return math.hypot(layout.dim_x, dy)
+
+
+def ff_outer_world_pos(layout, ff_x, world_z):
+    """World (x, y, z) on the FF outer plane at FF-distance ff_x from
+    the left endpoint of the angled face frame, at height world_z.
+
+    For non-angled cabinets ff_x maps directly to world X and the
+    plane lies at world Y = -dim_y, so this returns (ff_x, -dim_y, z).
+    For angled cabinets the FF outer plane is rotated around Z by
+    face_frame_angle, with its left endpoint at (0, -effective_left_
+    depth) and its right endpoint at (dim_x, -effective_right_depth).
+    Used to place stiles, rails, and any other part anchored to the
+    FF outer face.
+    """
+    if not layout.is_angled:
+        return (ff_x, -layout.dim_y, world_z)
+    theta = face_frame_angle(layout)
+    return (
+        ff_x * math.cos(theta),
+        -effective_left_depth(layout) + ff_x * math.sin(theta),
+        world_z,
+    )
+
+
+def ff_inner_world_pos(layout, ff_x, world_z):
+    """World (x, y, z) on the FF inner plane (the back face of the
+    face frame, where carcass tops / bottoms / sides butt) at FF-
+    distance ff_x from the left endpoint, at height world_z.
+
+    Equivalent to ff_outer_world_pos shifted by fft in the
+    perpendicular-into-cabinet direction.
+    """
+    return ff_perpendicular_offset(layout, ff_x, layout.fft, world_z)
+
+
+def ff_perpendicular_offset(layout, ff_x, perp_offset, world_z):
+    """World (x, y, z) on a FF-parallel plane shifted inward from the
+    FF outer plane by perp_offset along the perpendicular-into-cabinet
+    direction, parameterized by FF-distance ff_x from the left FF
+    endpoint. For parts whose endpoints are already in FF coordinates
+    (rails, stiles).
+    """
+    if not layout.is_angled:
+        return (ff_x, -layout.dim_y + perp_offset, world_z)
+    theta = face_frame_angle(layout)
+    cos_t = math.cos(theta)
+    sin_t = math.sin(theta)
+    return (
+        ff_x * cos_t - perp_offset * sin_t,
+        -effective_left_depth(layout) + ff_x * sin_t + perp_offset * cos_t,
+        world_z,
+    )
+
+
+def ff_perpendicular_offset_at_world_x(layout, world_x, perp_offset, world_z):
+    """World (x, y, z) on the same FF-parallel plane as
+    ff_perpendicular_offset, but parameterized by WORLD X instead of
+    FF-distance. For the toe kick subfront and finish kick whose
+    endpoints must align with the side panels' world-X-aligned inner
+    faces (so the kick is captured between the sides), not with the
+    FF stile inboard edges.
+    """
+    if not layout.is_angled:
+        return (world_x, -layout.dim_y + perp_offset, world_z)
+    theta = face_frame_angle(layout)
+    sin_t = math.sin(theta)
+    cos_t = math.cos(theta)
+    # Kick plane equation: y(x) = -ld + tan*x + perp/cos. Derived from
+    # parameterizing the plane by FF-x (y = -ld + ff_x*sin + perp*cos,
+    # x = ff_x*cos - perp*sin) and eliminating ff_x.
+    return (
+        world_x,
+        (-effective_left_depth(layout)
+         + (sin_t / cos_t) * world_x
+         + perp_offset / cos_t),
+        world_z,
+    )
+
+
+def ff_world_x_span_to_length(layout, world_x_span):
+    """Given a span between two world X coordinates that lie on a FF-
+    parallel plane (e.g. the subfront kick stretching between the side
+    panels' inner faces), return the length the part should be along
+    its own +X axis (which after rotation is FF-aligned). For square
+    cabinets this is the same number; for angled it's longer by 1/cos.
+    """
+    if not layout.is_angled:
+        return world_x_span
+    return world_x_span / math.cos(face_frame_angle(layout))
+
+
+def left_side_position(layout):
+    """Left carcass side. Two anchoring modes:
+
+      Square (default): side back edge sits at -dim_y + bay 0 depth,
+        so a shallower bay shifts BOTH ends forward equally and the
+        back panel moves with it.
+      Angled (single-bay, unlock on): side back edge anchors at the
+        cabinet back (Y = 0). Only the front edge moves, producing
+        the asymmetric front geometry that drives the angled face
+        frame plane while the back stays put.
+
+    X reflects the scribe offset so the side can sit inboard of the
+    stile. Z anchor depends on toe_kick_type via side_bottom_z.
+    """
+    if layout.is_angled:
+        y = 0.0
+    else:
+        y = -layout.dim_y + layout.bays[0]['depth']
+    return (left_scribe_offset(layout), y,
             side_bottom_z(layout, 0, 'LEFT'))
 
 
 def left_side_dims(layout):
-    first_depth = layout.bays[0]['depth']
     bottom_z = side_bottom_z(layout, 0, 'LEFT')
     top_z = left_side_top_z(layout)
-    return (top_z - bottom_z, first_depth - layout.fft, left_side_thickness(layout))
+    return (top_z - bottom_z,
+            effective_left_depth(layout) - layout.fft,
+            left_side_thickness(layout))
 
 
 def right_side_position(layout):
+    """Mirror of left_side_position. See its docstring for the two
+    anchoring modes."""
+    if layout.is_angled:
+        y = 0.0
+    else:
+        last = layout.bay_count - 1
+        y = -layout.dim_y + layout.bays[last]['depth']
     last = layout.bay_count - 1
-    last_depth = layout.bays[last]['depth']
-    return (layout.dim_x - right_scribe_offset(layout),
-            -layout.dim_y + last_depth,
+    return (layout.dim_x - right_scribe_offset(layout), y,
             side_bottom_z(layout, last, 'RIGHT'))
 
 
 def right_side_dims(layout):
     last = layout.bay_count - 1
-    last_depth = layout.bays[last]['depth']
     bottom_z = side_bottom_z(layout, last, 'RIGHT')
     top_z = right_side_top_z(layout)
-    return (top_z - bottom_z, last_depth - layout.fft, right_side_thickness(layout))
+    return (top_z - bottom_z,
+            effective_right_depth(layout) - layout.fft,
+            right_side_thickness(layout))
 
 
 # ---------------------------------------------------------------------------
@@ -1645,9 +1846,14 @@ def bay_cage_position(layout, bay_index):
         return (x, y, z)
 
     left_x, _ = _cage_x_bounds(layout, bay_index)
-    y = -layout.dim_y + layout.fft
     z = bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
-    return (left_x, y, z)
+    # In angled mode the cage rotates around Z by face_frame_angle so
+    # bay-local +X aligns with the FF direction. The anchor sits at
+    # FF-distance left_x from the left endpoint on the FF inner plane;
+    # opening cages stay at bay-local Y=0 and inherit the rotation, so
+    # they land on the FF inner plane in world. ff_inner_world_pos
+    # collapses to (left_x, -dim_y + fft, z) when not angled.
+    return ff_inner_world_pos(layout, left_x, z)
 
 
 def bay_cage_dims(layout, bay_index):

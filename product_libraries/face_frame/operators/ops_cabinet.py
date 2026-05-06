@@ -320,7 +320,7 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
         layout.separator()
 
         if self.active_tab == 'GENERAL':
-            ui_face_frame.draw_dimensions(layout, cab_props)
+            ui_face_frame.draw_dimensions(layout, root)
             # Bay section sits under cabinet dimensions on the same tab.
             # Single-bay collapses to a one-line size readout (cabinet
             # dims above are the editor); multi-bay gets a compact box

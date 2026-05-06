@@ -195,6 +195,34 @@ INTERIOR_KIND_TO_ROLE = {
     'ACCESSORY':        PART_ROLE_ACCESSORY_LABEL,
 }
 
+# Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
+# whose cage volume covers everything forward of the angled face frame
+# inner plane; carcass parts that need a trapezoidal silhouette carry a
+# 'Angled Cut' boolean DIFFERENCE modifier referencing it. Defined down
+# here so the role frozenset can reference PART_ROLE_ADJUSTABLE_SHELF
+# (declared just above).
+PART_ROLE_ANGLED_CUTTER = 'ANGLED_CUTTER'
+ANGLED_CUT_MOD_NAME = 'Angled Cut'
+ANGLED_CUT_PART_ROLES = frozenset({
+    PART_ROLE_TOP, PART_ROLE_BOTTOM,
+    PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF,
+})
+
+# Baseline rotation_euler.z for parts that live in the face frame plane.
+# Recalc adds face_frame_angle on top so they rotate with the angled
+# FF plane in angled mode; with theta = 0 the values match the build-
+# time rotations and there's no behavior change for square cabinets.
+# Bay cages are handled separately in _update_bay_cage (no baseline; the
+# FF angle IS the rotation).
+FF_ROTATION_BASELINE_Z = {
+    PART_ROLE_LEFT_STILE:        math.pi / 2,
+    PART_ROLE_RIGHT_STILE:       math.pi / 2,
+    PART_ROLE_TOP_RAIL:          0.0,
+    PART_ROLE_BOTTOM_RAIL:       0.0,
+    PART_ROLE_TOE_KICK_SUBFRONT: 0.0,
+    PART_ROLE_FINISH_TOE_KICK:   0.0,
+}
+
 
 # ---------------------------------------------------------------------------
 # Bay cage
@@ -892,7 +920,26 @@ class FaceFrameCabinet(GeoNodeCage):
         if not unlocked_bays:
             return  # all bays locked, nothing to redistribute
 
-        remainder = cab_props.width - consumed - locked_total
+        # In angled mode the face frame becomes the hypotenuse, so rails
+        # and openings need to size against that length, not the cabinet's
+        # world X width. Layout's face_frame_length helper would do this
+        # but isn't built yet at this point in recalc, so reproduce the
+        # same condition + math directly from cab_props.
+        is_angled_single_bay = (
+            cab_props.corner_type == 'NONE'
+            and len(bays) == 1
+            and (cab_props.unlock_left_depth or cab_props.unlock_right_depth)
+        )
+        if is_angled_single_bay:
+            ld = (cab_props.left_depth if cab_props.unlock_left_depth
+                  else cab_props.depth)
+            rd = (cab_props.right_depth if cab_props.unlock_right_depth
+                  else cab_props.depth)
+            available_width = math.hypot(cab_props.width, ld - rd)
+        else:
+            available_width = cab_props.width
+
+        remainder = available_width - consumed - locked_total
         share = remainder / len(unlocked_bays)
 
         # Write shares to unlocked bays under the distribution guard so
@@ -1036,6 +1083,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
         layout = solver.FaceFrameLayout(self.obj)
         carcass_depth = solver.carcass_inner_depth(layout)
+        # face_frame_angle is 0 for square cabinets, so the rotation
+        # additions below are idempotent in the non-angled case.
+        ff_theta = solver.face_frame_angle(layout)
 
         # Compute and reconcile rail segments before the dispatch loop
         top_segments = solver.top_rail_segments(layout)
@@ -1122,6 +1172,13 @@ class FaceFrameCabinet(GeoNodeCage):
 
             if not role:
                 continue
+
+            # FF plane rotation. Hits stiles, rails, and kick subfronts;
+            # leaves other parts (sides, back, panels) at their built-in
+            # rotation_euler. Idempotent in square mode (theta = 0).
+            ff_baseline = FF_ROTATION_BASELINE_Z.get(role)
+            if ff_baseline is not None:
+                child.rotation_euler.z = ff_baseline + ff_theta
 
             part = GeoNodeCutpart(child)
 
@@ -1377,6 +1434,116 @@ class FaceFrameCabinet(GeoNodeCage):
             self._reconcile_finished_back(layout)
             self._reconcile_flush_x_strips(layout)
             self._reconcile_textured_panels(layout)
+
+        # Angled cabinet cutter: drives the trapezoidal silhouette on
+        # the root cage, top, bottom, and any shelves. Lazy: created
+        # on transition into angled mode, removed on transition out.
+        if layout.is_angled and self._has_carcass():
+            cutter_obj = self._ensure_angled_cutter()
+            self._position_angled_cutter(cutter_obj, layout)
+            self._apply_angled_cuts(cutter_obj)
+        else:
+            self._cleanup_angled_cutter_and_cuts()
+
+    # =====================================================================
+    # Angled cabinet cutter (single-bay, unlock_left/right_depth on)
+    # =====================================================================
+    def _ensure_angled_cutter(self):
+        """Find the cabinet's angled cutter or build it. Lazy: only
+        called when entering angled mode, so non-angled cabinets carry
+        no extra child."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER:
+                return child
+        cutter = GeoNodeCage()
+        cutter.create('Angled Cutter')
+        cutter.obj.parent = self.obj
+        cutter.obj['hb_part_role'] = PART_ROLE_ANGLED_CUTTER
+        # Show Cage emits the cage geometry the boolean reads from;
+        # hide_viewport keeps the wireframe out of the artist's way.
+        cutter.set_input('Show Cage', True)
+        cutter.obj.hide_viewport = True
+        return cutter.obj
+
+    def _position_angled_cutter(self, cutter_obj, layout):
+        """Place / size the cutter so its cage covers the wedge of
+        space forward of the angled FF inner plane.
+
+        Origin sits at the LEFT endpoint of the FF inner plane shifted
+        backward along the FF direction by `margin`, with rotation_
+        euler.z = face_frame_angle so cutter-local +X runs from left
+        to right along the FF line. Cage extends in cutter-local +X
+        for ff_length + 2 * margin (past both endpoints), in cutter-
+        local -Y for dim_y + margin (toward the cabinet front, far
+        enough to clear it from any point on the FF inner plane), and
+        in +Z for dim_z + 2 * margin (covering top and bottom panels
+        plus margin in either direction).
+        """
+        margin = inch(2.0)
+        fft = layout.fft
+        ld = solver.effective_left_depth(layout)
+        theta = solver.face_frame_angle(layout)
+        ff_len = solver.face_frame_length(layout)
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+
+        cutter_obj.location = (
+            -margin * cos_t,
+            -ld + fft - margin * sin_t,
+            -margin,
+        )
+        cutter_obj.rotation_euler = (0.0, 0.0, theta)
+
+        cage = GeoNodeCage(cutter_obj)
+        cage.set_input('Dim X', ff_len + 2.0 * margin)
+        cage.set_input('Dim Y', layout.dim_y + margin)
+        cage.set_input('Dim Z', layout.dim_z + 2.0 * margin)
+        cage.set_input('Mirror X', False)
+        cage.set_input('Mirror Y', True)
+        cage.set_input('Mirror Z', False)
+        cage.set_input('Show Cage', True)
+
+    def _iter_angled_cut_targets(self):
+        """Yield every object that should carry the 'Angled Cut'
+        modifier: cabinet root cage (so its silhouette matches the
+        carved carcass), cabinet-level top / bottom panels, and any
+        bay shelf / adjustable shelf living deeper in the bay tree.
+        """
+        yield self.obj
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            role = obj.get('hb_part_role')
+            if role == PART_ROLE_ANGLED_CUTTER:
+                continue
+            if role in ANGLED_CUT_PART_ROLES:
+                yield obj
+            stack.extend(obj.children)
+
+    def _apply_angled_cuts(self, cutter_obj):
+        """Ensure every cuttable target carries a boolean DIFFERENCE
+        modifier named ANGLED_CUT_MOD_NAME pointing at the cutter.
+        Idempotent; safe to call every recalc."""
+        for part in self._iter_angled_cut_targets():
+            mod = part.modifiers.get(ANGLED_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=ANGLED_CUT_MOD_NAME, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+
+    def _cleanup_angled_cutter_and_cuts(self):
+        """Reverse of _apply_angled_cuts + _ensure_angled_cutter. Pulls
+        the modifier off every target it might be attached to, then
+        removes the cutter object. No-op when there's nothing to undo.
+        """
+        for part in self._iter_angled_cut_targets():
+            mod = part.modifiers.get(ANGLED_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER:
+                bpy.data.objects.remove(child, do_unlink=True)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)
@@ -2144,6 +2311,11 @@ class FaceFrameCabinet(GeoNodeCage):
         pos = solver.bay_cage_position(layout, bay_index)
         dim_x, dim_y, dim_z = solver.bay_cage_dims(layout, bay_index)
         bay_obj.location = pos
+        # Rotate the bay around Z so its local +X aligns with the FF
+        # direction; opening cages, front pivots, fronts, and any
+        # interior items inherit the angle automatically through the
+        # parent transform. Zero in square cabinets.
+        bay_obj.rotation_euler.z = solver.face_frame_angle(layout)
         bay.set_input('Dim X', dim_x)
         bay.set_input('Dim Y', dim_y)
         bay.set_input('Dim Z', dim_z)

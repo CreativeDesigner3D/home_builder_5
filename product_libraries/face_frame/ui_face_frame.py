@@ -73,7 +73,11 @@ def draw_identity(layout, root):
     row.label(text=cab_props.cabinet_type)
 
 
-def draw_dimensions(layout, cab_props):
+def draw_dimensions(layout, root):
+    cab_props = root.face_frame_cabinet
+    bay_count = sum(
+        1 for c in root.children if c.get(types_face_frame.TAG_BAY_CAGE)
+    )
     col = layout.column(align=True)
     col.prop(cab_props, 'width', text="Width")
     col.prop(cab_props, 'depth', text="Depth")
@@ -91,6 +95,25 @@ def draw_dimensions(layout, cab_props):
         col.prop(cab_props, 'exterior_option',  text="Exterior")
         col.prop(cab_props, 'interior_option',  text="Interior")
         col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
+    # Angled standard cabinet: per-side depth unlocks, single-bay only.
+    # When either is on, the face frame becomes the hypotenuse spanning
+    # the two front edges; the back stays at cab_props.depth between
+    # the sides. Hidden entirely on multi-bay carcasses.
+    elif bay_count == 1:
+        col.separator()
+        left_row = col.row(align=True)
+        field = left_row.row(align=True)
+        field.enabled = cab_props.unlock_left_depth
+        field.prop(cab_props, 'left_depth', text="Left Depth")
+        lock_icon = 'UNLOCKED' if cab_props.unlock_left_depth else 'LOCKED'
+        left_row.prop(cab_props, 'unlock_left_depth', text="", icon=lock_icon)
+
+        right_row = col.row(align=True)
+        field = right_row.row(align=True)
+        field.enabled = cab_props.unlock_right_depth
+        field.prop(cab_props, 'right_depth', text="Right Depth")
+        lock_icon = 'UNLOCKED' if cab_props.unlock_right_depth else 'LOCKED'
+        right_row.prop(cab_props, 'unlock_right_depth', text="", icon=lock_icon)
 
 
 def draw_construction(layout, cab_props):
@@ -514,7 +537,7 @@ def draw_cabinet_wide(layout, root):
     layout.separator()
     box = layout.box()
     box.label(text="Dimensions", icon='ARROW_LEFTRIGHT')
-    draw_dimensions(box, cab_props)
+    draw_dimensions(box, root)
     box = layout.box()
     box.label(text="Construction", icon='MODIFIER')
     draw_construction(box, cab_props)
@@ -568,7 +591,7 @@ class HB_FACE_FRAME_PT_dimensions(bpy.types.Panel):
         root = types_face_frame.find_cabinet_root(context.active_object)
         if root is None:
             return
-        draw_dimensions(self.layout, root.face_frame_cabinet)
+        draw_dimensions(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
