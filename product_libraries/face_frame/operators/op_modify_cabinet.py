@@ -95,14 +95,14 @@ def _restore_session(snap):
 # ---------------------------------------------------------------------------
 # Boundary collection
 # ---------------------------------------------------------------------------
-def _collect_boundaries(scene):
-    """Walk every face-frame cabinet and gather BAY_EDGE boundary
-    records, plus the per-cabinet layout cached for hit-testing and
-    drawing. Returns list of (boundary, layout) tuples."""
+def _collect_boundaries(scene, collector):
+    """Walk every face-frame cabinet and gather boundary records using
+    the supplied collector function (one per grab-operator variant).
+    Returns list of (boundary, layout) tuples."""
     out = []
     for cab in _iter_face_frame_cabinets(scene):
         layout = solver.FaceFrameLayout(cab)
-        for b in solver.editable_boundaries_v1(cab, layout):
+        for b in collector(cab, layout):
             out.append((b, layout))
     return out
 
@@ -184,13 +184,22 @@ def _snap_offset(proposed, region, rv3d, b, layout,
     proj_self = _ff_to_screen(region, rv3d, cabinet_obj, layout,
                               self_pt[0], self_pt[1])
     drag_screen_axis = 'x' if b['axis'] == 'X' else 'y'
-    # 1. Alignment to any other boundary (regardless of its axis), as
-    # long as projecting it lines up on the drag screen axis.
+    # 1. Alignment to other boundaries on the SAME drag axis. Same-axis
+    # only because cross-axis alignment isn't meaningful (aligning a
+    # vertical line's screen.y to a horizontal line's anchor projects
+    # to whatever the horizontal line's left endpoint happens to be —
+    # not a target the user could reason about). It also caused visible
+    # flicker on vertical drags: every BAY_EDGE / MID_STILE in the
+    # scene has its alignment anchor at its ff_z_low, all clustered at
+    # bay-bottom level, so dragging through that band rapidly switches
+    # between dozens of near-identical targets.
     if proj_self is not None:
         best = None
         best_dist = SNAP_PX
         for other_b, other_layout in all_boundaries:
             if other_b is b:
+                continue
+            if other_b['axis'] != b['axis']:
                 continue
             opt = _other_anchor_point_ff(other_b)
             other_screen = _ff_to_screen(
@@ -428,7 +437,34 @@ def _draw_callback(op, context):
         layout = op._drag_layout
         cab = b['cabinet_obj']
         snap = op._drag_snapshot or []
-        if b['kind'] == 'BAY_EDGE':
+        if b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
+                         'OUTER_TOP', 'OUTER_BOTTOM',
+                         'TOE_KICK'):
+            # Single-neighbor drag: one label at the boundary's
+            # midpoint showing the current cabinet dim.
+            cur = getattr(cab.face_frame_cabinet, b['dim_attr'])
+            if b['axis'] == 'X':
+                mid_pt = (b['ff_x'], 0.5 * (b['ff_z_low'] + b['ff_z_high']))
+            else:
+                mid_pt = (0.5 * (b['ff_x_low'] + b['ff_x_high']), b['ff_z'])
+            scr = _ff_to_screen(region, rv3d, cab, layout,
+                                mid_pt[0], mid_pt[1])
+            if scr is not None:
+                _draw_text(scr.x, scr.y, _format_inches(cur),
+                           DIM_TEXT, size=14)
+        elif b['kind'] == 'BAY_HANDLE':
+            # Per-bay handle: label the bay's current attr value at the
+            # boundary midpoint.
+            bay_obj = bpy.data.objects.get(b['bay_obj_name'])
+            if bay_obj is not None:
+                cur = getattr(bay_obj.face_frame_bay, b['attr'])
+                mid_pt = (0.5 * (b['ff_x_low'] + b['ff_x_high']), b['ff_z'])
+                scr = _ff_to_screen(region, rv3d, cab, layout,
+                                    mid_pt[0], mid_pt[1])
+                if scr is not None:
+                    _draw_text(scr.x, scr.y, _format_inches(cur),
+                               DIM_TEXT, size=14)
+        elif b['kind'] == 'BAY_EDGE':
             for bay_idx in (b['left_bay_idx'], b['right_bay_idx']):
                 x0 = solver.bay_x_position(layout, bay_idx)
                 x1 = x0 + layout.bays[bay_idx]['width']
@@ -500,21 +536,24 @@ def _draw_callback(op, context):
 
 
 # ---------------------------------------------------------------------------
-# Modal operator
+# Modal operator: shared mixin + per-scope subclasses
 # ---------------------------------------------------------------------------
-class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
-    """Modal: drag bay boundaries on face frame cabinets to resize bays.
+# The grab UX — hover-pick a boundary, drag with snap, auto-lock,
+# click-to-unlock — is identical regardless of which boundaries the
+# operator exposes. Subclasses set BOUNDARY_COLLECTOR to a function
+# that yields the relevant boundary records for that scope (face frame
+# internals, cabinet outer dims, walls, etc. as the pattern grows).
+class _GrabBaseMixin:
+    """Shared modal lifecycle, GPU draw, snap, drag, commit, and
+    click-to-unlock machinery for grab-style operators.
 
-    Slice 1 supports bay-edge edits. Mid-stile (intra-bay opening) and
-    mid-rail edits land in subsequent slices."""
-
-    bl_idname = "hb_face_frame.modify_cabinet"
-    bl_label = "Modify Face Frame Cabinet"
-    bl_description = (
-        "Click and drag bay boundaries to resize bays. Auto-locks edited "
-        "bays. Enter to confirm, Esc to cancel"
-    )
-    bl_options = {'REGISTER', 'UNDO'}
+    Subclasses must set:
+      BOUNDARY_COLLECTOR — callable(cabinet_obj, layout) -> iterable of
+                           boundary records.
+    Subclasses must also set bl_idname / bl_label / bl_description /
+    bl_options on themselves.
+    """
+    BOUNDARY_COLLECTOR = None
 
     # Session state
     _session_snapshot = None
@@ -527,6 +566,7 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
     _drag_active = False
     _drag_origin_ff = 0.0          # cursor pos on drag axis at click
     _drag_origin_boundary = 0.0    # boundary's drag-axis value at click
+    _drag_basis = None             # cached FF basis (origin, x, z, normal)
     _snap_mode = 'COARSE'       # OFF | COARSE | FINE
     _snap_disabled_temp = False # Shift held
     _snap_kind = None
@@ -548,7 +588,7 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
             self.report({'WARNING'}, "Run from a 3D Viewport")
             return {'CANCELLED'}
         self._session_snapshot = _snapshot_session(context.scene)
-        self._boundaries = _collect_boundaries(context.scene)
+        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
         if not self._boundaries:
             self.report({'INFO'}, "No editable boundaries found")
             return {'CANCELLED'}
@@ -614,7 +654,7 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
             obj.face_frame_opening.unlock_size = False
         # Boundaries change because freshly-unlocked children re-share
         # their sibling space; the icon also disappears.
-        self._boundaries = _collect_boundaries(context.scene)
+        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
         return True
 
     def _pick_boundary(self, context, event):
@@ -638,14 +678,17 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
 
     @staticmethod
     def _snapshot_neighbors(b):
-        """Snapshot the two children affected by a drag, keyed by kind.
-        For BAY_EDGE: bay objects (width + unlock_width).
-        For MID_STILE / MID_RAIL: opening or split tree-children
-        (size + unlock_size). Returned as a list of dicts in
-        [primary, secondary] order so delta arithmetic is consistent
-        (primary grows, secondary shrinks)."""
+        """Snapshot the affected neighbor(s) for a drag, keyed by kind.
+
+        Returns a list of dicts. Length 2 for paired-neighbor kinds
+        (BAY_EDGE, MID_STILE, MID_RAIL). Length 1 for single-neighbor
+        kinds (OUTER_RIGHT, OUTER_LEFT, OUTER_TOP, TOE_KICK,
+        BAY_HANDLE) where only one value changes — no paired sibling
+        to compensate.
+        """
+        cab = b['cabinet_obj']
+
         if b['kind'] == 'BAY_EDGE':
-            cab = b['cabinet_obj']
             bay_objs = sorted(
                 [c for c in cab.children
                  if c.get(types_face_frame.TAG_BAY_CAGE)],
@@ -658,11 +701,66 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
                     out.append({
                         'kind': 'BAY',
                         'name': bay_objs[idx].name,
+                        'attr': 'width',
+                        'unlock_attr': 'unlock_width',
                         'value': bp.width,
                         'unlock': bp.unlock_width,
                     })
             return out
-        # Mid stile / mid rail: tree children
+
+        if b['kind'] == 'BAY_HANDLE':
+            bay_obj = bpy.data.objects.get(b['bay_obj_name'])
+            if bay_obj is None:
+                return []
+            bp = bay_obj.face_frame_bay
+            state = {
+                'kind': 'BAY',
+                'name': bay_obj.name,
+                'attr': b['attr'],
+                'unlock_attr': b['unlock_attr'],
+                'value': getattr(bp, b['attr']),
+                'unlock': getattr(bp, b['unlock_attr']),
+                'min_value': b.get('min_value'),
+            }
+            # Compensate: a paired attribute on the same bay that
+            # absorbs the drag so a constraint stays satisfied (e.g.
+            # upper bay top edge: top_offset shrinks while height
+            # grows so bay_bottom_z stays put).
+            if 'compensate_attr' in b:
+                state['compensate_attr'] = b['compensate_attr']
+                state['compensate_unlock_attr'] = b['compensate_unlock_attr']
+                state['compensate_sign'] = b['compensate_sign']
+                state['compensate_min_value'] = b['compensate_min_value']
+                state['compensate_value'] = getattr(bp, b['compensate_attr'])
+                state['compensate_unlock'] = getattr(
+                    bp, b['compensate_unlock_attr'])
+            return [state]
+
+        if b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
+                         'OUTER_TOP', 'OUTER_BOTTOM',
+                         'TOE_KICK'):
+            dim_attr = b['dim_attr']
+            state = {
+                'kind': 'CABINET_DIM',
+                'name': cab.name,
+                'dim': dim_attr,
+                'value': getattr(cab.face_frame_cabinet, dim_attr),
+                'unlock': None,
+            }
+            # Translate companion: dragging the LEFT or BOTTOM edge
+            # also moves the cabinet's location so the opposite edge
+            # stays put. translate_axis selects which FF basis axis to
+            # translate along (matched against the cached drag basis
+            # at write time).
+            if b.get('translate'):
+                state['translate'] = True
+                state['translate_axis'] = b['translate_axis']
+                state['grow_sign'] = b.get('primary_sign', 1.0)
+                state['orig_world_loc'] = cab.matrix_world.translation.copy()
+                state['orig_location'] = cab.location.copy()
+            return [state]
+
+        # MID_STILE / MID_RAIL: tree children
         if b['kind'] == 'MID_STILE':
             primary = b['left_child_name']
             secondary = b['right_child_name']
@@ -685,20 +783,59 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
             })
         return out
 
-    @staticmethod
-    def _write_neighbor(state, new_value, write_unlock):
+    def _write_neighbor(self, state, new_value, write_unlock, delta=None):
         """Apply a new value to one snapshot record. Auto-lock semantics
-        differ by kind: bay widths auto-lock through the setter; tree
-        children need an explicit unlock_size = True alongside the size
-        write."""
+        vary by kind:
+          BAY        - explicitly set the unlock flag named by the
+                       state, then write the attribute. If the state
+                       carries a compensate_attr, compute the
+                       compensating value from delta and write it too
+                       (with its own auto-lock).
+          CABINET_DIM- write the named dim. If translate is set, also
+                       shift cab.location along the cached drag basis
+                       so the opposite edge stays put.
+          TREE_CHILD - explicit unlock_size = True alongside size write
+        """
         obj = bpy.data.objects.get(state['name'])
         if obj is None:
             return
         if state['kind'] == 'BAY':
             bp = obj.face_frame_bay
-            if write_unlock and not bp.unlock_width:
-                bp.unlock_width = True
-            bp.width = new_value
+            unlock_attr = state['unlock_attr']
+            if write_unlock and not getattr(bp, unlock_attr):
+                setattr(bp, unlock_attr, True)
+            setattr(bp, state['attr'], new_value)
+            # Compensate write: derive new value from the same delta
+            # that drove the primary so the constraint stays satisfied.
+            if 'compensate_attr' in state and delta is not None:
+                c_attr = state['compensate_attr']
+                c_unlock_attr = state['compensate_unlock_attr']
+                c_sign = state['compensate_sign']
+                c_orig = state['compensate_value']
+                c_new = c_orig + c_sign * delta
+                if write_unlock and not getattr(bp, c_unlock_attr):
+                    setattr(bp, c_unlock_attr, True)
+                setattr(bp, c_attr, c_new)
+            return
+        if state['kind'] == 'CABINET_DIM':
+            cab_props = obj.face_frame_cabinet
+            setattr(cab_props, state['dim'], new_value)
+            if state.get('translate') and self._drag_basis is not None:
+                # delta along the drag axis = (new - orig) / grow_sign
+                grow_sign = state['grow_sign']
+                if abs(grow_sign) < 1e-9:
+                    return
+                delta_axis = (new_value - state['value']) / grow_sign
+                origin_w, x_axis_w, z_axis_w, _n = self._drag_basis
+                axis_w = x_axis_w if state['translate_axis'] == 'X' \
+                    else z_axis_w
+                world_delta = axis_w * delta_axis
+                new_world_loc = state['orig_world_loc'] + world_delta
+                if obj.parent is not None:
+                    parent_inv = obj.parent.matrix_world.inverted_safe()
+                    obj.location = parent_inv @ new_world_loc
+                else:
+                    obj.location = new_world_loc
             return
         # Tree child
         pg = (obj.face_frame_opening
@@ -716,8 +853,19 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
             return
         if state['kind'] == 'BAY':
             bp = obj.face_frame_bay
-            bp.unlock_width = state['unlock']
-            bp.width = state['value']
+            unlock_attr = state['unlock_attr']
+            setattr(bp, unlock_attr, state['unlock'])
+            setattr(bp, state['attr'], state['value'])
+            if 'compensate_attr' in state:
+                setattr(bp, state['compensate_unlock_attr'],
+                        state['compensate_unlock'])
+                setattr(bp, state['compensate_attr'],
+                        state['compensate_value'])
+            return
+        if state['kind'] == 'CABINET_DIM':
+            setattr(obj.face_frame_cabinet, state['dim'], state['value'])
+            if state.get('translate') and 'orig_location' in state:
+                obj.location = state['orig_location']
             return
         pg = (obj.face_frame_opening
               if obj.get(types_face_frame.TAG_OPENING_CAGE)
@@ -748,6 +896,13 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
         self._drag_layout = layout
         self._drag_origin_ff = self._drag_axis_value(b, ff_x, ff_z)
         self._drag_origin_boundary = self._boundary_axis_value(b)
+        # Freeze the FF basis for the duration of the drag. For drags
+        # that translate the cabinet (OUTER_LEFT) this keeps cursor
+        # projection in a stable reference frame; otherwise the
+        # cabinet would move underneath the cursor and cursor_delta
+        # would compound.
+        self._drag_basis = solver.face_frame_world_basis(
+            b['cabinet_obj'], layout)
         self._drag_active = True
         self._drag_snapshot = self._snapshot_neighbors(b)
         return True
@@ -760,9 +915,13 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
         b = self._drag_boundary
         layout = self._drag_layout
         cab = b['cabinet_obj']
-        hit = solver.mouse_to_ff_local(
-            cab, layout, region, rv3d,
-            (event.mouse_region_x, event.mouse_region_y))
+        # Use the frozen drag basis. mouse_to_ff_local would re-derive
+        # the basis from the cabinet's current matrix_world, which is
+        # mid-update for translate-style drags.
+        hit = solver.mouse_to_ff_local_with_basis(
+            region, rv3d,
+            (event.mouse_region_x, event.mouse_region_y),
+            self._drag_basis)
         if hit is None:
             return
         ff_x_now, ff_z_now, _w = hit
@@ -781,7 +940,7 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
             try:
                 primary_orig = (self._drag_snapshot[0]['value']
                                 if self._drag_snapshot else 0.0)
-                sign = -1.0 if b['kind'] == 'MID_RAIL' else 1.0
+                sign = b.get('primary_sign', 1.0)
                 typed_size = self._parse_typed(self._typed)
                 # Positive primary-growth delta = sign * (new - orig)
                 # along the drag axis, so:
@@ -802,41 +961,97 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
         # is +ff_z. Moving the boundary up (positive delta) should
         # SHRINK the top child, not grow it. Flip primary growth sign
         # for MID_RAIL so the math stays consistent.
-        primary_sign = -1.0 if b['kind'] == 'MID_RAIL' else 1.0
+        primary_sign = b.get('primary_sign', 1.0)
         if not self._drag_snapshot:
             return
-        primary_orig = self._drag_snapshot[0]['value']
-        secondary_orig = (self._drag_snapshot[1]['value']
-                          if len(self._drag_snapshot) > 1
-                          else primary_orig)
-        new_primary = primary_orig + primary_sign * delta
-        new_secondary = secondary_orig - primary_sign * delta
-        min_size = (MIN_BAY_WIDTH if b['kind'] == 'BAY_EDGE'
-                    else MIN_OPENING_SIZE)
-        if new_primary < min_size:
-            shortfall = min_size - new_primary
-            new_primary = min_size
-            new_secondary -= shortfall
-        if new_secondary < min_size:
-            shortfall = min_size - new_secondary
-            new_secondary = min_size
-            new_primary -= shortfall
-            if new_primary < min_size:
-                new_primary = min_size
-        # Write. write_unlock = True so each affected child auto-locks.
-        self._write_neighbor(self._drag_snapshot[0], new_primary, True)
-        if len(self._drag_snapshot) > 1:
-            self._write_neighbor(self._drag_snapshot[1], new_secondary, True)
+        state0 = self._drag_snapshot[0]
+        primary_orig = state0['value']
+        single_neighbor = (len(self._drag_snapshot) == 1)
+        # Default minimum if the boundary record didn't supply its own.
+        if b['kind'] in ('BAY_EDGE', 'OUTER_RIGHT', 'OUTER_LEFT',
+                         'OUTER_TOP', 'OUTER_BOTTOM', 'BAY_HANDLE'):
+            default_min = MIN_BAY_WIDTH
+        elif b['kind'] == 'TOE_KICK':
+            default_min = 0.0
+        else:
+            default_min = MIN_OPENING_SIZE
+        primary_min = state0.get('min_value')
+        if primary_min is None:
+            primary_min = default_min
+
+        if single_neighbor:
+            # Possibly-compound clamp: enforce primary_min, and (if
+            # present) the compensate attr's own min, by clamping
+            # delta to the most restrictive feasible range.
+            has_compensate = ('compensate_attr' in state0)
+            # primary_sign * delta >= primary_min - primary_orig
+            if primary_sign > 0:
+                lower = (primary_min - primary_orig) / primary_sign
+                if delta < lower:
+                    delta = lower
+            elif primary_sign < 0:
+                upper = (primary_min - primary_orig) / primary_sign
+                if delta > upper:
+                    delta = upper
+            if has_compensate:
+                c_orig = state0['compensate_value']
+                c_sign = state0['compensate_sign']
+                c_min = state0['compensate_min_value']
+                if c_sign > 0:
+                    lower = (c_min - c_orig) / c_sign
+                    if delta < lower:
+                        delta = lower
+                elif c_sign < 0:
+                    upper = (c_min - c_orig) / c_sign
+                    if delta > upper:
+                        delta = upper
+            new_primary = primary_orig + primary_sign * delta
+            new_secondary = None
+        else:
+            # Paired-neighbor (BAY_EDGE, MID_STILE, MID_RAIL).
+            secondary_orig = self._drag_snapshot[1]['value']
+            sec_min = self._drag_snapshot[1].get('min_value')
+            if sec_min is None:
+                sec_min = default_min
+            new_primary = primary_orig + primary_sign * delta
+            new_secondary = secondary_orig - primary_sign * delta
+            if new_primary < primary_min:
+                shortfall = primary_min - new_primary
+                new_primary = primary_min
+                new_secondary -= shortfall
+            if new_secondary < sec_min:
+                shortfall = sec_min - new_secondary
+                new_secondary = sec_min
+                new_primary -= shortfall
+                if new_primary < primary_min:
+                    new_primary = primary_min
+        # Write. write_unlock = True so each affected child auto-locks
+        # (no-op for CABINET_DIM kind).
+        self._write_neighbor(state0, new_primary, True, delta=delta)
+        if not single_neighbor:
+            self._write_neighbor(
+                self._drag_snapshot[1], new_secondary, True)
         # Refresh boundaries — splitter centerlines shift as sizes
         # change. Re-link the drag boundary to the freshly collected
         # record matching the same edge / split / gap.
-        self._boundaries = _collect_boundaries(context.scene)
+        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
         for nb, nl in self._boundaries:
             if nb['cabinet_obj'] is not cab or nb['kind'] != b['kind']:
                 continue
             same = False
             if b['kind'] == 'BAY_EDGE':
                 same = nb.get('edge_index') == b.get('edge_index')
+            elif b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
+                               'OUTER_TOP', 'OUTER_BOTTOM',
+                               'TOE_KICK'):
+                # One of each kind per cabinet (matching kind + cabinet
+                # already checked above is sufficient).
+                same = True
+            elif b['kind'] == 'BAY_HANDLE':
+                same = (
+                    nb.get('bay_obj_name') == b.get('bay_obj_name')
+                    and nb.get('attr') == b.get('attr')
+                )
             else:
                 same = (
                     nb.get('split_node_name') == b.get('split_node_name')
@@ -853,11 +1068,12 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
         if not commit:
             for state in (self._drag_snapshot or []):
                 self._restore_neighbor(state)
-            self._boundaries = _collect_boundaries(bpy.context.scene)
+            self._boundaries = _collect_boundaries(bpy.context.scene, self.BOUNDARY_COLLECTOR)
         self._drag_active = False
         self._drag_boundary = None
         self._drag_layout = None
         self._drag_snapshot = None
+        self._drag_basis = None
         self._snap_kind = None
         self._typing = False
         self._typed = ''
@@ -978,5 +1194,36 @@ class hb_face_frame_OT_modify_cabinet(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
-classes = (hb_face_frame_OT_modify_cabinet,)
+class hb_face_frame_OT_grab_face_frame(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab face frame internals — bay edges, mid stiles, and
+    mid rails — to resize bays and openings."""
+    bl_idname = "hb_face_frame.grab_face_frame"
+    bl_label = "Grab Face Frame"
+    bl_description = (
+        "Click and drag face-frame boundaries (bay edges, mid stiles, "
+        "mid rails) to resize bays and openings. Click a lock icon to "
+        "unlock. Enter to confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+    BOUNDARY_COLLECTOR = staticmethod(solver.editable_boundaries_v1)
+
+
+class hb_face_frame_OT_grab_cabinet(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab cabinet-level dims — outer right edge (width), outer
+    top edge (height), and bay edges."""
+    bl_idname = "hb_face_frame.grab_cabinet"
+    bl_label = "Grab Cabinet"
+    bl_description = (
+        "Click and drag the cabinet's outer edges to resize overall "
+        "width / height, or drag bay edges to redistribute width "
+        "between bays. Enter to confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+    BOUNDARY_COLLECTOR = staticmethod(solver.editable_boundaries_cabinet)
+
+
+classes = (
+    hb_face_frame_OT_grab_face_frame,
+    hb_face_frame_OT_grab_cabinet,
+)
 register, unregister = bpy.utils.register_classes_factory(classes)

@@ -2841,6 +2841,7 @@ def editable_boundaries_v1(cabinet_obj, layout):
             yield {
                 'kind': 'BAY_EDGE',
                 'axis': 'X',
+                'primary_sign': 1.0,
                 'cabinet_obj': cabinet_obj,
                 'edge_index': i,
                 'ff_x': ff_x,
@@ -2851,6 +2852,97 @@ def editable_boundaries_v1(cabinet_obj, layout):
                 'locked_left': locked_left,
                 'locked_right': locked_right,
             }
+    # Per-bay vertical-anchor handles. Top edge and bottom edge of each
+    # bay map to different bay properties depending on cabinet type:
+    #   base / tall: top -> bay.height            (drag up => grow)
+    #                bottom -> bay.kick_height    (drag up => grow)
+    #   upper:       top -> bay.top_offset        (drag up => shrink)
+    #                bottom -> bay.height         (drag up => shrink)
+    # Live in Grab Face Frame; outer cabinet edges live in Grab Cabinet.
+    is_upper = (layout.cabinet_type == 'UPPER')
+    for bi, bay_obj in enumerate(bay_objs):
+        bp = bay_obj.face_frame_bay
+        x0 = bay_x_position(layout, bi)
+        x1 = x0 + layout.bays[bi]['width']
+        z_top = bay_top_z(layout, bi)
+        z_bottom = bay_bottom_z(layout, bi)
+        if is_upper:
+            # Top edge drives top_offset AND height: dragging up shrinks
+            # top_offset (bay top rises) while growing height by the
+            # same amount (bay bottom stays put). bay_bottom_z =
+            # dim_z - top_offset - height; preserving it requires
+            # d(top_offset) + d(height) = 0, i.e. compensate_sign is
+            # the negative of primary's effect on top_offset.
+            yield {
+                'kind': 'BAY_HANDLE',
+                'axis': 'Z',
+                'primary_sign': -1.0,
+                'cabinet_obj': cabinet_obj,
+                'bay_obj_name': bay_obj.name,
+                'attr': 'top_offset',
+                'unlock_attr': 'unlock_top_offset',
+                # top_offset is signed: positive drops the bay below
+                # the cabinet ceiling, negative pushes it above. No
+                # lower bound — the user's design intent rules.
+                'min_value': float('-inf'),
+                'compensate_attr': 'height',
+                'compensate_unlock_attr': 'unlock_height',
+                'compensate_sign': 1.0,
+                'compensate_min_value': inch(2.0),
+                'locked': bool(bp.unlock_top_offset),
+                'ff_z': z_top,
+                'ff_x_low': x0,
+                'ff_x_high': x1,
+            }
+            # Bottom edge drives height (drag up shrinks height).
+            # No compensate: dragging the bottom moves only the bottom
+            # edge; top stays put because top_offset isn't touched.
+            yield {
+                'kind': 'BAY_HANDLE',
+                'axis': 'Z',
+                'primary_sign': -1.0,
+                'cabinet_obj': cabinet_obj,
+                'bay_obj_name': bay_obj.name,
+                'attr': 'height',
+                'unlock_attr': 'unlock_height',
+                'min_value': inch(2.0),
+                'locked': bool(bp.unlock_height),
+                'ff_z': z_bottom,
+                'ff_x_low': x0,
+                'ff_x_high': x1,
+            }
+        else:
+            # Top edge drives height (drag up grows height)
+            yield {
+                'kind': 'BAY_HANDLE',
+                'axis': 'Z',
+                'primary_sign': 1.0,
+                'cabinet_obj': cabinet_obj,
+                'bay_obj_name': bay_obj.name,
+                'attr': 'height',
+                'unlock_attr': 'unlock_height',
+                'locked': bool(bp.unlock_height),
+                'ff_z': z_top,
+                'ff_x_low': x0,
+                'ff_x_high': x1,
+            }
+            # Kick top drives kick_height (drag up grows kick_height).
+            # Only emit when the cabinet has a toe kick at all.
+            if layout.has_toe_kick:
+                yield {
+                    'kind': 'BAY_HANDLE',
+                    'axis': 'Z',
+                    'primary_sign': 1.0,
+                    'cabinet_obj': cabinet_obj,
+                    'bay_obj_name': bay_obj.name,
+                    'attr': 'kick_height',
+                    'unlock_attr': 'unlock_kick_height',
+                    'min_value': 0.0,
+                    'locked': bool(bp.unlock_kick_height),
+                    'ff_z': z_bottom,
+                    'ff_x_low': x0,
+                    'ff_x_high': x1,
+                }
     # MID_STILE / MID_RAIL pass per bay
     for bi in range(layout.bay_count):
         for b in intra_bay_boundaries(cabinet_obj, layout, bi):
@@ -2908,6 +3000,7 @@ def intra_bay_boundaries(cabinet_obj, layout, bay_index):
             yield {
                 'kind': 'MID_STILE',
                 'axis': 'X',
+                'primary_sign': 1.0,
                 'cabinet_obj': cabinet_obj,
                 'bay_index': bay_index,
                 'split_node_name': node_name,
@@ -2932,6 +3025,7 @@ def intra_bay_boundaries(cabinet_obj, layout, bay_index):
             yield {
                 'kind': 'MID_RAIL',
                 'axis': 'Z',
+                'primary_sign': -1.0,
                 'cabinet_obj': cabinet_obj,
                 'bay_index': bay_index,
                 'split_node_name': node_name,
@@ -2960,4 +3054,101 @@ def _kid_unlock_size(kid_obj):
         except AttributeError:
             pass
     return False
+
+
+def editable_boundaries_cabinet(cabinet_obj, layout):
+    """Boundary records for the cabinet-level grab operator.
+
+    Exposes only the four outer edges of the cabinet — left, right,
+    top, bottom. Bay-level and intra-bay edits live in
+    editable_boundaries_v1 (Grab Face Frame). This separation keeps
+    each operator's overlay unambiguous: at any FF position there's
+    exactly one drag handle per Grab variant, no flicker between
+    overlapping per-bay and cabinet-level lines.
+
+    LEFT and BOTTOM dragging translate the cabinet's location (so the
+    opposite edge stays put) in addition to writing the dimension.
+    Depth is omitted; face-on UX doesn't render a depth handle cleanly.
+    """
+    ff_len = face_frame_length(layout)
+    # OUTER_RIGHT — vertical line at the FF's right end
+    yield {
+        'kind': 'OUTER_RIGHT',
+        'axis': 'X',
+        'primary_sign': 1.0,
+        'cabinet_obj': cabinet_obj,
+        'dim_attr': 'width',
+        'ff_x': ff_len,
+        'ff_z_low': 0.0,
+        'ff_z_high': layout.dim_z,
+    }
+    # OUTER_LEFT — vertical line at the FF's left end. Translates the
+    # cabinet location along +ff_x_world so the right edge stays put.
+    yield {
+        'kind': 'OUTER_LEFT',
+        'axis': 'X',
+        'primary_sign': -1.0,
+        'translate': True,
+        'translate_axis': 'X',
+        'cabinet_obj': cabinet_obj,
+        'dim_attr': 'width',
+        'ff_x': 0.0,
+        'ff_z_low': 0.0,
+        'ff_z_high': layout.dim_z,
+    }
+    # OUTER_TOP — horizontal line at the cabinet's top
+    yield {
+        'kind': 'OUTER_TOP',
+        'axis': 'Z',
+        'primary_sign': 1.0,
+        'cabinet_obj': cabinet_obj,
+        'dim_attr': 'height',
+        'ff_z': layout.dim_z,
+        'ff_x_low': 0.0,
+        'ff_x_high': ff_len,
+    }
+    # OUTER_BOTTOM — horizontal line at the cabinet's floor. Translates
+    # cabinet location along +ff_z_world so the top stays put. For
+    # floor-anchored types (base, tall) this lifts the cabinet off the
+    # floor; the user is responsible for re-seating it if needed.
+    yield {
+        'kind': 'OUTER_BOTTOM',
+        'axis': 'Z',
+        'primary_sign': -1.0,
+        'translate': True,
+        'translate_axis': 'Z',
+        'cabinet_obj': cabinet_obj,
+        'dim_attr': 'height',
+        'ff_z': 0.0,
+        'ff_x_low': 0.0,
+        'ff_x_high': ff_len,
+    }
+
+def mouse_to_ff_local_with_basis(region, rv3d, mouse_xy, basis):
+    """Project a mouse position onto an FF outer plane defined by the
+    given basis tuple (origin_w, x_axis_w, z_axis_w, normal_w). Returns
+    (ff_x, ff_z, world_hit) or None.
+
+    Companion to mouse_to_ff_local. Used by the modify-cabinet operator
+    during drags that translate the cabinet's location: a frozen basis
+    captured at drag start gives cursor_delta a stable reference frame,
+    avoiding compounding drift as the cabinet moves under the cursor.
+    """
+    from bpy_extras import view3d_utils
+    from mathutils.geometry import intersect_line_plane
+    if region is None or rv3d is None:
+        return None
+    co2d = (mouse_xy[0], mouse_xy[1])
+    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co2d)
+    ray_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, co2d)
+    if ray_origin is None or ray_dir is None:
+        return None
+    origin_w, x_axis_w, z_axis_w, normal_w = basis
+    hit = intersect_line_plane(
+        ray_origin, ray_origin + ray_dir, origin_w, normal_w,
+    )
+    if hit is None:
+        return None
+    rel = hit - origin_w
+    return (rel.dot(x_axis_w), rel.dot(z_axis_w), hit)
 
