@@ -992,277 +992,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
 
-    def get_adjacent_wall_intrusion(self, wall_obj, side='left'):
-        """
-        Calculate how far cabinets on an adjacent (connected) wall intrude into
-        this wall's available placement space.
-        
-        Uses coordinate transforms to handle any wall angle, not just 90 degrees.
-        Only considers cabinets that vertically and depth-wise overlap with
-        the cabinet being placed.
-        
-        Args:
-            wall_obj: The current wall object
-            side: 'left' (x=0 end) or 'right' (x=wall_length end)
-        
-        Returns:
-            float: intrusion distance along wall's X axis, or 0 if none
-        """
-        wall = hb_types.GeoNodeWall(wall_obj)
-        adj_wall_node = wall.get_connected_wall(direction=side)
-        if not adj_wall_node:
-            return 0.0
-        
-        adj_wall_obj = adj_wall_node.obj
-        wall_length = wall.get_input('Length')
-        wall_matrix_inv = wall_obj.matrix_world.inverted()
-        adj_matrix = adj_wall_obj.matrix_world
-        
-        # Our cabinet's vertical bounds
-        cabinet_z_start = self.get_cabinet_z_location(bpy.context)
-        cabinet_height = self.get_cabinet_height(bpy.context)
-        cabinet_z_end = cabinet_z_start + cabinet_height
-        
-        # Our cabinet's Y zone in local space (depth direction from wall surface)
-        cabinet_depth = self.get_cabinet_depth(bpy.context)
-        if self.place_on_front:
-            our_y_min = -cabinet_depth
-            our_y_max = 0
-        else:
-            our_y_min = wall.get_input('Thickness')
-            our_y_max = our_y_min + cabinet_depth
-        
-        max_intrusion = 0.0
-        
-        for child in adj_wall_obj.children:
-            if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
-                continue
-            if not ('IS_FRAMELESS_CABINET_CAGE' in child or 'IS_APPLIANCE' in child):
-                continue
-            
-            # Get adjacent cabinet dimensions
-            try:
-                child_geo = hb_types.GeoNodeObject(child)
-                child_width = child_geo.get_input('Dim X')
-                child_depth = child_geo.get_input('Dim Y')
-                child_height = child_geo.get_input('Dim Z')
-            except:
-                continue
-            
-            # Vertical overlap check
-            child_z_start = child.location.z
-            child_z_end = child_z_start + child_height
-            if not (cabinet_z_start < child_z_end and child_z_start < cabinet_z_end):
-                continue
-            
-            # Build corner positions in adjacent wall's local space
-            is_back_side = abs(child.rotation_euler.z - math.pi) < 0.1 or abs(child.rotation_euler.z + math.pi) < 0.1
-            if is_back_side:
-                child_x_start = child.location.x - child_width
-                adj_thickness = adj_wall_node.get_input('Thickness')
-                corners_adj_local = [
-                    Vector((child_x_start, adj_thickness, 0)),
-                    Vector((child_x_start + child_width, adj_thickness, 0)),
-                    Vector((child_x_start, adj_thickness + child_depth, 0)),
-                    Vector((child_x_start + child_width, adj_thickness + child_depth, 0)),
-                ]
-            else:
-                child_x_start = child.location.x
-                corners_adj_local = [
-                    Vector((child_x_start, 0, 0)),
-                    Vector((child_x_start + child_width, 0, 0)),
-                    Vector((child_x_start, -child_depth, 0)),
-                    Vector((child_x_start + child_width, -child_depth, 0)),
-                ]
-            
-            # Transform corners to our wall's local space
-            corners_our = []
-            for c in corners_adj_local:
-                world_pos = adj_matrix @ c
-                our_pos = wall_matrix_inv @ world_pos
-                corners_our.append(our_pos)
-            
-            # Check Y overlap (depth zone) with our cabinet
-            adj_y_min = min(c.y for c in corners_our)
-            adj_y_max = max(c.y for c in corners_our)
-            if not (our_y_min < adj_y_max and adj_y_min < our_y_max):
-                continue
-            
-            # Calculate X intrusion from the relevant end
-            if side == 'left':
-                # Intrusion from x=0: how far the deepest corner extends into positive X
-                for c in corners_our:
-                    if c.x > 0:
-                        max_intrusion = max(max_intrusion, c.x)
-            else:
-                # Intrusion from x=wall_length: how far the deepest corner extends into wall
-                for c in corners_our:
-                    if c.x < wall_length:
-                        intrusion = wall_length - c.x
-                        max_intrusion = max(max_intrusion, intrusion)
-        
-        return max(0.0, max_intrusion)
-
-    def find_placement_gap_by_side(self, wall_obj, cursor_x: float, object_width: float, 
-                                     place_on_front: bool, wall_thickness: float) -> tuple:
-        """
-        Find the available gap at cursor position, only considering objects on the same side
-        that overlap vertically with the cabinet being placed.
-        Doors and windows are always considered as they cut through the entire wall.
-        
-        Args:
-            wall_obj: The wall object
-            cursor_x: Cursor X position in wall's local space
-            object_width: Width of the object being placed
-            place_on_front: True if placing on front side of wall
-            wall_thickness: Thickness of the wall
-        
-        Returns (gap_start, gap_end, snap_x)
-        """
-        wall = hb_types.GeoNodeWall(wall_obj)
-        # Applied walls are not parametric; no gap calculation is possible.
-        if not wall.has_modifier():
-            return None, None, None
-        wall_length = wall.get_input('Length')
-        
-        # Get the Z bounds of the cabinet being placed
-        cabinet_z_start = self.get_cabinet_z_location(bpy.context)
-        cabinet_height = self.get_cabinet_height(bpy.context)
-        cabinet_z_end = cabinet_z_start + cabinet_height
-        
-        # Get all children and filter appropriately
-        children = []
-        for child in wall_obj.children:
-            # Skip helper objects
-            if child.get('obj_x'):
-                continue
-            # Skip the preview cage
-            if self.preview_cage and child == self.preview_cage.obj:
-                continue
-            # Skip dimension annotations (they have IS_2D_ANNOTATION custom property)
-            if child.get('IS_2D_ANNOTATION'):
-                continue
-            # Skip snap lines (handled separately as zero-width boundaries)
-            if child.get('IS_SNAP_LINE'):
-                continue
-            
-            # Doors and windows are obstacles for BOTH sides (they cut through wall)
-            is_door_or_window = 'IS_ENTRY_DOOR_BP' in child or 'IS_WINDOW_BP' in child
-            
-            if not is_door_or_window:
-                # For cabinets/other objects, check which side they're on
-                child_y = child.location.y
-                child_on_front = child_y < wall_thickness / 2
-                
-                # Only include children on the same side
-                if child_on_front != place_on_front:
-                    continue
-            
-            # Get object vertical bounds
-            child_z_start = child.location.z
-            child_z_end = child_z_start
-            child_width = 0
-            
-            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
-                try:
-                    geo_obj = hb_types.GeoNodeObject(child)
-                    child_width = geo_obj.get_input('Dim X')
-                    child_height = geo_obj.get_input('Dim Z')
-                    child_z_end = child_z_start + child_height
-                except:
-                    pass
-            
-            # Check for vertical overlap
-            # Two ranges overlap if: start1 < end2 AND start2 < end1
-            has_vertical_overlap = (cabinet_z_start < child_z_end) and (child_z_start < cabinet_z_end)
-            
-            if not has_vertical_overlap:
-                # No vertical collision, skip this object (including doors/windows)
-                continue
-            
-            # Get object horizontal bounds based on rotation
-            rot_z = child.rotation_euler.z
-            is_rotated_180 = abs(rot_z - math.pi) < 0.1 or abs(rot_z + math.pi) < 0.1
-            is_rotated_neg90 = abs(rot_z - math.radians(-90)) < 0.1 or abs(rot_z - math.radians(270)) < 0.1
-            
-            if is_rotated_neg90:
-                # -90° rotation (right corner cabinet): origin is at right edge,
-                # local Y maps to wall -X, so cabinet extends left by Dim Y
-                try:
-                    child_depth = hb_types.GeoNodeObject(child).get_input('Dim Y')
-                except:
-                    child_depth = child_width
-                x_start = child.location.x - child_depth
-                x_end = child.location.x
-            elif is_rotated_180:
-                # Back side: location.x is at right edge, cabinet extends left
-                x_start = child.location.x - child_width
-                x_end = child.location.x
-            else:
-                # Front side: location.x is at left edge, cabinet extends right
-                x_start = child.location.x
-                x_end = x_start + child_width
-            
-            children.append((x_start, x_end, child))
-        
-        # Sort by X position
-        children = sorted(children, key=lambda x: x[0])
-        
-        # Add virtual obstacles from cabinets on adjacent walls
-        left_intrusion = self.get_adjacent_wall_intrusion(wall_obj, 'left')
-        if left_intrusion > 0:
-            children.append((0, left_intrusion, None))
-        
-        right_intrusion = self.get_adjacent_wall_intrusion(wall_obj, 'right')
-        if right_intrusion > 0:
-            children.append((wall_length - right_intrusion, wall_length, None))
-        
-        # Re-sort after adding virtual obstacles
-        if left_intrusion > 0 or right_intrusion > 0:
-            children = sorted(children, key=lambda x: x[0])
-        
-        # Add snap lines as zero-width obstacles (boundaries)
-        for child in wall_obj.children:
-            if child.get('IS_SNAP_LINE'):
-                snap_x = child.get('SNAP_X_POSITION', child.location.x)
-                children.append((snap_x, snap_x, child))
-        
-        # Re-sort after adding snap lines
-        children = sorted(children, key=lambda x: x[0])
-        
-        if not children:
-            return (0, wall_length, cursor_x)
-        
-        # Find which gap the cursor is in
-        gap_start = 0
-        gap_end = wall_length
-        
-        for x_start, x_end, obj in children:
-            if cursor_x < x_start:
-                gap_end = x_start
-                break
-            else:
-                gap_start = x_end
-        
-        # Check if cursor is past all objects
-        if children and cursor_x >= children[-1][1]:
-            gap_start = children[-1][1]
-            gap_end = wall_length
-        
-        # Determine snap position within gap
-        gap_width = gap_end - gap_start
-        
-        if object_width >= gap_width:
-            snap_x = gap_start
-        elif cursor_x - gap_start < object_width / 2:
-            snap_x = gap_start
-        elif gap_end - cursor_x < object_width / 2:
-            snap_x = gap_end - object_width
-        else:
-            snap_x = cursor_x - object_width / 2
-        
-        return (gap_start, gap_end, snap_x)
-
     def calculate_auto_quantity(self, gap_width: float) -> int:
         """Calculate how many cabinets needed so none exceed max width."""
         if gap_width <= 0:
@@ -1419,11 +1148,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         # Find available gap, filtering by which side we're placing on
         gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
-            self.selected_wall, 
-            cursor_x, 
+            self.selected_wall,
+            cursor_x,
             self.individual_cabinet_width,
             self.place_on_front,
-            wall_thickness
+            wall_thickness,
+            object_z_start=self.get_cabinet_z_location(context),
+            object_height=self.get_cabinet_height(context),
+            object_depth=self.get_cabinet_depth(context),
+            exclude_obj=self.preview_cage.obj if self.preview_cage else None,
         )
         
         # Store gap boundaries for offset calculations
@@ -1546,26 +1279,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Update dimensions
         self.update_dimensions(context)
 
-    def find_cabinet_bp(self, obj):
-        """Find the cabinet or appliance base point (cage) from any child object."""
-        if obj is None:
-            return None
-        
-        # Check the object itself
-        if 'IS_FRAMELESS_CABINET_CAGE' in obj or 'IS_APPLIANCE' in obj:
-            return obj
-        
-        # Walk up parent hierarchy (but stop at walls)
-        current = obj
-        while current:
-            if 'IS_WALL_BP' in current:
-                return None  # Don't snap to wall-parented cabinets from floor mode
-            if 'IS_FRAMELESS_CABINET_CAGE' in current or 'IS_APPLIANCE' in current:
-                return current
-            current = current.parent
-        
-        return None
-    
     def set_position_free(self):
         """Position cabinet(s) on the floor, snapping to nearby cabinets."""
         if not self.preview_cage or not self.hit_location:
@@ -1576,29 +1289,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.snap_side = None
         self.center_snap_state = None  # No center snapping on floor
         
-        # Try to find a cabinet from what we hit
-        snap_target = None
-        if self.hit_object:
-            snap_target = self.find_cabinet_bp(self.hit_object)
-        
-        # Make sure we don't snap to ourselves
-        if snap_target and snap_target != self.preview_cage.obj:
-            try:
-                snap_cab = hb_types.GeoNodeObject(snap_target)
-                snap_width = snap_cab.get_input('Dim X')
-                
-                # Transform hit location to cabinet's local space
-                local_hit = snap_target.matrix_world.inverted() @ Vector(self.hit_location)
-                
-                # Determine which side based on local X position
-                if local_hit.x < snap_width / 2:
-                    self.snap_side = 'LEFT'
-                else:
-                    self.snap_side = 'RIGHT'
-                
-                self.snap_cabinet = snap_target
-            except:
-                pass
+        # Detect a cabinet under the cursor (excluding ourselves)
+        snap_target, snap_side = self.detect_cabinet_snap_target(
+            self.hit_object, self.hit_location)
+        if snap_target is not None and snap_target != self.preview_cage.obj:
+            self.snap_cabinet = snap_target
+            self.snap_side = snap_side
         
         if self.snap_cabinet:
             self.position_snapped_to_cabinet()
@@ -1626,42 +1322,26 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
         if not self.snap_cabinet or not self.preview_cage:
             return
-        
-        try:
-            snap_cab = hb_types.GeoNodeObject(self.snap_cabinet)
-            snap_width = snap_cab.get_input('Dim X')
-        except:
-            return
-        
-        # Get the snap cabinet's rotation
-        snap_rotation = self.snap_cabinet.rotation_euler.z
-        
-        # Calculate total width of cabinets being placed
+
         total_width = self.individual_cabinet_width * self.cabinet_quantity
-        
-        # Position based on which side we're snapping to
-        if self.snap_side == 'LEFT':
-            # Place to the left of snap cabinet - our right edge meets their left edge
-            local_offset = Vector((-total_width, 0, 0))
-        else:
-            # Place to the right of snap cabinet - our left edge meets their right edge
-            local_offset = Vector((snap_width, 0, 0))
-        
-        # Transform offset to world space using snap cabinet's rotation
-        rotation_matrix = Matrix.Rotation(snap_rotation, 4, 'Z')
-        world_offset = rotation_matrix @ local_offset
-        
-        # Set position and rotation to match snap cabinet
+        result = self.compute_cabinet_snap_transform(
+            self.snap_cabinet, self.snap_side, total_width)
+        if result is None:
+            return
+        new_loc, new_rot = result
+
         self.preview_cage.obj.parent = None
-        self.preview_cage.obj.location = self.snap_cabinet.location + world_offset
-        
-        # Set Z location based on cabinet/appliance type
-        if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+        self.preview_cage.obj.location = new_loc
+        self.preview_cage.obj.rotation_euler = new_rot
+
+        # Z override: uppers / align-top-to-base / hoods all need their
+        # natural Z, not the snap target's. Otherwise inherit Z from
+        # the snap target so a row of cabinets stays at the same height.
+        if (self.align_top_to_base or self.cabinet_type == 'UPPER'
+                or (self.is_appliance and self.appliance_type == 'HOOD')):
             self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
         else:
             self.preview_cage.obj.location.z = self.snap_cabinet.location.z
-        
-        self.preview_cage.obj.rotation_euler = self.snap_cabinet.rotation_euler
 
     def assign_door_styles_to_cabinet(self, cabinet_obj):
         """Assign the active door style to all fronts in a cabinet.

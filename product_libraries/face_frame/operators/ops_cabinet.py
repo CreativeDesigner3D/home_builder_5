@@ -38,33 +38,18 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
-        # Corner cabinets bypass the wall-snap modal: their footprint is
-        # square and their snap target is a wall corner, not a wall face.
-        # Drop them at the 3D cursor; corner-aware placement lands later.
+        # Corner cabinets get a dedicated placement modal - same
+        # cursor-follow / GPU-dim feedback as regular cabinets, but
+        # snaps to wall corners instead of gap edges and skips the
+        # fill / bay-qty / typed-width affordances that don't apply
+        # to a corner build.
         cls = types_face_frame.get_cabinet_class(self.cabinet_name)
         if cls is not None and issubclass(
                 cls, types_face_frame_corner.CornerFaceFrameCabinet):
-            try:
-                cabinet = cls()
-                cabinet.create(self.cabinet_name)
-            except Exception as e:
-                self.report({'ERROR'}, f"Cabinet creation failed: {e}")
-                return {'CANCELLED'}
-            cabinet.obj.location = context.scene.cursor.location.copy()
-            for o in context.selected_objects:
-                o.select_set(False)
-            context.view_layer.objects.active = cabinet.obj
-            # Apply the current selection-mode highlighting to the new
-            # cabinet so its parts dim / show correctly in 'Cabinets',
-            # 'Face Frame', etc. Mirrors the standard place_cabinet
-            # path. Toggle_mode poll might fail in unusual contexts -
-            # swallow rather than failing the whole placement.
-            try:
-                bpy.ops.hb_face_frame.toggle_mode(
-                    search_obj_name=cabinet.obj.name)
-            except RuntimeError:
-                pass
-            cabinet.obj.select_set(True)
+            bpy.ops.hb_face_frame.place_corner_cabinet(
+                'INVOKE_DEFAULT',
+                cabinet_name=self.cabinet_name,
+            )
             return {'FINISHED'}
         bpy.ops.hb_face_frame.place_cabinet(
             'INVOKE_DEFAULT',

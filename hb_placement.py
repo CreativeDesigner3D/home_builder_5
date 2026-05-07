@@ -1,10 +1,24 @@
 import bpy
+import blf
 import gpu
 import math
-from mathutils import Vector
+from collections import namedtuple
+from mathutils import Vector, Matrix
 from enum import Enum, auto
+from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from . import hb_snap, units
+
+
+# Placement-dimension spec consumed by draw_placement_dimensions.
+# `start` / `end` are world-space Vectors; `text` is the formatted label.
+# `color` is an optional RGBA tuple - defaults to None, in which case the
+# drawer uses its own default white. Use it to highlight snap-state etc.
+PlacementDimSpec = namedtuple(
+    'PlacementDimSpec',
+    ['start', 'end', 'text', 'color'],
+    defaults=[None],
+)
 
 class PlacementState(Enum):
     """States for placement modal operators"""
@@ -37,6 +51,17 @@ NUMBER_KEYS = {
     'MINUS': '-', 'NUMPAD_MINUS': '-',
     'SLASH': '/', 'NUMPAD_SLASH': '/',  # For fractions like 3/4
 }
+
+
+# Custom-property markers identifying objects that placement code
+# should treat as cabinets/appliances - for snap-target lookups,
+# adjacent-wall intrusion, etc. Centralized here so both libraries
+# (and any future ones) check the same set.
+CABINET_MARKERS = frozenset({
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_APPLIANCE',
+})
 
 
 class PlacementMixin:
@@ -89,7 +114,33 @@ class PlacementMixin:
         if self.placement_objects is None:
             self.placement_objects = []
         self.placement_objects.append(obj)
-        
+
+    def add_placement_dim_handler(self, context):
+        """Register a POST_PIXEL handler that draws placement dimensions.
+
+        After this is called, write a list of PlacementDimSpec values to
+        self._placement_dim_specs and call context.area.tag_redraw() to
+        flush. Idempotent - safe to call once in invoke().
+        """
+        if getattr(self, '_placement_dim_handle', None):
+            return
+        self._placement_dim_specs = []
+        self._placement_dim_handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_placement_dimensions, (self, context),
+            'WINDOW', 'POST_PIXEL',
+        )
+
+    def remove_placement_dim_handler(self):
+        """Tear down the placement-dim handler. Idempotent."""
+        handle = getattr(self, '_placement_dim_handle', None)
+        if handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(handle, 'WINDOW')
+            except Exception:
+                pass
+        self._placement_dim_handle = None
+        self._placement_dim_specs = []
+
     def update_snap(self, context, event):
         """
         Update snap calculation based on current mouse position.
@@ -481,6 +532,369 @@ class PlacementMixin:
             
         return (gap_start, gap_end, snap_x)
 
+    def find_cabinet_bp(self, obj, marker_set=None):
+        """Walk obj's parent chain looking for a cabinet/appliance root.
+
+        Returns the first ancestor (including obj itself) whose custom
+        properties include any marker in marker_set, or None if no
+        match is found before hitting a wall root.
+
+        marker_set defaults to CABINET_MARKERS, which covers both
+        library types and appliances. Pass a narrower set to scope
+        the search (e.g., only frameless cabinets).
+
+        Walls terminate the walk - this is for cabinet-to-cabinet
+        snap from off-wall placement, where wall-parented cabinets
+        are NOT valid snap targets.
+        """
+        if obj is None:
+            return None
+        markers = marker_set if marker_set is not None else CABINET_MARKERS
+        current = obj
+        while current is not None:
+            if 'IS_WALL_BP' in current:
+                return None
+            for m in markers:
+                if m in current:
+                    return current
+            current = current.parent
+        return None
+
+    def detect_cabinet_snap_target(self, hit_obj, hit_location):
+        """Resolve `hit_obj` to a cabinet root and pick which side
+        (LEFT or RIGHT in the cabinet's local frame) the hit is on.
+
+        Walks via find_cabinet_bp so wall-parented cabinets don't
+        come back as targets when the hit is on a deep child part.
+        Side is decided by hit_location's X relative to the cabinet's
+        local center, so a hit on the cabinet's left half snaps the
+        new object to the LEFT (against this cabinet's left face),
+        and a hit on the right half snaps RIGHT.
+
+        Returns (snap_obj, snap_side) or (None, None) if no cabinet
+        root is found or its Dim X can't be read.
+        """
+        from . import hb_types
+        snap_obj = self.find_cabinet_bp(hit_obj)
+        if snap_obj is None or hit_location is None:
+            return (None, None)
+        try:
+            snap_geo = hb_types.GeoNodeObject(snap_obj)
+            snap_width = snap_geo.get_input('Dim X')
+        except Exception:
+            return (None, None)
+        local_hit = snap_obj.matrix_world.inverted() @ hit_location
+        snap_side = 'LEFT' if local_hit.x < snap_width / 2 else 'RIGHT'
+        return (snap_obj, snap_side)
+
+    def compute_cabinet_snap_transform(self, snap_obj, snap_side,
+                                      new_object_width):
+        """World-space (location, rotation_euler) for an object placed
+        flush against the LEFT or RIGHT face of `snap_obj`, sharing
+        its Z rotation.
+
+        Math is in the snap target's local frame: LEFT means the new
+        object's right edge meets snap_obj's left edge (offset is
+        -new_object_width along snap-local X). RIGHT means the new
+        object's left edge meets snap_obj's right edge (offset is
+        +snap_width along snap-local X). The offset is then rotated
+        into world space by snap_obj's Z rotation.
+
+        Z is the snap target's Z. Callers that need a different Z
+        (e.g. uppers pinned to a fixed height) override on the
+        returned location.
+
+        Returns (Vector, Euler) or None if Dim X unreadable.
+        """
+        from . import hb_types
+        try:
+            snap_geo = hb_types.GeoNodeObject(snap_obj)
+            snap_width = snap_geo.get_input('Dim X')
+        except Exception:
+            return None
+
+        if snap_side == 'LEFT':
+            local_offset = Vector((-new_object_width, 0, 0))
+        else:
+            local_offset = Vector((snap_width, 0, 0))
+
+        rot_z = snap_obj.rotation_euler.z
+        world_offset = Matrix.Rotation(rot_z, 4, 'Z') @ local_offset
+        new_loc = snap_obj.location + world_offset
+        new_rot = snap_obj.rotation_euler.copy()
+        return (new_loc, new_rot)
+
+    def get_adjacent_wall_intrusion(self, wall_obj, side,
+                                    object_z_start=None,
+                                    object_height=None,
+                                    object_depth=None,
+                                    place_on_front=True):
+        """How far cabinets on a connected wall intrude into this wall.
+
+        Walks the connected wall's children matching CABINET_MARKERS,
+        maps each cabinet's footprint into this wall's local frame via
+        its matrix_world (so any rotation - including -90 corner
+        placements - is handled correctly without enumerating cases),
+        and returns the largest X distance any intruding corner sits
+        inside this wall's bounds at the requested end.
+
+        Vertical and depth filtering are opt-in via the kwargs; pass
+        None on either pair to skip that filter (then every cabinet
+        on the connected wall counts as a potential intrusion).
+
+        side is 'left' (the x=0 end) or 'right' (x=wall_length).
+        Returns 0.0 if no connected wall or no intruding cabinet.
+        """
+        from . import hb_types
+
+        wall = hb_types.GeoNodeWall(wall_obj)
+        adj_wall_node = wall.get_connected_wall(direction=side)
+        if not adj_wall_node:
+            return 0.0
+        adj_wall_obj = adj_wall_node.obj
+
+        wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        wall_matrix_inv = wall_obj.matrix_world.inverted()
+
+        check_vertical = (object_z_start is not None and
+                          object_height is not None)
+        if check_vertical:
+            object_z_end = object_z_start + object_height
+
+        check_depth = object_depth is not None
+        if check_depth:
+            if place_on_front:
+                our_y_min = -object_depth
+                our_y_max = 0.0
+            else:
+                our_y_min = wall_thickness
+                our_y_max = wall_thickness + object_depth
+
+        max_intrusion = 0.0
+
+        for child in adj_wall_obj.children:
+            if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
+                continue
+            if not any(m in child for m in CABINET_MARKERS):
+                continue
+
+            try:
+                child_geo = hb_types.GeoNodeObject(child)
+                child_width = child_geo.get_input('Dim X')
+                child_depth_val = child_geo.get_input('Dim Y')
+                child_height = child_geo.get_input('Dim Z')
+            except Exception:
+                continue
+
+            if check_vertical:
+                child_z_start = child.location.z
+                child_z_end = child_z_start + child_height
+                if not (object_z_start < child_z_end and
+                        child_z_start < object_z_end):
+                    continue
+
+            # Cabinet's footprint corners in cabinet-local space.
+            # HB cabinets place origin at back-left and extend +X
+            # (Dim X) along width, -Y (Dim Y) along depth into the
+            # room. Using matrix_world for the world map handles ANY
+            # rotation correctly, including -90 right-corner placements.
+            local_corners = [
+                Vector((0, 0, 0)),
+                Vector((child_width, 0, 0)),
+                Vector((0, -child_depth_val, 0)),
+                Vector((child_width, -child_depth_val, 0)),
+            ]
+            corners_our = [
+                wall_matrix_inv @ (child.matrix_world @ c)
+                for c in local_corners
+            ]
+
+            if check_depth:
+                adj_y_min = min(c.y for c in corners_our)
+                adj_y_max = max(c.y for c in corners_our)
+                if not (our_y_min < adj_y_max and adj_y_min < our_y_max):
+                    continue
+
+            if side == 'left':
+                # Intrusion = how far past x=0 any corner sits
+                for c in corners_our:
+                    if c.x > 0:
+                        max_intrusion = max(max_intrusion, c.x)
+            else:
+                # Intrusion = how far back from x=wall_length any
+                # corner sits (positive = inside the wall span)
+                for c in corners_our:
+                    if c.x < wall_length:
+                        max_intrusion = max(max_intrusion,
+                                            wall_length - c.x)
+
+        return max(0.0, max_intrusion)
+
+    def find_placement_gap_by_side(self, wall_obj, cursor_x: float,
+                                   object_width: float,
+                                   place_on_front: bool,
+                                   wall_thickness: float,
+                                   object_z_start: float = None,
+                                   object_height: float = None,
+                                   object_depth: float = None,
+                                   exclude_obj=None) -> tuple:
+        """Side-aware version of find_placement_gap.
+
+        Filters wall children to those on the same wall side as the
+        object being placed. Doors and windows count as obstacles on
+        BOTH sides (they cut through). Snap lines act as zero-width
+        boundary obstacles. Adjacent-wall intrusion (delegated to
+        get_adjacent_wall_intrusion) becomes virtual obstacles at
+        the wall ends.
+
+        Vertical filtering is opt-in: pass object_z_start AND
+        object_height to skip children that don't overlap the
+        object's Z range (e.g., a base cabinet doesn't block an
+        upper above it). If either is None, vertical filtering
+        is disabled and every same-side child is an obstacle.
+
+        Returns (gap_start, gap_end, snap_x). On a non-parametric
+        wall (no modifier), returns (None, None, None).
+        """
+        from . import hb_types
+
+        wall = hb_types.GeoNodeWall(wall_obj)
+        if not wall.has_modifier():
+            return None, None, None
+        wall_length = wall.get_input('Length')
+
+        check_vertical = (
+            object_z_start is not None and object_height is not None
+        )
+        if check_vertical:
+            object_z_end = object_z_start + object_height
+
+        children = []
+        for child in wall_obj.children:
+            if child.get('obj_x'):
+                continue
+            if exclude_obj is not None and child == exclude_obj:
+                continue
+            if child.get('IS_2D_ANNOTATION'):
+                continue
+            if child.get('IS_SNAP_LINE'):
+                continue  # handled separately as zero-width boundaries
+
+            # Doors/windows cut through both sides - always an obstacle.
+            is_opening = ('IS_ENTRY_DOOR_BP' in child or
+                          'IS_WINDOW_BP' in child)
+            if not is_opening:
+                child_on_front = child.location.y < wall_thickness / 2
+                if child_on_front != place_on_front:
+                    continue
+
+            child_z_start = child.location.z
+            child_z_end = child_z_start
+            child_width = 0
+            if hasattr(child, 'home_builder') and child.home_builder.mod_name:
+                try:
+                    geo_obj = hb_types.GeoNodeObject(child)
+                    child_width = geo_obj.get_input('Dim X')
+                    child_height_val = geo_obj.get_input('Dim Z')
+                    child_z_end = child_z_start + child_height_val
+                except Exception:
+                    pass
+
+            if check_vertical:
+                # Two ranges overlap iff start1 < end2 AND start2 < end1.
+                overlaps = (object_z_start < child_z_end and
+                            child_z_start < object_z_end)
+                if not overlaps:
+                    continue
+
+            # Resolve horizontal extent based on rotation. Back-side
+            # cabinets are rotated 180 around Z so location.x is the
+            # right edge; -90 corner cabinets have origin at right
+            # and extend by Dim Y along the wall.
+            rot_z = child.rotation_euler.z
+            is_rot_180 = (abs(rot_z - math.pi) < 0.1 or
+                          abs(rot_z + math.pi) < 0.1)
+            is_rot_neg90 = (abs(rot_z - math.radians(-90)) < 0.1 or
+                            abs(rot_z - math.radians(270)) < 0.1)
+
+            if is_rot_neg90:
+                try:
+                    child_depth = hb_types.GeoNodeObject(child).get_input('Dim Y')
+                except Exception:
+                    child_depth = child_width
+                x_start = child.location.x - child_depth
+                x_end = child.location.x
+            elif is_rot_180:
+                x_start = child.location.x - child_width
+                x_end = child.location.x
+            else:
+                x_start = child.location.x
+                x_end = x_start + child_width
+
+            children.append((x_start, x_end, child))
+
+        children.sort(key=lambda x: x[0])
+
+        # Adjacent-wall intrusion as virtual obstacles at the ends.
+        # Pass our own filter params through so the intrusion check
+        # uses the same vertical / depth / side criteria as the
+        # primary same-wall scan above.
+        left_intrusion = self.get_adjacent_wall_intrusion(
+            wall_obj, 'left',
+            object_z_start=object_z_start,
+            object_height=object_height,
+            object_depth=object_depth,
+            place_on_front=place_on_front,
+        )
+        if left_intrusion > 0:
+            children.append((0.0, left_intrusion, None))
+        right_intrusion = self.get_adjacent_wall_intrusion(
+            wall_obj, 'right',
+            object_z_start=object_z_start,
+            object_height=object_height,
+            object_depth=object_depth,
+            place_on_front=place_on_front,
+        )
+        if right_intrusion > 0:
+            children.append((wall_length - right_intrusion, wall_length, None))
+        if left_intrusion > 0 or right_intrusion > 0:
+            children.sort(key=lambda x: x[0])
+
+        # Snap lines as zero-width boundaries.
+        for child in wall_obj.children:
+            if child.get('IS_SNAP_LINE'):
+                snap_x_pos = child.get('SNAP_X_POSITION', child.location.x)
+                children.append((snap_x_pos, snap_x_pos, child))
+        children.sort(key=lambda x: x[0])
+
+        if not children:
+            return (0, wall_length, cursor_x)
+
+        gap_start = 0
+        gap_end = wall_length
+        for x_start, x_end, _ in children:
+            if cursor_x < x_start:
+                gap_end = x_start
+                break
+            else:
+                gap_start = x_end
+        if cursor_x >= children[-1][1]:
+            gap_start = children[-1][1]
+            gap_end = wall_length
+
+        gap_width = gap_end - gap_start
+        if object_width >= gap_width:
+            snap_x = gap_start
+        elif cursor_x - gap_start < object_width / 2:
+            snap_x = gap_start
+        elif gap_end - cursor_x < object_width / 2:
+            snap_x = gap_end - object_width
+        else:
+            snap_x = cursor_x - object_width / 2
+
+        return (gap_start, gap_end, snap_x)
+
 
 def draw_header_text(context, text: str):
     """
@@ -843,5 +1257,112 @@ def draw_dimension_snap_indicator(operator, context):
         batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": ortho_verts})
         batch.draw(shader)
     
+    gpu.state.blend_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
+# =============================================================================
+# PLACEMENT DIMENSION DRAWER
+# =============================================================================
+
+def draw_placement_dimensions(operator, context):
+    """Draw placement dimension lines + labels in screen space.
+
+    Reads ``operator._placement_dim_specs`` - a list of PlacementDimSpec
+    namedtuples. Each spec has world-space ``start`` / ``end`` Vectors
+    and a pre-formatted ``text`` label. The drawer projects the endpoints
+    into the region, renders a line with perpendicular end ticks, and
+    blits the label via blf at the line's midpoint.
+
+    Pure draw - no scene mutation, no depsgraph cost. Replaces per-tick
+    GeoNodeDimension object writes for placement feedback. Subclasses
+    rebuild the spec list each time the cabinet position changes and
+    call context.area.tag_redraw().
+    """
+    specs = getattr(operator, '_placement_dim_specs', None)
+    if not specs:
+        return
+
+    region = context.region
+    rv3d = context.region_data
+    if region is None or rv3d is None:
+        return
+
+    default_color = (1.0, 1.0, 1.0, 0.95)
+    tick_pixels = 6  # half-length of the perpendicular end tick
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(1.5)
+
+    font_id = 0
+    blf.size(font_id, 14)
+
+    for spec in specs:
+        s_world = spec.start
+        e_world = spec.end
+        text = spec.text
+        # Per-spec color override (e.g., snap state). Falls back to
+        # the drawer's default white when the spec didn't set one.
+        color = spec.color if spec.color is not None else default_color
+
+        s_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, s_world)
+        e_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, e_world)
+        if s_screen is None or e_screen is None:
+            continue
+
+        # Main dim line
+        shader.bind()
+        shader.uniform_float("color", color)
+        batch = batch_for_shader(
+            shader, 'LINES',
+            {"pos": [tuple(s_screen), tuple(e_screen)]},
+        )
+        batch.draw(shader)
+
+        # Perpendicular end ticks (degenerate gracefully if the line
+        # collapses to a point in screen space - e.g., camera looking
+        # straight down the dim axis).
+        dx = e_screen.x - s_screen.x
+        dy = e_screen.y - s_screen.y
+        length = math.hypot(dx, dy)
+        if length > 0.5:
+            inv = 1.0 / length
+            # Perpendicular unit vector
+            px = -dy * inv
+            py = dx * inv
+            tx = px * tick_pixels
+            ty = py * tick_pixels
+            tick_verts = [
+                (s_screen.x - tx, s_screen.y - ty),
+                (s_screen.x + tx, s_screen.y + ty),
+                (e_screen.x - tx, e_screen.y - ty),
+                (e_screen.x + tx, e_screen.y + ty),
+            ]
+            batch = batch_for_shader(
+                shader, 'LINES', {"pos": tick_verts},
+            )
+            batch.draw(shader)
+
+        # Label - centered on midpoint, offset perpendicular so the
+        # text doesn't sit on top of the line.
+        if text:
+            mx = (s_screen.x + e_screen.x) * 0.5
+            my = (s_screen.y + e_screen.y) * 0.5
+            text_w, text_h = blf.dimensions(font_id, text)
+            if length > 0.5:
+                # Offset along the perpendicular by half-text + a few px
+                offset = text_h * 0.5 + 4.0
+                ox = px * offset
+                oy = py * offset
+                tx_pos = mx + ox - text_w * 0.5
+                ty_pos = my + oy - text_h * 0.5
+            else:
+                tx_pos = mx - text_w * 0.5
+                ty_pos = my + 6.0
+            blf.position(font_id, tx_pos, ty_pos, 0)
+            blf.color(font_id, *color)
+            blf.draw(font_id, text)
+
     gpu.state.blend_set('NONE')
     gpu.state.line_width_set(1.0)

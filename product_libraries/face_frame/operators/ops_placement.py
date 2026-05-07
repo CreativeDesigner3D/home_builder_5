@@ -32,11 +32,12 @@ The cage is flagged HB_CURRENT_DRAW_OBJ so hb_snap raycasts skip it
 import bpy
 from .... import units
 import math
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from mathutils.geometry import intersect_line_plane, intersect_point_line
 from bpy_extras import view3d_utils
 
 from .. import types_face_frame
+from .. import types_face_frame_corner
 from .. import bay_presets
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
@@ -120,6 +121,153 @@ def _auto_bay_qty(cabinet_width):
     return max(_BAY_QTY_MIN, min(qty, _BAY_QTY_MAX))
 
 
+def _detect_wall(op, context):
+    """Find a wall via raycast or floor-projection fallback.
+
+    Returns the wall object or None. May update op.hit_location to a
+    projected floor point if the fallback path is used.
+
+    The fallback exists so cursor flicker on wall surfaces (which
+    causes raycasts to occasionally miss the wall) doesn't kick the
+    cabinet off the wall mid-placement.
+    """
+    if op.hit_object is not None:
+        wall = _find_wall_root(op.hit_object)
+        if wall is not None:
+            return wall
+    return _find_nearest_wall_from_cursor(op, context)
+
+
+def _find_nearest_wall_from_cursor(op, context):
+    """Project cursor onto floor plane and find nearest wall within snap.
+
+    Side effect: updates op.hit_location to the projected floor point
+    on the wall so downstream positioning math still has a valid
+    world-space point even though the raycast missed.
+    """
+    region = op.region
+    if region is None:
+        return None
+    rv3d = region.data
+    if rv3d is None:
+        return None
+
+    view_origin = view3d_utils.region_2d_to_origin_3d(
+        region, rv3d, op.mouse_pos)
+    view_dir = view3d_utils.region_2d_to_vector_3d(
+        region, rv3d, op.mouse_pos)
+    floor_point = intersect_line_plane(
+        view_origin,
+        view_origin + view_dir * 10000,
+        Vector((0, 0, 0)),
+        Vector((0, 0, 1)),
+    )
+    if not floor_point:
+        return None
+
+    cursor_2d = Vector((floor_point.x, floor_point.y))
+    nearest_wall = None
+    nearest_distance = _WALL_SNAP_DISTANCE
+
+    for obj in context.scene.objects:
+        if 'IS_WALL_BP' not in obj:
+            continue
+        try:
+            wall = hb_types.GeoNodeWall(obj)
+            if not wall.has_modifier():
+                continue
+            wall_length = wall.get_input('Length')
+            wall_thickness = wall.get_input('Thickness')
+        except Exception:
+            continue
+
+        wall_matrix = obj.matrix_world
+        local_start = Vector((0, wall_thickness / 2, 0))
+        local_end = Vector((wall_length, wall_thickness / 2, 0))
+        world_start = wall_matrix @ local_start
+        world_end = wall_matrix @ local_end
+        start_2d = Vector((world_start.x, world_start.y))
+        end_2d = Vector((world_end.x, world_end.y))
+
+        closest, percent = intersect_point_line(
+            cursor_2d, start_2d, end_2d)
+        closest_2d = Vector(closest[:2])
+        if percent < 0:
+            closest_2d = start_2d
+        elif percent > 1:
+            closest_2d = end_2d
+
+        distance = (cursor_2d - closest_2d).length
+        if distance < nearest_distance and 0 <= percent <= 1:
+            nearest_distance = distance
+            nearest_wall = obj
+            # Update hit_location so downstream code has a valid
+            # world-space point on/near the wall to work with.
+            op.hit_location = Vector(
+                (floor_point.x, floor_point.y, 0))
+
+    return nearest_wall
+
+
+def _is_corner_cabinet(obj):
+    """Return True if `obj` is a face frame corner cabinet root.
+
+    Detected by the face_frame_cabinet PropertyGroup's corner_type
+    being anything other than 'NONE' (e.g., 'PIE_CUT', 'DIAGONAL',
+    'INSIDE_CORNER'). Returns False for regular cabinets, frameless
+    cabinets, and any object without the PropertyGroup.
+    """
+    ff = getattr(obj, 'face_frame_cabinet', None)
+    if ff is None:
+        return False
+    return getattr(ff, 'corner_type', 'NONE') != 'NONE'
+
+
+def _compute_corner_left_snap_transform(snap_obj, new_object_width):
+    """LEFT-snap transform for a face frame corner cabinet.
+
+    A corner cabinet is L-shaped: its "left arm" runs the full
+    depth of the cabinet (Dim Y) along the perpendicular wall (the
+    one the corner cabinet's parent wall meets at the room corner).
+    The face_frame_cabinet.left_depth value is the *thickness* of
+    the left arm (perpendicular to its length axis), not its length;
+    the length is the cabinet's overall depth.
+
+    Continuing a cabinet run "to the left" of a corner cabinet means
+    continuing along the perpendicular wall - which requires the new
+    cabinet to be rotated 90 CCW relative to the corner cabinet so
+    its back faces the perpendicular wall, and offset so its right
+    edge lands at the end of the left arm.
+
+    Math in the corner cabinet's local frame:
+      - Origin at (0, -(corner_depth + new_object_width), 0).
+        After +90 CCW rotation, the new cabinet's local +X axis
+        maps to corner-local +Y direction, so its right edge
+        (local x = new_object_width) lands at corner-local
+        y = -corner_depth - the end of the left arm.
+      - Rotation: corner's Z rotation + pi/2
+
+    Returns (Vector, Euler) world-space, or None if corner depth
+    isn't readable.
+    """
+    ff = getattr(snap_obj, 'face_frame_cabinet', None)
+    if ff is None:
+        return None
+    try:
+        corner_depth = ff.depth
+    except AttributeError:
+        return None
+
+    local_offset = Vector((0, -(corner_depth + new_object_width), 0))
+    rot_z = snap_obj.rotation_euler.z
+    world_offset = Matrix.Rotation(rot_z, 4, 'Z') @ local_offset
+    new_loc = snap_obj.location + world_offset
+
+    new_rot = snap_obj.rotation_euler.copy()
+    new_rot.z = new_rot.z + math.pi / 2
+    return (new_loc, new_rot)
+
+
 class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                                      hb_placement.PlacementMixin):
     """Modal: cursor drags a face-frame preview cage, click to commit."""
@@ -150,6 +298,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _auto_bay_qty: bool = True      # True until user presses arrow keys
     _place_on_front: bool = True    # which side of the wall
     _fill_mode: bool = True         # False after the user types a width
+    _gap_snap = None                # None | 'LEFT' | 'CENTER' | 'RIGHT' gap-position snap
+    _cabinet_snap_side = None       # None | 'LEFT' | 'RIGHT' off-wall cabinet-to-cabinet snap
 
     # ---------------- invoke / modal ----------------
 
@@ -191,6 +341,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self.register_placement_object(cage_obj)
+
+        # Screen-space dimension feedback during the modal. Specs are
+        # rebuilt by _position_on_wall / _position_free; the draw
+        # handler reads self._placement_dim_specs each frame.
+        self.add_placement_dim_handler(context)
 
         context.window_manager.modal_handler_add(self)
         self._update_header(context)
@@ -382,6 +537,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self.bay_qty = new_qty
         self._update_cage()
 
+        # Typed-width path: position and dim overlay haven't run since
+        # the last MOUSEMOVE, so the cage just resized in place. Re-
+        # run positioning against the cached hit so the preview
+        # reflects the new width immediately. Fill mode is invoked
+        # from inside _position_on_wall - skipping the re-run there
+        # avoids redundant work (the caller is about to set position
+        # itself).
+        if not fill_mode and self.hit_location is not None:
+            self._position_from_hit(bpy.context)
+
     def _update_header(self, context):
         bay_label = f"{self.bay_qty} bay" + ("" if self.bay_qty == 1 else "s")
         mode = "auto" if self._auto_bay_qty else "manual"
@@ -408,96 +573,6 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             )
 
     # ---------------- wall detection ----------------
-
-    def _detect_wall(self, context):
-        """Find a wall via raycast or floor-projection fallback.
-
-        Returns the wall object or None. May update self.hit_location
-        to a projected floor point if the fallback path is used.
-
-        The fallback exists so cursor flicker on wall surfaces (which
-        causes raycasts to occasionally miss the wall) doesn't kick the
-        cabinet off the wall mid-placement. Frameless uses the same
-        pattern.
-        """
-        # Try raycast hit first
-        if self.hit_object is not None:
-            wall = _find_wall_root(self.hit_object)
-            if wall is not None:
-                return wall
-
-        # Fallback: project cursor onto floor and find nearest wall
-        return self._find_nearest_wall_from_cursor(context)
-
-    def _find_nearest_wall_from_cursor(self, context):
-        """Project cursor onto floor plane and find nearest wall within snap.
-
-        Side effect: updates self.hit_location to the projected floor
-        point on the wall so downstream positioning math still has a
-        valid hit location even though the raycast missed.
-        """
-        region = self.region
-        if region is None:
-            return None
-        rv3d = region.data
-        if rv3d is None:
-            return None
-
-        view_origin = view3d_utils.region_2d_to_origin_3d(
-            region, rv3d, self.mouse_pos)
-        view_dir = view3d_utils.region_2d_to_vector_3d(
-            region, rv3d, self.mouse_pos)
-        floor_point = intersect_line_plane(
-            view_origin,
-            view_origin + view_dir * 10000,
-            Vector((0, 0, 0)),
-            Vector((0, 0, 1)),
-        )
-        if not floor_point:
-            return None
-
-        cursor_2d = Vector((floor_point.x, floor_point.y))
-        nearest_wall = None
-        nearest_distance = _WALL_SNAP_DISTANCE
-
-        for obj in context.scene.objects:
-            if 'IS_WALL_BP' not in obj:
-                continue
-            try:
-                wall = hb_types.GeoNodeWall(obj)
-                if not wall.has_modifier():
-                    continue
-                wall_length = wall.get_input('Length')
-                wall_thickness = wall.get_input('Thickness')
-            except Exception:
-                continue
-
-            wall_matrix = obj.matrix_world
-            local_start = Vector((0, wall_thickness / 2, 0))
-            local_end = Vector((wall_length, wall_thickness / 2, 0))
-            world_start = wall_matrix @ local_start
-            world_end = wall_matrix @ local_end
-            start_2d = Vector((world_start.x, world_start.y))
-            end_2d = Vector((world_end.x, world_end.y))
-
-            closest, percent = intersect_point_line(
-                cursor_2d, start_2d, end_2d)
-            closest_2d = Vector(closest[:2])
-            if percent < 0:
-                closest_2d = start_2d
-            elif percent > 1:
-                closest_2d = end_2d
-
-            distance = (cursor_2d - closest_2d).length
-            if distance < nearest_distance and 0 <= percent <= 1:
-                nearest_distance = distance
-                nearest_wall = obj
-                # Update hit_location so downstream code has a valid
-                # world-space point on/near the wall to work with.
-                self.hit_location = Vector(
-                    (floor_point.x, floor_point.y, 0))
-
-        return nearest_wall
 
     def _update_place_on_front(self, context, wall, local_hit_y, wall_thickness):
         """Decide which side of the wall the cursor is on, with hysteresis.
@@ -555,7 +630,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             # cage where it is (don't jump to a stale or zero location).
             return
 
-        wall = self._detect_wall(context)
+        wall = _detect_wall(self, context)
         if wall is not None:
             self._position_on_wall(context, wall)
         else:
@@ -594,31 +669,99 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Decide which side (with hysteresis)
         self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
 
-        # Find the gap at this cursor X. Pass the cabinet's actual
-        # width so find_placement_gap returns a sensible snap_x: when
-        # the cursor is near a gap edge it snaps to that edge, when
-        # in the middle the cabinet centers on the cursor.
+        # Find the gap at this cursor X using the side-aware lookup:
+        # only same-side cabinets count, vertical overlap is required
+        # (so a base cabinet doesn't block placement of an upper above
+        # it), doors and windows count for both sides. snap_x snaps to
+        # the nearest gap edge when the cursor is close, otherwise
+        # centers the cabinet on the cursor.
+        cabinet_height = self._preview_cage.get_input('Dim Z')
+        cabinet_depth = self._preview_cage.get_input('Dim Y')
         try:
-            gap_start, gap_end, snap_x = self.find_placement_gap(
-                wall, cursor_x, object_width=self._cabinet_width,
+            result = self.find_placement_gap_by_side(
+                wall, cursor_x, self._cabinet_width,
+                self._place_on_front, wall_thickness,
+                object_z_start=cage_obj.location.z,
+                object_height=cabinet_height,
+                object_depth=cabinet_depth,
                 exclude_obj=cage_obj,
             )
         except Exception:
-            gap_start, gap_end = 0.0, wall_geo.get_input('Length')
+            result = (None, None, None)
+        gap_start, gap_end, snap_x = result
+        # Non-parametric (applied) wall returns None tuple - fall back
+        # to treating the wall as one open span.
+        if gap_start is None:
+            gap_start = 0.0
+            gap_end = wall_geo.get_input('Length')
             snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
 
         gap_width = max(gap_end - gap_start, units.inch(1.0))
 
+        # Snap to gap edges or center with a fixed-floor tolerance
+        # (so narrow cabinets still get a usable zone) and a small
+        # hysteresis band that widens the release threshold once
+        # snapped, so movement at the boundary doesn't pop in and
+        # out. Disabled in fill mode - that mode pins the cabinet
+        # to gap_start by definition. Corner snap takes priority
+        # over center when their zones overlap (rare, only in narrow
+        # gaps).
+        engage_corner = max(self._cabinet_width / 2, units.inch(6.0))
+        release_corner = engage_corner + units.inch(1.0)
+        engage_center = units.inch(4.0)
+        release_center = engage_center + units.inch(1.0)
+
+        left_thresh = release_corner if self._gap_snap == 'LEFT' else engage_corner
+        right_thresh = release_corner if self._gap_snap == 'RIGHT' else engage_corner
+        center_thresh = release_center if self._gap_snap == 'CENTER' else engage_center
+
+        near_left = (cursor_x - gap_start) < left_thresh
+        near_right = (gap_end - cursor_x) < right_thresh
+        gap_center = (gap_start + gap_end) / 2
+        # Center snap only meaningful when cabinet actually fits with
+        # room to spare; otherwise centered placement equals left
+        # placement and the snap state would be misleading.
+        near_center = (
+            abs(cursor_x - gap_center) < center_thresh
+            and self._cabinet_width < gap_width
+        )
+
+        if self._fill_mode:
+            self._gap_snap = None
+        elif near_left and near_right:
+            # Cursor near both ends in a narrow gap - pick the closer.
+            self._gap_snap = (
+                'LEFT' if (cursor_x - gap_start) < (gap_end - cursor_x)
+                else 'RIGHT'
+            )
+        elif near_left:
+            self._gap_snap = 'LEFT'
+        elif near_right:
+            self._gap_snap = 'RIGHT'
+        elif near_center:
+            self._gap_snap = 'CENTER'
+        else:
+            self._gap_snap = None
+
         # In fill mode, cabinet width follows the gap. With typed width
-        # (fill_mode=False), the user controls the width and we just
-        # need to clamp it so the cabinet doesn't overflow the gap.
+        # (fill_mode=False), the user controls the width; gap snap
+        # forces the cabinet flush to the chosen end or centered in
+        # the gap, otherwise we clamp the cursor-centered position
+        # into the gap.
         if self._fill_mode:
             self._apply_width(gap_width, fill_mode=True)
             placement_x = gap_start
             cabinet_width = gap_width
         else:
             cabinet_width = min(self._cabinet_width, gap_width)
-            placement_x = max(gap_start, min(snap_x, gap_end - cabinet_width))
+            if self._gap_snap == 'LEFT':
+                placement_x = gap_start
+            elif self._gap_snap == 'RIGHT':
+                placement_x = gap_end - cabinet_width
+            elif self._gap_snap == 'CENTER':
+                placement_x = gap_start + (gap_width - cabinet_width) / 2
+            else:
+                placement_x = max(gap_start, min(snap_x, gap_end - cabinet_width))
 
         # Position based on which side. The Mirror Y cage extends in -Y
         # from origin (front-side convention). For back-side placement,
@@ -634,14 +777,36 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.location.y = wall_thickness
             cage_obj.rotation_euler = (0, 0, math.pi)
 
+        # Refresh the GPU dimension overlay
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_thickness,
+            gap_start, gap_end, placement_x, cabinet_width,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
+
     def _position_free(self, context):
-        """Drop the cage at the world hit point (no wall snap)."""
+        """Drop the cage at the world hit point, snapping flush to an
+        existing off-wall cabinet's edge if the cursor is over one.
+        """
         cage_obj = self._preview_cage.obj
+
+        # Cabinet-to-cabinet snap detection. detect_cabinet_snap_target
+        # walks via find_cabinet_bp, which terminates the parent chain
+        # at IS_WALL_BP - so wall-parented cabinets aren't returned as
+        # snap targets when the hit is on a deep child part.
+        snap_target, snap_side = self.detect_cabinet_snap_target(
+            self.hit_object, self.hit_location)
+        if snap_target is cage_obj:
+            snap_target = None
+            snap_side = None
+        self._cabinet_snap_side = snap_side
+
+        # Detach from any wall parent before repositioning
         if cage_obj.parent is not None:
             world = cage_obj.matrix_world.copy()
             cage_obj.parent = None
             cage_obj.matrix_world = world
-            cage_obj.rotation_euler = (0, 0, 0)
 
         # In fill mode, off-wall placement returns the cage to the
         # scene default width. With a typed width, the user's value
@@ -652,16 +817,140 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._apply_width(default_w, fill_mode=True)
             self._update_header(context)
 
-        cage_obj.location.x = self.hit_location.x
-        cage_obj.location.y = self.hit_location.y
         cabinet_type = _cabinet_type_for_name(self.cabinet_name)
-        if cabinet_type != 'UPPER':
-            cage_obj.location.z = self.hit_location.z
+
+        snap_result = None
+        if snap_target is not None and snap_side is not None:
+            if _is_corner_cabinet(snap_target) and snap_side == 'LEFT':
+                # Corner cabinets need special LEFT-snap geometry: the
+                # new cabinet pivots 90 CCW onto the perpendicular wall
+                # and aligns with the corner's left_depth, not its
+                # bounding-box left face.
+                snap_result = _compute_corner_left_snap_transform(
+                    snap_target, self._cabinet_width)
+            else:
+                snap_result = self.compute_cabinet_snap_transform(
+                    snap_target, snap_side, self._cabinet_width)
+
+        if snap_result is not None:
+            new_loc, new_rot = snap_result
+            cage_obj.location = new_loc
+            cage_obj.rotation_euler = new_rot
+            # Z override: uppers go to scene default; others inherit
+            # the snap target's Z so a row stays at one height.
+            if cabinet_type == 'UPPER':
+                scene_props = context.scene.hb_face_frame
+                cage_obj.location.z = scene_props.default_wall_cabinet_location
+            else:
+                cage_obj.location.z = snap_target.location.z
+        else:
+            self._cabinet_snap_side = None
+            cage_obj.location.x = self.hit_location.x
+            cage_obj.location.y = self.hit_location.y
+            if cabinet_type != 'UPPER':
+                cage_obj.location.z = self.hit_location.z
+            cage_obj.rotation_euler = (0, 0, 0)
+
+        self._placement_dim_specs = self._build_dim_specs_free(context)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    # ---------------- placement dimensions ----------------
+
+    def _build_dim_specs_on_wall(self, context, wall, wall_thickness,
+                                 gap_start, gap_end,
+                                 placement_x, cabinet_width):
+        """Build placement-dim specs for the wall case.
+
+        Coordinates are wall-local (cage is wall-parented); the wall
+        matrix maps each endpoint into world space for the drawer.
+        Total-width dim sits 4" above the cabinet top; left/right
+        offset dims sit 8" above to keep them clear of the total.
+        """
+        cage_obj = self._preview_cage.obj
+        cabinet_height = self._preview_cage.get_input('Dim Z')
+        z_top = cage_obj.location.z + cabinet_height
+        z_total = z_top + units.inch(4.0)
+        z_offset = z_top + units.inch(8.0)
+
+        # Inset toward the room so the dim line is visible from a
+        # typical 3D camera angle (otherwise it sits flush with the
+        # wall surface and z-fights).
+        if self._place_on_front:
+            y_dim = -units.inch(2.0)
+        else:
+            y_dim = wall_thickness + units.inch(2.0)
+
+        wm = wall.matrix_world
+        unit_settings = context.scene.unit_settings
+        specs = []
+
+        # Total width - tinted green whenever a snap is active so the
+        # user has a clear "this is locked" signal. For CENTER, the
+        # offset dims also go green because their equality IS the
+        # snap; otherwise it could look like the cabinet just happens
+        # to be centered.
+        snap_green = (0.30, 0.95, 0.40, 1.0)
+        total_color = snap_green if self._gap_snap else None
+        offset_color = snap_green if self._gap_snap == 'CENTER' else None
+        s = wm @ Vector((placement_x, y_dim, z_total))
+        e = wm @ Vector((placement_x + cabinet_width, y_dim, z_total))
+        specs.append(hb_placement.PlacementDimSpec(
+            s, e,
+            units.unit_to_string(unit_settings, cabinet_width),
+            total_color,
+        ))
+
+        # Left offset (only if there's room worth annotating)
+        left_offset = placement_x - gap_start
+        if left_offset > units.inch(0.5):
+            s = wm @ Vector((gap_start, y_dim, z_offset))
+            e = wm @ Vector((placement_x, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, left_offset),
+                offset_color,
+            ))
+
+        # Right offset
+        right_offset = gap_end - (placement_x + cabinet_width)
+        if right_offset > units.inch(0.5):
+            s = wm @ Vector((placement_x + cabinet_width, y_dim, z_offset))
+            e = wm @ Vector((gap_end, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, right_offset),
+                offset_color,
+            ))
+
+        return specs
+
+    def _build_dim_specs_free(self, context):
+        """Build placement-dim specs for off-wall placement.
+
+        Off-wall there's no gap to annotate - just the total width
+        above the cabinet. Tinted green when cabinet-to-cabinet snap
+        is active, matching the wall corner / center-snap convention.
+        """
+        cage_obj = self._preview_cage.obj
+        cabinet_height = self._preview_cage.get_input('Dim Z')
+        cabinet_width = self._cabinet_width
+        z = cabinet_height + units.inch(4.0)
+
+        s = cage_obj.matrix_world @ Vector((0, 0, z))
+        e = cage_obj.matrix_world @ Vector((cabinet_width, 0, z))
+        snap_color = (
+            (0.30, 0.95, 0.40, 1.0) if self._cabinet_snap_side else None
+        )
+        return [hb_placement.PlacementDimSpec(
+            s, e,
+            units.unit_to_string(context.scene.unit_settings, cabinet_width),
+            snap_color,
+        )]
 
     # ---------------- finalize / cancel ----------------
 
     def _finalize(self, context):
         """Commit: capture cage transform, delete cage, build real cabinet."""
+        self.remove_placement_dim_handler()
         cage_obj = self._preview_cage.obj
         captured_parent = cage_obj.parent
         captured_world = cage_obj.matrix_world.copy()
@@ -738,6 +1027,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         return {'FINISHED'}
 
     def _cancel(self, context):
+        self.remove_placement_dim_handler()
         self._delete_preview()
         hb_placement.clear_header_text(context)
         return {'CANCELLED'}
@@ -755,9 +1045,419 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._preview_cage = None
         self._array_modifier = None
 
+class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
+                                            hb_placement.PlacementMixin):
+    """Modal: cursor drags a corner-cabinet preview cage, click to commit.
+
+    Snaps the cabinet to whichever wall corner is closer to the cursor.
+    Off-wall, drops at the cursor position with no rotation. Corner
+    cabinets don't take a typed width or a bay count - the dimensions
+    come from scene corner-size props, and the build is always one
+    cabinet at one corner.
+    """
+    bl_idname = "hb_face_frame.place_corner_cabinet"
+    bl_label = "Place Face Frame Corner Cabinet"
+    bl_description = (
+        "Place a face frame corner cabinet. Snaps to whichever wall "
+        "corner is closer to the cursor. LMB commits, Esc cancels."
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(
+        name="Cabinet Name",
+        description="Corner cabinet type to place",
+        default="",
+    )  # type: ignore
+
+    # Live state during modal session
+    _preview_cage = None
+    _cabinet_class = None
+    _cabinet_width: float = 0.0
+    _cabinet_depth: float = 0.0
+    _cabinet_height: float = 0.0
+    _corner_side = None  # None | 'LEFT' | 'RIGHT'
+    _selected_wall = None
+
+    # ---------------- invoke / modal ----------------
+
+    def invoke(self, context, event):
+        if not self.cabinet_name:
+            self.report({'WARNING'}, "No cabinet name supplied")
+            return {'CANCELLED'}
+        cls = types_face_frame.get_cabinet_class(self.cabinet_name)
+        if cls is None or not issubclass(
+                cls, types_face_frame_corner.CornerFaceFrameCabinet):
+            self.report({'WARNING'},
+                        f"Not a corner cabinet: {self.cabinet_name}")
+            return {'CANCELLED'}
+        self._cabinet_class = cls
+
+        scene_props = context.scene.hb_face_frame
+        if cls.default_cabinet_type == 'UPPER':
+            size = scene_props.upper_inside_corner_size
+            height = scene_props.upper_cabinet_height
+        else:
+            size = scene_props.base_inside_corner_size
+            height = scene_props.base_cabinet_height
+        self._cabinet_width = size
+        self._cabinet_depth = size
+        self._cabinet_height = height
+
+        try:
+            self._create_preview_cage(context)
+        except Exception as e:
+            self.report({'ERROR'}, f"Preview creation failed: {e}")
+            return {'CANCELLED'}
+
+        cage_obj = self._preview_cage.obj
+        cursor_loc = context.scene.cursor.location
+        cage_obj.location.x = cursor_loc.x
+        cage_obj.location.y = cursor_loc.y
+        if cls.default_cabinet_type == 'UPPER':
+            cage_obj.location.z = scene_props.default_wall_cabinet_location
+        else:
+            cage_obj.location.z = cursor_loc.z
+
+        self.init_placement(context)
+        if self.region is None:
+            self._delete_preview()
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self.register_placement_object(cage_obj)
+        self.add_placement_dim_handler(context)
+
+        context.window_manager.modal_handler_add(self)
+        self._update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if self._preview_cage is None:
+            return self._cancel(context)
+
+        # Pass through viewport navigation
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            return self._cancel(context)
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            return self._finalize(context)
+
+        if event.type == 'MOUSEMOVE':
+            cage_obj = self._preview_cage.obj
+            cage_obj.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                cage_obj.hide_set(False)
+            self._position_from_hit(context)
+
+        return {'RUNNING_MODAL'}
+
+    # ---------------- preview / positioning ----------------
+
+    def _create_preview_cage(self, context):
+        """Wireframe square cage matching the corner cabinet's outer
+        bounding square. Mirror Y so the cage extends -Y from origin
+        (matches the cabinet's back-at-origin convention).
+
+        HB_CURRENT_DRAW_OBJ excludes the cage from hb_snap raycasts.
+        """
+        cage = hb_types.GeoNodeCage()
+        cage.create('FaceFrameCornerPlacementPreview')
+        cage.set_input('Dim X', self._cabinet_width)
+        cage.set_input('Dim Y', self._cabinet_depth)
+        cage.set_input('Dim Z', self._cabinet_height)
+        cage.set_input('Mirror Y', True)
+        cage.obj.display_type = 'WIRE'
+        cage.obj.show_in_front = True
+        cage.obj['HB_CURRENT_DRAW_OBJ'] = True
+        self._preview_cage = cage
+
+    def _position_from_hit(self, context):
+        if self.hit_location is None:
+            return
+        wall = _detect_wall(self, context)
+        if wall is not None:
+            self._position_on_wall(context, wall)
+        else:
+            self._position_free(context)
+
+    def _position_on_wall(self, context, wall):
+        """Cursor-follow placement along the wall, snap to corners.
+
+        Uses find_placement_gap_by_side for collision detection so
+        existing cabinets (and adjacent-wall intrusions) carve the
+        gap we work in. Corner snap engages only when the cursor is
+        within engage_tol of a wall end AND that end is part of the
+        gap (no other cabinet blocking it). Hysteresis on release.
+
+        Corner snap states:
+          LEFT  - location.x=0,           rotation_euler.z=0
+          RIGHT - location.x=wall_length, rotation_euler.z=-pi/2
+          None  - free along wall, no rotation, clamped to gap
+        """
+        cage_obj = self._preview_cage.obj
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_length = wall_geo.get_input('Length')
+            wall_thickness = wall_geo.get_input('Thickness')
+        except Exception:
+            return
+
+        if cage_obj.parent is not wall:
+            cage_obj.parent = wall
+            cage_obj.matrix_parent_inverse.identity()
+
+        local_hit = wall.matrix_world.inverted() @ self.hit_location
+        cursor_x = local_hit.x
+
+        # Collision-aware gap. Corners are always front-side.
+        try:
+            result = self.find_placement_gap_by_side(
+                wall, cursor_x, self._cabinet_width,
+                place_on_front=True,
+                wall_thickness=wall_thickness,
+                object_z_start=cage_obj.location.z,
+                object_height=self._cabinet_height,
+                object_depth=self._cabinet_depth,
+                exclude_obj=cage_obj,
+            )
+        except Exception:
+            result = (None, None, None)
+        gap_start, gap_end, snap_x = result
+        if gap_start is None:
+            gap_start = 0.0
+            gap_end = wall_length
+            snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
+
+        # Corner snap detection. Only available when the gap actually
+        # reaches that wall end; an existing cabinet (or adjacent-wall
+        # intrusion) at a corner removes that corner from the option.
+        engage_tol = max(self._cabinet_width / 2, units.inch(6.0))
+        release_tol = engage_tol + units.inch(2.0)
+        left_thresh = release_tol if self._corner_side == 'LEFT' else engage_tol
+        right_thresh = release_tol if self._corner_side == 'RIGHT' else engage_tol
+        eps = units.inch(0.1)
+
+        near_left_corner = (cursor_x < left_thresh) and (gap_start <= eps)
+        near_right_corner = (
+            (cursor_x > wall_length - right_thresh)
+            and (gap_end >= wall_length - eps)
+        )
+
+        if near_left_corner and near_right_corner:
+            self._corner_side = (
+                'LEFT' if cursor_x < wall_length / 2 else 'RIGHT'
+            )
+        elif near_left_corner:
+            self._corner_side = 'LEFT'
+        elif near_right_corner:
+            self._corner_side = 'RIGHT'
+        else:
+            self._corner_side = None
+
+        # Position based on snap state
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
+        if self._corner_side == 'LEFT':
+            cage_obj.location.x = 0.0
+            cage_obj.location.y = 0.0
+            cage_obj.rotation_euler = (0, 0, 0)
+            placement_x = 0.0
+            cabinet_extent = self._cabinet_width
+        elif self._corner_side == 'RIGHT':
+            cage_obj.location.x = wall_length
+            cage_obj.location.y = 0.0
+            cage_obj.rotation_euler = (0, 0, math.radians(-90))
+            placement_x = wall_length - self._cabinet_depth
+            cabinet_extent = self._cabinet_depth
+        else:
+            # Free along wall: cursor-centered, clamped into the gap.
+            cabinet_extent = min(self._cabinet_width, gap_width)
+            placement_x = max(
+                gap_start, min(snap_x, gap_end - cabinet_extent)
+            )
+            cage_obj.location.x = placement_x
+            cage_obj.location.y = 0.0
+            cage_obj.rotation_euler = (0, 0, 0)
+
+        if self._cabinet_class.default_cabinet_type == 'UPPER':
+            scene_props = context.scene.hb_face_frame
+            cage_obj.location.z = scene_props.default_wall_cabinet_location
+        else:
+            cage_obj.location.z = 0.0
+
+        self._selected_wall = wall
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_length,
+            gap_start, gap_end, placement_x, cabinet_extent,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _position_free(self, context):
+        """Drop the cage at the cursor's hit location (no wall snap)."""
+        cage_obj = self._preview_cage.obj
+        if cage_obj.parent is not None:
+            world = cage_obj.matrix_world.copy()
+            cage_obj.parent = None
+            cage_obj.matrix_world = world
+            cage_obj.rotation_euler = (0, 0, 0)
+        self._corner_side = None
+        self._selected_wall = None
+
+        cage_obj.location.x = self.hit_location.x
+        cage_obj.location.y = self.hit_location.y
+        if self._cabinet_class.default_cabinet_type != 'UPPER':
+            cage_obj.location.z = self.hit_location.z
+
+        self._placement_dim_specs = self._build_dim_specs_free(context)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    # ---------------- placement dimensions ----------------
+
+    def _build_dim_specs_on_wall(self, context, wall, wall_length,
+                                 gap_start, gap_end,
+                                 placement_x, cabinet_extent):
+        """Build dim specs for wall placement.
+
+        Corner-snapped: just the total-width spec, green.
+        Free along wall: total + L/R offsets from the gap edges
+        (offsets shown only when > 0.5"). Mirrors the regular
+        cabinet operator's offset-dim convention so the placement
+        story is consistent.
+        """
+        cage_obj = self._preview_cage.obj
+        wm = wall.matrix_world
+        unit_settings = context.scene.unit_settings
+
+        z_top = cage_obj.location.z + self._cabinet_height
+        z_total = z_top + units.inch(4.0)
+        z_offset = z_top + units.inch(8.0)
+        y_dim = -units.inch(2.0)
+
+        snapped = self._corner_side is not None
+        snap_color = (0.30, 0.95, 0.40, 1.0)
+        total_color = snap_color if snapped else None
+        specs = []
+
+        # Total width
+        s = wm @ Vector((placement_x, y_dim, z_total))
+        e = wm @ Vector((placement_x + cabinet_extent, y_dim, z_total))
+        specs.append(hb_placement.PlacementDimSpec(
+            s, e,
+            units.unit_to_string(unit_settings, cabinet_extent),
+            total_color,
+        ))
+
+        if snapped:
+            return specs
+
+        # Free placement: show L/R offsets to gap edges
+        left_offset = placement_x - gap_start
+        if left_offset > units.inch(0.5):
+            s = wm @ Vector((gap_start, y_dim, z_offset))
+            e = wm @ Vector((placement_x, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, left_offset),
+            ))
+        right_offset = gap_end - (placement_x + cabinet_extent)
+        if right_offset > units.inch(0.5):
+            s = wm @ Vector((placement_x + cabinet_extent, y_dim, z_offset))
+            e = wm @ Vector((gap_end, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, right_offset),
+            ))
+        return specs
+
+    def _build_dim_specs_free(self, context):
+        """Off-wall: a single neutral-color width dim above the cage."""
+        cage_obj = self._preview_cage.obj
+        z = self._cabinet_height + units.inch(4.0)
+        s = cage_obj.matrix_world @ Vector((0, 0, z))
+        e = cage_obj.matrix_world @ Vector((self._cabinet_width, 0, z))
+        return [hb_placement.PlacementDimSpec(
+            s, e,
+            units.unit_to_string(
+                context.scene.unit_settings, self._cabinet_width),
+        )]
+
+    def _update_header(self, context):
+        msg = (f"Place {self.cabinet_name} - move cursor near a wall corner. "
+               f"LMB commits, Esc cancels.")
+        hb_placement.draw_header_text(context, msg)
+
+    # ---------------- finalize / cancel ----------------
+
+    def _finalize(self, context):
+        """Commit: capture cage transform, delete cage, build real cabinet."""
+        self.remove_placement_dim_handler()
+        cage_obj = self._preview_cage.obj
+        captured_parent = cage_obj.parent
+        captured_world = cage_obj.matrix_world.copy()
+        captured_local_loc = cage_obj.location.copy()
+        captured_local_rot = cage_obj.rotation_euler.copy()
+
+        self._delete_preview()
+
+        cls = self._cabinet_class
+        try:
+            cabinet = cls()
+            cabinet.create(self.cabinet_name)
+        except Exception as e:
+            self.report({'ERROR'}, f"Cabinet creation failed: {e}")
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        cab_obj = cabinet.obj
+        if captured_parent is not None:
+            cab_obj.parent = captured_parent
+            cab_obj.matrix_parent_inverse.identity()
+            cab_obj.location = captured_local_loc
+            cab_obj.rotation_euler = captured_local_rot
+        else:
+            cab_obj.matrix_world = captured_world
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        cab_obj.select_set(True)
+        context.view_layer.objects.active = cab_obj
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=cab_obj.name)
+            cab_obj.select_set(True)
+            context.view_layer.objects.active = cab_obj
+        except RuntimeError:
+            pass
+
+        hb_placement.clear_header_text(context)
+        side = self._corner_side or 'free'
+        self.report({'INFO'}, f"Placed {self.cabinet_name} ({side})")
+        return {'FINISHED'}
+
+    def _cancel(self, context):
+        self.remove_placement_dim_handler()
+        self._delete_preview()
+        hb_placement.clear_header_text(context)
+        return {'CANCELLED'}
+
+    def _delete_preview(self):
+        if self._preview_cage is None:
+            return
+        try:
+            self._delete_object_and_children(self._preview_cage.obj)
+        except Exception:
+            try:
+                bpy.data.objects.remove(self._preview_cage.obj, do_unlink=True)
+            except Exception:
+                pass
+        self._preview_cage = None
+
 
 classes = (
     hb_face_frame_OT_place_cabinet,
+    hb_face_frame_OT_place_corner_cabinet,
 )
 
 
