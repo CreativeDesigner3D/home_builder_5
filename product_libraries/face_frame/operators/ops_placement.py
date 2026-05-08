@@ -117,6 +117,11 @@ def _appliance_dimensions(scene_props, appliance_name):
     """Return (width, height, depth) for an appliance preview cage and
     final placement. Falls back to the appliance class's class-level
     defaults when no scene-prop override exists for that field.
+
+    Range Hood is the special case: its height fills from its mount Z
+    up to the scene ceiling so the hood reads as a duct enclosure. If
+    the ceiling sits at or below the mount Z (mis-configured scene),
+    the class default keeps it visible at a sane size.
     """
     cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(appliance_name)
     if cls is None:
@@ -128,7 +133,151 @@ def _appliance_dimensions(scene_props, appliance_name):
     if appliance_name == "Standalone Refrigerator":
         return (scene_props.refrigerator_cabinet_width,
                 scene_props.refrigerator_height, cls.depth)
+    if appliance_name == "Range Hood":
+        ceiling = bpy.context.scene.home_builder.ceiling_height
+        mount_z = _appliance_z_location(scene_props, appliance_name)
+        height = max(ceiling - mount_z, cls.height)
+        return (cls.width, height, cls.depth)
     return (cls.width, cls.height, cls.depth)
+
+
+def _appliance_z_location(scene_props, appliance_name):
+    """Return the cage Z origin for an appliance.
+
+    Range Hood mounts at the upper-cabinet base height (same Z as wall
+    cabinets) so it reads as the bay above the range. Everything else
+    sits on the floor (Z=0); the operator's invoke uses cursor Z for
+    the floor case so the user can rough in shelf/island placements.
+    """
+    if appliance_name == "Range Hood":
+        return scene_props.default_wall_cabinet_location
+    return None  # caller falls back to cursor / hit Z
+
+
+def _find_center_snap(hit_object, wall, kinds, cab_z_range):
+    """Walk up from hit_object looking for a center-snap target.
+
+    Used by placement to anchor a cabinet/appliance horizontally on
+    a window (base cabinet under window) or on an existing product
+    (range hood above a cabinet bay or cabinet body).
+
+    kinds is a set; any of:
+      'WINDOW'   - IS_WINDOW_BP wrapper; finds its child geo cage,
+                   honors a height-collision check so an upper cabinet
+                   doesn't try to center on a window it would hit.
+      'BAY'      - IS_FACE_FRAME_BAY_CAGE; matches when the hit is on
+                   a door / drawer front whose parent chain runs through
+                   the bay. More-specific match than CABINET, so checked
+                   first within the same parent-walk iteration.
+      'PRODUCT'  - IS_FACE_FRAME_CABINET_CAGE / IS_FRAMELESS_CABINET_CAGE
+                   / IS_APPLIANCE. Matches when no bay is in the chain
+                   (cursor on a stile / carcass / appliance shell).
+
+    cab_z_range is the (z_start, z_end) wall-local bounds of the
+    object being placed. Used only for the WINDOW height-collision
+    check; other kinds skip it (the hood mounts above floor products
+    by construction).
+
+    Returns (center_x, kind, width) in wall-local coordinates, or
+    (None, None, None) when no qualifying target is found.
+    """
+    if hit_object is None or wall is None:
+        return None, None, None
+
+    cab_z_start, cab_z_end = cab_z_range
+    target_obj = None
+    target_kind = None
+
+    current = hit_object
+    while current is not None and current is not wall:
+        # Bay cage is checked before product so a hit on a door
+        # front (whose chain runs door -> pivot -> opening -> bay
+        # -> cabinet root) returns the bay rather than the whole
+        # cabinet.
+        if 'BAY' in kinds and current.get('IS_FACE_FRAME_BAY_CAGE'):
+            target_obj = current
+            target_kind = 'BAY'
+            break
+        if 'PRODUCT' in kinds:
+            if (current.get('IS_FACE_FRAME_CABINET_CAGE')
+                    or current.get('IS_FRAMELESS_CABINET_CAGE')
+                    or current.get('IS_APPLIANCE')):
+                target_obj = current
+                target_kind = 'PRODUCT'
+                break
+        if 'WINDOW' in kinds and current.get('IS_WINDOW_BP'):
+            # Window may be a single object marked both IS_WINDOW_BP
+            # and IS_GEONODE_CAGE (current convention) or a wrapper
+            # whose IS_GEONODE_CAGE child carries the dimensions
+            # (older window builds). Probe self first, then children.
+            if current.get('IS_GEONODE_CAGE'):
+                target_obj = current
+                target_kind = 'WINDOW'
+                break
+            for child in current.children:
+                if child.get('IS_GEONODE_CAGE'):
+                    target_obj = child
+                    target_kind = 'WINDOW'
+                    break
+            if target_obj is not None:
+                break
+        current = current.parent
+
+    if target_obj is None:
+        return None, None, None
+
+    # Compute the target's width using whichever accessor fits its kind.
+    try:
+        if target_kind == 'PRODUCT' and target_obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            tgt_width = target_obj.face_frame_cabinet.width
+        elif target_kind == 'PRODUCT' and target_obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            # Frameless cabinets are GeoNodeCage with an array modifier;
+            # total width = cell width * count.
+            cage = hb_types.GeoNodeObject(target_obj)
+            cell_w = cage.get_input('Dim X')
+            count = 1
+            for mod in target_obj.modifiers:
+                if mod.type == 'ARRAY':
+                    count = mod.count
+                    break
+            tgt_width = cell_w * count
+        else:
+            cage = hb_types.GeoNodeObject(target_obj)
+            tgt_width = cage.get_input('Dim X')
+    except Exception:
+        return None, None, None
+
+    if tgt_width is None or tgt_width <= 0.0:
+        return None, None, None
+
+    # Wall-local X bounds via matrix_world. Two corners of the cage
+    # at local (0,0,0) and (width,0,0) map to wall-local (x0,_,_)
+    # and (x1,_,_); back-side rotation flips x0 > x1, hence min/max.
+    wall_inv = wall.matrix_world.inverted()
+    p0 = wall_inv @ (target_obj.matrix_world @ Vector((0.0, 0.0, 0.0)))
+    p1 = wall_inv @ (target_obj.matrix_world @ Vector((tgt_width, 0.0, 0.0)))
+    tgt_x_min = min(p0.x, p1.x)
+    tgt_x_max = max(p0.x, p1.x)
+
+    if target_kind == 'WINDOW':
+        try:
+            tgt_height = hb_types.GeoNodeObject(target_obj).get_input('Dim Z')
+        except Exception:
+            return None, None, None
+        # Window cages are wall-parented, so location.z is wall-local
+        # and matches the cabinet's wall-local Z directly.
+        # Tolerance is needed because Blender stores location in float32:
+        # a window resting at 36" reports 0.9143999814987183m while a
+        # 36"-tall cabinet's computed top is 0.9144m exactly. Touching
+        # ranges shouldn't count as colliding.
+        eps = units.inch(0.0625)
+        tgt_z_start = target_obj.location.z
+        tgt_z_end = tgt_z_start + tgt_height
+        if cab_z_start + eps < tgt_z_end and tgt_z_start + eps < cab_z_end:
+            return None, None, None
+
+    center_x = (tgt_x_min + tgt_x_max) / 2.0
+    return center_x, target_kind, (tgt_x_max - tgt_x_min)
 
 
 def _auto_bay_qty(cabinet_width):
@@ -353,7 +502,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     bl_label = "Place Face Frame Cabinet"
     bl_description = (
         "Place a face frame cabinet on a wall or on the floor. "
-        "Up/Down arrows adjust bay quantity, Esc cancels."
+        "Up/Down arrows adjust bay quantity, Left/Right arrows set "
+        "gap offset, W or numbers type width, Esc cancels."
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -378,7 +528,20 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _fill_mode: bool = True         # False after the user types a width
     _single_placement: bool = False # True for cabinets that don't fill or tile (e.g., Sink)
     _gap_snap = None                # None | 'LEFT' | 'CENTER' | 'RIGHT' gap-position snap
+    _center_snap_state = None       # None | 'WINDOW' - cursor-over-target snap
+    _fill_mode_before_center_snap: bool = False   # tracks transient fill->non-fill flip
     _cabinet_snap_side = None       # None | 'LEFT' | 'RIGHT' off-wall cabinet-to-cabinet snap
+
+    # Gap-relative offset state. None means "not set"; the cabinet
+    # follows the cursor and auto-snaps to gap edges/center as before.
+    # Once typed, the cabinet locks to that offset relative to the
+    # wall gap detected at the moment of commit.
+    _left_offset: float = None
+    _right_offset: float = None
+    _gap_left_boundary: float = 0.0
+    _gap_right_boundary: float = 0.0
+    _gap_wall = None                # wall the gap was measured against
+    _position_locked: bool = False  # True while an offset is in effect
 
     # ---------------- invoke / modal ----------------
 
@@ -510,7 +673,29 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._update_header(context)
             return {'RUNNING_MODAL'}
 
+        # Left/right arrows: type a gap-edge offset. Only meaningful
+        # when a wall (and therefore a gap) is in play - off-wall the
+        # arrows do nothing.
+        if event.type == 'LEFT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='LEFT')
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'RIGHT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='RIGHT')
+            return {'RUNNING_MODAL'}
+
         if event.type == 'MOUSEMOVE':
+            # While typing an offset, freeze positioning entirely -
+            # the live preview drives the cage from on_typed_value_changed
+            # and a re-snap here would clobber it.
+            if (self.placement_state == hb_placement.PlacementState.TYPING
+                    and self.typing_target in (
+                        hb_placement.TypingTarget.OFFSET_X,
+                        hb_placement.TypingTarget.OFFSET_RIGHT)):
+                return {'RUNNING_MODAL'}
+
             # Hide the cage during the raycast so the ray passes through
             # to the wall/floor behind it. HB_CURRENT_DRAW_OBJ filters
             # the cage out of the snap result, but it doesn't stop the
@@ -589,7 +774,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         return hb_placement.TypingTarget.WIDTH
 
     def on_typed_value_changed(self):
-        """Live preview: parse typed_value and resize cage every keystroke.
+        """Live preview: parse typed_value and update cage every keystroke.
+
+        Width: resize cage in place. Offsets: temporarily apply the
+        offset, reposition, then restore the stored value - the offset
+        is only committed on Enter (apply_typed_value).
 
         Errors are silent (incomplete typing like "5'" briefly fails to
         parse, which is fine - we just skip live preview until the
@@ -597,19 +786,65 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         """
         if not self.typed_value:
             return
-        if self.typing_target != hb_placement.TypingTarget.WIDTH:
-            return
         parsed = self.parse_typed_distance()
-        if parsed is None or parsed <= 0:
+        if parsed is None:
             return
-        self._apply_width(parsed, fill_mode=False)
+
+        if self.typing_target == hb_placement.TypingTarget.WIDTH:
+            if parsed > 0:
+                self._apply_width(parsed, fill_mode=False)
+                # User committed to a width - don't auto-restore fill
+                # mode if they later leave a center snap.
+                self._fill_mode_before_center_snap = False
+            return
+
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            if parsed < 0 or self._gap_wall is None:
+                return
+            old_val = self._left_offset
+            self._left_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._left_offset = old_val
+            return
+
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            if parsed < 0 or self._gap_wall is None:
+                return
+            old_val = self._right_offset
+            self._right_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._right_offset = old_val
+            return
 
     def apply_typed_value(self):
-        """Commit the typed value on ENTER. Disables fill mode."""
+        """Commit the typed value on ENTER.
+
+        WIDTH disables fill mode and resizes the cage. OFFSET_X /
+        OFFSET_RIGHT lock the cabinet to that offset from the gap edge
+        and clear any active edge/center snap (the explicit offset
+        wins over snap heuristics).
+        """
+        parsed = self.parse_typed_distance()
+
         if self.typing_target == hb_placement.TypingTarget.WIDTH:
-            parsed = self.parse_typed_distance()
             if parsed is not None and parsed > 0:
                 self._apply_width(parsed, fill_mode=False)
+                self._fill_mode_before_center_snap = False
+
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            if parsed is not None and parsed >= 0 and self._gap_wall is not None:
+                self._left_offset = parsed
+                self._gap_snap = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            if parsed is not None and parsed >= 0 and self._gap_wall is not None:
+                self._right_offset = parsed
+                self._gap_snap = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+
         self.stop_typing()
 
     def _apply_width(self, width, fill_mode):
@@ -651,21 +886,37 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         width_in = self._cabinet_width * 39.37008
 
         # When the user is typing, show the live buffer prominently so
-        # they can see what they've entered. Otherwise show the static
-        # state (size, side, key hints).
+        # they can see what they've entered. Label which value is
+        # being typed so left/right offsets aren't ambiguous.
         if self.placement_state == hb_placement.PlacementState.TYPING:
             typed = self.get_typed_display_string()
+            label = {
+                hb_placement.TypingTarget.WIDTH: "Width",
+                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+            }.get(self.typing_target, "Value")
             hb_placement.draw_header_text(
                 context,
-                f"{self.cabinet_name}  -  {typed}  -  "
-                "Enter: apply   Esc: cancel typing   Backspace: delete"
+                f"{self.cabinet_name}  -  {label}: {typed}  -  "
+                "Enter: apply   ←/→: switch offset   "
+                "Esc: cancel typing   Backspace: delete"
             )
         else:
+            offset_hint = ""
+            if self._left_offset is not None:
+                offset_hint += (
+                    f"  L:{units.unit_to_string(context.scene.unit_settings, self._left_offset)}"
+                )
+            if self._right_offset is not None:
+                offset_hint += (
+                    f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
+                )
             hb_placement.draw_header_text(
                 context,
                 f"{self.cabinet_name}  -  {bay_label} ({mode})  -  "
-                f"width: {width_in:.1f}\"  -  side: {side}  -  "
-                "W/numbers: type width   Up/Down: bays   "
+                f"width: {width_in:.1f}\"  -  side: {side}{offset_hint}  -  "
+                "W/numbers: width   Up/Down: bays   "
+                "←/→: gap offset   "
                 "Click: place   Esc: cancel"
             )
 
@@ -795,6 +1046,21 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         gap_width = max(gap_end - gap_start, units.inch(1.0))
 
+        # Snapshot the gap so offset typing can re-derive placement
+        # without re-detecting the gap. Tracked on self so a subsequent
+        # MOUSEMOVE-driven call refreshes the boundaries naturally
+        # while the cabinet is still cursor-following (no lock yet).
+        self._gap_left_boundary = gap_start
+        self._gap_right_boundary = gap_end
+        self._gap_wall = wall
+
+        # If the user has typed an offset, hand off to the offset path.
+        # The offset positioning ignores cursor-based snap entirely.
+        if self._left_offset is not None or self._right_offset is not None:
+            self._gap_snap = None
+            self._reposition_with_offsets(context)
+            return
+
         # Snap to gap edges or center with a fixed-floor tolerance
         # (so narrow cabinets still get a usable zone) and a small
         # hysteresis band that widens the release threshold once
@@ -840,18 +1106,60 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         else:
             self._gap_snap = None
 
+        # Center-on-window snap. In fill mode, engaging the snap
+        # transitions the cabinet to non-fill at the scene's default
+        # width so the centering has a useful effect (a gap-wide
+        # cabinet "centered on a window" would still span the gap).
+        # Releasing the snap restores fill mode automatically via the
+        # _fill_mode_before_center_snap tracker.
+        cab_z_start = cage_obj.location.z
+        cab_z_end = cab_z_start + cabinet_height
+        cs_x, cs_kind, _cs_w = _find_center_snap(
+            self.hit_object, wall, {'WINDOW'},
+            (cab_z_start, cab_z_end),
+        )
+        center_snap_x = None
+        if cs_kind is not None:
+            if self._fill_mode:
+                # Transition: remember we were filling, switch to a
+                # typed-width-equivalent state at the scene default.
+                self._fill_mode_before_center_snap = True
+                scene_props = context.scene.hb_face_frame
+                self._apply_width(scene_props.default_cabinet_width,
+                                  fill_mode=False)
+                # _apply_width updated cabinet_width in place. Refresh
+                # our local copy so positioning math sees the new value.
+                cabinet_width = self._cabinet_width
+                gap_width = max(gap_end - gap_start, units.inch(1.0))
+            self._center_snap_state = cs_kind
+            center_snap_x = cs_x
+            self._gap_snap = None
+        else:
+            # Snap released. If we entered the snap from fill mode,
+            # restore fill mode so the cabinet resumes filling the gap.
+            if self._fill_mode_before_center_snap:
+                self._fill_mode_before_center_snap = False
+                self._apply_width(gap_width, fill_mode=True)
+                cabinet_width = self._cabinet_width
+            self._center_snap_state = None
+
         # In fill mode, cabinet width follows the gap. With typed width
         # (fill_mode=False), the user controls the width; gap snap
         # forces the cabinet flush to the chosen end or centered in
         # the gap, otherwise we clamp the cursor-centered position
-        # into the gap.
+        # into the gap. Center snap (cursor over a window) takes
+        # precedence over both the gap snap and the cursor position.
         if self._fill_mode:
             self._apply_width(gap_width, fill_mode=True)
             placement_x = gap_start
             cabinet_width = gap_width
         else:
             cabinet_width = min(self._cabinet_width, gap_width)
-            if self._gap_snap == 'LEFT':
+            if center_snap_x is not None:
+                # Center cabinet on the snap target, clamped into gap.
+                ideal_x = center_snap_x - cabinet_width / 2
+                placement_x = max(gap_start, min(ideal_x, gap_end - cabinet_width))
+            elif self._gap_snap == 'LEFT':
                 placement_x = gap_start
             elif self._gap_snap == 'RIGHT':
                 placement_x = gap_end - cabinet_width
@@ -886,6 +1194,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         """Drop the cage at the world hit point, snapping flush to an
         existing off-wall cabinet's edge if the cursor is over one.
         """
+        # Going off-wall releases any offset lock - the gap reference
+        # is gone, so the cabinet returns to cursor-following.
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+        # Center snap is wall-bound; clear it whenever we go off-wall.
+        self._center_snap_state = None
+
         cage_obj = self._preview_cage.obj
 
         # Cabinet-to-cabinet snap detection. detect_cabinet_snap_target
@@ -952,6 +1270,123 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         if context.area is not None:
             context.area.tag_redraw()
 
+    # ---------------- offset-driven positioning ----------------
+
+    def _handle_offset_arrow(self, context, side):
+        """Start (or switch) typing a gap-edge offset.
+
+        Front-side: LEFT arrow types the left offset, RIGHT the right.
+        Back-side: meanings flip because the wall is rotated 180 from
+        the user's point of view - the leftmost cabinet edge is on the
+        viewer's right.
+
+        Switching sides mid-typing commits the in-flight value before
+        flipping the target so partial input isn't lost.
+        """
+        if (side == 'LEFT') == self._place_on_front:
+            target = hb_placement.TypingTarget.OFFSET_X
+        else:
+            target = hb_placement.TypingTarget.OFFSET_RIGHT
+
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.typed_value:
+                # Commit the current side's value, then keep typing on
+                # the new side (apply_typed_value calls stop_typing,
+                # which on_typed_value_changed expects we re-enter).
+                self.apply_typed_value()
+            self.placement_state = hb_placement.PlacementState.TYPING
+            self.typed_value = ""
+            self.typing_target = target
+        else:
+            self.start_typing(target)
+
+        self._update_header(context)
+
+    def _reposition_with_offsets(self, context):
+        """Place the cage using the stored gap and the active offsets.
+
+        Each offset pins the corresponding cabinet edge: left_offset
+        anchors the cabinet's left edge to gap_left + offset; right_offset
+        anchors the cabinet's right edge to gap_right - offset. With both
+        set, both edges are pinned and the cabinet width is derived.
+
+        In fill mode without both offsets, the cabinet fills whatever the
+        offset leaves of the gap (one edge pinned, the other at the gap
+        boundary). With a typed width, the cabinet keeps its width and
+        slides so the pinned edge is at the offset position - this is
+        what avoids the "jump to gap_left when right-typing" behavior of
+        a naive shrink-from-left implementation.
+        """
+        wall = self._gap_wall
+        if wall is None or self._preview_cage is None:
+            return
+
+        cage_obj = self._preview_cage.obj
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+        except Exception:
+            wall_thickness = 0.0
+
+        full_left = self._gap_left_boundary
+        full_right = self._gap_right_boundary
+        has_left = self._left_offset is not None
+        has_right = self._right_offset is not None
+        min_w = units.inch(1.0)
+
+        if has_left and has_right:
+            cab_left = full_left + self._left_offset
+            cab_right = full_right - self._right_offset
+            cabinet_width = max(cab_right - cab_left, min_w)
+            placement_x = cab_left
+        elif has_left:
+            placement_x = full_left + self._left_offset
+            available = max(full_right - placement_x, min_w)
+            if self._fill_mode:
+                cabinet_width = available
+            else:
+                cabinet_width = max(min(self._cabinet_width, available), min_w)
+        else:  # has_right
+            cab_right = full_right - self._right_offset
+            available = max(cab_right - full_left, min_w)
+            if self._fill_mode:
+                cabinet_width = available
+                placement_x = full_left
+            else:
+                cabinet_width = max(min(self._cabinet_width, available), min_w)
+                placement_x = cab_right - cabinet_width
+
+        # Resize the cage. _apply_width is the right hook in fill mode
+        # (it preserves _fill_mode=True). In non-fill mode we update
+        # cage geometry inline so we don't trip _apply_width's typed-
+        # width re-position path - we're already positioning here.
+        if self._fill_mode:
+            self._apply_width(cabinet_width, fill_mode=True)
+        elif abs(cabinet_width - self._cabinet_width) > 1e-5:
+            self._cabinet_width = cabinet_width
+            if self._auto_bay_qty:
+                new_qty = _auto_bay_qty(cabinet_width)
+                if new_qty != self.bay_qty:
+                    self.bay_qty = new_qty
+            self._update_cage()
+
+        if self._place_on_front:
+            cage_obj.location.x = placement_x
+            cage_obj.location.y = 0
+            cage_obj.rotation_euler = (0, 0, 0)
+        else:
+            cage_obj.location.x = placement_x + cabinet_width
+            cage_obj.location.y = wall_thickness
+            cage_obj.rotation_euler = (0, 0, math.pi)
+
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_thickness,
+            self._gap_left_boundary, self._gap_right_boundary,
+            placement_x, cabinet_width,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
+
     # ---------------- placement dimensions ----------------
 
     def _build_dim_specs_on_wall(self, context, wall, wall_thickness,
@@ -983,13 +1418,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         specs = []
 
         # Total width - tinted green whenever a snap is active so the
-        # user has a clear "this is locked" signal. For CENTER, the
-        # offset dims also go green because their equality IS the
-        # snap; otherwise it could look like the cabinet just happens
-        # to be centered.
+        # user has a clear "this is locked" signal. Either gap snap
+        # or center snap (over a window) qualifies. Offset dims go
+        # green only for CENTER gap-snap (where their equality IS
+        # the snap) and for window snap (the L/R distances are the
+        # geometric balance the snap is producing).
         snap_green = (0.30, 0.95, 0.40, 1.0)
-        total_color = snap_green if self._gap_snap else None
-        offset_color = snap_green if self._gap_snap == 'CENTER' else None
+        any_snap = self._gap_snap or self._center_snap_state
+        total_color = snap_green if any_snap else None
+        balanced = (self._gap_snap == 'CENTER') or bool(self._center_snap_state)
+        offset_color = snap_green if balanced else None
         s = wm @ Vector((placement_x, y_dim, z_total))
         e = wm @ Vector((placement_x + cabinet_width, y_dim, z_total))
         specs.append(hb_placement.PlacementDimSpec(
@@ -1163,7 +1601,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     bl_label = "Place Appliance"
     bl_description = (
         "Place an appliance on a wall or on the floor. "
-        "Esc cancels."
+        "Left/Right arrows set gap offset, Esc cancels."
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -1179,7 +1617,16 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     _appliance_depth: float = 0.0
     _place_on_front: bool = True
     _gap_snap = None
+    _center_snap_state = None       # None | 'WINDOW' | 'BAY' | 'PRODUCT'
     _cabinet_snap_side = None
+
+    # Gap-relative offset state - same model as the cabinet operator.
+    _left_offset: float = None
+    _right_offset: float = None
+    _gap_left_boundary: float = 0.0
+    _gap_right_boundary: float = 0.0
+    _gap_wall = None
+    _position_locked: bool = False
 
     # ---------------- invoke / modal ----------------
 
@@ -1199,6 +1646,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         self._appliance_depth = d
         self._place_on_front = True
         self._gap_snap = None
+        self._center_snap_state = None
         self._cabinet_snap_side = None
 
         try:
@@ -1209,6 +1657,13 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
 
         cage_obj = self._preview_cage.obj
         cage_obj.location = context.scene.cursor.location.copy()
+        # Override Z for appliances that mount at a fixed height
+        # (range hood at the upper-cabinet base). Other appliances
+        # follow the cursor Z so the user can rough in shelves /
+        # islands at any height.
+        z_override = _appliance_z_location(scene_props, self.appliance_name)
+        if z_override is not None:
+            cage_obj.location.z = z_override
 
         self.init_placement(context)
         if self.region is None:
@@ -1229,13 +1684,41 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
             return {'PASS_THROUGH'}
 
+        # Route typing events through the mixin first so it can own
+        # ESC (cancel typing) and ENTER (commit) - otherwise our own
+        # ESC would eat the event and cancel the whole modal.
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.handle_typing_event(event):
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             return self._cancel(context)
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             return self._finalize(context)
 
+        # Left/right arrows: type a gap-edge offset. Inert off-wall.
+        if event.type == 'LEFT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='LEFT')
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'RIGHT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='RIGHT')
+            return {'RUNNING_MODAL'}
+
         if event.type == 'MOUSEMOVE':
+            # Freeze positioning while typing an offset - the live
+            # preview from on_typed_value_changed drives the cage and
+            # a re-snap here would overwrite it.
+            if (self.placement_state == hb_placement.PlacementState.TYPING
+                    and self.typing_target in (
+                        hb_placement.TypingTarget.OFFSET_X,
+                        hb_placement.TypingTarget.OFFSET_RIGHT)):
+                return {'RUNNING_MODAL'}
+
             cage_obj = self._preview_cage.obj
             cage_obj.hide_set(True)
             try:
@@ -1263,11 +1746,161 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     def _update_header(self, context):
         side = "front" if self._place_on_front else "back"
         width_in = self._appliance_width * 39.37008
+
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            typed = self.get_typed_display_string()
+            label = {
+                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+            }.get(self.typing_target, "Value")
+            hb_placement.draw_header_text(
+                context,
+                f"{self.appliance_name}  -  {label}: {typed}  -  "
+                "Enter: apply   ←/→: switch offset   "
+                "Esc: cancel typing   Backspace: delete"
+            )
+            return
+
+        offset_hint = ""
+        if self._left_offset is not None:
+            offset_hint += (
+                f"  L:{units.unit_to_string(context.scene.unit_settings, self._left_offset)}"
+            )
+        if self._right_offset is not None:
+            offset_hint += (
+                f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
+            )
         hb_placement.draw_header_text(
             context,
             f"{self.appliance_name}  -  width: {width_in:.1f}\""
-            f"  -  side: {side}  -  Click: place   Esc: cancel"
+            f"  -  side: {side}{offset_hint}  -  "
+            "←/→: gap offset   Click: place   Esc: cancel"
         )
+
+    # ---------------- typed-input handlers ----------------
+
+    def get_default_typing_target(self):
+        # Appliances don't have a typed width; arrows are the only
+        # way to enter typing mode and they set the target explicitly.
+        return hb_placement.TypingTarget.OFFSET_X
+
+    def on_typed_value_changed(self):
+        """Live preview offset typing - apply, render, restore."""
+        if not self.typed_value:
+            return
+        parsed = self.parse_typed_distance()
+        if parsed is None or parsed < 0:
+            return
+        if self._gap_wall is None:
+            return
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            old_val = self._left_offset
+            self._left_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._left_offset = old_val
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            old_val = self._right_offset
+            self._right_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._right_offset = old_val
+
+    def apply_typed_value(self):
+        """Commit offset on Enter and lock the position."""
+        parsed = self.parse_typed_distance()
+        if (parsed is not None and parsed >= 0
+                and self._gap_wall is not None):
+            if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+                self._left_offset = parsed
+                self._gap_snap = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+            elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+                self._right_offset = parsed
+                self._gap_snap = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+        self.stop_typing()
+
+    # ---------------- offset-driven positioning ----------------
+
+    def _handle_offset_arrow(self, context, side):
+        """Start (or switch) typing a gap-edge offset.
+
+        Front-side: LEFT arrow types the left offset; back-side flips
+        the meaning since the wall is rotated 180 from the user's view.
+        """
+        if (side == 'LEFT') == self._place_on_front:
+            target = hb_placement.TypingTarget.OFFSET_X
+        else:
+            target = hb_placement.TypingTarget.OFFSET_RIGHT
+
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.typed_value:
+                self.apply_typed_value()
+            self.placement_state = hb_placement.PlacementState.TYPING
+            self.typed_value = ""
+            self.typing_target = target
+        else:
+            self.start_typing(target)
+
+        self._update_header(context)
+
+    def _reposition_with_offsets(self, context):
+        """Place the cage using stored gap + active offsets.
+
+        Same edge-anchoring semantics as the cabinet operator: each
+        offset pins the corresponding edge. Appliances have a fixed
+        width, so the cabinet slides rather than shrinks unless the
+        offset-adjusted gap is too narrow to fit it.
+        """
+        wall = self._gap_wall
+        if wall is None or self._preview_cage is None:
+            return
+
+        cage_obj = self._preview_cage.obj
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+        except Exception:
+            wall_thickness = 0.0
+
+        full_left = self._gap_left_boundary
+        full_right = self._gap_right_boundary
+        has_left = self._left_offset is not None
+        has_right = self._right_offset is not None
+        min_w = units.inch(1.0)
+
+        if has_left and has_right:
+            cab_left = full_left + self._left_offset
+            cab_right = full_right - self._right_offset
+            cabinet_width = max(cab_right - cab_left, min_w)
+            placement_x = cab_left
+        elif has_left:
+            placement_x = full_left + self._left_offset
+            available = max(full_right - placement_x, min_w)
+            cabinet_width = max(min(self._appliance_width, available), min_w)
+        else:  # has_right
+            cab_right = full_right - self._right_offset
+            available = max(cab_right - full_left, min_w)
+            cabinet_width = max(min(self._appliance_width, available), min_w)
+            placement_x = cab_right - cabinet_width
+
+        if self._place_on_front:
+            cage_obj.location.x = placement_x
+            cage_obj.location.y = 0
+            cage_obj.rotation_euler = (0, 0, 0)
+        else:
+            cage_obj.location.x = placement_x + cabinet_width
+            cage_obj.location.y = wall_thickness
+            cage_obj.rotation_euler = (0, 0, math.pi)
+
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_thickness,
+            self._gap_left_boundary, self._gap_right_boundary,
+            placement_x, cabinet_width,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
 
     # ---------------- positioning ----------------
 
@@ -1351,6 +1984,18 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         gap_width = max(gap_end - gap_start, units.inch(1.0))
         cabinet_width = min(self._appliance_width, gap_width)
 
+        # Snapshot the gap so offset typing can re-derive placement
+        # without re-detecting the gap.
+        self._gap_left_boundary = gap_start
+        self._gap_right_boundary = gap_end
+        self._gap_wall = wall
+
+        # Offset override: typed offsets bypass cursor-based snap.
+        if self._left_offset is not None or self._right_offset is not None:
+            self._gap_snap = None
+            self._reposition_with_offsets(context)
+            return
+
         # Same gap-edge / center snap thresholds as cabinet placement.
         engage_corner = max(cabinet_width / 2, units.inch(6.0))
         release_corner = engage_corner + units.inch(1.0)
@@ -1380,15 +2025,39 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         else:
             self._gap_snap = None
 
-        if self._gap_snap == 'LEFT':
-            placement_x = gap_start
-        elif self._gap_snap == 'RIGHT':
-            placement_x = gap_end - cabinet_width
-        elif self._gap_snap == 'CENTER':
-            placement_x = gap_start + (gap_width - cabinet_width) / 2
+        # Center snap. Range Hood mounts above an existing product so
+        # it looks for a bay (most-specific) or any cabinet/appliance
+        # (PRODUCT). Other appliances center on a window when the
+        # cursor is over one.
+        if self.appliance_name == "Range Hood":
+            kinds = {'BAY', 'PRODUCT'}
         else:
+            kinds = {'WINDOW'}
+
+        cab_z_start = cage_obj.location.z
+        cab_z_end = cab_z_start + self._appliance_height
+        cs_x, cs_kind, _cs_w = _find_center_snap(
+            self.hit_object, wall, kinds,
+            (cab_z_start, cab_z_end),
+        )
+
+        if cs_kind is not None:
+            self._center_snap_state = cs_kind
+            self._gap_snap = None
+            ideal_x = cs_x - cabinet_width / 2
             placement_x = max(gap_start,
-                              min(snap_x, gap_end - cabinet_width))
+                              min(ideal_x, gap_end - cabinet_width))
+        else:
+            self._center_snap_state = None
+            if self._gap_snap == 'LEFT':
+                placement_x = gap_start
+            elif self._gap_snap == 'RIGHT':
+                placement_x = gap_end - cabinet_width
+            elif self._gap_snap == 'CENTER':
+                placement_x = gap_start + (gap_width - cabinet_width) / 2
+            else:
+                placement_x = max(gap_start,
+                                  min(snap_x, gap_end - cabinet_width))
 
         if self._place_on_front:
             cage_obj.location.x = placement_x
@@ -1407,6 +2076,15 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             context.area.tag_redraw()
 
     def _position_free(self, context):
+        # Going off-wall releases any offset lock (gap reference is gone).
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+        # Center snap is wall-bound; clear it whenever we go off-wall.
+        self._center_snap_state = None
+
         cage_obj = self._preview_cage.obj
         snap_target, snap_side = self.detect_cabinet_snap_target(
             self.hit_object, self.hit_location)
@@ -1429,14 +2107,26 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
                 snap_result = self.compute_cabinet_snap_transform(
                     snap_target, snap_side, self._appliance_width)
 
+        # Appliances that mount at a fixed height (range hood) keep
+        # their configured Z when off-wall instead of dropping to the
+        # cursor / snap-target Z; that anchor is what makes the hood
+        # read as the bay above the range.
+        scene_props = context.scene.hb_face_frame
+        z_override = _appliance_z_location(scene_props, self.appliance_name)
+
         if snap_result is not None:
             new_loc, new_rot = snap_result
             cage_obj.location = new_loc
             cage_obj.rotation_euler = new_rot
-            cage_obj.location.z = snap_target.location.z
+            if z_override is not None:
+                cage_obj.location.z = z_override
+            else:
+                cage_obj.location.z = snap_target.location.z
         else:
             self._cabinet_snap_side = None
             cage_obj.location = self.hit_location.copy()
+            if z_override is not None:
+                cage_obj.location.z = z_override
             cage_obj.rotation_euler = (0, 0, 0)
 
         self._placement_dim_specs = self._build_dim_specs_free(context)
@@ -1459,8 +2149,13 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         unit_settings = context.scene.unit_settings
         specs = []
         snap_green = (0.30, 0.95, 0.40, 1.0)
-        total_color = snap_green if self._gap_snap else None
-        offset_color = snap_green if self._gap_snap == 'CENTER' else None
+        # Either gap snap or center snap (window / bay / product)
+        # tints the total dim. Offset dims tint when the snap is the
+        # one that balances them - center-of-gap or any center snap.
+        any_snap = self._gap_snap or self._center_snap_state
+        balanced = (self._gap_snap == 'CENTER') or bool(self._center_snap_state)
+        total_color = snap_green if any_snap else None
+        offset_color = snap_green if balanced else None
 
         s = wm @ Vector((placement_x, y_dim, z_total))
         e = wm @ Vector((placement_x + cabinet_width, y_dim, z_total))
@@ -1591,7 +2286,8 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
     bl_label = "Place Face Frame Corner Cabinet"
     bl_description = (
         "Place a face frame corner cabinet. Snaps to whichever wall "
-        "corner is closer to the cursor. LMB commits, Esc cancels."
+        "corner is closer to the cursor. Left/Right arrows set gap "
+        "offset (disables corner snap). LMB commits, Esc cancels."
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -1609,6 +2305,16 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
     _cabinet_height: float = 0.0
     _corner_side = None  # None | 'LEFT' | 'RIGHT'
     _selected_wall = None
+
+    # Gap-relative offset state. When an offset is active, corner snap
+    # is disabled and the cabinet sits in the free (un-rotated) state
+    # at gap_left_boundary + left_offset (or right equivalent).
+    _left_offset: float = None
+    _right_offset: float = None
+    _gap_left_boundary: float = 0.0
+    _gap_right_boundary: float = 0.0
+    _gap_wall = None
+    _position_locked: bool = False
 
     # ---------------- invoke / modal ----------------
 
@@ -1670,13 +2376,40 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
             return {'PASS_THROUGH'}
 
+        # Route typing events through the mixin first so it owns ESC
+        # (cancel typing) and ENTER (commit) without our own ESC
+        # handler eating the event.
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.handle_typing_event(event):
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             return self._cancel(context)
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             return self._finalize(context)
 
+        # Left/right arrows: type a gap-edge offset. Inert off-wall.
+        if event.type == 'LEFT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='LEFT')
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'RIGHT_ARROW' and event.value == 'PRESS':
+            if self._gap_wall is not None:
+                self._handle_offset_arrow(context, side='RIGHT')
+            return {'RUNNING_MODAL'}
+
         if event.type == 'MOUSEMOVE':
+            # Freeze positioning while typing an offset; live preview
+            # comes from on_typed_value_changed.
+            if (self.placement_state == hb_placement.PlacementState.TYPING
+                    and self.typing_target in (
+                        hb_placement.TypingTarget.OFFSET_X,
+                        hb_placement.TypingTarget.OFFSET_RIGHT)):
+                return {'RUNNING_MODAL'}
+
             cage_obj = self._preview_cage.obj
             cage_obj.hide_set(True)
             try:
@@ -1764,6 +2497,20 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             gap_end = wall_length
             snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
 
+        # Snapshot the gap so offset typing can re-derive placement
+        # without re-detecting the gap.
+        self._gap_left_boundary = gap_start
+        self._gap_right_boundary = gap_end
+        self._gap_wall = wall
+
+        # Offset override: typed offsets bypass corner snap entirely
+        # and place the cabinet in the free (un-rotated) state at
+        # gap_start + left_offset.
+        if self._left_offset is not None or self._right_offset is not None:
+            self._corner_side = None
+            self._reposition_with_offsets(context)
+            return
+
         # Corner snap detection. Only available when the gap actually
         # reaches that wall end; an existing cabinet (or adjacent-wall
         # intrusion) at a corner removes that corner from the option.
@@ -1830,6 +2577,13 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
     def _position_free(self, context):
         """Drop the cage at the cursor's hit location (no wall snap)."""
+        # Going off-wall releases any offset lock (gap reference is gone).
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+
         cage_obj = self._preview_cage.obj
         if cage_obj.parent is not None:
             world = cage_obj.matrix_world.copy()
@@ -1917,9 +2671,166 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         )]
 
     def _update_header(self, context):
-        msg = (f"Place {self.cabinet_name} - move cursor near a wall corner. "
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            typed = self.get_typed_display_string()
+            label = {
+                hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
+                hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
+            }.get(self.typing_target, "Value")
+            hb_placement.draw_header_text(
+                context,
+                f"{self.cabinet_name}  -  {label}: {typed}  -  "
+                "Enter: apply   ←/→: switch offset   "
+                "Esc: cancel typing   Backspace: delete"
+            )
+            return
+
+        offset_hint = ""
+        if self._left_offset is not None:
+            offset_hint += (
+                f"  L:{units.unit_to_string(context.scene.unit_settings, self._left_offset)}"
+            )
+        if self._right_offset is not None:
+            offset_hint += (
+                f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
+            )
+        msg = (f"Place {self.cabinet_name} - move cursor near a wall corner."
+               f"{offset_hint}  -  ←/→: gap offset   "
                f"LMB commits, Esc cancels.")
         hb_placement.draw_header_text(context, msg)
+
+    # ---------------- typed-input handlers ----------------
+
+    def get_default_typing_target(self):
+        # Corner cabinets have no typed width; arrows enter typing mode
+        # and set the target explicitly.
+        return hb_placement.TypingTarget.OFFSET_X
+
+    def on_typed_value_changed(self):
+        """Live preview offset typing - apply, render, restore."""
+        if not self.typed_value:
+            return
+        parsed = self.parse_typed_distance()
+        if parsed is None or parsed < 0:
+            return
+        if self._gap_wall is None:
+            return
+        if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+            old_val = self._left_offset
+            self._left_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._left_offset = old_val
+        elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+            old_val = self._right_offset
+            self._right_offset = parsed
+            self._reposition_with_offsets(bpy.context)
+            self._right_offset = old_val
+
+    def apply_typed_value(self):
+        """Commit offset on Enter and lock the position."""
+        parsed = self.parse_typed_distance()
+        if (parsed is not None and parsed >= 0
+                and self._gap_wall is not None):
+            if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
+                self._left_offset = parsed
+                self._corner_side = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+            elif self.typing_target == hb_placement.TypingTarget.OFFSET_RIGHT:
+                self._right_offset = parsed
+                self._corner_side = None
+                self._position_locked = True
+                self._reposition_with_offsets(bpy.context)
+        self.stop_typing()
+
+    # ---------------- offset-driven positioning ----------------
+
+    def _handle_offset_arrow(self, context, side):
+        """Start (or switch) typing a gap-edge offset.
+
+        Corner cabinets are always front-side, so no back-side flip
+        is needed - LEFT arrow always means left offset.
+        """
+        if side == 'LEFT':
+            target = hb_placement.TypingTarget.OFFSET_X
+        else:
+            target = hb_placement.TypingTarget.OFFSET_RIGHT
+
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.typed_value:
+                self.apply_typed_value()
+            self.placement_state = hb_placement.PlacementState.TYPING
+            self.typed_value = ""
+            self.typing_target = target
+        else:
+            self.start_typing(target)
+
+        self._update_header(context)
+
+    def _reposition_with_offsets(self, context):
+        """Place the cage in free (un-rotated) state at the offset.
+
+        Corner snap is intentionally bypassed - typing an offset is an
+        explicit "I want it here" override. Edge-anchoring matches the
+        cabinet/appliance operators: left_offset pins the cabinet's
+        left edge, right_offset pins the right edge, both pin both.
+        Corner cabinets have a fixed extent so they slide rather than
+        shrink unless the offset-adjusted gap is narrower.
+        """
+        wall = self._gap_wall
+        if wall is None or self._preview_cage is None:
+            return
+
+        cage_obj = self._preview_cage.obj
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_length = wall_geo.get_input('Length')
+        except Exception:
+            wall_length = 0.0
+
+        if cage_obj.parent is not wall:
+            cage_obj.parent = wall
+            cage_obj.matrix_parent_inverse.identity()
+
+        full_left = self._gap_left_boundary
+        full_right = self._gap_right_boundary
+        has_left = self._left_offset is not None
+        has_right = self._right_offset is not None
+        min_w = units.inch(1.0)
+
+        if has_left and has_right:
+            cab_left = full_left + self._left_offset
+            cab_right = full_right - self._right_offset
+            cabinet_extent = max(cab_right - cab_left, min_w)
+            placement_x = cab_left
+        elif has_left:
+            placement_x = full_left + self._left_offset
+            available = max(full_right - placement_x, min_w)
+            cabinet_extent = max(min(self._cabinet_width, available), min_w)
+        else:  # has_right
+            cab_right = full_right - self._right_offset
+            available = max(cab_right - full_left, min_w)
+            cabinet_extent = max(min(self._cabinet_width, available), min_w)
+            placement_x = cab_right - cabinet_extent
+
+        cage_obj.location.x = placement_x
+        cage_obj.location.y = 0.0
+        cage_obj.rotation_euler = (0, 0, 0)
+
+        if self._cabinet_class.default_cabinet_type == 'UPPER':
+            scene_props = context.scene.hb_face_frame
+            cage_obj.location.z = scene_props.default_wall_cabinet_location
+        else:
+            cage_obj.location.z = 0.0
+
+        self._selected_wall = wall
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_length,
+            self._gap_left_boundary, self._gap_right_boundary,
+            placement_x, cabinet_extent,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
 
     # ---------------- finalize / cancel ----------------
 

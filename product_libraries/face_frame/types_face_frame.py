@@ -3150,6 +3150,7 @@ CABINET_NAME_DISPATCH = {
 APPLIANCE_NAME_DISPATCH = {
     "Dishwasher": types_appliances.Dishwasher,
     "Range": types_appliances.Range,
+    "Range Hood": types_appliances.Hood,
     "Standalone Refrigerator": types_appliances.Refrigerator,
 }
 
