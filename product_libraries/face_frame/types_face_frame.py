@@ -3322,3 +3322,252 @@ def recalculate_face_frame_cabinet(obj):
         cabinet.recalculate()
     finally:
         _RECALCULATING.discard(id(root))
+
+
+# ---------------------------------------------------------------------------
+# Cabinet merge
+# ---------------------------------------------------------------------------
+
+def _propagate_far_side_props(absorbed_props, anchor_props, side):
+    """When `absorbed` is merged onto `anchor` on the given `side`,
+    `absorbed`'s far-side exterior props (the side opposite the merge
+    boundary) become `anchor`'s same-side exterior props. The anchor's
+    OTHER side stays untouched. The merge boundary itself - what was
+    anchor's <side> exterior and absorbed's <opposite> exterior - just
+    disappears (becomes interior bay structure), so neither gets read
+    after the merge.
+    """
+    if side == 'RIGHT':
+        anchor_props.right_finished_end_condition = absorbed_props.right_finished_end_condition
+        anchor_props.right_exposed                = absorbed_props.right_exposed
+        anchor_props.right_scribe                 = absorbed_props.right_scribe
+        anchor_props.right_flush_x_amount         = absorbed_props.right_flush_x_amount
+        anchor_props.blind_right                  = absorbed_props.blind_right
+        anchor_props.blind_amount_right           = absorbed_props.blind_amount_right
+        anchor_props.extend_right                 = absorbed_props.extend_right
+        anchor_props.right_offset                 = absorbed_props.right_offset
+        anchor_props.inset_toe_kick_right         = absorbed_props.inset_toe_kick_right
+        anchor_props.right_stile_width            = absorbed_props.right_stile_width
+        anchor_props.right_stile_type             = absorbed_props.right_stile_type
+        anchor_props.unlock_right_stile           = absorbed_props.unlock_right_stile
+        anchor_props.turn_off_right_stile         = absorbed_props.turn_off_right_stile
+        anchor_props.extend_right_stile_to_floor  = absorbed_props.extend_right_stile_to_floor
+        anchor_props.extend_right_stile_up        = absorbed_props.extend_right_stile_up
+        anchor_props.extend_right_stile_down      = absorbed_props.extend_right_stile_down
+        anchor_props.extend_right_stile_up_amount   = absorbed_props.extend_right_stile_up_amount
+        anchor_props.extend_right_stile_down_amount = absorbed_props.extend_right_stile_down_amount
+        # Per-side depth / unlock - pre-flight requires square cabinets so
+        # these are defensive copies (would matter only if angled-cabinet
+        # merge support is added later).
+        anchor_props.right_depth                  = absorbed_props.right_depth
+        anchor_props.unlock_right_depth           = absorbed_props.unlock_right_depth
+    else:  # LEFT
+        anchor_props.left_finished_end_condition = absorbed_props.left_finished_end_condition
+        anchor_props.left_exposed                = absorbed_props.left_exposed
+        anchor_props.left_scribe                 = absorbed_props.left_scribe
+        anchor_props.left_flush_x_amount         = absorbed_props.left_flush_x_amount
+        anchor_props.blind_left                  = absorbed_props.blind_left
+        anchor_props.blind_amount_left           = absorbed_props.blind_amount_left
+        anchor_props.extend_left                 = absorbed_props.extend_left
+        anchor_props.left_offset                 = absorbed_props.left_offset
+        anchor_props.inset_toe_kick_left         = absorbed_props.inset_toe_kick_left
+        anchor_props.left_stile_width            = absorbed_props.left_stile_width
+        anchor_props.left_stile_type             = absorbed_props.left_stile_type
+        anchor_props.unlock_left_stile           = absorbed_props.unlock_left_stile
+        anchor_props.turn_off_left_stile         = absorbed_props.turn_off_left_stile
+        anchor_props.extend_left_stile_to_floor  = absorbed_props.extend_left_stile_to_floor
+        anchor_props.extend_left_stile_up        = absorbed_props.extend_left_stile_up
+        anchor_props.extend_left_stile_down      = absorbed_props.extend_left_stile_down
+        anchor_props.extend_left_stile_up_amount   = absorbed_props.extend_left_stile_up_amount
+        anchor_props.extend_left_stile_down_amount = absorbed_props.extend_left_stile_down_amount
+        anchor_props.left_depth                  = absorbed_props.left_depth
+        anchor_props.unlock_left_depth           = absorbed_props.unlock_left_depth
+
+
+def merge_cabinets(anchor, absorbed, side):
+    """Merge `absorbed` cabinet into `anchor` on the given `side`
+    ('LEFT' or 'RIGHT' relative to anchor).
+
+    Reparents absorbed's bays under anchor (preserving opening cage
+    object identity, which the solver matches by obj.name across
+    recalcs), copies absorbed's far-side exterior props onto anchor's
+    same-side exterior, deletes absorbed, then triggers a single recalc
+    of anchor.
+
+    Pre-flight requires matching height, depth, world Z, and parent;
+    abutting within 1 inch in parent-local X; and both cabinets square
+    (no corner / angled merge in this pass).
+
+    Returns True on success, False on failed pre-flight.
+    """
+    if side not in ('LEFT', 'RIGHT'):
+        return False
+    if anchor is None or absorbed is None or anchor is absorbed:
+        return False
+    if not anchor.get(TAG_CABINET_CAGE) or not absorbed.get(TAG_CABINET_CAGE):
+        return False
+
+    a_props = anchor.face_frame_cabinet
+    b_props = absorbed.face_frame_cabinet
+
+    eps = 1e-4
+    if abs(a_props.height - b_props.height) > eps:
+        return False
+    if abs(a_props.depth - b_props.depth) > eps:
+        return False
+    if abs(anchor.matrix_world.translation.z - absorbed.matrix_world.translation.z) > eps:
+        return False
+    if anchor.parent is not absorbed.parent:
+        return False
+    if a_props.corner_type != 'NONE' or b_props.corner_type != 'NONE':
+        return False
+
+    tolerance = inch(1.0)
+    a_x, a_w = anchor.location.x, a_props.width
+    b_x, b_w = absorbed.location.x, b_props.width
+    if side == 'RIGHT':
+        gap = b_x - (a_x + a_w)
+    else:
+        gap = a_x - (b_x + b_w)
+    if abs(gap) > tolerance:
+        return False
+
+    with suspend_recalc():
+        anchor_bays = sorted(
+            [c for c in anchor.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+        absorbed_bays = sorted(
+            [c for c in absorbed.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+        M = len(anchor_bays)
+        N = len(absorbed_bays)
+
+        # Snapshot original unlock_width on every bay. After merge each
+        # bay's lock state is one of: original (multi-bay source) or
+        # forced-True (single-bay source - the sink / appliance case
+        # where the bay must hold its captured width).
+        original_unlock = {
+            bay.name: bay.face_frame_bay.unlock_width
+            for bay in (anchor_bays + absorbed_bays)
+        }
+
+        # Capture mid_stile_widths from both cabinets as plain data
+        # before mutating anything. Boundary width is the sum of the
+        # two end stiles meeting at the merge - the wood that was
+        # anchor's right end stile + absorbed's left end stile becomes
+        # the boundary mid stile, preserving bay positions exactly.
+        # Captured BEFORE _propagate_far_side_props because propagation
+        # overwrites anchor's end stile widths.
+        def _snapshot_mids(props):
+            return [(e.width, e.unlock, e.extend_up_amount, e.extend_down_amount)
+                    for e in props.mid_stile_widths]
+        anchor_mids = _snapshot_mids(a_props)
+        absorbed_mids = _snapshot_mids(b_props)
+
+        # Boundary mid stile uses the cabinet's default mid-stile
+        # width (typically narrower than the two abutting end stiles).
+        # Total cabinet width is held at (a_w + b_w); the bay
+        # redistributor absorbs the saved-stile-width delta into
+        # whichever bays remain unlocked at recalc time.
+        boundary_width = a_props.bay_mid_stile_width
+        boundary_gap_index = M - 1 if side == 'RIGHT' else N - 1
+
+        # Capture mid-stile / mid-div parts. Absorbed's move to anchor
+        # with new indices; anchor's existing parts shift only on LEFT
+        # merges (when absorbed prepends).
+        mid_part_roles = (PART_ROLE_MID_STILE, PART_ROLE_MID_DIVISION)
+        anchor_mid_parts = [c for c in anchor.children
+                            if c.get('hb_part_role') in mid_part_roles]
+        absorbed_mid_parts = [c for c in absorbed.children
+                              if c.get('hb_part_role') in mid_part_roles]
+
+        # Reparent absorbed's bays under anchor.
+        for bay in absorbed_bays:
+            bay.parent = anchor
+            bay.matrix_parent_inverse.identity()
+
+        if side == 'RIGHT':
+            final_bays = anchor_bays + absorbed_bays
+        else:
+            final_bays = absorbed_bays + anchor_bays
+        for new_idx, bay in enumerate(final_bays):
+            bay['hb_bay_index'] = new_idx
+            bay.face_frame_bay.bay_index = new_idx
+
+        # Bays from a single-bay source cabinet get locked - this is
+        # the "sink / appliance must stay at exactly this size" case.
+        # Bays from a multi-bay source keep their original unlock_width,
+        # so any auto-calculated (originally unlocked) ones absorb the
+        # cabinet-shrinkage delta during _distribute_bay_widths
+        # redistribution at recalc time.
+        anchor_was_single = (M == 1)
+        absorbed_was_single = (N == 1)
+        for bay in anchor_bays:
+            bay.face_frame_bay.unlock_width = (
+                True if anchor_was_single else original_unlock[bay.name]
+            )
+        for bay in absorbed_bays:
+            bay.face_frame_bay.unlock_width = (
+                True if absorbed_was_single else original_unlock[bay.name]
+            )
+
+        _propagate_far_side_props(b_props, a_props, side)
+
+        # Reparent absorbed's mid parts under anchor with new indices.
+        # Anchor's existing mid parts shift only on LEFT merges.
+        if side == 'RIGHT':
+            for part in absorbed_mid_parts:
+                old_idx = part.get('hb_mid_stile_index', 0)
+                part['hb_mid_stile_index'] = old_idx + M
+                part.parent = anchor
+                part.matrix_parent_inverse.identity()
+        else:
+            for part in anchor_mid_parts:
+                old_idx = part.get('hb_mid_stile_index', 0)
+                part['hb_mid_stile_index'] = old_idx + N
+            for part in absorbed_mid_parts:
+                part.parent = anchor
+                part.matrix_parent_inverse.identity()
+
+        # Build the boundary mid stile + slot-0 / slot-1 mid div pair.
+        # _create_mid_parts_at parents to anchor and sets defaults; the
+        # recalc positions and sizes everything from layout.
+        _wrap_cabinet(anchor)._create_mid_parts_at(boundary_gap_index)
+
+        # Rebuild anchor's mid_stile_widths in merged order.
+        if side == 'RIGHT':
+            merged_mids = (anchor_mids
+                           + [(boundary_width, False, 0.0, 0.0)]
+                           + absorbed_mids)
+        else:
+            merged_mids = (absorbed_mids
+                           + [(boundary_width, False, 0.0, 0.0)]
+                           + anchor_mids)
+        a_props.mid_stile_widths.clear()
+        for w, ulk, ext_up, ext_dn in merged_mids:
+            entry = a_props.mid_stile_widths.add()
+            entry.width = w
+            entry.unlock = ulk
+            entry.extend_up_amount = ext_up
+            entry.extend_down_amount = ext_dn
+
+        # LEFT merge: anchor's origin moves to absorbed's old location.
+        # The merged cabinet then spans exactly
+        # [absorbed.location.x, absorbed.location.x + (a_w + b_w)],
+        # which is the same span as the two original cabinets combined.
+        # Inside that span the bay redistributor handles the
+        # (anchor.right + absorbed.left - boundary_default) delta by
+        # growing whichever bays are still unlocked.
+        if side == 'LEFT':
+            anchor.location.x = absorbed.location.x
+
+        # Total cabinet width preserved at sum of original widths.
+        a_props.width = a_w + b_w
+
+        # Bays and mid parts have been reparented; what's left under
+        # absorbed is its carcass + end stiles + rails + pulls.
+        _remove_root_with_children(absorbed)
+
+    return True

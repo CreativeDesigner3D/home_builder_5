@@ -284,6 +284,51 @@ def _compute_corner_left_snap_transform(snap_obj, new_object_width):
     return (new_loc, new_rot)
 
 
+def _try_auto_merge_with_neighbor(context, cab_obj):
+    """If a compatible face-frame cabinet sits abutting cab_obj on the
+    same wall, merge cab_obj into it and return the surviving anchor.
+    Returns None when no merge happens.
+
+    "Compatible" is everything merge_cabinets pre-flights: same parent,
+    same height / depth / Z, abutting within tolerance, no corner type.
+    Prefers the left neighbor when both sides are compatible.
+    """
+    parent = cab_obj.parent
+    if parent is None:
+        return None
+
+    cab_x = cab_obj.location.x
+    cab_w = cab_obj.face_frame_cabinet.width
+    eps = 1e-4
+
+    left_neighbor = None
+    right_neighbor = None
+    for sib in parent.children:
+        if sib is cab_obj:
+            continue
+        if not sib.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        sib_x = sib.location.x
+        sib_w = sib.face_frame_cabinet.width
+        # Pick the closest neighbor on each side. The merge primitive
+        # itself enforces the abutment tolerance; here we just sort
+        # roughly into "to the left" vs "to the right" buckets.
+        if sib_x + sib_w <= cab_x + eps:
+            if left_neighbor is None or sib_x > left_neighbor.location.x:
+                left_neighbor = sib
+        elif sib_x >= cab_x + cab_w - eps:
+            if right_neighbor is None or sib_x < right_neighbor.location.x:
+                right_neighbor = sib
+
+    if left_neighbor is not None:
+        if types_face_frame.merge_cabinets(left_neighbor, cab_obj, 'RIGHT'):
+            return left_neighbor
+    if right_neighbor is not None:
+        if types_face_frame.merge_cabinets(right_neighbor, cab_obj, 'LEFT'):
+            return right_neighbor
+    return None
+
+
 class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                                      hb_placement.PlacementMixin):
     """Modal: cursor drags a face-frame preview cage, click to commit."""
@@ -1041,16 +1086,22 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                     for bay_obj in bays:
                         ops_cabinet.apply_bay_preset(bay_obj, default_config)
 
-        # Active selection
+        # Auto-merge with an abutting compatible neighbor on the wall.
+        # When a merge happens, cab_obj is absorbed and deleted; the
+        # neighbor is the survivor that selection should target.
+        merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
+        selection_target = merged_into if merged_into is not None else cab_obj
+
+        # Active selection (on the survivor)
         for o in context.selected_objects:
             o.select_set(False)
-        cab_obj.select_set(True)
-        context.view_layer.objects.active = cab_obj
+        selection_target.select_set(True)
+        context.view_layer.objects.active = selection_target
 
         try:
-            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=cab_obj.name)
-            cab_obj.select_set(True)
-            context.view_layer.objects.active = cab_obj
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=selection_target.name)
+            selection_target.select_set(True)
+            context.view_layer.objects.active = selection_target
         except RuntimeError:
             pass
 

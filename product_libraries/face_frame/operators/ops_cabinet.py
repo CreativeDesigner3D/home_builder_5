@@ -107,6 +107,112 @@ class hb_face_frame_OT_delete_cabinet(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: join multiple selected cabinets into one
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_join_cabinets(bpy.types.Operator):
+    """Merge selected face frame cabinets into the active cabinet,
+    sharing a continuous face frame. Each absorbed cabinet's bays
+    (and per-opening configuration) carry over; the active cabinet
+    is the survivor.
+    """
+    bl_idname = "hb_face_frame.join_cabinets"
+    bl_label = "Join Cabinets"
+    bl_description = (
+        "Merge selected face frame cabinets into the active cabinet, "
+        "sharing one continuous face frame"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Need at least two distinct face frame cabinets in the
+        # selection, with the active object resolving to one of them.
+        active_root = types_face_frame.find_cabinet_root(context.active_object)
+        if active_root is None:
+            return False
+        seen = {active_root.name}
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is not None:
+                seen.add(root.name)
+                if len(seen) >= 2:
+                    return True
+        return False
+
+    def execute(self, context):
+        active_root = types_face_frame.find_cabinet_root(context.active_object)
+        if active_root is None:
+            self.report({'ERROR'}, "No active face frame cabinet")
+            return {'CANCELLED'}
+
+        roots = []
+        seen = set()
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is None or root.name in seen:
+                continue
+            seen.add(root.name)
+            roots.append(root)
+
+        if len(roots) < 2:
+            self.report({'WARNING'}, "Select two or more face frame cabinets")
+            return {'CANCELLED'}
+
+        # All selected cabinets must share a parent (same wall, or all
+        # unparented). The merge primitive checks per-pair, but bailing
+        # here gives a clearer error than "merge failed".
+        if len({r.parent for r in roots}) > 1:
+            self.report({'ERROR'}, "Cabinets must share the same parent")
+            return {'CANCELLED'}
+
+        # Sort left-to-right and pre-flight every adjacent pair before
+        # any merge runs - half-merged state on a partial failure is
+        # confusing for the user even with undo.
+        roots.sort(key=lambda r: r.location.x)
+        eps = 1e-4
+        tol = inch(1.0)
+        for a, b in zip(roots, roots[1:]):
+            ap = a.face_frame_cabinet
+            bp = b.face_frame_cabinet
+            if abs(ap.height - bp.height) > eps:
+                self.report({'ERROR'}, "Cabinets must match in height")
+                return {'CANCELLED'}
+            if abs(ap.depth - bp.depth) > eps:
+                self.report({'ERROR'}, "Cabinets must match in depth")
+                return {'CANCELLED'}
+            if abs(a.matrix_world.translation.z - b.matrix_world.translation.z) > eps:
+                self.report({'ERROR'}, "Cabinets must sit at the same Z")
+                return {'CANCELLED'}
+            if ap.corner_type != 'NONE' or bp.corner_type != 'NONE':
+                self.report({'ERROR'}, "Corner cabinets cannot be joined")
+                return {'CANCELLED'}
+            if abs(b.location.x - (a.location.x + ap.width)) > tol:
+                self.report({'ERROR'},
+                            "Cabinets must abut along the wall (no gaps)")
+                return {'CANCELLED'}
+
+        # Active becomes anchor. Merge cabinets on each side of active
+        # closest-first so the running anchor's geometry stays sane.
+        active_idx = roots.index(active_root)
+        for i in range(active_idx - 1, -1, -1):
+            if not types_face_frame.merge_cabinets(active_root, roots[i], 'LEFT'):
+                self.report({'ERROR'}, "Merge failed during pairwise join")
+                return {'CANCELLED'}
+        for i in range(active_idx + 1, len(roots)):
+            if not types_face_frame.merge_cabinets(active_root, roots[i], 'RIGHT'):
+                self.report({'ERROR'}, "Merge failed during pairwise join")
+                return {'CANCELLED'}
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        active_root.select_set(True)
+        context.view_layer.objects.active = active_root
+
+        self.report({'INFO'}, f"Joined {len(roots)} cabinets")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: selection mode toggle (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
@@ -1121,6 +1227,7 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_delete_cabinet,
+    hb_face_frame_OT_join_cabinets,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_bay_prompts,
