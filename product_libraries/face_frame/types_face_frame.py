@@ -2944,6 +2944,20 @@ class FloatingBaseFaceFrameCabinet(BaseFaceFrameCabinet):
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
 
 
+class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Standard base cabinet sized for a sink. Default width is pulled
+    from sink_cabinet_width; the bay defaults to false-front-over-doors
+    via default_bay_config so the sink basin clears the upper drawer
+    position with its own apron. Otherwise a plain BASE construction.
+    """
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_width = scene.hb_face_frame.sink_cabinet_width
+
+
 class UpperFaceFrameCabinet(FaceFrameCabinet):
     """Upper (wall) cabinet. No toe kick; mounts above the counter."""
     default_cabinet_type = 'UPPER'
@@ -3108,6 +3122,7 @@ CABINET_NAME_DISPATCH = {
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,
     "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
+    "Sink": SinkFaceFrameCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
     "Upper Stacked": UpperFaceFrameCabinet,
@@ -3250,6 +3265,7 @@ def _wrap_cabinet(obj):
 WRAP_CLASS_REGISTRY.update({
     'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
+    'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
     'RefrigeratorCabinet': RefrigeratorCabinet,

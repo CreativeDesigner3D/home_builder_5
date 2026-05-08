@@ -1684,6 +1684,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
         self._draw_catalog_grid(layout, [
             "Elevated Dishwasher", "Dishwasher", "Built in Tall",
             "Range", "Standalone Refrigerator", "Refrigerator Cabinet",
+            "Sink",
         ], columns=3)
 
     # =====================================================================

@@ -64,6 +64,13 @@ BASE_PRESETS = {
                                  L('RIGHT_DOOR')),
     'DRAWER_DOUBLE_DOOR':      H(L('DRAWER', size_role='TOP_DRAWER'),
                                  L('DOUBLE_DOOR')),
+    # Sink-style: false front (apron above the basin) over door(s). Top
+    # zone size pinned to top_drawer_opening_height like the drawer
+    # combos so the apron lines up with adjacent drawer fronts.
+    'FALSE_FRONT_DOOR':        H(L('FALSE_FRONT', size_role='TOP_DRAWER'),
+                                 L('RIGHT_DOOR')),
+    'FALSE_FRONT_DOUBLE_DOOR': H(L('FALSE_FRONT', size_role='TOP_DRAWER'),
+                                 L('DOUBLE_DOOR')),
     'TWO_DRAWERS_DOUBLE_DOOR': H(V(L('DRAWER'), L('DRAWER'),
                                    size_role='TOP_DRAWER'),
                                  L('DOUBLE_DOOR')),
@@ -177,6 +184,8 @@ BASE_MENU_ENTRIES = [
     ('TWO_DRAWERS',              "2 Drawers"),
     ('ONE_DRAWER',               "1 Drawer"),
     ('FALSE_FRONT',              "False Front"),
+    ('FALSE_FRONT_DOOR',         "False Front 1 Door"),
+    ('FALSE_FRONT_DOUBLE_DOOR',  "False Front 2 Door"),
     SEP,
     ('PULLOUT',                  "Pullout"),
     ('PULLOUT_WITH_DRAWER',      "Pullout with Drawer"),
@@ -289,4 +298,6 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     if cabinet_name == 'Refrigerator Cabinet':
         return 'BUILT_IN_REFRIGERATOR'
+    if cabinet_name == 'Sink':
+        return 'FALSE_FRONT_DOUBLE_DOOR' if is_wide else 'FALSE_FRONT_DOOR'
     return None
