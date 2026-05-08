@@ -297,6 +297,21 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     if parent is None:
         return None
 
+    # Tall and refrigerator cabinets (both cabinet_type='TALL') don't
+    # auto-merge - heights are visually distinct so adjacent placement
+    # is usually intentional, not a join. Manual join via the
+    # right-click menu still works.
+    if cab_obj.face_frame_cabinet.cabinet_type == 'TALL':
+        return None
+
+    # Force a depsgraph update so cab_obj.matrix_world reflects the
+    # parent + location assignments _finalize just made. Without this,
+    # the Z-match check in merge_cabinets sees a stale world Z (often
+    # the cabinet's pre-parenting world origin) and rejects what should
+    # be a valid auto-merge. Surfaces on uppers where wall-local Z is
+    # non-zero; bases sit at Z=0 so the staleness happens to match.
+    context.view_layer.update()
+
     cab_x = cab_obj.location.x
     cab_w = cab_obj.face_frame_cabinet.width
     eps = 1e-4
@@ -307,6 +322,8 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
         if sib is cab_obj:
             continue
         if not sib.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        if sib.face_frame_cabinet.cabinet_type == 'TALL':
             continue
         sib_x = sib.location.x
         sib_w = sib.face_frame_cabinet.width

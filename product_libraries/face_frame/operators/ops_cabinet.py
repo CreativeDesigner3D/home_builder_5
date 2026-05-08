@@ -213,6 +213,148 @@ class hb_face_frame_OT_join_cabinets(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Helper: resolve active object to (bay, cabinet_root)
+# ---------------------------------------------------------------------------
+def _find_active_bay_and_root(context):
+    """Walk up from the active object to find the enclosing bay cage
+    and cabinet root. Returns (bay, root) or (None, None)."""
+    obj = context.active_object
+    if obj is None:
+        return None, None
+    bay = None
+    cur = obj
+    while cur is not None:
+        if bay is None and cur.get(types_face_frame.TAG_BAY_CAGE):
+            bay = cur
+        if cur.get(types_face_frame.TAG_CABINET_CAGE):
+            return bay, cur
+        cur = cur.parent
+    return None, None
+
+
+def _bay_count(root):
+    return sum(1 for c in root.children
+               if c.get(types_face_frame.TAG_BAY_CAGE))
+
+
+# ---------------------------------------------------------------------------
+# Operators: break a cabinet at gaps adjacent to the active bay
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_break_cabinet_left(bpy.types.Operator):
+    """Break the cabinet at the gap to the left of the active bay.
+    The active bay becomes the leftmost bay of the new right-side
+    cabinet; its width is locked so it holds through the recalc.
+    """
+    bl_idname = "hb_face_frame.break_cabinet_left"
+    bl_label = "Break Left"
+    bl_description = "Split the cabinet at the gap left of the active bay"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            return False
+        return bay.face_frame_bay.bay_index > 0
+
+    def execute(self, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            self.report({'ERROR'}, "No active bay")
+            return {'CANCELLED'}
+        bay_index = bay.face_frame_bay.bay_index
+        if bay_index <= 0:
+            self.report({'WARNING'}, "Active bay is the first bay")
+            return {'CANCELLED'}
+        bay.face_frame_bay.unlock_width = True
+        new_root = types_face_frame.break_cabinet_at_gap(root, bay_index - 1)
+        if new_root is None:
+            self.report({'ERROR'}, "Break failed")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_break_cabinet_right(bpy.types.Operator):
+    """Break the cabinet at the gap to the right of the active bay.
+    The active bay stays as the rightmost bay of the (modified)
+    original cabinet; its width is locked so it holds through the
+    recalc.
+    """
+    bl_idname = "hb_face_frame.break_cabinet_right"
+    bl_label = "Break Right"
+    bl_description = "Split the cabinet at the gap right of the active bay"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            return False
+        return bay.face_frame_bay.bay_index < _bay_count(root) - 1
+
+    def execute(self, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            self.report({'ERROR'}, "No active bay")
+            return {'CANCELLED'}
+        bay_index = bay.face_frame_bay.bay_index
+        if bay_index >= _bay_count(root) - 1:
+            self.report({'WARNING'}, "Active bay is the last bay")
+            return {'CANCELLED'}
+        bay.face_frame_bay.unlock_width = True
+        new_root = types_face_frame.break_cabinet_at_gap(root, bay_index)
+        if new_root is None:
+            self.report({'ERROR'}, "Break failed")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
+    """Break the cabinet on both sides of the active bay so the
+    active bay becomes its own single-bay cabinet. On a first or
+    last bay, only the applicable side breaks. The active bay's
+    width is locked so it holds through the recalcs.
+    """
+    bl_idname = "hb_face_frame.break_cabinet_both"
+    bl_label = "Break Both"
+    bl_description = (
+        "Split the cabinet on both sides of the active bay so it "
+        "becomes its own single-bay cabinet"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            return False
+        return _bay_count(root) > 1
+
+    def execute(self, context):
+        bay, root = _find_active_bay_and_root(context)
+        if bay is None or root is None:
+            self.report({'ERROR'}, "No active bay")
+            return {'CANCELLED'}
+        count = _bay_count(root)
+        if count <= 1:
+            self.report({'WARNING'}, "Cabinet has only one bay")
+            return {'CANCELLED'}
+        bay_index = bay.face_frame_bay.bay_index
+        bay.face_frame_bay.unlock_width = True
+        # Break right first so the original keeps the active bay; the
+        # subsequent break-left then operates on the modified original.
+        if bay_index < count - 1:
+            if types_face_frame.break_cabinet_at_gap(root, bay_index) is None:
+                self.report({'ERROR'}, "Break (right) failed")
+                return {'CANCELLED'}
+        if bay_index > 0:
+            if types_face_frame.break_cabinet_at_gap(root, bay_index - 1) is None:
+                self.report({'ERROR'}, "Break (left) failed")
+                return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: selection mode toggle (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
@@ -1228,6 +1370,9 @@ classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_delete_cabinet,
     hb_face_frame_OT_join_cabinets,
+    hb_face_frame_OT_break_cabinet_left,
+    hb_face_frame_OT_break_cabinet_right,
+    hb_face_frame_OT_break_cabinet_both,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_bay_prompts,

@@ -3328,6 +3328,77 @@ def recalculate_face_frame_cabinet(obj):
 # Cabinet merge
 # ---------------------------------------------------------------------------
 
+_SIDE_PROP_NAMES_LEFT = (
+    'left_finished_end_condition', 'left_exposed', 'left_scribe',
+    'left_flush_x_amount', 'blind_left', 'blind_amount_left',
+    'extend_left', 'left_offset', 'inset_toe_kick_left',
+    'left_stile_width', 'left_stile_type', 'unlock_left_stile',
+    'turn_off_left_stile', 'extend_left_stile_to_floor',
+    'extend_left_stile_up', 'extend_left_stile_down',
+    'extend_left_stile_up_amount', 'extend_left_stile_down_amount',
+    'left_depth', 'unlock_left_depth',
+)
+_SIDE_PROP_NAMES_RIGHT = (
+    'right_finished_end_condition', 'right_exposed', 'right_scribe',
+    'right_flush_x_amount', 'blind_right', 'blind_amount_right',
+    'extend_right', 'right_offset', 'inset_toe_kick_right',
+    'right_stile_width', 'right_stile_type', 'unlock_right_stile',
+    'turn_off_right_stile', 'extend_right_stile_to_floor',
+    'extend_right_stile_up', 'extend_right_stile_down',
+    'extend_right_stile_up_amount', 'extend_right_stile_down_amount',
+    'right_depth', 'unlock_right_depth',
+)
+
+
+def _side_prop_names(side):
+    return _SIDE_PROP_NAMES_RIGHT if side == 'RIGHT' else _SIDE_PROP_NAMES_LEFT
+
+
+def _capture_side_props(props, side):
+    """Snapshot all side-specific cabinet props for the given side."""
+    return {name: getattr(props, name) for name in _side_prop_names(side)}
+
+
+def _apply_side_props(props, side, captured):
+    """Write a captured side-prop snapshot onto props. The dict's keys
+    are expected to match the prop names for that side."""
+    for name in _side_prop_names(side):
+        if name in captured:
+            setattr(props, name, captured[name])
+
+
+def _default_side_props(side, stile_width, depth):
+    """Return a dict of side-specific cabinet prop values representing
+    a freshly-exterior side - what a new cabinet edge looks like at
+    creation time. Used during break to reset both halves' new
+    boundary edges to a clean default state.
+    """
+    pre = 'right_' if side == 'RIGHT' else 'left_'
+    suf = '_right' if side == 'RIGHT' else '_left'
+    return {
+        f'{pre}finished_end_condition': 'UNFINISHED',
+        f'{pre}exposed': True,
+        f'{pre}scribe': 0.0,
+        f'{pre}flush_x_amount': inch(4.0),
+        f'blind{suf}': False,
+        f'blind_amount{suf}': inch(24.0),
+        f'extend{suf}': 0.0,
+        f'{pre}offset': 0.0,
+        f'inset_toe_kick{suf}': 0.0,
+        f'{pre}stile_width': stile_width,
+        f'{pre}stile_type': 'STANDARD',
+        f'unlock_{pre}stile': False,
+        f'turn_off_{pre}stile': False,
+        f'extend_{pre}stile_to_floor': False,
+        f'extend_{pre}stile_up': False,
+        f'extend_{pre}stile_down': False,
+        f'extend_{pre}stile_up_amount': 0.0,
+        f'extend_{pre}stile_down_amount': 0.0,
+        f'{pre}depth': depth,
+        f'unlock_{pre}depth': False,
+    }
+
+
 def _propagate_far_side_props(absorbed_props, anchor_props, side):
     """When `absorbed` is merged onto `anchor` on the given `side`,
     `absorbed`'s far-side exterior props (the side opposite the merge
@@ -3571,3 +3642,186 @@ def merge_cabinets(anchor, absorbed, side):
         _remove_root_with_children(absorbed)
 
     return True
+
+
+def break_cabinet_at_gap(cabinet, gap_index):
+    """Break `cabinet` into two cabinets at the gap between bays
+    `gap_index` and `gap_index+1`. Returns the new (right-half)
+    cabinet root, or None on invalid input.
+
+    The original keeps bays [0..gap_index]; the new cabinet receives
+    bays [gap_index+1..end] reindexed from 0. The boundary mid stile
+    + mid div pair is deleted. New end stiles at the break edge use
+    the cabinet's bay_mid_stile_width default; side props on the
+    break edges reset to default-exterior state. The original's
+    far-side (right) props propagate onto the new cabinet's right
+    side, since that's the new cabinet's exterior on that side.
+
+    Caller sets unlock_width on bays it wants preserved before
+    calling.
+    """
+    if cabinet is None or not cabinet.get(TAG_CABINET_CAGE):
+        return None
+    cab_props = cabinet.face_frame_cabinet
+    if cab_props.corner_type != 'NONE':
+        return None
+    bays = sorted(
+        [c for c in cabinet.children if c.get(TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+    if not (0 <= gap_index < len(bays) - 1):
+        return None
+
+    class_name = cabinet.get('CLASS_NAME', 'FaceFrameCabinet')
+    cls = WRAP_CLASS_REGISTRY.get(class_name, FaceFrameCabinet)
+
+    with suspend_recalc():
+        captured_right = _capture_side_props(cab_props, 'RIGHT')
+        mids_data = [(e.width, e.unlock, e.extend_up_amount, e.extend_down_amount)
+                     for e in cab_props.mid_stile_widths]
+        right_mids = mids_data[gap_index + 1:]
+
+        mid_part_roles = (PART_ROLE_MID_STILE, PART_ROLE_MID_DIVISION)
+        all_mid_parts = [c for c in cabinet.children
+                         if c.get('hb_part_role') in mid_part_roles]
+        boundary_parts = [p for p in all_mid_parts
+                          if p.get('hb_mid_stile_index', 0) == gap_index]
+        right_mid_parts = [p for p in all_mid_parts
+                           if p.get('hb_mid_stile_index', 0) > gap_index]
+        right_bays = bays[gap_index + 1:]
+        boundary_default = cab_props.bay_mid_stile_width
+
+        # Create new cabinet (1 default bay; we replace it below)
+        new_inst = cls()
+        new_inst.create(cabinet.name.split('.')[0], bay_qty=1)
+        new_root = new_inst.obj
+        new_props = new_root.face_frame_cabinet
+
+        if cabinet.parent is not None:
+            new_root.parent = cabinet.parent
+            new_root.matrix_parent_inverse.identity()
+        new_root.rotation_euler = cabinet.rotation_euler.copy()
+        new_root.location.y = cabinet.location.y
+        new_root.location.z = cabinet.location.z
+
+        # Copy cabinet-wide (non-side) props from original to new
+        for name in (
+            'cabinet_type', 'height', 'depth',
+            'is_sink', 'is_built_in_appliance', 'is_double',
+            'top_scribe', 'top_rail_width', 'bottom_rail_width',
+            'unlock_top_rail', 'unlock_bottom_rail',
+            'bay_mid_rail_width', 'bay_mid_stile_width',
+            'panel_frame_auto', 'panel_top_rail_width',
+            'panel_bottom_rail_width', 'panel_stile_width',
+            'default_top_overlay', 'default_bottom_overlay',
+            'default_left_overlay', 'default_right_overlay',
+            'material_thickness', 'face_frame_thickness',
+            'door_thickness', 'back_thickness', 'division_thickness',
+            'finish_toe_kick_thickness',
+            'toe_kick_type', 'toe_kick_height', 'toe_kick_setback',
+            'toe_kick_thickness', 'back_bottom_inset',
+            'include_finish_toe_kick',
+            'include_external_nailer', 'include_internal_nailer',
+            'include_thin_finished_bottom',
+            'include_thick_finished_bottom', 'include_blocking',
+            'back_finished_end_condition', 'back_exposed',
+            'corner_type', 'exterior_option', 'interior_option',
+            'tray_compartment',
+        ):
+            try:
+                setattr(new_props, name, getattr(cab_props, name))
+            except (AttributeError, TypeError):
+                pass
+
+        # Side props
+        _apply_side_props(new_props, 'RIGHT', captured_right)
+        _apply_side_props(new_props, 'LEFT',
+                          _default_side_props('LEFT', boundary_default, cab_props.depth))
+        _apply_side_props(cab_props, 'RIGHT',
+                          _default_side_props('RIGHT', boundary_default, cab_props.depth))
+
+        # Delete the new cabinet's default bay (created by cls.create())
+        for child in list(new_root.children):
+            if child.get(TAG_BAY_CAGE):
+                _remove_root_with_children(child)
+
+        # Reparent right bays from original to new, reindex from 0
+        for new_idx, bay in enumerate(right_bays):
+            bay.parent = new_root
+            bay.matrix_parent_inverse.identity()
+            bay['hb_bay_index'] = new_idx
+            bay.face_frame_bay.bay_index = new_idx
+
+        # Delete boundary mid stile + mid div pair
+        for p in boundary_parts:
+            if p.name in bpy.data.objects:
+                bpy.data.objects.remove(p, do_unlink=True)
+
+        # Reparent right mid parts; subtract (gap_index + 1) from index
+        for p in right_mid_parts:
+            old_idx = p.get('hb_mid_stile_index', 0)
+            p['hb_mid_stile_index'] = old_idx - (gap_index + 1)
+            p.parent = new_root
+            p.matrix_parent_inverse.identity()
+
+        # Strip original's mid_stile_widths down to first gap_index entries
+        coll_a = cab_props.mid_stile_widths
+        while len(coll_a) > gap_index:
+            coll_a.remove(len(coll_a) - 1)
+
+        # Build new cabinet's mid_stile_widths
+        coll_b = new_props.mid_stile_widths
+        coll_b.clear()
+        for w, ulk, ext_up, ext_dn in right_mids:
+            entry = coll_b.add()
+            entry.width = w
+            entry.unlock = ulk
+            entry.extend_up_amount = ext_up
+            entry.extend_down_amount = ext_dn
+
+        # Set widths so combined width preserves the original cabinet's
+        # total. Replacing the boundary mid stile (width B) with two
+        # new end stiles (each at default D) adds (2D - B) of extra
+        # width. That extra has to be absorbed by shrinking unlocked
+        # bays - same redistribution principle as merge but in
+        # reverse. Locked bays (including the active one the operator
+        # just locked) hold; unlocked bays in each half receive a
+        # share of the shrinkage.
+        left_bay_total = sum(b.face_frame_bay.width for b in bays[:gap_index + 1])
+        left_mid_total = sum(w for (w, _, _, _) in mids_data[:gap_index])
+        right_bay_total = sum(b.face_frame_bay.width for b in right_bays)
+        right_mid_total = sum(w for (w, _, _, _) in right_mids)
+
+        boundary_actual = mids_data[gap_index][0]
+        extra = 2 * boundary_default - boundary_actual
+
+        left_has_unlocked = any(not b.face_frame_bay.unlock_width
+                                for b in bays[:gap_index + 1])
+        right_has_unlocked = any(not b.face_frame_bay.unlock_width
+                                 for b in right_bays)
+        if left_has_unlocked and right_has_unlocked:
+            left_shrink, right_shrink = extra / 2.0, extra / 2.0
+        elif left_has_unlocked:
+            left_shrink, right_shrink = extra, 0.0
+        elif right_has_unlocked:
+            left_shrink, right_shrink = 0.0, extra
+        else:
+            # No unlocked bays anywhere. Distribute symmetrically; the
+            # halves will be slightly oversized but the user can
+            # adjust manually.
+            left_shrink, right_shrink = extra / 2.0, extra / 2.0
+
+        cab_props.width = (cab_props.left_stile_width
+                           + left_bay_total + left_mid_total
+                           + cab_props.right_stile_width
+                           - left_shrink)
+        new_props.width = (new_props.left_stile_width
+                           + right_bay_total + right_mid_total
+                           + new_props.right_stile_width
+                           - right_shrink)
+
+        # Position new cabinet abutting original (using the now-final
+        # original width).
+        new_root.location.x = cabinet.location.x + cab_props.width
+
+    return new_root

@@ -76,6 +76,14 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
                              text="Delete Bay", icon='X')
         op.bay_index = bay_index
 
+        layout.separator()
+        layout.operator("hb_face_frame.break_cabinet_left",
+                        text="Break Left", icon='TRIA_LEFT_BAR')
+        layout.operator("hb_face_frame.break_cabinet_right",
+                        text="Break Right", icon='TRIA_RIGHT_BAR')
+        layout.operator("hb_face_frame.break_cabinet_both",
+                        text="Break Both", icon='UNLINKED')
+
 
 class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
     """Right-click menu for a face frame mid stile part."""
