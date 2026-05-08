@@ -113,6 +113,24 @@ def _cage_dimensions(scene_props, cabinet_type):
             scene_props.base_cabinet_height)
 
 
+def _appliance_dimensions(scene_props, appliance_name):
+    """Return (width, height, depth) for an appliance preview cage and
+    final placement. Falls back to the appliance class's class-level
+    defaults when no scene-prop override exists for that field.
+    """
+    cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(appliance_name)
+    if cls is None:
+        return (units.inch(24), units.inch(34), units.inch(24))
+    if appliance_name == "Dishwasher":
+        return (scene_props.dishwasher_width, cls.height, cls.depth)
+    if appliance_name == "Range":
+        return (scene_props.range_width, cls.height, cls.depth)
+    if appliance_name == "Standalone Refrigerator":
+        return (scene_props.refrigerator_cabinet_width,
+                scene_props.refrigerator_height, cls.depth)
+    return (cls.width, cls.height, cls.depth)
+
+
 def _auto_bay_qty(cabinet_width):
     """Pick a bay quantity that gives ~_TARGET_BAY_WIDTH per bay."""
     qty = round(cabinet_width / _TARGET_BAY_WIDTH)
@@ -1043,6 +1061,435 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._preview_cage = None
         self._array_modifier = None
 
+
+# ---------------------------------------------------------------------------
+# Appliance placement
+# ---------------------------------------------------------------------------
+# Mirrors the cabinet placement modal but with a fixed-width single
+# cage. No bay quantity arrows, no fill mode, no typed width entry.
+# Wall snap, gap-edge snap, and cabinet-to-cabinet snap behave the
+# same as the cabinet flow.
+class hb_face_frame_OT_place_appliance(bpy.types.Operator,
+                                       hb_placement.PlacementMixin):
+    """Modal: cursor drags an appliance preview cage, click to commit."""
+    bl_idname = "hb_face_frame.place_appliance"
+    bl_label = "Place Appliance"
+    bl_description = (
+        "Place an appliance on a wall or on the floor. "
+        "Esc cancels."
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    appliance_name: bpy.props.StringProperty(
+        name="Appliance Name",
+        description="Catalog name of the appliance to place",
+        default="",
+    )  # type: ignore
+
+    _preview_cage = None
+    _appliance_width: float = 0.0
+    _appliance_height: float = 0.0
+    _appliance_depth: float = 0.0
+    _place_on_front: bool = True
+    _gap_snap = None
+    _cabinet_snap_side = None
+
+    # ---------------- invoke / modal ----------------
+
+    def invoke(self, context, event):
+        if not self.appliance_name:
+            self.report({'WARNING'}, "No appliance name supplied")
+            return {'CANCELLED'}
+        if self.appliance_name not in types_face_frame.APPLIANCE_NAME_DISPATCH:
+            self.report({'WARNING'},
+                        f"Unknown appliance: {self.appliance_name}")
+            return {'CANCELLED'}
+
+        scene_props = context.scene.hb_face_frame
+        w, h, d = _appliance_dimensions(scene_props, self.appliance_name)
+        self._appliance_width = w
+        self._appliance_height = h
+        self._appliance_depth = d
+        self._place_on_front = True
+        self._gap_snap = None
+        self._cabinet_snap_side = None
+
+        try:
+            self._create_preview_cage(context)
+        except Exception as e:
+            self.report({'ERROR'}, f"Preview creation failed: {e}")
+            return {'CANCELLED'}
+
+        cage_obj = self._preview_cage.obj
+        cage_obj.location = context.scene.cursor.location.copy()
+
+        self.init_placement(context)
+        if self.region is None:
+            self._delete_preview()
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self.register_placement_object(cage_obj)
+        self.add_placement_dim_handler(context)
+
+        context.window_manager.modal_handler_add(self)
+        self._update_header(context)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if self._preview_cage is None:
+            return self._cancel(context)
+
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            return self._cancel(context)
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            return self._finalize(context)
+
+        if event.type == 'MOUSEMOVE':
+            cage_obj = self._preview_cage.obj
+            cage_obj.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                cage_obj.hide_set(False)
+            self._position_from_hit(context)
+
+        return {'RUNNING_MODAL'}
+
+    # ---------------- preview cage ----------------
+
+    def _create_preview_cage(self, context):
+        cage = hb_types.GeoNodeCage()
+        cage.create('AppliancePlacementPreview')
+        cage.set_input('Dim X', self._appliance_width)
+        cage.set_input('Dim Y', self._appliance_depth)
+        cage.set_input('Dim Z', self._appliance_height)
+        cage.set_input('Mirror Y', True)
+        cage.obj.display_type = 'WIRE'
+        cage.obj.show_in_front = True
+        cage.obj['HB_CURRENT_DRAW_OBJ'] = True
+        self._preview_cage = cage
+
+    def _update_header(self, context):
+        side = "front" if self._place_on_front else "back"
+        width_in = self._appliance_width * 39.37008
+        hb_placement.draw_header_text(
+            context,
+            f"{self.appliance_name}  -  width: {width_in:.1f}\""
+            f"  -  side: {side}  -  Click: place   Esc: cancel"
+        )
+
+    # ---------------- positioning ----------------
+
+    def _update_place_on_front(self, context, wall, local_hit_y, wall_thickness):
+        """Front/back side decision with hysteresis. Mirrors the cabinet
+        operator's logic - a 1" band keeps the side stable while the
+        cursor sits near the wall surface.
+        """
+        wall_center_y = wall_thickness / 2.0
+        region = self.region
+        rv3d = region.data if region is not None else None
+        if rv3d is None:
+            return
+
+        view_z = rv3d.view_matrix[2][2]
+        is_plan_view = abs(view_z) > _PLAN_VIEW_THRESHOLD
+        if is_plan_view:
+            view_origin = view3d_utils.region_2d_to_origin_3d(
+                region, rv3d, self.mouse_pos)
+            view_dir = view3d_utils.region_2d_to_vector_3d(
+                region, rv3d, self.mouse_pos)
+            floor_point = intersect_line_plane(
+                view_origin,
+                view_origin + view_dir * 10000,
+                Vector((0, 0, 0)),
+                Vector((0, 0, 1)),
+            )
+            cursor_y = (local_hit_y if floor_point is None
+                        else (wall.matrix_world.inverted() @ floor_point).y)
+        else:
+            cursor_y = local_hit_y
+
+        if cursor_y < wall_center_y - _FRONT_BACK_HYSTERESIS:
+            self._place_on_front = True
+        elif cursor_y > wall_center_y + _FRONT_BACK_HYSTERESIS:
+            self._place_on_front = False
+
+    def _position_from_hit(self, context):
+        if self.hit_location is None:
+            return
+        wall = _detect_wall(self, context)
+        if wall is not None:
+            self._position_on_wall(context, wall)
+        else:
+            self._position_free(context)
+
+    def _position_on_wall(self, context, wall):
+        cage_obj = self._preview_cage.obj
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+        except Exception:
+            wall_thickness = 0.0
+
+        if cage_obj.parent is not wall:
+            cage_obj.parent = wall
+            cage_obj.matrix_parent_inverse.identity()
+
+        local_hit = wall.matrix_world.inverted() @ self.hit_location
+        cursor_x = local_hit.x
+
+        self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
+
+        try:
+            result = self.find_placement_gap_by_side(
+                wall, cursor_x, self._appliance_width,
+                self._place_on_front, wall_thickness,
+                object_z_start=cage_obj.location.z,
+                object_height=self._appliance_height,
+                object_depth=self._appliance_depth,
+                exclude_obj=cage_obj,
+            )
+        except Exception:
+            result = (None, None, None)
+        gap_start, gap_end, snap_x = result
+        if gap_start is None:
+            gap_start = 0.0
+            gap_end = wall_geo.get_input('Length')
+            snap_x = max(gap_start, cursor_x - self._appliance_width / 2)
+
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
+        cabinet_width = min(self._appliance_width, gap_width)
+
+        # Same gap-edge / center snap thresholds as cabinet placement.
+        engage_corner = max(cabinet_width / 2, units.inch(6.0))
+        release_corner = engage_corner + units.inch(1.0)
+        engage_center = units.inch(4.0)
+        release_center = engage_center + units.inch(1.0)
+        left_thresh = release_corner if self._gap_snap == 'LEFT' else engage_corner
+        right_thresh = release_corner if self._gap_snap == 'RIGHT' else engage_corner
+        center_thresh = release_center if self._gap_snap == 'CENTER' else engage_center
+
+        near_left = (cursor_x - gap_start) < left_thresh
+        near_right = (gap_end - cursor_x) < right_thresh
+        gap_center = (gap_start + gap_end) / 2
+        near_center = (
+            abs(cursor_x - gap_center) < center_thresh
+            and cabinet_width < gap_width
+        )
+
+        if near_left and near_right:
+            self._gap_snap = ('LEFT' if (cursor_x - gap_start) <
+                              (gap_end - cursor_x) else 'RIGHT')
+        elif near_left:
+            self._gap_snap = 'LEFT'
+        elif near_right:
+            self._gap_snap = 'RIGHT'
+        elif near_center:
+            self._gap_snap = 'CENTER'
+        else:
+            self._gap_snap = None
+
+        if self._gap_snap == 'LEFT':
+            placement_x = gap_start
+        elif self._gap_snap == 'RIGHT':
+            placement_x = gap_end - cabinet_width
+        elif self._gap_snap == 'CENTER':
+            placement_x = gap_start + (gap_width - cabinet_width) / 2
+        else:
+            placement_x = max(gap_start,
+                              min(snap_x, gap_end - cabinet_width))
+
+        if self._place_on_front:
+            cage_obj.location.x = placement_x
+            cage_obj.location.y = 0
+            cage_obj.rotation_euler = (0, 0, 0)
+        else:
+            cage_obj.location.x = placement_x + cabinet_width
+            cage_obj.location.y = wall_thickness
+            cage_obj.rotation_euler = (0, 0, math.pi)
+
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_thickness,
+            gap_start, gap_end, placement_x, cabinet_width,
+        )
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _position_free(self, context):
+        cage_obj = self._preview_cage.obj
+        snap_target, snap_side = self.detect_cabinet_snap_target(
+            self.hit_object, self.hit_location)
+        if snap_target is cage_obj:
+            snap_target = None
+            snap_side = None
+        self._cabinet_snap_side = snap_side
+
+        if cage_obj.parent is not None:
+            world = cage_obj.matrix_world.copy()
+            cage_obj.parent = None
+            cage_obj.matrix_world = world
+
+        snap_result = None
+        if snap_target is not None and snap_side is not None:
+            if _is_corner_cabinet(snap_target) and snap_side == 'LEFT':
+                snap_result = _compute_corner_left_snap_transform(
+                    snap_target, self._appliance_width)
+            else:
+                snap_result = self.compute_cabinet_snap_transform(
+                    snap_target, snap_side, self._appliance_width)
+
+        if snap_result is not None:
+            new_loc, new_rot = snap_result
+            cage_obj.location = new_loc
+            cage_obj.rotation_euler = new_rot
+            cage_obj.location.z = snap_target.location.z
+        else:
+            self._cabinet_snap_side = None
+            cage_obj.location = self.hit_location.copy()
+            cage_obj.rotation_euler = (0, 0, 0)
+
+        self._placement_dim_specs = self._build_dim_specs_free(context)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _build_dim_specs_on_wall(self, context, wall, wall_thickness,
+                                 gap_start, gap_end,
+                                 placement_x, cabinet_width):
+        cage_obj = self._preview_cage.obj
+        z_top = cage_obj.location.z + self._appliance_height
+        z_total = z_top + units.inch(4.0)
+        z_offset = z_top + units.inch(8.0)
+        if self._place_on_front:
+            y_dim = -units.inch(2.0)
+        else:
+            y_dim = wall_thickness + units.inch(2.0)
+
+        wm = wall.matrix_world
+        unit_settings = context.scene.unit_settings
+        specs = []
+        snap_green = (0.30, 0.95, 0.40, 1.0)
+        total_color = snap_green if self._gap_snap else None
+        offset_color = snap_green if self._gap_snap == 'CENTER' else None
+
+        s = wm @ Vector((placement_x, y_dim, z_total))
+        e = wm @ Vector((placement_x + cabinet_width, y_dim, z_total))
+        specs.append(hb_placement.PlacementDimSpec(
+            s, e, units.unit_to_string(unit_settings, cabinet_width),
+            total_color,
+        ))
+
+        left_offset = placement_x - gap_start
+        if left_offset > units.inch(0.5):
+            s = wm @ Vector((gap_start, y_dim, z_offset))
+            e = wm @ Vector((placement_x, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, left_offset),
+                offset_color,
+            ))
+
+        right_offset = gap_end - (placement_x + cabinet_width)
+        if right_offset > units.inch(0.5):
+            s = wm @ Vector((placement_x + cabinet_width, y_dim, z_offset))
+            e = wm @ Vector((gap_end, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, right_offset),
+                offset_color,
+            ))
+        return specs
+
+    def _build_dim_specs_free(self, context):
+        cage_obj = self._preview_cage.obj
+        z = self._appliance_height + units.inch(4.0)
+        s = cage_obj.matrix_world @ Vector((0, 0, z))
+        e = cage_obj.matrix_world @ Vector((self._appliance_width, 0, z))
+        snap_color = (
+            (0.30, 0.95, 0.40, 1.0) if self._cabinet_snap_side else None
+        )
+        return [hb_placement.PlacementDimSpec(
+            s, e,
+            units.unit_to_string(context.scene.unit_settings,
+                                 self._appliance_width),
+            snap_color,
+        )]
+
+    # ---------------- finalize / cancel ----------------
+
+    def _finalize(self, context):
+        self.remove_placement_dim_handler()
+        cage_obj = self._preview_cage.obj
+        captured_parent = cage_obj.parent
+        captured_world = cage_obj.matrix_world.copy()
+        captured_local_loc = cage_obj.location.copy()
+        captured_local_rot = cage_obj.rotation_euler.copy()
+
+        self._delete_preview()
+
+        cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(self.appliance_name)
+        if cls is None:
+            self.report({'ERROR'}, f"Unknown appliance: {self.appliance_name}")
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+        appliance = cls()
+        # Apply preview-resolved dims so the final appliance matches
+        # the cage the user just placed.
+        appliance.width = self._appliance_width
+        appliance.height = self._appliance_height
+        appliance.depth = self._appliance_depth
+        try:
+            appliance.create(self.appliance_name)
+        except Exception as e:
+            self.report({'ERROR'}, f"Appliance creation failed: {e}")
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        app_obj = appliance.obj
+        if captured_parent is not None:
+            app_obj.parent = captured_parent
+            app_obj.matrix_parent_inverse.identity()
+            app_obj.location = captured_local_loc
+            app_obj.rotation_euler = captured_local_rot
+        else:
+            app_obj.matrix_world = captured_world
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        app_obj.select_set(True)
+        context.view_layer.objects.active = app_obj
+
+        try:
+            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=app_obj.name)
+            app_obj.select_set(True)
+            context.view_layer.objects.active = app_obj
+        except RuntimeError:
+            pass
+
+        hb_placement.clear_header_text(context)
+        self.report({'INFO'}, f"Placed {self.appliance_name}")
+        return {'FINISHED'}
+
+    def _cancel(self, context):
+        self.remove_placement_dim_handler()
+        self._delete_preview()
+        hb_placement.clear_header_text(context)
+        return {'CANCELLED'}
+
+    def _delete_preview(self):
+        if self._preview_cage is None:
+            return
+        try:
+            self._delete_object_and_children(self._preview_cage.obj)
+        except Exception:
+            try:
+                bpy.data.objects.remove(self._preview_cage.obj, do_unlink=True)
+            except Exception:
+                pass
+        self._preview_cage = None
+
+
 class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
                                             hb_placement.PlacementMixin):
     """Modal: cursor drags a corner-cabinet preview cage, click to commit.
@@ -1455,6 +1902,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
 classes = (
     hb_face_frame_OT_place_cabinet,
+    hb_face_frame_OT_place_appliance,
     hb_face_frame_OT_place_corner_cabinet,
 )
 

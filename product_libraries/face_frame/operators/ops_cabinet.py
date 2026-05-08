@@ -38,6 +38,14 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
+        # Appliance products: invoke the appliance placement modal
+        # (cursor follow + wall snap, fixed width, single instance).
+        if self.cabinet_name in types_face_frame.APPLIANCE_NAME_DISPATCH:
+            bpy.ops.hb_face_frame.place_appliance(
+                'INVOKE_DEFAULT',
+                appliance_name=self.cabinet_name,
+            )
+            return {'FINISHED'}
         # Corner cabinets get a dedicated placement modal - same
         # cursor-follow / GPU-dim feedback as regular cabinets, but
         # snaps to wall corners instead of gap edges and skips the
@@ -138,6 +146,10 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
             if obj.hide_render:
                 return False
             return True
+        if mode == 'Cabinets' and obj.get('IS_APPLIANCE'):
+            # Appliances live alongside cabinets in the catalog and
+            # should highlight together in Cabinets mode.
+            return True
         tag = self.MODE_TAGS.get(mode)
         if tag is None:
             return False
@@ -150,10 +162,11 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
         if any(t in obj for t in ('IS_WALL_BP', 'IS_ENTRY_DOOR_BP',
                                   'IS_WINDOW_BP', 'IS_CUTTING_OBJ')):
             return
-        # Only touch objects that are part of a face frame cabinet, or are
-        # generic cabinet parts/cages we know about. Avoids dimming arbitrary
-        # scene geometry.
-        if types_face_frame.find_cabinet_root(obj) is None:
+        # Only touch objects that are part of a face frame cabinet,
+        # an appliance product, or are generic cabinet parts/cages we
+        # know about. Avoids dimming arbitrary scene geometry.
+        if (types_face_frame.find_cabinet_root(obj) is None
+                and not obj.get('IS_APPLIANCE')):
             return
 
         if self._matches_mode(obj, mode):

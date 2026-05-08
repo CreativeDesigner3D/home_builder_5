@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from ...units import inch
+from ..common import types_appliances
 from ..frameless.types_frameless import CabinetPart
 from . import solver_face_frame as solver
 from . import pulls
@@ -3058,6 +3059,18 @@ CABINET_NAME_DISPATCH = {
     "Tall": TallFaceFrameCabinet,
     "Tall Stacked": TallFaceFrameCabinet,
     "Panel": PanelFaceFrameCabinet,
+}
+
+
+# Catalog names in the Appliance Products section map to classes in
+# the shared common.types_appliances module. These produce a wireframe
+# cage with a text label and no carcass / bays / face frame; the
+# draw_cabinet operator drops them at the 3D cursor rather than
+# routing through the cabinet placement modal.
+APPLIANCE_NAME_DISPATCH = {
+    "Dishwasher": types_appliances.Dishwasher,
+    "Range": types_appliances.Range,
+    "Standalone Refrigerator": types_appliances.Refrigerator,
 }
 
 
