@@ -314,6 +314,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _auto_bay_qty: bool = True      # True until user presses arrow keys
     _place_on_front: bool = True    # which side of the wall
     _fill_mode: bool = True         # False after the user types a width
+    _single_placement: bool = False # True for cabinets that don't fill or tile (e.g., Sink)
     _gap_snap = None                # None | 'LEFT' | 'CENTER' | 'RIGHT' gap-position snap
     _cabinet_snap_side = None       # None | 'LEFT' | 'RIGHT' off-wall cabinet-to-cabinet snap
 
@@ -329,10 +330,22 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return {'CANCELLED'}
 
         scene_props = context.scene.hb_face_frame
-        self._cabinet_width = scene_props.default_cabinet_width
-        self._auto_bay_qty = True
         self._place_on_front = True
-        self._fill_mode = True
+        cls = types_face_frame.get_cabinet_class(self.cabinet_name)
+        # cls() does no Blender-side work - it just runs the Python
+        # __init__ to capture default_width from scene props for
+        # subclasses like SinkFaceFrameCabinet.
+        cls_inst = cls()
+        self._single_placement = bool(getattr(cls_inst, 'single_placement', False))
+        if self._single_placement:
+            self._cabinet_width = cls_inst.default_width
+            self._auto_bay_qty = False
+            self._fill_mode = False
+            self.bay_qty = 1
+        else:
+            self._cabinet_width = scene_props.default_cabinet_width
+            self._auto_bay_qty = True
+            self._fill_mode = True
 
         try:
             self._create_preview_cage(context)
@@ -414,6 +427,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return self._finalize(context)
 
         if event.type == 'UP_ARROW' and event.value == 'PRESS':
+            if self._single_placement:
+                return {'RUNNING_MODAL'}
             new_qty = min(self.bay_qty + 1, _BAY_QTY_MAX)
             if new_qty != self.bay_qty:
                 self.bay_qty = new_qty
@@ -423,6 +438,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return {'RUNNING_MODAL'}
 
         if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
+            if self._single_placement:
+                return {'RUNNING_MODAL'}
             new_qty = max(self.bay_qty - 1, _BAY_QTY_MIN)
             if new_qty != self.bay_qty:
                 self.bay_qty = new_qty
@@ -543,6 +560,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         fill_mode=True is the auto-fill path: width comes from the
         wall gap and changes naturally as the cursor moves.
         """
+        if self._single_placement:
+            fill_mode = False
         if abs(width - self._cabinet_width) < 1e-5 and fill_mode == self._fill_mode:
             return
         self._cabinet_width = width

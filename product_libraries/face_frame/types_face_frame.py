@@ -304,6 +304,11 @@ class FaceFrameOpening(GeoNodeCage):
 # Base cabinet class
 # ---------------------------------------------------------------------------
 class FaceFrameCabinet(GeoNodeCage):
+    # When True, the place_cabinet modal pins bay_qty=1 and disables
+    # fill-to-gap behavior. Used for single-unit products like sinks
+    # where tiling across a wall doesn't make sense.
+    single_placement = False
+
     """Base class for all face frame cabinets.
 
     No drivers. All dimensions flow through the recalculate() method which
@@ -2951,6 +2956,8 @@ class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
     position with its own apron. Otherwise a plain BASE construction.
     """
 
+    single_placement = True
+
     def __init__(self):
         super().__init__()
         scene = bpy.context.scene
@@ -3016,6 +3023,8 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
     - Bay tree is preset to doors-on-top + appliance-on-bottom, with
       the appliance opening pinned to the scene refrigerator_height.
     """
+
+    single_placement = True
 
     def __init__(self):
         super().__init__()
