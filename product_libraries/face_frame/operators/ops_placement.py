@@ -93,8 +93,6 @@ def _cabinet_type_for_name(cabinet_name):
         return 'UPPER'
     if 'Tall' in cabinet_name or 'Refrigerator Cabinet' in cabinet_name:
         return 'TALL'
-    if 'Lap Drawer' in cabinet_name:
-        return 'LAP_DRAWER'
     return 'BASE'
 
 

@@ -176,6 +176,7 @@ class FaceFrameLayout:
             'bottom_rail_width':  bp.bottom_rail_width,
             'remove_bottom':      bp.remove_bottom,
             'remove_carcass':     bp.remove_carcass,
+            'floating_bay':       bp.floating_bay,
             'tree':               self._read_tree_root(bay_obj),
         }
 
@@ -241,6 +242,7 @@ class FaceFrameLayout:
             'bottom_rail_width':  self.default_bottom_rail_width,
             'remove_bottom':      False,
             'remove_carcass':     False,
+            'floating_bay':       False,
             'tree':               None,
         }
 
@@ -401,6 +403,9 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     recess for NOTCH; the wide bottom rail handles it for FLUSH).
     FLOATING and uppers anchor the side at the bay bottom.
 
+    Per-bay override: floating_bay forces this bay's side to anchor at
+    the bay bottom regardless of cabinet toe_kick_type.
+
     Inset exception: kick_inset_left / kick_inset_right > 0 means a
     return part is wrapping the kick at that end and the side floats
     by kick_height on that side, so the inset region is open from
@@ -409,6 +414,8 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     if not layout.has_toe_kick:
         return bay_bottom_z(layout, bay_index)
     if layout.toe_kick_type == 'FLOATING':
+        return bay_bottom_z(layout, bay_index)
+    if layout.bays[bay_index].get('floating_bay'):
         return bay_bottom_z(layout, bay_index)
     # NOTCH / FLUSH default to floor unless this side has a kick inset.
     if side == 'LEFT' and layout.kick_inset_left > 0:
@@ -452,9 +459,9 @@ def has_kick_subfront(layout):
 
 def _kick_subfront_passthrough(layout, gap_index):
     """True if a single kick subfront spans gap_index uninterrupted.
-    Breaks where adjacent bays have different kick_heights, or where
-    either bay has remove_bottom or remove_carcass set (no kick parts
-    emitted at that bay).
+    Breaks where adjacent bays have different kick_heights, where
+    either bay has remove_bottom or remove_carcass set, or where either
+    bay is flagged floating_bay (no kick parts emitted at that bay).
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -464,6 +471,8 @@ def _kick_subfront_passthrough(layout, gap_index):
         return False
     if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
             or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
+        return False
+    if bay_a.get('floating_bay') or bay_b.get('floating_bay'):
         return False
     return True
 
@@ -483,6 +492,8 @@ def kick_subfront_segments(layout):
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
         if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
+            continue
+        if first_bay.get('floating_bay'):
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         if start == 0:
@@ -549,6 +560,8 @@ def finish_kick_segments(layout):
         first_bay = layout.bays[start]
         if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
             continue
+        if first_bay.get('floating_bay'):
+            continue
         if start == 0:
             if layout.kick_inset_left > 0:
                 # Inset with return: finish kick covers the return's
@@ -594,11 +607,14 @@ def finish_kick_segments(layout):
 
 def _end_bay_drops_kick(layout, bay_index):
     """End-bay convenience: True if that bay omits its kick parts via
-    remove_bottom or remove_carcass. Used to suppress corner finish
-    kicks and kick returns at a cabinet end whose bay is carcass-free.
+    remove_bottom, remove_carcass, or floating_bay. Used to suppress
+    corner finish kicks and kick returns at a cabinet end whose bay
+    has no kick.
     """
     bay = layout.bays[bay_index]
-    return bool(bay.get('remove_bottom') or bay.get('remove_carcass'))
+    return bool(bay.get('remove_bottom')
+                or bay.get('remove_carcass')
+                or bay.get('floating_bay'))
 
 
 def has_left_corner_finish_kick(layout):

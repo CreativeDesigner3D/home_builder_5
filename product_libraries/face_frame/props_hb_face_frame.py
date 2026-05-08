@@ -819,6 +819,14 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Remove Carcass", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Per-bay override: when True this bay behaves as FLOATING regardless
+    # of the cabinet's toe_kick_type. Sides under an end bay anchor at the
+    # bay bottom rather than the floor, and kick subfront / finish kick
+    # segments skip this bay. Bay kick_height is the lift amount.
+    floating_bay: BoolProperty(
+        name="Floating", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
     finish_bay: BoolProperty(name="Finish Bay", default=False)  # type: ignore
 

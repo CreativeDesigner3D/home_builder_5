@@ -232,6 +232,8 @@ def draw_bay_properties(layout, bay_obj):
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
+    if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
+        col.prop(bp, 'floating_bay', text="Floating")
 
 
 def draw_opening_properties(layout, opening_obj):
@@ -482,6 +484,8 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
+    if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
+        col.prop(bp, 'floating_bay', text="Floating")
 
 
 def draw_bays_in_prompts(layout, root):

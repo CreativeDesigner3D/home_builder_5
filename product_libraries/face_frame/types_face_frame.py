@@ -2290,6 +2290,13 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             stile_to_floor = solver.right_stile_to_floor(layout)
             has_inset = layout.kick_inset_right > 0
+        # End bay flagged floating_bay forces the side to anchor at the
+        # bay bottom (see solver.side_bottom_z), so the notch becomes
+        # redundant just like the has_inset case.
+        bay_floating = (
+            0 <= bay_index < len(layout.bays)
+            and bool(layout.bays[bay_index].get('floating_bay'))
+        )
         # Side already floats by kick_height when there's an inset on
         # this side, so the notch (which only existed to clear the
         # recess in a floor-anchored side) becomes redundant.
@@ -2297,6 +2304,7 @@ class FaceFrameCabinet(GeoNodeCage):
                   and layout.toe_kick_type == 'NOTCH'
                   and not stile_to_floor
                   and not has_inset
+                  and not bay_floating
                   and 0 <= bay_index < len(layout.bays))
         if active:
             bay = layout.bays[bay_index]
@@ -2918,6 +2926,23 @@ class BaseFaceFrameCabinet(FaceFrameCabinet):
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
 
 
+class FloatingBaseFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Base cabinet whose body is lifted off the floor on a separate
+    base assembly. Same construction as BASE; toe kick type forced to
+    FLOATING at create-time so the carcass sides anchor at the bay
+    bottom and no recessed kick subfront is emitted.
+    """
+
+    def create(self, name="Floating Base Cabinet", bay_qty=1):
+        self.create_cabinet_root(name)
+        # Toe kick type override: kick_height keeps its default (the
+        # gap between floor and body); change it from the cabinet
+        # prompts if a taller reveal is wanted.
+        cab_props = self.obj.face_frame_cabinet
+        cab_props.toe_kick_type = 'FLOATING'
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
+
+
 class UpperFaceFrameCabinet(FaceFrameCabinet):
     """Upper (wall) cabinet. No toe kick; mounts above the counter."""
     default_cabinet_type = 'UPPER'
@@ -2964,8 +2989,12 @@ class TallFaceFrameCabinet(FaceFrameCabinet):
 
 
 class LapDrawerFaceFrameCabinet(FaceFrameCabinet):
-    """Lap drawer cabinet: shallow drawer unit at counter height."""
-    default_cabinet_type = 'LAP_DRAWER'
+    """Lap drawer cabinet: a base cabinet configured to float above the
+    counter with a single drawer bay. Built on the BASE construction
+    (stretchers + toe kick) and overridden at create-time to FLOATING
+    with a 27" lift, so the carcass sits at the lap-drawer reveal.
+    """
+    default_cabinet_type = 'BASE'
 
     def __init__(self):
         super().__init__()
@@ -2981,6 +3010,12 @@ class LapDrawerFaceFrameCabinet(FaceFrameCabinet):
 
     def create(self, name="Lap Drawer Cabinet", bay_qty=1):
         self.create_cabinet_root(name)
+        # Lap-drawer-specific toe kick: floating construction with the
+        # cabinet body lifted to counter height. Set before create_carcass
+        # so the single recalc that builds the parts uses these values.
+        cab_props = self.obj.face_frame_cabinet
+        cab_props.toe_kick_type = 'FLOATING'
+        cab_props.toe_kick_height = inch(27.0)
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
 
 
@@ -3016,6 +3051,7 @@ CABINET_NAME_DISPATCH = {
     "Base Door": BaseFaceFrameCabinet,
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,
+    "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
     "Upper Stacked": UpperFaceFrameCabinet,
@@ -3144,6 +3180,7 @@ def _wrap_cabinet(obj):
 
 WRAP_CLASS_REGISTRY.update({
     'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
+    'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
     'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,

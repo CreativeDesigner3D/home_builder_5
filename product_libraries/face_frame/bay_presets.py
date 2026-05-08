@@ -258,9 +258,11 @@ def default_bay_config(cabinet_name, bay_width):
     single-door variant, at or above it use the double / stacked variant.
     """
     is_wide = bay_width >= DOUBLE_DOOR_WIDTH_THRESHOLD
-    if cabinet_name in ('Base', 'Base Cabinet'):
+    if cabinet_name in ('Base', 'Base Cabinet', 'Floating Base Cabinet'):
         # Generic Base cabinet defaults to drawer-on-top-of-door, the
-        # most common base configuration in residential kitchens.
+        # most common base configuration in residential kitchens. The
+        # floating variant uses the same recipe; only its toe kick
+        # construction differs from a standard base.
         return 'DRAWER_DOUBLE_DOOR' if is_wide else 'DRAWER_DOOR'
     if cabinet_name == 'Base Door':
         return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
@@ -268,12 +270,16 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DRAWER_DOUBLE_DOOR' if is_wide else 'DRAWER_DOOR'
     if cabinet_name == 'Base Drawer':
         return 'THREE_DRAWERS'
+    if cabinet_name == 'Lap Drawer':
+        return 'ONE_DRAWER'
     if cabinet_name == 'Upper':
         return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Upper Stacked':
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
-    if cabinet_name == 'Tall':
-        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
-    if cabinet_name == 'Tall Stacked':
+    if cabinet_name in ('Tall', 'Tall Stacked'):
+        # Stacked-door default; the bottom leaf carries size_role
+        # 'TALL_SPLIT_BOTTOM' so apply_bay_preset pins it to
+        # tall_cabinet_split_height and the top section flexes with
+        # the cabinet's overall height.
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     return None

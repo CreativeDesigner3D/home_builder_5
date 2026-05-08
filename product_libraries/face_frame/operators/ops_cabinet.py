@@ -128,7 +128,16 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
         if mode == 'Face Frame':
             return obj.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES
         if mode == 'Parts':
-            return bool(obj.get('CABINET_PART'))
+            if not obj.get('CABINET_PART'):
+                return False
+            # Conditional parts (corner finish kicks, kick returns,
+            # slot-1 mid-divs / partition skins, etc.) are persistent
+            # children that the recalc layer marks hide_render=True when
+            # currently inactive. Skip those so Parts mode doesn't
+            # surface them as zero-geometry phantom selections.
+            if obj.hide_render:
+                return False
+            return True
         tag = self.MODE_TAGS.get(mode)
         if tag is None:
             return False
@@ -159,7 +168,10 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
         # "not highlighted" branch by passing a sentinel mode that no
         # _matches_mode case recognizes - keeps all face frame parts in
         # their default render state and hides the cages.
-        if not ff_scene.face_frame_selection_mode_enabled:
+        # Parts mode also takes the off-path so individual parts render
+        # at default color rather than the cabinet-color highlight; the
+        # mode value is still readable elsewhere for selection scoping.
+        if not ff_scene.face_frame_selection_mode_enabled or mode == 'Parts':
             mode = '__off__'
 
         if self.search_obj_name and self.search_obj_name in bpy.data.objects:
