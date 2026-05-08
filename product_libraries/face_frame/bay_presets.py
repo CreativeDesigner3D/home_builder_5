@@ -107,6 +107,11 @@ TALL_PRESETS = {
     'BUILT_IN_APPLIANCE':         H(L('DOUBLE_DOOR'), L('APPLIANCE'), L('DOUBLE_DOOR')),
     'BUILT_IN_DOUBLE_APPLIANCE':  H(L('DOUBLE_DOOR'), L('APPLIANCE'),
                                     L('APPLIANCE'), L('DRAWER')),
+    # Refrigerator cabinet: doors above, refrigerator zone below pinned
+    # to refrigerator_height so the door zone flexes with cabinet height.
+    'BUILT_IN_REFRIGERATOR':      H(L('DOUBLE_DOOR'),
+                                    L('APPLIANCE', size_role='REFRIGERATOR',
+                                      accessory_label='Refrigerator')),
     'DOORS_WITH_TALL_PULLOUT':    H(L('DOUBLE_DOOR'), L('PULLOUT')),
     'TALL_PULLOUT':               L('PULLOUT'),
     'OPEN_WITH_SHELVES':          L('OPEN_WITH_SHELVES'),
@@ -282,4 +287,6 @@ def default_bay_config(cabinet_name, bay_width):
         # tall_cabinet_split_height and the top section flexes with
         # the cabinet's overall height.
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
+    if cabinet_name == 'Refrigerator Cabinet':
+        return 'BUILT_IN_REFRIGERATOR'
     return None

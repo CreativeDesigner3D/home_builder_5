@@ -739,6 +739,12 @@ def _build_recipe_into(recipe, parent_obj, child_index,
             # Scene-level preference, not per-cabinet.
             props.unlock_size = True
             props.size = bpy.context.scene.hb_face_frame.upper_top_stacked_cabinet_height
+        elif size_role == 'REFRIGERATOR':
+            # Pins the bottom appliance opening of a refrigerator
+            # cabinet to the scene's refrigerator_height so the
+            # door zone above flexes with the cabinet height.
+            props.unlock_size = True
+            props.size = bpy.context.scene.hb_face_frame.refrigerator_height
 
     if kind == 'leaf':
         config = recipe[1]

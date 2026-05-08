@@ -2989,6 +2989,61 @@ class TallFaceFrameCabinet(FaceFrameCabinet):
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
 
 
+class RefrigeratorCabinet(TallFaceFrameCabinet):
+    """Tall cabinet configured to house a refrigerator: doors above,
+    open zone below for the fridge.
+
+    Construction differences from a standard tall cabinet:
+    - Bay's bottom panel removed (refrigerator zone is open underneath).
+    - Both end stiles extend to the floor since there's no kick recess
+      to clear behind them.
+    - Carcass back is raised by refrigerator_height so it spans only
+      the door zone, leaving the lower zone open at the back as well.
+    - Bay tree is preset to doors-on-top + appliance-on-bottom, with
+      the appliance opening pinned to the scene refrigerator_height.
+    """
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            props = scene.hb_face_frame
+            self.default_width = props.refrigerator_cabinet_width
+
+    def create(self, name="Refrigerator Cabinet", bay_qty=1):
+        self.create_cabinet_root(name)
+        cab_props = self.obj.face_frame_cabinet
+        cab_props.extend_left_stile_to_floor = True
+        cab_props.extend_right_stile_to_floor = True
+        # Raise the back so it only spans the door zone above the
+        # refrigerator. Mirrors the standard back z_origin formula
+        # (top of bottom rail - mt) but anchored at the top of the
+        # mid rail above the appliance opening: kick + bottom rail +
+        # appliance + mid rail - mt. Captured at create-time; the
+        # user can tweak from the cabinet prompts after.
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            cab_props.back_bottom_inset = (
+                cab_props.toe_kick_height
+                + cab_props.bottom_rail_width
+                + scene.hb_face_frame.refrigerator_height
+                + cab_props.bay_mid_rail_width
+                - cab_props.material_thickness
+            )
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
+        # Drop the bottom panel on each bay so the carcass is open
+        # underneath the refrigerator zone. Snapshot the bay refs
+        # first because the recalc that fires from each remove_bottom
+        # write reconciles back / bottom / kick parts and would
+        # invalidate sibling references mid-iteration over
+        # self.obj.children. suspend_recalc batches the writes into
+        # a single recalc on exit.
+        bay_objs = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]
+        with suspend_recalc():
+            for bay_obj in bay_objs:
+                bay_obj.face_frame_bay.remove_bottom = True
+
+
 class LapDrawerFaceFrameCabinet(FaceFrameCabinet):
     """Lap drawer cabinet: a base cabinet configured to float above the
     counter with a single drawer bay. Built on the BASE construction
@@ -3058,6 +3113,7 @@ CABINET_NAME_DISPATCH = {
     "Upper Stacked": UpperFaceFrameCabinet,
     "Tall": TallFaceFrameCabinet,
     "Tall Stacked": TallFaceFrameCabinet,
+    "Refrigerator Cabinet": RefrigeratorCabinet,
     "Panel": PanelFaceFrameCabinet,
 }
 
@@ -3196,6 +3252,7 @@ WRAP_CLASS_REGISTRY.update({
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
+    'RefrigeratorCabinet': RefrigeratorCabinet,
     'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
     'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
 })

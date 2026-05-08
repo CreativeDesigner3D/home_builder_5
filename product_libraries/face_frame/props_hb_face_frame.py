@@ -657,6 +657,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     toe_kick_thickness: FloatProperty(
         name="Toe Kick Thickness", default=units.inch(0.75), unit='LENGTH', precision=4
     )  # type: ignore
+    # Raises the carcass back panel's bottom edge above the cabinet
+    # floor by this amount. Default 0 leaves the back full-height
+    # (current behavior); a positive value leaves the lower portion
+    # open at the back, used by refrigerator cabinets so the fridge
+    # zone is open both at the front (no door) and at the back.
+    back_bottom_inset: FloatProperty(
+        name="Back Bottom Inset", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     inset_toe_kick_left: FloatProperty(
         name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -1674,7 +1683,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
         layout.separator()
         self._draw_catalog_grid(layout, [
             "Elevated Dishwasher", "Dishwasher", "Built in Tall",
-            "Range", "Standalone Refrigerator",
+            "Range", "Standalone Refrigerator", "Refrigerator Cabinet",
         ], columns=3)
 
     # =====================================================================

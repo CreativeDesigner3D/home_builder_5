@@ -83,6 +83,7 @@ class FaceFrameLayout:
                                 if self.has_toe_kick else 0.0)
         self.kick_inset_right = (cab.inset_toe_kick_right
                                  if self.has_toe_kick else 0.0)
+        self.back_bottom_inset = cab.back_bottom_inset
         self.finish_kick_thickness = cab.finish_toe_kick_thickness
         self.include_finish_kick = cab.include_finish_toe_kick
 
@@ -1376,6 +1377,11 @@ def carcass_back_segments(layout):
             z_origin = 0.0
         else:
             z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        # Cabinet-level override: raise the back's bottom edge above
+        # the default origin (refrigerator cabinet, etc.). Honored
+        # only when it raises the panel - never lowers it.
+        if layout.back_bottom_inset > z_origin:
+            z_origin = layout.back_bottom_inset
         # Per-bay back: segments break at depth changes (passthrough returns
         # False), so each segment's bays share a single depth -> use start
         # bay's depth to position the back at this bay group's back edge.
