@@ -1366,6 +1366,151 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
+    """Equalize visible door widths across the cabinets containing
+    every selected bay. Selection picks the cabinets; every bay in
+    those cabinets contributes to the calculation. Each cabinet's
+    own width floats to the new bay total + stiles so the cross-
+    cabinet target can actually be honored.
+
+    Bay door count rule: a bay contributes 2 doors and one
+    DOUBLE_DOOR_REVEAL gap if any opening reached from the bay tree
+    root via H-splits only is a DOOR with hinge_side='DOUBLE'.
+    Otherwise the bay is treated as 1 door of width = bay width
+    regardless of front_type. V-split nodes shrink children's
+    widths so they short-circuit the descent."""
+    bl_idname = "hb_face_frame.set_equal_door_width"
+    bl_label = "Set Equal Door Width"
+    bl_description = (
+        "Make all door widths equal across the cabinets containing the "
+        "selected bay(s). Every bay in those cabinets is recalculated"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # 0.125" double-door reveal between leaves. Mirrors
+    # solver_face_frame.DOUBLE_DOOR_REVEAL; not imported to keep this
+    # operator's deps the same as its neighbors.
+    _DOUBLE_DOOR_REVEAL = inch(0.125)
+
+    @classmethod
+    def poll(cls, context):
+        for obj in context.selected_objects:
+            if obj.get(types_face_frame.TAG_BAY_CAGE):
+                return True
+        ao = context.active_object
+        return ao is not None and bool(ao.get(types_face_frame.TAG_BAY_CAGE))
+
+    @staticmethod
+    def _bay_has_full_width_double_door(bay_obj):
+        TAG_OP = types_face_frame.TAG_OPENING_CAGE
+        TAG_SP = types_face_frame.TAG_SPLIT_NODE
+        roots = [c for c in bay_obj.children
+                 if c.get(TAG_OP) or c.get(TAG_SP)]
+        if not roots:
+            return False
+
+        def walk(node):
+            if node.get(TAG_OP):
+                op = node.face_frame_opening
+                return (op.front_type == 'DOOR'
+                        and op.hinge_side == 'DOUBLE')
+            if node.get(TAG_SP):
+                # Only H-splits keep children at the bay's full width.
+                if node.face_frame_split.axis != 'H':
+                    return False
+                for c in node.children:
+                    if c.get(TAG_OP) or c.get(TAG_SP):
+                        if walk(c):
+                            return True
+            return False
+
+        return walk(roots[0])
+
+    def execute(self, context):
+        # Collect cabinet roots from any selected bay (and the active
+        # object - right-click usually activates without selecting).
+        candidates = list(context.selected_objects)
+        if (context.active_object is not None
+                and context.active_object not in candidates):
+            candidates.append(context.active_object)
+        roots = []
+        seen = set()
+        for obj in candidates:
+            if not obj.get(types_face_frame.TAG_BAY_CAGE):
+                continue
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is not None and root.name not in seen:
+                roots.append(root)
+                seen.add(root.name)
+        if not roots:
+            self.report({'WARNING'}, "Select at least one face frame bay")
+            return {'CANCELLED'}
+
+        # Per-bay info: (bay_obj, root, is_double_door_bay).
+        all_bays = []
+        for root in roots:
+            bays = sorted(
+                [c for c in root.children
+                 if c.get(types_face_frame.TAG_BAY_CAGE)],
+                key=lambda c: c.get('hb_bay_index', 0),
+            )
+            for bay in bays:
+                all_bays.append((bay, root,
+                                 self._bay_has_full_width_double_door(bay)))
+
+        # Pool budget. Each bay's overlay comes from its own cabinet
+        # so cabinets with different ff_door_overlay still balance.
+        DD_GAP = self._DOUBLE_DOOR_REVEAL
+        total_bay_widths = sum(b.face_frame_bay.width for b, _, _ in all_bays)
+        # Each bay's overlay budget is (left + right) at the cabinet
+        # default. Per-opening overlay overrides are not consulted in
+        # v1 - same simplification a single-overlay model would make.
+        total_overlay_pad = sum(
+            (r.face_frame_cabinet.default_left_overlay
+             + r.face_frame_cabinet.default_right_overlay)
+            for _, r, _ in all_bays
+        )
+        num_double_bays = sum(1 for _, _, dd in all_bays if dd)
+        num_doors = sum(2 if dd else 1 for _, _, dd in all_bays)
+        if num_doors == 0:
+            self.report({'WARNING'}, "No doors to equalize")
+            return {'CANCELLED'}
+
+        total_visible = (total_bay_widths
+                         + total_overlay_pad
+                         - num_double_bays * DD_GAP)
+        target_door_width = total_visible / num_doors
+
+        # Write new bay widths under one suspended recalc, then resync
+        # each cabinet's overall width to the new bay total + stiles.
+        # Cabinets float so the cross-cabinet target is honored.
+        with types_face_frame.suspend_recalc():
+            for bay, root, is_double in all_bays:
+                cp = root.face_frame_cabinet
+                lr_pad = cp.default_left_overlay + cp.default_right_overlay
+                if is_double:
+                    new_w = 2.0 * target_door_width - lr_pad + DD_GAP
+                else:
+                    new_w = target_door_width - lr_pad
+                bp = bay.face_frame_bay
+                bp.unlock_width = True
+                bp.width = new_w
+
+            for root in roots:
+                cp = root.face_frame_cabinet
+                bays = [c for c in root.children
+                        if c.get(types_face_frame.TAG_BAY_CAGE)]
+                stile_total = (cp.left_stile_width
+                               + cp.right_stile_width)
+                for i in range(min(len(bays) - 1,
+                                   len(cp.mid_stile_widths))):
+                    stile_total += cp.mid_stile_widths[i].width
+                bay_total = sum(b.face_frame_bay.width for b in bays)
+                cp.width = stile_total + bay_total
+
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_delete_cabinet,
@@ -1385,6 +1530,7 @@ classes = (
     hb_face_frame_OT_change_bay,
     hb_face_frame_OT_insert_bay,
     hb_face_frame_OT_delete_bay,
+    hb_face_frame_OT_set_equal_door_width,
 )
 
 

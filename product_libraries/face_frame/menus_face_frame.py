@@ -84,6 +84,15 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.break_cabinet_both",
                         text="Break Both", icon='UNLINKED')
 
+        # Equalize-door-width is bay-scope by selection but cabinet-
+        # scope in its effect (every bay in the picked cabinets is
+        # recalculated). Lives at the bottom of the bay menu so the
+        # structural edits above stay grouped.
+        layout.separator()
+        layout.operator("hb_face_frame.set_equal_door_width",
+                        text="Set Equal Door Width",
+                        icon='ALIGN_JUSTIFY')
+
 
 class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
     """Right-click menu for a face frame mid stile part."""
