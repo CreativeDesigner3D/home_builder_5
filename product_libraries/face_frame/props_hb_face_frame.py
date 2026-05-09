@@ -1370,7 +1370,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     tall_cabinet_depth: FloatProperty(
         name="Tall Cabinet Depth",
         description="Default depth for tall cabinets",
-        default=units.inch(24.0),
+        default=units.inch(25.5),
         unit='LENGTH',
         precision=4,
     )  # type: ignore

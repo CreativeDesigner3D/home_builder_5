@@ -495,6 +495,87 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     return None
 
 
+
+
+def _align_base_tall_toe_kick(cab_obj):
+    """Align toe-kick face position between abutting BASE and TALL
+    neighbors on the same parent wall.
+
+    Tall cabinets are deeper than bases (default 25.5" vs 24"). With a
+    common toe_kick_setback the tall's recessed kick face sits 1.5"
+    further back than the base's, breaking the visual line of the toe
+    kick run when they're placed side by side. Increasing the deeper
+    cabinet's setback by the depth difference brings its kick face
+    forward to the same world-Y as the shallower neighbor's.
+
+    Only fires when both cabinets use NOTCH toe kicks. FLUSH has no
+    setback and FLOATING uses a separate base assembly whose alignment
+    is handled differently. Adjustment is one-shot at placement; later
+    independent edits to either cabinet are not tracked.
+    """
+    parent = cab_obj.parent
+    if parent is None:
+        return
+
+    cab_props = cab_obj.face_frame_cabinet
+    if cab_props.toe_kick_type != 'NOTCH':
+        return
+    cab_type = cab_props.cabinet_type
+    if cab_type not in ('BASE', 'TALL'):
+        return
+
+    cab_x = cab_obj.location.x
+    cab_w = cab_props.width
+    cab_d = cab_props.depth
+    eps = 1e-4
+
+    # Collect immediate left/right abutting siblings of the opposite
+    # type with NOTCH toe kicks.
+    other_type = 'TALL' if cab_type == 'BASE' else 'BASE'
+    neighbors = []
+    for sib in parent.children:
+        if sib is cab_obj:
+            continue
+        if not sib.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        sib_props = sib.face_frame_cabinet
+        if sib_props.cabinet_type != other_type:
+            continue
+        if sib_props.toe_kick_type != 'NOTCH':
+            continue
+        sib_x = sib.location.x
+        sib_w = sib_props.width
+        if abs(sib_x + sib_w - cab_x) < eps or \
+           abs(sib_x - (cab_x + cab_w)) < eps:
+            neighbors.append(sib)
+
+    if not neighbors:
+        return
+
+    # When cab_obj is the deeper one (TALL), accumulate the max required
+    # setback across abutting shallower neighbors and apply once. When
+    # cab_obj is the shallower one (BASE), each abutting deeper neighbor
+    # gets its own setback adjusted to match cab_obj.
+    cab_target_setback = None
+    for nb in neighbors:
+        nb_props = nb.face_frame_cabinet
+        nb_d = nb_props.depth
+        if abs(nb_d - cab_d) < eps:
+            continue
+        if cab_d > nb_d:
+            target = nb_props.toe_kick_setback + (cab_d - nb_d)
+            if cab_target_setback is None or target > cab_target_setback:
+                cab_target_setback = target
+        else:
+            target = cab_props.toe_kick_setback + (nb_d - cab_d)
+            if abs(nb_props.toe_kick_setback - target) > eps:
+                nb_props.toe_kick_setback = target
+
+    if cab_target_setback is not None and \
+       abs(cab_props.toe_kick_setback - cab_target_setback) > eps:
+        cab_props.toe_kick_setback = cab_target_setback
+
+
 class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                                      hb_placement.PlacementMixin):
     """Modal: cursor drags a face-frame preview cage, click to commit."""
@@ -1546,6 +1627,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # neighbor is the survivor that selection should target.
         merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
         selection_target = merged_into if merged_into is not None else cab_obj
+
+        # Align toe-kick setback when this cabinet abuts a BASE/TALL of
+        # the opposite type - the deeper one's kick face is brought
+        # forward by the depth difference so the run reads as continuous.
+        _align_base_tall_toe_kick(selection_target)
 
         # Active selection (on the survivor)
         for o in context.selected_objects:
