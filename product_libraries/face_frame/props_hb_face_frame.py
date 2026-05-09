@@ -1198,6 +1198,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_general_options: BoolProperty(name="Show General Options", default=False)  # type: ignore
     show_face_frame_options: BoolProperty(name="Show Face Frame Options", default=False)  # type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options", default=False)  # type: ignore
+    show_countertop_options: BoolProperty(name="Show Countertop Options", default=False)  # type: ignore
 
     # ---- Finished Ends and Backs defaults ----
     # Drives the "Apply to All Exposed" bulk operator and seeds new
@@ -1270,6 +1271,34 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=units.inch(36.0),
         unit='LENGTH',
         precision=4,
+    )  # type: ignore
+
+    countertop_thickness: FloatProperty(
+        name="Countertop Thickness",
+        description="Thickness of the countertop slab",
+        default=units.inch(1.5),
+        unit='LENGTH',
+    )  # type: ignore
+
+    countertop_overhang_front: FloatProperty(
+        name="Countertop Front Overhang",
+        description="Overhang past the front of cabinets",
+        default=units.inch(1.0),
+        unit='LENGTH',
+    )  # type: ignore
+
+    countertop_overhang_sides: FloatProperty(
+        name="Countertop Side Overhang",
+        description="Overhang past exposed ends of cabinets",
+        default=units.inch(1.0),
+        unit='LENGTH',
+    )  # type: ignore
+
+    countertop_overhang_back: FloatProperty(
+        name="Countertop Back Overhang",
+        description="Overhang past the back of cabinets toward wall",
+        default=units.inch(0.0),
+        unit='LENGTH',
     )  # type: ignore
 
     base_cabinet_depth: FloatProperty(
@@ -1910,6 +1939,50 @@ class Face_Frame_Scene_Props(PropertyGroup):
                      icon='TRIA_DOWN' if self.show_handle_options else 'TRIA_RIGHT', emboss=False)
             if self.show_handle_options:
                 self.draw_pulls_ui(box, context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self, 'show_countertop_options', text="Countertops",
+                     icon='TRIA_DOWN' if self.show_countertop_options else 'TRIA_RIGHT', emboss=False)
+            if self.show_countertop_options:
+                self.draw_countertop_ui(box, context)
+
+    # =====================================================================
+    # UI: countertops
+    # =====================================================================
+    def draw_countertop_ui(self, layout, context):
+        from ... import hb_project
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_face_frame
+
+        col = layout.column(align=True)
+        col.prop(props, 'countertop_thickness', text="Thickness")
+        col.prop(props, 'countertop_overhang_front', text="Front Overhang")
+        col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
+        col.prop(props, 'countertop_overhang_back', text="Back Overhang")
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        op = row.operator('hb_face_frame.add_countertops',
+                          text="Add Countertops", icon='MESH_PLANE')
+        op.selected_only = False
+        row.operator('hb_face_frame.remove_countertops', text="", icon='X')
+
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        op = row.operator('hb_face_frame.add_countertops',
+                          text="Add to Selected", icon='RESTRICT_SELECT_OFF')
+        op.selected_only = True
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_face_frame.countertop_boolean_cut',
+                     text="Cut Hole (Select 2)", icon='MOD_BOOLEAN')
 
     # =====================================================================
     # Registration
