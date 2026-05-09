@@ -136,6 +136,10 @@ def draw_construction(layout, cab_props):
         col.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
 
     box = layout.box()
+    box.label(text="End Stile Types")
+    draw_blind_corners(box, cab_props)
+
+    box = layout.box()
     box.label(text="Finished Ends and Backs")
     draw_finished_ends(box, cab_props)
 
@@ -369,6 +373,28 @@ def draw_rail_properties(layout, root, rail_obj, role):
     attr = 'top_rail_width' if is_top else 'bottom_rail_width'
     layout.label(text=f"{label} (Bay {seg_start + 1})", icon='SNAP_EDGE')
     layout.prop(bp, attr, text="Width")
+
+
+def draw_blind_corners(layout, cab_props):
+    """Per-side stile type plus blind flag and depth.
+
+    Stile type is the structural choice (Standard / Wall / Blind) that
+    drives the end stile's width. The blind flag and amount are only
+    relevant - and only revealed - when the type is BLIND. The flag
+    indicates an adjacent perpendicular cabinet is butted against this
+    end (widens the stile by 0.75" and shows the blind panel); the
+    amount controls how far the blind panel extends forward from the
+    back to close off the dead corner.
+    """
+    col = layout.column(align=True)
+    for side, label in (('left', 'Left'), ('right', 'Right')):
+        row = col.row(align=True)
+        row.label(text=label)
+        row.prop(cab_props, f'{side}_stile_type', text="")
+        if getattr(cab_props, f'{side}_stile_type') == 'BLIND':
+            row.prop(cab_props, f'blind_{side}', text="")
+            if getattr(cab_props, f'blind_{side}'):
+                row.prop(cab_props, f'blind_amount_{side}', text="")
 
 
 def draw_finished_ends(layout, cab_props):

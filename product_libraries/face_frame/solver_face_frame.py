@@ -91,6 +91,21 @@ class FaceFrameLayout:
         self.lsw = cab.left_stile_width
         self.rsw = cab.right_stile_width
 
+        # Blind corner offsets - amount the FF plane is shrunk on each
+        # side when the corresponding end is configured as blind. Zero
+        # otherwise. Used by face_frame_length and ff_outer_world_pos
+        # so end stiles, rails, and bays all naturally fit inside the
+        # remaining FF area; the blind panels themselves still anchor
+        # to the cabinet's outer edges (x=0 / x=dim_x).
+        is_blind_left = (cab.left_stile_type == 'BLIND'
+                         and cab.blind_left
+                         and cab.blind_amount_left > 0)
+        is_blind_right = (cab.right_stile_type == 'BLIND'
+                          and cab.blind_right
+                          and cab.blind_amount_right > 0)
+        self.blind_offset_left = cab.blind_amount_left if is_blind_left else 0.0
+        self.blind_offset_right = cab.blind_amount_right if is_blind_right else 0.0
+
         # Side scribe + finish end condition. The pair determines how
         # far the side panel sits inboard of the face frame outer face
         # via left_scribe_offset / right_scribe_offset.
@@ -964,29 +979,40 @@ def face_frame_angle(layout):
 
 
 def face_frame_length(layout):
-    """Length of the face frame plane along its own X axis. Equals the
-    hypotenuse spanning the two front edges in angled mode, dim_x in
-    the square case."""
+    """Length of the face frame plane along its own X axis. In the
+    square case the FF plane shrinks by any active blind offsets so
+    end stiles, rails, and bays all fit within the non-blind portion
+    of the cabinet width. The angled case keeps the hypotenuse math
+    untouched - blind plus angled isn't supported yet.
+    """
     if not layout.is_angled:
-        return layout.dim_x
+        return (layout.dim_x
+                - layout.blind_offset_left
+                - layout.blind_offset_right)
     dy = effective_right_depth(layout) - effective_left_depth(layout)
     return math.hypot(layout.dim_x, dy)
 
 
 def ff_outer_world_pos(layout, ff_x, world_z):
     """World (x, y, z) on the FF outer plane at FF-distance ff_x from
-    the left endpoint of the angled face frame, at height world_z.
+    the left endpoint of the (potentially shrunken) face frame, at
+    height world_z.
 
-    For non-angled cabinets ff_x maps directly to world X and the
-    plane lies at world Y = -dim_y, so this returns (ff_x, -dim_y, z).
+    For non-angled cabinets ff_x maps to world X via the blind offset:
+    the FF plane's left endpoint sits at world x = blind_offset_left,
+    so the function returns (ff_x + blind_offset_left, -dim_y, z).
+    Callers pass FF-local coordinates from bay_x_position /
+    face_frame_length so the offset is added once at the world
+    boundary.
+
     For angled cabinets the FF outer plane is rotated around Z by
     face_frame_angle, with its left endpoint at (0, -effective_left_
     depth) and its right endpoint at (dim_x, -effective_right_depth).
-    Used to place stiles, rails, and any other part anchored to the
-    FF outer face.
+    Blind+angled isn't supported, so the angled branch ignores the
+    blind offsets.
     """
     if not layout.is_angled:
-        return (ff_x, -layout.dim_y, world_z)
+        return (ff_x + layout.blind_offset_left, -layout.dim_y, world_z)
     theta = face_frame_angle(layout)
     return (
         ff_x * math.cos(theta),
@@ -1137,7 +1163,9 @@ def mid_stile_position(layout, gap_index):
         base_z += bay_a['bottom_rail_width']
     base_z -= ms['extend_down_amount']
 
-    x = bay_x_position(layout, gap_index) + bay_a['width']
+    x = (bay_x_position(layout, gap_index)
+         + bay_a['width']
+         + layout.blind_offset_left)
     y = -layout.dim_y
     return (x, y, base_z)
 
@@ -1208,11 +1236,16 @@ def _mid_stile_center_x(layout, gap_index):
     """World-X of the mid-stile centerline at this gap. The mid-div
     setup is mirrored about this line: same-depth = single panel
     centered here; diff-depth = two panels meeting face-to-face here.
+
+    bay_x_position returns FF-local; add blind_offset_left so this
+    function honors its world-X contract regardless of blind state.
     """
     bay_a = layout.bays[gap_index]
     ms = layout.mid_stiles[gap_index]
     msw = ms['width']
-    base_x = bay_x_position(layout, gap_index) + bay_a['width']
+    base_x = (bay_x_position(layout, gap_index)
+              + bay_a['width']
+              + layout.blind_offset_left)
     return base_x + msw / 2.0
 
 
@@ -1956,7 +1989,10 @@ def _bay_root_reveals(layout, bay_index):
 
     bay = layout.bays[bay_index]
     cage_left_x, cage_right_x = _cage_x_bounds(layout, bay_index)
-    ff_opening_left_x = bay_x_position(layout, bay_index)
+    # Cage bounds are world; bay_x_position is FF-local. Convert to
+    # world so the reveal subtractions don't mix coordinate systems.
+    ff_opening_left_x = (bay_x_position(layout, bay_index)
+                         + layout.blind_offset_left)
     ff_opening_right_x = ff_opening_left_x + bay['width']
 
     _, _, cage_dim_z = bay_cage_dims(layout, bay_index)

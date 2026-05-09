@@ -497,6 +497,158 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
 
 
 
+def _wall_corner_angle_deg(wall_a_obj, wall_b_obj):
+    """Unsigned angle (degrees) between two walls' length axes (their
+    local +X axes in world space). Returns 0 for parallel walls and 90
+    for perpendicular ones - used to confirm a corner is square enough
+    for blind setup.
+    """
+    a_axis = wall_a_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    b_axis = wall_b_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    a_axis.z = 0.0
+    b_axis.z = 0.0
+    if a_axis.length < 1e-8 or b_axis.length < 1e-8:
+        return 0.0
+    a_axis.normalize()
+    b_axis.normalize()
+    cos = max(-1.0, min(1.0, a_axis.dot(b_axis)))
+    return math.degrees(math.acos(cos))
+
+
+def _max_intrusion_neighbor(adj_wall_obj, our_wall_obj, side):
+    """Find the cabinet child on adj_wall_obj whose footprint reaches
+    farthest into our_wall_obj's bounds at the requested end ('left'
+    or 'right'). Returns (cabinet_obj, intrusion_distance) or None.
+    """
+    our_wall = hb_types.GeoNodeWall(our_wall_obj)
+    our_length = our_wall.get_input('Length')
+    our_inv = our_wall_obj.matrix_world.inverted()
+
+    best_obj = None
+    best_intrusion = 0.0
+
+    for child in adj_wall_obj.children:
+        if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
+            continue
+        if not any(m in child for m in hb_placement.CABINET_MARKERS):
+            continue
+        try:
+            geo = hb_types.GeoNodeObject(child)
+            child_w = geo.get_input('Dim X')
+            child_d = geo.get_input('Dim Y')
+        except Exception:
+            continue
+        local_corners = [
+            Vector((0.0, 0.0, 0.0)),
+            Vector((child_w, 0.0, 0.0)),
+            Vector((0.0, -child_d, 0.0)),
+            Vector((child_w, -child_d, 0.0)),
+        ]
+        corners_our = [our_inv @ (child.matrix_world @ c) for c in local_corners]
+        if side == 'left':
+            intrusion = max((c.x for c in corners_our if c.x > 0), default=0.0)
+        else:
+            intrusion = max(
+                (our_length - c.x for c in corners_our if c.x < our_length),
+                default=0.0,
+            )
+        if intrusion > best_intrusion:
+            best_intrusion = intrusion
+            best_obj = child
+    if best_obj is None:
+        return None
+    return (best_obj, best_intrusion)
+
+
+def _neighbor_blind_side(neighbor_obj, corner_world_pos):
+    """Which end of neighbor_obj sits closer to the corner world point.
+    Returns 'LEFT' (neighbor's local x=0 end is at corner) or 'RIGHT'
+    (neighbor's local x=width end is at corner). Used to decide which
+    side of the neighbor becomes the blind end.
+    """
+    try:
+        width = neighbor_obj.face_frame_cabinet.width
+    except AttributeError:
+        # Fallback for non-face-frame cabinets (shouldn't reach here, but
+        # don't blow up if it does).
+        try:
+            width = hb_types.GeoNodeObject(neighbor_obj).get_input('Dim X')
+        except Exception:
+            return 'LEFT'
+    left_world = neighbor_obj.matrix_world.translation
+    right_world = neighbor_obj.matrix_world @ Vector((width, 0.0, 0.0))
+    d_left = (left_world.xy - corner_world_pos.xy).length
+    d_right = (right_world.xy - corner_world_pos.xy).length
+    return 'LEFT' if d_left <= d_right else 'RIGHT'
+
+
+def _detect_blind_corner_neighbor(cab_obj):
+    """If cab_obj sits at a 90-degree wall corner with a perpendicular
+    face-frame cabinet at the corner, return the neighbor and which
+    side of the NEIGHBOR becomes blind ('LEFT' or 'RIGHT'). Returns
+    None when no qualifying neighbor.
+
+    Two qualifying geometric cases per connected-wall direction:
+      (a) Our cabinet's near-end edge sits at the wall corner end
+          (within 1"). This is the cabinet whose body extends across
+          the corner.
+      (b) Our cabinet's far-end edge meets the neighbor's intrusion
+          boundary on this wall (within 1"). This is the cabinet
+          placed against the corner cabinet's body.
+    """
+    wall = cab_obj.parent
+    if wall is None or 'IS_WALL_BP' not in wall:
+        return None
+    try:
+        wall_geo = hb_types.GeoNodeWall(wall)
+        wall_length = wall_geo.get_input('Length')
+    except Exception:
+        return None
+
+    cab_props = cab_obj.face_frame_cabinet
+    cab_left = cab_obj.location.x
+    cab_right = cab_left + cab_props.width
+
+    EDGE_TOL = units.inch(1.0)
+    ANGLE_TOL_DEG = 5.0
+
+    for direction in ('left', 'right'):
+        adj_node = wall_geo.get_connected_wall(direction=direction)
+        if adj_node is None:
+            continue
+        result = _max_intrusion_neighbor(adj_node.obj, wall, direction)
+        if result is None:
+            continue
+        neighbor, intrusion = result
+        if 'IS_FACE_FRAME_CABINET_CAGE' not in neighbor:
+            continue
+
+        angle_deg = _wall_corner_angle_deg(wall, adj_node.obj)
+        if abs(angle_deg - 90.0) > ANGLE_TOL_DEG:
+            continue
+
+        # Case (a): our edge at the wall corner end.
+        # Case (b): our far edge at the intrusion boundary.
+        if direction == 'left':
+            qualifies = (cab_left <= EDGE_TOL
+                         or abs(cab_left - intrusion) <= EDGE_TOL)
+        else:
+            qualifies = (cab_right >= wall_length - EDGE_TOL
+                         or abs(cab_right - (wall_length - intrusion)) <= EDGE_TOL)
+        if not qualifies:
+            continue
+
+        # Corner world position: meeting point of our wall and adj wall.
+        if direction == 'left':
+            corner_world = wall.matrix_world.translation
+        else:
+            corner_world = wall.matrix_world @ Vector((wall_length, 0.0, 0.0))
+
+        blind_side = _neighbor_blind_side(neighbor, corner_world)
+        return (neighbor, blind_side)
+    return None
+
+
 def _align_base_tall_toe_kick(cab_obj):
     """Align toe-kick face position between abutting BASE and TALL
     neighbors on the same parent wall.
@@ -1645,6 +1797,23 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             context.view_layer.objects.active = selection_target
         except RuntimeError:
             pass
+
+        # Detect an adjacent perpendicular neighbor at this wall corner.
+        # When found, pop the void-amount dialog so the user can configure
+        # how the cabinets meet (depth-match vs. fixed void, stile widths).
+        # Skipped silently when nothing qualifies - placement just finishes.
+        corner_match = _detect_blind_corner_neighbor(selection_target)
+        if corner_match is not None:
+            neighbor, blind_side = corner_match
+            try:
+                bpy.ops.hb_face_frame.set_blind_corner_void_amount(
+                    'INVOKE_DEFAULT',
+                    blind_cabinet_name=neighbor.name,
+                    current_cabinet_name=selection_target.name,
+                    blind_side=blind_side,
+                )
+            except RuntimeError:
+                pass
 
         hb_placement.clear_header_text(context)
         bay_label = f"{captured_bay_qty} bay" + ("" if captured_bay_qty == 1 else "s")
@@ -2984,10 +3153,188 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         self._preview_cage = None
 
 
+class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
+    """Modal popup invoked after a placement that lands at a 90-degree
+    wall corner with a perpendicular cabinet neighbor. Lets the user
+    pick how the two cabinets meet (depth-match vs. fixed void) and
+    what stile widths apply, then applies the blind state to the
+    neighbor and the matching adjacent-side state to the placed
+    cabinet.
+    """
+    bl_idname = "hb_face_frame.set_blind_corner_void_amount"
+    bl_label = "Set Blind Corner Void Amount"
+    bl_description = (
+        "Configure how the placed cabinet meets a perpendicular "
+        "cabinet at this wall corner"
+    )
+    bl_options = {'UNDO'}
+
+    blind_cabinet_name: bpy.props.StringProperty(
+        name="Blind Cabinet Name", default="",
+    )  # type: ignore
+    current_cabinet_name: bpy.props.StringProperty(
+        name="Placed Cabinet Name", default="",
+    )  # type: ignore
+    # 'LEFT' = neighbor's left side becomes blind (placed cabinet near
+    # the right end of its wall); 'RIGHT' = neighbor's right side blind
+    # (placed cabinet near the left end).
+    blind_side: bpy.props.EnumProperty(
+        name="Blind Side",
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='LEFT',
+    )  # type: ignore
+
+    match_cabinet_depth: bpy.props.BoolProperty(
+        name="Match Cabinet Depth",
+        description=(
+            "Auto-set the void so the blind cabinet's exposed end "
+            "lines up with the back of the placed cabinet's face frame"
+        ),
+        default=False,
+    )  # type: ignore
+    void_amount: bpy.props.FloatProperty(
+        name="Void Amount", default=units.inch(1.0),
+        min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
+    blind_stile_width: bpy.props.FloatProperty(
+        name="Exposed Blind Stile Width",
+        description=(
+            "Visible portion of the blind end stile; the 0.75 inch "
+            "accept-adjacent add is applied internally so the actual "
+            "stile width is this value plus 0.75 inch"
+        ),
+        default=units.inch(3.0),
+        min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
+    current_cabinet_stile_width: bpy.props.FloatProperty(
+        name="Placed Cabinet Stile Width",
+        default=units.inch(2.0),
+        min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
+
+    def invoke(self, context, event):
+        scene = context.scene
+        ff_scene = getattr(scene, 'hb_face_frame', None)
+        if ff_scene is not None:
+            self.blind_stile_width = ff_scene.ff_blind_stile_width
+            self.current_cabinet_stile_width = ff_scene.ff_end_stile_width
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        placed = bpy.data.objects.get(self.current_cabinet_name)
+        blind = bpy.data.objects.get(self.blind_cabinet_name)
+        if placed is None or blind is None:
+            layout.label(text="Cabinet reference lost", icon='ERROR')
+            return
+
+        side_label = "left" if self.blind_side == 'LEFT' else "right"
+        layout.label(
+            text=f"{blind.name}'s {side_label} end will become blind",
+            icon='INFO',
+        )
+
+        row = layout.row(align=True)
+        row.label(text="Match Cabinet Depth:")
+        row.prop(self, 'match_cabinet_depth', text="")
+
+        if self.match_cabinet_depth:
+            depth_in = placed.face_frame_cabinet.depth * 39.37008
+            layout.label(
+                text=f"Void will match the placed cabinet's depth ({depth_in:.2f} in)"
+            )
+        else:
+            row = layout.row(align=True)
+            row.label(text="Void Amount:")
+            row.prop(self, 'void_amount', text="")
+
+        row = layout.row(align=True)
+        row.label(text="Exposed Blind Stile Width:")
+        row.prop(self, 'blind_stile_width', text="")
+
+        row = layout.row(align=True)
+        row.label(text="Placed Cabinet Stile Width:")
+        row.prop(self, 'current_cabinet_stile_width', text="")
+
+    def execute(self, context):
+        blind_obj = bpy.data.objects.get(self.blind_cabinet_name)
+        placed_obj = bpy.data.objects.get(self.current_cabinet_name)
+        if blind_obj is None or placed_obj is None:
+            self.report({'WARNING'}, "Cabinet missing; aborting blind setup")
+            return {'CANCELLED'}
+
+        blind_props = blind_obj.face_frame_cabinet
+        placed_props = placed_obj.face_frame_cabinet
+        ff_thickness = placed_props.face_frame_thickness
+        depth = placed_props.depth
+
+        # Width reduction and blind state by mode:
+        #   match-depth: shrink so the blind cabinet's exposed end lines
+        #     up flush with the back of the placed cabinet's face frame.
+        #     No blind area remains inside the blind cabinet, so the
+        #     blind flag goes off and no blind panel is rendered.
+        #   void mode: shrink by the user-typed void only. The blind
+        #     area inside the blind cabinet covers the placed cabinet's
+        #     remaining depth minus the face frame thickness.
+        if self.match_cabinet_depth:
+            width_reduction = max(depth - ff_thickness, 0.0)
+            new_blind_flag = False
+            new_blind_amount = 0.0
+        else:
+            width_reduction = self.void_amount
+            new_blind_flag = True
+            new_blind_amount = max(
+                depth - self.void_amount - ff_thickness, 0.0
+            )
+
+        # Cap the reduction at the current width so the cabinet doesn't
+        # collapse below 1" (a sentinel; the user can recover by widening).
+        new_blind_width = max(
+            blind_props.width - width_reduction, units.inch(1.0)
+        )
+        actual_reduction = blind_props.width - new_blind_width
+
+        # Stile width: the recompute callback would write
+        # ff_blind_stile_width (+0.75 when blind flag is True). Override
+        # with the user's value, applying the 0.75" accept-adjacent add
+        # only when the blind flag remains on.
+        final_stile_w = self.blind_stile_width + (
+            units.inch(0.75) if new_blind_flag else 0.0
+        )
+
+        with types_face_frame.suspend_recalc():
+            if self.blind_side == 'LEFT':
+                # Shift the cabinet's wall-local X by the reduction so
+                # the right edge stays anchored while the left edge
+                # moves away from the wall corner. Cabinet origin sits
+                # at the left edge, so location.x tracks that edge.
+                blind_obj.location.x += actual_reduction
+                blind_props.width = new_blind_width
+                blind_props.left_stile_type = 'BLIND'
+                blind_props.blind_left = new_blind_flag
+                blind_props.blind_amount_left = new_blind_amount
+                blind_props.left_stile_width = final_stile_w
+                placed_props.right_stile_type = 'BLIND'
+                placed_props.right_stile_width = self.current_cabinet_stile_width
+            else:  # 'RIGHT'
+                # Shrinking from the right edge requires no location
+                # shift since the origin sits at the left edge.
+                blind_props.width = new_blind_width
+                blind_props.right_stile_type = 'BLIND'
+                blind_props.blind_right = new_blind_flag
+                blind_props.blind_amount_right = new_blind_amount
+                blind_props.right_stile_width = final_stile_w
+                placed_props.left_stile_type = 'BLIND'
+                placed_props.left_stile_width = self.current_cabinet_stile_width
+
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_place_cabinet,
     hb_face_frame_OT_place_appliance,
     hb_face_frame_OT_place_corner_cabinet,
+    hb_face_frame_OT_set_blind_corner_void_amount,
 )
 
 

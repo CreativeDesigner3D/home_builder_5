@@ -101,6 +101,12 @@ PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
 PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
 PART_ROLE_LEFT_KICK_RETURN = 'LEFT_KICK_RETURN'
 PART_ROLE_RIGHT_KICK_RETURN = 'RIGHT_KICK_RETURN'
+PART_ROLE_BLIND_PANEL_LEFT = 'BLIND_PANEL_LEFT'
+PART_ROLE_BLIND_PANEL_RIGHT = 'BLIND_PANEL_RIGHT'
+
+# 1/4" thick decorative panel that closes off the dead corner space when
+# the cabinet sits next to a perpendicular cabinet on an adjacent wall.
+BLIND_PANEL_THICKNESS = inch(0.25)
 
 # Face frame member roles (rails and stiles). Phase 3a doesn't create any
 # of these yet; defined here so the "Face Frame" selection mode has a known
@@ -267,6 +273,8 @@ FF_ROTATION_BASELINE_Z = {
     PART_ROLE_BOTTOM_RAIL:       0.0,
     PART_ROLE_TOE_KICK_SUBFRONT: 0.0,
     PART_ROLE_FINISH_TOE_KICK:   0.0,
+    PART_ROLE_BLIND_PANEL_LEFT:  math.pi / 2,
+    PART_ROLE_BLIND_PANEL_RIGHT: math.pi / 2,
 }
 
 
@@ -361,6 +369,13 @@ class FaceFrameCabinet(GeoNodeCage):
             'UPPER': inch(0.125),
             'TALL':  inch(0.5),
         }.get(self.default_cabinet_type, 0.0)
+
+        # Uppers sit at the back of a corner with shallower carcasses, so
+        # the blind amount default tracks Upper depth conventions (12") vs
+        # the standard 24" Base/Tall default seeded by the property declaration.
+        if self.default_cabinet_type == 'UPPER':
+            cab_props.blind_amount_left = inch(12.0)
+            cab_props.blind_amount_right = inch(12.0)
 
         if hasattr(scene, 'hb_face_frame'):
             ff_scene = scene.hb_face_frame
@@ -996,7 +1011,19 @@ class FaceFrameCabinet(GeoNodeCage):
                   else cab_props.depth)
             available_width = math.hypot(cab_props.width, ld - rd)
         else:
-            available_width = cab_props.width
+            # Mirror FaceFrameLayout.blind_offset_* coupling so the bay
+            # share matches the FF area the solver will actually use.
+            blind_left = (cab_props.blind_amount_left
+                          if (cab_props.left_stile_type == 'BLIND'
+                              and cab_props.blind_left
+                              and cab_props.blind_amount_left > 0)
+                          else 0.0)
+            blind_right = (cab_props.blind_amount_right
+                           if (cab_props.right_stile_type == 'BLIND'
+                               and cab_props.blind_right
+                               and cab_props.blind_amount_right > 0)
+                           else 0.0)
+            available_width = cab_props.width - blind_left - blind_right
 
         remainder = available_width - consumed - locked_total
         share = remainder / len(unlocked_bays)
@@ -1188,6 +1215,15 @@ class FaceFrameCabinet(GeoNodeCage):
                 finish_kick_segs = []
                 self._reconcile_kick_subfronts([])
                 self._reconcile_finish_kicks([])
+
+            # Blind panels exist on every carcass-bearing cabinet (Base /
+            # Tall / Upper / Lap Drawer). Hidden when stile type isn't
+            # BLIND or the side's blind flag is False - the dispatch loop
+            # toggles visibility per side.
+            self._ensure_blind_panel(
+                PART_ROLE_BLIND_PANEL_LEFT, 'Blind Panel Left', mirror_y=True)
+            self._ensure_blind_panel(
+                PART_ROLE_BLIND_PANEL_RIGHT, 'Blind Panel Right', mirror_y=False)
 
             # Top construction branches on cabinet type:
             #   BASE / LAP_DRAWER -> Front + Rear stretchers
@@ -1435,6 +1471,52 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_BLIND_PANEL_LEFT:
+                # Visible when the left end is a blind corner stile AND
+                # the side's blind flag is on (an adjacent cabinet is
+                # actually butted against this stile). Either condition
+                # off and the panel hides without being deleted.
+                visible = (cab_props.left_stile_type == 'BLIND'
+                           and cab_props.blind_left
+                           and cab_props.blind_amount_left > 0)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                z_origin, z_height = self._blind_panel_z_range()
+                # Anchored at the LEFT endpoint of the FF outer plane,
+                # offset back by face_frame_thickness so the panel sits
+                # just behind the face frame. Length runs vertically
+                # (cabinet interior height); Width runs +X by
+                # blind_amount via Mirror Y=True (matches left stile);
+                # Thickness extends +Y deeper into the cabinet body.
+                child.location = (0.0,
+                                  -cab_props.depth + cab_props.face_frame_thickness,
+                                  z_origin)
+                part.set_input('Length', z_height)
+                part.set_input('Width', cab_props.blind_amount_left)
+                part.set_input('Thickness', BLIND_PANEL_THICKNESS)
+
+            elif role == PART_ROLE_BLIND_PANEL_RIGHT:
+                visible = (cab_props.right_stile_type == 'BLIND'
+                           and cab_props.blind_right
+                           and cab_props.blind_amount_right > 0)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                z_origin, z_height = self._blind_panel_z_range()
+                # Anchored at the RIGHT endpoint of the FF outer plane.
+                # Mirror Y=False makes Width grow -X from this anchor
+                # (matches right stile), so the panel reaches inboard
+                # by blind_amount.
+                child.location = (cab_props.width,
+                                  -cab_props.depth + cab_props.face_frame_thickness,
+                                  z_origin)
+                part.set_input('Length', z_height)
+                part.set_input('Width', cab_props.blind_amount_right)
+                part.set_input('Thickness', BLIND_PANEL_THICKNESS)
 
             # ---- Mid stiles (gap-keyed) ----
             elif role == PART_ROLE_MID_STILE:
@@ -2102,6 +2184,42 @@ class FaceFrameCabinet(GeoNodeCage):
         ret.obj.rotation_euler.z = math.radians(-90)
         ret.set_input('Mirror Z', mirror_z)
         return ret.obj
+
+    def _ensure_blind_panel(self, role, name, mirror_y):
+        """Lazy-create a left or right blind panel - a 1/4" vertical
+        partition that sits just behind the face frame, parallel to it,
+        extending inboard from the cabinet end by blind_amount. Closes
+        off the dead corner space when an adjacent perpendicular cabinet
+        butts against this end. Same rotation convention as the end
+        stiles (Y=-90 + Z=90); mirror_y flips Width direction so the
+        panel grows inboard from each respective end (True for LEFT,
+        False for RIGHT, matching left/right stile setup).
+        """
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        panel = CabinetPart()
+        panel.create(name)
+        panel.obj.parent = self.obj
+        panel.obj['hb_part_role'] = role
+        panel.obj['CABINET_PART'] = True
+        panel.obj.rotation_euler.y = math.radians(-90)
+        panel.obj.rotation_euler.z = math.radians(90)
+        panel.set_input('Mirror Y', mirror_y)
+        panel.set_input('Mirror Z', False)
+        return panel.obj
+
+    def _blind_panel_z_range(self):
+        """Return (z_origin, z_height) for blind panel placement.
+        Sits above the toe kick recess (or directly on the floor for
+        upper / panel cabinets) and runs to the top of the cabinet.
+        Subclasses can override if a class needs a different baseline
+        (e.g. lap drawer wanting to sit above the lap reveal).
+        """
+        cab_props = self.obj.face_frame_cabinet
+        z_origin = cab_props.toe_kick_height if self._has_toe_kick() else 0.0
+        z_height = max(cab_props.height - z_origin, 0.0)
+        return (z_origin, z_height)
 
     def _reconcile_carcass_backs(self, segments):
         """Match Back carcass children against segments. Same three-pass

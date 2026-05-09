@@ -354,6 +354,69 @@ class Face_Frame_Mid_Stile_Width(PropertyGroup):
     )  # type: ignore
 
 
+def _recompute_blind_stile_width(cab_props, side):
+    """Set left_stile_width or right_stile_width from the current stile-type
+    and blind-state combination. No-op when the side's unlock flag is True
+    (user has taken manual control) or when the scene doesn't carry the
+    face frame defaults yet (during first-load / unregister).
+
+    Coupling: stile_type=='BLIND' uses ff_blind_stile_width as the visible
+    portion; the blind_left/blind_right flag adds 0.75" for the adjacent
+    cabinet's face. stile_type=='STANDARD' or 'WALL' restores the plain
+    ff_end_stile_width default.
+    """
+    scene = bpy.context.scene
+    ff_scene = getattr(scene, 'hb_face_frame', None)
+    if ff_scene is None:
+        return
+
+    if side == 'LEFT':
+        if cab_props.unlock_left_stile:
+            return
+        stile_type = cab_props.left_stile_type
+        is_blind = cab_props.blind_left
+        target_attr = 'left_stile_width'
+    else:
+        if cab_props.unlock_right_stile:
+            return
+        stile_type = cab_props.right_stile_type
+        is_blind = cab_props.blind_right
+        target_attr = 'right_stile_width'
+
+    if stile_type == 'BLIND':
+        width = ff_scene.ff_blind_stile_width
+        if is_blind:
+            width += units.inch(0.75)
+    else:
+        width = ff_scene.ff_end_stile_width
+
+    # Only write if the value actually changed - avoids a redundant
+    # _update_cabinet_dim recalc trip in the common case where the user
+    # toggles a flag that doesn't change the resulting width.
+    if abs(getattr(cab_props, target_attr) - width) > 1e-7:
+        setattr(cab_props, target_attr, width)
+
+
+def _update_left_stile_type(self, context):
+    _recompute_blind_stile_width(self, 'LEFT')
+    _update_cabinet_dim(self, context)
+
+
+def _update_right_stile_type(self, context):
+    _recompute_blind_stile_width(self, 'RIGHT')
+    _update_cabinet_dim(self, context)
+
+
+def _update_blind_left(self, context):
+    _recompute_blind_stile_width(self, 'LEFT')
+    _update_cabinet_dim(self, context)
+
+
+def _update_blind_right(self, context):
+    _recompute_blind_stile_width(self, 'RIGHT')
+    _update_cabinet_dim(self, context)
+
+
 class Face_Frame_Cabinet_Props(PropertyGroup):
     """Cabinet-level face frame state. Attached to the cabinet's root object
     as bpy.types.Object.face_frame_cabinet.
@@ -480,16 +543,23 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
-    blind_left: BoolProperty(name="Blind Left", default=False)  # type: ignore
-    blind_right: BoolProperty(name="Blind Right", default=False)  # type: ignore
+    blind_left: BoolProperty(
+        name="Blind Left", default=False, update=_update_blind_left
+    )  # type: ignore
+    blind_right: BoolProperty(
+        name="Blind Right", default=False, update=_update_blind_right
+    )  # type: ignore
     blind_amount_left: FloatProperty(
-        name="Blind Amount Left", default=units.inch(24.0), unit='LENGTH', precision=4
+        name="Blind Amount Left", default=units.inch(24.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     blind_amount_right: FloatProperty(
-        name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4
+        name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     blind_reveal: FloatProperty(
-        name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4
+        name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     left_stile_width: FloatProperty(
@@ -511,10 +581,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ('BLIND', "Blind", "Blind corner stile"),
     ]
     left_stile_type: EnumProperty(
-        name="Left Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD'
+        name="Left Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD',
+        update=_update_left_stile_type,
     )  # type: ignore
     right_stile_type: EnumProperty(
-        name="Right Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD'
+        name="Right Stile Type", items=LEFT_STILE_TYPE_ITEMS, default='STANDARD',
+        update=_update_right_stile_type,
     )  # type: ignore
 
     # End stile drops to the floor instead of stopping at the bay bottom,
@@ -1584,6 +1656,18 @@ class Face_Frame_Scene_Props(PropertyGroup):
         name="End Stile Width",
         description="Default end stile width",
         default=units.inch(2.0),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
+    # Exposed (visible) portion of a blind-corner end stile. When the
+    # adjacent cabinet butts into the blind side (blind_left/right True),
+    # the stile widens by another 0.75" to accept the adjacent face -
+    # so a 3.0" default yields a 3.75" stile with 3.0" visible.
+    ff_blind_stile_width: FloatProperty(
+        name="Blind Stile Width",
+        description="Visible (exposed) portion of a blind-corner end stile",
+        default=units.inch(3.0),
         unit='LENGTH',
         precision=4,
     )  # type: ignore
