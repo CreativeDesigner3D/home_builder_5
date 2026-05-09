@@ -160,6 +160,23 @@ def update_face_frame_selection_mode(self, context):
     bpy.ops.hb_face_frame.toggle_mode(search_obj_name="")
 
 
+def update_include_drawer_boxes(self, context):
+    """Toggle: rebuild every face frame cabinet so drawer boxes are added
+    behind drawer/pullout fronts (when True) or removed (when False).
+
+    Reuses the cabinet recalc path rather than walking children directly
+    so drawer-box presence stays a derived consequence of front parts -
+    one source of truth in _update_fronts_in_opening. Wrapped in
+    suspend_recalc so a scene full of cabinets recalcs once per cabinet
+    instead of once per intermediate prop write.
+    """
+    from . import types_face_frame
+    with types_face_frame.suspend_recalc():
+        for obj in context.scene.objects:
+            if obj.get(types_face_frame.TAG_CABINET_CAGE):
+                types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
 # ---------------------------------------------------------------------------
 # Cabinet Style (placeholder shell, full implementation in Phase 4)
 # ---------------------------------------------------------------------------
@@ -1199,6 +1216,39 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_face_frame_options: BoolProperty(name="Show Face Frame Options", default=False)  # type: ignore
     show_handle_options: BoolProperty(name="Show Handle Options", default=False)  # type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options", default=False)  # type: ignore
+    show_drawer_box_options: BoolProperty(name="Show Drawer Box Options", default=False)  # type: ignore
+
+    # ---- Drawer box defaults ----
+    # include_drawer_boxes gates spawning of drawer boxes behind drawer
+    # and pullout fronts; clearances are subtracted from the opening hole
+    # to size each box. v1 keeps these scene-wide; per-front overrides
+    # land when front parts grow editable per-part props.
+    include_drawer_boxes: BoolProperty(
+        name="Include Drawer Boxes",
+        description="Spawn a drawer box behind every drawer and pullout front",
+        default=True,
+        update=update_include_drawer_boxes,
+    )  # type: ignore
+    drawer_box_side_clearance: FloatProperty(
+        name="Drawer Box Side Clearance",
+        description="Gap between each side of the drawer box and the opening",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+    )  # type: ignore
+    drawer_box_top_clearance: FloatProperty(
+        name="Drawer Box Top Clearance",
+        description="Gap between the top of the drawer box and the opening top",
+        default=units.inch(0.75), unit='LENGTH', precision=4,
+    )  # type: ignore
+    drawer_box_rear_clearance: FloatProperty(
+        name="Drawer Box Rear Clearance",
+        description="Gap between the back of the drawer box and the cabinet back",
+        default=units.inch(1.0), unit='LENGTH', precision=4,
+    )  # type: ignore
+    drawer_box_bottom_clearance: FloatProperty(
+        name="Drawer Box Bottom Clearance",
+        description="Gap between the bottom of the drawer box and the opening bottom",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+    )  # type: ignore
 
     # ---- Finished Ends and Backs defaults ----
     # Drives the "Apply to All Exposed" bulk operator and seeds new
@@ -1943,10 +1993,36 @@ class Face_Frame_Scene_Props(PropertyGroup):
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'
+            row.prop(self, 'show_drawer_box_options', text="Drawer Boxes",
+                     icon='TRIA_DOWN' if self.show_drawer_box_options else 'TRIA_RIGHT', emboss=False)
+            if self.show_drawer_box_options:
+                self.draw_drawer_box_ui(box, context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
             row.prop(self, 'show_countertop_options', text="Countertops",
                      icon='TRIA_DOWN' if self.show_countertop_options else 'TRIA_RIGHT', emboss=False)
             if self.show_countertop_options:
                 self.draw_countertop_ui(box, context)
+
+    # =====================================================================
+    # UI: drawer boxes
+    # =====================================================================
+    def draw_drawer_box_ui(self, layout, context):
+        from ... import hb_project
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_face_frame
+
+        col = layout.column(align=True)
+        col.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes")
+
+        col.separator()
+        col.label(text="Clearances:")
+        col.prop(props, 'drawer_box_side_clearance', text="Side")
+        col.prop(props, 'drawer_box_top_clearance', text="Top")
+        col.prop(props, 'drawer_box_bottom_clearance', text="Bottom")
+        col.prop(props, 'drawer_box_rear_clearance', text="Rear")
 
     # =====================================================================
     # UI: countertops

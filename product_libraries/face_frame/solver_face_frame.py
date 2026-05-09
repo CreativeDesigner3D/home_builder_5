@@ -2497,6 +2497,12 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     return {
         'role': role, 'name': name,
         'pivot_position': (base_x, base_y - slide, base_z),
+        # Swing-zero pivot corner. The drawer box anchors against this so it
+        # can be placed once in pivot-local space and ride the slide via the
+        # pivot's animated Y - if it anchored to pivot_position instead, the
+        # box would sit at a fixed world Y and stay behind while the front
+        # slides out.
+        'pivot_anchor_position': (base_x, base_y, base_z),
         'pivot_rotation': (0.0, 0.0, 0.0),
         'part_position':  (0.0, 0.0, 0.0),
         'part_dims':      (height, width, door_thickness),

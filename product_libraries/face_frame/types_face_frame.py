@@ -18,7 +18,7 @@ import bpy
 import math
 from contextlib import contextmanager
 
-from ...hb_types import GeoNodeCage, GeoNodeCutpart
+from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox
 from ...units import inch
 from ..common import types_appliances
 from ..frameless.types_frameless import CabinetPart
@@ -196,6 +196,13 @@ APPLIED_PANEL_END_TYPES = frozenset({'PANELED', 'FALSE_FF', 'WORKING_FF'})
 # (door / pullout) or the slide translation (drawer front) so the front
 # part itself stays at a fixed local transform relative to the pivot.
 PART_ROLE_FRONT_PIVOT = 'FRONT_PIVOT'
+
+# Drawer box behind a drawer or pullout front. Parented to the front pivot
+# (not the front part) so the box rides the slide animation but is sized
+# from the opening cage's interior dimensions, independent of the front's
+# overlay-inflated size. Not a member of FRONT_PART_ROLES; it's an interior
+# part by structure even though it's spawned alongside the front.
+PART_ROLE_DRAWER_BOX = 'DRAWER_BOX'
 
 # Front roles that share the same panel geometry today. Keeping them
 # grouped here so reconciliation can iterate the set instead of
@@ -2642,6 +2649,7 @@ class FaceFrameCabinet(GeoNodeCage):
             front.set_input('Thickness', thickness)
 
             self._create_pull_for_front(front, leaf['role'], leaf)
+            self._create_drawer_box_for_front(pivot, leaf, rect)
 
     def _create_front_pivot(self, opening_obj):
         """Create an Empty parented to the opening cage, used as the
@@ -2804,6 +2812,79 @@ class FaceFrameCabinet(GeoNodeCage):
         instance['IS_CABINET_PULL'] = True
         return instance
 
+
+    def _create_drawer_box_for_front(self, pivot_obj, leaf, rect):
+        """Spawn a drawer box behind a drawer or pullout front.
+
+        Skips quietly if the role isn't drawer/pullout, if the scene-level
+        toggle is off, or if any computed dimension goes nonpositive (very
+        narrow openings with large clearances). The box is parented to the
+        front pivot rather than the front part: the pivot's local axes
+        match the opening cage's (no rotation for slide leaves), so the
+        box can be placed and sized in opening-local terms without
+        composing through the front's rotated frame. Anchoring to
+        pivot_anchor_position (swing=0) instead of pivot_position lets
+        the box ride the slide animation - the pivot's animated Y carries
+        the box forward; if we used pivot_position the box would stay at
+        a fixed world Y and the front would slide out without it.
+
+        Box dimensions fit inside the face frame opening hole minus
+        per-side clearances. Box depth is the full bay cavity depth
+        (cage_dim_y) minus rear clearance, so its front face sits flush
+        with the back of the face frame.
+        """
+        if leaf['role'] not in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT):
+            return None
+        scene_props = bpy.context.scene.hb_face_frame
+        if not scene_props.include_drawer_boxes:
+            return None
+
+        side_clr = scene_props.drawer_box_side_clearance
+        top_clr = scene_props.drawer_box_top_clearance
+        rear_clr = scene_props.drawer_box_rear_clearance
+        bottom_clr = scene_props.drawer_box_bottom_clearance
+
+        cage_x = rect['cage_dim_x']
+        cage_y = rect['cage_dim_y']
+        cage_z = rect['cage_dim_z']
+        rl = rect['reveal_left']
+        rr = rect['reveal_right']
+        rt = rect['reveal_top']
+        rb = rect['reveal_bottom']
+
+        # Anchor the box's front face against the back of the drawer front
+        # so the two read as connected. The pivot's swing=0 Y sits one
+        # door_thickness in front of the drawer front's back face (the
+        # front part extends +Y from the pivot by door_thickness), so the
+        # back of the front lives at anchor_y + door_thickness in opening-
+        # local Y. The box passes through the FF opening from there and
+        # extends back to cage_dim_y - rear_clr; box_dx already sits
+        # within the opening reveals, so it clears the rails and stiles.
+        anchor = leaf.get('pivot_anchor_position', leaf['pivot_position'])
+        a_x, a_y, a_z = anchor
+        door_thickness = leaf['part_dims'][2]
+        front_back_y = a_y + door_thickness
+
+        box_dx = cage_x - rl - rr - 2.0 * side_clr
+        box_dy = (cage_y - rear_clr) - front_back_y
+        box_dz = cage_z - rt - rb - top_clr - bottom_clr
+        if box_dx <= 0.0 or box_dy <= 0.0 or box_dz <= 0.0:
+            return None
+
+        # Box origin (front-left-bottom corner) in opening-local coords.
+        op_x = rl + side_clr
+        op_y = front_back_y
+        op_z = rb + bottom_clr
+
+        box = GeoNodeDrawerBox()
+        box.create('Drawer Box')
+        box.obj.parent = pivot_obj
+        box.obj.location = (op_x - a_x, op_y - a_y, op_z - a_z)
+        box.set_input('Dim X', box_dx)
+        box.set_input('Dim Y', box_dy)
+        box.set_input('Dim Z', box_dz)
+        box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
+        return box
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory
