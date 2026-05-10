@@ -33,6 +33,10 @@ TAG_CABINET_CAGE = 'IS_FACE_FRAME_CABINET_CAGE'
 TAG_BAY_CAGE = 'IS_FACE_FRAME_BAY_CAGE'
 TAG_OPENING_CAGE = 'IS_FACE_FRAME_OPENING_CAGE'
 TAG_SPLIT_NODE = 'IS_FACE_FRAME_SPLIT_NODE'
+# Interior tree tags. Internal nodes carry TAG_INTERIOR_SPLIT_NODE; leaves
+# carry TAG_INTERIOR_REGION. Both live as cage children of an opening.
+TAG_INTERIOR_SPLIT_NODE = 'IS_INTERIOR_SPLIT_NODE'
+TAG_INTERIOR_REGION = 'IS_INTERIOR_REGION'
 
 # Reentrance guards. Bay-level prop writes inside recalculate() (such as
 # the width redistribution in _distribute_bay_widths) fire those props'
@@ -235,16 +239,50 @@ FRONT_TYPE_TO_ROLE = {
 # this list.
 # ---------------------------------------------------------------------------
 PART_ROLE_ADJUSTABLE_SHELF = 'ADJUSTABLE_SHELF'
+PART_ROLE_GLASS_SHELF = 'GLASS_SHELF'
+PART_ROLE_PULLOUT_SHELF = 'PULLOUT_SHELF'
+PART_ROLE_PULLOUT_SPACER = 'PULLOUT_SPACER'
+PART_ROLE_ROLLOUT_BOX = 'ROLLOUT_BOX'
+PART_ROLE_ROLLOUT_SPACER = 'ROLLOUT_SPACER'
+PART_ROLE_TRAY_DIVIDER = 'TRAY_DIVIDER'
+PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
+PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
+PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+# Interior tree dividers: physical parts at split-node boundaries.
+PART_ROLE_INTERIOR_DIVISION = 'INTERIOR_DIVISION'
+PART_ROLE_INTERIOR_FIXED_SHELF = 'INTERIOR_FIXED_SHELF'
 
 INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_ADJUSTABLE_SHELF,
+    PART_ROLE_GLASS_SHELF,
+    PART_ROLE_PULLOUT_SHELF,
+    PART_ROLE_PULLOUT_SPACER,
+    PART_ROLE_ROLLOUT_BOX,
+    PART_ROLE_ROLLOUT_SPACER,
+    PART_ROLE_TRAY_DIVIDER,
+    PART_ROLE_TRAY_LOCKED_SHELF,
+    PART_ROLE_VANITY_SHELF,
+    PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_ACCESSORY_LABEL,
+    PART_ROLE_INTERIOR_DIVISION,
+    PART_ROLE_INTERIOR_FIXED_SHELF,
 })
 
+# Maps a Face_Frame_Interior_Item.kind to the *primary* part role its
+# descriptors carry. Multi-part assemblies (PULLOUT_SHELF, ROLLOUT,
+# TRAY_DIVIDERS, VANITY_SHELVES) emit multiple part roles; this map
+# only names the headline role used for tagging the wipe set.
 INTERIOR_KIND_TO_ROLE = {
-    'ADJUSTABLE_SHELF': PART_ROLE_ADJUSTABLE_SHELF,
-    'ACCESSORY':        PART_ROLE_ACCESSORY_LABEL,
+    'ADJUSTABLE_SHELF':      PART_ROLE_ADJUSTABLE_SHELF,
+    'GLASS_SHELF':           PART_ROLE_GLASS_SHELF,
+    'PULLOUT_SHELF':         PART_ROLE_PULLOUT_SHELF,
+    'ROLLOUT':               PART_ROLE_ROLLOUT_BOX,
+    'TRAY_DIVIDERS':         PART_ROLE_TRAY_DIVIDER,
+    'VANITY_SHELVES':        PART_ROLE_VANITY_SHELF,
+    'ACCESSORY':             PART_ROLE_ACCESSORY_LABEL,
+    'INTERIOR_DIVISION':     PART_ROLE_INTERIOR_DIVISION,
+    'INTERIOR_FIXED_SHELF':  PART_ROLE_INTERIOR_FIXED_SHELF,
 }
 
 # Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
@@ -257,7 +295,10 @@ PART_ROLE_ANGLED_CUTTER = 'ANGLED_CUTTER'
 ANGLED_CUT_MOD_NAME = 'Angled Cut'
 ANGLED_CUT_PART_ROLES = frozenset({
     PART_ROLE_TOP, PART_ROLE_BOTTOM,
-    PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF,
+    PART_ROLE_BAY_SHELF,
+    PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+    PART_ROLE_TRAY_LOCKED_SHELF,
+    PART_ROLE_INTERIOR_FIXED_SHELF,
 })
 
 # Baseline rotation_euler.z for parts that live in the face frame plane.
@@ -312,6 +353,19 @@ class FaceFrameOpening(GeoNodeCage):
         super().create(name)
         self.obj[TAG_OPENING_CAGE] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_opening_commands'
+        self.obj.display_type = 'WIRE'
+
+
+class FaceFrameInteriorRegion(GeoNodeCage):
+    """Interior tree leaf cage. A wireframe box inside an opening that
+    represents one region of the interior split tree. Selectable in the
+    viewport; the panel uses the active region to drive which leaf's
+    interior_items are shown / edited.
+    """
+
+    def create(self, name="Region"):
+        super().create(name)
+        self.obj[TAG_INTERIOR_REGION] = True
         self.obj.display_type = 'WIRE'
 
 
@@ -3030,24 +3084,52 @@ class FaceFrameCabinet(GeoNodeCage):
                 op_props.interior_items.clear()
             return
 
+        # Share remainder between unlocked siblings of every split
+        # node so users can edit either side of a divider and have
+        # the other yield. No-op when the opening uses the flat path.
+        # Runs before cage sizing so the leaf wireframes pick up the
+        # redistributed sizes.
+        self._redistribute_interior_split_tree(opening_obj, rect)
+
+        # Bring leaf cage dims + child locations into sync with the
+        # tree props before reading any rects from the tree (no-op
+        # when the opening uses the flat path).
+        self._update_interior_tree_cages(opening_obj, rect)
+
         # Sync auto-computed shelf counts for any unlocked items before
         # the solver reads them. Writing shelf_qty fires its update
         # callback which would re-enter recalculate_face_frame_cabinet,
-        # but the _RECALCULATING guard short-circuits that.
-        auto_qty = solver.auto_shelf_qty(rect['cage_dim_z'])
-        for item in op_props.interior_items:
-            if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
-                if item.shelf_qty != auto_qty:
-                    item.shelf_qty = auto_qty
+        # but the _RECALCULATING guard short-circuits that. When a tree
+        # exists, every leaf's items get the same auto rule applied
+        # against the leaf's own height (so a fixed shelf splitting an
+        # opening into halves seeds each half independently).
+        for region_props, region_z in self._walk_interior_regions(
+            opening_obj, rect,
+        ):
+            auto_qty = solver.auto_shelf_qty(region_z)
+            for item in region_props.interior_items:
+                if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
+                    if item.shelf_qty != auto_qty:
+                        item.shelf_qty = auto_qty
 
-        for desc in solver.interior_item_descriptors(
-            layout, rect, self.obj.face_frame_cabinet, op_props
+        for desc in solver.interior_descriptors_for_opening(
+            opening_obj, layout, rect, self.obj.face_frame_cabinet,
         ):
             kind = desc['kind']
             if kind == 'ADJUSTABLE_SHELF':
                 self._create_shelf_part(opening_obj, desc)
             elif kind == 'ACCESSORY':
                 self._create_accessory_label(opening_obj, desc)
+            elif kind == 'ROLLOUT_BOX':
+                self._create_rollout_box(opening_obj, desc)
+            else:
+                # All remaining mesh-based interior parts route through
+                # the generic factory; orientation in the descriptor
+                # drives rotation / mirror flags. Covers GLASS_SHELF,
+                # PULLOUT_SHELF, PULLOUT_SPACER, ROLLOUT_SPACER,
+                # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
+                # VANITY_SUPPORT.
+                self._create_interior_mesh_part(opening_obj, desc)
 
     def _create_shelf_part(self, opening_obj, desc):
         """Horizontal panel oriented as Length+X, Width+Y, Thickness+Z
@@ -3088,6 +3170,249 @@ class FaceFrameCabinet(GeoNodeCage):
         text_obj.rotation_euler = desc['rotation']
         text_obj['hb_part_role'] = desc['role']
         return text_obj
+
+    def _redistribute_interior_split_tree(self, opening_obj, rect):
+        """Top-level entry: walk the opening's interior tree and share
+        the remainder among unlocked siblings of every split node. No-op
+        when the opening uses the flat path. Mirrors the front-frame
+        _redistribute_split_node convention so editing either child of
+        a divider feels the same as editing either child of a bay split.
+        """
+        root = solver._interior_tree_root(opening_obj)
+        if root is None:
+            return
+        self._redistribute_interior_node(root, rect)
+
+    def _redistribute_interior_node(self, node, rect):
+        """If node is a split, share remainder among its unlocked
+        children and recurse. Leaves end the recursion. Writes happen
+        inside the cabinet's _RECALCULATING guard so per-prop update
+        callbacks short-circuit and don't re-enter recalc.
+        """
+        if not node.get(TAG_INTERIOR_SPLIT_NODE):
+            return
+        sp = node.face_frame_interior_split
+        children = sorted(
+            [c for c in node.children
+             if c.get(TAG_INTERIOR_REGION)
+             or c.get(TAG_INTERIOR_SPLIT_NODE)],
+            key=lambda c: c.get('hb_interior_child_index', 0),
+        )
+        if len(children) != 2:
+            return
+
+        is_h = (sp.axis == 'H')
+        parent_dim = rect['cage_dim_z'] if is_h else rect['cage_dim_x']
+        div_t = sp.divider_thickness
+
+        locked_total = 0.0
+        unlocked = []
+        for c in children:
+            size_val, unlock = solver._read_interior_node_size(c)
+            # unlock=True means hold the stored size (matches the
+            # naming convention from front-frame's split tree).
+            if unlock:
+                locked_total += size_val
+            else:
+                unlocked.append(c)
+
+        remainder = max(0.0, parent_dim - div_t - locked_total)
+        share = remainder / len(unlocked) if unlocked else 0.0
+
+        # Reuse _DISTRIBUTING_WIDTHS as the system-write guard so the
+        # interior-size update callback knows these writes are not
+        # user edits and skips the auto-lock.
+        _DISTRIBUTING_WIDTHS.add(id(self.obj))
+        try:
+            for c in unlocked:
+                if c.get(TAG_INTERIOR_REGION):
+                    c.face_frame_interior_region.size = share
+                else:
+                    c.face_frame_interior_split.size = share
+        finally:
+            _DISTRIBUTING_WIDTHS.discard(id(self.obj))
+
+        # Recurse with each child's resolved sub-rect
+        for c in children:
+            size_val, _ = solver._read_interior_node_size(c)
+            if is_h:
+                child_rect = {
+                    'cage_dim_x': rect['cage_dim_x'],
+                    'cage_dim_y': rect['cage_dim_y'],
+                    'cage_dim_z': size_val,
+                }
+            else:
+                child_rect = {
+                    'cage_dim_x': size_val,
+                    'cage_dim_y': rect['cage_dim_y'],
+                    'cage_dim_z': rect['cage_dim_z'],
+                }
+            self._redistribute_interior_node(c, child_rect)
+
+    def _update_interior_tree_cages(self, opening_obj, rect):
+        """Walk the opening's interior tree and bring each cage's
+        Dim X/Y/Z + each child's location into sync with the current
+        tree props (axis, divider_thickness, child sizes). No-op when
+        the opening has no tree.
+
+        Mirrors the layout math in solver._walk_interior_node so the
+        wireframe leaf cages render in the same positions the
+        descriptor walker computes for items.
+        """
+        root = solver._interior_tree_root(opening_obj)
+        if root is None:
+            return
+        # The root sits at the opening's origin and inherits the full
+        # rect; downstream relative offsets accumulate via parent-child.
+        root.location = (0.0, 0.0, 0.0)
+        self._size_interior_node(root, rect)
+
+    def _size_interior_node(self, node, rect):
+        """Recurse: at leaves, write Dim X/Y/Z on the cage; at split
+        nodes, compute child rects + relative offsets, update child
+        locations, and recurse.
+        """
+        if node.get(TAG_INTERIOR_REGION):
+            region = FaceFrameInteriorRegion(node)
+            region.set_input('Dim X', rect['cage_dim_x'])
+            region.set_input('Dim Y', rect['cage_dim_y'])
+            region.set_input('Dim Z', rect['cage_dim_z'])
+            return
+
+        if not node.get(TAG_INTERIOR_SPLIT_NODE):
+            return
+
+        sp = node.face_frame_interior_split
+        children = sorted(
+            [c for c in node.children
+             if c.get(TAG_INTERIOR_REGION)
+             or c.get(TAG_INTERIOR_SPLIT_NODE)],
+            key=lambda c: c.get('hb_interior_child_index', 0),
+        )
+        if len(children) != 2:
+            return
+
+        div_t = sp.divider_thickness
+        cage_x = rect['cage_dim_x']
+        cage_y = rect['cage_dim_y']
+        cage_z = rect['cage_dim_z']
+        size_a, _ = solver._read_interior_node_size(children[0])
+        size_b, _ = solver._read_interior_node_size(children[1])
+
+        if sp.axis == 'H':
+            children[0].location = (0.0, 0.0, 0.0)
+            children[1].location = (0.0, 0.0, size_a + div_t)
+            self._size_interior_node(children[0], {
+                'cage_dim_x': cage_x, 'cage_dim_y': cage_y,
+                'cage_dim_z': size_a,
+            })
+            self._size_interior_node(children[1], {
+                'cage_dim_x': cage_x, 'cage_dim_y': cage_y,
+                'cage_dim_z': size_b,
+            })
+        else:
+            children[0].location = (0.0, 0.0, 0.0)
+            children[1].location = (size_a + div_t, 0.0, 0.0)
+            self._size_interior_node(children[0], {
+                'cage_dim_x': size_a, 'cage_dim_y': cage_y,
+                'cage_dim_z': cage_z,
+            })
+            self._size_interior_node(children[1], {
+                'cage_dim_x': size_b, 'cage_dim_y': cage_y,
+                'cage_dim_z': cage_z,
+            })
+
+    def _walk_interior_regions(self, opening_obj, opening_rect):
+        """Yield (region_props, region_cage_dim_z) pairs covering every
+        leaf in the opening's interior tree. When the opening has no
+        tree, yields exactly one pair: the opening's own props +
+        cage_dim_z. Used by the auto-shelf-qty pass so each leaf seeds
+        its shelf count from its own height, not the whole opening's.
+        """
+        root = solver._interior_tree_root(opening_obj)
+        if root is None:
+            yield (opening_obj.face_frame_opening,
+                   opening_rect['cage_dim_z'])
+            return
+
+        def _recurse(node, dim_z):
+            if node.get(TAG_INTERIOR_REGION):
+                yield (node.face_frame_interior_region, dim_z)
+                return
+            if not node.get(TAG_INTERIOR_SPLIT_NODE):
+                return
+            sp = node.face_frame_interior_split
+            children = sorted(
+                [c for c in node.children
+                 if c.get(TAG_INTERIOR_REGION)
+                 or c.get(TAG_INTERIOR_SPLIT_NODE)],
+                key=lambda c: c.get('hb_interior_child_index', 0),
+            )
+            if len(children) != 2:
+                return
+            size_a, _ = solver._read_interior_node_size(children[0])
+            size_b, _ = solver._read_interior_node_size(children[1])
+            if sp.axis == 'H':
+                yield from _recurse(children[0], size_a)
+                yield from _recurse(children[1], size_b)
+            else:
+                # V-split doesn't change Z extent for either child.
+                yield from _recurse(children[0], dim_z)
+                yield from _recurse(children[1], dim_z)
+
+        yield from _recurse(root, opening_rect['cage_dim_z'])
+
+    def _create_interior_mesh_part(self, opening_obj, desc):
+        """Generic interior mesh-part factory. Reads desc['orientation']
+        for rotation / mirror conventions:
+
+          HORIZONTAL  - no rotation, no mirror; origin = front-left-bottom.
+                        Length+X, Width+Y, Thickness+Z.
+          VERTICAL    - rotation_euler.y = -90 deg, Mirror Y, Mirror Z.
+                        Origin = back-bottom; length runs +Z (up), width
+                        runs -Y (forward). Matches Mid Division /
+                        Partition Skin convention.
+
+        Tagged IS_FACE_FRAME_INTERIOR_PART so the wipe pass picks it up
+        on every recalc.
+        """
+        part = CabinetPart()
+        part.create(desc['name'])
+        part.obj.parent = opening_obj
+        part.obj['hb_part_role'] = desc['role']
+        part.obj['CABINET_PART'] = True
+        part.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        part.obj.location = desc['position']
+
+        orientation = desc.get('orientation', 'HORIZONTAL')
+        if orientation == 'VERTICAL':
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+            part.set_input('Mirror Z', True)
+        # HORIZONTAL falls through with default rotation/mirror.
+
+        length, width, thickness = desc['dims']
+        part.set_input('Length', length)
+        part.set_input('Width', width)
+        part.set_input('Thickness', thickness)
+        return part
+
+    def _create_rollout_box(self, opening_obj, desc):
+        """Drawer box for ROLLOUT items. Uses GeoNodeDrawerBox parented
+        to the opening cage in opening-local coords; origin sits at the
+        box's front-left-bottom corner.
+        """
+        box = GeoNodeDrawerBox()
+        box.create(desc['name'])
+        box.obj.parent = opening_obj
+        box.obj['hb_part_role'] = desc['role']
+        box.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        box.obj.location = desc['position']
+        dx, dy, dz = desc['dims']
+        box.set_input('Dim X', dx)
+        box.set_input('Dim Y', dy)
+        box.set_input('Dim Z', dz)
+        return box
 
     def _has_toe_kick(self):
         """Whether this cabinet sits on a toe kick. Subclasses override."""

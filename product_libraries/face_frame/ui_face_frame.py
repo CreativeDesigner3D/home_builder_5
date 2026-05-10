@@ -31,6 +31,7 @@ def find_active_selection(context):
         ('cabinet',   root)
         ('bay',       bay_obj, root)
         ('opening',   opening_obj, bay_obj, root)
+        ('interior_region', leaf_obj, opening_obj, root)
         ('mid_stile', stile_obj, msi, root)
         ('end_stile', stile_obj, role, root)
         ('rail',      rail_obj, role, root)
@@ -49,6 +50,15 @@ def find_active_selection(context):
     if obj.get(types_face_frame.TAG_OPENING_CAGE):
         bay_obj = obj.parent
         return ('opening', obj, bay_obj, root)
+    if obj.get(types_face_frame.TAG_INTERIOR_REGION):
+        # Walk up through (zero or more) split nodes to find the
+        # owning opening so panels that need it (e.g. for context
+        # labels) can resolve it without re-walking.
+        opening_obj = obj.parent
+        while opening_obj is not None and not opening_obj.get(
+                types_face_frame.TAG_OPENING_CAGE):
+            opening_obj = opening_obj.parent
+        return ('interior_region', obj, opening_obj, root)
     role = obj.get('hb_part_role')
     if role == types_face_frame.PART_ROLE_MID_STILE:
         msi = obj.get('hb_mid_stile_index', 0)
@@ -289,20 +299,109 @@ def draw_opening_properties(layout, opening_obj):
     layout.separator()
     layout.label(text="Interior Items")
 
-    # Add buttons up top; list grows downward.
-    add_row = layout.row(align=True)
-    add_shelf = add_row.operator(
-        "hb_face_frame.add_interior_item",
-        text="Add Shelves", icon='ADD',
+    # When the opening has no tree the user can subdivide it directly,
+    # add items to the flat collection, or both. Once a tree exists,
+    # items live on leaves so the flat add buttons are suppressed; the
+    # tree itself is rendered inline below so the modal popup remains
+    # self-sufficient (no need to leave the popup to edit a region).
+    has_tree = any(
+        c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+        or c.get(types_face_frame.TAG_INTERIOR_REGION)
+        for c in opening_obj.children
     )
-    add_shelf.kind = 'ADJUSTABLE_SHELF'
-    add_acc = add_row.operator(
+
+    if not has_tree:
+        split_row = layout.row(align=True)
+        split_row.operator(
+            "hb_face_frame.add_interior_division",
+            text="Add Division", icon='MOD_ARRAY',
+        )
+        split_row.operator(
+            "hb_face_frame.add_interior_fixed_shelf",
+            text="Add Fixed Shelf", icon='SNAP_FACE',
+        )
+        _draw_interior_items_section(layout, op)
+        return
+
+    _draw_interior_tree_inline(layout, opening_obj)
+
+
+def _draw_interior_items_section(layout, target_props, target_name=""):
+    """Add buttons + per-item rows for any object whose props expose an
+    `interior_items` collection. Used by the opening panel (flat path),
+    the leaf region panel, and the inline tree view in the opening
+    popup. When `target_name` is non-empty it is stamped on every
+    add/remove button so the operators address that object regardless
+    of context.active_object - required when the panel renders inside
+    a modal popup that locks the active object to the opening cage.
+    """
+    # Add buttons grouped by category. Three rows keeps the panel
+    # readable without forcing a popover; less common kinds fall on
+    # later rows so the most-used (adjustable shelves, accessory) sit
+    # at the top.
+    add_row1 = layout.row(align=True)
+    add_adj = add_row1.operator(
         "hb_face_frame.add_interior_item",
-        text="Add Accessory", icon='ADD',
+        text="Adjustable", icon='ADD',
+    )
+    add_adj.kind = 'ADJUSTABLE_SHELF'
+    add_adj.half_depth = False
+    add_adj.target_name = target_name
+    add_glass = add_row1.operator(
+        "hb_face_frame.add_interior_item",
+        text="Glass", icon='ADD',
+    )
+    add_glass.kind = 'GLASS_SHELF'
+    add_glass.half_depth = False
+    add_glass.target_name = target_name
+    add_half = add_row1.operator(
+        "hb_face_frame.add_interior_item",
+        text="Half Depth", icon='ADD',
+    )
+    add_half.kind = 'ADJUSTABLE_SHELF'
+    add_half.half_depth = True
+    add_half.target_name = target_name
+
+    add_row2 = layout.row(align=True)
+    add_pull = add_row2.operator(
+        "hb_face_frame.add_interior_item",
+        text="Pullout", icon='ADD',
+    )
+    add_pull.kind = 'PULLOUT_SHELF'
+    add_pull.half_depth = False
+    add_pull.target_name = target_name
+    add_roll = add_row2.operator(
+        "hb_face_frame.add_interior_item",
+        text="Rollout", icon='ADD',
+    )
+    add_roll.kind = 'ROLLOUT'
+    add_roll.half_depth = False
+    add_roll.target_name = target_name
+    add_tray = add_row2.operator(
+        "hb_face_frame.add_interior_item",
+        text="Tray Dividers", icon='ADD',
+    )
+    add_tray.kind = 'TRAY_DIVIDERS'
+    add_tray.half_depth = False
+    add_tray.target_name = target_name
+
+    add_row3 = layout.row(align=True)
+    add_van = add_row3.operator(
+        "hb_face_frame.add_interior_item",
+        text="Vanity Shelves", icon='ADD',
+    )
+    add_van.kind = 'VANITY_SHELVES'
+    add_van.half_depth = False
+    add_van.target_name = target_name
+    add_acc = add_row3.operator(
+        "hb_face_frame.add_interior_item",
+        text="Accessory", icon='ADD',
     )
     add_acc.kind = 'ACCESSORY'
+    add_acc.half_depth = False
+    add_acc.target_name = target_name
 
-    if not op.interior_items:
+    if not target_props.interior_items:
         layout.label(text="(none)")
         return
 
@@ -310,7 +409,7 @@ def draw_opening_properties(layout, opening_obj):
     # button keyed by index so the operator doesn't have to consult
     # interior_items_index.
     box = layout.box()
-    for i, item in enumerate(op.interior_items):
+    for i, item in enumerate(target_props.interior_items):
         sub = box.column(align=True)
         header = sub.row(align=True)
         header.prop(item, 'kind', text="")
@@ -319,7 +418,9 @@ def draw_opening_properties(layout, opening_obj):
             text="", icon='X',
         )
         rm.index = i
-        if item.kind == 'ADJUSTABLE_SHELF':
+        rm.target_name = target_name
+
+        if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF'}:
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             # Greyed out when on auto - the recalc owns the value.
@@ -327,10 +428,206 @@ def draw_opening_properties(layout, opening_obj):
             field.prop(item, 'shelf_qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
+            sub.prop(item, 'shelf_setback', text="Setback")
+        elif item.kind in {'PULLOUT_SHELF', 'ROLLOUT'}:
+            qty_row = sub.row(align=True)
+            field = qty_row.row(align=True)
+            field.enabled = item.unlock_qty
+            field.prop(item, 'qty', text="Qty")
+            lock_icon = 'UNLOCKED' if item.unlock_qty else 'LOCKED'
+            qty_row.prop(item, 'unlock_qty', text="", icon=lock_icon)
+            if item.kind == 'PULLOUT_SHELF':
+                sub.prop(item, 'pullout_thickness', text="Thickness")
+            else:
+                sub.prop(item, 'rollout_height', text="Box Height")
+            sub.prop(item, 'distance_between', text="Gap Between")
+            sub.prop(item, 'bottom_gap', text="Bottom Gap")
+            sub.prop(item, 'item_setback', text="Front Setback")
+            sub.prop(item, 'spacer_height', text="Spacer Width")
+        elif item.kind == 'TRAY_DIVIDERS':
+            sub.prop(item, 'tray_qty', text="Qty")
+            sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")
+            shelf_row = sub.row()
+            shelf_row.enabled = not item.tray_remove_shelf
+            shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
+            sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
+            sub.prop(item, 'tray_setback', text="Setback")
+        elif item.kind == 'VANITY_SHELVES':
+            sub.prop(item, 'vanity_z', text="Shelf Z")
+            sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
-        if i < len(op.interior_items) - 1:
+
+        if i < len(target_props.interior_items) - 1:
             box.separator()
+
+
+def _walk_tree_leaves(opening_obj):
+    """DFS yielder for leaf cages of the opening's interior tree.
+    Yields (leaf_obj, parent_split, child_index, depth). Skips when
+    no tree exists.
+    """
+    def _recurse(node, depth):
+        if node.get(types_face_frame.TAG_INTERIOR_REGION):
+            parent = node.parent
+            if parent is not None and parent.get(
+                    types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+                yield (node, parent,
+                       node.get('hb_interior_child_index', 0), depth)
+            return
+        if not node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+            return
+        children = sorted(
+            [c for c in node.children
+             if c.get(types_face_frame.TAG_INTERIOR_REGION)
+             or c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)],
+            key=lambda c: c.get('hb_interior_child_index', 0),
+        )
+        for c in children:
+            yield from _recurse(c, depth + 1)
+
+    for c in opening_obj.children:
+        if (c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+                or c.get(types_face_frame.TAG_INTERIOR_REGION)):
+            yield from _recurse(c, 0)
+
+
+def _draw_interior_tree_inline(layout, opening_obj):
+    """Render every leaf of the opening's interior tree as an inline
+    sub-section. Used by the opening's modal popup so the user can
+    edit any region's divider position, items, and further splits
+    without leaving the popup. Buttons stamp `target_name` on the
+    operators so they address the right leaf despite active_object
+    being the opening cage.
+
+    Per-leaf section layout:
+      - Header: leaf name + side label (Left/Right/Bottom/Top)
+      - Divider Thickness (parent split)
+      - Region Size + lock (child 0 only - walker reads child 0's size
+        and computes child 1 as the remainder; child 1 shows a hint)
+      - Add Division / Add Fixed Shelf (subdivide further)
+      - Items section
+    """
+    leaves = list(_walk_tree_leaves(opening_obj))
+    if not leaves:
+        layout.label(text="(no regions)", icon='INFO')
+        return
+    for leaf, sp_obj, child_index, depth in leaves:
+        rp = leaf.face_frame_interior_region
+        sp = sp_obj.face_frame_interior_split
+
+        if sp.axis == 'H':
+            side = "Bottom" if child_index == 0 else "Top"
+        else:
+            side = "Left" if child_index == 0 else "Right"
+
+        box = layout.box()
+        header = box.row(align=True)
+        # Triangle toggle drives the per-region `expanded` prop.
+        # Collapsed by default keeps the popup short; user expands
+        # only the regions they want to edit.
+        tri_icon = 'TRIA_DOWN' if rp.expanded else 'TRIA_RIGHT'
+        header.prop(rp, 'expanded', text="", icon=tri_icon, emboss=False)
+        # Depth indent so nested regions read as visually nested
+        # even though all leaves are flat-listed.
+        if depth > 0:
+            header.label(text="  " * depth + "")
+        header.label(
+            text=f"{leaf.name}  -  {side}",
+            icon='MESH_PLANE',
+        )
+
+        if not rp.expanded:
+            continue
+
+        col = box.column(align=True)
+        col.prop(sp, 'divider_thickness', text="Divider Thickness")
+
+        # Both children carry an editable size now that sibling
+        # redistribution honors locks. Editing either side moves the
+        # divider; the unlocked sibling absorbs the remainder.
+        size_row = col.row(align=True)
+        field = size_row.row(align=True)
+        field.enabled = rp.unlock_size
+        field.prop(rp, 'size', text="Region Size")
+        lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
+        size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
+
+        split_row = box.row(align=True)
+        op_div = split_row.operator(
+            "hb_face_frame.add_interior_division",
+            text="Add Division", icon='MOD_ARRAY',
+        )
+        op_div.target_name = leaf.name
+        op_fs = split_row.operator(
+            "hb_face_frame.add_interior_fixed_shelf",
+            text="Add Fixed Shelf", icon='SNAP_FACE',
+        )
+        op_fs.target_name = leaf.name
+
+        box.separator()
+        box.label(text="Interior Items")
+        _draw_interior_items_section(box, rp, target_name=leaf.name)
+
+
+def draw_interior_region_properties(layout, leaf_obj, opening_obj):
+    """N-panel content when an interior region (leaf cage) is active.
+    Shows the parent split's axis + divider thickness, this leaf's
+    size (the divider position handle), Add Division / Add Fixed Shelf
+    for further subdivision, and the leaf's interior_items list.
+    """
+    rp = leaf_obj.face_frame_interior_region
+    parent = leaf_obj.parent
+    if parent is None or not parent.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+        layout.label(text="Region with no parent split", icon='ERROR')
+        return
+    sp = parent.face_frame_interior_split
+    child_index = leaf_obj.get('hb_interior_child_index', 0)
+
+    # Header: which side of the split this leaf is on
+    if sp.axis == 'H':
+        side = "Bottom" if child_index == 0 else "Top"
+    else:
+        side = "Left" if child_index == 0 else "Right"
+    header = "Interior Region"
+    if opening_obj is not None:
+        header += f" ({side} of {opening_obj.name})"
+    layout.label(text=header, icon='MESH_PLANE')
+
+    # Divider geometry: parent split's axis label + thickness, and
+    # this leaf's own size (editing it moves the divider when this
+    # leaf is the lower/left child; for the upper/right leaf the size
+    # is currently advisory until sibling redistribution is wired).
+    col = layout.column(align=True)
+    axis_label = "Fixed Shelf" if sp.axis == 'H' else "Division"
+    col.label(text=f"Parent Split: {axis_label}")
+    col.prop(sp, 'divider_thickness', text="Divider Thickness")
+
+    size_row = col.row(align=True)
+    field = size_row.row(align=True)
+    field.enabled = rp.unlock_size
+    field.prop(rp, 'size', text="Region Size")
+    lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
+    size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
+
+    layout.separator()
+
+    # Subdivide further: same operators as the opening's panel, but
+    # they target this leaf when run with it active.
+    split_row = layout.row(align=True)
+    split_row.operator(
+        "hb_face_frame.add_interior_division",
+        text="Add Division", icon='MOD_ARRAY',
+    )
+    split_row.operator(
+        "hb_face_frame.add_interior_fixed_shelf",
+        text="Add Fixed Shelf", icon='SNAP_FACE',
+    )
+
+    layout.separator()
+    layout.label(text="Interior Items")
+    _draw_interior_items_section(layout, rp)
+
 
 def draw_mid_stile_properties(layout, root, msi):
     """All editable properties of a single mid stile."""
@@ -657,7 +954,8 @@ class HB_FACE_FRAME_PT_selection(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         kind = find_active_selection(context)[0]
-        return kind in ('bay', 'opening', 'mid_stile', 'end_stile', 'rail')
+        return kind in ('bay', 'opening', 'interior_region',
+                        'mid_stile', 'end_stile', 'rail')
 
     def draw(self, context):
         sel = find_active_selection(context)
@@ -666,6 +964,8 @@ class HB_FACE_FRAME_PT_selection(bpy.types.Panel):
             draw_bay_properties(self.layout, sel[1])
         elif kind == 'opening':
             draw_opening_properties(self.layout, sel[1])
+        elif kind == 'interior_region':
+            draw_interior_region_properties(self.layout, sel[1], sel[2])
         elif kind == 'mid_stile':
             draw_mid_stile_properties(self.layout, sel[3], sel[2])
         elif kind == 'end_stile':

@@ -3,6 +3,7 @@ import bpy
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
+from .. import props_hb_face_frame
 from ....units import inch
 from .... import hb_utils
 from ...frameless.operators.ops_placement import toggle_cabinet_color
@@ -841,10 +842,56 @@ class hb_face_frame_OT_mid_stile_prompts(bpy.types.Operator):
         ui_face_frame.draw_mid_stile_properties(self.layout, root, msi)
 
 
+def _resolve_interior_target(operator, context):
+    """Return the active interior target object for an operator,
+    honoring an explicit `target_name` set by the inline opening
+    popup when present, else falling back to context.active_object.
+    Used so buttons rendered inside the opening's modal popup can
+    address a specific leaf without changing the active object.
+    """
+    name = getattr(operator, 'target_name', '') or ''
+    if name:
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            return obj
+    return context.active_object
+
+
+def _interior_items_target(obj):
+    """Return the props object whose `interior_items` collection should
+    be edited by add/remove operators when `obj` is active. Returns
+    None for objects that don't carry items (cabinet, bay, parts).
+
+    - Opening cage with no tree: opening's flat interior_items.
+    - Opening cage with a tree: None (the user must drill into a leaf).
+    - Interior region (leaf): the leaf's interior_items.
+    """
+    if obj.get(types_face_frame.TAG_OPENING_CAGE):
+        # When the opening has a tree, items live on leaves and the
+        # opening's flat collection is dead. Block direct edits to
+        # avoid silent writes the walker would never read.
+        has_tree = any(
+            c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+            or c.get(types_face_frame.TAG_INTERIOR_REGION)
+            for c in obj.children
+        )
+        if has_tree:
+            return None
+        return obj.face_frame_opening
+    if obj.get(types_face_frame.TAG_INTERIOR_REGION):
+        return obj.face_frame_interior_region
+    return None
+
+
 class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
     """Append a new interior item to the active opening's collection.
-    Auto-seeds shelf_qty for ADJUSTABLE_SHELF based on the opening's
-    current interior height; the user can edit the count afterward.
+    Auto-seeds qty fields where applicable; field defaults on
+    Face_Frame_Interior_Item supply the rest, and the user edits in
+    the panel afterward.
+
+    The half_depth flag is a shortcut: when on, sets the new item's
+    kind to ADJUSTABLE_SHELF and bumps shelf_setback to 6" (a half-
+    depth shelf is just a deeper-setback adjustable shelf).
     """
     bl_idname = "hb_face_frame.add_interior_item"
     bl_label = "Add Interior Item"
@@ -852,38 +899,61 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
 
     kind: bpy.props.EnumProperty(
         name="Kind",
-        items=[
-            ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Auto-spaced shelves on shelf pins"),
-            ('ACCESSORY',        "Accessory",          "Free-text accessory label"),
-        ],
+        items=props_hb_face_frame.Face_Frame_Interior_Item.INTERIOR_KIND_ITEMS,
         default='ADJUSTABLE_SHELF',
+    )  # type: ignore
+
+    half_depth: bpy.props.BoolProperty(
+        name="Half Depth",
+        description="Create a half-depth adjustable shelf (kind = ADJUSTABLE_SHELF, shelf_setback = 6\")",
+        default=False,
+    )  # type: ignore
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name",
+        description="Object name to target instead of active_object "
+                    "(used when the panel renders inside a modal popup)",
+        default="",
     )  # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and bool(obj.get(types_face_frame.TAG_OPENING_CAGE))
+        if obj is None:
+            return False
+        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
+                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
 
     def execute(self, context):
-        opening_obj = context.active_object
-        if not opening_obj or not opening_obj.get(types_face_frame.TAG_OPENING_CAGE):
-            self.report({'WARNING'}, "Select an opening first")
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            self.report({'WARNING'}, "Could not resolve target")
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            self.report({'WARNING'},
+                        "Select an opening or interior region first")
             return {'CANCELLED'}
 
-        op_props = opening_obj.face_frame_opening
-        item = op_props.interior_items.add()
-        item.kind = self.kind
+        item = target_props.interior_items.add()
+        if self.half_depth:
+            # The half-depth preset is a kind override: regardless of
+            # what kind the operator was called with, we land on an
+            # adjustable shelf with the deeper setback.
+            item.kind = 'ADJUSTABLE_SHELF'
+            item.shelf_setback = inch(6.0)
+        else:
+            item.kind = self.kind
 
-        # ADJUSTABLE_SHELF: shelf_qty is left at the IntProperty default
-        # (1) and gets recomputed by the recalc since unlock_shelf_qty
-        # defaults to False. ACCESSORY: label stays at its default until
-        # the user edits it.
+        # Field defaults on the prop class (shelf_qty=1, qty=2, tray_qty=3,
+        # vanity_z=11", ...) cover the initial values; the recalc owns
+        # any auto-recompute (shelf_qty when unlock_shelf_qty is False).
 
-        op_props.interior_items_index = len(op_props.interior_items) - 1
+        target_props.interior_items_index = len(target_props.interior_items) - 1
         # Property writes above already trigger update_cabinet_dim,
         # but call recalc explicitly so the new parts appear even if
         # the update path was suppressed by a re-entrance guard.
-        root = types_face_frame.find_cabinet_root(opening_obj)
+        root = types_face_frame.find_cabinet_root(target)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
         return {'FINISHED'}
@@ -904,24 +974,272 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
         default=-1,
     )  # type: ignore
 
+    target_name: bpy.props.StringProperty(
+        name="Target Name",
+        description="Object name to target instead of active_object",
+        default="",
+    )  # type: ignore
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        if obj is None or not obj.get(types_face_frame.TAG_OPENING_CAGE):
+        if obj is None:
             return False
-        return len(obj.face_frame_opening.interior_items) > 0
+        target_props = _interior_items_target(obj)
+        if target_props is None:
+            return False
+        return len(target_props.interior_items) > 0
 
     def execute(self, context):
-        opening_obj = context.active_object
-        op_props = opening_obj.face_frame_opening
-        idx = self.index if self.index >= 0 else op_props.interior_items_index
-        if 0 <= idx < len(op_props.interior_items):
-            op_props.interior_items.remove(idx)
-            if op_props.interior_items_index >= len(op_props.interior_items):
-                op_props.interior_items_index = max(
-                    0, len(op_props.interior_items) - 1
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            return {'CANCELLED'}
+        idx = (self.index if self.index >= 0
+               else target_props.interior_items_index)
+        if 0 <= idx < len(target_props.interior_items):
+            target_props.interior_items.remove(idx)
+            if target_props.interior_items_index >= len(target_props.interior_items):
+                target_props.interior_items_index = max(
+                    0, len(target_props.interior_items) - 1
                 )
-        root = types_face_frame.find_cabinet_root(opening_obj)
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Interior split operators
+# ---------------------------------------------------------------------------
+# Two operators (Add Division, Add Fixed Shelf) plus a shared splitter that
+# handles both "first split of a flat opening" (the opening's items migrate
+# onto the lower/left child) and "subdivide an existing leaf" (the leaf
+# becomes the lower/left child, a fresh empty leaf is the upper/right).
+def _read_cage_dims(obj):
+    """Return cage_dim_x/y/z dict by reading 'Dim X/Y/Z' inputs off the
+    object's geometry node modifier. Used by the split operator to seed
+    the new children's sizes from the active target's current rect.
+    """
+    rect = {'cage_dim_x': 0.0, 'cage_dim_y': 0.0, 'cage_dim_z': 0.0}
+    nm = next((m for m in obj.modifiers if m.type == 'NODES'), None)
+    if not (nm and nm.node_group):
+        return rect
+    for sk in nm.node_group.interface.items_tree:
+        if sk.in_out != 'INPUT':
+            continue
+        if sk.name == 'Dim X':
+            rect['cage_dim_x'] = nm.get(sk.identifier, 0.0) or 0.0
+        elif sk.name == 'Dim Y':
+            rect['cage_dim_y'] = nm.get(sk.identifier, 0.0) or 0.0
+        elif sk.name == 'Dim Z':
+            rect['cage_dim_z'] = nm.get(sk.identifier, 0.0) or 0.0
+    return rect
+
+
+def _copy_interior_items(src, dst):
+    """Append every item in src CollectionProperty into dst, copying all
+    user-facing fields. Used by the flat -> tree migration on first split
+    and (later) by tree collapse.
+    """
+    for s in src:
+        d = dst.add()
+        for prop in s.bl_rna.properties:
+            if prop.identifier == 'rna_type' or prop.is_readonly:
+                continue
+            try:
+                setattr(d, prop.identifier, getattr(s, prop.identifier))
+            except (AttributeError, TypeError):
+                # Skip props we can't copy (pointer types, etc.); none
+                # of those exist on Face_Frame_Interior_Item today, but
+                # the loop is defensive against future additions.
+                pass
+
+
+def _split_active_region(target, axis):
+    """Insert a new split node + two child leaves at the position of
+    `target`. axis = 'V' (vertical divider) or 'H' (horizontal divider).
+    Handles both target=opening (flat -> tree) and target=existing leaf
+    (subdivide). All initial size writes are bracketed by the
+    _DISTRIBUTING_WIDTHS guard so the auto-lock-on-edit callback
+    treats them as system writes (the user just clicked "Add" - they
+    didn't type a custom size).
+    """
+    is_flat_opening = bool(target.get(types_face_frame.TAG_OPENING_CAGE))
+    is_leaf = bool(target.get(types_face_frame.TAG_INTERIOR_REGION))
+    if not (is_flat_opening or is_leaf):
+        return None
+
+    rect = _read_cage_dims(target)
+    parent_dim = (rect['cage_dim_x'] if axis == 'V'
+                  else rect['cage_dim_z'])
+    div_t = inch(0.75)
+    half = max(0.0, (parent_dim - div_t) / 2.0)
+
+    root = types_face_frame.find_cabinet_root(target)
+    guard_id = id(root) if root is not None else None
+
+    def _seed_size(props, value, unlock):
+        """Write size + unlock_size as a system-style seed: bracketed
+        by the redistribution guard so the size update callback skips
+        the auto-lock (user didn't type this value)."""
+        if guard_id is not None:
+            types_face_frame._DISTRIBUTING_WIDTHS.add(guard_id)
+        try:
+            props.size = value
+            props.unlock_size = unlock
+        finally:
+            if guard_id is not None:
+                types_face_frame._DISTRIBUTING_WIDTHS.discard(guard_id)
+
+    # Create the split node empty
+    split = bpy.data.objects.new('Interior Split', None)
+    bpy.context.scene.collection.objects.link(split)
+    split.empty_display_type = 'PLAIN_AXES'
+    split.empty_display_size = 0.001
+    split[types_face_frame.TAG_INTERIOR_SPLIT_NODE] = True
+    sp = split.face_frame_interior_split
+    sp.axis = axis
+    sp.divider_thickness = div_t
+
+    if is_flat_opening:
+        opening = target
+        split.parent = opening
+        split.location = (0.0, 0.0, 0.0)
+
+        # Lower/left child: existing items migrate here. Per the locked
+        # design, items move to lower/left on first split.
+        leaf_a = types_face_frame.FaceFrameInteriorRegion()
+        leaf_a.create('Region 1')
+        leaf_a.obj.parent = split
+        leaf_a.obj['hb_interior_child_index'] = 0
+        _seed_size(leaf_a.obj.face_frame_interior_region, half, False)
+        _copy_interior_items(
+            opening.face_frame_opening.interior_items,
+            leaf_a.obj.face_frame_interior_region.interior_items,
+        )
+        opening.face_frame_opening.interior_items.clear()
+
+        # Upper/right child: empty leaf
+        leaf_b = types_face_frame.FaceFrameInteriorRegion()
+        leaf_b.create('Region 2')
+        leaf_b.obj.parent = split
+        leaf_b.obj['hb_interior_child_index'] = 1
+        _seed_size(leaf_b.obj.face_frame_interior_region, half, False)
+        return split
+
+    # Subdivide existing leaf: split node takes leaf's slot in parent;
+    # leaf becomes child 0; a new empty leaf becomes child 1.
+    leaf = target
+    leaf_parent = leaf.parent
+    leaf_index = leaf.get('hb_interior_child_index', 0)
+    rp_existing = leaf.face_frame_interior_region
+
+    # Hand the leaf's current size + unlock to the new split (which now
+    # occupies the leaf's slot).
+    _seed_size(sp, rp_existing.size, rp_existing.unlock_size)
+
+    split.parent = leaf_parent
+    split['hb_interior_child_index'] = leaf_index
+    leaf.parent = split
+    leaf['hb_interior_child_index'] = 0
+    _seed_size(rp_existing, half, False)
+
+    leaf_b = types_face_frame.FaceFrameInteriorRegion()
+    leaf_b.create('Region')
+    leaf_b.obj.parent = split
+    leaf_b.obj['hb_interior_child_index'] = 1
+    _seed_size(leaf_b.obj.face_frame_interior_region, half, False)
+    return split
+
+
+class hb_face_frame_OT_add_interior_division(bpy.types.Operator):
+    """Add a vertical division to the active opening or interior leaf,
+    splitting it into a left and a right region.
+    """
+    bl_idname = "hb_face_frame.add_interior_division"
+    bl_label = "Add Interior Division"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name", default="",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
+                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        # When the opening already has a tree, the user must pick a leaf
+        # to subdivide further. Block here so the operator is unambiguous.
+        if (target.get(types_face_frame.TAG_OPENING_CAGE)
+                and any(c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+                        or c.get(types_face_frame.TAG_INTERIOR_REGION)
+                        for c in target.children)):
+            self.report({'WARNING'},
+                        "Opening already has interior splits - "
+                        "select a region to subdivide")
+            return {'CANCELLED'}
+
+        if _split_active_region(target, axis='V') is None:
+            self.report({'WARNING'},
+                        "Select an opening or interior region first")
+            return {'CANCELLED'}
+
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
+    """Add a horizontal fixed shelf to the active opening or interior
+    leaf, splitting it into a bottom and a top region.
+    """
+    bl_idname = "hb_face_frame.add_interior_fixed_shelf"
+    bl_label = "Add Interior Fixed Shelf"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name", default="",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
+                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        if (target.get(types_face_frame.TAG_OPENING_CAGE)
+                and any(c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+                        or c.get(types_face_frame.TAG_INTERIOR_REGION)
+                        for c in target.children)):
+            self.report({'WARNING'},
+                        "Opening already has interior splits - "
+                        "select a region to subdivide")
+            return {'CANCELLED'}
+
+        if _split_active_region(target, axis='H') is None:
+            self.report({'WARNING'},
+                        "Select an opening or interior region first")
+            return {'CANCELLED'}
+
+        root = types_face_frame.find_cabinet_root(target)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)
         return {'FINISHED'}
@@ -1526,6 +1844,8 @@ classes = (
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
     hb_face_frame_OT_remove_interior_item,
+    hb_face_frame_OT_add_interior_division,
+    hb_face_frame_OT_add_interior_fixed_shelf,
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
     hb_face_frame_OT_insert_bay,

@@ -2662,10 +2662,13 @@ def auto_shelf_qty(opening_height):
     return max(1, int((opening_height or 0.0) / inch(12.0)))
 
 
-def _adjustable_shelf_descriptors(rect, cage_dim_y, qty):
-    """Build descriptors for `qty` evenly-spaced shelves in this opening.
-    Returns an empty list if qty <= 0 or the cage is too short to hold
-    a single shelf at the requested thickness.
+def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
+                              kind, role, name_prefix):
+    """Stacked horizontal shelves filling a region. Geometry is
+    identical for adjustable and glass shelves; the kind/role tag
+    drives downstream material handling and selection. setback is
+    per-item so the half-depth preset (which bumps shelf_setback to
+    6") can request a deeper front gap on individual items.
     """
     if qty <= 0:
         return []
@@ -2678,7 +2681,7 @@ def _adjustable_shelf_descriptors(rect, cage_dim_y, qty):
     spacing = interior_h / (qty + 1)
 
     length = max(0.0, cage_dim_x - 2 * SHELF_X_CLEARANCE)
-    width = max(0.0, cage_dim_y - SHELF_FRONT_SETBACK - SHELF_BACK_SETBACK)
+    width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
 
     items = []
     for k in range(qty):
@@ -2686,13 +2689,28 @@ def _adjustable_shelf_descriptors(rect, cage_dim_y, qty):
         # gap before the first shelf and one after the last.
         z = (k + 1) * spacing + k * SHELF_THICKNESS
         items.append({
-            'kind':     'ADJUSTABLE_SHELF',
-            'role':     'ADJUSTABLE_SHELF',
-            'name':     f'Adjustable Shelf {k + 1}',
-            'position': (SHELF_X_CLEARANCE, SHELF_FRONT_SETBACK, z),
+            'kind':     kind,
+            'role':     role,
+            'name':     f'{name_prefix} {k + 1}',
+            'orientation': 'HORIZONTAL',
+            'position': (SHELF_X_CLEARANCE, setback, z),
             'dims':     (length, width, SHELF_THICKNESS),
         })
     return items
+
+
+def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback):
+    return _shelf_stack_descriptors(
+        rect, cage_dim_y, qty, setback,
+        'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Adjustable Shelf',
+    )
+
+
+def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback):
+    return _shelf_stack_descriptors(
+        rect, cage_dim_y, qty, setback,
+        'GLASS_SHELF', 'GLASS_SHELF', 'Glass Shelf',
+    )
 
 
 def _accessory_label_descriptor(rect, cage_dim_y, label):
@@ -2720,6 +2738,245 @@ def _accessory_label_descriptor(rect, cage_dim_y, label):
     }
 
 
+# ---------------------------------------------------------------------------
+# Pullout / rollout assemblies
+# ---------------------------------------------------------------------------
+# A pullout assembly is N stacked items (flat shelves for PULLOUT_SHELF, drawer
+# boxes for ROLLOUT) plus 4 vertical side spacers (front-left, back-left,
+# front-right, back-right). The spacers are the surface slide hardware mounts
+# to; they bridge any face frame inset that would otherwise leave the slide
+# unsupported. Spacer thickness uses the standard side panel stock; depth-axis
+# extent (the user-facing 'spacer_height' prop) is the slide mounting pad
+# width and defaults to 2".
+PULLOUT_SPACER_THICKNESS = inch(0.5)
+PULLOUT_SPACER_Y_OFFSET = inch(2.5)
+
+
+def _assembly_spacers(rect, spacer_height, kind, role, name_prefix):
+    """Four vertical spacer parts for a pullout/rollout assembly. Origin
+    convention for VERTICAL parts: position.y is the back face of the
+    spacer's Y extent (mirror_y at materialize time fans the width
+    forward in -Y), position.z is the bottom (mirror_z fans length up
+    in +Z).
+    """
+    cage_dim_x = rect['cage_dim_x']
+    cage_dim_y = rect['cage_dim_y']
+    cage_dim_z = rect['cage_dim_z']
+
+    # Back face of front spacer = front offset + spacer_height.
+    front_back_y = PULLOUT_SPACER_Y_OFFSET + spacer_height
+    # Back face of back spacer = cage_dim_y - PULLOUT_SPACER_Y_OFFSET.
+    back_back_y = cage_dim_y - PULLOUT_SPACER_Y_OFFSET
+
+    spacer_dims = (cage_dim_z, spacer_height, PULLOUT_SPACER_THICKNESS)
+    out = []
+    sides = [
+        ('Front Left',  0.0,                                   front_back_y),
+        ('Back Left',   0.0,                                   back_back_y),
+        ('Front Right', cage_dim_x - PULLOUT_SPACER_THICKNESS, front_back_y),
+        ('Back Right',  cage_dim_x - PULLOUT_SPACER_THICKNESS, back_back_y),
+    ]
+    for side_name, x, y in sides:
+        out.append({
+            'kind':         kind,
+            'role':         role,
+            'name':         f'{name_prefix} {side_name}',
+            'orientation':  'VERTICAL',
+            'position':     (x, y, 0.0),
+            'dims':         spacer_dims,
+        })
+    return out
+
+
+def _pullout_shelf_descriptors(rect, cage_dim_y, item):
+    qty = item.qty
+    if qty <= 0:
+        return []
+    cage_dim_x = rect['cage_dim_x']
+    item_height = item.pullout_thickness
+    bottom_gap = item.bottom_gap
+    distance_between = item.distance_between
+    setback = item.item_setback
+    spacer_height = item.spacer_height
+
+    length = max(0.0, cage_dim_x - 2 * PULLOUT_SPACER_THICKNESS)
+    width = max(0.0, cage_dim_y - setback)
+
+    out = []
+    for k in range(qty):
+        z = bottom_gap + k * (item_height + distance_between)
+        out.append({
+            'kind':         'PULLOUT_SHELF',
+            'role':         'PULLOUT_SHELF',
+            'name':         f'Pullout Shelf {k + 1}',
+            'orientation':  'HORIZONTAL',
+            'position':     (PULLOUT_SPACER_THICKNESS, setback, z),
+            'dims':         (length, width, item_height),
+        })
+    out.extend(_assembly_spacers(
+        rect, spacer_height, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
+        'Pullout Spacer',
+    ))
+    return out
+
+
+def _rollout_descriptors(rect, cage_dim_y, item):
+    qty = item.qty
+    if qty <= 0:
+        return []
+    cage_dim_x = rect['cage_dim_x']
+    item_height = item.rollout_height
+    bottom_gap = item.bottom_gap
+    distance_between = item.distance_between
+    setback = item.item_setback
+    spacer_height = item.spacer_height
+
+    box_dx = max(0.0, cage_dim_x - 2 * PULLOUT_SPACER_THICKNESS)
+    box_dy = max(0.0, cage_dim_y - setback)
+
+    out = []
+    for k in range(qty):
+        z = bottom_gap + k * (item_height + distance_between)
+        out.append({
+            'kind':         'ROLLOUT_BOX',
+            'role':         'ROLLOUT_BOX',
+            'name':         f'Rollout Box {k + 1}',
+            'orientation':  'BOX',
+            'position':     (PULLOUT_SPACER_THICKNESS, setback, z),
+            'dims':         (box_dx, box_dy, item_height),
+        })
+    out.extend(_assembly_spacers(
+        rect, spacer_height, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
+        'Rollout Spacer',
+    ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Tray dividers
+# ---------------------------------------------------------------------------
+# Vertical thin dividers spaced evenly across the opening's X span. With
+# Remove Locked Shelf off (default), the dividers stop at the underside
+# of a horizontal locked shelf at tray_opening_height; with it on, the
+# dividers run the full opening height. The locked shelf carries its own
+# part role so the wipe set picks it up alongside the dividers.
+def _tray_dividers_descriptors(rect, cage_dim_y, item):
+    qty = item.tray_qty
+    if qty <= 0:
+        return []
+    cage_dim_x = rect['cage_dim_x']
+    cage_dim_z = rect['cage_dim_z']
+    div_thickness = item.tray_divider_thickness
+    setback = item.tray_setback
+    remove_shelf = item.tray_remove_shelf
+    opening_height = item.tray_opening_height
+
+    if remove_shelf:
+        div_length = cage_dim_z
+    else:
+        # Dividers stop just below the locked shelf's bottom face.
+        div_length = max(0.0, opening_height - SHELF_THICKNESS)
+
+    div_width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
+
+    # Equal regions: span_x = qty * div_thickness + (qty + 1) * gap.
+    span_x = cage_dim_x
+    div_spacing = (span_x - qty * div_thickness) / (qty + 1)
+
+    out = []
+    for k in range(qty):
+        x = (k + 1) * div_spacing + k * div_thickness
+        out.append({
+            'kind':         'TRAY_DIVIDER',
+            'role':         'TRAY_DIVIDER',
+            'name':         f'Tray Divider {k + 1}',
+            'orientation':  'VERTICAL',
+            'position':     (x, cage_dim_y - SHELF_BACK_SETBACK, 0.0),
+            'dims':         (div_length, div_width, div_thickness),
+        })
+
+    if not remove_shelf:
+        shelf_length = max(0.0, cage_dim_x - 2 * SHELF_X_CLEARANCE)
+        shelf_width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
+        out.append({
+            'kind':         'TRAY_LOCKED_SHELF',
+            'role':         'TRAY_LOCKED_SHELF',
+            'name':         'Tray Locked Shelf',
+            'orientation':  'HORIZONTAL',
+            'position':     (SHELF_X_CLEARANCE, setback,
+                             max(0.0, opening_height - SHELF_THICKNESS)),
+            'dims':         (shelf_length, shelf_width, SHELF_THICKNESS),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Vanity shelves
+# ---------------------------------------------------------------------------
+# Pair of L/R side-mounted shelves around plumbing, on corbel supports.
+# Single Z, mirrored L/R lengths. The corbels are vertical pieces that
+# tuck under the inboard end of each shelf and run from floor to shelf
+# height. Hardcoded depth/thickness/inset; the user-facing knobs are
+# vanity_z (height) and vanity_length (horizontal extent of each shelf).
+VANITY_SUPPORT_DEPTH = inch(1.5)
+VANITY_SUPPORT_THICKNESS = inch(0.5)
+VANITY_SUPPORT_INSET = inch(0.375)
+
+
+def _vanity_shelves_descriptors(rect, cage_dim_y, item):
+    cage_dim_x = rect['cage_dim_x']
+    z = item.vanity_z
+    length = item.vanity_length
+
+    out = []
+    # Left shelf: anchored at x=0
+    out.append({
+        'kind':         'VANITY_SHELF',
+        'role':         'VANITY_SHELF',
+        'name':         'Vanity Left Shelf',
+        'orientation':  'HORIZONTAL',
+        'position':     (0.0, 0.0, z),
+        'dims':         (length, cage_dim_y, SHELF_THICKNESS),
+    })
+    # Right shelf: anchored at x = cage_dim_x - length
+    out.append({
+        'kind':         'VANITY_SHELF',
+        'role':         'VANITY_SHELF',
+        'name':         'Vanity Right Shelf',
+        'orientation':  'HORIZONTAL',
+        'position':     (max(0.0, cage_dim_x - length), 0.0, z),
+        'dims':         (length, cage_dim_y, SHELF_THICKNESS),
+    })
+
+    # Vertical corbel supports below each shelf, at the inboard end.
+    # VERTICAL convention: position.y = back face of part's Y extent
+    # (mirror_y at materialize fans width forward in -Y), position.z = 0
+    # (mirror_z fans length up). Length = vanity_z (full corbel height).
+    support_dims = (z, VANITY_SUPPORT_DEPTH, VANITY_SUPPORT_THICKNESS)
+    # Left corbel inboard X: shelf right edge minus inset, minus thickness
+    left_x = max(0.0, length - VANITY_SUPPORT_INSET - VANITY_SUPPORT_THICKNESS)
+    # Right corbel inboard X: cage_dim_x - length + inset
+    right_x = min(cage_dim_x - VANITY_SUPPORT_THICKNESS,
+                  cage_dim_x - length + VANITY_SUPPORT_INSET)
+    out.append({
+        'kind':         'VANITY_SUPPORT',
+        'role':         'VANITY_SUPPORT',
+        'name':         'Vanity Left Support',
+        'orientation':  'VERTICAL',
+        'position':     (left_x, cage_dim_y, 0.0),
+        'dims':         support_dims,
+    })
+    out.append({
+        'kind':         'VANITY_SUPPORT',
+        'role':         'VANITY_SUPPORT',
+        'name':         'Vanity Right Support',
+        'orientation':  'VERTICAL',
+        'position':     (right_x, cage_dim_y, 0.0),
+        'dims':         support_dims,
+    })
+    return out
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
@@ -2738,12 +2995,186 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
     for item in opening_props.interior_items:
         if item.kind == 'ADJUSTABLE_SHELF':
             out.extend(_adjustable_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty
+                rect, cage_dim_y, item.shelf_qty, item.shelf_setback
             ))
+        elif item.kind == 'GLASS_SHELF':
+            out.extend(_glass_shelf_descriptors(
+                rect, cage_dim_y, item.shelf_qty, item.shelf_setback
+            ))
+        elif item.kind == 'PULLOUT_SHELF':
+            out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
+        elif item.kind == 'ROLLOUT':
+            out.extend(_rollout_descriptors(rect, cage_dim_y, item))
+        elif item.kind == 'TRAY_DIVIDERS':
+            out.extend(_tray_dividers_descriptors(rect, cage_dim_y, item))
+        elif item.kind == 'VANITY_SHELVES':
+            out.extend(_vanity_shelves_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'ACCESSORY':
             out.append(_accessory_label_descriptor(
                 rect, cage_dim_y, item.accessory_label
             ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Interior split tree
+# ---------------------------------------------------------------------------
+# An opening can either carry a flat interior_items collection (no splits) or
+# a tree of cage children that recursively subdivide it. Tree nodes are:
+#   - split nodes: empties with TAG_INTERIOR_SPLIT_NODE; carry axis +
+#     divider_thickness, with two children sorted by hb_interior_child_index.
+#     'H' axis = horizontal divider (fixed shelf, children stacked in Z);
+#     'V' axis = vertical divider (division, children side by side in X).
+#   - leaves: cages with TAG_INTERIOR_REGION; carry their own interior_items
+#     collection (same item type as the opening's flat collection).
+#
+# When walking a tree, descriptors emitted by the per-leaf builders are in
+# region-local coords and get translated by the leaf's origin offset before
+# joining the opening-level descriptor list. Divider descriptors are emitted
+# directly in opening-local coords from the split-node level.
+
+
+def _interior_tree_root(opening_obj):
+    """Return the opening's tree root node (Empty or cage with one of the
+    interior tags) if a tree exists, else None. The flat path uses the
+    opening's own interior_items when this returns None.
+    """
+    from . import types_face_frame
+    for c in opening_obj.children:
+        if (c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+                or c.get(types_face_frame.TAG_INTERIOR_REGION)):
+            return c
+    return None
+
+
+def _read_interior_node_size(node):
+    """Return (size, unlock_size) for any interior tree node."""
+    from . import types_face_frame
+    if node.get(types_face_frame.TAG_INTERIOR_REGION):
+        rp = node.face_frame_interior_region
+        return rp.size, rp.unlock_size
+    if node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+        sp = node.face_frame_interior_split
+        return sp.size, sp.unlock_size
+    return 0.0, False
+
+
+def _shifted_descriptor(desc, offset):
+    """Return a copy of desc with position translated by offset. Used to
+    lift region-local descriptors from a leaf walk into opening-local
+    coords. Rotation-relative dims are unaffected.
+    """
+    ox, oy, oz = offset
+    px, py, pz = desc['position']
+    out = dict(desc)
+    out['position'] = (px + ox, py + oy, pz + oz)
+    return out
+
+
+def _walk_interior_node(node, rect, origin_offset,
+                        layout, cab_props, out):
+    """Recurse the interior tree. rect is the region's local cage_dim_*;
+    origin_offset is the (x, y, z) of this region's front-left-bottom
+    corner in OPENING-local coords. Leaves emit interior items
+    (translated by origin_offset); split nodes emit one divider
+    descriptor and recurse into children.
+    """
+    from . import types_face_frame
+
+    if node.get(types_face_frame.TAG_INTERIOR_REGION):
+        rp = node.face_frame_interior_region
+        leaf_descs = interior_item_descriptors(
+            layout, rect, cab_props, rp,
+        )
+        for d in leaf_descs:
+            out.append(_shifted_descriptor(d, origin_offset))
+        return
+
+    if not node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+        return
+
+    sp = node.face_frame_interior_split
+    children = sorted(
+        [c for c in node.children
+         if c.get(types_face_frame.TAG_INTERIOR_REGION)
+         or c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)],
+        key=lambda c: c.get('hb_interior_child_index', 0),
+    )
+    if len(children) != 2:
+        # Malformed tree (split with != 2 children) - treat as empty;
+        # the operator that created the split is responsible for keeping
+        # the structure well-formed.
+        return
+
+    div_t = sp.divider_thickness
+    cage_x = rect['cage_dim_x']
+    cage_y = rect['cage_dim_y']
+    cage_z = rect['cage_dim_z']
+
+    # Both children's sizes are honored directly. The recalc-time
+    # redistribution pass guarantees that for any unlocked sibling
+    # the stored size already equals the remainder, so the walker
+    # never has to compute it.
+    size_a, _ = _read_interior_node_size(children[0])
+    size_b, _ = _read_interior_node_size(children[1])
+
+    if sp.axis == 'H':
+        # Horizontal divider (fixed shelf). Children stack in Z.
+        ox, oy, oz = origin_offset
+        # Divider: HORIZONTAL part flush in X and Y, at z = size_a
+        out.append({
+            'kind':         'INTERIOR_FIXED_SHELF',
+            'role':         'INTERIOR_FIXED_SHELF',
+            'name':         f'Fixed Shelf {len(out) + 1}',
+            'orientation':  'HORIZONTAL',
+            'position':     (ox, oy, oz + size_a),
+            'dims':         (cage_x, cage_y, div_t),
+        })
+        lower_rect = {'cage_dim_x': cage_x, 'cage_dim_y': cage_y,
+                      'cage_dim_z': size_a}
+        upper_rect = {'cage_dim_x': cage_x, 'cage_dim_y': cage_y,
+                      'cage_dim_z': size_b}
+        _walk_interior_node(children[0], lower_rect, origin_offset,
+                            layout, cab_props, out)
+        upper_origin = (ox, oy, oz + size_a + div_t)
+        _walk_interior_node(children[1], upper_rect, upper_origin,
+                            layout, cab_props, out)
+    else:
+        # Vertical divider (division). Children stack in X.
+        ox, oy, oz = origin_offset
+        # Divider: VERTICAL part. Origin = back face Y, bottom Z; length
+        # runs +Z, width runs -Y (mirror_y at materialize), thickness
+        # extends in +X from the origin so left face = origin.x.
+        out.append({
+            'kind':         'INTERIOR_DIVISION',
+            'role':         'INTERIOR_DIVISION',
+            'name':         f'Division {len(out) + 1}',
+            'orientation':  'VERTICAL',
+            'position':     (ox + size_a, oy + cage_y, oz),
+            'dims':         (cage_z, cage_y, div_t),
+        })
+        left_rect = {'cage_dim_x': size_a, 'cage_dim_y': cage_y,
+                     'cage_dim_z': cage_z}
+        right_rect = {'cage_dim_x': size_b, 'cage_dim_y': cage_y,
+                      'cage_dim_z': cage_z}
+        _walk_interior_node(children[0], left_rect, origin_offset,
+                            layout, cab_props, out)
+        right_origin = (ox + size_a + div_t, oy, oz)
+        _walk_interior_node(children[1], right_rect, right_origin,
+                            layout, cab_props, out)
+
+
+def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
+    """Top-level entry point for the recalc. Routes through the tree if
+    one exists on `opening_obj`, else falls through to the flat path.
+    """
+    root = _interior_tree_root(opening_obj)
+    if root is None:
+        op_props = opening_obj.face_frame_opening
+        return interior_item_descriptors(layout, rect, cab_props, op_props)
+    out = []
+    _walk_interior_node(root, rect, (0.0, 0.0, 0.0),
+                        layout, cab_props, out)
     return out
 
 

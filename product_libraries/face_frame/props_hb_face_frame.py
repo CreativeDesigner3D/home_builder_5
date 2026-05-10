@@ -296,6 +296,27 @@ def _update_bay_width(self, context):
         types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_interior_size(self, context):
+    """Auto-lock-on-edit for interior tree node sizes (region or split).
+
+    Mirrors _update_bay_width: distinguishes user edits from the
+    redistribution pass by checking the _DISTRIBUTING_WIDTHS guard.
+    User edits flip unlock_size=True so the new size holds during
+    future redistributions; that flip itself fires _update_cabinet_dim
+    which runs the recalc, so we don't call recalc directly here.
+    """
+    from . import types_face_frame
+    root = types_face_frame.find_cabinet_root(self.id_data)
+    if root is None:
+        return
+    if id(root) in types_face_frame._DISTRIBUTING_WIDTHS:
+        return  # system write - skip auto-lock and skip recalc
+    if not self.unlock_size:
+        self.unlock_size = True
+    else:
+        types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
 def _update_bay_kick_height(self, context):
     """Auto-lock-on-edit for Face_Frame_Bay_Props.kick_height.
 
@@ -975,10 +996,22 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     Holds every kind's data side-by-side; the recalc reads only the
     fields relevant to the active kind. New kinds add their own fields
     here and a mapping in INTERIOR_KIND_TO_ROLE.
+
+    Field naming convention:
+      - shared shelf-like fields use shelf_*
+      - shared multi-count assembly fields (PULLOUT_SHELF, ROLLOUT) use
+        the bare names qty / unlock_qty / spacer_height / item_setback /
+        bottom_gap / distance_between / item_height
+      - kind-specific fields use the kind as a prefix (tray_*, vanity_*)
     """
 
     INTERIOR_KIND_ITEMS = [
         ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Set of evenly-spaced shelves on shelf pins"),
+        ('GLASS_SHELF',      "Glass Shelves",      "Adjustable shelves with a glass material override"),
+        ('PULLOUT_SHELF',    "Pullout Shelves",    "Stack of flat shelves on slide hardware"),
+        ('ROLLOUT',          "Rollouts",           "Stack of drawer boxes on slide hardware"),
+        ('TRAY_DIVIDERS',    "Tray Dividers",      "Vertical dividers for trays / cookie sheets, optionally with a locked shelf above"),
+        ('VANITY_SHELVES',   "Vanity Shelves",     "Pair of L/R shelves on corbel supports, around plumbing"),
         ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),
     ]
     kind: EnumProperty(
@@ -986,14 +1019,10 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
-    # ADJUSTABLE_SHELF: count is auto-seeded on creation from the
-    # opening's interior height, then becomes a plain user-editable
-    # number. The auto rule lives in the operator that creates the
-    # item, not here, so changing the rule later doesn't migrate
-    # existing data.
-    # ADJUSTABLE_SHELF: auto-recomputed from opening height every recalc
-    # while unlocked is False. Set unlock_shelf_qty to True to pin a
-    # specific count and stop the auto-recompute.
+    # ADJUSTABLE_SHELF / GLASS_SHELF
+    # shelf_qty is auto-recomputed from opening height every recalc
+    # while unlock_shelf_qty is False. Set unlock_shelf_qty to True to
+    # pin a specific count and stop the auto-recompute.
     shelf_qty: IntProperty(
         name="Shelf Qty", default=1, min=0, max=20,
         update=_update_cabinet_dim,
@@ -1002,6 +1031,118 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Unlock Shelf Qty",
         description="When on, hold the shelf count at the value above instead of auto-computing it from the opening's height",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Front setback for shelf-likes. Default = standard pin clearance;
+    # the half-depth preset bumps this to 6" for a half-depth feel.
+    shelf_setback: FloatProperty(
+        name="Shelf Setback",
+        description="Distance the shelf is pulled back from the front of the cavity",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # PULLOUT_SHELF / ROLLOUT
+    # Multi-count assembly fields. qty defaults to 2 (typical use); the
+    # auto rule (when unlock_qty is False) fills the opening from
+    # item_height + distance_between.
+    qty: IntProperty(
+        name="Qty", default=2, min=0, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_qty: BoolProperty(
+        name="Unlock Qty",
+        description="When on, hold the count at the value above instead of auto-computing it from the opening's height",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Side spacer width: vertical filler the assembly mounts to. The
+    # spacers run the full opening height on both sides, front + back,
+    # giving slide hardware a flush surface that bridges any face frame
+    # inset. Width is the X-dimension of each spacer.
+    spacer_height: FloatProperty(
+        name="Spacer Width",
+        description="Width of the side spacer parts the slides mount to (front and back, both sides)",
+        default=units.inch(2.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    item_setback: FloatProperty(
+        name="Item Setback",
+        description="Front setback for each item in the stack",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bottom_gap: FloatProperty(
+        name="Bottom Gap",
+        description="Gap below the bottom-most item in the stack",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    distance_between: FloatProperty(
+        name="Distance Between",
+        description="Vertical gap between consecutive items in the stack",
+        default=units.inch(6.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Split per kind because the natural defaults are far apart: a
+    # pullout shelf is 0.75" stock; a rollout drawer box is ~3.625" tall.
+    # Sharing the field would force one or the other to be wrong on
+    # creation and on kind switches.
+    pullout_thickness: FloatProperty(
+        name="Pullout Thickness",
+        description="Thickness of each pullout shelf (PULLOUT_SHELF only)",
+        default=units.inch(0.75), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    rollout_height: FloatProperty(
+        name="Rollout Height",
+        description="Height of each rollout drawer box (ROLLOUT only)",
+        default=units.inch(3.625), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # TRAY_DIVIDERS
+    # Vertical dividers; tray_remove_shelf=False adds a horizontal locked
+    # shelf at tray_opening_height that the dividers stop against.
+    tray_qty: IntProperty(
+        name="Tray Qty", default=3, min=1, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_remove_shelf: BoolProperty(
+        name="Remove Locked Shelf",
+        description="When on, dividers run the full opening height. Off = dividers stop at a horizontal locked shelf at Tray Opening Height",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_opening_height: FloatProperty(
+        name="Tray Opening Height",
+        description="Z position of the locked shelf above the tray dividers (only when Remove Locked Shelf is off)",
+        default=units.inch(20.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_divider_thickness: FloatProperty(
+        name="Tray Divider Thickness",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_setback: FloatProperty(
+        name="Tray Setback",
+        description="Front setback for the tray dividers",
+        default=units.inch(1.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # VANITY_SHELVES
+    # Pair of side-mounted shelves around plumbing. Single Z, mirrored
+    # length L/R.
+    vanity_z: FloatProperty(
+        name="Shelf Z",
+        description="Z height of the vanity shelves (both sides)",
+        default=units.inch(11.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    vanity_length: FloatProperty(
+        name="Shelf Length",
+        description="Length of each side shelf (mirrored L and R)",
+        default=units.inch(7.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # ACCESSORY: free-text label (e.g., 'Lazy Susan', 'Trash Pullout').
@@ -1186,6 +1327,79 @@ class Face_Frame_Split_Props(PropertyGroup):
         description="Add a carcass shelf (H-split) or division (V-split) behind each splitter",
         default=True,
         update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Interior_Split_Props(PropertyGroup):
+    """Per-interior-split-node state. Attached to each interior split
+    node Empty as bpy.types.Object.face_frame_interior_split.
+
+    Interior splits subdivide an opening into regions. H-splits are
+    fixed shelves (children stacked in Z; horizontal divider between);
+    V-splits are divisions (children side by side in X; vertical
+    divider between). Children are sorted by hb_interior_child_index
+    (0 = lower / left, 1 = upper / right) and each carries its own
+    size (Face_Frame_Interior_Region_Props.size for leaves, or this
+    same Face_Frame_Interior_Split_Props.size for nested splits).
+    """
+
+    SPLIT_AXIS_ITEMS = [
+        ('H', "Fixed Shelf", "Horizontal divider; children stacked vertically"),
+        ('V', "Division",    "Vertical divider; children side by side"),
+    ]
+    axis: EnumProperty(
+        name="Axis", items=SPLIT_AXIS_ITEMS, default='H',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    size: FloatProperty(
+        name="Size", default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_update_interior_size,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Size",
+        description="Hold this split's size during sibling redistribution",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    divider_thickness: FloatProperty(
+        name="Divider Thickness",
+        description="Thickness of the fixed shelf or division at this split",
+        default=units.inch(0.75), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Interior_Region_Props(PropertyGroup):
+    """Per-leaf-region state. Attached to each leaf cage as
+    bpy.types.Object.face_frame_interior_region.
+
+    A leaf region is a sub-rect of an opening, isolated by zero or
+    more splits in the interior tree. It carries its own
+    interior_items collection (same item type as the opening's flat
+    collection) plus the size/unlock used by sibling redistribution.
+    """
+
+    interior_items: CollectionProperty(type=Face_Frame_Interior_Item)  # type: ignore
+    interior_items_index: IntProperty(default=0)  # type: ignore
+
+    size: FloatProperty(
+        name="Size", default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_update_interior_size,
+    )  # type: ignore
+    unlock_size: BoolProperty(
+        name="Unlock Size",
+        description="Hold this region's size during sibling redistribution",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # UI-only: collapsed by default in the inline tree view to keep
+    # the opening prompts popup short. Toggled by the triangle button
+    # next to each region's header.
+    expanded: BoolProperty(
+        name="Expanded",
+        description="Show this region's size, divider, and items",
+        default=False,
     )  # type: ignore
 
 
@@ -2171,8 +2385,10 @@ classes = (
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
     Face_Frame_Interior_Item,
+    Face_Frame_Interior_Region_Props,
     Face_Frame_Opening_Props,
     Face_Frame_Split_Props,
+    Face_Frame_Interior_Split_Props,
     Face_Frame_Scene_Props,
 )
 
@@ -2190,6 +2406,8 @@ def register():
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
     bpy.types.Object.face_frame_split = PointerProperty(type=Face_Frame_Split_Props)
+    bpy.types.Object.face_frame_interior_split = PointerProperty(type=Face_Frame_Interior_Split_Props)
+    bpy.types.Object.face_frame_interior_region = PointerProperty(type=Face_Frame_Interior_Region_Props)
 
     # Initialize preview collections so thumbnails load on first sidebar draw
     get_library_previews()
@@ -2197,6 +2415,10 @@ def register():
 
 
 def unregister():
+    if hasattr(bpy.types.Object, 'face_frame_interior_region'):
+        del bpy.types.Object.face_frame_interior_region
+    if hasattr(bpy.types.Object, 'face_frame_interior_split'):
+        del bpy.types.Object.face_frame_interior_split
     if hasattr(bpy.types.Object, 'face_frame_split'):
         del bpy.types.Object.face_frame_split
     if hasattr(bpy.types.Object, 'face_frame_opening'):
