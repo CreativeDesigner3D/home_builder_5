@@ -1245,6 +1245,113 @@ class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
+    """Pop a menu of every interior add option (subdivisions and item
+    kinds) for one target. Replaces the older multi-row button grid.
+
+    The target_name property is captured into a closure-based draw
+    function so each menu item stamps the right target on its
+    operator regardless of which leaf was clicked. Lets one Add
+    button serve every leaf in the inline tree view without each
+    leaf needing its own row of buttons.
+    """
+    bl_idname = "hb_face_frame.show_interior_add_menu"
+    bl_label = "Add Interior..."
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name", default="",
+    )  # type: ignore
+
+    def execute(self, context):
+        target_name = self.target_name
+
+        def draw_fn(menu_self, _ctx):
+            layout = menu_self.layout
+
+            # Subdivisions
+            op = layout.operator(
+                "hb_face_frame.add_interior_division",
+                text="Division", icon='MOD_ARRAY',
+            )
+            op.target_name = target_name
+            op = layout.operator(
+                "hb_face_frame.add_interior_fixed_shelf",
+                text="Fixed Shelf", icon='SNAP_FACE',
+            )
+            op.target_name = target_name
+
+            layout.separator()
+
+            # Shelves
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Adjustable Shelf",
+            )
+            op.kind = 'ADJUSTABLE_SHELF'
+            op.half_depth = False
+            op.target_name = target_name
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Glass Shelf",
+            )
+            op.kind = 'GLASS_SHELF'
+            op.half_depth = False
+            op.target_name = target_name
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Half-Depth Shelf",
+            )
+            op.kind = 'ADJUSTABLE_SHELF'
+            op.half_depth = True
+            op.target_name = target_name
+
+            layout.separator()
+
+            # Pullouts / rollouts / tray dividers
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Pullout",
+            )
+            op.kind = 'PULLOUT_SHELF'
+            op.half_depth = False
+            op.target_name = target_name
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Rollout",
+            )
+            op.kind = 'ROLLOUT'
+            op.half_depth = False
+            op.target_name = target_name
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Tray Dividers",
+            )
+            op.kind = 'TRAY_DIVIDERS'
+            op.half_depth = False
+            op.target_name = target_name
+
+            layout.separator()
+
+            # Vanity / accessory
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Vanity Shelves",
+            )
+            op.kind = 'VANITY_SHELVES'
+            op.half_depth = False
+            op.target_name = target_name
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Accessory",
+            )
+            op.kind = 'ACCESSORY'
+            op.half_depth = False
+            op.target_name = target_name
+
+        context.window_manager.popup_menu(
+            draw_fn, title="Add Interior", icon='ADD',
+        )
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Bay rebuild helpers (used by change_bay)
 # ---------------------------------------------------------------------------
@@ -1846,6 +1953,7 @@ classes = (
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_add_interior_division,
     hb_face_frame_OT_add_interior_fixed_shelf,
+    hb_face_frame_OT_show_interior_add_menu,
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
     hb_face_frame_OT_insert_bay,

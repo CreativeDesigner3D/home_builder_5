@@ -311,15 +311,6 @@ def draw_opening_properties(layout, opening_obj):
     )
 
     if not has_tree:
-        split_row = layout.row(align=True)
-        split_row.operator(
-            "hb_face_frame.add_interior_division",
-            text="Add Division", icon='MOD_ARRAY',
-        )
-        split_row.operator(
-            "hb_face_frame.add_interior_fixed_shelf",
-            text="Add Fixed Shelf", icon='SNAP_FACE',
-        )
         _draw_interior_items_section(layout, op)
         return
 
@@ -335,71 +326,14 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
     of context.active_object - required when the panel renders inside
     a modal popup that locks the active object to the opening cage.
     """
-    # Add buttons grouped by category. Three rows keeps the panel
-    # readable without forcing a popover; less common kinds fall on
-    # later rows so the most-used (adjustable shelves, accessory) sit
-    # at the top.
-    add_row1 = layout.row(align=True)
-    add_adj = add_row1.operator(
-        "hb_face_frame.add_interior_item",
-        text="Adjustable", icon='ADD',
+    # Single Add button pops a menu of every option (subdivisions
+    # and item kinds) so the panel stays compact regardless of how
+    # many leaves are visible at once.
+    add_op = layout.operator(
+        "hb_face_frame.show_interior_add_menu",
+        text="Add...", icon='ADD',
     )
-    add_adj.kind = 'ADJUSTABLE_SHELF'
-    add_adj.half_depth = False
-    add_adj.target_name = target_name
-    add_glass = add_row1.operator(
-        "hb_face_frame.add_interior_item",
-        text="Glass", icon='ADD',
-    )
-    add_glass.kind = 'GLASS_SHELF'
-    add_glass.half_depth = False
-    add_glass.target_name = target_name
-    add_half = add_row1.operator(
-        "hb_face_frame.add_interior_item",
-        text="Half Depth", icon='ADD',
-    )
-    add_half.kind = 'ADJUSTABLE_SHELF'
-    add_half.half_depth = True
-    add_half.target_name = target_name
-
-    add_row2 = layout.row(align=True)
-    add_pull = add_row2.operator(
-        "hb_face_frame.add_interior_item",
-        text="Pullout", icon='ADD',
-    )
-    add_pull.kind = 'PULLOUT_SHELF'
-    add_pull.half_depth = False
-    add_pull.target_name = target_name
-    add_roll = add_row2.operator(
-        "hb_face_frame.add_interior_item",
-        text="Rollout", icon='ADD',
-    )
-    add_roll.kind = 'ROLLOUT'
-    add_roll.half_depth = False
-    add_roll.target_name = target_name
-    add_tray = add_row2.operator(
-        "hb_face_frame.add_interior_item",
-        text="Tray Dividers", icon='ADD',
-    )
-    add_tray.kind = 'TRAY_DIVIDERS'
-    add_tray.half_depth = False
-    add_tray.target_name = target_name
-
-    add_row3 = layout.row(align=True)
-    add_van = add_row3.operator(
-        "hb_face_frame.add_interior_item",
-        text="Vanity Shelves", icon='ADD',
-    )
-    add_van.kind = 'VANITY_SHELVES'
-    add_van.half_depth = False
-    add_van.target_name = target_name
-    add_acc = add_row3.operator(
-        "hb_face_frame.add_interior_item",
-        text="Accessory", icon='ADD',
-    )
-    add_acc.kind = 'ACCESSORY'
-    add_acc.half_depth = False
-    add_acc.target_name = target_name
+    add_op.target_name = target_name
 
     if not target_props.interior_items:
         layout.label(text="(none)")
@@ -553,20 +487,9 @@ def _draw_interior_tree_inline(layout, opening_obj):
         lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
         size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
 
-        split_row = box.row(align=True)
-        op_div = split_row.operator(
-            "hb_face_frame.add_interior_division",
-            text="Add Division", icon='MOD_ARRAY',
-        )
-        op_div.target_name = leaf.name
-        op_fs = split_row.operator(
-            "hb_face_frame.add_interior_fixed_shelf",
-            text="Add Fixed Shelf", icon='SNAP_FACE',
-        )
-        op_fs.target_name = leaf.name
-
+        # Items list + Add menu (the menu covers both subdivisions
+        # and item kinds, so no separate subdivide row needed).
         box.separator()
-        box.label(text="Interior Items")
         _draw_interior_items_section(box, rp, target_name=leaf.name)
 
 
@@ -609,20 +532,6 @@ def draw_interior_region_properties(layout, leaf_obj, opening_obj):
     field.prop(rp, 'size', text="Region Size")
     lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
     size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
-
-    layout.separator()
-
-    # Subdivide further: same operators as the opening's panel, but
-    # they target this leaf when run with it active.
-    split_row = layout.row(align=True)
-    split_row.operator(
-        "hb_face_frame.add_interior_division",
-        text="Add Division", icon='MOD_ARRAY',
-    )
-    split_row.operator(
-        "hb_face_frame.add_interior_fixed_shelf",
-        text="Add Fixed Shelf", icon='SNAP_FACE',
-    )
 
     layout.separator()
     layout.label(text="Interior Items")
