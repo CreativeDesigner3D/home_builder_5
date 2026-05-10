@@ -51,9 +51,10 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
         else:
             text = "Select a Room"
 
-        row = layout.row()
+        row = layout.row(align=True)
         row.scale_y = 1.5
         row.menu("HOME_BUILDER_MT_room_list", text=text, icon='LOOP_BACK')
+        row.operator("home_builder.scene_navigator", text="", icon='MENU_PANEL')
 
         hb_scene = context.scene.home_builder
         product_tab = getattr(hb_scene, 'product_tab', 'FRAMELESS')
