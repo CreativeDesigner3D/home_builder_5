@@ -1245,6 +1245,137 @@ class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _collect_subtree_items_into(node, dest_collection):
+    """Recursively walk the interior subtree rooted at `node` and copy
+    every leaf's interior_items into `dest_collection`. Doesn't modify
+    or delete the source tree - the caller handles teardown.
+    """
+    if node.get(types_face_frame.TAG_INTERIOR_REGION):
+        _copy_interior_items(
+            node.face_frame_interior_region.interior_items,
+            dest_collection,
+        )
+        return
+    if not node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+        return
+    children = sorted(
+        [c for c in node.children
+         if c.get(types_face_frame.TAG_INTERIOR_REGION)
+         or c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)],
+        key=lambda c: c.get('hb_interior_child_index', 0),
+    )
+    for c in children:
+        _collect_subtree_items_into(c, dest_collection)
+
+
+class hb_face_frame_OT_remove_interior_split(bpy.types.Operator):
+    """Remove an interior region's parent split, merging both sides
+    of the split (and any nested regions under them) into a single
+    flat list of items.
+
+    If the removed split was the opening's tree root, the merged
+    items fold back to the opening's flat interior_items collection
+    and the opening returns to the no-tree state. Otherwise a new
+    merged leaf takes the split's slot in the grandparent.
+
+    target_name selects which leaf identifies the split to remove
+    (its parent split). When two children share a parent, removing
+    the split via either child gives the same result, so any leaf
+    in the affected pair is a valid target.
+    """
+    bl_idname = "hb_face_frame.remove_interior_split"
+    bl_label = "Remove Interior Split"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name",
+        description="Region object whose parent split should be removed",
+        default="",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        # Either the active object is a region (sidebar) or a leaf
+        # is named via target_name and the active object is the
+        # opening (popup case). Both paths are valid.
+        return bool(obj.get(types_face_frame.TAG_INTERIOR_REGION)
+                    or obj.get(types_face_frame.TAG_OPENING_CAGE))
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None or not target.get(
+                types_face_frame.TAG_INTERIOR_REGION):
+            self.report({'WARNING'},
+                        "Select an interior region first")
+            return {'CANCELLED'}
+
+        parent_split = target.parent
+        if (parent_split is None
+                or not parent_split.get(
+                    types_face_frame.TAG_INTERIOR_SPLIT_NODE)):
+            self.report({'WARNING'},
+                        "Region has no parent split to remove")
+            return {'CANCELLED'}
+
+        grandparent = parent_split.parent
+        is_root_split = (
+            grandparent is not None
+            and grandparent.get(types_face_frame.TAG_OPENING_CAGE)
+        )
+        root = types_face_frame.find_cabinet_root(target)
+        guard_id = id(root) if root is not None else None
+
+        if is_root_split:
+            # Fold back to flat opening: merged items go on the
+            # opening's flat collection, entire subtree torn down.
+            opening = grandparent
+            dest = opening.face_frame_opening.interior_items
+            dest.clear()  # flat collection should already be empty
+            for c in list(parent_split.children):
+                _collect_subtree_items_into(c, dest)
+            hb_utils.delete_obj_and_children(parent_split)
+        else:
+            # Replace split with a merged leaf in the grandparent's
+            # slot. The new leaf inherits the split's size + unlock
+            # state so sibling redistribution stays balanced.
+            split_index = parent_split.get('hb_interior_child_index', 0)
+            split_props = parent_split.face_frame_interior_split
+            split_size = split_props.size
+            split_unlock = split_props.unlock_size
+
+            new_leaf = types_face_frame.FaceFrameInteriorRegion()
+            new_leaf.create('Region')
+            new_leaf.obj.parent = grandparent
+            new_leaf.obj['hb_interior_child_index'] = split_index
+
+            # Seed size + unlock as a system write so the user-edit
+            # auto-lock callback skips them.
+            if guard_id is not None:
+                types_face_frame._DISTRIBUTING_WIDTHS.add(guard_id)
+            try:
+                rp = new_leaf.obj.face_frame_interior_region
+                rp.size = split_size
+                rp.unlock_size = split_unlock
+            finally:
+                if guard_id is not None:
+                    types_face_frame._DISTRIBUTING_WIDTHS.discard(guard_id)
+
+            # Gather subtree items into the new leaf, then tear down
+            # the old subtree (children get hauled in by the recursive
+            # delete helper).
+            dest = new_leaf.obj.face_frame_interior_region.interior_items
+            for c in list(parent_split.children):
+                _collect_subtree_items_into(c, dest)
+            hb_utils.delete_obj_and_children(parent_split)
+
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
     """Pop a menu of every interior add option (subdivisions and item
     kinds) for one target. Replaces the older multi-row button grid.
@@ -1953,6 +2084,7 @@ classes = (
     hb_face_frame_OT_remove_interior_item,
     hb_face_frame_OT_add_interior_division,
     hb_face_frame_OT_add_interior_fixed_shelf,
+    hb_face_frame_OT_remove_interior_split,
     hb_face_frame_OT_show_interior_add_menu,
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,

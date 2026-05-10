@@ -487,6 +487,18 @@ def _draw_interior_tree_inline(layout, opening_obj):
         lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
         size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
 
+        # Remove the parent split. Label tracks the split's axis so
+        # it reads naturally for the user (either child of the same
+        # split removes the same divider, so the wording matches the
+        # divider type rather than the side).
+        remove_label = ("Remove Fixed Shelf" if sp.axis == 'H'
+                        else "Remove Division")
+        remove_op = col.operator(
+            "hb_face_frame.remove_interior_split",
+            text=remove_label, icon='X',
+        )
+        remove_op.target_name = leaf.name
+
         # Items list + Add menu (the menu covers both subdivisions
         # and item kinds, so no separate subdivide row needed).
         box.separator()
@@ -532,6 +544,13 @@ def draw_interior_region_properties(layout, leaf_obj, opening_obj):
     field.prop(rp, 'size', text="Region Size")
     lock_icon = 'UNLOCKED' if rp.unlock_size else 'LOCKED'
     size_row.prop(rp, 'unlock_size', text="", icon=lock_icon)
+
+    remove_label = ("Remove Fixed Shelf" if sp.axis == 'H'
+                    else "Remove Division")
+    col.operator(
+        "hb_face_frame.remove_interior_split",
+        text=remove_label, icon='X',
+    )
 
     layout.separator()
     layout.label(text="Interior Items")
