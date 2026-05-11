@@ -112,6 +112,14 @@ def clear_library_previews():
         preview_collections["library_previews"].clear()
 
 
+def get_cabinet_group_category_items(self, context):
+    """Dynamic enum items for the user library category dropdown. Indirect
+    through the operators package so this module doesn't pull operator
+    code in at import time."""
+    from .operators import ops_library
+    return ops_library.get_cabinet_group_categories()
+
+
 # ---------------------------------------------------------------------------
 # Update callbacks
 # ---------------------------------------------------------------------------
@@ -1495,6 +1503,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_misc_library: BoolProperty(name="Show Misc", default=False)  # type: ignore
     show_user_library: BoolProperty(name="Show User Library", default=False)  # type: ignore
 
+    # User library category filter. Items are dynamic so newly-created
+    # subfolders show up without a restart.
+    cabinet_group_category: EnumProperty(
+        name="Category",
+        description="Filter cabinet groups by category subfolder",
+        items=get_cabinet_group_category_items,
+    )  # type: ignore
+
     # ---- Options section toggles ----
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles", default=False)  # type: ignore
     show_finished_ends_options: BoolProperty(name="Show Finished Ends and Backs", default=False)  # type: ignore
@@ -2121,12 +2137,68 @@ class Face_Frame_Scene_Props(PropertyGroup):
         ], columns=2)
 
     # =====================================================================
-    # UI: user library (placeholder for Phase 5)
+    # UI: user library
     # =====================================================================
     def draw_user_library_ui(self, layout, context):
+        from .operators import ops_library
+
+        # Header row: refresh + open-folder. Keeps these one tap away when
+        # the user is iterating on a saved group.
+        row = layout.row()
+        row.label(text="User Library")
+        row.operator('hb_face_frame.refresh_user_library', text="", icon='FILE_REFRESH')
+        row.operator('hb_face_frame.open_user_library_folder', text="", icon='FILE_FOLDER')
+
+        # Create + save sit at the top so the workflow reads top-down:
+        # build a group, save it, browse what's already saved.
+        col = layout.column(align=True)
+        col.operator('hb_face_frame.create_cabinet_group', text="Create Cabinet Group", icon='ADD')
+        col.operator('hb_face_frame.save_cabinet_group_to_user_library',
+                     text="Save to Library", icon='FILE_TICK')
+
+        layout.separator()
+
+        row = layout.row(align=True)
+        row.label(text="Category:")
+        row.prop(self, 'cabinet_group_category', text="")
+
+        category = self.cabinet_group_category if hasattr(self, 'cabinet_group_category') else 'ALL'
+        library_items = ops_library.get_user_library_items(
+            None if category == 'ALL' else category
+        )
+
+        if not library_items:
+            box = layout.box()
+            box.label(text="No saved cabinet groups", icon='INFO')
+            box.label(text="Save a cabinet group to see it here")
+            return
+
         box = layout.box()
-        box.label(text="User Library - coming in Phase 5", icon='INFO')
-        box.label(text="Saved cabinet groups will appear here")
+        box.label(text=f"Saved Groups ({len(library_items)})", icon='ASSET_MANAGER')
+
+        # Two-column grid of saved items. Each cell shows name + delete +
+        # thumbnail (if rendered) + an Add-to-Scene button that fires the
+        # modal load operator.
+        flow = box.column_flow(columns=2, align=True)
+
+        for item in library_items:
+            item_box = flow.box()
+
+            row = item_box.row()
+            row.label(text=item['name'])
+            del_op = row.operator('hb_face_frame.delete_library_item',
+                                  text="", icon='X', emboss=False)
+            del_op.filepath = item['filepath']
+            del_op.item_name = item['name']
+
+            if item['thumbnail']:
+                icon_id = load_library_thumbnail(item['thumbnail'], item['name'])
+                if icon_id:
+                    item_box.template_icon(icon_value=icon_id, scale=5.0)
+
+            op = item_box.operator('hb_face_frame.load_cabinet_group_from_library',
+                                   text="Add to Scene", icon='IMPORT')
+            op.filepath = item['filepath']
 
     # =====================================================================
     # UI: pulls (Options tab)

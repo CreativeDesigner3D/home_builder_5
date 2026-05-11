@@ -2,6 +2,7 @@ from . import ops_cabinet
 from . import ops_countertop
 from . import ops_defaults
 from . import ops_finished_ends
+from . import ops_library
 from . import ops_placement
 from . import op_modify_cabinet
 
@@ -11,6 +12,7 @@ def register():
     ops_countertop.register()
     ops_defaults.register()
     ops_finished_ends.register()
+    ops_library.register()
     ops_placement.register()
     op_modify_cabinet.register()
 
@@ -18,6 +20,7 @@ def register():
 def unregister():
     op_modify_cabinet.unregister()
     ops_placement.unregister()
+    ops_library.unregister()
     ops_finished_ends.unregister()
     ops_defaults.unregister()
     ops_countertop.unregister()

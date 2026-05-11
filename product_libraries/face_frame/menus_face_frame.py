@@ -30,6 +30,21 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.join_cabinets",
                         text="Join Cabinets", icon='AUTOMERGE_ON')
+
+        # Show "Create Cabinet Group" only when more than one cabinet is
+        # in the selection - grouping a single cabinet is rarely useful.
+        # find_cabinet_root walks any selected part up to its root, so the
+        # menu surfaces correctly whether the user picked roots, bays, or
+        # individual face frame parts.
+        selected_roots = set()
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is not None:
+                selected_roots.add(root.name)
+        if len(selected_roots) > 1:
+            layout.operator("hb_face_frame.create_cabinet_group",
+                            text="Create Cabinet Group", icon='ADD')
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')

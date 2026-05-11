@@ -1,11 +1,12 @@
 import bpy
+from mathutils import Vector
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
 from ....units import inch
-from .... import hb_utils
+from .... import hb_types, hb_utils
 from ...frameless.operators.ops_placement import toggle_cabinet_color
 
 
@@ -2067,8 +2068,119 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Operator: group selected face frame cabinets into a saveable cage group
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
+    """Group selected face frame cabinets under a single cage that can be
+    saved to the user library.
+
+    The group cage is a generic GeoNodeCage with IS_CAGE_GROUP - the same
+    marker frameless uses, so save/load is shared via a common library
+    folder.
+    """
+    bl_idname = "hb_face_frame.create_cabinet_group"
+    bl_label = "Create Cabinet Group"
+    bl_description = "Group the selected face frame cabinets into a single cabinet group"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        # Walk each selected object up to its face frame cabinet root.
+        # Letting users select any part (door, opening cage, etc.) means
+        # they don't have to hunt for the root before grouping.
+        roots = []
+        seen = set()
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is not None and root.name not in seen:
+                seen.add(root.name)
+                roots.append(root)
+
+        if not roots:
+            self.report({'WARNING'}, "No face frame cabinets selected")
+            return {'CANCELLED'}
+
+        loc, rot, w, d, h = self._calculate_group_bounds(roots)
+
+        group = hb_types.GeoNodeCage()
+        group.create("New Cabinet Group")
+        group.obj['IS_CAGE_GROUP'] = True
+        group.obj.parent = None
+        group.obj.location = loc
+        group.obj.rotation_euler = rot
+        group.set_input('Dim X', w)
+        group.set_input('Dim Y', d)
+        group.set_input('Dim Z', h)
+        # Mirror Y so the group cage matches face frame's cabinet
+        # convention: origin at back, geometry extending -Y into the room.
+        group.set_input('Mirror Y', True)
+
+        bpy.ops.object.select_all(action='DESELECT')
+
+        # Reparent preserving world transforms - the user placed these
+        # cabinets where they wanted them and the group shouldn't shift
+        # them at creation time.
+        for root in roots:
+            world_matrix = root.matrix_world.copy()
+            root.parent = group.obj
+            root.matrix_world = world_matrix
+
+        group.obj.select_set(True)
+        context.view_layer.objects.active = group.obj
+        return {'FINISHED'}
+
+    def _calculate_group_bounds(self, roots):
+        """World-space AABB across all roots, returned as the back-left-bottom
+        corner for a Mirror-Y cage (origin at back, +Y is back, geometry
+        extends -Y into the room).
+        """
+        if not roots:
+            return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
+
+        min_x = float('inf'); max_x = float('-inf')
+        min_y = float('inf'); max_y = float('-inf')
+        min_z = float('inf'); max_z = float('-inf')
+
+        for root in roots:
+            cab_props = root.face_frame_cabinet
+            cw = cab_props.width
+            cd = cab_props.depth
+            ch = cab_props.height
+
+            # Cabinet local frame: origin at back, depth in -Y (Mirror Y).
+            local_corners = [
+                Vector((0,   0, 0)),
+                Vector((cw,  0, 0)),
+                Vector((0,  -cd, 0)),
+                Vector((cw, -cd, 0)),
+                Vector((0,   0, ch)),
+                Vector((cw,  0, ch)),
+                Vector((0,  -cd, ch)),
+                Vector((cw, -cd, ch)),
+            ]
+
+            mw = root.matrix_world
+            for lc in local_corners:
+                wc = mw @ lc
+                min_x = min(min_x, wc.x); max_x = max(max_x, wc.x)
+                min_y = min(min_y, wc.y); max_y = max(max_y, wc.y)
+                min_z = min(min_z, wc.z); max_z = max(max_z, wc.z)
+
+        overall_w = max_x - min_x
+        overall_d = max_y - min_y
+        overall_h = max_z - min_z
+
+        # The group cage uses Mirror Y, so its origin sits at +Y (back of
+        # the world AABB) and its geometry extends -Y from there.
+        location = Vector((min_x, max_y, min_z))
+        rotation = (0, 0, 0)
+
+        return (location, rotation, overall_w, overall_d, overall_h)
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
+    hb_face_frame_OT_create_cabinet_group,
     hb_face_frame_OT_delete_cabinet,
     hb_face_frame_OT_join_cabinets,
     hb_face_frame_OT_break_cabinet_left,
