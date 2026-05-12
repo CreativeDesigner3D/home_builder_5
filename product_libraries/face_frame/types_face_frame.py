@@ -3892,7 +3892,8 @@ def _reapply_cabinet_style(root):
 # ---------------------------------------------------------------------------
 
 _SIDE_PROP_NAMES_LEFT = (
-    'left_finished_end_condition', 'left_exposed', 'left_scribe',
+    'left_finished_end_condition', 'left_exposure',
+    'left_dishwasher_adjacent', 'left_finish_end_auto', 'left_scribe',
     'left_flush_x_amount', 'blind_left', 'blind_amount_left',
     'extend_left', 'left_offset', 'inset_toe_kick_left',
     'left_stile_width', 'left_stile_type', 'unlock_left_stile',
@@ -3902,7 +3903,8 @@ _SIDE_PROP_NAMES_LEFT = (
     'left_depth', 'unlock_left_depth',
 )
 _SIDE_PROP_NAMES_RIGHT = (
-    'right_finished_end_condition', 'right_exposed', 'right_scribe',
+    'right_finished_end_condition', 'right_exposure',
+    'right_dishwasher_adjacent', 'right_finish_end_auto', 'right_scribe',
     'right_flush_x_amount', 'blind_right', 'blind_amount_right',
     'extend_right', 'right_offset', 'inset_toe_kick_right',
     'right_stile_width', 'right_stile_type', 'unlock_right_stile',
@@ -3973,7 +3975,9 @@ def _propagate_far_side_props(absorbed_props, anchor_props, side):
     """
     if side == 'RIGHT':
         anchor_props.right_finished_end_condition = absorbed_props.right_finished_end_condition
-        anchor_props.right_exposed                = absorbed_props.right_exposed
+        anchor_props.right_exposure             = absorbed_props.right_exposure
+        anchor_props.right_dishwasher_adjacent  = absorbed_props.right_dishwasher_adjacent
+        anchor_props.right_finish_end_auto      = absorbed_props.right_finish_end_auto
         anchor_props.right_scribe                 = absorbed_props.right_scribe
         anchor_props.right_flush_x_amount         = absorbed_props.right_flush_x_amount
         anchor_props.blind_right                  = absorbed_props.blind_right
@@ -3997,7 +4001,9 @@ def _propagate_far_side_props(absorbed_props, anchor_props, side):
         anchor_props.unlock_right_depth           = absorbed_props.unlock_right_depth
     else:  # LEFT
         anchor_props.left_finished_end_condition = absorbed_props.left_finished_end_condition
-        anchor_props.left_exposed                = absorbed_props.left_exposed
+        anchor_props.left_exposure              = absorbed_props.left_exposure
+        anchor_props.left_dishwasher_adjacent   = absorbed_props.left_dishwasher_adjacent
+        anchor_props.left_finish_end_auto       = absorbed_props.left_finish_end_auto
         anchor_props.left_scribe                 = absorbed_props.left_scribe
         anchor_props.left_flush_x_amount         = absorbed_props.left_flush_x_amount
         anchor_props.blind_left                  = absorbed_props.blind_left
@@ -4287,7 +4293,7 @@ def break_cabinet_at_gap(cabinet, gap_index):
             'include_external_nailer', 'include_internal_nailer',
             'include_thin_finished_bottom',
             'include_thick_finished_bottom', 'include_blocking',
-            'back_finished_end_condition', 'back_exposed',
+            'back_finished_end_condition', 'back_exposure', 'back_finish_end_auto',
             'corner_type', 'exterior_option', 'interior_option',
             'tray_compartment',
         ):

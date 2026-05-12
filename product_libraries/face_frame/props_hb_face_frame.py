@@ -38,6 +38,17 @@ FIN_END_ITEMS = [
 ]
 
 
+# Exposure states per side. UNEXPOSED = covered by wall or neighbor over
+# the full cabinet height. PARTIAL = neighbor abuts but only covers part
+# of the height (tall vs. base/upper). EXPOSED = no abutting neighbor.
+# Drives the auto-pick of finished_end_condition in exposure.py.
+EXPOSURE_ITEMS = [
+    ('UNEXPOSED', "Unexposed", "Side is fully covered by a wall or neighbor"),
+    ('PARTIAL', "Partial", "Side is partially covered by a shorter neighbor"),
+    ('EXPOSED', "Exposed", "Side has no abutting neighbor"),
+]
+
+
 # ---------------------------------------------------------------------------
 # Preview collection management - mirrors frameless lifecycle
 # ---------------------------------------------------------------------------
@@ -1639,6 +1650,39 @@ def _update_cabinet_dim(self, context):
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
+
+# When the user edits a finished-end-condition enum from the UI, flip the
+# matching auto flag off so subsequent exposure recalcs don't clobber the
+# choice. Exposure recalc re-arms auto explicitly after writing its own
+# value, so its own writes don't permanently disable auto.
+def _on_left_finish_end_user_set(self, context):
+    self.left_finish_end_auto = False
+    _update_cabinet_dim(self, context)
+
+
+def _on_right_finish_end_user_set(self, context):
+    self.right_finish_end_auto = False
+    _update_cabinet_dim(self, context)
+
+
+def _on_back_finish_end_user_set(self, context):
+    self.back_finish_end_auto = False
+    _update_cabinet_dim(self, context)
+
+
+# Scribe edits also flip the side's auto flag off. The single auto flag
+# governs both finish type and scribe so the user's mental model stays
+# "this side is auto-managed" or not - touching either auto-managed
+# value pins it.
+def _on_left_scribe_user_set(self, context):
+    self.left_finish_end_auto = False
+    _update_cabinet_dim(self, context)
+
+
+def _on_right_scribe_user_set(self, context):
+    self.right_finish_end_auto = False
+    _update_cabinet_dim(self, context)
+
 def _update_front_type(self, context):
     """Front-type write hook: when a user picks DOOR, ensure the opening
     carries an ADJUSTABLE_SHELF interior item. If the user later removes
@@ -1876,15 +1920,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
 
     left_finished_end_condition: EnumProperty(
         name="Left Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
-        update=_update_cabinet_dim,
+        update=_on_left_finish_end_user_set,
     )  # type: ignore
     right_finished_end_condition: EnumProperty(
         name="Right Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
-        update=_update_cabinet_dim,
+        update=_on_right_finish_end_user_set,
     )  # type: ignore
     back_finished_end_condition: EnumProperty(
         name="Back Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
-        update=_update_cabinet_dim,
+        update=_on_back_finish_end_user_set,
     )  # type: ignore
 
     # Scribe = inset from the face frame outer face to the side panel
@@ -1895,21 +1939,52 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # against-a-wall case (~1/2" typical, 0 for an adjacent cabinet).
     left_scribe: FloatProperty(
         name="Left Scribe", default=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_on_left_scribe_user_set,
     )  # type: ignore
     right_scribe: FloatProperty(
         name="Right Scribe", default=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_on_right_scribe_user_set,
     )  # type: ignore
 
-    # Exposure flags. Default True for testing - placement logic will
-    # eventually compute these from neighbor / wall geometry and flip
-    # them to False where a side is hidden against an adjacent cabinet
-    # or wall. Drives the "Apply to All Exposed" bulk operator and
-    # signals to the solver which sides need finished treatment.
-    left_exposed: BoolProperty(name="Left Exposed", default=True)  # type: ignore
-    right_exposed: BoolProperty(name="Right Exposed", default=True)  # type: ignore
-    back_exposed: BoolProperty(name="Back Exposed", default=True)  # type: ignore
+    # Per-side exposure state. Computed by exposure.recalc_cabinet_exposure
+    # from wall edges and parent-wall siblings (cabinets + appliances).
+    # Drives the auto-pick of finished_end_condition. Defaults are EXPOSED
+    # so a cabinet that hasn't yet been touched by detection reads as if
+    # it stands alone - matches the prior default-True placeholder.
+    left_exposure: EnumProperty(
+        name="Left Exposure", items=EXPOSURE_ITEMS, default='EXPOSED',
+    )  # type: ignore
+    right_exposure: EnumProperty(
+        name="Right Exposure", items=EXPOSURE_ITEMS, default='EXPOSED',
+    )  # type: ignore
+    back_exposure: EnumProperty(
+        name="Back Exposure", items=EXPOSURE_ITEMS, default='EXPOSED',
+    )  # type: ignore
+
+    # Adjacent dishwasher (or other panel-ready appliance handled the same
+    # way) on this side. Forces FLUSH_X regardless of exposure state when
+    # auto-pick is on. Back has no dishwasher concept by design.
+    left_dishwasher_adjacent: BoolProperty(
+        name="Left Dishwasher Adjacent", default=False,
+    )  # type: ignore
+    right_dishwasher_adjacent: BoolProperty(
+        name="Right Dishwasher Adjacent", default=False,
+    )  # type: ignore
+
+    # Auto flag per side. True = exposure recalc is allowed to overwrite
+    # the finished_end_condition based on detection. Flipped to False
+    # automatically when the user edits the enum directly (see the
+    # per-side update callbacks). The Recalculate operator re-arms all
+    # three before re-running detection.
+    left_finish_end_auto: BoolProperty(
+        name="Left Finish End Auto", default=True,
+    )  # type: ignore
+    right_finish_end_auto: BoolProperty(
+        name="Right Finish End Auto", default=True,
+    )  # type: ignore
+    back_finish_end_auto: BoolProperty(
+        name="Back Finish End Auto", default=True,
+    )  # type: ignore
 
     # FLUSH_X writes a finished strip running the front X inches of the
     # side panel; per-side because adjacent-appliance widths can differ.
@@ -3626,6 +3701,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         col.operator(
             "hb_face_frame.apply_finished_ends_to_exposed",
             text="Apply to All Exposed", icon='CHECKMARK',
+        )
+        col.operator(
+            "hb_face_frame.recalculate_side_exposure",
+            text="Recalculate Side Exposure", icon='FILE_REFRESH',
         )
 
     def draw_pulls_ui(self, layout, context):

@@ -40,6 +40,7 @@ from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
+from .. import exposure
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
@@ -1781,6 +1782,14 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
         selection_target = merged_into if merged_into is not None else cab_obj
 
+        # Refresh side-exposure on the survivor and its immediate L/R
+        # neighbors before style application. Sides that just flipped
+        # from EXPOSED to UNEXPOSED / PARTIAL need their auto-picked
+        # finish type updated; doing it here means the placed cabinet
+        # is already in its final visual state by the time the user
+        # sees it.
+        exposure.recalc_with_neighbors(selection_target)
+
         # Apply the active cabinet style to this fresh placement. Skip
         # when a merge absorbed cab_obj into a neighbor - the survivor
         # keeps its existing style assignment. ensure_default_styles
@@ -2505,6 +2514,11 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             app_obj.rotation_euler = captured_local_rot
         else:
             app_obj.matrix_world = captured_world
+
+        # Refresh exposure on any face-frame cabinet that now abuts the
+        # placed appliance. Dishwasher placement is the headline case -
+        # adjacent cabinet sides auto-flip to FLUSH_X.
+        exposure.recalc_after_appliance_placement(app_obj)
 
         for o in context.selected_objects:
             o.select_set(False)

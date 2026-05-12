@@ -623,14 +623,14 @@ def draw_blind_corners(layout, cab_props):
 
 
 def draw_finished_ends(layout, cab_props):
-    """Per-cabinet finished ends + exposed flags.
+    """Per-cabinet finished ends + auto-pick flags.
 
-    One row per side (Left / Right / Back): label, exposed toggle, type
-    dropdown, and a context field that only appears when relevant -
+    One row per side (Left / Right / Back): label, auto checkbox, finish
+    type dropdown, and a context field that only appears when relevant -
     scribe when type is UNFINISHED (left/right), flush-X amount when
-    type is FLUSH_X (left/right). Back has neither. Lives in the
-    Construction section so the active cabinet's finish state stays
-    visible alongside the rest of the carcass settings.
+    type is FLUSH_X (left/right). Back has neither. The auto checkbox
+    lets exposure detection drive the dropdown; editing the dropdown
+    flips auto off automatically.
     """
     col = layout.column(align=True)
     for side, label, has_flush_x in (
@@ -640,7 +640,7 @@ def draw_finished_ends(layout, cab_props):
     ):
         row = col.row(align=True)
         row.label(text=label)
-        row.prop(cab_props, f'{side}_exposed', text="")
+        row.prop(cab_props, f'{side}_finish_end_auto', text="", icon='AUTO')
         row.prop(cab_props, f'{side}_finished_end_condition', text="")
         fin_type = getattr(cab_props, f'{side}_finished_end_condition')
         if has_flush_x and fin_type == 'FLUSH_X':
