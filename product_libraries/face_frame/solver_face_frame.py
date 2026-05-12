@@ -2450,7 +2450,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     # opening's left edge is at opening-local X = reveal_left, bottom
     # at Z = reveal_bottom.
     base_x = rect['reveal_left'] - left_overlay
-    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
     base_z = rect['reveal_bottom'] - bottom_overlay
 
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
@@ -2494,7 +2494,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
     base_z = rect['reveal_bottom'] - bottom_overlay
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
 
@@ -2526,7 +2526,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP - door_thickness
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
     base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, rect)
 
@@ -2551,11 +2551,11 @@ def _inset_panel_leaf(layout, rect, role, name):
     with its back face flush with the back of the face frame plane.
     Thickness fixed at 1/4".
 
-    The pivot is the part's front face; the part extends +Y by
-    thickness from there. To place the back face on the FF back plane:
-    pivot_y = ff_back_y_bay_local - thickness. In bay-local Y the FF
-    back is at 0 for cabinets (cage origin = back of FF) and at
-    layout.dim_y for panels (cage spans panel front -> back).
+    The pivot is the part's back face; the part extends -Y by
+    thickness from there to its front face. To place the back face
+    on the FF back plane: pivot_y = ff_back_y_bay_local. In bay-local
+    Y the FF back is at 0 for cabinets (cage origin = back of FF)
+    and at layout.dim_y for panels (cage spans panel front -> back).
     """
     panel_thickness = inch(0.25)
     width = (
@@ -2565,7 +2565,7 @@ def _inset_panel_leaf(layout, rect, role, name):
         rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
     )
     base_x = rect['reveal_left']
-    base_y = _ff_back_y_bay_local(layout) - panel_thickness
+    base_y = _ff_back_y_bay_local(layout)
     base_z = rect['reveal_bottom']
     return {
         'role': role,

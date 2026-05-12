@@ -2472,9 +2472,11 @@ class FaceFrameCabinet(GeoNodeCage):
         if role == PART_ROLE_LEFT_SIDE:
             stile_to_floor = solver.left_stile_to_floor(layout)
             has_inset = layout.kick_inset_left > 0
+            side_thickness = solver.left_side_thickness(layout)
         else:
             stile_to_floor = solver.right_stile_to_floor(layout)
             has_inset = layout.kick_inset_right > 0
+            side_thickness = solver.right_side_thickness(layout)
         # End bay flagged floating_bay forces the side to anchor at the
         # bay bottom (see solver.side_bottom_z), so the notch becomes
         # redundant just like the has_inset case.
@@ -2495,7 +2497,12 @@ class FaceFrameCabinet(GeoNodeCage):
             bay = layout.bays[bay_index]
             kick = bay['kick_height']
             setback = cab_props.toe_kick_setback
-            thickness = cab_props.material_thickness
+            # Route Depth must cut through the FULL side thickness, not
+            # just the cabinet's material_thickness default. FINISHED
+            # sides are 3/4" thick (vs 1/2" default), and a notch that
+            # only cuts 1/2" would leave 1/4" of material in the kick
+            # recess.
+            thickness = side_thickness
         else:
             kick = setback = thickness = 0.0
         ng = mod.node_group
@@ -2841,11 +2848,14 @@ class FaceFrameCabinet(GeoNodeCage):
     def _create_front_part(self, pivot_obj, role, name):
         """Create a front CabinetPart parented to the given pivot empty.
 
-        Orientation matches the left end stile pattern: rotation y=-90,
-        z=90 with Mirror Y=True and Mirror Z=True. With those flags
-        Length goes +Z, Width goes +X, Thickness goes +Y from the
-        part's origin - the leaf's part_position picks the X / Z
-        offsets so the panel anchors against the pivot's hinge corner.
+        Orientation: rotation y=-90, z=90 with Mirror Y=True. Mirror Z
+        is intentionally NOT set so the CPM_5PIECEDOOR modifier renders
+        its panel / rails on the correct face - Mirror Z flips the
+        thickness axis inside the cutpart, which inverts the asymmetric
+        5-piece geometry. The leaf's part_position picks the X / Z
+        offsets so the panel anchors against the pivot's hinge corner;
+        compensation for the dropped Mirror Z (if any visible shift on
+        slab fronts) lives in solver.front_leaves.
         """
         part = CabinetPart()
         part.create(name)
@@ -2855,7 +2865,6 @@ class FaceFrameCabinet(GeoNodeCage):
         part.obj.rotation_euler.y = math.radians(-90)
         part.obj.rotation_euler.z = math.radians(90)
         part.set_input('Mirror Y', True)
-        part.set_input('Mirror Z', True)
         return part
 
     def _z_in_cabinet(self, obj):
@@ -2963,11 +2972,11 @@ class FaceFrameCabinet(GeoNodeCage):
             y = -(width - h_offset)
 
         # Mounting plane: pull sits flush against the door front face.
-        # Door's local Z=0 is the front (maps to most negative world Y);
-        # Z=-thickness is the back (toward cabinet). The cage's Mirror Z
-        # makes geometry extend -Z from origin, but the origin itself is
-        # the front face.
-        z = 0.0
+        # Without Mirror Z, the cutpart's geometry extends +Z from
+        # part-local origin, so part-local z=0 is the BACK face
+        # (against the cabinet) and z=+thickness is the FRONT face
+        # (toward the viewer). The pull mounts on the front face.
+        z = thickness
 
         instance = bpy.data.objects.new(f"Pull - {front_part.obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)
@@ -3024,18 +3033,17 @@ class FaceFrameCabinet(GeoNodeCage):
         rt = rect['reveal_top']
         rb = rect['reveal_bottom']
 
-        # Anchor the box's front face against the back of the drawer front
-        # so the two read as connected. The pivot's swing=0 Y sits one
-        # door_thickness in front of the drawer front's back face (the
-        # front part extends +Y from the pivot by door_thickness), so the
-        # back of the front lives at anchor_y + door_thickness in opening-
-        # local Y. The box passes through the FF opening from there and
-        # extends back to cage_dim_y - rear_clr; box_dx already sits
-        # within the opening reveals, so it clears the rails and stiles.
+        # Anchor the box's front face against the back of the drawer
+        # front so the two read as connected. The pivot's swing=0 Y now
+        # sits AT the drawer front's back face (the front part extends
+        # -Y from the pivot by door_thickness to its outer face), so the
+        # back of the front lives at anchor_y. The box passes through
+        # the FF opening from there and extends back to cage_dim_y -
+        # rear_clr; box_dx already sits within the opening reveals, so
+        # it clears the rails and stiles.
         anchor = leaf.get('pivot_anchor_position', leaf['pivot_position'])
         a_x, a_y, a_z = anchor
-        door_thickness = leaf['part_dims'][2]
-        front_back_y = a_y + door_thickness
+        front_back_y = a_y
 
         box_dx = cage_x - rl - rr - 2.0 * side_clr
         box_dy = (cage_y - rear_clr) - front_back_y
@@ -3845,8 +3853,38 @@ def recalculate_face_frame_cabinet(obj):
     try:
         cabinet = _wrap_cabinet(root)
         cabinet.recalculate()
+        _reapply_cabinet_style(root)
     finally:
         _RECALCULATING.discard(id(root))
+
+
+def _reapply_cabinet_style(root):
+    """Re-attach door / drawer-front styles AND materials to a cabinet's
+    parts after a recalc. The face frame solver wipes and rebuilds all
+    bays, carcass parts, and fronts on every recalc, so per-part
+    material slots and the per-front CPM_5PIECEDOOR modifier vanish
+    each cycle. STYLE_NAME on the cabinet root survives (it lives on
+    the root, not on parts), so we look up the cabinet style and re-
+    run both walks. No-op if the cabinet has no STYLE_NAME or the
+    named style is missing from the scene's collection.
+
+    Order matters: door styles add the 5-piece modifier (which has its
+    own material slots), and the material walk then wires those slots
+    along with the cutpart surface inputs.
+    """
+    style_name = root.get('STYLE_NAME')
+    if not style_name:
+        return
+    ff = bpy.context.scene.hb_face_frame
+    for cs in ff.cabinet_styles:
+        if cs.name == style_name:
+            cs._apply_door_styles_to_fronts(root)
+            cs._apply_materials_to_cabinet(root)
+            # FF sizes intentionally NOT re-applied here - widths are
+            # cabinet props the user can edit between recalcs; pushing
+            # them every recalc would clobber per-cabinet adjustments.
+            # The Assign Style op runs the push explicitly.
+            return
 
 
 # ---------------------------------------------------------------------------

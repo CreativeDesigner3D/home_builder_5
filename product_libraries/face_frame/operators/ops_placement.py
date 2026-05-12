@@ -39,6 +39,7 @@ from bpy_extras import view3d_utils
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
+from .. import props_hb_face_frame
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
@@ -1779,6 +1780,19 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # neighbor is the survivor that selection should target.
         merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
         selection_target = merged_into if merged_into is not None else cab_obj
+
+        # Apply the active cabinet style to this fresh placement. Skip
+        # when a merge absorbed cab_obj into a neighbor - the survivor
+        # keeps its existing style assignment. ensure_default_styles
+        # seeds a Default / Slab pair if either collection was empty,
+        # so this branch always has something to apply.
+        if merged_into is None:
+            props_hb_face_frame.ensure_default_styles(context)
+            scene_props = context.scene.hb_face_frame
+            idx = scene_props.active_cabinet_style_index
+            if 0 <= idx < len(scene_props.cabinet_styles):
+                active = scene_props.cabinet_styles[idx]
+                active.assign_style_to_cabinet(cab_obj)
 
         # Align toe-kick setback when this cabinet abuts a BASE/TALL of
         # the opposite type - the deeper one's kick face is brought

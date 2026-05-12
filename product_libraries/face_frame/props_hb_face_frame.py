@@ -6,6 +6,7 @@ Phase 3 (types_face_frame.py).
 """
 import bpy
 import os
+from contextlib import contextmanager
 from bpy.types import (
     PropertyGroup,
     UIList,
@@ -20,6 +21,7 @@ from bpy.props import (
     EnumProperty,
 )
 from ... import units
+from . import finish_colors, wood_materials
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -136,6 +138,182 @@ def update_cabinet_style_name(self, context):
     self.name = f"{base_name}.{i:03d}"
 
 
+def get_stain_color_enum_items(self, context):
+    """Dynamic items for the stain color dropdown. Pulled fresh so newly
+    saved custom colors show up without restart."""
+    items = []
+    colors = finish_colors.get_all_stain_colors()
+    for i, name in enumerate(colors.keys()):
+        is_custom = finish_colors.is_custom_color(name, 'stain')
+        desc = f"Custom: {name}" if is_custom else name
+        items.append((name, name, desc, i))
+    if not items:
+        items.append(('Natural', "Natural", "Natural", 0))
+    return items
+
+
+def get_paint_color_enum_items(self, context):
+    """Dynamic items for the paint color dropdown."""
+    items = []
+    colors = finish_colors.get_all_paint_colors()
+    for i, name in enumerate(colors.keys()):
+        is_custom = finish_colors.is_custom_color(name, 'paint')
+        desc = f"Custom: {name}" if is_custom else name
+        items.append((name, name, desc, i))
+    if not items:
+        items.append(('Arctic White', "Arctic White", "Arctic White", 0))
+    return items
+
+
+def get_door_style_enum_items(self, context):
+    """Dynamic items for the cabinet style's door / drawer-front pickers.
+    Reads names from the shared door_styles pool on the scene props.
+    """
+    items = []
+    ff = context.scene.hb_face_frame
+    for i, ds in enumerate(ff.door_styles):
+        items.append((ds.name, ds.name, ds.name, i))
+    if not items:
+        items.append(('NONE', "(none defined)", "No door styles defined", 0))
+    return items
+
+
+def update_custom_procedural_material(self, context):
+    """Forward custom-procedural shader edits to the wood material module."""
+    wood_materials.update_finish_material_custom_procedural(self)
+
+
+# Suspend-propagation refcount. While > 0, _propagate_cabinet_style
+# returns immediately - used to silence the storm of update callbacks
+# that fire when one user action writes many style props in sequence
+# (e.g. an overlay change writes 21 width props, each of which would
+# otherwise re-propagate to the whole scene).
+_PROPAGATE_SUSPEND_DEPTH = 0
+
+
+@contextmanager
+def suspend_propagate():
+    """Refcounted context manager around _propagate_cabinet_style. Use
+    around bulk style-prop writes to coalesce into a single explicit
+    propagate at the outermost resume.
+    """
+    global _PROPAGATE_SUSPEND_DEPTH
+    _PROPAGATE_SUSPEND_DEPTH += 1
+    try:
+        yield
+    finally:
+        _PROPAGATE_SUSPEND_DEPTH -= 1
+
+
+def _propagate_cabinet_style(self, context):
+    """Push this cabinet style's current state to every face frame
+    cabinet in the scene tagged with STYLE_NAME == self.name. Wired
+    as the update callback on every cabinet-style prop that affects
+    cabinet geometry / appearance, so changes in the style panel
+    reflect across the scene without needing an explicit Update
+    Cabinets click.
+
+    Returns immediately under suspend_propagate(); callers performing
+    bulk writes (update_face_frame_sizes' overlay sweep) hold the
+    suspend through the inner setattrs and call propagate explicitly
+    once at the end.
+
+    Wrapped in suspend_recalc(): each assign_style_to_cabinet ends
+    with an explicit recalculate_face_frame_cabinet call; under the
+    outer suspend those recalcs queue by name and drain once at
+    exit, so we get one recalc per cabinet (not one per assign step
+    per cabinet) when a single style change sweeps through the scene.
+    """
+    if _PROPAGATE_SUSPEND_DEPTH > 0:
+        return
+    from . import types_face_frame
+    target_name = self.name
+    with types_face_frame.suspend_recalc():
+        for obj in context.scene.objects:
+            if (obj.get('IS_FACE_FRAME_CABINET_CAGE')
+                    and obj.get('STYLE_NAME') == target_name):
+                self.assign_style_to_cabinet(obj)
+
+
+def _propagate_door_style(self, context):
+    """Push this door style's current state to every front tagged with
+    DOOR_STYLE_NAME == self.name. Same pattern as the cabinet style
+    propagator: edits in the door style panel reflect across every
+    front using that style without a button press.
+    """
+    target_name = self.name
+    for obj in context.scene.objects:
+        if obj.get('DOOR_STYLE_NAME') == target_name:
+            self.assign_style_to_front(obj)
+
+
+def update_face_frame_sizes(self, context):
+    """door_overlay_type change handler. Writes new widths into every
+    locked rail cell + every stile cell based on the overlay. Unlocked
+    rails keep the user's value. The cabinet-side propagation (Update
+    Cabinets op) is intentionally manual - this only rewrites style
+    props, never touches scene cabinets.
+    """
+    defaults = self._FF_SIZE_DEFAULTS.get(
+        self.door_overlay_type, self._FF_SIZE_DEFAULTS['CLASSIC'])
+
+    # Each ff_*_width_* prop carries update=_propagate_cabinet_style,
+    # which would re-propagate to every matching cabinet per setattr.
+    # Suspend it for the bulk write and propagate ONCE at the end.
+    with suspend_propagate():
+        # Rails - only write the cell when its unlock flag is False.
+        for row, key in (('top_rail', 'top'),
+                         ('bottom_rail', 'bottom'),
+                         ('mid_rail', 'mid')):
+            base_in, tall_in, upper_in = defaults[row]
+            if not getattr(self, f"unlock_base_{key}_rail"):
+                setattr(self, f"ff_{row}_width_base", units.inch(base_in))
+            if not getattr(self, f"unlock_tall_{key}_rail"):
+                setattr(self, f"ff_{row}_width_tall", units.inch(tall_in))
+            if not getattr(self, f"unlock_upper_{key}_rail"):
+                setattr(self, f"ff_{row}_width_upper", units.inch(upper_in))
+
+        # Stiles - always overlay-driven, no unlocks.
+        for row in ('wall_stile', 'mid_stile', 'end_stile', 'blind_stile'):
+            base_in, tall_in, upper_in = defaults[row]
+            setattr(self, f"ff_{row}_width_base", units.inch(base_in))
+            setattr(self, f"ff_{row}_width_tall", units.inch(tall_in))
+            setattr(self, f"ff_{row}_width_upper", units.inch(upper_in))
+
+    # One propagate now that the style is fully consistent.
+    _propagate_cabinet_style(self, context)
+
+
+def ensure_default_styles(context):
+    """Make sure the scene carries at least one cabinet style and one
+    door style. Operators that read from those collections call this
+    on entry so the user never sees an empty-active state. Adds a
+    Default cabinet style + Slab door style when empty; idempotent.
+    """
+    ff = context.scene.hb_face_frame
+    if len(ff.cabinet_styles) == 0:
+        cs = ff.cabinet_styles.add()
+        cs.name = "Default"
+        ff.active_cabinet_style_index = 0
+    if len(ff.door_styles) == 0:
+        ds = ff.door_styles.add()
+        ds.name = "Default"
+        ff.active_door_style_index = 0
+
+
+def update_door_style_name(self, context):
+    """Keep door style names unique within the shared collection."""
+    main = context.scene.hb_face_frame
+    base_name = self.name if self.name else "Door Style"
+    existing = [s.name for s in main.door_styles if s != self]
+    if base_name not in existing:
+        return
+    i = 1
+    while f"{base_name}.{i:03d}" in existing:
+        i += 1
+    self.name = f"{base_name}.{i:03d}"
+
+
 def update_top_cabinet_clearance(self, context):
     """Recompute the derived cabinet heights when either the top
     clearance or the wall cabinet location changes. Same callback is
@@ -189,10 +367,13 @@ def update_include_drawer_boxes(self, context):
 # Cabinet Style (placeholder shell, full implementation in Phase 4)
 # ---------------------------------------------------------------------------
 class Face_Frame_Cabinet_Style(PropertyGroup):
-    """Per-cabinet face frame style: wood, finish, face frame member sizes,
-    door overlay. This is a Phase 2 shell - the full property set, custom
-    procedural material support, and assign_style_to_cabinet logic are
-    implemented in Phase 4."""
+    """Face frame cabinet style: wood species, finish color, interior
+    material, door overlay, and references to a door style + drawer front
+    style from the shared door_styles collection. Applied via
+    assign_style_to_cabinet(), which writes the four overlay floats and
+    inset depth onto the cabinet, assigns materials to every part, and
+    walks fronts to apply the referenced door/drawer-front styles.
+    """
 
     name: StringProperty(
         name="Name",
@@ -207,6 +388,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    # ---- Wood / exterior material ----
     wood_species: EnumProperty(
         name="Wood Species",
         description="Wood species for cabinet exterior",
@@ -219,28 +401,1229 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             ('HICKORY', "Hickory", "Hickory wood"),
             ('ALDER', "Alder", "Alder wood"),
             ('PAINT_GRADE', "Paint Grade", "Paint Grade"),
-            ('CUSTOM', "Custom Material", "Use a custom material"),
+            ('CUSTOM_PROCEDURAL', "Custom Procedural", "Procedural wood material with custom parameters"),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
         ],
         default='MAPLE',
+        update=_propagate_cabinet_style,
     )  # type: ignore
 
+    stain_color: EnumProperty(
+        name="Stain Color",
+        description="Stain color for cabinet finish",
+        items=get_stain_color_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    paint_color: EnumProperty(
+        name="Paint Color",
+        description="Paint color for cabinet finish",
+        items=get_paint_color_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # ---- Interior material ----
+    interior_material_type: EnumProperty(
+        name="Interior Material",
+        description="Material for cabinet interior",
+        items=[
+            ('MAPLE_PLY', "Maple Plywood", "Maple veneer plywood"),
+            ('MATCHING', "Matching Exterior", "Use the same material as the exterior"),
+            ('CUSTOM', "Custom Material", "Use a custom material from the file"),
+        ],
+        default='MAPLE_PLY',
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # ---- Door overlay (five face frame options) ----
     door_overlay_type: EnumProperty(
         name="Door Overlay",
         description="Door overlay style for face frame cabinets",
         items=[
-            ('STANDARD', "Standard Overlay", "Standard partial overlay"),
+            ('CLASSIC', "Classic", "Classic partial overlay"),
             ('TRANSITIONAL', "Transitional", "Transitional overlay"),
             ('FULL', "Full Overlay", "Full overlay"),
-            ('PARTIAL_INSET', "Partial Inset", "Partial inset"),
-            ('FULL_INSET', "Full Inset", "Full inset (flush)"),
+            ('PARTIAL_INSET', "Partial Inset", "Door is partially inset into the opening"),
+            ('FULL_INSET', "Full Inset", "Door is fully inset, flush with the frame"),
         ],
-        default='STANDARD',
+        default='CLASSIC',
+        update=update_face_frame_sizes,
     )  # type: ignore
+
+    # ---- Face frame member widths (7 row types x 3 cabinet types) ----
+    # Driven by door_overlay_type via update_face_frame_sizes. Rails have
+    # per-cell unlock toggles so users can override the overlay default
+    # for one cabinet type without losing the others. Stiles are always
+    # overlay-driven (no unlock toggles). Defaults below match CLASSIC.
+    ff_top_rail_width_base: FloatProperty(
+        name="Top Rail (Base)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_top_rail_width_tall: FloatProperty(
+        name="Top Rail (Tall)", default=units.inch(3.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_top_rail_width_upper: FloatProperty(
+        name="Top Rail (Upper)", default=units.inch(3.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_bottom_rail_width_base: FloatProperty(
+        name="Bottom Rail (Base)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_bottom_rail_width_tall: FloatProperty(
+        name="Bottom Rail (Tall)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_bottom_rail_width_upper: FloatProperty(
+        name="Bottom Rail (Upper)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_mid_rail_width_base: FloatProperty(
+        name="Mid Rail (Base)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_mid_rail_width_tall: FloatProperty(
+        name="Mid Rail (Tall)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_mid_rail_width_upper: FloatProperty(
+        name="Mid Rail (Upper)", default=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_wall_stile_width_base: FloatProperty(
+        name="Wall Stile (Base)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_wall_stile_width_tall: FloatProperty(
+        name="Wall Stile (Tall)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_wall_stile_width_upper: FloatProperty(
+        name="Wall Stile (Upper)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_mid_stile_width_base: FloatProperty(
+        name="Mid Stile (Base)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_mid_stile_width_tall: FloatProperty(
+        name="Mid Stile (Tall)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_mid_stile_width_upper: FloatProperty(
+        name="Mid Stile (Upper)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_end_stile_width_base: FloatProperty(
+        name="End Stile (Base)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_end_stile_width_tall: FloatProperty(
+        name="End Stile (Tall)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_end_stile_width_upper: FloatProperty(
+        name="End Stile (Upper)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    ff_blind_stile_width_base: FloatProperty(
+        name="Blind Stile (Base)", default=units.inch(3.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_blind_stile_width_tall: FloatProperty(
+        name="Blind Stile (Tall)", default=units.inch(3.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ff_blind_stile_width_upper: FloatProperty(
+        name="Blind Stile (Upper)", default=units.inch(2.0),
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # ---- Rail unlock toggles (9: 3 row types x 3 cabinet types) ----
+    # When False (locked), the rail's width follows the overlay default
+    # and gets rewritten on overlay change. When True (unlocked), the
+    # user's value persists across overlay changes.
+    unlock_base_top_rail: BoolProperty(name="Unlock Base Top Rail", default=False)  # type: ignore
+    unlock_tall_top_rail: BoolProperty(name="Unlock Tall Top Rail", default=False)  # type: ignore
+    unlock_upper_top_rail: BoolProperty(name="Unlock Upper Top Rail", default=False)  # type: ignore
+    unlock_base_bottom_rail: BoolProperty(name="Unlock Base Bottom Rail", default=False)  # type: ignore
+    unlock_tall_bottom_rail: BoolProperty(name="Unlock Tall Bottom Rail", default=False)  # type: ignore
+    unlock_upper_bottom_rail: BoolProperty(name="Unlock Upper Bottom Rail", default=False)  # type: ignore
+    unlock_base_mid_rail: BoolProperty(name="Unlock Base Mid Rail", default=False)  # type: ignore
+    unlock_tall_mid_rail: BoolProperty(name="Unlock Tall Mid Rail", default=False)  # type: ignore
+    unlock_upper_mid_rail: BoolProperty(name="Unlock Upper Mid Rail", default=False)  # type: ignore
+
+    # ---- Door / drawer-front style refs (by name into Face_Frame_Scene_Props.door_styles) ----
+    door_style: EnumProperty(
+        name="Door Style",
+        description="Door style applied to door fronts on cabinets carrying this style",
+        items=get_door_style_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    drawer_front_style: EnumProperty(
+        name="Drawer Front Style",
+        description="Door style applied to drawer fronts on cabinets carrying this style",
+        items=get_door_style_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # ---- Cached materials (lazy-loaded from face_frame_assets/materials/cabinet_material.blend) ----
+    material: PointerProperty(name="Material", type=bpy.types.Material)  # type: ignore
+    material_rotated: PointerProperty(name="Material Rotated", type=bpy.types.Material)  # type: ignore
+    interior_material: PointerProperty(name="Interior Material", type=bpy.types.Material)  # type: ignore
+    interior_material_rotated: PointerProperty(name="Interior Material Rotated", type=bpy.types.Material)  # type: ignore
+    custom_material: PointerProperty(name="Custom Exterior Material", type=bpy.types.Material, update=_propagate_cabinet_style)  # type: ignore
+    custom_interior_material: PointerProperty(name="Custom Interior Material", type=bpy.types.Material, update=_propagate_cabinet_style)  # type: ignore
+
+    # ---- Custom procedural shader (active when wood_species == 'CUSTOM_PROCEDURAL') ----
+    custom_wood_color_1: bpy.props.FloatVectorProperty(
+        name="Wood Color 1", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.8, 0.65, 0.45), update=update_custom_procedural_material)  # type: ignore
+    custom_wood_color_2: bpy.props.FloatVectorProperty(
+        name="Wood Color 2", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.6, 0.45, 0.3), update=update_custom_procedural_material)  # type: ignore
+    custom_noise_scale_1: FloatProperty(name="Noise Scale 1", default=3.5, min=0.0, max=50.0, update=update_custom_procedural_material)  # type: ignore
+    custom_noise_scale_2: FloatProperty(name="Noise Scale 2", default=2.5, min=0.0, max=50.0, update=update_custom_procedural_material)  # type: ignore
+    custom_texture_variation_1: FloatProperty(name="Texture Variation 1", default=0.1, min=0.0, max=20.0, update=update_custom_procedural_material)  # type: ignore
+    custom_texture_variation_2: FloatProperty(name="Texture Variation 2", default=12.5, min=0.0, max=20.0, update=update_custom_procedural_material)  # type: ignore
+    custom_noise_detail: FloatProperty(name="Noise Detail", default=15.0, min=0.0, max=20.0, update=update_custom_procedural_material)  # type: ignore
+    custom_voronoi_detail_1: FloatProperty(name="Voronoi Detail 1", default=0.0, min=0.0, max=10.0, update=update_custom_procedural_material)  # type: ignore
+    custom_voronoi_detail_2: FloatProperty(name="Voronoi Detail 2", default=0.2, min=0.0, max=10.0, update=update_custom_procedural_material)  # type: ignore
+    custom_knots_scale: FloatProperty(name="Knots Scale", default=0.0, min=0.0, max=20.0, update=update_custom_procedural_material)  # type: ignore
+    custom_knots_darkness: FloatProperty(name="Knots Darkness", default=0.0, min=0.0, max=1.0, update=update_custom_procedural_material)  # type: ignore
+    custom_roughness: FloatProperty(name="Roughness", default=1.0, min=0.0, max=1.0, update=update_custom_procedural_material)  # type: ignore
+    custom_noise_bump_strength: FloatProperty(name="Noise Bump Strength", default=0.1, min=0.0, max=1.0, update=update_custom_procedural_material)  # type: ignore
+    custom_knots_bump_strength: FloatProperty(name="Knots Bump Strength", default=0.15, min=0.0, max=1.0, update=update_custom_procedural_material)  # type: ignore
+    custom_wood_bump_strength: FloatProperty(name="Wood Bump Strength", default=0.2, min=0.0, max=1.0, update=update_custom_procedural_material)  # type: ignore
+    show_custom_grain_options: BoolProperty(name="Show Grain Options", default=False)  # type: ignore
+
+    show_advanced_color: BoolProperty(
+        name="Show Advanced Color Options",
+        description="Show advanced shader parameters for color editing",
+        default=False,
+    )  # type: ignore
+
+    show_face_frame_sizes: BoolProperty(
+        name="Show Face Frame Sizes",
+        description="Show the face frame sizes grid (top/bottom/mid rail and stile widths per cabinet type)",
+        default=False,
+    )  # type: ignore
+
+    # =================================================================
+    # Material resolution
+    # =================================================================
+    def _get_material_blend_path(self):
+        return os.path.join(
+            os.path.dirname(__file__),
+            'face_frame_assets', 'materials', 'cabinet_material.blend',
+        )
+
+    def get_finish_material(self):
+        """Return (material, material_rotated) for the exterior finish.
+
+        CUSTOM returns the user-picked material as-is for both slots.
+        CUSTOM_PROCEDURAL + named species lazy-load 'Wood' from the
+        face frame material blend, then forward to wood_materials for
+        node-graph updates based on the current species / colors.
+        """
+        if self.wood_species == 'CUSTOM':
+            if self.custom_material:
+                return self.custom_material, self.custom_material
+            return None, None
+
+        if not self.material or not self.material_rotated:
+            with bpy.data.libraries.load(self._get_material_blend_path()) as (data_from, data_to):
+                data_to.materials = ["Wood"]
+            mat = data_to.materials[0]
+            mat.name = self.name + " Finish"
+            self.material = mat
+            rotated = mat.copy()
+            rotated.name = mat.name + " ROTATED"
+            self.material_rotated = rotated
+
+        if self.wood_species == 'CUSTOM_PROCEDURAL':
+            wood_materials.update_finish_material_custom_procedural(self)
+        else:
+            wood_materials.update_finish_material(self)
+        return self.material, self.material_rotated
+
+    def get_interior_material(self):
+        """Return (material, material_rotated) for the interior surfaces."""
+        if self.interior_material_type == 'CUSTOM':
+            if self.custom_interior_material:
+                return self.custom_interior_material, self.custom_interior_material
+            return None, None
+        if self.interior_material_type == 'MATCHING':
+            return self.get_finish_material()
+
+        if not self.interior_material or not self.interior_material_rotated:
+            with bpy.data.libraries.load(self._get_material_blend_path()) as (data_from, data_to):
+                data_to.materials = ["Wood"]
+            mat = data_to.materials[0]
+            mat.name = self.name + " Interior"
+            self.interior_material = mat
+            rotated = mat.copy()
+            rotated.name = mat.name + " ROTATED"
+            self.interior_material_rotated = rotated
+        return self.interior_material, self.interior_material_rotated
+
+    # =================================================================
+    # Apply style to a cabinet
+    # =================================================================
+    # overlay -> row_type -> (base, tall, upper) widths in inches.
+    # Used by update_face_frame_sizes when door_overlay_type changes.
+    # All values are inches; conversion to meters happens in the
+    # callback. Tables mirror the Pulito Spaces defaults.
+    _FF_SIZE_DEFAULTS = {
+        'CLASSIC': {
+            'top_rail':    (1.5, 3.5, 3.5),
+            'bottom_rail': (1.5, 1.5, 1.5),
+            'mid_rail':    (1.5, 1.5, 1.5),
+            'wall_stile':  (2.0, 2.0, 2.0),
+            'mid_stile':   (2.0, 2.0, 2.0),
+            'end_stile':   (2.0, 2.0, 2.0),
+            'blind_stile': (3.0, 3.0, 2.0),
+        },
+        'TRANSITIONAL': {
+            'top_rail':    (1.5, 3.0, 3.0),
+            'bottom_rail': (1.25, 1.25, 1.25),
+            'mid_rail':    (2.0, 2.0, 2.0),
+            'wall_stile':  (1.5, 1.5, 1.5),
+            'mid_stile':   (1.5, 1.5, 1.5),
+            'end_stile':   (1.5, 1.5, 1.5),
+            'blind_stile': (3.75, 3.75, 2.75),
+        },
+        'FULL': {
+            'top_rail':    (1.125, 3.0, 3.0),
+            'bottom_rail': (1.25, 1.25, 1.125),
+            'mid_rail':    (2.0, 2.0, 2.0),
+            'wall_stile':  (2.5, 2.5, 2.5),
+            'mid_stile':   (2.25, 2.25, 2.25),
+            'end_stile':   (1.25, 1.25, 1.5),
+            'blind_stile': (3.75, 3.75, 2.75),
+        },
+        'PARTIAL_INSET': {
+            'top_rail':    (1.5, 3.0, 3.0),
+            'bottom_rail': (1.25, 1.25, 1.25),
+            'mid_rail':    (1.5, 1.5, 1.5),
+            'wall_stile':  (1.5, 1.5, 1.5),
+            'mid_stile':   (1.5, 1.5, 1.5),
+            'end_stile':   (1.5, 1.5, 1.5),
+            'blind_stile': (3.75, 3.75, 2.75),
+        },
+        'FULL_INSET': {
+            'top_rail':    (1.5, 3.0, 3.0),
+            'bottom_rail': (1.25, 1.25, 1.25),
+            'mid_rail':    (1.5, 1.5, 1.5),
+            'wall_stile':  (1.5, 1.5, 1.5),
+            'mid_stile':   (1.5, 1.5, 1.5),
+            'end_stile':   (1.5, 1.5, 1.5),
+            'blind_stile': (3.75, 3.75, 2.75),
+        },
+    }
+
+    # door_overlay_type -> (L, R, T, B) overlay reveals in inches. Pure
+    # overlay (CLASSIC / TRANSITIONAL / FULL) sits in front of the face
+    # frame; inset is computed separately in assign_style_to_cabinet
+    # because it scales with door thickness.
+    _OVERLAY_TABLE = {
+        'CLASSIC':       (0.5,    0.5,    0.5,    0.5),
+        'TRANSITIONAL':  (0.625,  0.625,  0.875,  0.875),
+        'FULL':          (1.0,    1.0,    0.875,  0.875),
+        'PARTIAL_INSET': (0.5,    0.5,    0.5,    0.5),
+        'FULL_INSET':    (-0.125, -0.125, -0.125, -0.125),
+    }
+
+    def assign_style_to_cabinet(self, cabinet_obj):
+        """Write the style's overlay floats + inset amount onto the cabinet
+        and recalc. Material assignment to parts and door-style application
+        to fronts ship in the next phase, once Face_Frame_Door_Style and
+        the per-part material rules are in place.
+        """
+        l, r, t, b = self._OVERLAY_TABLE.get(
+            self.door_overlay_type, self._OVERLAY_TABLE['CLASSIC'])
+        props = cabinet_obj.face_frame_cabinet
+        props.default_left_overlay = units.inch(l)
+        props.default_right_overlay = units.inch(r)
+        props.default_top_overlay = units.inch(t)
+        props.default_bottom_overlay = units.inch(b)
+
+        # Inset depth scales with door thickness so non-standard
+        # doors land correctly. FULL_INSET makes the outer face flush
+        # with the face frame; PARTIAL_INSET sits halfway between
+        # flush and the standard overlay position. The 0.125 magic
+        # number must stay in sync with DOOR_TO_FRAME_GAP in
+        # solver_face_frame.py.
+        door_thickness = props.door_thickness
+        door_to_frame_gap = units.inch(0.125)
+        full_inset = door_thickness + door_to_frame_gap
+        if self.door_overlay_type == 'FULL_INSET':
+            props.default_door_inset_amount = full_inset
+        elif self.door_overlay_type == 'PARTIAL_INSET':
+            props.default_door_inset_amount = full_inset / 2.0
+        else:
+            props.default_door_inset_amount = 0.0
+
+        cabinet_obj['STYLE_NAME'] = self.name
+
+        # Push face frame widths to the cabinet BEFORE recalc so the
+        # carcass rebuild picks up the new stile/rail dimensions.
+        # Pulito-style: assign overwrites whatever the user had per-
+        # cabinet; Update Cabinets re-runs this for every cabinet
+        # tagged with this style.
+        self._apply_face_frame_sizes_to_cabinet(cabinet_obj)
+
+        # Materials -> deferred to next phase.
+
+        # Recalc rebuilds carcass + fronts; its tail hook
+        # (_reapply_cabinet_style_to_fronts) reads STYLE_NAME on the
+        # root and re-runs _apply_door_styles_to_fronts, so every
+        # recalc keeps door styles applied without each caller having
+        # to re-trigger it.
+        from . import types_face_frame
+        types_face_frame.recalculate_face_frame_cabinet(cabinet_obj)
+
+    # =================================================================
+    # Material walking
+    # =================================================================
+    # Visible exterior surfaces (finish material on top + bottom + edges).
+    _FINISH_EXTERIOR_ROLES = {
+        # Face frame members
+        'TOP_RAIL', 'BOTTOM_RAIL', 'LEFT_STILE', 'RIGHT_STILE', 'MID_STILE',
+        'MID_RAIL', 'BAY_MID_RAIL', 'BAY_MID_STILE',
+        # Fronts
+        'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'INSET_PANEL',
+        # Visible toe kick parts
+        'FINISH_TOE_KICK', 'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
+        'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
+        # Blind ends + finished back + flush skins / decorative panels
+        'BLIND_PANEL_LEFT', 'BLIND_PANEL_RIGHT',
+        'FINISHED_BACK', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP',
+    }
+
+    # Hidden surfaces (interior material on top + bottom + edges).
+    # Sides land here for v1; the .75 FINISHED end-condition case where
+    # a side panel is the visible exterior is a follow-up.
+    _INTERIOR_PART_ROLES = {
+        # Carcass (LEFT_SIDE / RIGHT_SIDE handled separately in
+        # _apply_materials_to_cabinet because their material depends on
+        # the per-side finished_end_condition, not the role alone)
+        'TOP', 'BOTTOM',
+        'FRONT_STRETCHER', 'REAR_STRETCHER', 'BACK',
+        'TOE_KICK_SUBFRONT',
+        # Internal dividers / shelves
+        'BAY_DIVISION', 'BAY_SHELF', 'MID_DIVISION', 'PARTITION_SKIN',
+        # Drawer box
+        'DRAWER_BOX',
+        # Interior items
+        'ADJUSTABLE_SHELF', 'PULLOUT_SHELF', 'PULLOUT_SPACER',
+        'ROLLOUT_BOX', 'ROLLOUT_SPACER',
+        'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
+        'VANITY_SHELF', 'VANITY_SUPPORT',
+        'INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION',
+    }
+
+    # Roles that read materials from the 5-piece door modifier instead
+    # of (or in addition to) the cutpart surface inputs.
+    _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+
+    def _set_part_surfaces(self, part_obj, surface_mat, edge_mat):
+        """Plug surface_mat into Top Surface + Bottom Surface and edge_mat
+        into all four edge slots of a cutpart. Silently no-ops when
+        either material is None (uncached / unresolved custom material)
+        so the user just sees the previous slot value.
+        """
+        from ... import hb_types
+        part = hb_types.GeoNodeCutpart(part_obj)
+        if surface_mat is not None:
+            try:
+                part.set_input("Top Surface", surface_mat)
+                part.set_input("Bottom Surface", surface_mat)
+            except Exception:
+                pass
+        if edge_mat is not None:
+            try:
+                part.set_input("Edge W1", edge_mat)
+                part.set_input("Edge W2", edge_mat)
+                part.set_input("Edge L1", edge_mat)
+                part.set_input("Edge L2", edge_mat)
+            except Exception:
+                pass
+
+    def _set_part_surfaces_split(self, part_obj, top_mat, bottom_mat, edge_mat):
+        """Like _set_part_surfaces but writes Top Surface and Bottom
+        Surface independently. Used when the two faces of a cutpart
+        should differ - a FINISHED side panel's outer face (Bottom
+        Surface, regardless of left vs right side - see analysis in
+        the chat thread that introduced this) gets finish material
+        while the inner face (Top Surface) gets interior. Silent
+        no-op for any material that's None.
+        """
+        from ... import hb_types
+        part = hb_types.GeoNodeCutpart(part_obj)
+        try:
+            if top_mat is not None:
+                part.set_input("Top Surface", top_mat)
+            if bottom_mat is not None:
+                part.set_input("Bottom Surface", bottom_mat)
+            if edge_mat is not None:
+                part.set_input("Edge W1", edge_mat)
+                part.set_input("Edge W2", edge_mat)
+                part.set_input("Edge L1", edge_mat)
+                part.set_input("Edge L2", edge_mat)
+        except Exception:
+            pass
+
+    def _set_door_modifier_materials(self, front_obj, finish_mat, finish_mat_rotated):
+        """Set Stile / Rail / Panel material on a front's 'Door Style'
+        CPM_5PIECEDOOR modifier, when present. Slab fronts have no
+        such modifier and skip silently. Rails get the rotated variant
+        so cross-grain reads correctly.
+        """
+        for mod in front_obj.modifiers:
+            if mod.type != 'NODES' or not mod.node_group:
+                continue
+            if 'Door Style' not in mod.name:
+                continue
+            tree = mod.node_group.interface.items_tree
+            if 'Stile Material' in tree and finish_mat is not None:
+                mod[tree['Stile Material'].identifier] = finish_mat
+            if 'Rail Material' in tree and finish_mat_rotated is not None:
+                mod[tree['Rail Material'].identifier] = finish_mat_rotated
+            if 'Panel Material' in tree and finish_mat is not None:
+                # Glass-panel override is v2 - currently the panel always
+                # gets the cabinet's finish material.
+                mod[tree['Panel Material'].identifier] = finish_mat
+            break
+
+    def _apply_materials_to_cabinet(self, cabinet_obj):
+        """Walk every CABINET_PART under cabinet_obj and write surface
+        materials based on role. Face frame classifies by part role
+        (face frame member / front / carcass / interior item) rather
+        than the per-part Finish Top/Bottom flags frameless uses,
+        because face frame construction does not vary those flags.
+        Also wires the 5-piece door modifier material slots on fronts.
+        """
+        finish_mat, finish_mat_rotated = self.get_finish_material()
+        interior_mat, interior_mat_rotated = self.get_interior_material()
+
+        # Bail entirely if we have nothing useful to apply (e.g. CUSTOM
+        # wood species with no custom_material picked yet).
+        if finish_mat is None and interior_mat is None:
+            return
+
+        # Side panels read from the cabinet's per-side finished-end
+        # condition: 'FINISHED' = the side itself is the visible
+        # exterior (3/4" stock), all other values mean a covering part
+        # (FLUSH_X / BEADBOARD / SHIPLAP / PANELED / FALSE_FF /
+        # WORKING_FF) provides the visible face and the side stays
+        # interior. Read once outside the loop.
+        ff_cab = cabinet_obj.face_frame_cabinet
+        left_side_finished = (ff_cab.left_finished_end_condition == 'FINISHED')
+        right_side_finished = (ff_cab.right_finished_end_condition == 'FINISHED')
+
+        for child in cabinet_obj.children_recursive:
+            if 'CABINET_PART' not in child:
+                continue
+            role = child.get('hb_part_role')
+
+            # Sides routed per-condition. For FINISHED sides the outer
+            # face (Bottom Surface) gets finish, the inner face (Top
+            # Surface, visible from inside the cabinet) gets interior.
+            # Edges stay interior - they're mostly hidden behind the
+            # face frame / against neighbors. Non-FINISHED sides are
+            # interior throughout; the visible exterior comes from a
+            # separate covering part (FLUSH_X / BEADBOARD / etc.).
+            if role == 'LEFT_SIDE':
+                if left_side_finished:
+                    self._set_part_surfaces_split(
+                        child,
+                        top_mat=interior_mat,
+                        bottom_mat=finish_mat,
+                        edge_mat=interior_mat_rotated,
+                    )
+                else:
+                    self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+            if role == 'RIGHT_SIDE':
+                if right_side_finished:
+                    self._set_part_surfaces_split(
+                        child,
+                        top_mat=interior_mat,
+                        bottom_mat=finish_mat,
+                        edge_mat=interior_mat_rotated,
+                    )
+                else:
+                    self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+
+            if role in self._FINISH_EXTERIOR_ROLES:
+                self._set_part_surfaces(
+                    child, finish_mat, finish_mat_rotated,
+                )
+            elif role in self._INTERIOR_PART_ROLES:
+                self._set_part_surfaces(
+                    child, interior_mat, interior_mat_rotated,
+                )
+            # 5-piece door modifier slots, only on actual fronts (the
+            # INSET_PANEL role is excluded - inset panels are flat).
+            if role in self._FRONT_ROLES:
+                self._set_door_modifier_materials(
+                    child, finish_mat, finish_mat_rotated,
+                )
+
+    # cabinet_type -> column key in the ff_* width props.
+    # LAP_DRAWER behaves as a base-cabinet; PANEL has no per-type
+    # column yet (parent-cabinet inheritance is a follow-up) so it
+    # falls back to base values.
+    _CABINET_TYPE_COLUMN = {
+        'BASE': 'base',
+        'TALL': 'tall',
+        'UPPER': 'upper',
+        'LAP_DRAWER': 'base',
+        'PANEL': 'base',
+    }
+
+    # left/right_stile_type -> ff_*_stile_width row prefix.
+    _STILE_TYPE_TO_ROW = {
+        'STANDARD': 'end_stile',
+        'WALL': 'wall_stile',
+        'BLIND': 'blind_stile',
+    }
+
+    def _ff_size_for(self, row, col):
+        """Read the inch-meter value for a (row, col) cell."""
+        return getattr(self, f"ff_{row}_width_{col}")
+
+    def _apply_face_frame_sizes_to_cabinet(self, cabinet_obj):
+        """Push the style's 21 face frame widths into the cabinet's
+        stile/rail props. cabinet_type picks the column; left and
+        right stile widths additionally depend on each side's
+        stile_type. PANEL cabinets get the panel_* slot trio drawn
+        from the BASE column.
+
+        Wrapped in suspend_recalc(): the cabinet- and bay-level width
+        props carry update callbacks that trigger recalc, and recalc
+        wipes and rebuilds bays. Without suspending, the first bay
+        write tears down the very list children_recursive is iterating
+        and the next child reference dangles. Suspend coalesces all
+        writes into one queued recalc that fires at the outermost
+        resume - which here is the explicit recalc call back in
+        assign_style_to_cabinet.
+        """
+        from . import types_face_frame
+        with types_face_frame.suspend_recalc():
+            self._apply_face_frame_sizes_to_cabinet_inner(cabinet_obj)
+
+    def _apply_face_frame_sizes_to_cabinet_inner(self, cabinet_obj):
+        props = cabinet_obj.face_frame_cabinet
+        col = self._CABINET_TYPE_COLUMN.get(props.cabinet_type, 'base')
+
+        if props.cabinet_type == 'PANEL':
+            # PANEL has its own three-prop slot, no left/right or bays
+            # to write into. Stile width borrows the end-stile row.
+            props.panel_top_rail_width = self._ff_size_for('top_rail', 'base')
+            props.panel_bottom_rail_width = self._ff_size_for('bottom_rail', 'base')
+            props.panel_stile_width = self._ff_size_for('end_stile', 'base')
+            return
+
+        # Regular carcass cabinets - top/bottom rail at cabinet level.
+        props.top_rail_width = self._ff_size_for('top_rail', col)
+        props.bottom_rail_width = self._ff_size_for('bottom_rail', col)
+
+        # Per-side stile widths: each side picks its row by its
+        # stile_type. Unknown stile types fall back to end_stile.
+        left_row = self._STILE_TYPE_TO_ROW.get(props.left_stile_type, 'end_stile')
+        right_row = self._STILE_TYPE_TO_ROW.get(props.right_stile_type, 'end_stile')
+        props.left_stile_width = self._ff_size_for(left_row, col)
+        props.right_stile_width = self._ff_size_for(right_row, col)
+
+        # Bay-level top/bottom rail widths: bays carry their own copies
+        # of these (Face_Frame_Bay_Props), construction reads from the
+        # bay, so writing only at the cabinet level leaves visible rails
+        # unchanged for any bay whose values were seeded at creation
+        # time.
+        top_rail_w = self._ff_size_for('top_rail', col)
+        bottom_rail_w = self._ff_size_for('bottom_rail', col)
+        # Materialize the bay list before writing - even with recalcs
+        # suspended, this is the safer pattern.
+        bays = [
+            child for child in cabinet_obj.children_recursive
+            if child.get('IS_FACE_FRAME_BAY_CAGE')
+        ]
+        for bay_obj in bays:
+            bay = bay_obj.face_frame_bay
+            bay.top_rail_width = top_rail_w
+            bay.bottom_rail_width = bottom_rail_w
+
+        # Mid rail / mid stile widths cascade in THREE places:
+        #
+        # 1. The cabinet's bay_mid_rail_width / bay_mid_stile_width are
+        #    the *defaults* used to initialize the per-split copy when a
+        #    new split node is created. Setting these affects future
+        #    splits only.
+        #
+        # 2. Each existing split node (inside-a-bay subdivisions) carries
+        #    its own splitter_width on its face_frame_split PropertyGroup;
+        #    bay mid rail / mid stile parts read THAT value at construction
+        #    time. H-axis splits produce mid rails, V-axis splits produce
+        #    mid stiles, so the per-split value picks from a different row.
+        #
+        # 3. The cabinet's mid_stile_widths CollectionProperty stores the
+        #    width of each BETWEEN-BAYS mid stile (PART_ROLE_MID_STILE).
+        #    Entry index N is the stile between bay N and bay N+1. Each
+        #    entry carries an `unlock` flag - True means the user has
+        #    overridden that specific stile and the style apply should
+        #    leave it alone.
+        mid_rail_w = self._ff_size_for('mid_rail', col)
+        mid_stile_w = self._ff_size_for('mid_stile', col)
+        props.bay_mid_rail_width = mid_rail_w
+        props.bay_mid_stile_width = mid_stile_w
+
+        split_nodes = [
+            child for child in cabinet_obj.children_recursive
+            if child.get('IS_FACE_FRAME_SPLIT_NODE')
+        ]
+        for split_obj in split_nodes:
+            sp = split_obj.face_frame_split
+            sp.splitter_width = mid_rail_w if sp.axis == 'H' else mid_stile_w
+
+        for entry in props.mid_stile_widths:
+            if not entry.unlock:
+                entry.width = mid_stile_w
+
+    def _apply_door_styles_to_fronts(self, cabinet_obj):
+        """Walk every front under cabinet_obj. DOOR-role fronts get
+        self.door_style; DRAWER_FRONT / PULLOUT_FRONT / FALSE_FRONT get
+        self.drawer_front_style. Other roles (INSET_PANEL, structural
+        parts, hardware) are skipped.
+        """
+        DOOR_ROLES = {'DOOR'}
+        DRAWER_ROLES = {'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+
+        ff = bpy.context.scene.hb_face_frame
+
+        def resolve(name):
+            if not name or name == 'NONE':
+                return None
+            for ds in ff.door_styles:
+                if ds.name == name:
+                    return ds
+            return None
+
+        door_ds = resolve(self.door_style)
+        drawer_ds = resolve(self.drawer_front_style)
+        if door_ds is None and drawer_ds is None:
+            return
+
+        for child in cabinet_obj.children_recursive:
+            if 'CABINET_PART' not in child:
+                continue
+            role = child.get('hb_part_role')
+            if role in DOOR_ROLES and door_ds is not None:
+                door_ds.assign_style_to_front(child)
+            elif role in DRAWER_ROLES and drawer_ds is not None:
+                drawer_ds.assign_style_to_front(child)
+
+    # =================================================================
+    # UI
+    # =================================================================
+    def _draw_face_frame_sizes(self, layout, context):
+        """7x3 grid of face frame sizes drawn inside the cabinet style
+        panel. Rail cells get an unlock checkbox + either a float input
+        (unlocked) or a read-only inch label (locked). Stile cells are
+        always overlay-driven and render as read-only inch labels.
+        """
+        from ... import units as _units  # for inch() display conversion
+
+        def inch_label(meters):
+            return f'{_units.meter_to_inch(meters):.4g}"'
+
+        box = layout.box()
+        row = box.row()
+        row.label(text=f"Face Frame Sizes: Overlay = {self.door_overlay_type.replace('_', ' ').title()}")
+
+        # Header row
+        row = box.row(align=True)
+        row.label(text="")
+        row.label(text="", icon='BLANK1')
+        row.label(text="Base")
+        row.label(text="Tall")
+        row.label(text="Upper")
+
+        # Rail rows - each cell has an unlock checkbox + value
+        for row_label, row_key, prop_root in (
+            ("Top Rail", "top", "ff_top_rail_width"),
+            ("Bottom Rail", "bottom", "ff_bottom_rail_width"),
+            ("Mid Rail", "mid", "ff_mid_rail_width"),
+        ):
+            r = box.row(align=True)
+            r.label(text=row_label)
+            for col_key in ("base", "tall", "upper"):
+                unlock_name = f"unlock_{col_key}_{row_key}_rail"
+                unlocked = getattr(self, unlock_name)
+                r.prop(self, unlock_name, text="",
+                       icon='UNLOCKED' if unlocked else 'LOCKED',
+                       emboss=False)
+                if unlocked:
+                    r.prop(self, f"{prop_root}_{col_key}", text="")
+                else:
+                    r.label(text=inch_label(getattr(self, f"{prop_root}_{col_key}")))
+
+        # Stile rows - read-only labels (overlay-driven)
+        for row_label, prop_root in (
+            ("Wall Stile", "ff_wall_stile_width"),
+            ("Mid Stile", "ff_mid_stile_width"),
+            ("End Stile", "ff_end_stile_width"),
+            ("Blind Stile", "ff_blind_stile_width"),
+        ):
+            r = box.row(align=True)
+            r.label(text=row_label)
+            for col_key in ("base", "tall", "upper"):
+                r.label(text="", icon='BLANK1')
+                r.label(text=inch_label(getattr(self, f"{prop_root}_{col_key}")))
+
+    def draw_cabinet_style_ui(self, layout, context):
+        """Per-style settings drawn inside the cabinet styles UIList panel.
+        Door / drawer-front style dropdowns land after the door_styles
+        collection is in place.
+        """
+        box = layout.box()
+        box.prop(self, "name", text="Style Name")
+
+        # Exterior material
+        col = box.column(align=True)
+        col.prop(self, "wood_species", text="Exterior")
+        if self.wood_species == 'CUSTOM':
+            col.prop(self, "custom_material", text="")
+        elif self.wood_species == 'CUSTOM_PROCEDURAL':
+            col.prop(self, "custom_wood_color_1", text="Color 1")
+            col.prop(self, "custom_wood_color_2", text="Color 2")
+            col.prop(self, "custom_roughness", text="Roughness")
+            col.prop(self, "custom_noise_bump_strength", text="Noise Bump")
+            col.prop(self, "custom_knots_bump_strength", text="Knots Bump")
+            col.prop(self, "custom_wood_bump_strength", text="Wood Bump")
+            row = box.row()
+            row.prop(self, "show_custom_grain_options",
+                     text="Grain Options",
+                     icon='TRIA_DOWN' if self.show_custom_grain_options else 'TRIA_RIGHT',
+                     emboss=False)
+            if self.show_custom_grain_options:
+                gcol = box.column(align=True)
+                gcol.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
+                gcol.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
+                gcol.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
+                gcol.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
+                gcol.prop(self, "custom_noise_detail", text="Noise Detail")
+                gcol.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
+                gcol.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
+                gcol.prop(self, "custom_knots_scale", text="Knots Scale")
+                gcol.prop(self, "custom_knots_darkness", text="Knots Darkness")
+        elif self.wood_species == 'PAINT_GRADE':
+            col.prop(self, "paint_color", text="Paint Color")
+        else:
+            col.prop(self, "stain_color", text="Stain Color")
+
+        # Interior material
+        col = box.column(align=True)
+        col.prop(self, "interior_material_type", text="Interior")
+        if self.interior_material_type == 'CUSTOM':
+            col.prop(self, "custom_interior_material", text="")
+
+        # Door overlay (writes to L/R/T/B + inset at apply time)
+        box.prop(self, "door_overlay_type", text="Door Overlay")
+
+        # Door / drawer-front style picks (from the shared pool). The
+        # selected names land in self.door_style / self.drawer_front_style;
+        # assign_style_to_cabinet consumes them once assign_style_to_front
+        # is wired.
+        col = box.column(align=True)
+        col.label(text="Fronts:")
+        col.prop(self, "door_style", text="Door")
+        col.prop(self, "drawer_front_style", text="Drawer Front")
+
+        # Face frame sizes grid - 7 row types x 3 cabinet types. Rails
+        # carry per-cell unlock toggles; stiles are always overlay-driven
+        # and render as read-only inch labels. Collapsed by default
+        # since the grid is large; expand to edit.
+        row = box.row()
+        row.alignment = 'LEFT'
+        row.prop(self, "show_face_frame_sizes",
+                 text="Face Frame Sizes",
+                 icon='TRIA_DOWN' if self.show_face_frame_sizes else 'TRIA_RIGHT',
+                 emboss=False)
+        if self.show_face_frame_sizes:
+            self._draw_face_frame_sizes(box, context)
+
+        # Apply / re-apply buttons. Assign hits the current selection;
+        # Update walks every cabinet already tagged with this style name.
+        row = box.row(align=True)
+        row.scale_y = 1.3
+        row.operator("hb_face_frame.assign_style_to_selected_cabinets",
+                     text="Assign Style", icon='BRUSH_DATA')
+        row.operator("hb_face_frame.update_cabinets_from_style",
+                     text="Update Cabinets", icon='FILE_REFRESH')
 
 
 class HB_UL_face_frame_cabinet_styles(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
         layout.prop(item, "name", text="", emboss=False, icon='SHADERFX')
+
+
+# ---------------------------------------------------------------------------
+# Door Style - shared pool, referenced from cabinet styles via index
+# ---------------------------------------------------------------------------
+class Face_Frame_Door_Style(PropertyGroup):
+    """Door / drawer-front construction style. Lives in a single
+    Face_Frame_Scene_Props.door_styles collection; cabinet styles reference
+    one entry as the door style and another as the drawer-front style via
+    integer indices.
+    """
+
+    name: StringProperty(
+        name="Name",
+        description="Door style name",
+        default="Door Style",
+        update=update_door_style_name,
+    )  # type: ignore
+
+    show_expanded: BoolProperty(
+        name="Show Expanded",
+        description="Show expanded style options",
+        default=False,
+    )  # type: ignore
+
+    # ---- Construction type ----
+    door_type: EnumProperty(
+        name="Door Type",
+        description="Door construction type",
+        items=[
+            ('SLAB', "Slab", "Solid slab door"),
+            ('5_PIECE', "5 Piece", "5-piece frame and panel door"),
+        ],
+        default='5_PIECE',
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    panel_material: EnumProperty(
+        name="Panel Material",
+        description="Material for door panel center",
+        items=[
+            ('MATCH_CABINET', "Match Cabinet", "Match the parent cabinet style material"),
+            ('GLASS', "Glass", "Glass panel"),
+        ],
+        default='MATCH_CABINET',
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # ---- Profile object references ----
+    outside_profile: PointerProperty(
+        name="Outside Profile",
+        type=bpy.types.Object,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    inside_profile: PointerProperty(
+        name="Inside Profile",
+        type=bpy.types.Object,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # ---- 5-piece dimensions ----
+    stile_width: FloatProperty(
+        name="Stile Width",
+        description="Width of left and right stiles",
+        default=units.inch(3.0), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    rail_width: FloatProperty(
+        name="Rail Width",
+        description="Width of top and bottom rails",
+        default=units.inch(3.0), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # ---- Mid rail ----
+    add_mid_rail: BoolProperty(
+        name="Add Mid Rail",
+        description="Add a horizontal mid rail",
+        default=False,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    center_mid_rail: BoolProperty(
+        name="Center Mid Rail",
+        description="Center the mid rail vertically",
+        default=True,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    mid_rail_width: FloatProperty(
+        name="Mid Rail Width",
+        description="Width of the mid rail",
+        default=units.inch(3.0), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    mid_rail_location: FloatProperty(
+        name="Mid Rail Location",
+        description="Distance from bottom of door to mid rail (if not centered)",
+        default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # ---- Panel ----
+    panel_thickness: FloatProperty(
+        name="Panel Thickness",
+        description="Thickness of the center panel",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    panel_inset: FloatProperty(
+        name="Panel Inset",
+        description="How far panel is inset from frame face",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # ---- Edge profile (slab doors) ----
+    edge_profile_type: EnumProperty(
+        name="Edge Profile",
+        description="Edge profile for slab doors",
+        items=[
+            ('SQUARE', "Square", "Square edge"),
+            ('EASED', "Eased", "Slightly rounded edge"),
+            ('OGEE', "Ogee", "Ogee profile"),
+            ('BEVEL', "Bevel", "Beveled edge"),
+            ('ROUNDOVER', "Roundover", "Rounded edge"),
+        ],
+        default='SQUARE',
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    # Front roles this style will act on (DOOR fronts read door_style on the
+    # parent cabinet style, the rest read drawer_front_style).
+    _DOOR_FRONT_ROLES = {'DOOR'}
+    _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+    _STYLEABLE_ROLES = _DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
+
+    def get_parent_cabinet_style(self, front_obj):
+        """Walk up from a front object to its face frame cabinet root,
+        read the cabinet's STYLE_NAME custom prop, and return the matching
+        Face_Frame_Cabinet_Style on the scene (or None if unresolvable).
+        Used for material inheritance once material walking is wired.
+        """
+        cur = front_obj
+        cabinet_obj = None
+        while cur is not None:
+            if cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+                cabinet_obj = cur
+                break
+            cur = cur.parent
+        if cabinet_obj is None:
+            return None
+
+        style_name = cabinet_obj.get('STYLE_NAME')
+        if not style_name:
+            return None
+
+        ff = bpy.context.scene.hb_face_frame
+        for cs in ff.cabinet_styles:
+            if cs.name == style_name:
+                return cs
+        return None
+
+    def assign_style_to_front(self, front_obj):
+        """Apply this door style to a face frame front object.
+
+        SLAB: remove any existing 'Door Style' modifier so the front
+        renders as a flat slab.
+        5_PIECE: add or update a CPM_5PIECEDOOR modifier named
+        'Door Style' with the configured stile/rail widths, mid rail,
+        panel thickness/inset.
+
+        Returns:
+            True on success.
+            False if front_obj is not a styleable face frame front.
+            A string with an error message on a 5-piece dimension check
+            failure (front too narrow / too short for the configured
+            stiles + rails).
+        """
+        role = front_obj.get('hb_part_role')
+        if role not in self._STYLEABLE_ROLES:
+            return False
+
+        from ... import hb_types
+
+        # Slab: strip any existing door style modifier and tag.
+        if self.door_type == 'SLAB':
+            for mod in list(front_obj.modifiers):
+                if mod.type == 'NODES' and 'Door Style' in mod.name:
+                    front_obj.modifiers.remove(mod)
+            front_obj['DOOR_STYLE_NAME'] = self.name
+            return True
+
+        # 5-piece: dimension check, then add / update the modifier.
+        # GeoNodeCutpart (not GeoNodeObject) is the class that exposes
+        # add_part_modifier - matches the wrap used elsewhere for fronts.
+        part = hb_types.GeoNodeCutpart(front_obj)
+        try:
+            front_length = part.get_input("Length")
+            front_width = part.get_input("Width")
+        except Exception:
+            return "Could not read front dimensions"
+
+        # Auto-add a centered mid rail above 45.5" so tall doors are
+        # split. Matches the frameless convention.
+        auto_mid_rail_threshold = units.inch(45.5)
+        needs_auto_mid_rail = front_length > auto_mid_rail_threshold
+
+        min_width = self.stile_width * 2 + units.inch(1)
+        min_height = self.rail_width * 2 + units.inch(1)
+        if self.add_mid_rail or needs_auto_mid_rail:
+            min_height += self.mid_rail_width
+
+        if front_width < min_width:
+            return (f"Front too narrow ({front_width:.3f}m) for stile "
+                    f"widths (need {min_width:.3f}m)")
+        if front_length < min_height:
+            return (f"Front too short ({front_length:.3f}m) for rail "
+                    f"widths (need {min_height:.3f}m)")
+
+        # Find or add the 'Door Style' CPM_5PIECEDOOR modifier.
+        existing_mod = None
+        for mod in front_obj.modifiers:
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                existing_mod = mod
+                break
+        if existing_mod is not None:
+            door_style_mod = hb_types.CabinetPartModifier()
+            door_style_mod.obj = front_obj
+            door_style_mod.mod = existing_mod
+        else:
+            door_style_mod = part.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
+
+        door_style_mod.set_input("Left Stile Width", self.stile_width)
+        door_style_mod.set_input("Right Stile Width", self.stile_width)
+        door_style_mod.set_input("Top Rail Width", self.rail_width)
+        door_style_mod.set_input("Bottom Rail Width", self.rail_width)
+        door_style_mod.set_input("Panel Thickness", self.panel_thickness)
+        door_style_mod.set_input("Panel Inset", self.panel_inset)
+
+        if needs_auto_mid_rail or self.add_mid_rail:
+            try:
+                door_style_mod.set_input("Add Mid Rail", True)
+                door_style_mod.set_input("Mid Rail Width", self.mid_rail_width)
+                if needs_auto_mid_rail:
+                    door_style_mod.set_input("Center Mid Rail", True)
+                else:
+                    door_style_mod.set_input("Center Mid Rail", self.center_mid_rail)
+                    if not self.center_mid_rail:
+                        door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
+            except Exception:
+                pass
+        else:
+            try:
+                door_style_mod.set_input("Add Mid Rail", False)
+            except Exception:
+                pass
+
+        # Material inheritance from the parent cabinet style lands once
+        # cabinet-style material walking is implemented.
+        front_obj['DOOR_STYLE_NAME'] = self.name
+        return True
+
+    def draw_door_style_ui(self, layout, context):
+        """Per-style settings drawn inside the door styles UIList panel.
+        Assign / Update ops for fronts ship alongside assign_style_to_front.
+        """
+        box = layout.box()
+        box.prop(self, "name", text="Style Name")
+
+        col = box.column(align=True)
+        col.label(text="Construction:")
+        col.prop(self, "door_type", text="Type")
+
+        if self.door_type == 'SLAB':
+            col = box.column(align=True)
+            col.label(text="Edge Profile:")
+            col.prop(self, "edge_profile_type", text="")
+        else:
+            col = box.column(align=True)
+            col.label(text="Frame Dimensions:")
+            col.prop(self, "stile_width", text="Stile Width")
+            col.prop(self, "rail_width", text="Rail Width")
+
+            col = box.column(align=True)
+            col.label(text="Mid Rail:")
+            col.prop(self, "add_mid_rail", text="Add Mid Rail")
+            # Width stays editable even when Add Mid Rail is off: tall
+            # doors above 45.5" get an auto-added mid rail in
+            # assign_style_to_front using this same value, so the user
+            # needs to be able to set it without first toggling Add.
+            col.prop(self, "mid_rail_width", text="Width")
+            if self.add_mid_rail:
+                col.prop(self, "center_mid_rail", text="Center")
+                if not self.center_mid_rail:
+                    col.prop(self, "mid_rail_location", text="Location")
+
+            col = box.column(align=True)
+            col.label(text="Panel:")
+            col.prop(self, "panel_material", text="Material")
+            col.prop(self, "panel_thickness", text="Thickness")
+            col.prop(self, "panel_inset", text="Inset")
+
+        col = box.column(align=True)
+        col.label(text="Profiles:")
+        col.prop(self, "outside_profile", text="Outside")
+        if self.door_type != 'SLAB':
+            col.prop(self, "inside_profile", text="Inside")
+
+        # Assign hits the current selection (anything not a face frame
+        # front is silently skipped); Update walks every front already
+        # tagged with this style name.
+        row = box.row(align=True)
+        row.scale_y = 1.3
+        row.operator("hb_face_frame.assign_door_style_to_selected_fronts",
+                     text="Assign Door Style", icon='BRUSH_DATA')
+        row.operator("hb_face_frame.update_fronts_from_door_style",
+                     text="Update Fronts", icon='FILE_REFRESH')
+
+
+class HB_UL_face_frame_door_styles(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
+        layout.prop(item, "name", text="", emboss=False, icon='MESH_PLANE')
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +2099,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     default_right_overlay: FloatProperty(
         name="Default Right Overlay", default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Distance the door is recessed into the face frame thickness. Zero for
+    # overlay doors (door front face sits proud of the frame face); positive
+    # for inset doors (door pushed back into the opening). Partial inset
+    # typically ~0.375"; full inset = face_frame_thickness (flush).
+    default_door_inset_amount: FloatProperty(
+        name="Default Door Inset Amount",
+        description="Distance the door is recessed from the face frame face (0 = overlay, full = flush inset)",
+        default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -1513,6 +2907,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
     # ---- Options section toggles ----
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles", default=False)  # type: ignore
+    show_door_styles: BoolProperty(name="Show Door Styles", default=False)  # type: ignore
     show_finished_ends_options: BoolProperty(name="Show Finished Ends and Backs", default=False)  # type: ignore
     show_general_options: BoolProperty(name="Show General Options", default=False)  # type: ignore
     show_face_frame_options: BoolProperty(name="Show Face Frame Options", default=False)  # type: ignore
@@ -1590,6 +2985,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # ---- Cabinet styles collection ----
     cabinet_styles: CollectionProperty(type=Face_Frame_Cabinet_Style)  # type: ignore
     active_cabinet_style_index: IntProperty(name="Active Cabinet Style Index", default=0)  # type: ignore
+
+    # Shared door-style pool. Cabinet styles reference one entry as the door
+    # style and another as the drawer-front style via integer indices.
+    door_styles: CollectionProperty(type=Face_Frame_Door_Style)  # type: ignore
+    active_door_style_index: IntProperty(name="Active Door Style Index", default=0)  # type: ignore
 
     # ---- Default placement behaviour ----
     fill_cabinets: BoolProperty(
@@ -2275,17 +3675,35 @@ class Face_Frame_Scene_Props(PropertyGroup):
             self, "active_cabinet_style_index",
             rows=3,
         )
+        side = row.column(align=True)
+        side.operator("hb_face_frame.add_cabinet_style", text="", icon='ADD')
+        side.operator("hb_face_frame.remove_cabinet_style", text="", icon='REMOVE')
 
         if self.cabinet_styles and self.active_cabinet_style_index < len(self.cabinet_styles):
             style = self.cabinet_styles[self.active_cabinet_style_index]
-            box = layout.box()
-            box.prop(style, 'name', text="Name")
-            box.prop(style, 'wood_species', text="Wood")
-            box.prop(style, 'door_overlay_type', text="Door Overlay")
-            box.label(text="Full style settings coming in Phase 4", icon='INFO')
+            style.draw_cabinet_style_ui(layout, context)
         else:
             box = layout.box()
             box.label(text="No cabinet styles defined", icon='INFO')
+
+    def draw_door_styles_ui(self, layout, context):
+        row = layout.row()
+        row.template_list(
+            "HB_UL_face_frame_door_styles", "",
+            self, "door_styles",
+            self, "active_door_style_index",
+            rows=3,
+        )
+        side = row.column(align=True)
+        side.operator("hb_face_frame.add_door_style", text="", icon='ADD')
+        side.operator("hb_face_frame.remove_door_style", text="", icon='REMOVE')
+
+        if self.door_styles and self.active_door_style_index < len(self.door_styles):
+            ds = self.door_styles[self.active_door_style_index]
+            ds.draw_door_style_ui(layout, context)
+        else:
+            box = layout.box()
+            box.label(text="No door styles defined", icon='INFO')
 
     # =====================================================================
     # UI: master draw entry point (called by view3d_sidebar)
@@ -2343,6 +3761,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
                      icon='TRIA_DOWN' if self.show_cabinet_styles else 'TRIA_RIGHT', emboss=False)
             if self.show_cabinet_styles:
                 self.draw_cabinet_styles_ui(box, context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self, 'show_door_styles', text="Door Styles",
+                     icon='TRIA_DOWN' if self.show_door_styles else 'TRIA_RIGHT', emboss=False)
+            if self.show_door_styles:
+                self.draw_door_styles_ui(box, context)
 
             box = col.box()
             row = box.row()
@@ -2453,6 +3879,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
 classes = (
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
+    Face_Frame_Door_Style,
+    HB_UL_face_frame_door_styles,
     Face_Frame_Mid_Stile_Width,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
