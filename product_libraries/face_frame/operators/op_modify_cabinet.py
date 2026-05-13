@@ -382,14 +382,21 @@ def _draw_callback(op, context):
                 corners = _bay_rect_screen(region, rv3d, cab, layout, i)
                 if corners is not None:
                     _draw_quad_2d(shader, corners, LOCK_TINT)
+                    # Bay locks sit centered on the bay's top edge so
+                    # they're spatially distinct from opening locks
+                    # (which hug the right edge). Average both top
+                    # corners to stay correct under perspective skew.
+                    top_left = corners[3]
                     top_right = corners[2]
-                    icon_anchor_x = top_right.x - 4
-                    icon_anchor_y = top_right.y - 4
+                    top_center_x = 0.5 * (top_left.x + top_right.x)
+                    top_center_y = 0.5 * (top_left.y + top_right.y)
+                    # _draw_padlock's (x, y) is the body's top-right.
+                    # Shift right by bw/2 (=5) so body centers on the
+                    # top edge; inset 4 below so shackle clears rail.
+                    icon_anchor_x = top_center_x + 5.0
+                    icon_anchor_y = top_center_y - 4
                     _draw_padlock(shader, icon_anchor_x, icon_anchor_y,
                                   LOCK_GLYPH, size=10.0)
-                    # Anchor (x, y) is the top-right corner of the lock
-                    # body; center sits 5px left and 3.5px down. Record
-                    # for click-to-unlock hit-testing.
                     op._lock_targets.append({
                         'kind': 'BAY',
                         'target_name': bay.name,
@@ -409,9 +416,18 @@ def _draw_callback(op, context):
                 if corners is None:
                     continue
                 _draw_quad_2d(shader, corners, LOCK_TINT)
+                # Opening locks hang on the right edge, vertically
+                # centered on the opening. Pairs with bay locks
+                # (top-center) so the two kinds never collide.
+                bottom_right = corners[1]
                 top_right = corners[2]
-                icon_anchor_x = top_right.x - 4
-                icon_anchor_y = top_right.y - 4
+                right_edge_x = 0.5 * (bottom_right.x + top_right.x)
+                right_mid_y = 0.5 * (bottom_right.y + top_right.y)
+                # _draw_padlock's (x, y) is the body's top-right.
+                # Inset 4 inboard from the right edge; shift up by
+                # bh/2 (=3.5) so body centers on right_mid_y.
+                icon_anchor_x = right_edge_x - 4
+                icon_anchor_y = right_mid_y + 3.5
                 _draw_padlock(shader, icon_anchor_x, icon_anchor_y,
                               LOCK_GLYPH, size=10.0)
                 op._lock_targets.append({
@@ -595,10 +611,18 @@ class _GrabBaseMixin:
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             _draw_callback, (self, context), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
-        context.workspace.status_text_set(
-            "LMB: drag boundary  |  Tab: snap mode  |  Shift: no snap  "
-            "|  Type: numeric  |  Enter: confirm  |  Esc: cancel"
+        # bl_label leads so the mode is identified up front. Area
+        # header (top of viewport) is more visible than the workspace
+        # status bar; matches the draw_walls / change_room_size
+        # convention. Mention click-to-unlock since the lock-icon
+        # affordance is otherwise only discoverable by experiment.
+        context.area.header_text_set(
+            f"{self.bl_label}  |  LMB: drag boundary or click lock"
+            f" to unlock  |  Type: numeric  |  Tab: cycle snap"
+            f"  |  Shift: hold to disable snap  |  Enter: confirm"
+            f"  |  Esc / RMB: cancel"
         )
+        context.window.cursor_modal_set('SCROLL_XY')
         context.area.tag_redraw()
         return {'RUNNING_MODAL'}
 
@@ -611,7 +635,13 @@ class _GrabBaseMixin:
                 pass
             self._draw_handle = None
         try:
-            context.workspace.status_text_set(None)
+            if context.area is not None:
+                context.area.header_text_set(None)
+        except Exception:
+            pass
+        try:
+            if context.window is not None:
+                context.window.cursor_modal_restore()
         except Exception:
             pass
         if context.area:
