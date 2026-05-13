@@ -1813,6 +1813,29 @@ class FaceFrameCabinet(GeoNodeCage):
             panel_props.height = height
             panel_props.depth = depth
 
+            # Sizing first - apply_panel_split_structure reads the
+            # panel's bay.location.z to compute the mid rail position,
+            # and bay.location.z is downstream of the panel's
+            # bottom_rail_width, which apply_panel_sizing sets. If
+            # sizing runs second, the split rebuild reads the panel's
+            # DEFAULT bot_rail (1.5") instead of the correct value
+            # (door rail + bay bottom rail + ...) and the mid rail
+            # lands too high. The split rebuild does NOT modify the
+            # panel's only bay - only its descendants - so it's safe
+            # for sizing to run first.
+            from . import applied_panel_sizing
+            applied_panel_sizing.apply_panel_sizing(
+                self.obj, panel_obj, side, condition,
+            )
+            applied_panel_sizing.apply_panel_split_structure(
+                self.obj, panel_obj, side,
+            )
+            # Toe-kick corner notch on bottom rail + facing stile.
+            # No-op for BACK panels and non-NOTCH toe kicks.
+            applied_panel_sizing.apply_panel_toe_kick_notch(
+                self.obj, panel_obj, side,
+            )
+
     # =====================================================================
     # Applied finished back (single 3/4 part layered on the carcass back)
     # =====================================================================
@@ -3742,9 +3765,12 @@ def applied_panel_geometry(layout, side):
     LEFT and RIGHT panels sit in the scribe gap between the cabinet's
     exterior face and the side panel's outer face. The panel's outer
     (visible) face is flush with the face frame's outer face; its inner
-    face touches the side panel. Y range matches the side panel
-    (between back of FF and back of cabinet); Z range matches the bay's
-    vertical extent so the applied panel and the side panel align.
+    face touches the side panel. Z range is the FULL cabinet height -
+    floor to cabinet top - so the panel covers the toe-kick band at
+    the bottom and ignores top_scribe at the top. The panel's bottom
+    rail width grows by toe_kick_height (handled in
+    applied_panel_sizing) to keep that bottom band reading as frame
+    rather than opening.
 
     BACK uses simple full-extent positioning for now; refining is
     deferred until applied-back behavior is settled.
@@ -3755,30 +3781,25 @@ def applied_panel_geometry(layout, side):
     """
     if side == 'LEFT':
         scribe = solver.left_scribe_offset(layout)
-        bottom_z = solver.bay_bottom_z(layout, 0)
-        top_z = solver.left_side_top_z(layout)
         # Rz(-pi/2): panel +X -> cabinet -Y, panel +Y -> cabinet +X.
         # Origin x = scribe (panel back face touches side outer face);
         # panel front face lands at cabinet x = 0 (flush with FF outer
         # face) when depth = scribe.
-        location = (scribe, 0.0, bottom_z)
+        location = (scribe, 0.0, 0.0)
         rotation_z = -math.pi / 2.0
         width = layout.dim_y - layout.fft
-        height = top_z - bottom_z
+        height = layout.dim_z
         return (location, rotation_z, width, height, scribe)
     if side == 'RIGHT':
         scribe = solver.right_scribe_offset(layout)
-        last = layout.bay_count - 1
-        bottom_z = solver.bay_bottom_z(layout, last)
-        top_z = solver.right_side_top_z(layout)
         # Rz(+pi/2): panel +X -> cabinet +Y, panel +Y -> cabinet -X.
         # Origin x = dim_x - scribe; front face lands at dim_x (flush
         # with FF outer face) when depth = scribe.
         location = (layout.dim_x - scribe,
-                    -layout.dim_y + layout.fft, bottom_z)
+                    -layout.dim_y + layout.fft, 0.0)
         rotation_z = math.pi / 2.0
         width = layout.dim_y - layout.fft
-        height = top_z - bottom_z
+        height = layout.dim_z
         return (location, rotation_z, width, height, scribe)
     # BACK: rotate +pi around Z. Front face -> +Y. Origin at
     # back-right-bottom; width spans cabinet x from dim_x down to 0.
