@@ -72,6 +72,41 @@ class HB_FACE_FRAME_OT_apply_finished_ends_to_exposed(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HB_FACE_FRAME_OT_show_applied_panels(bpy.types.Operator):
+    """Switch face frame selection mode to Applied Panels, highlighting
+    every applied finished-end panel in the scene so they can be clicked
+    directly. Host cabinet cages dim out for the duration.
+
+    Reachable from the Finished Ends and Backs panel only - intentionally
+    absent from the main mode picker. Clicking any standard mode (Cabinets,
+    Bays, etc.) leaves Applied Panels via the normal selection-mode update
+    path, since 'Applied Panels' is just another enum value on
+    face_frame_selection_mode.
+
+    Reports "No applied panels in scene" and cancels if nothing is there to
+    highlight, so the user isn't dropped into an empty viewport state.
+    """
+    bl_idname = "hb_face_frame.show_applied_panels"
+    bl_label = "Show Applied Panels"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        ff_scene = context.scene.hb_face_frame
+        has_panels = any(
+            obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+            for obj in context.scene.objects
+        )
+        if not has_panels:
+            self.report({'INFO'}, "No applied panels in scene")
+            return {'CANCELLED'}
+        # Order matters: enable the master toggle first so the mode write
+        # below produces a visible highlight pass rather than landing in
+        # the off-path branch of toggle_mode.
+        ff_scene.face_frame_selection_mode_enabled = True
+        ff_scene.face_frame_selection_mode = 'Applied Panels'
+        return {'FINISHED'}
+
+
 class HB_FACE_FRAME_OT_recalculate_side_exposure(bpy.types.Operator):
     """Sweep every face-frame cabinet, re-arm the per-side auto flags,
     and recompute exposure + finish type from current neighbor and
@@ -90,6 +125,7 @@ class HB_FACE_FRAME_OT_recalculate_side_exposure(bpy.types.Operator):
 
 classes = (
     HB_FACE_FRAME_OT_apply_finished_ends_to_exposed,
+    HB_FACE_FRAME_OT_show_applied_panels,
     HB_FACE_FRAME_OT_recalculate_side_exposure,
 )
 

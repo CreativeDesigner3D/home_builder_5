@@ -2938,6 +2938,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ('Openings', "Openings", "Select opening cages"),
             ('Interiors', "Interiors", "Select interior parts"),
             ('Parts', "Parts", "Select all individual cuttable parts"),
+            # 'Applied Panels' is reachable via the Show Applied Panels
+            # operator in the Finished Ends and Backs panel; intentionally
+            # absent from the main mode picker (see ui/view3d_sidebar.py).
+            ('Applied Panels', "Applied Panels",
+             "Select applied finished-end panels"),
         ],
         default='Cabinets',
         update=update_face_frame_selection_mode,
@@ -3679,19 +3684,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # UI: pulls (Options tab)
     # =====================================================================
     def draw_finished_ends_ui(self, layout, context):
+        # default_scribe and default_panel_frame_auto (with its top/bottom
+        # rail and stile width children) are intentionally hidden from
+        # this UI. The underlying properties still drive the solver - the
+        # user just doesn't access them here.
         col = layout.column(align=True)
         col.prop(self, 'default_finished_end_type', text="Type")
-        col.separator()
-        col.prop(self, 'default_scribe', text="Default Scribe")
         if self.default_finished_end_type == 'FLUSH_X':
             col.prop(self, 'default_flush_x_amount', text="Flush X Amount")
-        col.separator()
-        col.prop(self, 'default_panel_frame_auto', text="Auto Panel Frame Widths")
-        if not self.default_panel_frame_auto:
-            sub = col.column(align=True)
-            sub.prop(self, 'default_panel_top_rail_width', text="Top Rail")
-            sub.prop(self, 'default_panel_bottom_rail_width', text="Bottom Rail")
-            sub.prop(self, 'default_panel_stile_width', text="Stile")
         col.separator()
         # The bulk operator walks every cabinet in the scene and writes
         # default_finished_end_type to any side flagged exposed. Type
@@ -3706,6 +3706,16 @@ class Face_Frame_Scene_Props(PropertyGroup):
             "hb_face_frame.recalculate_side_exposure",
             text="Recalculate Side Exposure", icon='FILE_REFRESH',
         )
+        # When the scene default is anything other than plain FINISHED,
+        # applied panels can exist in the scene. Surface the Show Applied
+        # Panels operator here so it's reachable from the same panel that
+        # configures the finish type.
+        if self.default_finished_end_type != 'FINISHED':
+            col.separator()
+            col.operator(
+                "hb_face_frame.show_applied_panels",
+                text="Show Applied Panels", icon='HIDE_OFF',
+            )
 
     def draw_pulls_ui(self, layout, context):
         from . import pulls

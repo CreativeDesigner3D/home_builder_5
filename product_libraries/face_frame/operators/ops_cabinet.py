@@ -375,10 +375,14 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
 
     # Object-marker tags for cage-level modes
     MODE_TAGS = {
-        'Cabinets':  types_face_frame.TAG_CABINET_CAGE,
-        'Bays':      types_face_frame.TAG_BAY_CAGE,
-        'Openings':  'IS_FACE_FRAME_OPENING_CAGE',     # Phase 3c
-        'Interiors': 'IS_FACE_FRAME_INTERIOR_PART',    # Phase 3d
+        'Cabinets':       types_face_frame.TAG_CABINET_CAGE,
+        'Bays':           types_face_frame.TAG_BAY_CAGE,
+        'Openings':       'IS_FACE_FRAME_OPENING_CAGE',     # Phase 3c
+        'Interiors':      'IS_FACE_FRAME_INTERIOR_PART',    # Phase 3d
+        # Applied panel roots also carry TAG_CABINET_CAGE (every cabinet
+        # root does); they're discriminated from regular cabinets by the
+        # per-side marker that _reconcile_applied_panels stamps on them.
+        'Applied Panels': types_face_frame.TAG_APPLIED_PANEL_SIDE,
     }
 
     def _matches_mode(self, obj, mode):
@@ -396,10 +400,19 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
             if obj.hide_render:
                 return False
             return True
-        if mode == 'Cabinets' and obj.get('IS_APPLIANCE'):
-            # Appliances live alongside cabinets in the catalog and
-            # should highlight together in Cabinets mode.
-            return True
+        if mode == 'Cabinets':
+            if obj.get('IS_APPLIANCE'):
+                # Appliances live alongside cabinets in the catalog and
+                # should highlight together in Cabinets mode.
+                return True
+            # Applied panels are nested cabinet roots that share
+            # TAG_CABINET_CAGE with their host. They get their own
+            # Applied Panels mode (reached via the Show Applied Panels
+            # operator in the Finished Ends and Backs panel) and are
+            # excluded from regular Cabinets mode so the host cabinet
+            # cage stays the single selection target there.
+            if obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+                return False
         tag = self.MODE_TAGS.get(mode)
         if tag is None:
             return False
@@ -419,8 +432,15 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
                 and not obj.get('IS_APPLIANCE')):
             return
 
+        # dont_show_parent=False: the frameless toggle_cabinet_color
+        # suppresses a parent whenever any descendant shares the same
+        # type tag. Applied panel roots always carry TAG_CABINET_CAGE,
+        # which would re-hide the host cabinet cage in Cabinets mode
+        # even after _matches_mode correctly excludes the panel itself.
+        # _matches_mode already does the conceptual filtering here.
         if self._matches_mode(obj, mode):
-            toggle_cabinet_color(obj, True, type_name=self.MODE_TAGS.get(mode, ''))
+            toggle_cabinet_color(obj, True, type_name=self.MODE_TAGS.get(mode, ''),
+                                 dont_show_parent=False)
         else:
             toggle_cabinet_color(obj, False, type_name=self.MODE_TAGS.get(mode, ''))
 
