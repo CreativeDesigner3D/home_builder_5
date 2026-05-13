@@ -4287,6 +4287,14 @@ def break_cabinet_at_gap(cabinet, gap_index):
         new_root = new_inst.obj
         new_props = new_root.face_frame_cabinet
 
+        # Carry over root-level custom prop tags. STYLE_NAME drives
+        # _reapply_cabinet_style at recalc end (door style + materials);
+        # without it, the new cabinet's fronts render slab.
+        for key in ('STYLE_NAME',):
+            val = cabinet.get(key)
+            if val is not None:
+                new_root[key] = val
+
         if cabinet.parent is not None:
             new_root.parent = cabinet.parent
             new_root.matrix_parent_inverse.identity()
