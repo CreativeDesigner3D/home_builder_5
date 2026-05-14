@@ -372,6 +372,131 @@ class FaceFrameInteriorRegion(GeoNodeCage):
 
 
 # ---------------------------------------------------------------------------
+# Tree cloning (used by insert_bay to copy a bay's contents)
+# ---------------------------------------------------------------------------
+def _copy_property_group(src, dst, skip=()):
+    """Copy every writable, non-pointer field from one PropertyGroup to
+    another, recursing into nested CollectionProperty members. `skip` is
+    a set of identifiers to leave untouched on dst. Pointer props are
+    skipped (none of the face frame PGs carry them today; the guard is
+    defensive against future additions)."""
+    for prop in src.bl_rna.properties:
+        ident = prop.identifier
+        if ident == 'rna_type' or ident in skip or prop.is_readonly:
+            continue
+        if prop.type == 'POINTER':
+            continue
+        if prop.type == 'COLLECTION':
+            dst_coll = getattr(dst, ident)
+            dst_coll.clear()
+            for src_item in getattr(src, ident):
+                _copy_property_group(src_item, dst_coll.add())
+            continue
+        try:
+            setattr(dst, ident, getattr(src, ident))
+        except (AttributeError, TypeError):
+            pass
+
+
+def _clone_interior_tree_node(src_node, new_parent):
+    """Recursively clone an opening's interior tree node - a region leaf
+    cage or an interior-split Empty - under new_parent. Carcass interior
+    parts are not cloned; the recalc rebuilds those from the copied
+    PropertyGroups."""
+    if src_node.get(TAG_INTERIOR_REGION):
+        new_leaf = FaceFrameInteriorRegion()
+        new_leaf.create('Region')
+        new_leaf.obj.parent = new_parent
+        ici = src_node.get('hb_interior_child_index')
+        if ici is not None:
+            new_leaf.obj['hb_interior_child_index'] = ici
+        _copy_property_group(
+            src_node.face_frame_interior_region,
+            new_leaf.obj.face_frame_interior_region,
+        )
+        return new_leaf.obj
+
+    if src_node.get(TAG_INTERIOR_SPLIT_NODE):
+        split_obj = bpy.data.objects.new('Interior Split', None)
+        bpy.context.scene.collection.objects.link(split_obj)
+        split_obj.empty_display_type = 'PLAIN_AXES'
+        split_obj.empty_display_size = 0.001
+        split_obj[TAG_INTERIOR_SPLIT_NODE] = True
+        split_obj.parent = new_parent
+        ici = src_node.get('hb_interior_child_index')
+        if ici is not None:
+            split_obj['hb_interior_child_index'] = ici
+        _copy_property_group(
+            src_node.face_frame_interior_split,
+            split_obj.face_frame_interior_split,
+        )
+        children = sorted(
+            [c for c in src_node.children
+             if c.get(TAG_INTERIOR_REGION)
+             or c.get(TAG_INTERIOR_SPLIT_NODE)],
+            key=lambda c: c.get('hb_interior_child_index', 0),
+        )
+        for c in children:
+            _clone_interior_tree_node(c, split_obj)
+        return split_obj
+    return None
+
+
+def _clone_bay_tree_node(src_node, new_parent, opening_counter):
+    """Recursively clone a bay's interior tree node - an opening cage or
+    a split-node Empty - under new_parent. opening_counter is a one-item
+    list used as a mutable per-bay counter so cloned openings get fresh
+    sequential opening_index values. Fronts, pulls, and carcass parts
+    are not cloned: the recalc rebuilds those from the copied front_type
+    plus the cabinet style."""
+    if src_node.get(TAG_OPENING_CAGE):
+        new_op = FaceFrameOpening()
+        new_op.create('Opening')
+        new_op.obj.parent = new_parent
+        idx = opening_counter[0]
+        opening_counter[0] += 1
+        new_op.obj['hb_opening_index'] = idx
+        # opening_index is the within-bay counter, reassigned here; every
+        # other opening field (front_type, overlays, interior_items, ...)
+        # is copied verbatim so the new bay matches the anchor.
+        _copy_property_group(
+            src_node.face_frame_opening,
+            new_op.obj.face_frame_opening,
+            skip=('opening_index',),
+        )
+        new_op.obj.face_frame_opening.opening_index = idx
+        sci = src_node.get('hb_split_child_index')
+        if sci is not None:
+            new_op.obj['hb_split_child_index'] = sci
+        interior_root = solver._interior_tree_root(src_node)
+        if interior_root is not None:
+            _clone_interior_tree_node(interior_root, new_op.obj)
+        return new_op.obj
+
+    if src_node.get(TAG_SPLIT_NODE):
+        split_obj = bpy.data.objects.new('Split Node', None)
+        bpy.context.scene.collection.objects.link(split_obj)
+        split_obj.empty_display_type = 'PLAIN_AXES'
+        split_obj.empty_display_size = 0.001
+        split_obj[TAG_SPLIT_NODE] = True
+        split_obj.parent = new_parent
+        sci = src_node.get('hb_split_child_index')
+        if sci is not None:
+            split_obj['hb_split_child_index'] = sci
+        _copy_property_group(
+            src_node.face_frame_split, split_obj.face_frame_split)
+        children = sorted(
+            [c for c in src_node.children
+             if c.get(TAG_OPENING_CAGE) or c.get(TAG_SPLIT_NODE)],
+            key=lambda c: c.get('hb_split_child_index', 0),
+        )
+        for c in children:
+            _clone_bay_tree_node(c, split_obj, opening_counter)
+        return split_obj
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Base cabinet class
 # ---------------------------------------------------------------------------
 class FaceFrameCabinet(GeoNodeCage):
@@ -490,6 +615,10 @@ class FaceFrameCabinet(GeoNodeCage):
         if not bays:
             return
         anchor_index = max(0, min(anchor_index, len(bays) - 1))
+        # Hold the anchor bay's object ref before the reindex pass. The
+        # ref is stable across reindexing (only its hb_bay_index prop
+        # changes), so the new bay can clone its tree afterwards.
+        anchor_bay = bays[anchor_index]
         new_bay_index = anchor_index if direction == 'BEFORE' else anchor_index + 1
         # Inserting AT new_bay_index means existing bays at new_bay_index
         # and beyond shift up by one. The new mid-stile sits at gap
@@ -529,13 +658,36 @@ class FaceFrameCabinet(GeoNodeCage):
             # 4) Build the new bay object + opening.
             new_bay = self._create_bay_at(new_bay_index)
 
+            # 4b) Replace the new bay's placeholder opening with a deep
+            #     copy of the anchor bay's tree (openings, splits, front
+            #     types, overlays, interior items / interior tree). Bay-
+            #     level physical props stay at _create_bay_at defaults so
+            #     the redistributor still gives the new bay an equal
+            #     width share. Fronts / pulls are rebuilt by the recalc.
+            anchor_roots = [c for c in anchor_bay.children
+                            if c.get(TAG_OPENING_CAGE)
+                            or c.get(TAG_SPLIT_NODE)]
+            if anchor_roots:
+                for placeholder in [c for c in new_bay.children
+                                    if c.get(TAG_OPENING_CAGE)
+                                    or c.get(TAG_SPLIT_NODE)]:
+                    for d in list(placeholder.children_recursive):
+                        bpy.data.objects.remove(d, do_unlink=True)
+                    bpy.data.objects.remove(placeholder, do_unlink=True)
+                _clone_bay_tree_node(anchor_roots[0], new_bay, [0])
+
             # 5) Build the new mid-stile + mid-div pair at new_gap_index.
             self._create_mid_parts_at(new_gap_index)
         finally:
             _RECALCULATING.discard(cabinet_id)
             _DISTRIBUTING_WIDTHS.discard(cabinet_id)
 
-        self.recalculate()
+        # Route through the module-level wrapper, not the bare
+        # recalculate(): the wrapper also runs _reapply_cabinet_style,
+        # which re-adds the per-front door-style modifier the wipe-and-
+        # rebuild recalc strips. Calling self.recalculate() directly
+        # would leave every front rendering as a slab.
+        recalculate_face_frame_cabinet(self.obj)
         return new_bay
 
     def delete_bay(self, bay_index):
@@ -595,7 +747,9 @@ class FaceFrameCabinet(GeoNodeCage):
             _RECALCULATING.discard(cabinet_id)
             _DISTRIBUTING_WIDTHS.discard(cabinet_id)
 
-        self.recalculate()
+        # Route through the wrapper so _reapply_cabinet_style re-adds
+        # the per-front door-style modifiers the rebuild strips.
+        recalculate_face_frame_cabinet(self.obj)
         return True
 
     # ----- Helpers used by insert_bay / delete_bay -----------------------
