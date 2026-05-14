@@ -16,6 +16,7 @@ Back exposure is reduced to UNEXPOSED-when-wall-parented; partial
 backs don't show up in practice.
 """
 import bpy
+from mathutils import Vector
 
 from ... import hb_types, units
 from . import types_face_frame
@@ -186,11 +187,95 @@ def _side_exposure(cab_obj, side):
     return ('EXPOSED', False, False)
 
 
-def _back_exposure(cab_obj):
-    """Back is UNEXPOSED whenever the cabinet is wall-parented (the normal
-    case). PARTIAL doesn't apply to backs in v1.
+# Back-to-back abutment tolerances. A cabinet placed against the back of
+# another run sits with its carcass back plane flush against that run's
+# back plane; these decide when two back faces read as the same plane.
+_BACK_GAP_TOL = units.inch(0.125)    # plane separation along the normal
+_BACK_LATERAL_TOL = units.inch(0.5)  # min lateral overlap to count
+
+
+def _back_face_segment(cab_obj):
+    """World-space back face of a free-standing face-frame carcass.
+
+    Returns (p0, p1, outward_normal) as XY-plane mathutils Vectors, or
+    None for wall-parented cabinets and non-carcass roots. The back-to-
+    back case only arises between free-standing island runs.
     """
-    return 'UNEXPOSED' if cab_obj.parent is not None else 'EXPOSED'
+    if cab_obj.parent is not None:
+        return None
+    if not _is_face_frame_carcass(cab_obj):
+        return None
+    cp = cab_obj.face_frame_cabinet
+    mw = cab_obj.matrix_world
+    # Carcass origin is back-left; depth extrudes -Y toward the front, so
+    # the back edge runs local (0,0) to (width,0) and the outward back
+    # normal is local +Y (pointing away from the carcass interior).
+    bl = mw @ Vector((0.0, 0.0, 0.0))
+    br = mw @ Vector((cp.width, 0.0, 0.0))
+    p0 = Vector((bl.x, bl.y))
+    p1 = Vector((br.x, br.y))
+    n3 = mw.to_3x3() @ Vector((0.0, 1.0, 0.0))
+    normal = Vector((n3.x, n3.y))
+    if normal.length > 1e-6:
+        normal.normalize()
+    return (p0, p1, normal)
+
+
+def _backs_coincident(seg_a, seg_b):
+    """True when two back-face segments sit back-to-back: same world
+    plane, opposing outward normals, enough lateral overlap.
+    """
+    p0a, p1a, na = seg_a
+    p0b, p1b, nb = seg_b
+    # Opposing normals: the carcasses face into each other.
+    if na.dot(nb) > -0.999:
+        return False
+    # Same plane: b's near endpoint sits on a's back line within tol.
+    if abs((p0b - p0a).dot(na)) > _BACK_GAP_TOL:
+        return False
+    # Lateral overlap measured along a's back edge.
+    axis = p1a - p0a
+    length = axis.length
+    if length < 1e-6:
+        return False
+    axis = axis / length
+    tb0 = (p0b - p0a).dot(axis)
+    tb1 = (p1b - p0a).dot(axis)
+    b_lo, b_hi = min(tb0, tb1), max(tb0, tb1)
+    overlap = min(length, b_hi) - max(0.0, b_lo)
+    return overlap >= _BACK_LATERAL_TOL
+
+
+def _find_back_abutting_cabinets(cab_obj):
+    """Free-standing face-frame carcass cabinets whose back face is flush
+    against cab_obj's back face. Empty for wall-parented cabinets: the
+    back-to-back case only happens off-wall.
+    """
+    seg = _back_face_segment(cab_obj)
+    if seg is None:
+        return []
+    hits = []
+    for obj in bpy.context.scene.objects:
+        if obj is cab_obj:
+            continue
+        other = _back_face_segment(obj)
+        if other is None:
+            continue
+        if _backs_coincident(seg, other):
+            hits.append(obj)
+    return hits
+
+
+def _back_exposure(cab_obj):
+    """UNEXPOSED when the cabinet is wall-parented (back to the wall) or
+    when its carcass back is flush against another free-standing run
+    (island placed back-to-back). EXPOSED otherwise.
+    """
+    if cab_obj.parent is not None:
+        return 'UNEXPOSED'
+    if _find_back_abutting_cabinets(cab_obj):
+        return 'UNEXPOSED'
+    return 'EXPOSED'
 
 
 # ---------------------------------------------------------------------------
@@ -314,11 +399,14 @@ def _find_immediate_face_frame_neighbors_of_point(parent_obj, target_x):
 
 
 def recalc_with_neighbors(cab_obj):
-    """Placement convenience: recalc this cabinet plus the immediate L/R
-    face-frame neighbors whose facing side just gained or lost coverage.
-    Wrapped in suspend_recalc so the multi-cabinet finish writes fold
-    into one solver pass.
+    """Placement convenience: recalc this cabinet, the immediate L/R
+    face-frame neighbors whose facing side just changed coverage, and
+    any free-standing run cab_obj was placed back-to-back against -
+    those cabinets' backs just became unexposed.
     """
+    # cab_obj may have just been placed or moved; refresh matrix_world
+    # before the back-abutment scan reads sibling transforms.
+    bpy.context.view_layer.update()
     with types_face_frame.suspend_recalc():
         recalc_cabinet_exposure(cab_obj)
         left, right = _find_immediate_face_frame_neighbors(cab_obj)
@@ -326,6 +414,8 @@ def recalc_with_neighbors(cab_obj):
             recalc_cabinet_exposure(left)
         if right is not None:
             recalc_cabinet_exposure(right)
+        for back_neighbor in _find_back_abutting_cabinets(cab_obj):
+            recalc_cabinet_exposure(back_neighbor)
 
 
 def recalc_after_appliance_placement(app_obj):
