@@ -53,6 +53,16 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                         text="Delete Cabinet", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_cabinet_group_commands(bpy.types.Menu):
+    """Right-click menu for a cabinet group cage (IS_CAGE_GROUP)."""
+    bl_label = "Cabinet Group Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.grab_cabinet_group",
+                        text="Grab Cabinet Group", icon='OBJECT_ORIGIN')
+
+
 class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
     """Right-click menu for a face frame bay cage."""
     bl_label = "Face Frame Bay Commands"
@@ -204,6 +214,7 @@ class HOME_BUILDER_MT_face_frame_change_bay(bpy.types.Menu):
 
 classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
+    HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_mid_stile_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,

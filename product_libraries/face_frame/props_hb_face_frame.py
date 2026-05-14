@@ -1902,6 +1902,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Width lock - consulted by the Grab Cabinet Group operator when
+    # distributing a delta across cabinets in a group. Locked cabinets
+    # hold their width; unlocked ones absorb. Defaulting False matches
+    # bay-level unlock_width semantics (unlocked = free to resize).
+    lock_width: BoolProperty(
+        name="Lock Width",
+        description="Hold this cabinet's width when a containing group is resized",
+        default=False,
+    )  # type: ignore
+
     cabinet_type: EnumProperty(
         name="Cabinet Type",
         items=[

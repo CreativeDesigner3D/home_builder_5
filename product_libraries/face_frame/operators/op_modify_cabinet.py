@@ -29,6 +29,7 @@ from bpy_extras import view3d_utils
 
 from .. import solver_face_frame as solver
 from .. import types_face_frame
+from .... import hb_types
 from ....units import inch
 
 
@@ -52,6 +53,206 @@ LOCK_GLYPH = (1.00, 0.85, 0.20, 1.00)
 # ---------------------------------------------------------------------------
 # Snapshot helpers
 # ---------------------------------------------------------------------------
+def _member_is_cabinet(obj):
+    return bool(obj.get(types_face_frame.TAG_CABINET_CAGE))
+
+
+def _member_width(obj):
+    """Member width — cabinet width prop for cages, Dim X for appliances."""
+    if _member_is_cabinet(obj):
+        return obj.face_frame_cabinet.width
+    return hb_types.GeoNodeObject(obj).get_input('Dim X')
+
+
+def _member_is_locked(obj):
+    """Locked members hold their width during a group resize. Appliances
+    are always locked (their physical width doesn't flex)."""
+    if _member_is_cabinet(obj):
+        return bool(obj.face_frame_cabinet.lock_width)
+    return True
+
+
+def _member_set_width(obj, w):
+    """Write a new width. No-op for appliances (they're locked)."""
+    if _member_is_cabinet(obj):
+        obj.face_frame_cabinet.width = w
+
+
+def _row_key(obj):
+    """Bucket members into rows by rotation around Z. 0 and pi are the
+    two cases that matter for islands (front row vs back row); anything
+    else rounds to the nearest pi/4 step so an angled run also groups
+    cleanly with itself.
+    """
+    rot_z = obj.rotation_euler.z
+    quantum = math.pi / 4
+    key = round(rot_z / quantum) * quantum
+    # Normalize to [-pi, pi] so e.g. 2pi and 0 share a key.
+    while key > math.pi:
+        key -= 2 * math.pi
+    while key <= -math.pi:
+        key += 2 * math.pi
+    return round(key, 4)
+
+
+class GroupLayout:
+    """Minimal layout adapter so the solver's FF-plane helpers (which
+    expect a FaceFrameLayout) can be reused for a cabinet group.
+
+    The group cage stands in for a cabinet: its local +X is the run
+    direction, its local +Z is up, its outer face is at local y =
+    -dim_y (matching the Mirror-Y cage convention). The basis-building
+    helpers in solver_face_frame only read dim_x, dim_y, is_angled,
+    and the blind offsets — keeping this class to that subset is
+    enough to make ff_local_to_world / mouse_to_ff_local /
+    face_frame_world_basis behave correctly for groups.
+
+    dim_x is computed live from the sum of member cabinet widths
+    rather than re-read from the cage's Dim X input, so the FF basis
+    tracks edits made during a drag even if the cage modifier hasn't
+    been refreshed yet.
+    """
+
+    def __init__(self, group_obj):
+        geo = hb_types.GeoNodeObject(group_obj)
+        # dim_x = widest row's total width, summing cabinets AND
+        # appliances. Earlier version summed cabinets only, which made
+        # the GROUP_OUTER_RIGHT drag line land short by the appliance's
+        # width. Bucketing by rotation handles front-back island runs:
+        # each row sums independently, and the widest wins.
+        members = [c for c in group_obj.children
+                   if c.get(types_face_frame.TAG_CABINET_CAGE)
+                   or c.get('IS_APPLIANCE')]
+        row_totals = {}
+        for m in members:
+            key = _row_key(m)
+            row_totals[key] = row_totals.get(key, 0.0) + _member_width(m)
+        if row_totals:
+            self.dim_x = max(row_totals.values())
+        else:
+            self.dim_x = geo.get_input('Dim X')
+        self.dim_y = geo.get_input('Dim Y')
+        self.dim_z = geo.get_input('Dim Z')
+        self.is_angled = False
+        self.blind_offset_left = 0.0
+        self.blind_offset_right = 0.0
+        # Cabinets only (no appliances) for CABINET_BOUNDARY records -
+        # those record adjacent face-frame cabinet pairs the user can
+        # drag between. Appliances are locked and don't participate.
+        self.cabinets = sorted(
+            [c for c in group_obj.children
+             if c.get(types_face_frame.TAG_CABINET_CAGE)],
+            key=lambda c: c.location.x,
+        )
+
+
+def group_boundary_records(group_obj, layout):
+    """Boundary records for a Grab Cabinet Group session.
+
+    Phase A: only CABINET_BOUNDARY records (between adjacent member
+    cabinets). Group outer-edge drags (which would distribute a
+    delta across unlocked members based on face_frame_cabinet.lock_
+    width) land in a follow-up edit.
+
+    cabinet_obj on each record is the group itself — the FF basis used
+    for screen projection is the group's frame, not any one member's.
+    """
+    # Bucket every member by row using rotation around Z. CABINET_
+    # BOUNDARY records only make sense within a single row (a "boundary"
+    # between a front-row and back-row cabinet isn't a thing — they're
+    # not spatially adjacent along either row's run). Walking each row
+    # left-to-right in group-local X, the running_x accumulates over
+    # ALL members (cabinets AND appliances) so the boundary ff_x lands
+    # at the actual cabinet-cabinet abutment. Boundaries are only
+    # emitted between consecutive face-frame cabinets within a row;
+    # appliance-adjacent edges are skipped because appliances can't
+    # absorb a width shift.
+    rows_by_key = {}
+    for m in group_obj.children:
+        if not (m.get(types_face_frame.TAG_CABINET_CAGE)
+                or m.get('IS_APPLIANCE')):
+            continue
+        w = _member_width(m)
+        rot = m.rotation_euler.z
+        is_back = abs(abs(rot) - math.pi) < 0.1
+        leading_offset = w if is_back else 0.0
+        left_gx = m.location.x - leading_offset
+        rows_by_key.setdefault(_row_key(m), []).append({
+            'obj': m,
+            'width': w,
+            'left_gx': left_gx,
+        })
+
+    edge_index = 0
+    for row_entries in rows_by_key.values():
+        row_entries.sort(key=lambda e: e['left_gx'])
+        # running_x advances by every member's width so cabinet
+        # boundaries land at the right group-local X even when an
+        # appliance sits between two cabinets.
+        running_x = row_entries[0]['left_gx']
+        for i in range(len(row_entries) - 1):
+            running_x += row_entries[i]['width']
+            left = row_entries[i]['obj']
+            right = row_entries[i + 1]['obj']
+            if not (_member_is_cabinet(left) and _member_is_cabinet(right)):
+                continue
+            ff_z_high = min(left.face_frame_cabinet.height,
+                            right.face_frame_cabinet.height)
+            yield {
+                'kind': 'CABINET_BOUNDARY',
+                'axis': 'X',
+                'primary_sign': 1.0,
+                'cabinet_obj': group_obj,
+                'edge_index': edge_index,
+                'left_cab_name': left.name,
+                'right_cab_name': right.name,
+                'ff_x': running_x,
+                'ff_z_low': 0.0,
+                'ff_z_high': ff_z_high,
+                'locked_left': bool(left.face_frame_cabinet.lock_width),
+                'locked_right': bool(right.face_frame_cabinet.lock_width),
+            }
+            edge_index += 1
+
+    # Outer right edge of the group. Dragging grows / shrinks the
+    # group; unlocked member cabinets absorb the delta proportionally
+    # by their current width, locked ones hold.
+    yield {
+        'kind': 'GROUP_OUTER_RIGHT',
+        'axis': 'X',
+        'primary_sign': 1.0,
+        'cabinet_obj': group_obj,
+        'ff_x': layout.dim_x,
+        'ff_z_low': 0.0,
+        'ff_z_high': layout.dim_z,
+    }
+    # Outer left edge. Same distribution math, plus a group translation
+    # so the right edge stays put while the left moves.
+    yield {
+        'kind': 'GROUP_OUTER_LEFT',
+        'axis': 'X',
+        'primary_sign': -1.0,
+        'translate': True,
+        'translate_axis': 'X',
+        'cabinet_obj': group_obj,
+        'ff_x': 0.0,
+        'ff_z_low': 0.0,
+        'ff_z_high': layout.dim_z,
+    }
+
+
+def _collect_group_boundaries(group_obj):
+    """Build the (boundary, layout) list for a single cabinet group.
+
+    Mirrors _collect_boundaries' shape but scoped to one group, using
+    GroupLayout instead of FaceFrameLayout.
+    """
+    if group_obj is None or not group_obj.get('IS_CAGE_GROUP'):
+        return []
+    layout = GroupLayout(group_obj)
+    return [(b, layout) for b in group_boundary_records(group_obj, layout)]
+
+
 def _iter_face_frame_cabinets(scene):
     for obj in scene.objects:
         if obj.get(types_face_frame.TAG_CABINET_CAGE):
@@ -59,15 +260,18 @@ def _iter_face_frame_cabinets(scene):
 
 
 def _snapshot_session(scene):
-    """Capture per-bay widths and unlock flags for every face-frame cabinet
-    in the scene. Used to roll back on Esc."""
-    snap = {}
+    """Capture per-bay widths, cabinet widths, and the matching lock
+    flags for every face-frame cabinet in the scene. Used to roll back
+    on Esc - covers any grab variant's edits without per-variant
+    bookkeeping.
+    """
+    snap = {'bays': {}, 'cabinets': {}}
     for cab in _iter_face_frame_cabinets(scene):
         bays = sorted(
             [c for c in cab.children if c.get(types_face_frame.TAG_BAY_CAGE)],
             key=lambda c: c.get('hb_bay_index', 0),
         )
-        snap[cab.name] = [
+        snap['bays'][cab.name] = [
             {
                 'bay_name': b.name,
                 'width': b.face_frame_bay.width,
@@ -75,19 +279,35 @@ def _snapshot_session(scene):
             }
             for b in bays
         ]
+        snap['cabinets'][cab.name] = {
+            'width': cab.face_frame_cabinet.width,
+            'lock_width': cab.face_frame_cabinet.lock_width,
+        }
     return snap
 
 
 def _restore_session(snap):
-    """Restore per-bay widths and unlock flags from a snapshot."""
-    for cab_name, bay_states in snap.items():
+    """Restore per-bay widths, cabinet widths, and the matching lock
+    flags from a snapshot. Cabinets restored before bays so the
+    cabinet-level recalc fires once with the correct outer width,
+    rather than running per-bay and triggering a redistribution
+    against a still-stale cabinet width.
+    """
+    for cab_name, state in snap.get('cabinets', {}).items():
+        cab = bpy.data.objects.get(cab_name)
+        if cab is None:
+            continue
+        cp = cab.face_frame_cabinet
+        # Restore lock_width first so the width setter doesn't see
+        # an inconsistent intermediate state.
+        cp.lock_width = state['lock_width']
+        cp.width = state['width']
+    for cab_name, bay_states in snap.get('bays', {}).items():
         for state in bay_states:
             bay = bpy.data.objects.get(state['bay_name'])
             if bay is None:
                 continue
             bp = bay.face_frame_bay
-            # Write unlock_width first to prevent the width setter's
-            # auto-lock from re-flipping during restore.
             bp.unlock_width = state['unlock_width']
             bp.width = state['width']
 
@@ -571,6 +791,14 @@ class _GrabBaseMixin:
     """
     BOUNDARY_COLLECTOR = None
 
+    # Subclasses can override _collect to scope boundary collection to
+    # a specific object (e.g. a cabinet group) instead of iterating
+    # every face-frame cabinet in the scene. Default returns the
+    # scene-wide list via the existing per-cabinet collector.
+    def _collect(self):
+        return _collect_boundaries(bpy.context.scene, self.BOUNDARY_COLLECTOR)
+
+
     # Session state
     _session_snapshot = None
     _draw_handle = None
@@ -604,7 +832,7 @@ class _GrabBaseMixin:
             self.report({'WARNING'}, "Run from a 3D Viewport")
             return {'CANCELLED'}
         self._session_snapshot = _snapshot_session(context.scene)
-        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
+        self._boundaries = self._collect()
         if not self._boundaries:
             self.report({'INFO'}, "No editable boundaries found")
             return {'CANCELLED'}
@@ -684,7 +912,7 @@ class _GrabBaseMixin:
             obj.face_frame_opening.unlock_size = False
         # Boundaries change because freshly-unlocked children re-share
         # their sibling space; the icon also disappears.
-        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
+        self._boundaries = self._collect()
         return True
 
     def _pick_boundary(self, context, event):
@@ -717,6 +945,78 @@ class _GrabBaseMixin:
         to compensate.
         """
         cab = b['cabinet_obj']
+
+        if b['kind'] == 'CABINET_BOUNDARY':
+            out = []
+            for nm in (b['left_cab_name'], b['right_cab_name']):
+                obj = bpy.data.objects.get(nm)
+                if obj is None:
+                    continue
+                cp = obj.face_frame_cabinet
+                out.append({
+                    'kind': 'CABINET_WIDTH',
+                    'name': obj.name,
+                    'attr': 'width',
+                    'unlock_attr': 'lock_width',
+                    'value': cp.width,
+                    'unlock': cp.lock_width,
+                })
+            return out
+
+        if b['kind'] in ('GROUP_OUTER_RIGHT', 'GROUP_OUTER_LEFT'):
+            group = cab  # 'cabinet_obj' on group records is the group itself
+            # Collect every group member - face frame cabinets AND
+            # appliances - and bucket by row using rotation around Z.
+            # Within each row, sort spatially left-to-right in group-local
+            # X (which depends on rotation: front-row location.x is the
+            # cab's left edge, back-row location.x is the right edge).
+            members = [c for c in group.children
+                       if c.get(types_face_frame.TAG_CABINET_CAGE)
+                       or c.get('IS_APPLIANCE')]
+            rows_by_key = {}
+            for m in members:
+                w = _member_width(m)
+                rot = m.rotation_euler.z
+                # leading_offset: distance from spatial-left-edge-in-
+                # group-local to the cab's location.x. 0 for front
+                # (location.x sits at left edge), width for back
+                # (location.x sits at right edge because rotated 180).
+                is_back = abs(abs(rot) - math.pi) < 0.1
+                leading_offset = w if is_back else 0.0
+                left_gx = m.location.x - leading_offset
+                rows_by_key.setdefault(_row_key(m), []).append({
+                    'obj': m,
+                    'width': w,
+                    'left_gx': left_gx,
+                    'is_back': is_back,
+                })
+            rows = []
+            for key in sorted(rows_by_key.keys()):
+                entries = sorted(rows_by_key[key], key=lambda e: e['left_gx'])
+                rows.append({
+                    'rotation_key': key,
+                    'is_back_row': entries[0]['is_back'],
+                    'start_gx': entries[0]['left_gx'],
+                    'member_names': [e['obj'].name for e in entries],
+                    'orig_widths': [e['width'] for e in entries],
+                    'orig_locations':
+                        [e['obj'].location.copy() for e in entries],
+                    'orig_locks': [_member_is_locked(e['obj']) for e in entries],
+                    'is_appliance': [not _member_is_cabinet(e['obj'])
+                                     for e in entries],
+                })
+            state = {
+                'kind': 'GROUP_DISTRIBUTE',
+                'name': group.name,
+                'rows': rows,
+                'orig_group_world_loc':
+                    group.matrix_world.translation.copy(),
+                'orig_group_location': group.location.copy(),
+            }
+            if b.get('translate'):
+                state['translate'] = True
+                state['grow_sign'] = b.get('primary_sign', 1.0)
+            return [state]
 
         if b['kind'] == 'BAY_EDGE':
             bay_objs = sorted(
@@ -867,6 +1167,13 @@ class _GrabBaseMixin:
                 else:
                     obj.location = new_world_loc
             return
+        if state['kind'] == 'CABINET_WIDTH':
+            cp = obj.face_frame_cabinet
+            unlock_attr = state['unlock_attr']
+            if write_unlock and not getattr(cp, unlock_attr):
+                setattr(cp, unlock_attr, True)
+            setattr(cp, state['attr'], new_value)
+            return
         # Tree child
         pg = (obj.face_frame_opening
               if obj.get(types_face_frame.TAG_OPENING_CAGE)
@@ -897,6 +1204,34 @@ class _GrabBaseMixin:
             if state.get('translate') and 'orig_location' in state:
                 obj.location = state['orig_location']
             return
+        if state['kind'] == 'CABINET_WIDTH':
+            cp = obj.face_frame_cabinet
+            setattr(cp, state['unlock_attr'], state['unlock'])
+            setattr(cp, state['attr'], state['value'])
+            return
+        if state['kind'] == 'GROUP_DISTRIBUTE':
+            # Restore every row's member widths and locations, then the
+            # group's translation and the cage's Dim X.
+            orig_totals = []
+            for row in state['rows']:
+                for name, w, loc in zip(row['member_names'],
+                                        row['orig_widths'],
+                                        row['orig_locations']):
+                    m = bpy.data.objects.get(name)
+                    if m is None:
+                        continue
+                    _member_set_width(m, w)
+                    m.location = loc.copy()
+                orig_totals.append(sum(row['orig_widths']))
+            group = obj  # obj was looked up from state['name'] above
+            if state.get('translate'):
+                group.location = state['orig_group_location'].copy()
+            try:
+                hb_types.GeoNodeObject(group).set_input(
+                    'Dim X', max(orig_totals) if orig_totals else 0.0)
+            except Exception:
+                pass
+            return
         pg = (obj.face_frame_opening
               if obj.get(types_face_frame.TAG_OPENING_CAGE)
               else obj.face_frame_split)
@@ -912,6 +1247,102 @@ class _GrabBaseMixin:
     def _boundary_axis_value(self, b):
         """Current value of the boundary along its drag axis."""
         return b['ff_x'] if b['axis'] == 'X' else b['ff_z']
+
+    def _apply_group_distribute(self, state, width_delta):
+        """Distribute a total-group-width delta across each row's
+        unlocked members, reposition every member spatially left-to-
+        right in group-local X, and (for LEFT-edge drags) translate
+        the group so its world-space right edge stays put.
+
+        Each row (front cabinets, back cabinets) distributes the SAME
+        width_delta independently. Within a row, unlocked face-frame
+        cabinets absorb proportionally to their original width;
+        appliances and lock_width=True cabinets hold their width but
+        still get repositioned so they remain abutting their neighbors.
+
+        Row geometry depends on rotation: front-row cabinets have
+        location.x at their spatial-left edge in group-local, back-row
+        cabinets have location.x at their spatial-right edge
+        (rotated 180 around Z, so cab-local origin maps to the right
+        end in group-local). leading_offset captures that.
+        """
+        max_new_total = 0.0
+        for row in state['rows']:
+            orig_widths = row['orig_widths']
+            orig_locks = row['orig_locks']
+            unlocked = [i for i, lk in enumerate(orig_locks) if not lk]
+
+            if unlocked:
+                weights = [orig_widths[i] for i in unlocked]
+                total_weight = sum(weights)
+                row_delta = width_delta
+                if total_weight > 1e-9:
+                    # Clamp so no unlocked drops below MIN_BAY_WIDTH.
+                    floor = None
+                    for i, w in zip(unlocked, weights):
+                        if w > 1e-9:
+                            f = ((MIN_BAY_WIDTH - orig_widths[i])
+                                 * total_weight / w)
+                            floor = f if floor is None else max(floor, f)
+                    if floor is not None and row_delta < floor:
+                        row_delta = floor
+                    new_widths = list(orig_widths)
+                    for i, w in zip(unlocked, weights):
+                        share = (w / total_weight) * row_delta
+                        new_widths[i] = orig_widths[i] + share
+                else:
+                    new_widths = list(orig_widths)
+            else:
+                # All locked: row width is fixed. Members still need
+                # repositioning if their relative order shifts, but in
+                # practice their absolute positions don't move.
+                new_widths = list(orig_widths)
+
+            is_back_row = row['is_back_row']
+            running_gx = row['start_gx']
+            for i, name in enumerate(row['member_names']):
+                m = bpy.data.objects.get(name)
+                if m is None:
+                    continue
+                if new_widths[i] != orig_widths[i]:
+                    _member_set_width(m, new_widths[i])
+                leading_offset = new_widths[i] if is_back_row else 0.0
+                new_loc = row['orig_locations'][i].copy()
+                new_loc.x = running_gx + leading_offset
+                m.location = new_loc
+                running_gx += new_widths[i]
+            max_new_total = max(max_new_total, running_gx - row['start_gx'])
+
+        group = bpy.data.objects.get(state['name'])
+        if group is None:
+            return
+
+        if state.get('translate') and self._drag_basis is not None:
+            # World-space right edge stays put; group shifts along its
+            # frozen +X axis by the shrinkage amount (max across rows).
+            # Use the front row's shrinkage by default - typical islands
+            # have aligned front+back so row deltas match.
+            orig_total = max(
+                (sum(r['orig_widths']) for r in state['rows']),
+                default=0.0,
+            )
+            shift = orig_total - max_new_total
+            origin_w, x_axis_w, _z, _n = self._drag_basis
+            new_world_loc = state['orig_group_world_loc'] + x_axis_w * shift
+            if group.parent is not None:
+                parent_inv = group.parent.matrix_world.inverted_safe()
+                group.location = parent_inv @ new_world_loc
+            else:
+                group.location = new_world_loc
+
+        # Sync cage Dim X to the widest row's total. For aligned
+        # islands all rows match; for misaligned the cage tracks the
+        # outermost extent.
+        try:
+            hb_types.GeoNodeObject(group).set_input('Dim X', max_new_total)
+        except Exception:
+            pass
+
 
     def _start_drag(self, context, event, b, layout):
         region = context.region
@@ -985,6 +1416,30 @@ class _GrabBaseMixin:
             self._boundaries, snap_mode)
         delta = snapped_axis - self._drag_origin_boundary
         self._snap_kind = snap_kind
+
+        # Group outer-edge drags use N-way distribution across member
+        # cabinets, gated by face_frame_cabinet.lock_width. State on
+        # the snapshot is a single GROUP_DISTRIBUTE record carrying
+        # original widths and locations, so the math is anchored on
+        # drag-start values and stays drift-free across refreshes.
+        if b['kind'] in ('GROUP_OUTER_RIGHT', 'GROUP_OUTER_LEFT'):
+            if not self._drag_snapshot:
+                return
+            state = self._drag_snapshot[0]
+            primary_sign = b.get('primary_sign', 1.0)
+            # width_delta = total change to group width. RIGHT: +cursor
+            # delta = +growth. LEFT: +cursor delta = -growth (right edge
+            # stays put, left moves in).
+            self._apply_group_distribute(state, primary_sign * delta)
+            self._boundaries = self._collect()
+            for nb, nl in self._boundaries:
+                if (nb['cabinet_obj'] is b['cabinet_obj']
+                        and nb['kind'] == b['kind']):
+                    self._drag_boundary = nb
+                    self._drag_layout = nl
+                    break
+            return
+
         # Apply with clamp. Sign convention: positive delta along the
         # drag axis grows the PRIMARY neighbor and shrinks the SECONDARY.
         # For MID_RAIL the primary is the TOP child and the drag axis
@@ -999,7 +1454,8 @@ class _GrabBaseMixin:
         single_neighbor = (len(self._drag_snapshot) == 1)
         # Default minimum if the boundary record didn't supply its own.
         if b['kind'] in ('BAY_EDGE', 'OUTER_RIGHT', 'OUTER_LEFT',
-                         'OUTER_TOP', 'OUTER_BOTTOM', 'BAY_HANDLE'):
+                         'OUTER_TOP', 'OUTER_BOTTOM', 'BAY_HANDLE',
+                         'CABINET_BOUNDARY'):
             default_min = MIN_BAY_WIDTH
         elif b['kind'] == 'TOE_KICK':
             default_min = 0.0
@@ -1064,12 +1520,14 @@ class _GrabBaseMixin:
         # Refresh boundaries — splitter centerlines shift as sizes
         # change. Re-link the drag boundary to the freshly collected
         # record matching the same edge / split / gap.
-        self._boundaries = _collect_boundaries(context.scene, self.BOUNDARY_COLLECTOR)
+        self._boundaries = self._collect()
         for nb, nl in self._boundaries:
             if nb['cabinet_obj'] is not cab or nb['kind'] != b['kind']:
                 continue
             same = False
             if b['kind'] == 'BAY_EDGE':
+                same = nb.get('edge_index') == b.get('edge_index')
+            elif b['kind'] == 'CABINET_BOUNDARY':
                 same = nb.get('edge_index') == b.get('edge_index')
             elif b['kind'] in ('OUTER_RIGHT', 'OUTER_LEFT',
                                'OUTER_TOP', 'OUTER_BOTTOM',
@@ -1098,7 +1556,7 @@ class _GrabBaseMixin:
         if not commit:
             for state in (self._drag_snapshot or []):
                 self._restore_neighbor(state)
-            self._boundaries = _collect_boundaries(bpy.context.scene, self.BOUNDARY_COLLECTOR)
+            self._boundaries = self._collect()
         self._drag_active = False
         self._drag_boundary = None
         self._drag_layout = None
@@ -1252,8 +1710,50 @@ class hb_face_frame_OT_grab_cabinet(_GrabBaseMixin, bpy.types.Operator):
     BOUNDARY_COLLECTOR = staticmethod(solver.editable_boundaries_cabinet)
 
 
+class hb_face_frame_OT_grab_cabinet_group(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab boundaries between member cabinets in a cabinet
+    group. Drag a boundary to shift width between the two adjacent
+    cabinets. Same modal mechanics as Grab Cabinet (snap, type-to-set,
+    Esc to cancel, click-to-unlock) — scope is just the active group
+    instead of the whole scene.
+
+    Phase A: only inter-cabinet boundaries (CABINET_BOUNDARY). Group
+    outer-edge drags with lock_width-aware distribution land in a
+    follow-up.
+    """
+    bl_idname = "hb_face_frame.grab_cabinet_group"
+    bl_label = "Grab Cabinet Group"
+    bl_description = (
+        "Click and drag boundaries between cabinets in the group to "
+        "shift width between them. Locked cabinets hold their width. "
+        "Enter to confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+    # Group scope is resolved via _collect; BOUNDARY_COLLECTOR is
+    # unused in this subclass but the mixin tolerates None.
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get('IS_CAGE_GROUP'))
+
+    def invoke(self, context, event):
+        # Capture the active group up front so _collect doesn't depend
+        # on the active object staying selected across modal events.
+        self._scope_group = context.active_object
+        if (self._scope_group is None
+                or not self._scope_group.get('IS_CAGE_GROUP')):
+            self.report({'WARNING'}, "Active object isn't a cabinet group")
+            return {'CANCELLED'}
+        return super().invoke(context, event)
+
+    def _collect(self):
+        return _collect_group_boundaries(self._scope_group)
+
+
 classes = (
     hb_face_frame_OT_grab_face_frame,
     hb_face_frame_OT_grab_cabinet,
+    hb_face_frame_OT_grab_cabinet_group,
 )
 register, unregister = bpy.utils.register_classes_factory(classes)

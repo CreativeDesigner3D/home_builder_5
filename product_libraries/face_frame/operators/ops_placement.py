@@ -435,19 +435,268 @@ def _compute_corner_left_snap_transform(snap_obj, new_object_width):
     return (new_loc, new_rot)
 
 
-def _try_auto_merge_with_neighbor(context, cab_obj):
-    """If a compatible face-frame cabinet sits abutting cab_obj on the
-    same wall, merge cab_obj into it and return the surviving anchor.
-    Returns None when no merge happens.
+def _hit_face_of_cabinet(cab_obj, hit_location):
+    """Which face of cab_obj was hit. Returns 'BACK', 'FRONT', 'LEFT',
+    'RIGHT', 'TOP', 'BOTTOM', or None if the hit point can't be
+    resolved against the cabinet's six bounding planes.
 
-    "Compatible" is everything merge_cabinets pre-flights: same parent,
-    same height / depth / Z, abutting within tolerance, no corner type.
-    Prefers the left neighbor when both sides are compatible.
+    Cabinet local frame convention: origin at back-left-floor, +X is
+    right, -Y is forward (depth extrudes in -Y), +Z is up. So local
+    face planes are y=0 (back), y=-depth (front), x=0 (left),
+    x=width (right), z=0 (bottom), z=height (top).
     """
-    parent = cab_obj.parent
-    if parent is None:
+    if cab_obj is None or hit_location is None:
         return None
+    try:
+        geo = hb_types.GeoNodeObject(cab_obj)
+        w = geo.get_input('Dim X')
+        d = geo.get_input('Dim Y')
+        h = geo.get_input('Dim Z')
+    except Exception:
+        return None
+    local = cab_obj.matrix_world.inverted() @ hit_location
+    # Distance to each face plane in local coords.
+    candidates = [
+        ('BACK',   abs(local.y)),
+        ('FRONT',  abs(local.y - (-d))),
+        ('LEFT',   abs(local.x)),
+        ('RIGHT',  abs(local.x - w)),
+        ('BOTTOM', abs(local.z)),
+        ('TOP',    abs(local.z - h)),
+    ]
+    candidates.sort(key=lambda t: t[1])
+    return candidates[0][0]
 
+
+def _resolve_island_run(seed_obj):
+    """Free-standing run containing seed_obj. Returns objects sorted
+    left-to-right along the run axis.
+
+    A "run" is the set of free-standing face-frame cabinets and
+    appliances that share Z rotation (within 0.5 deg), share world Z
+    (within eps), and sit on the same perpendicular line (within 1").
+    Tall and base/upper can co-exist since dishwashers and ranges
+    typically sit alongside base cabinets.
+
+    Empty list (or list containing only the seed) is returned when the
+    seed isn't free-standing or when its run can't be resolved.
+    """
+    if seed_obj is None or seed_obj.parent is not None:
+        return [seed_obj] if seed_obj is not None else []
+    seed_axis = seed_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    seed_axis.z = 0.0
+    if seed_axis.length < 1e-8:
+        return [seed_obj]
+    seed_axis.normalize()
+    seed_origin = seed_obj.matrix_world.translation
+    seed_z = seed_origin.z
+    cos_tol = math.cos(math.radians(0.5))
+    perp_tol = units.inch(1.0)
+
+    found = []
+    for obj in bpy.context.scene.objects:
+        if obj.parent is not None:
+            continue
+        if not (obj.get(types_face_frame.TAG_CABINET_CAGE)
+                or obj.get('IS_APPLIANCE')):
+            continue
+        if abs(obj.matrix_world.translation.z - seed_z) > 1e-4:
+            continue
+        obj_axis = obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        obj_axis.z = 0.0
+        if obj_axis.length < 1e-8:
+            continue
+        obj_axis.normalize()
+        if seed_axis.dot(obj_axis) < cos_tol:
+            continue
+        disp = obj.matrix_world.translation - seed_origin
+        signed = disp.x * seed_axis.x + disp.y * seed_axis.y
+        perp_x = disp.x - signed * seed_axis.x
+        perp_y = disp.y - signed * seed_axis.y
+        perp = math.sqrt(perp_x * perp_x + perp_y * perp_y)
+        if perp > perp_tol:
+            continue
+        # Object width along run axis. For cabinets read the face-
+        # frame width prop; for appliances read Dim X via GeoNodeObject.
+        try:
+            if obj.get(types_face_frame.TAG_CABINET_CAGE):
+                obj_w = obj.face_frame_cabinet.width
+            else:
+                obj_w = hb_types.GeoNodeObject(obj).get_input('Dim X')
+        except Exception:
+            continue
+        found.append((signed, obj, obj_w))
+    found.sort(key=lambda t: t[0])
+
+    # Walk outward from the seed, accepting only objects that abut the
+    # chain (gap to the previous member < 1"). Two separate islands at
+    # the same Z and rotation sit far apart and must not collapse into
+    # one run; the contiguity walk enforces that.
+    seed_idx = next((i for i, t in enumerate(found) if t[1] is seed_obj), -1)
+    if seed_idx < 0:
+        return [seed_obj]
+    abut_tol = units.inch(1.0)
+    run_indexes = [seed_idx]
+    # Walk left
+    i = seed_idx
+    while i > 0:
+        prev_signed, _, prev_w = found[i - 1]
+        cur_signed, _, _ = found[i]
+        gap = cur_signed - (prev_signed + prev_w)
+        if gap > abut_tol:
+            break
+        run_indexes.insert(0, i - 1)
+        i -= 1
+    # Walk right
+    i = seed_idx
+    while i < len(found) - 1:
+        cur_signed, _, cur_w = found[i]
+        next_signed, _, _ = found[i + 1]
+        gap = next_signed - (cur_signed + cur_w)
+        if gap > abut_tol:
+            break
+        run_indexes.append(i + 1)
+        i += 1
+    return [found[i][1] for i in run_indexes]
+
+
+def _compute_run_back_geometry(run_objs):
+    """Geometry of the back-snap line for a run.
+
+    Returns (origin_world, axis_world, length, world_z):
+      * origin_world: leftmost object's back-left corner in world space
+        (also its matrix_world.translation, since cabinet origin sits
+        at back-left-floor by convention).
+      * axis_world: run direction as a unit vector in world XY (the
+        leftmost object's local +X). All run members share this
+        orientation within the 0.5 deg tolerance enforced by
+        _resolve_island_run.
+      * length: signed offset of the rightmost object's right edge
+        from origin. Includes any gaps between run members; the snap
+        line is continuous across them.
+      * world_z: leftmost object's world Z. All members share this
+        within eps.
+
+    Returns None on degenerate input.
+    """
+    if not run_objs:
+        return None
+    leftmost = run_objs[0]
+    rightmost = run_objs[-1]
+    axis = leftmost.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    axis.z = 0.0
+    if axis.length < 1e-8:
+        return None
+    axis.normalize()
+    origin = leftmost.matrix_world.translation.copy()
+    try:
+        right_w = hb_types.GeoNodeObject(rightmost).get_input('Dim X')
+    except Exception:
+        return None
+    disp = rightmost.matrix_world.translation - origin
+    rightmost_signed = disp.x * axis.x + disp.y * axis.y
+    length = rightmost_signed + right_w
+    return (origin, axis, length, origin.z)
+
+
+def _find_back_row_gap(run_origin, run_axis, run_length, world_z,
+                       perp_target, signed_cursor, object_width,
+                       exclude_obj):
+    """Find the available gap for a back-row placement at signed_cursor.
+
+    Back-row cabinets are free-standing face-frame cabinets whose Z
+    rotation is the run's rotation + pi (so their local +X points
+    opposite the run axis). Each occupies the span [signed_origin -
+    width, signed_origin] in run-signed-offset coordinates, where
+    signed_origin is the projection of the cabinet's world translation
+    onto the run axis.
+
+    Returns (gap_start, gap_end, snap_signed) in run-signed-offset
+    space. Snap value centers the new object on signed_cursor, clamped
+    so the object fits inside the gap.
+
+    perp_target: perpendicular signed offset of the back-snap line
+    (object's world translation must sit within 1" of this line in
+    the perp direction to count as part of the back row).
+    """
+    perp_tol = units.inch(1.0)
+    cos_tol = math.cos(math.radians(0.5))
+    back_axis = -run_axis  # back-row cabinets point this way (run + pi)
+
+    occupied = []
+    for obj in bpy.context.scene.objects:
+        if obj is exclude_obj:
+            continue
+        if obj.parent is not None:
+            continue
+        if not obj.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        if abs(obj.matrix_world.translation.z - world_z) > 1e-4:
+            continue
+        obj_axis = obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        obj_axis.z = 0.0
+        if obj_axis.length < 1e-8:
+            continue
+        obj_axis.normalize()
+        # Must point opposite the run axis (i.e. share the back-row
+        # orientation). Same 0.5 deg tolerance.
+        if back_axis.dot(obj_axis) < cos_tol:
+            continue
+        disp = obj.matrix_world.translation - run_origin
+        signed = disp.x * run_axis.x + disp.y * run_axis.y
+        # Perpendicular component along run_axis's normal
+        perp_signed = disp.x * (-run_axis.y) + disp.y * run_axis.x
+        if abs(perp_signed - perp_target) > perp_tol:
+            continue
+        try:
+            obj_w = obj.face_frame_cabinet.width
+        except AttributeError:
+            continue
+        # Back-row span in signed-offset space: [signed - obj_w, signed]
+        occupied.append((signed - obj_w, signed))
+
+    # Gap edges from occupied spans plus the run endpoints.
+    occupied.sort()
+    gap_start = 0.0
+    gap_end = run_length
+    for left, right in occupied:
+        if right <= signed_cursor:
+            if left < gap_end and right > gap_start:
+                gap_start = max(gap_start, right)
+        elif left >= signed_cursor:
+            if right > gap_start and left < gap_end:
+                gap_end = min(gap_end, left)
+            break
+        else:
+            # Cursor sits inside an existing back-row cabinet - no
+            # placeable gap at this cursor position.
+            return (signed_cursor, signed_cursor, signed_cursor)
+
+    if gap_end < gap_start:
+        gap_end = gap_start
+    # Center the new object on the cursor inside the gap, clamped.
+    half = object_width / 2.0
+    snap = max(gap_start + half, min(signed_cursor, gap_end - half))
+    if gap_end - gap_start < object_width:
+        snap = (gap_start + gap_end) / 2.0
+    return (gap_start, gap_end, snap)
+
+
+def _try_auto_merge_with_neighbor(context, cab_obj):
+    """If a compatible face-frame cabinet sits abutting cab_obj along
+    its run direction, merge cab_obj into it and return the surviving
+    anchor. Returns None when no merge happens.
+
+    Works for both wall-parented runs (siblings under a wall) and
+    free-standing island runs (unparented cabinets sharing orientation
+    in world space). The candidate scope is "cabinets that share
+    cab_obj's parent" - which collapses to parent.children when on a
+    wall, or to every unparented cabinet root in the scene off-wall.
+
+    "Compatible" is everything merge_cabinets pre-flights: same height
+    / depth / world Z, matching orientation, abutting within tolerance,
+    no corner type. Prefers the left neighbor when both sides match.
+    """
     # Tall and refrigerator cabinets (both cabinet_type='TALL') don't
     # auto-merge - heights are visually distinct so adjacent placement
     # is usually intentional, not a join. Manual join via the
@@ -459,34 +708,68 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     # parent + location assignments _finalize just made. Without this,
     # the Z-match check in merge_cabinets sees a stale world Z (often
     # the cabinet's pre-parenting world origin) and rejects what should
-    # be a valid auto-merge. Surfaces on uppers where wall-local Z is
-    # non-zero; bases sit at Z=0 so the staleness happens to match.
+    # be a valid auto-merge.
     context.view_layer.update()
 
-    cab_x = cab_obj.location.x
+    parent = cab_obj.parent
+    if parent is not None:
+        candidates = list(parent.children)
+    else:
+        # Off-wall: every scene-root face-frame cabinet is a potential
+        # neighbor. Filtered further below.
+        candidates = [
+            o for o in context.scene.objects
+            if o.parent is None and o.get(types_face_frame.TAG_CABINET_CAGE)
+        ]
+
+    # Run axis = cab_obj's local +X projected into world XY. Matches
+    # the convention used inside merge_cabinets so the bucketing and
+    # the merge primitive's abutment check see the same geometry.
+    cab_run = cab_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    cab_run.z = 0.0
+    if cab_run.length < 1e-8:
+        return None
+    cab_run.normalize()
+    cab_origin = cab_obj.matrix_world.translation
     cab_w = cab_obj.face_frame_cabinet.width
     eps = 1e-4
+    cos_tol = math.cos(math.radians(0.5))
 
     left_neighbor = None
+    left_best_signed = None  # largest signed (closest to cab's left edge)
     right_neighbor = None
-    for sib in parent.children:
+    right_best_signed = None  # smallest signed (closest to cab's right edge)
+
+    for sib in candidates:
         if sib is cab_obj:
             continue
         if not sib.get(types_face_frame.TAG_CABINET_CAGE):
             continue
         if sib.face_frame_cabinet.cabinet_type == 'TALL':
             continue
-        sib_x = sib.location.x
+        sib_run = sib.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        sib_run.z = 0.0
+        if sib_run.length < 1e-8:
+            continue
+        sib_run.normalize()
+        # Must point the same direction; merge_cabinets enforces this
+        # too but filtering here avoids spinning through obvious misses.
+        if cab_run.dot(sib_run) < cos_tol:
+            continue
+        disp = sib.matrix_world.translation - cab_origin
+        signed = disp.x * cab_run.x + disp.y * cab_run.y
         sib_w = sib.face_frame_cabinet.width
-        # Pick the closest neighbor on each side. The merge primitive
-        # itself enforces the abutment tolerance; here we just sort
-        # roughly into "to the left" vs "to the right" buckets.
-        if sib_x + sib_w <= cab_x + eps:
-            if left_neighbor is None or sib_x > left_neighbor.location.x:
+        # Bucket by sib's position along cab's run. The merge primitive
+        # itself enforces the strict abutment tolerance; here we just
+        # split into "to the left" vs "to the right" candidates.
+        if signed + sib_w <= eps:
+            if left_best_signed is None or signed > left_best_signed:
                 left_neighbor = sib
-        elif sib_x >= cab_x + cab_w - eps:
-            if right_neighbor is None or sib_x < right_neighbor.location.x:
+                left_best_signed = signed
+        elif signed >= cab_w - eps:
+            if right_best_signed is None or signed < right_best_signed:
                 right_neighbor = sib
+                right_best_signed = signed
 
     if left_neighbor is not None:
         if types_face_frame.merge_cabinets(left_neighbor, cab_obj, 'RIGHT'):
@@ -1216,8 +1499,23 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         wall = _detect_wall(self, context)
         if wall is not None:
             self._position_on_wall(context, wall)
-        else:
-            self._position_free(context)
+            return
+
+        # Back-of-island snap: if the cursor is over the back face of a
+        # free-standing face-frame cabinet, treat that cabinet's run as
+        # a snap surface. Falls through to free placement when the hit
+        # isn't on a back face or the cabinet is wall-parented.
+        hit_cab = self.find_cabinet_bp(
+            self.hit_object,
+            marker_set=frozenset({types_face_frame.TAG_CABINET_CAGE}),
+        )
+        if (hit_cab is not None
+                and hit_cab.parent is None
+                and _hit_face_of_cabinet(hit_cab, self.hit_location) == 'BACK'):
+            self._position_on_island_back(context, hit_cab)
+            return
+
+        self._position_free(context)
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.
@@ -1422,6 +1720,100 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             context, wall, wall_thickness,
             gap_start, gap_end, placement_x, cabinet_width,
         )
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _position_on_island_back(self, context, hit_cab):
+        """Place on the back side of a free-standing island run.
+
+        hit_cab is the front-row cabinet whose back face was hit. The
+        run is resolved laterally from it (cabinets + appliances that
+        share rotation/Z/depth), and the back face of the whole run is
+        treated as a single snap surface - the cursor slides along it
+        and the cabinet width auto-fills the available gap between
+        existing back-row cabinets, bounded by the run's lateral span.
+
+        The placed cabinet is unparented, oriented at the run's
+        rotation plus pi around Z, with its back face on the run's
+        back-face line. Auto-merge picks up back-row neighbors once
+        finalize runs, so multiple back-row cabinets chain into a
+        merged back-row run.
+        """
+        cage_obj = self._preview_cage.obj
+
+        # Going onto a run releases wall-gap state - no longer relevant.
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+        self._center_snap_state = None
+        self._cabinet_snap_side = None
+
+        run = _resolve_island_run(hit_cab)
+        run_geo = _compute_run_back_geometry(run)
+        if run_geo is None:
+            self._position_free(context)
+            return
+        run_origin, run_axis, run_length, world_z = run_geo
+
+        # Detach cage from any previous parent and put it in world coords.
+        if cage_obj.parent is not None:
+            world = cage_obj.matrix_world.copy()
+            cage_obj.parent = None
+            cage_obj.matrix_world = world
+
+        # Cursor in run-signed-offset coordinates. Perp_target stays at
+        # zero because the run's back face line passes through run_origin.
+        disp = self.hit_location - run_origin
+        signed_cursor = disp.x * run_axis.x + disp.y * run_axis.y
+
+        # In fill mode, start from scene default; gap-fit will grow it.
+        # With a typed width, the user's value sticks.
+        if self._fill_mode:
+            scene_props = context.scene.hb_face_frame
+            default_w = scene_props.default_cabinet_width
+            self._apply_width(default_w, fill_mode=True)
+
+        cabinet_width = self._cabinet_width
+        gap_start, gap_end, snap_signed = _find_back_row_gap(
+            run_origin, run_axis, run_length, world_z,
+            perp_target=0.0,
+            signed_cursor=signed_cursor,
+            object_width=cabinet_width,
+            exclude_obj=cage_obj,
+        )
+
+        # Width auto-fits to fill the gap (matches wall-snap behavior).
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
+        if self._fill_mode:
+            self._apply_width(gap_width, fill_mode=True)
+            cabinet_width = self._cabinet_width
+            snap_signed = gap_start  # flush to gap's left edge
+            self._update_header(context)
+
+        # Rotation: run direction reversed (pi around Z relative to the
+        # run's own rotation). atan2 gives the run's world Z angle.
+        run_rot_z = math.atan2(run_axis.y, run_axis.x)
+        cage_rot_z = run_rot_z + math.pi
+
+        # Origin position: back-left corner in cabinet local frame, which
+        # for a pi-rotated cage sits at signed offset (snap + width) along
+        # the run axis from run_origin, on the back-face line (perp = 0).
+        cage_origin_signed = snap_signed + cabinet_width
+        cage_world = (
+            run_origin
+            + cage_origin_signed * run_axis
+        )
+
+        cage_obj.location = cage_world
+        cage_obj.rotation_euler = (0.0, 0.0, cage_rot_z)
+
+        # Track that we're in back-of-run mode so finalize stays
+        # unparented and any subsequent off-back move resets state.
+        self._gap_wall = None  # not a wall
+        self._placement_dim_specs = []  # dim overlay TBD
+
         if context.area is not None:
             context.area.tag_redraw()
 

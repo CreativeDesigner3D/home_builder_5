@@ -2091,6 +2091,21 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 # Operator: group selected face frame cabinets into a saveable cage group
 # ---------------------------------------------------------------------------
+def _find_group_member_root(obj):
+    """Walk obj's parent chain to find the root that belongs in a
+    cabinet group: a face-frame cabinet cage or an appliance.
+    Returns the root Object or None.
+    """
+    cur = obj
+    while cur is not None:
+        if cur.get(types_face_frame.TAG_CABINET_CAGE):
+            return cur
+        if cur.get('IS_APPLIANCE'):
+            return cur
+        cur = cur.parent
+    return None
+
+
 class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
     """Group selected face frame cabinets under a single cage that can be
     saved to the user library.
@@ -2105,19 +2120,21 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        # Walk each selected object up to its face frame cabinet root.
-        # Letting users select any part (door, opening cage, etc.) means
-        # they don't have to hunt for the root before grouping.
+        # Walk each selected object up to its group-member root: a face-
+        # frame cabinet cage OR an appliance. Appliances (dishwasher,
+        # range, etc.) belong in an island group too, even though their
+        # widths don't change with resize ops.
         roots = []
         seen = set()
         for obj in context.selected_objects:
-            root = types_face_frame.find_cabinet_root(obj)
+            root = _find_group_member_root(obj)
             if root is not None and root.name not in seen:
                 seen.add(root.name)
                 roots.append(root)
 
         if not roots:
-            self.report({'WARNING'}, "No face frame cabinets selected")
+            self.report({'WARNING'},
+                        "No face frame cabinets or appliances selected")
             return {'CANCELLED'}
 
         loc, rot, w, d, h = self._calculate_group_bounds(roots)
@@ -2134,16 +2151,39 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         # Mirror Y so the group cage matches face frame's cabinet
         # convention: origin at back, geometry extending -Y into the room.
         group.set_input('Mirror Y', True)
+        # Right-click menu dispatch: ui/menu_apend reads MENU_ID off the
+        # active object and shows the named Menu class.
+        group.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_group_commands'
 
         bpy.ops.object.select_all(action='DESELECT')
 
         # Reparent preserving world transforms - the user placed these
         # cabinets where they wanted them and the group shouldn't shift
-        # them at creation time.
+        # them at creation time. The cabinet roots' own cages stay
+        # in the scene but hide_viewport=True keeps their wireframes
+        # from cluttering the group cage; child parts (carcass, doors,
+        # drawers) remain visible because hide_viewport doesn't
+        # propagate to children.
         for root in roots:
             world_matrix = root.matrix_world.copy()
             root.parent = group.obj
             root.matrix_world = world_matrix
+            # Cabinet cages get hidden so only the group cage shows;
+            # appliances keep their visible geometry on the root, so
+            # hiding them would make the dishwasher / range disappear.
+            if root.get(types_face_frame.TAG_CABINET_CAGE):
+                root.hide_viewport = True
+
+        # Shade the group cage like a cabinet (solid, addon's cabinet
+        # color, drawn in front). Same helper frameless uses on its
+        # cabinet roots; dont_show_parent=False forces application
+        # even though the group cage has cabinet-cage children that
+        # would normally suppress the toggle.
+        toggle_cabinet_color(
+            group.obj, True,
+            type_name=types_face_frame.TAG_CABINET_CAGE,
+            dont_show_parent=False,
+        )
 
         group.obj.select_set(True)
         context.view_layer.objects.active = group.obj
@@ -2162,10 +2202,15 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         min_z = float('inf'); max_z = float('-inf')
 
         for root in roots:
-            cab_props = root.face_frame_cabinet
-            cw = cab_props.width
-            cd = cab_props.depth
-            ch = cab_props.height
+            if root.get(types_face_frame.TAG_CABINET_CAGE):
+                cab_props = root.face_frame_cabinet
+                cw, cd, ch = cab_props.width, cab_props.depth, cab_props.height
+            else:
+                # Appliance: dims come off the GeoNodeObject inputs.
+                geo = hb_types.GeoNodeObject(root)
+                cw = geo.get_input('Dim X')
+                cd = geo.get_input('Dim Y')
+                ch = geo.get_input('Dim Z')
 
             # Cabinet local frame: origin at back, depth in -Y (Mirror Y).
             local_corners = [

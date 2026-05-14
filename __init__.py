@@ -15,6 +15,7 @@ from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
+from .operators import ops_general
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -215,6 +216,7 @@ def register():
     export.register()
     ops_stairs.register()
     scene_navigator.register()
+    ops_general.register()
     ops.register()
     view3d_sidebar.register()
     menu_apend.register()
@@ -250,6 +252,7 @@ def unregister():
     export.unregister()
     scene_navigator.unregister()
     ops_stairs.unregister()
+    ops_general.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
     menu_apend.unregister()

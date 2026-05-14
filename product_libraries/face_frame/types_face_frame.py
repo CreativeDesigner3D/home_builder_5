@@ -18,6 +18,8 @@ import bpy
 import math
 from contextlib import contextmanager
 
+from mathutils import Vector
+
 from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox
 from ...units import inch
 from ..common import types_appliances
@@ -4084,12 +4086,42 @@ def merge_cabinets(anchor, absorbed, side):
         return False
 
     tolerance = inch(1.0)
-    a_x, a_w = anchor.location.x, a_props.width
-    b_x, b_w = absorbed.location.x, b_props.width
+    a_w = a_props.width
+    b_w = b_props.width
+
+    # Abutment is checked along the anchor's run direction, defined as
+    # its local +X axis projected into the world XY plane. For wall-
+    # parented cabinets both anchor and absorbed sit with no local Z
+    # rotation, so the run axis equals the wall's length direction and
+    # the projected gap collapses to (absorbed.location.x -
+    # anchor.location.x) - same number the old code computed. For
+    # island / off-wall placement the cabinets can sit at any Z
+    # rotation; the projection handles both cases.
+    a_run = anchor.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    a_run.z = 0.0
+    b_run = absorbed.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    b_run.z = 0.0
+    if a_run.length < 1e-8 or b_run.length < 1e-8:
+        return False
+    a_run.normalize()
+    b_run.normalize()
+    # Cabinets in the same run must share orientation. Half-degree
+    # tolerance keeps two parallel island runs offset depth-wise from
+    # ever being treated as a single run.
+    if a_run.dot(b_run) < math.cos(math.radians(0.5)):
+        return False
+
+    disp = absorbed.matrix_world.translation - anchor.matrix_world.translation
+    signed = disp.x * a_run.x + disp.y * a_run.y
+    perp_x = disp.x - signed * a_run.x
+    perp_y = disp.y - signed * a_run.y
+    perp = math.sqrt(perp_x * perp_x + perp_y * perp_y)
+    if perp > tolerance:
+        return False
     if side == 'RIGHT':
-        gap = b_x - (a_x + a_w)
+        gap = signed - a_w
     else:
-        gap = a_x - (b_x + b_w)
+        gap = -signed - b_w
     if abs(gap) > tolerance:
         return False
 
@@ -4215,14 +4247,18 @@ def merge_cabinets(anchor, absorbed, side):
             entry.extend_down_amount = ext_dn
 
         # LEFT merge: anchor's origin moves to absorbed's old location.
-        # The merged cabinet then spans exactly
-        # [absorbed.location.x, absorbed.location.x + (a_w + b_w)],
-        # which is the same span as the two original cabinets combined.
-        # Inside that span the bay redistributor handles the
+        # The merged cabinet then spans exactly the same range as the
+        # two originals combined; the bay redistributor handles the
         # (anchor.right + absorbed.left - boundary_default) delta by
-        # growing whichever bays are still unlocked.
+        # growing whichever bays are still unlocked. Shifting via the
+        # rotation-applied run vector lets this work for island
+        # placement at any orientation, while collapsing to a plain
+        # location.x assignment when rotation_euler is zero.
         if side == 'LEFT':
-            anchor.location.x = absorbed.location.x
+            run_in_parent = (
+                anchor.rotation_euler.to_matrix() @ Vector((1.0, 0.0, 0.0))
+            )
+            anchor.location -= b_w * run_in_parent
 
         # Total cabinet width preserved at sum of original widths.
         a_props.width = a_w + b_w
