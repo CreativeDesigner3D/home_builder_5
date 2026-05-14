@@ -4343,22 +4343,33 @@ def merge_cabinets(anchor, absorbed, side):
             bay['hb_bay_index'] = new_idx
             bay.face_frame_bay.bay_index = new_idx
 
-        # Bays from a single-bay source cabinet get locked - this is
-        # the "sink / appliance must stay at exactly this size" case.
-        # Bays from a multi-bay source keep their original unlock_width,
-        # so any auto-calculated (originally unlocked) ones absorb the
-        # cabinet-shrinkage delta during _distribute_bay_widths
-        # redistribution at recalc time.
+        # A single-bay source's bay gets force-locked when it merges
+        # into a multi-bay cabinet - the lock keeps a sink / appliance
+        # bay from being resized by the neighbor's redistribution.
+        # Multi-bay sources always keep their original unlock_width so
+        # their auto-calculated bays absorb the boundary-stile
+        # consolidation delta at recalc time.
+        #
+        # When two single-bay cabinets merge, the anchor is the cabinet
+        # already in place and holds its width; only the absorbed bay -
+        # the one just placed - stays unlocked, so _distribute_bay_widths
+        # grows it to fill the merged run (the two abutting end stiles
+        # collapse to one narrower boundary mid stile, freeing width
+        # that needs an unlocked bay to land in).
         anchor_was_single = (M == 1)
         absorbed_was_single = (N == 1)
+        both_single = anchor_was_single and absorbed_was_single
         for bay in anchor_bays:
             bay.face_frame_bay.unlock_width = (
                 True if anchor_was_single else original_unlock[bay.name]
             )
         for bay in absorbed_bays:
-            bay.face_frame_bay.unlock_width = (
-                True if absorbed_was_single else original_unlock[bay.name]
-            )
+            if both_single:
+                bay.face_frame_bay.unlock_width = False
+            else:
+                bay.face_frame_bay.unlock_width = (
+                    True if absorbed_was_single else original_unlock[bay.name]
+                )
 
         _propagate_far_side_props(b_props, a_props, side)
 
