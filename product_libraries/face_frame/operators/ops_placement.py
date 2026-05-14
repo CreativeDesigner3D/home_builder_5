@@ -45,7 +45,7 @@ from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
 
-_TARGET_BAY_WIDTH = units.inch(18.0)
+_MAX_BAY_WIDTH = units.inch(36.0)
 _BAY_QTY_MIN = 1
 _BAY_QTY_MAX = 10
 
@@ -283,8 +283,17 @@ def _find_center_snap(hit_object, wall, kinds, cab_z_range):
 
 
 def _auto_bay_qty(cabinet_width):
-    """Pick a bay quantity that gives ~_TARGET_BAY_WIDTH per bay."""
-    qty = round(cabinet_width / _TARGET_BAY_WIDTH)
+    """Fewest bays that keep every bay at or under _MAX_BAY_WIDTH.
+
+    A max-width rule, not an average-width target: a cabinet only
+    gains a bay when it would otherwise exceed the cap, so widths
+    stay as large (and bay counts as low) as the cap allows.
+    """
+    # Epsilon against float32 width storage so a cabinet sitting
+    # exactly on the cap - or a hair over from rounding - stays at
+    # the lower bay count instead of tipping into an extra bay.
+    eps = units.inch(0.0625)
+    qty = math.ceil((cabinet_width - eps) / _MAX_BAY_WIDTH)
     return max(_BAY_QTY_MIN, min(qty, _BAY_QTY_MAX))
 
 
