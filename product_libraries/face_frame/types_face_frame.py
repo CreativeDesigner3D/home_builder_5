@@ -3081,6 +3081,11 @@ class FaceFrameCabinet(GeoNodeCage):
             return None
         scene_props = bpy.context.scene.hb_face_frame
         kind = 'drawer' if role in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT) else 'door'
+        # A pullout front carries a drawer-style pull - drawer pull
+        # asset, horizontal bar - but it's a full door-height front, so
+        # its vertical placement follows the door / cabinet-type formula
+        # (top-of-door on a base cabinet), not the drawer formula.
+        is_pullout = role == PART_ROLE_PULLOUT_FRONT
         pull_obj = pulls.resolve_pull_object(scene_props, kind)
         if pull_obj is None:
             return None
@@ -3099,8 +3104,15 @@ class FaceFrameCabinet(GeoNodeCage):
         # on drawers; the asset's X span is the right dim either way.
         half_pull_len = pulls.pull_length(pull_obj) / 2.0
 
-        # Vertical (X axis on door): zone-dependent.
-        if kind == 'drawer':
+        # Vertical (X axis on door): zone-dependent. Pullout fronts are
+        # excluded from the drawer branch so they fall through to the
+        # cabinet-type branch below and sit at the top of the door like
+        # a door pull. Their pull is rotated flat, though, so the bar's
+        # vertical extent is ~0 - the half-bar-length edge correction
+        # that vertical door-pull bars need doesn't apply, so vert_half
+        # is 0 for pullouts.
+        vert_half = 0.0 if is_pullout else half_pull_len
+        if kind == 'drawer' and not is_pullout:
             if scene_props.center_pulls_on_drawer_front:
                 x = length / 2.0
             else:
@@ -3109,7 +3121,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 # only has one offset to tune.
                 x = length - scene_props.pull_vertical_location_base - half_pull_len
         elif cabinet_type == 'UPPER':
-            x = scene_props.pull_vertical_location_upper + half_pull_len
+            x = scene_props.pull_vertical_location_upper + vert_half
         elif cabinet_type == 'TALL':
             # Three-way decision based on the door's vertical position
             # AND its length:
@@ -3123,14 +3135,14 @@ class FaceFrameCabinet(GeoNodeCage):
             door_bottom_z = self._z_in_cabinet(front_part.obj)
             tall_offset = scene_props.pull_vertical_location_tall
             if door_bottom_z >= tall_offset:
-                x = scene_props.pull_vertical_location_upper + half_pull_len
+                x = scene_props.pull_vertical_location_upper + vert_half
             elif length >= tall_offset:
-                x = tall_offset + half_pull_len
+                x = tall_offset + vert_half
             else:
-                x = length - scene_props.pull_vertical_location_base - half_pull_len
+                x = length - scene_props.pull_vertical_location_base - vert_half
         else:
             # BASE / LAP_DRAWER: measure DOWN from top of door.
-            x = length - scene_props.pull_vertical_location_base - half_pull_len
+            x = length - scene_props.pull_vertical_location_base - vert_half
 
         # Horizontal (Y axis on door): the leaf builder positions a
         # right-hinged door's local origin at the UNHINGED corner
