@@ -792,15 +792,30 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single bay.
 
-    Operates on the active object - which must be a bay cage (i.e., the
-    user right-clicked on a bay or has it selected). Shows only that
-    bay's properties: width, height, depth, kick height, top offset,
-    rail width overrides, remove_bottom, delete_bay.
+    Targets the bay named by bay_name; when that is empty (the normal
+    right-click / selection entry point) it resolves from the active
+    object. The dialog's Previous / Next buttons re-invoke this same
+    operator with bay_name set to a sibling, so Blender closes the
+    current popup and opens a fresh one on that bay - no manual
+    re-invoke needed. invoke() also makes the resolved bay the active
+    selection so the viewport tracks the dialog as the user pages
+    through bays.
     """
     bl_idname = "hb_face_frame.bay_prompts"
     bl_label = "Bay Properties"
     bl_description = "Edit a single bay's properties"
     bl_options = {'UNDO'}
+
+    # SKIP_SAVE so a fresh right-click invocation starts with an empty
+    # bay_name and falls back to the active object, rather than reusing
+    # whatever bay the previous dialog navigated to.
+    bay_name: bpy.props.StringProperty(
+        name="Bay Name",
+        description=("Object name of the bay cage to edit; empty "
+                     "resolves from the active object"),
+        default="",
+        options={'SKIP_SAVE'},
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -809,7 +824,35 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
             return False
         return bool(obj.get(types_face_frame.TAG_BAY_CAGE))
 
+    def _resolve_bay(self, context):
+        """Return the bay cage this invocation targets, or None.
+
+        bay_name wins when set (Previous / Next path); otherwise fall
+        back to the active object (right-click / selection path).
+        """
+        if self.bay_name:
+            obj = bpy.data.objects.get(self.bay_name)
+            if obj is not None and obj.get(types_face_frame.TAG_BAY_CAGE):
+                return obj
+        obj = context.active_object
+        if obj is not None and obj.get(types_face_frame.TAG_BAY_CAGE):
+            return obj
+        return None
+
     def invoke(self, context, event):
+        bay_obj = self._resolve_bay(context)
+        if bay_obj is None:
+            self.report({'WARNING'}, "No bay selected")
+            return {'CANCELLED'}
+        # Pin bay_name so draw() and any Previous / Next re-invoke are
+        # anchored to a concrete bay, not whatever stays active.
+        self.bay_name = bay_obj.name
+        # Track the dialog in the viewport: select only the target bay
+        # so paging between bays moves the selection with the dialog.
+        for o in context.selected_objects:
+            o.select_set(False)
+        bay_obj.select_set(True)
+        context.view_layer.objects.active = bay_obj
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
@@ -817,10 +860,43 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
 
     def draw(self, context):
         from .. import ui_face_frame
-        bay_obj = context.active_object
-        if bay_obj is None or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        bay_obj = self._resolve_bay(context)
+        if bay_obj is None:
             self.layout.label(text="No bay selected", icon='INFO')
             return
+
+        # Sibling bays in index order, for the Previous / Next nav row.
+        cabinet = bay_obj.parent
+        siblings = sorted(
+            [c for c in cabinet.children
+             if c.get(types_face_frame.TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        ) if cabinet else [bay_obj]
+        try:
+            pos = siblings.index(bay_obj)
+        except ValueError:
+            pos = 0
+
+        # Each nav button is another bay_prompts invocation with
+        # bay_name pre-set: clicking it closes this popup and Blender
+        # opens a fresh dialog on the sibling. Clamped at the ends.
+        nav = self.layout.row(align=True)
+        prev_btn = nav.row(align=True)
+        prev_btn.enabled = pos > 0
+        op = prev_btn.operator(
+            'hb_face_frame.bay_prompts', text="Previous", icon='TRIA_LEFT',
+        )
+        op.bay_name = siblings[pos - 1].name if pos > 0 else ""
+        nav.label(text=f"Bay {pos + 1} of {len(siblings)}")
+        next_btn = nav.row(align=True)
+        next_btn.enabled = pos < len(siblings) - 1
+        op = next_btn.operator(
+            'hb_face_frame.bay_prompts', text="Next", icon='TRIA_RIGHT',
+        )
+        op.bay_name = (siblings[pos + 1].name
+                       if pos < len(siblings) - 1 else "")
+        self.layout.separator()
+
         ui_face_frame.draw_bay_properties(self.layout, bay_obj)
 
 
