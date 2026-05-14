@@ -46,9 +46,13 @@ class home_builder_OT_create_room(bpy.types.Operator):
         use_snap_align_rotation = tool_settings.use_snap_align_rotation
         use_snap_backface_culling = tool_settings.use_snap_backface_culling
         
+        # Store the active product library so the new room keeps it
+        product_tab = original_scene.home_builder.product_tab
+
         # Create new scene
         new_scene = bpy.data.scenes.new(self.room_name)
         new_scene['IS_ROOM_SCENE'] = True
+        new_scene.home_builder.product_tab = product_tab
         
         # Save view state of original scene if it's a room
         if hb_utils.is_room_scene(original_scene):
@@ -154,29 +158,45 @@ class home_builder_OT_delete_room(bpy.types.Operator):
 class home_builder_OT_rename_room(bpy.types.Operator):
     bl_idname = "home_builder.rename_room"
     bl_label = "Rename Room"
-    bl_description = "Rename the current room"
+    bl_description = "Rename a room"
     bl_options = {'UNDO'}
-    
+
+    scene_name: bpy.props.StringProperty(
+        name="Scene Name",
+        description="Room scene to rename; empty means the current scene",
+        default=""
+    )  # type: ignore
+
     new_name: bpy.props.StringProperty(
         name="New Name",
         description="New name for the room"
     )  # type: ignore
-    
+
     @classmethod
     def poll(cls, context):
         return not context.scene.get('IS_LAYOUT_VIEW')
-    
+
+    def _target(self, context):
+        return bpy.data.scenes.get(self.scene_name) or context.scene
+
     def invoke(self, context, event):
-        self.new_name = context.scene.name
+        self.new_name = self._target(context).name
         return context.window_manager.invoke_props_dialog(self)
-    
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "new_name")
-    
+
     def execute(self, context):
-        old_name = context.scene.name
-        context.scene.name = self.new_name
+        target = self._target(context)
+        if target is None:
+            self.report({'WARNING'}, "Room scene not found")
+            return {'CANCELLED'}
+        if target.get('IS_LAYOUT_VIEW') or target.get('IS_DETAIL_VIEW'):
+            self.report({'WARNING'}, "Cannot rename a layout or detail view")
+            return {'CANCELLED'}
+        old_name = target.name
+        target.name = self.new_name
         self.report({'INFO'}, f"Renamed '{old_name}' to '{self.new_name}'")
         return {'FINISHED'}
 

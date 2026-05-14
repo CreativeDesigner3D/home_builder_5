@@ -44,6 +44,8 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         layout.separator()
         
         # Settings
+        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        layout.prop(prefs, "use_viewport_hud")
         layout.operator("home_builder.set_recommended_settings", 
                        text="Recommended Settings", icon='PREFERENCES')
         layout.operator("home_builder.rendering_settings",

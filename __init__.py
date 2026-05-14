@@ -15,6 +15,7 @@ from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
+from .operators import viewport_hud
 from .operators import ops_general
 from .product_libraries import closets
 from .product_libraries import face_frame
@@ -59,9 +60,30 @@ def load_file_post(scene):
     # Ensure a default frameless style is created
     main_scene.hb_frameless.ensure_default_style()
 
+    # Modal operators do not survive a .blend load -- re-arm the HUD listener.
+    from .operators import viewport_hud
+    viewport_hud.ensure_listener()
+
+
+def _update_use_viewport_hud(self, context):
+    """Flipping the HUD preference: redraw every 3D viewport so the change
+    shows immediately in both the viewport and the sidebar."""
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
 
 class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+
+    use_viewport_hud: bpy.props.BoolProperty(
+        name="Viewport Controls",
+        description="Draw the scene navigator and selection mode controls "
+                    "in the 3D viewport instead of the sidebar",
+        default=False,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
 
     wall_color: bpy.props.FloatVectorProperty(name="Wall Color",
                                    description="The color of walls",
@@ -173,6 +195,8 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
+
+        layout.prop(self, "use_viewport_hud")
         
         # Layout view defaults
         box = layout.box()
@@ -216,6 +240,7 @@ def register():
     export.register()
     ops_stairs.register()
     scene_navigator.register()
+    viewport_hud.register()
     ops_general.register()
     ops.register()
     view3d_sidebar.register()
@@ -251,6 +276,7 @@ def unregister():
     doors_windows.unregister()
     export.unregister()
     scene_navigator.unregister()
+    viewport_hud.unregister()
     ops_stairs.unregister()
     ops_general.unregister()
     ops.unregister()

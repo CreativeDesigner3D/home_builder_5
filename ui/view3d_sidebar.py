@@ -51,10 +51,18 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
         else:
             text = "Select a Room"
 
+        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        use_hud = getattr(prefs, 'use_viewport_hud', False)
+
         row = layout.row(align=True)
         row.scale_y = 1.5
         row.menu("HOME_BUILDER_MT_room_list", text=text, icon='LOOP_BACK')
-        row.operator("home_builder.scene_navigator", text="", icon='MENU_PANEL')
+        if not use_hud:
+            row.operator("home_builder.scene_navigator", text="", icon='MENU_PANEL')
+
+        if use_hud:
+            # Scene navigator and selection mode are drawn in the 3D viewport.
+            return
 
         hb_scene = context.scene.home_builder
         product_tab = getattr(hb_scene, 'product_tab', 'FRAMELESS')
