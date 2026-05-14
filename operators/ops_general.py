@@ -65,9 +65,77 @@ class HB_GENERAL_OT_menu(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HB_GENERAL_OT_delete(bpy.types.Operator):
+    """HB5-aware delete: routes to the correct delete operator for the
+    selected asset, falling back to Blender's object delete otherwise.
+
+    Stock ``object.delete`` removes only the selected objects, which leaves
+    orphaned children behind when the selection is an HB5 cage or part, and
+    never runs the cleanup an HB5 asset needs (wall miter recompute,
+    neighbor constraint removal, etc.). This operator classifies the active
+    object and dispatches:
+
+    - face frame cabinet  -> hb_face_frame.delete_cabinet
+    - frameless cabinet   -> hb_frameless.delete_cabinet
+    - frameless appliance -> hb_frameless.delete_appliance
+    - door / window       -> home_builder_doors_windows.delete_door_window
+    - wall                -> home_builder_walls.delete_wall
+    - anything else       -> object.delete
+
+    Each HB5 delete operator already sweeps ``selected_objects`` for its own
+    kind, so multi-select delete (several cabinets, several walls) works
+    without extra handling here - the active object only decides which kind
+    is targeted. Mixed selections delete the active object's kind only.
+
+    The cabinet, appliance, and door/window checks all run before the wall
+    check on purpose: those assets sit in the wall's parent chain (a door
+    or window BP is a direct child of the wall BP), so the wall test would
+    otherwise misfire and delete the whole wall instead of the asset on it.
+
+    Intended to be bound to the DEL key (3D View > Object Mode) in the
+    user's keymap preferences.
+    """
+    bl_idname = "hb_general.delete"
+    bl_label = "HB Delete"
+    bl_description = "Delete the selected HB5 asset and all of its parts"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        # Deferred imports: ops_general is imported before the product
+        # libraries during addon registration, so importing these at module
+        # scope would risk an early/circular import.
+        from .. import hb_utils
+        from ..product_libraries.face_frame import types_face_frame
+
+        obj = context.active_object
+
+        if types_face_frame.find_cabinet_root(obj) is not None:
+            bpy.ops.hb_face_frame.delete_cabinet()
+        elif hb_utils.get_cabinet_bp(obj) is not None:
+            bpy.ops.hb_frameless.delete_cabinet()
+        elif hb_utils.get_appliance_bp(obj) is not None:
+            bpy.ops.hb_frameless.delete_appliance()
+        elif obj and obj.get('IS_WINDOW_BP'):
+            bpy.ops.home_builder_doors_windows.delete_door_window(
+                object_type='WINDOW')
+        elif obj and obj.get('IS_ENTRY_DOOR_BP'):
+            bpy.ops.home_builder_doors_windows.delete_door_window(
+                object_type='DOOR')
+        elif obj and (obj.get('IS_WALL_BP')
+                      or (obj.parent and obj.parent.get('IS_WALL_BP'))):
+            bpy.ops.home_builder_walls.delete_wall()
+        else:
+            # Not an HB5 asset - stock delete with no confirm popup, matching
+            # DEL's default behavior (X keeps its own stock confirm binding).
+            bpy.ops.object.delete(confirm=False)
+
+        return {'FINISHED'}
+
+
 classes = (
     HB_MT_call_menu_wrapper,
     HB_GENERAL_OT_menu,
+    HB_GENERAL_OT_delete,
 )
 
 
