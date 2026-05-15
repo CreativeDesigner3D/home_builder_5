@@ -174,6 +174,21 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Mid Stile Properties...", icon='WINDOW')
 
 
+class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
+    """Right-click menu for an interior part (shelf, pullout, mesh part,
+    rollout box, etc.). Surfaces the owning opening's properties so the
+    user can edit the opening's interior_items list without having to
+    select the opening cage directly. The opening_prompts operator
+    handles the walk-up from the clicked interior part.
+    """
+    bl_label = "Face Frame Interior Part Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
+
+
 class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
     """Right-click menu for a face frame opening cage."""
     bl_label = "Face Frame Opening Commands"
@@ -259,6 +274,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_part_commands,
+    HOME_BUILDER_MT_face_frame_interior_part_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,

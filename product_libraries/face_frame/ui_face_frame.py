@@ -311,7 +311,11 @@ def draw_opening_properties(layout, opening_obj):
     )
 
     if not has_tree:
-        _draw_interior_items_section(layout, op)
+        # Pass the opening's name as target_name so the Add / Remove
+        # operators in the buttons below survive an active-object
+        # change mid-popup (e.g., the shelf the user right-clicked
+        # gets wiped on a kind-change recalc).
+        _draw_interior_items_section(layout, op, target_name=opening_obj.name)
         return
 
     _draw_interior_tree_inline(layout, opening_obj)
@@ -547,14 +551,19 @@ def draw_interior_region_properties(layout, leaf_obj, opening_obj):
 
     remove_label = ("Remove Fixed Shelf" if sp.axis == 'H'
                     else "Remove Division")
-    col.operator(
+    remove_op = col.operator(
         "hb_face_frame.remove_interior_split",
         text=remove_label, icon='X',
     )
+    # target_name keeps the operator pointed at this region even if
+    # the active object goes stale (e.g., an interior part wipe).
+    remove_op.target_name = leaf_obj.name
 
     layout.separator()
     layout.label(text="Interior Items")
-    _draw_interior_items_section(layout, rp)
+    # target_name is the leaf region's name; lets buttons resolve back
+    # to this region's propgroup even if active_object goes stale.
+    _draw_interior_items_section(layout, rp, target_name=leaf_obj.name)
 
 
 def draw_mid_stile_properties(layout, root, msi):

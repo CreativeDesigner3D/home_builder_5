@@ -3349,6 +3349,7 @@ class FaceFrameCabinet(GeoNodeCage):
         part.obj['hb_part_role'] = desc['role']
         part.obj['CABINET_PART'] = True
         part.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         part.obj.location = desc['position']
         length, width, thickness = desc['dims']
         part.set_input('Length', length)
@@ -3586,6 +3587,7 @@ class FaceFrameCabinet(GeoNodeCage):
         part.obj['hb_part_role'] = desc['role']
         part.obj['CABINET_PART'] = True
         part.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         part.obj.location = desc['position']
 
         orientation = desc.get('orientation', 'HORIZONTAL')
@@ -3611,6 +3613,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj.parent = opening_obj
         box.obj['hb_part_role'] = desc['role']
         box.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         box.obj.location = desc['position']
         dx, dy, dz = desc['dims']
         box.set_input('Dim X', dx)

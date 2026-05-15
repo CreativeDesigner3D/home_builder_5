@@ -755,25 +755,65 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _find_owning_opening(obj):
+    """Walk obj's parent chain up to the first opening cage. Returns
+    None if no opening ancestor exists. Used by opening_prompts so a
+    right-click on an interior part (shelf, pullout, mesh part, rollout
+    box) lands on the same dialog as right-clicking the opening cage
+    itself - flat case the interior part is a direct child of the
+    opening; tree case it's under one or more interior region / split-
+    node empties.
+    """
+    cur = obj
+    while cur is not None:
+        if cur.get(types_face_frame.TAG_OPENING_CAGE):
+            return cur
+        cur = cur.parent
+    return None
+
+
 class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single opening.
 
-    Operates on the active object - which must be an opening cage. Shows
-    front type, hinge side, and the four per-side overlay rows.
+    Active object can be the opening cage itself OR any descendant
+    (interior part, interior region, interior split node) - the
+    operator walks up to find the owning opening so users in Interior
+    selection mode can right-click a shelf and reach the same dialog.
+
+    The owning opening's name is captured at invoke and held on the
+    operator. Necessary because interior_items rebuilds wipe and
+    recreate the parts on every kind change; without the cached name,
+    the popup loses its active object mid-edit and renders empty.
+    The opening cage itself is stable across these rebuilds.
     """
     bl_idname = "hb_face_frame.opening_prompts"
     bl_label = "Opening Properties"
     bl_description = "Edit a single opening's properties"
     bl_options = {'UNDO'}
 
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE))
+        return _find_owning_opening(context.active_object) is not None
+
+    def _resolve_opening(self, context):
+        """Prefer the cached opening_name; fall back to the active-object
+        walk-up if it's empty or stale (e.g. cabinet was deleted)."""
+        if self.opening_name:
+            obj = bpy.data.objects.get(self.opening_name)
+            if obj is not None and obj.get(types_face_frame.TAG_OPENING_CAGE):
+                return obj
+        return _find_owning_opening(context.active_object)
 
     def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
@@ -781,9 +821,8 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
 
     def draw(self, context):
         from .. import ui_face_frame
-        opening_obj = context.active_object
-        if opening_obj is None or not opening_obj.get(
-                types_face_frame.TAG_OPENING_CAGE):
+        opening_obj = self._resolve_opening(context)
+        if opening_obj is None:
             self.layout.label(text="No opening selected", icon='INFO')
             return
         ui_face_frame.draw_opening_properties(self.layout, opening_obj)
@@ -1015,11 +1054,12 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
-                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
+        # Always allow - target_name carries the indirection these
+        # operators need when called from inside a popup whose active
+        # object can go stale mid-edit. execute() validates via
+        # _resolve_interior_target and reports a clean warning if the
+        # target can't be resolved.
+        return True
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -1079,13 +1119,11 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        target_props = _interior_items_target(obj)
-        if target_props is None:
-            return False
-        return len(target_props.interior_items) > 0
+        # Always allow - the button is only rendered next to an item
+        # that actually exists, so the empty-collection guard the old
+        # check enforced is redundant. execute() validates via
+        # _resolve_interior_target if anything has gone stale.
+        return True
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -1266,11 +1304,12 @@ class hb_face_frame_OT_add_interior_division(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
-                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
+        # Always allow - target_name carries the indirection these
+        # operators need when called from inside a popup whose active
+        # object can go stale mid-edit. execute() validates via
+        # _resolve_interior_target and reports a clean warning if the
+        # target can't be resolved.
+        return True
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -1312,11 +1351,12 @@ class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        return bool(obj.get(types_face_frame.TAG_OPENING_CAGE)
-                    or obj.get(types_face_frame.TAG_INTERIOR_REGION))
+        # Always allow - target_name carries the indirection these
+        # operators need when called from inside a popup whose active
+        # object can go stale mid-edit. execute() validates via
+        # _resolve_interior_target and reports a clean warning if the
+        # target can't be resolved.
+        return True
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -1392,14 +1432,12 @@ class hb_face_frame_OT_remove_interior_split(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-        # Either the active object is a region (sidebar) or a leaf
-        # is named via target_name and the active object is the
-        # opening (popup case). Both paths are valid.
-        return bool(obj.get(types_face_frame.TAG_INTERIOR_REGION)
-                    or obj.get(types_face_frame.TAG_OPENING_CAGE))
+        # Always allow - target_name carries the indirection this
+        # operator needs from popups whose active_object can go stale
+        # mid-edit (e.g., shelf right-click flow). execute() validates
+        # via _resolve_interior_target and reports a clean warning if
+        # the region can't be resolved.
+        return True
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
