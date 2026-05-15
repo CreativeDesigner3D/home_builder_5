@@ -13,6 +13,8 @@ import bpy
 
 from . import bay_presets
 from . import types_face_frame
+from .operators import ops_part_commands
+from ... import units
 
 
 class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
@@ -122,14 +124,54 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
                         icon='ALIGN_JUSTIFY')
 
 
-class HOME_BUILDER_MT_face_frame_mid_stile_commands(bpy.types.Menu):
-    """Right-click menu for a face frame mid stile part."""
-    bl_label = "Face Frame Mid Stile Commands"
+class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
+    """Right-click menu shared by all face frame parts - end stiles,
+    mid stiles, top / bottom rails, and bay-internal splitters. Items
+    shown depend on the active part's role:
+
+      end stile  -> Set Width, Set Scribe, Toggle Stile to Floor
+      top rail   -> Set Width, Set Scribe (top_scribe)
+      mid stile  -> Set Width, Mid Stile Properties... (deeper popup)
+      others     -> Set Width
+    """
+    bl_label = "Face Frame Part Commands"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_face_frame.mid_stile_prompts",
-                        text="Mid Stile Properties...", icon='WINDOW')
+        obj = context.active_object
+        role = obj.get('hb_part_role') if obj is not None else None
+
+        # Width applies to every face frame part. Label includes the
+        # current value so the user can read it without opening the popup.
+        current_w = ops_part_commands.get_current_width(obj)
+        if current_w is None:
+            width_text = "Set Width"
+        else:
+            width_text = f"Set Width: {units.unit_to_string(context.scene.unit_settings, current_w)}"
+        layout.operator("hb_face_frame.set_part_width",
+                        text=width_text, icon='ARROW_LEFTRIGHT')
+
+        # Scribe only makes sense at the cabinet's outer edges: end
+        # stiles (left / right) and the top rail (top_scribe).
+        if role in (types_face_frame.PART_ROLE_LEFT_STILE,
+                    types_face_frame.PART_ROLE_RIGHT_STILE,
+                    types_face_frame.PART_ROLE_TOP_RAIL):
+            layout.operator("hb_face_frame.set_part_scribe",
+                            text="Set Scribe...", icon='SNAP_EDGE')
+
+        # Stile-to-floor is end-stile only.
+        if role in (types_face_frame.PART_ROLE_LEFT_STILE,
+                    types_face_frame.PART_ROLE_RIGHT_STILE):
+            layout.operator("hb_face_frame.toggle_stile_to_floor",
+                            text="Toggle Stile to Floor",
+                            icon='TRIA_DOWN_BAR')
+
+        # Mid stiles keep their deeper properties popup (extend up /
+        # down) as an additional item.
+        if role == types_face_frame.PART_ROLE_MID_STILE:
+            layout.separator()
+            layout.operator("hb_face_frame.mid_stile_prompts",
+                            text="Mid Stile Properties...", icon='WINDOW')
 
 
 class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
@@ -216,7 +258,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
-    HOME_BUILDER_MT_face_frame_mid_stile_commands,
+    HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,

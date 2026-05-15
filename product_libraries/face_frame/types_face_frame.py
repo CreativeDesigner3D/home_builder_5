@@ -836,7 +836,7 @@ class FaceFrameCabinet(GeoNodeCage):
         mid_stile.obj['hb_part_role'] = PART_ROLE_MID_STILE
         mid_stile.obj['CABINET_PART'] = True
         mid_stile.obj['hb_mid_stile_index'] = gap_index
-        mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
+        mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         mid_stile.obj.rotation_euler.y = math.radians(-90)
         mid_stile.obj.rotation_euler.z = math.radians(90)
         mid_stile.set_input('Mirror Y', True)
@@ -942,6 +942,7 @@ class FaceFrameCabinet(GeoNodeCage):
         left_stile.obj.parent = self.obj
         left_stile.obj['hb_part_role'] = PART_ROLE_LEFT_STILE
         left_stile.obj['CABINET_PART'] = True
+        left_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         left_stile.obj.rotation_euler.y = math.radians(-90)
         left_stile.obj.rotation_euler.z = math.radians(90)
         left_stile.set_input('Mirror Y', True)
@@ -952,6 +953,7 @@ class FaceFrameCabinet(GeoNodeCage):
         right_stile.obj.parent = self.obj
         right_stile.obj['hb_part_role'] = PART_ROLE_RIGHT_STILE
         right_stile.obj['CABINET_PART'] = True
+        right_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         right_stile.obj.rotation_euler.y = math.radians(-90)
         right_stile.obj.rotation_euler.z = math.radians(90)
         right_stile.set_input('Mirror Y', False)
@@ -1012,7 +1014,7 @@ class FaceFrameCabinet(GeoNodeCage):
             mid_stile.obj['hb_part_role'] = PART_ROLE_MID_STILE
             mid_stile.obj['CABINET_PART'] = True
             mid_stile.obj['hb_mid_stile_index'] = i
-            mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
+            mid_stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
             mid_stile.obj.rotation_euler.y = math.radians(-90)
             mid_stile.obj.rotation_euler.z = math.radians(90)
             mid_stile.set_input('Mirror Y', True)
@@ -1732,7 +1734,7 @@ class FaceFrameCabinet(GeoNodeCage):
             elif role == PART_ROLE_MID_STILE:
                 # Backfill MENU_ID for cabinets created before right-click was added
                 if not child.get('MENU_ID'):
-                    child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mid_stile_commands'
+                    child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
                 msi = child.get('hb_mid_stile_index', 0)
                 if msi >= len(layout.mid_stiles):
                     child.hide_viewport = True
@@ -2618,6 +2620,7 @@ class FaceFrameCabinet(GeoNodeCage):
         rail.obj['hb_part_role'] = role
         rail.obj['CABINET_PART'] = True
         rail.obj['hb_segment_start_bay'] = start_bay_index
+        rail.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         rail.obj.rotation_euler.x = math.radians(90)
         if role == PART_ROLE_TOP_RAIL:
             rail.set_input('Mirror Y', True)
@@ -2875,6 +2878,7 @@ class FaceFrameCabinet(GeoNodeCage):
         rail.obj['CABINET_PART'] = True
         rail.obj['hb_split_node_name'] = rect['split_node_name']
         rail.obj['hb_splitter_index'] = rect['splitter_index']
+        rail.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         rail.obj.rotation_euler.x = math.radians(90)
         rail.set_input('Mirror Z', True)
         rail.obj.location = (rect['x'], rect['y'], rect['z'])
@@ -2896,6 +2900,7 @@ class FaceFrameCabinet(GeoNodeCage):
         stile.obj['CABINET_PART'] = True
         stile.obj['hb_split_node_name'] = rect['split_node_name']
         stile.obj['hb_splitter_index'] = rect['splitter_index']
+        stile.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         stile.obj.rotation_euler.y = math.radians(-90)
         stile.obj.rotation_euler.z = math.radians(90)
         stile.set_input('Mirror Y', True)
@@ -4043,8 +4048,82 @@ def recalculate_face_frame_cabinet(obj):
         cabinet = _wrap_cabinet(root)
         cabinet.recalculate()
         _reapply_cabinet_style(root)
+        _reapply_selection_mode_highlights(root)
     finally:
         _RECALCULATING.discard(id(root))
+
+
+def _reapply_selection_mode_highlights(root):
+    """Re-apply face frame selection mode highlight to root and all its
+    descendants. Called at the end of every recalc so newly created
+    parts pick up the highlight without forcing the user to toggle the
+    mode off and on.
+
+    Mirrors HB_FACE_FRAME_OT_toggle_mode's per-object dispatch but does
+    NOT clear scene selection - recalc fires from prop update callbacks
+    during live-bound popup edits, not from an explicit user action, so
+    messing with selection would close popups and break drag flow.
+    """
+    # Lazy import: toggle_cabinet_color lives in a sibling product library
+    # and pulling it at module top would couple type-level recalc to the
+    # frameless package import order during addon load.
+    from ..frameless.operators.ops_placement import toggle_cabinet_color
+
+    scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
+    if scene_props is None:
+        return
+
+    mode = scene_props.face_frame_selection_mode
+    # Master toggle off and Parts mode both route through the "not
+    # highlighted" path - matches the operator's behavior at execute().
+    if not scene_props.face_frame_selection_mode_enabled or mode == 'Parts':
+        mode = '__off__'
+
+    # Same tag dict as HB_FACE_FRAME_OT_toggle_mode.MODE_TAGS. Kept in
+    # sync by convention; if the operator's MODE_TAGS gain entries, add
+    # them here too.
+    mode_tags = {
+        'Cabinets':       TAG_CABINET_CAGE,
+        'Bays':           TAG_BAY_CAGE,
+        'Openings':       'IS_FACE_FRAME_OPENING_CAGE',
+        'Interiors':      'IS_FACE_FRAME_INTERIOR_PART',
+        'Applied Panels': TAG_APPLIED_PANEL_SIDE,
+    }
+
+    skip_markers = ('IS_WALL_BP', 'IS_ENTRY_DOOR_BP',
+                    'IS_WINDOW_BP', 'IS_CUTTING_OBJ')
+
+    def matches(obj):
+        if mode == 'Face Frame':
+            return obj.get('hb_part_role') in FACE_FRAME_PART_ROLES
+        if mode == 'Cabinets':
+            if obj.get('IS_APPLIANCE'):
+                return True
+            if obj.get(TAG_APPLIED_PANEL_SIDE):
+                return False
+        tag = mode_tags.get(mode)
+        if tag is None:
+            return False
+        return tag in obj
+
+    def apply(obj):
+        if any(t in obj for t in skip_markers):
+            return
+        if matches(obj):
+            toggle_cabinet_color(
+                obj, True,
+                type_name=mode_tags.get(mode, ''),
+                dont_show_parent=False,
+            )
+        else:
+            toggle_cabinet_color(
+                obj, False,
+                type_name=mode_tags.get(mode, ''),
+            )
+
+    apply(root)
+    for child in root.children_recursive:
+        apply(child)
 
 
 def _reapply_cabinet_style(root):
