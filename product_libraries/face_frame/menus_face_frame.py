@@ -25,13 +25,6 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.cabinet_prompts",
                         text="Cabinet Properties...", icon='WINDOW')
-        layout.operator("hb_face_frame.grab_cabinet",
-                        text="Grab Cabinet", icon='OBJECT_ORIGIN')
-        layout.operator("hb_face_frame.grab_face_frame",
-                        text="Grab Face Frame", icon='MOD_EDGESPLIT')
-        layout.separator()
-        layout.operator("hb_face_frame.open_mode",
-                        text="Open Mode", icon='MOD_BOOLEAN')
         layout.separator()
         layout.operator("hb_face_frame.join_cabinets",
                         text="Join Cabinets", icon='AUTOMERGE_ON')

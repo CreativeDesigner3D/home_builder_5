@@ -34,30 +34,34 @@ class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
             box.operator("home_builder.set_recommended_settings",
                         text="Open Recommended Settings", icon='PREFERENCES')
 
-        in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
-        in_detail_view = context.scene.get('IS_DETAIL_VIEW')
-        
-        if in_layout_view:
-            box = layout.box()
-            box.label(text="Current Layout View: " + context.scene.name, icon='INFO')
-            box.label(text="You are in a layout view. Select a room below.",icon='BLANK1')
-        if in_detail_view:
-            box = layout.box()
-            box.label(text="Current Detail View: " + context.scene.name, icon='INFO')
-            box.label(text="You are in a detail view. Select a room below.",icon='BLANK1')
-
-        if not in_layout_view and not in_detail_view:
-            text = context.scene.name
-        else:
-            text = "Select a Room"
-
         prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
         use_hud = getattr(prefs, 'use_viewport_hud', False)
 
-        row = layout.row(align=True)
-        row.scale_y = 1.5
-        row.menu("HOME_BUILDER_MT_room_list", text=text, icon='LOOP_BACK')
+        in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
+        in_detail_view = context.scene.get('IS_DETAIL_VIEW')
+
+        # When the HUD is on, its nav button replaces both the room-list
+        # dropdown and the scene navigator trigger, and the layout/detail
+        # view info boxes (which point users to "select a room below") are
+        # redundant since the HUD nav button is the room picker.
         if not use_hud:
+            if in_layout_view:
+                box = layout.box()
+                box.label(text="Current Layout View: " + context.scene.name, icon='INFO')
+                box.label(text="You are in a layout view. Select a room below.", icon='BLANK1')
+            if in_detail_view:
+                box = layout.box()
+                box.label(text="Current Detail View: " + context.scene.name, icon='INFO')
+                box.label(text="You are in a detail view. Select a room below.", icon='BLANK1')
+
+            if not in_layout_view and not in_detail_view:
+                text = context.scene.name
+            else:
+                text = "Select a Room"
+
+            row = layout.row(align=True)
+            row.scale_y = 1.5
+            row.menu("HOME_BUILDER_MT_room_list", text=text, icon='LOOP_BACK')
             row.operator("home_builder.scene_navigator", text="", icon='MENU_PANEL')
 
         if use_hud:

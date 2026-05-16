@@ -59,6 +59,20 @@ def _find_opening_cage(obj):
     return None
 
 
+def _find_owning_front(obj):
+    """Walk obj's parent chain up to the first front part. Returns None
+    if no front ancestor exists. Lets clicks on a front's children
+    (pulls today; hinges or other decoration in the future) count as
+    clicks on the front itself, since the raycast lands on whatever
+    geometry sits topmost at the cursor."""
+    cur = obj
+    while cur is not None:
+        if cur.get('hb_part_role') in OPENING_FRONT_ROLES:
+            return cur
+        cur = cur.parent
+    return None
+
+
 def _find_bay_cage(opening_cage):
     cur = opening_cage.parent
     while cur is not None:
@@ -162,6 +176,12 @@ class hb_face_frame_OT_open_mode(bpy.types.Operator):
         context.workspace.status_text_set(
             "Open Mode  |  LMB: toggle front  |  Esc / RMB: exit"
         )
+        # Register with the HUD's modal registry so the Disable button
+        # can ask us to exit. Cleared in _exit.
+        from ....operators.viewport_hud import register_active_modal
+        register_active_modal(self)
+        self._exit_requested = False
+        self._exit_timer = None
         if context.area:
             context.area.tag_redraw()
         return {'RUNNING_MODAL'}
@@ -179,6 +199,17 @@ class hb_face_frame_OT_open_mode(bpy.types.Operator):
         if self._timer is not None:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
+        # Clear any pending HUD exit-timer and unregister from the HUD
+        # modal registry.
+        exit_t = getattr(self, '_exit_timer', None)
+        if exit_t is not None:
+            try:
+                context.window_manager.event_timer_remove(exit_t)
+            except Exception:
+                pass
+            self._exit_timer = None
+        from ....operators.viewport_hud import unregister_active_modal
+        unregister_active_modal(self)
         try:
             context.workspace.status_text_set(None)
         except Exception:
@@ -190,10 +221,10 @@ class hb_face_frame_OT_open_mode(bpy.types.Operator):
         hit = _raycast_under_cursor(context, event)
         if hit is None:
             return False
-        role = hit.get('hb_part_role')
-        if role not in OPENING_FRONT_ROLES:
+        front = _find_owning_front(hit)
+        if front is None:
             return False
-        opening = _find_opening_cage(hit)
+        opening = _find_opening_cage(front)
         if opening is None:
             return False
 
@@ -256,11 +287,29 @@ class hb_face_frame_OT_open_mode(bpy.types.Operator):
             context.area.tag_redraw()
 
     def modal(self, context, event):
+        # External exit request from the HUD's Disable button. Tween
+        # cleanup runs inside _exit (snaps to target, removes timer).
+        if getattr(self, '_exit_requested', False):
+            self._exit_requested = False
+            self._exit(context)
+            return {'FINISHED'}
+
         if event.type == 'TIMER':
             self._step_tweens(context)
             return {'PASS_THROUGH'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            # Clicks on HUD widgets pass through so the HUD listener can
+            # process them (e.g. Disable Open Door Mode). Otherwise the
+            # raycast in _handle_click might consume the click.
+            try:
+                from ....operators.viewport_hud import click_hits_widget
+                if click_hits_widget(context, context.area,
+                                     event.mouse_region_x,
+                                     event.mouse_region_y):
+                    return {'PASS_THROUGH'}
+            except Exception:
+                pass
             if self._handle_click(context, event):
                 return {'RUNNING_MODAL'}
             return {'PASS_THROUGH'}

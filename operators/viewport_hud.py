@@ -209,6 +209,87 @@ class _ModeButton:
         ff.face_frame_selection_mode = self.mode_value
 
 
+class _ModalToggleButton:
+    """HUD button that starts or stops a HUD-controllable modal operator.
+
+    Visibility is mode-driven: the cabinet grab pairs with the 'Cabinets'
+    selection mode, the face-frame grab with 'Face Frame', the open-door
+    mode with 'Parts'. A running modal also forces visibility regardless
+    of the current mode, so the user can always reach the Disable button
+    even after nudging the selection mode mid-session.
+
+    Label flips Enable -> Disable while the matching modal runs; on_click
+    either invokes the operator (Enable path) or asks the running modal
+    to commit and exit via request_exit_active_modal (Disable path).
+    Width is sized to the longer of the two labels so the button
+    geometry doesn't jitter when state changes.
+    """
+
+    def __init__(self, op_idname, mode_value, enable_label, disable_label):
+        self.op_idname = op_idname  # e.g. "hb_face_frame.grab_cabinet"
+        self.mode_value = mode_value
+        self.enable_label = enable_label
+        self.disable_label = disable_label
+
+    # ---- internal helpers ----
+
+    def _is_my_modal_active(self):
+        return active_modal_idname() == self.op_idname
+
+    def _label(self):
+        return (self.disable_label if self._is_my_modal_active()
+                else self.enable_label)
+
+    # ---- widget protocol ----
+
+    @property
+    def width(self):
+        # Size to the longer of the two possible labels so the rect
+        # doesn't shift width when state flips.
+        blf.size(0, FONT_SIZE)
+        w_enable = blf.dimensions(0, self.enable_label)[0]
+        w_disable = blf.dimensions(0, self.disable_label)[0]
+        return int(max(w_enable, w_disable)) + 24  # text + horizontal pad
+
+    def visible(self, context):
+        if not _face_frame_ui_visible(context):
+            return False
+        ff = context.scene.hb_face_frame
+        in_my_mode = (ff.face_frame_selection_mode_enabled
+                      and ff.face_frame_selection_mode == self.mode_value)
+        # Stay visible while our modal runs even if the user has nudged
+        # the selection mode; otherwise the exit button would vanish
+        # and the user would be forced to Esc out.
+        return in_my_mode or self._is_my_modal_active()
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        active = self._is_my_modal_active()
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        if active:
+            bg = BTN_ACTIVE_BG
+        elif hovered:
+            bg = BTN_HOVER_BG
+        else:
+            bg = BTN_BG
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        color = TEXT_ACTIVE if active else TEXT_NORMAL
+        _draw_centered_text(font_id, rect, FONT_SIZE, color, self._label())
+
+    def on_click(self, context, area, region):
+        if active_modal_idname() == self.op_idname:
+            request_exit_active_modal(context)
+            return
+        # Enable path: invoke the modal under a viewport override.
+        ns, name = self.op_idname.split('.')
+        try:
+            with context.temp_override(area=area, region=region):
+                getattr(getattr(bpy.ops, ns), name)('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
 # Widget instances. Mode values must match the EnumProperty items on
 # Face_Frame_Scene_Props.face_frame_selection_mode.
 _NAV_BUTTON = _NavButton()
@@ -221,13 +302,38 @@ _MODE_BUTTONS = [
     _ModeButton('Parts', "Parts"),
 ]
 
+_GRAB_CABINET_BUTTON = _ModalToggleButton(
+    'hb_face_frame.grab_cabinet', 'Cabinets',
+    enable_label="Enable Grab Cabinet",
+    disable_label="Disable Grab Cabinet",
+)
+_GRAB_FACE_FRAME_BUTTON = _ModalToggleButton(
+    'hb_face_frame.grab_face_frame', 'Face Frame',
+    enable_label="Enable Grab Face Frame",
+    disable_label="Disable Grab Face Frame",
+)
+_OPEN_DOOR_BUTTON = _ModalToggleButton(
+    'hb_face_frame.open_mode', 'Parts',
+    enable_label="Enable Open Door Mode",
+    disable_label="Disable Open Door Mode",
+)
+_MODAL_TOGGLE_BUTTONS = [
+    _GRAB_CABINET_BUTTON, _GRAB_FACE_FRAME_BUTTON, _OPEN_DOOR_BUTTON,
+]
+
 
 def _rows():
     """HUD rows, top to bottom. Each row is a list of widget groups; groups
     are separated by GROUP_GAP, widgets within a group by BTN_GAP, and the
-    whole row is centered along the top of the viewport."""
+    whole row is centered along the top of the viewport.
+
+    The second row holds the grab toggles. Their visible() checks gate on
+    selection mode and modal-active state, so the row contains at most one
+    rendered button at a time (or zero, in which case compute_layout skips
+    the row entirely)."""
     return [
         [[_NAV_BUTTON], _MODE_BUTTONS],
+        [_MODAL_TOGGLE_BUTTONS],
     ]
 
 
@@ -258,6 +364,77 @@ def compute_layout(context, area):
                 cursor_x += w.width
         cursor_y -= BTN_HEIGHT + ROW_GAP
     return placed
+
+
+# ---- Active modal registry --------------------------------------------------
+# Modal operators opt in by calling register_active_modal(self) in their
+# invoke and unregister_active_modal(self) in their teardown. The HUD's
+# toggle buttons read this to decide whether to show Enable or Disable,
+# and request_exit_active_modal pokes the running instance via an
+# _exit_requested flag plus a wake-up timer so the modal sees it on the
+# next event tick rather than waiting for user input.
+
+_active_modal = None
+
+
+def register_active_modal(modal_inst):
+    """Register a modal operator instance as the current HUD-controllable
+    modal. Single-modal-at-a-time assumption - the previous registration
+    is replaced silently."""
+    global _active_modal
+    _active_modal = modal_inst
+
+
+def unregister_active_modal(modal_inst):
+    """Clear the registry if it's still pointing at modal_inst. No-op if
+    another modal has since claimed the slot, so late teardowns can't
+    stomp on a successor."""
+    global _active_modal
+    if _active_modal is modal_inst:
+        _active_modal = None
+
+
+def active_modal_idname():
+    """bl_idname of the registered modal, or None.
+
+    Read it off the class, not the instance. Blender's RNA layer on an
+    Operator instance returns bl_idname as the UPPERCASE_OT form, while
+    the class attribute holds the dotted Python-callable form which is
+    what callers compare against."""
+    return type(_active_modal).bl_idname if _active_modal else None
+
+
+def request_exit_active_modal(context):
+    """Signal the registered modal to commit/finish and tear down. Sets
+    an _exit_requested flag the modal checks at the top of modal(), and
+    adds a 1ms event_timer so the next iteration runs immediately rather
+    than waiting for the user to nudge the mouse. Returns True if a
+    modal was registered."""
+    global _active_modal
+    if _active_modal is None:
+        return False
+    _active_modal._exit_requested = True
+    try:
+        _active_modal._exit_timer = (
+            context.window_manager.event_timer_add(
+                0.001, window=context.window)
+        )
+    except Exception:
+        _active_modal._exit_timer = None
+    return True
+
+
+def click_hits_widget(context, area, region_x, region_y):
+    """True if (region_x, region_y) sits inside any currently-visible HUD
+    widget hit-rect. Lets external modal operators (like the grab modals)
+    pass clicks through instead of consuming them, so HUD buttons remain
+    clickable while a modal is running."""
+    if not _hud_enabled() or area is None:
+        return False
+    for _widget, rect in compute_layout(context, area):
+        if point_in_rect(region_x, region_y, rect):
+            return True
+    return False
 
 
 # ---- Draw handler -----------------------------------------------------------

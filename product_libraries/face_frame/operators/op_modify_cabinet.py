@@ -852,9 +852,17 @@ class _GrabBaseMixin:
         )
         context.window.cursor_modal_set('SCROLL_XY')
         context.area.tag_redraw()
+        # Register with the HUD's modal registry so the Disable button
+        # can ask us to exit. Cleared in _cleanup.
+        from ....operators.viewport_hud import register_active_modal
+        register_active_modal(self)
+        self._exit_requested = False
+        self._exit_timer = None
         return {'RUNNING_MODAL'}
 
     def _cleanup(self, context):
+        from ....operators.viewport_hud import unregister_active_modal
+        unregister_active_modal(self)
         if self._draw_handle is not None:
             try:
                 bpy.types.SpaceView3D.draw_handler_remove(
@@ -1586,6 +1594,23 @@ class _GrabBaseMixin:
     # ---- Modal event router ----
 
     def modal(self, context, event):
+        # External exit request from the HUD: commit any in-progress drag
+        # (Enter semantics, not Esc) and tear down. The wake-up timer
+        # added by request_exit_active_grab is consumed here.
+        if getattr(self, '_exit_requested', False):
+            self._exit_requested = False
+            if self._drag_active:
+                self._end_drag(commit=True)
+            timer = getattr(self, '_exit_timer', None)
+            if timer is not None:
+                try:
+                    context.window_manager.event_timer_remove(timer)
+                except Exception:
+                    pass
+                self._exit_timer = None
+            self._cleanup(context)
+            return {'FINISHED'}
+
         if event.type == 'MOUSEMOVE':
             self._snap_disabled_temp = event.shift
             if self._drag_active:
@@ -1597,6 +1622,18 @@ class _GrabBaseMixin:
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            # Pass clicks on HUD widgets through to the viewport HUD's
+            # modal listener. The HUD sits further down the modal stack;
+            # without this gate the grab modal eats every LMB before it
+            # can reach a HUD button (e.g. Disable Grab Cabinet).
+            try:
+                from ....operators.viewport_hud import click_hits_widget
+                if click_hits_widget(context, context.area,
+                                     event.mouse_region_x,
+                                     event.mouse_region_y):
+                    return {'PASS_THROUGH'}
+            except Exception:
+                pass
             # Lock-icon click takes priority over boundary picking. The
             # icons are tiny so we use a generous square tolerance.
             if self._handle_lock_click(context, event):
