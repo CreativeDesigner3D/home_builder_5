@@ -5,6 +5,7 @@ from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
+from .. import split_preview
 from ....units import inch
 from .... import hb_types, hb_utils
 from ...frameless.operators.ops_placement import toggle_cabinet_color
@@ -577,21 +578,25 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             ('V', "Vertical",   "Add mid stiles; new openings on the left, original on the right"),
         ],
         default='H',
+        update=split_preview.tag_redraw,
     )  # type: ignore
     count: bpy.props.IntProperty(
         name="Openings",
         description="Total number of openings the split should produce (including the original)",
         default=2, min=2, max=MAX_SPLIT_OPENINGS,
+        update=split_preview.tag_redraw,
     )  # type: ignore
     mid_rail_width: bpy.props.FloatProperty(
         name="Mid Rail Width",
         description="Width of mid rails for this split (H-axis only)",
         default=inch(1.5), unit='LENGTH', precision=4,
+        update=split_preview.tag_redraw,
     )  # type: ignore
     mid_stile_width: bpy.props.FloatProperty(
         name="Mid Stile Width",
         description="Width of mid stiles for this split (V-axis only)",
         default=inch(2.0), unit='LENGTH', precision=4,
+        update=split_preview.tag_redraw,
     )  # type: ignore
     add_backing: bpy.props.BoolProperty(
         name="Add Backing",
@@ -604,12 +609,14 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         size=MAX_SPLIT_OPENINGS,
         default=(0.0,) * MAX_SPLIT_OPENINGS,
         unit='LENGTH', precision=4,
+        update=split_preview.tag_redraw,
     )  # type: ignore
     unlocks: bpy.props.BoolVectorProperty(
         name="Unlocks",
         description="When on, the opening's size is held at the typed value during redistribution",
         size=MAX_SPLIT_OPENINGS,
         default=(False,) * MAX_SPLIT_OPENINGS,
+        update=split_preview.tag_redraw,
     )  # type: ignore
 
     @classmethod
@@ -639,7 +646,14 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         falses = (False,) * MAX_SPLIT_OPENINGS
         self.sizes = zeros
         self.unlocks = falses
+        opening = context.view_layer.objects.active
+        split_preview.add_preview(self, opening.name if opening else "")
         return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def cancel(self, context):
+        # Drop the preview overlay when the dialog is dismissed
+        # without confirming (Esc / click-away).
+        split_preview.remove_preview()
 
     def draw(self, context):
         layout = self.layout
@@ -671,79 +685,81 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             row.prop(self, 'unlocks', index=i, text="", icon=lock_icon)
 
     def execute(self, context):
+        split_preview.remove_preview()
         original = context.view_layer.objects.active
         root = types_face_frame.find_cabinet_root(original)
         if root is None:
             self.report({'WARNING'}, "Active opening is not in a face frame cabinet")
             return {'CANCELLED'}
 
-        old_parent = original.parent
-        old_index = original.get('hb_split_child_index', 0)
+        with types_face_frame.suspend_recalc():
+            old_parent = original.parent
+            old_index = original.get('hb_split_child_index', 0)
 
-        # Snapshot original's current size + unlock for handing to the
-        # split node (which will now occupy original's slot in the
-        # parent tree).
-        op_props = original.face_frame_opening
-        inherited_size = op_props.size
-        inherited_unlock = op_props.unlock_size
+            # Snapshot original's current size + unlock for handing to the
+            # split node (which will now occupy original's slot in the
+            # parent tree).
+            op_props = original.face_frame_opening
+            inherited_size = op_props.size
+            inherited_unlock = op_props.unlock_size
 
-        # Create split node empty
-        split_obj = bpy.data.objects.new('Split Node', None)
-        bpy.context.scene.collection.objects.link(split_obj)
-        split_obj.empty_display_type = 'PLAIN_AXES'
-        split_obj.empty_display_size = 0.001
-        split_obj[types_face_frame.TAG_SPLIT_NODE] = True
-        split_obj.parent = old_parent
-        split_obj['hb_split_child_index'] = old_index
-        sp = split_obj.face_frame_split
-        sp.axis = self.axis
-        sp.size = inherited_size
-        sp.unlock_size = inherited_unlock
-        sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
-                             else self.mid_stile_width)
-        sp.add_backing = self.add_backing
+            # Create split node empty
+            split_obj = bpy.data.objects.new('Split Node', None)
+            bpy.context.scene.collection.objects.link(split_obj)
+            split_obj.empty_display_type = 'PLAIN_AXES'
+            split_obj.empty_display_size = 0.001
+            split_obj[types_face_frame.TAG_SPLIT_NODE] = True
+            split_obj.parent = old_parent
+            split_obj['hb_split_child_index'] = old_index
+            sp = split_obj.face_frame_split
+            sp.axis = self.axis
+            sp.size = inherited_size
+            sp.unlock_size = inherited_unlock
+            sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
+                                 else self.mid_stile_width)
+            sp.add_backing = self.add_backing
 
-        # Find the bay (for opening_index counter) before re-parenting.
-        bay = original
-        while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
-            bay = bay.parent
-        if bay is not None:
-            existing = [c for c in bay.children_recursive
-                        if c.get(types_face_frame.TAG_OPENING_CAGE)]
-            next_idx = 1 + max(
-                (c.face_frame_opening.opening_index for c in existing),
-                default=-1,
-            )
-        else:
-            next_idx = 1
+            # Find the bay (for opening_index counter) before re-parenting.
+            bay = original
+            while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
+                bay = bay.parent
+            if bay is not None:
+                existing = [c for c in bay.children_recursive
+                            if c.get(types_face_frame.TAG_OPENING_CAGE)]
+                next_idx = 1 + max(
+                    (c.face_frame_opening.opening_index for c in existing),
+                    default=-1,
+                )
+            else:
+                next_idx = 1
 
-        # Create (count - 1) new sibling openings at indices 0 .. count-2.
-        # The dialog's per-opening size + unlock arrays cover all `count`
-        # children; the original takes the last slot (index count - 1).
-        new_count = max(0, self.count - 1)
-        new_openings = []
-        default_front = types_face_frame.default_front_type_for_root(root)
-        for i in range(new_count):
-            new_op = types_face_frame.FaceFrameOpening()
-            new_op.create('Opening')
-            new_op.obj.parent = split_obj
-            new_op.obj['hb_split_child_index'] = i
-            new_op.obj.face_frame_opening.opening_index = next_idx + i
-            new_op.obj.face_frame_opening.size = self.sizes[i]
-            new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
-            # New openings inherit the root's default front type. Splits
-            # don't copy from the original opening - the original keeps
-            # its own front_type, the new siblings get the default.
-            new_op.obj.face_frame_opening.front_type = default_front
-            new_openings.append(new_op.obj)
+            # Create (count - 1) new sibling openings at indices 0 .. count-2.
+            # The dialog's per-opening size + unlock arrays cover all `count`
+            # children; the original takes the last slot (index count - 1).
+            new_count = max(0, self.count - 1)
+            new_openings = []
+            default_front = types_face_frame.default_front_type_for_root(root)
+            for i in range(new_count):
+                new_op = types_face_frame.FaceFrameOpening()
+                new_op.create('Opening')
+                new_op.obj.parent = split_obj
+                new_op.obj['hb_split_child_index'] = i
+                new_op.obj.face_frame_opening.opening_index = next_idx + i
+                new_op.obj.face_frame_opening.size = self.sizes[i]
+                new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
+                # New openings inherit the root's default front type. Splits
+                # don't copy from the original opening - the original keeps
+                # its own front_type, the new siblings get the default.
+                new_op.obj.face_frame_opening.front_type = default_front
+                new_openings.append(new_op.obj)
 
-        # Re-parent original under split as the last child.
-        original.parent = split_obj
-        original['hb_split_child_index'] = new_count
-        op_props.size = self.sizes[new_count]
-        op_props.unlock_size = self.unlocks[new_count]
+            # Re-parent original under split as the last child.
+            original.parent = split_obj
+            original['hb_split_child_index'] = new_count
+            op_props.size = self.sizes[new_count]
+            op_props.unlock_size = self.unlocks[new_count]
 
-        types_face_frame.recalculate_face_frame_cabinet(root)
+            types_face_frame.recalculate_face_frame_cabinet(root)
 
         # Apply current selection mode's visual treatment to the new
         # cages and the split node so they appear correctly highlighted

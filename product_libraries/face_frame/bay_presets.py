@@ -166,7 +166,8 @@ PRESETS = {
 # ---------------------------------------------------------------------------
 # Menu rendering data: per cabinet type, the order and grouping of entries
 # in the right-click "Change Bay" submenu. ('SEP',) inserts a separator;
-# all other tuples are (config_id, display_label).
+# all other tuples are (config_id, display_label), with an optional
+# trailing icon: (config_id, display_label, icon).
 # ---------------------------------------------------------------------------
 SEP = ('SEP',)
 
@@ -194,8 +195,8 @@ BASE_MENU_ENTRIES = [
     ('OPEN_WITH_SHELVES',        "Open with Shelves"),
     ('OPEN',                     "Open"),
     SEP,
-    ('CUSTOM_VERTICAL',          "Custom Vertical"),
-    ('CUSTOM_HORIZONTAL',        "Custom Horizontal"),
+    ('CUSTOM_HORIZONTAL', "Custom Horizontal", 'SNAP_EDGE'),
+    ('CUSTOM_VERTICAL',   "Custom Vertical",   'PAUSE'),
 ]
 
 TALL_MENU_ENTRIES = [
@@ -220,8 +221,8 @@ TALL_MENU_ENTRIES = [
     ('OPEN_WITH_SHELVES',         "Open with Shelves"),
     ('OPEN',                      "Open"),
     SEP,
-    ('CUSTOM_VERTICAL',           "Custom Vertical"),
-    ('CUSTOM_HORIZONTAL',         "Custom Horizontal"),
+    ('CUSTOM_HORIZONTAL', "Custom Horizontal", 'SNAP_EDGE'),
+    ('CUSTOM_VERTICAL',   "Custom Vertical",   'PAUSE'),
 ]
 
 UPPER_MENU_ENTRIES = [
@@ -246,8 +247,8 @@ UPPER_MENU_ENTRIES = [
     ('OPEN_WITH_SHELVES',         "Open with Shelves"),
     ('OPEN',                      "Open"),
     SEP,
-    ('CUSTOM_VERTICAL',           "Custom Vertical"),
-    ('CUSTOM_HORIZONTAL',         "Custom Horizontal"),
+    ('CUSTOM_HORIZONTAL', "Custom Horizontal", 'SNAP_EDGE'),
+    ('CUSTOM_VERTICAL',   "Custom Vertical",   'PAUSE'),
 ]
 
 

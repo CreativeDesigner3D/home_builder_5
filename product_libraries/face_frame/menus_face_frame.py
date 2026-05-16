@@ -257,8 +257,10 @@ class HOME_BUILDER_MT_face_frame_change_bay(bpy.types.Menu):
             if entry[0] == 'SEP':
                 layout.separator()
                 continue
-            config, label = entry
-            op = layout.operator("hb_face_frame.change_bay", text=label)
+            config, label, *rest = entry
+            icon = rest[0] if rest else 'NONE'
+            op = layout.operator("hb_face_frame.change_bay",
+                                 text=label, icon=icon)
             op.config = config
 
 
