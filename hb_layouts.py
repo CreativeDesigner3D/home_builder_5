@@ -47,6 +47,30 @@ def get_font(font_name='Calibri Regular'):
             return font
     return None
 
+
+# =============================================================================
+# OBJECT CLASSIFICATION
+# =============================================================================
+
+# Cage containers and helper empties are organizational, not visible geometry,
+# and must be excluded from 2D layout views. Cages from every product library
+# carry IS_GEONODE_CAGE (set by the GeoNodeCage base in hb_types). Face frame
+# interior split nodes are plain empties with no geo modifier, so they are
+# matched separately.
+
+def is_cage_object(obj) -> bool:
+    """True if obj is a cage container that should be excluded from layout views."""
+    return bool(
+        obj.get('IS_GEONODE_CAGE') or
+        obj.get('IS_FACE_FRAME_SPLIT_NODE')
+    )
+
+
+def is_helper_object(obj) -> bool:
+    """True if obj is a helper empty (prompt/anchor object), not visible geometry."""
+    return bool(obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name)
+
+
 # =============================================================================
 # TITLE BLOCK
 # =============================================================================
@@ -560,11 +584,8 @@ class ElevationView(LayoutView):
         # Check all children for their bounds in wall's local space
         for child in wall_obj.children_recursive:
             # Skip cages and helper objects
-            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
-                       child.get('IS_FRAMELESS_BAY_CAGE') or 
-                       child.get('IS_FRAMELESS_OPENING_CAGE') or
-                       child.get('IS_FRAMELESS_DOORS_CAGE'))
-            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            is_cage = is_cage_object(child)
+            is_helper = is_helper_object(child)
             
             if is_cage or is_helper:
                 continue
@@ -740,7 +761,7 @@ class ElevationView(LayoutView):
             if child.get('obj_x') or 'Overlay Prompt Obj' in child.name:
                 continue
             
-            if child.get('IS_FRAMELESS_CABINET_CAGE'):
+            if child.get('IS_FRAMELESS_CABINET_CAGE') or child.get('IS_FACE_FRAME_CABINET_CAGE'):
                 # Cabinet: create solid and dashed collections
                 cabinet_name = child.name
                 cab_solid = bpy.data.collections.new(f"{view_name}_{cabinet_name}_Solid")
@@ -789,7 +810,7 @@ class ElevationView(LayoutView):
         geometry goes to solid. Cages and helpers are skipped but their children are processed.
         """
         if not self._is_cage(obj) and not self._is_helper(obj):
-            if obj.get('IS_FRAMELESS_INTERIOR_PART'):
+            if obj.get('IS_FRAMELESS_INTERIOR_PART') or obj.get('IS_FACE_FRAME_INTERIOR_PART'):
                 if obj.name not in dashed_col.objects:
                     dashed_col.objects.link(obj)
             else:
@@ -802,19 +823,12 @@ class ElevationView(LayoutView):
     @staticmethod
     def _is_cage(obj: bpy.types.Object) -> bool:
         """Check if an object is a cage (organizational container, not visible geometry)."""
-        return bool(
-            obj.get('IS_FRAMELESS_CABINET_CAGE') or
-            obj.get('IS_FRAMELESS_BAY_CAGE') or
-            obj.get('IS_FRAMELESS_OPENING_CAGE') or
-            obj.get('IS_FRAMELESS_DOORS_CAGE') or
-            obj.get('IS_FRAMELESS_INTERIOR_CAGE') or
-            obj.get('IS_FRAMELESS_SPLITTER_VERTICAL_CAGE')
-        )
+        return is_cage_object(obj)
     
     @staticmethod
     def _is_helper(obj: bpy.types.Object) -> bool:
         """Check if an object is a helper empty (not visible geometry)."""
-        return bool(obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name)
+        return is_helper_object(obj)
     
     def update(self):
         """Update the elevation view to reflect changes in the 3D model."""
@@ -953,11 +967,8 @@ class PlanView(LayoutView):
         # Check all children for their bounds in wall's local space
         for child in wall_obj.children_recursive:
             # Skip cages and helper objects
-            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
-                       child.get('IS_FRAMELESS_BAY_CAGE') or 
-                       child.get('IS_FRAMELESS_OPENING_CAGE') or
-                       child.get('IS_FRAMELESS_DOORS_CAGE'))
-            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            is_cage = is_cage_object(child)
+            is_helper = is_helper_object(child)
             
             if is_cage or is_helper:
                 continue
@@ -1009,14 +1020,8 @@ class PlanView(LayoutView):
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
         
         # Skip cage objects and helper empties - they are organizational, not visible geometry
-        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
-                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
-                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
-                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
-        
-        # Skip helper empties
-        is_helper = (obj.get('obj_x') or 
-                     'Overlay Prompt Obj' in obj.name)
+        is_cage = is_cage_object(obj)
+        is_helper = is_helper_object(obj)
         
         if not is_cage and not is_helper:
             if obj.name not in collection.objects:
@@ -1129,11 +1134,8 @@ class View3D(LayoutView):
         # Check all children for their bounds in wall's local space
         for child in wall_obj.children_recursive:
             # Skip cages and helper objects
-            is_cage = (child.get('IS_FRAMELESS_CABINET_CAGE') or 
-                       child.get('IS_FRAMELESS_BAY_CAGE') or 
-                       child.get('IS_FRAMELESS_OPENING_CAGE') or
-                       child.get('IS_FRAMELESS_DOORS_CAGE'))
-            is_helper = (child.get('obj_x') or 'Overlay Prompt Obj' in child.name)
+            is_cage = is_cage_object(child)
+            is_helper = is_helper_object(child)
             
             if is_cage or is_helper:
                 continue
@@ -1185,14 +1187,8 @@ class View3D(LayoutView):
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
         
         # Skip cage objects and helper empties - they are organizational, not visible geometry
-        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
-                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
-                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
-                   obj.get('IS_FRAMELESS_DOORS_CAGE'))
-        
-        # Skip helper empties
-        is_helper = (obj.get('obj_x') or 
-                     'Overlay Prompt Obj' in obj.name)
+        is_cage = is_cage_object(obj)
+        is_helper = is_helper_object(obj)
         
         if not is_cage and not is_helper:
             if obj.name not in collection.objects:
@@ -1473,12 +1469,8 @@ class MultiView(LayoutView):
     
     def _add_object_to_collection(self, obj, collection):
         """Recursively add object and children to collection, skipping cages/helpers."""
-        is_cage = (obj.get('IS_FRAMELESS_CABINET_CAGE') or 
-                   obj.get('IS_FRAMELESS_BAY_CAGE') or 
-                   obj.get('IS_FRAMELESS_OPENING_CAGE') or
-                   obj.get('IS_FRAMELESS_DOORS_CAGE') or
-                   obj.get('IS_GEONODE_CAGE'))
-        is_helper = obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name
+        is_cage = is_cage_object(obj)
+        is_helper = is_helper_object(obj)
         
         if not is_cage and not is_helper:
             if obj.name not in collection.objects:
