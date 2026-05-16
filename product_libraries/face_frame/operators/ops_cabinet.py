@@ -614,7 +614,13 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
+        # view_layer.objects.active, not context.active_object: in
+        # Bay selection mode the opening cages are hidden, and a
+        # hidden active object resolves to None through
+        # context.active_object in the 3D-view context (notably
+        # when this operator's dialog is confirmed).
+        # view_layer.objects.active holds the cage in either mode.
+        obj = context.view_layer.objects.active
         return (obj is not None
                 and obj.get(types_face_frame.TAG_OPENING_CAGE))
 
@@ -622,7 +628,8 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         # Initialize axis-specific defaults from the cabinet so the
         # dialog opens with sensible starting values rather than the
         # operator's hard-coded class defaults.
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        root = types_face_frame.find_cabinet_root(
+            context.view_layer.objects.active)
         if root is not None:
             cab_props = root.face_frame_cabinet
             self.mid_rail_width = cab_props.bay_mid_rail_width
@@ -664,7 +671,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             row.prop(self, 'unlocks', index=i, text="", icon=lock_icon)
 
     def execute(self, context):
-        original = context.active_object
+        original = context.view_layer.objects.active
         root = types_face_frame.find_cabinet_root(original)
         if root is None:
             self.report({'WARNING'}, "Active opening is not in a face frame cabinet")
