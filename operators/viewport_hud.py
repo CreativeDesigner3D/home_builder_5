@@ -2,19 +2,21 @@
 
 When the `use_viewport_hud` addon preference is enabled, draws a small
 control strip in the top-left of every 3D viewport: a scene-navigator
-trigger plus the face frame selection-mode picker. A permanent draw
-handler renders the strip; a persistent modal listener routes clicks on
-widget rects to their actions while passing every other event through.
+trigger plus the selection-mode picker for the active product library.
+A permanent draw handler renders the strip; a persistent modal listener
+routes clicks on widget rects to their actions while passing every other
+event through.
 
-Widgets are intentionally thin -- they read and write properties that
-already own their update callbacks (face_frame_selection_mode and its
-master enable bool), so the HUD contributes presentation and hit-testing
-only, never selection logic.
+Widgets are intentionally thin -- they read and write the per-product
+selection-mode properties, which already own their update callbacks, so
+the HUD contributes presentation and hit-testing only, never selection
+logic.
 """
 
 import bpy
 import gpu
 import blf
+from collections import namedtuple
 
 from ..hb_gpu_draw import (
     get_visible_window_bounds,
@@ -74,14 +76,37 @@ def _hud_enabled():
     return bool(p and getattr(p, "use_viewport_hud", False))
 
 
-def _face_frame_ui_visible(context):
-    """Selection-mode widgets show only on the face frame product tab and
-    only in a real room scene -- mirrors the sidebar panel's gating."""
+def _product_ui_visible(context, product_tab):
+    """Selection-mode widgets show only on the matching product tab and
+    only in a real room scene -- mirrors the sidebar panels' gating."""
     scene = context.scene
     if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return False
     hb = getattr(scene, 'home_builder', None)
-    return getattr(hb, 'product_tab', 'FRAMELESS') == 'FACE FRAME'
+    return getattr(hb, 'product_tab', 'FRAMELESS') == product_tab
+
+
+def _face_frame_ui_visible(context):
+    return _product_ui_visible(context, 'FACE FRAME')
+
+
+def _frameless_ui_visible(context):
+    return _product_ui_visible(context, 'FRAMELESS')
+
+
+# Per-product wiring for the selection-mode picker. enabled_attr is the
+# product's master enable bool, or None when it has none -- frameless has
+# no such bool and treats the 'Parts' pick as the neutral state instead.
+_SelectionWiring = namedtuple(
+    '_SelectionWiring',
+    ['scene_attr', 'enum_attr', 'enabled_attr', 'ui_visible'])
+
+_FF_SELECTION = _SelectionWiring(
+    'hb_face_frame', 'face_frame_selection_mode',
+    'face_frame_selection_mode_enabled', _face_frame_ui_visible)
+_FL_SELECTION = _SelectionWiring(
+    'hb_frameless', 'frameless_selection_mode',
+    None, _frameless_ui_visible)
 
 
 def _viewport_under_cursor(context, event):
@@ -169,22 +194,35 @@ class _NavButton:
 
 
 class _ModeButton:
-    """One face frame selection-mode pick. Sets the scene enum on click;
-    the enum's own update callback drives the highlight toggle."""
+    """One selection-mode pick. Sets the scene enum on click; the enum's
+    own update callback drives the highlight toggle. A _SelectionWiring
+    supplies the per-product props (scene group, enum, optional master
+    enable bool), so one class serves both the face frame and frameless
+    pickers."""
     width = MODE_BTN_WIDTH
 
-    def __init__(self, mode_value, label):
+    def __init__(self, wiring, mode_value, label):
+        self.wiring = wiring
         self.mode_value = mode_value
         self.label = label
 
+    def _props(self, context):
+        return getattr(context.scene, self.wiring.scene_attr)
+
+    def _is_active(self, props):
+        # Products without an enable bool (frameless) are always "on";
+        # active state is then purely whether this mode is selected.
+        enabled_attr = self.wiring.enabled_attr
+        if enabled_attr and not getattr(props, enabled_attr):
+            return False
+        return getattr(props, self.wiring.enum_attr) == self.mode_value
+
     def visible(self, context):
-        return _face_frame_ui_visible(context)
+        return self.wiring.ui_visible(context)
 
     def draw(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
-        ff = context.scene.hb_face_frame
-        is_active = (ff.face_frame_selection_mode_enabled
-                     and ff.face_frame_selection_mode == self.mode_value)
+        is_active = self._is_active(self._props(context))
         hovered = point_in_rect(mouse[0], mouse[1], rect)
 
         if is_active:
@@ -200,13 +238,15 @@ class _ModeButton:
         _draw_centered_text(font_id, rect, FONT_SIZE, color, self.label)
 
     def on_click(self, context, area, region):
-        ff = context.scene.hb_face_frame
-        # No separate enable toggle in the HUD -- picking any mode turns
-        # selection mode on if it was off; Parts mode is the practical
-        # "neutral" state.
-        if not ff.face_frame_selection_mode_enabled:
-            ff.face_frame_selection_mode_enabled = True
-        ff.face_frame_selection_mode = self.mode_value
+        props = self._props(context)
+        # Face frame keeps a master enable bool -- picking a mode in the
+        # HUD also flips it on. Frameless has none (enabled_attr is None);
+        # picking a mode is the only state, with 'Parts' as the neutral
+        # pick that clears highlighting.
+        enabled_attr = self.wiring.enabled_attr
+        if enabled_attr and not getattr(props, enabled_attr):
+            setattr(props, enabled_attr, True)
+        setattr(props, self.wiring.enum_attr, self.mode_value)
 
 
 class _ModalToggleButton:
@@ -293,13 +333,22 @@ class _ModalToggleButton:
 # Widget instances. Mode values must match the EnumProperty items on
 # Face_Frame_Scene_Props.face_frame_selection_mode.
 _NAV_BUTTON = _NavButton()
+# Face frame (6 modes) and frameless (5 -- no Face Frame) buttons share one
+# group. Each self-gates on its product tab via visible(), so compute_layout
+# renders only the active product's set; the tabs are mutually exclusive so
+# the two never appear together.
 _MODE_BUTTONS = [
-    _ModeButton('Cabinets', "Cabinets"),
-    _ModeButton('Bays', "Bays"),
-    _ModeButton('Openings', "Openings"),
-    _ModeButton('Face Frame', "Face Frame"),
-    _ModeButton('Interiors', "Interiors"),
-    _ModeButton('Parts', "Parts"),
+    _ModeButton(_FF_SELECTION, 'Cabinets', "Cabinets"),
+    _ModeButton(_FF_SELECTION, 'Bays', "Bays"),
+    _ModeButton(_FF_SELECTION, 'Openings', "Openings"),
+    _ModeButton(_FF_SELECTION, 'Face Frame', "Face Frame"),
+    _ModeButton(_FF_SELECTION, 'Interiors', "Interiors"),
+    _ModeButton(_FF_SELECTION, 'Parts', "Parts"),
+    _ModeButton(_FL_SELECTION, 'Cabinets', "Cabinets"),
+    _ModeButton(_FL_SELECTION, 'Bays', "Bays"),
+    _ModeButton(_FL_SELECTION, 'Openings', "Openings"),
+    _ModeButton(_FL_SELECTION, 'Interiors', "Interiors"),
+    _ModeButton(_FL_SELECTION, 'Parts', "Parts"),
 ]
 
 _GRAB_CABINET_BUTTON = _ModalToggleButton(
