@@ -1834,7 +1834,7 @@ def apply_opening_preset(opening_obj, config, **overrides):
 
 
 class hb_face_frame_OT_change_opening(bpy.types.Operator):
-    """Apply a named opening preset to the active opening cage.
+    """Apply a named opening preset to every selected opening cage.
 
     Drives front_type, hinge_side, and the ADJUSTABLE_SHELF interior
     item in one click. Used by the right-click 'Change Opening' submenu.
@@ -1870,20 +1870,28 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
         return obj is not None and bool(obj.get(types_face_frame.TAG_OPENING_CAGE))
 
     def execute(self, context):
-        opening_obj = context.active_object
-        if not opening_obj or not opening_obj.get(types_face_frame.TAG_OPENING_CAGE):
+        active = context.active_object
+        if not active or not active.get(types_face_frame.TAG_OPENING_CAGE):
             self.report({'WARNING'}, "Select an opening first")
             return {'CANCELLED'}
 
-        apply_opening_preset(opening_obj, self.config)
+        openings = [o for o in context.selected_objects
+                    if o.get(types_face_frame.TAG_OPENING_CAGE)]
+        if active not in openings:
+            openings.append(active)
 
-        # Belt-and-suspenders: collection mutations don't fire callbacks,
-        # so a CLEAR with the same front_type as before would otherwise
-        # leave stale shelf objects around. An explicit recalc closes
-        # the gap.
-        root = types_face_frame.find_cabinet_root(opening_obj)
-        if root is not None:
-            types_face_frame.recalculate_face_frame_cabinet(root)
+        # One outer suspend so every opening's preset writes coalesce
+        # into a single recalc per affected cabinet. The explicit recalc
+        # per opening also covers re-applying the same config: an
+        # unchanged front_type fires no callback, but interior_items may
+        # still have been mutated (e.g. shelves cleared), so the cabinet
+        # must be recalculated regardless.
+        with types_face_frame.suspend_recalc():
+            for opening_obj in openings:
+                apply_opening_preset(opening_obj, self.config)
+                types_face_frame.recalculate_face_frame_cabinet(opening_obj)
+
+        self.report({'INFO'}, f"Changed {len(openings)} opening(s)")
         return {'FINISHED'}
 
 
@@ -1926,7 +1934,7 @@ def apply_bay_preset(bay_obj, config):
 # preset recipe in bay_presets.PRESETS.
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_change_bay(bpy.types.Operator):
-    """Apply a named bay configuration preset to the active bay cage.
+    """Apply a named bay configuration preset to every selected bay cage.
 
     The preset's available configurations differ by cabinet type. The
     operator looks up bay_presets.PRESETS[cabinet_type][config] and
@@ -1935,7 +1943,9 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
 
     The two CUSTOM_* configs are special: they reset the bay to a
     single opening and route to the existing split_opening dialog so
-    the user picks count and per-opening sizes.
+    the user picks count and per-opening sizes. Because that dialog
+    is interactive and per-opening, the CUSTOM configs act only on
+    the active bay, never the wider selection.
     """
     bl_idname = "hb_face_frame.change_bay"
     bl_label = "Change Bay"
@@ -1952,31 +1962,27 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
         return obj is not None and bool(obj.get(types_face_frame.TAG_BAY_CAGE))
 
     def execute(self, context):
-        bay_obj = context.active_object
-        if not bay_obj or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        active = context.active_object
+        if not active or not active.get(types_face_frame.TAG_BAY_CAGE):
             self.report({'WARNING'}, "Select a bay first")
             return {'CANCELLED'}
-        root = types_face_frame.find_cabinet_root(bay_obj)
-        if root is None:
-            self.report({'WARNING'}, "Bay is not part of a cabinet")
-            return {'CANCELLED'}
-        cabinet_type = root.face_frame_cabinet.cabinet_type
-        if cabinet_type not in bay_presets.PRESETS:
-            self.report({'WARNING'}, f"No bay presets for cabinet type {cabinet_type}")
-            return {'CANCELLED'}
 
-        # Custom routes: wipe to one opening, then hand off to the
-        # split dialog.
+        # CUSTOM routes are interactive (per-opening split dialog), so
+        # they act on the single active bay even with several selected.
         if self.config in ('CUSTOM_VERTICAL', 'CUSTOM_HORIZONTAL'):
-            _wipe_bay_children(bay_obj)
+            root = types_face_frame.find_cabinet_root(active)
+            if root is None:
+                self.report({'WARNING'}, "Bay is not part of a cabinet")
+                return {'CANCELLED'}
+            _wipe_bay_children(active)
             opening_idx = [0]
             _build_recipe_into(
-                bay_presets.L('OPEN'), bay_obj, 0,
+                bay_presets.L('OPEN'), active, 0,
                 opening_idx, root.face_frame_cabinet,
             )
             types_face_frame.recalculate_face_frame_cabinet(root)
             new_opening = next(
-                (c for c in bay_obj.children
+                (c for c in active.children
                  if c.get(types_face_frame.TAG_OPENING_CAGE)), None
             )
             if new_opening is None:
@@ -1987,17 +1993,46 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
             axis = 'V' if self.config == 'CUSTOM_VERTICAL' else 'H'
             return bpy.ops.hb_face_frame.split_opening('INVOKE_DEFAULT', axis=axis)
 
-        if not apply_bay_preset(bay_obj, self.config):
+        # Regular presets apply to every selected bay. Bays whose cabinet
+        # type doesn't define this config are skipped (apply_bay_preset
+        # returns False), so a mixed selection is handled gracefully.
+        bays = [o for o in context.selected_objects
+                if o.get(types_face_frame.TAG_BAY_CAGE)]
+        if active not in bays:
+            bays.append(active)
+
+        changed_roots = set()
+        changed = skipped = 0
+        # One outer suspend so every bay's rebuild coalesces into a
+        # single recalc per affected cabinet.
+        with types_face_frame.suspend_recalc():
+            for bay_obj in bays:
+                if apply_bay_preset(bay_obj, self.config):
+                    changed += 1
+                    root = types_face_frame.find_cabinet_root(bay_obj)
+                    if root is not None:
+                        changed_roots.add(root.name)
+                else:
+                    skipped += 1
+
+        if changed == 0:
             self.report({'WARNING'},
-                        f"Unknown bay config {self.config!r} for {cabinet_type}")
+                        f"No selected bay accepts config {self.config!r}")
             return {'CANCELLED'}
 
-        # Re-apply selection mode so the new objects render correctly
+        # Re-apply selection mode so the rebuilt cages render correctly
         # instead of staying in their default colors.
-        try:
-            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
-        except RuntimeError:
-            pass
+        for root_name in changed_roots:
+            try:
+                bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root_name)
+            except RuntimeError:
+                pass
+
+        if skipped:
+            self.report({'INFO'},
+                        f"Changed {changed} bay(s), skipped {skipped}")
+        else:
+            self.report({'INFO'}, f"Changed {changed} bay(s)")
         return {'FINISHED'}
 
 

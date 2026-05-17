@@ -209,25 +209,33 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
     """
     bl_label = "Change Opening"
 
-    # (config_value, display_text). Order matches the user-facing list.
+    # (config_value, display_text); ('SEP',) inserts a separator.
     ENTRIES = [
         ('OPEN',              "Open"),
         ('OPEN_WITH_SHELVES', "Open with Shelves"),
+        ('SEP',),
         ('LEFT_DOOR',         "Left Door"),
         ('RIGHT_DOOR',        "Right Door"),
         ('DOUBLE_DOOR',       "Double Door"),
+        ('SEP',),
         ('FLIP_UP_DOOR',      "Flip Up Door"),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
+        ('SEP',),
         ('DRAWER',            "Drawer"),
-        ('PULLOUT',           "Pullout"),
-        ('INSET_PANEL',       "Inset Panel"),
         ('FALSE_FRONT',       "False Front"),
+        ('PULLOUT',           "Pullout"),
+        ('SEP',),
+        ('INSET_PANEL',       "Inset Panel"),
         ('APPLIANCE',         "Appliance"),
     ]
 
     def draw(self, context):
         layout = self.layout
-        for config, label in self.ENTRIES:
+        for entry in self.ENTRIES:
+            if entry[0] == 'SEP':
+                layout.separator()
+                continue
+            config, label = entry
             op = layout.operator("hb_face_frame.change_opening", text=label)
             op.config = config
 
