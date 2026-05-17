@@ -835,7 +835,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Fronts
         'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'INSET_PANEL',
         # Visible toe kick parts
-        'FINISH_TOE_KICK', 'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
+        'FINISH_TOE_KICK', 'CORNER_LEFT_FINISH_KICK', 'CORNER_RIGHT_FINISH_KICK',
         'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
         # Blind ends + finished back + flush skins / decorative panels
         'BLIND_PANEL_LEFT', 'BLIND_PANEL_RIGHT',
@@ -862,6 +862,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
         'VANITY_SHELF', 'VANITY_SUPPORT',
         'INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION',
+        # Corner cabinet carcass: bottom, top, backs, side panels, and
+        # toe kick subfronts. Corner finish kicks are visible exterior
+        # (listed above); corner sides default to interior - a finished
+        # exposed side is a follow-up, same as standard cabinets.
+        'CORNER_BOTTOM', 'CORNER_TOP',
+        'CORNER_LEFT_BACK', 'CORNER_RIGHT_BACK',
+        'CORNER_LEFT_SIDE', 'CORNER_RIGHT_SIDE',
+        'CORNER_LEFT_KICK', 'CORNER_RIGHT_KICK', 'DIAGONAL_KICK',
+        'CORNER_PARTITION',
     }
 
     # Roles that read materials from the 5-piece door modifier instead
@@ -2338,7 +2347,8 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         items=[
             ('LEFT_DOOR_OPENS_FIRST',  "Left Door Opens First",  "Left door tucks behind right at the corner"),
             ('RIGHT_DOOR_OPENS_FIRST', "Right Door Opens First", "Right door tucks behind left at the corner"),
-            ('BIFOLD_DOORS',           "Bi-fold Doors",          "Pair of bi-fold doors per face"),
+            ('BIFOLD_LEFT_SWING',      "Bi-fold Left Swing",     "Bi-fold pair hinged on the left, pull leads on the right"),
+            ('BIFOLD_RIGHT_SWING',     "Bi-fold Right Swing",    "Bi-fold pair hinged on the right, pull leads on the left"),
             ('REVOLVING_DOORS',        "Revolving Doors",        "Door rotates with the susan inside"),
         ],
         default='LEFT_DOOR_OPENS_FIRST',
@@ -2363,6 +2373,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('RIGHT', "Right", "Tray compartment on the right side"),
         ],
         default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_compartment_width: FloatProperty(
+        name="Tray Compartment Width",
+        description="Clear width of the tray storage strip walled off by the partition",
+        default=units.inch(6.0),
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 

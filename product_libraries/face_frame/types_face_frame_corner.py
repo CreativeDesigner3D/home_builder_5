@@ -13,11 +13,13 @@ frames, bays, and doors land in slices 4 and 5.
 """
 import bpy
 import math
+from types import SimpleNamespace
 
 from ...units import inch
 from ...hb_types import CabinetPartModifier, GeoNodeCage
 from ..frameless.types_frameless import CabinetPart
 from . import types_face_frame as ff
+from . import solver_face_frame as solver
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +43,7 @@ PART_ROLE_DIAGONAL_CUTTER = 'DIAGONAL_CUTTER'
 PART_ROLE_DIAGONAL_SIDE_CUTTER = 'DIAGONAL_SIDE_CUTTER'
 PART_ROLE_DIAGONAL_KICK = 'DIAGONAL_KICK'
 PART_ROLE_CORNER_INTERIOR = 'CORNER_INTERIOR'
+PART_ROLE_CORNER_PARTITION = 'CORNER_PARTITION'
 
 CORNER_PART_ROLES = frozenset({
     PART_ROLE_CORNER_BOTTOM,
@@ -57,7 +60,14 @@ CORNER_PART_ROLES = frozenset({
     PART_ROLE_DIAGONAL_SIDE_CUTTER,
     PART_ROLE_DIAGONAL_KICK,
     PART_ROLE_CORNER_INTERIOR,
+    PART_ROLE_CORNER_PARTITION,
 })
+
+
+# Inset (revolving) doors sit inside the face frame opening with this
+# gap to the surrounding frame on the rail and stile edges. Overlay
+# doors do not use it - they extend over the frame instead.
+INSET_DOOR_REVEAL = inch(0.125)
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +427,21 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_door.obj.rotation_euler.y = math.radians(-90)
         right_door.obj.rotation_euler.z = math.radians(90)
 
+        # Tray Compartment partition: interior divider that walls off a
+        # tray-storage strip on one leg of an odd-sized pie cut. Always
+        # built; recalc shows/hides it and sets the side orientation from
+        # cab_props.tray_compartment. Built in the Left Side orientation;
+        # recalc re-aims the Z rotation for a right-side compartment.
+        partition = CabinetPart()
+        partition.create('Tray Partition')
+        partition.obj.parent = self.obj
+        partition.obj['hb_part_role'] = PART_ROLE_CORNER_PARTITION
+        partition.obj['CABINET_PART'] = True
+        partition.obj.rotation_euler.y = math.radians(-90)
+        partition.obj.rotation_euler.z = math.radians(-90)
+        partition.obj.hide_viewport = True
+        partition.obj.hide_render = True
+
     # -----------------------------------------------------------------
     # Diagonal corner: build
     # -----------------------------------------------------------------
@@ -608,6 +633,62 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             diag_kick.obj.rotation_euler.x = math.radians(90)
             diag_kick.set_input('Mirror Z', True)
 
+        # Door. Single overlay door on the diagonal face frame. Built
+        # with the diagonal left stile orientation so it lies in the FF
+        # plane. Mirror Z is left False (unlike the stiles) so the slab
+        # grows outward from the FF front face toward the room instead
+        # of inward into the carcass. recalc adds the diagonal angle to
+        # rotation_z. hb_face_frame_side='DIAGONAL' keeps _find_ff_part
+        # consistent with the stiles and rails.
+        diag_door = CabinetPart()
+        diag_door.create('Diagonal Door')
+        diag_door.obj.parent = self.obj
+        diag_door.obj['hb_part_role'] = ff.PART_ROLE_DOOR
+        diag_door.obj['hb_face_frame_side'] = 'DIAGONAL'
+        diag_door.obj['CABINET_PART'] = True
+        diag_door.obj.rotation_euler.y = math.radians(-90)
+        diag_door.obj.rotation_euler.z = math.radians(90)
+        diag_door.set_input('Mirror Y', True)
+
+    def _clear_door_pull(self, door_obj):
+        """Remove any pull instances parented to a corner door."""
+        for child in list(door_obj.children):
+            if child.get('hb_part_role') == 'PULL':
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    def _refresh_door_pull(self, door_obj, length, width, thickness,
+                           width_sign=-1.0, edge='CORNER'):
+        """Clear and re-attach the pull on a corner door.
+
+        Corner doors persist across recalc - unlike standard fronts,
+        which are wiped and rebuilt each cycle - so any prior pull must
+        be removed first or pulls accumulate. _create_pull_for_front
+        handles asset resolution, vertical placement, and the mounting
+        plane; it expects a CabinetPart-like wrapper exposing .obj and
+        for a DOOR role only reads part_dims off the leaf, so a minimal
+        descriptor is enough. Its horizontal heuristic assumes a
+        standard front, so the Width-axis position is overridden here.
+
+        width_sign is -1 for a door built Mirror Y True (Width grows in
+        part-local -Y: the left and diagonal doors) and +1 for Mirror Y
+        False (the pie cut right door). edge picks which end of the
+        Width span carries the pull: 'CORNER' for the inside-corner
+        meeting edge, 'OUTER' for the stile-side edge.
+        """
+        self._clear_door_pull(door_obj)
+        pull = self._create_pull_for_front(
+            SimpleNamespace(obj=door_obj),
+            ff.PART_ROLE_DOOR,
+            {'part_dims': (length, width, thickness)},
+        )
+        if pull is None:
+            return
+        h_offset = bpy.context.scene.hb_face_frame.pull_horizontal_offset
+        if edge == 'OUTER':
+            pull.location.y = width_sign * h_offset
+        else:  # CORNER
+            pull.location.y = width_sign * (width - h_offset)
+
     # -----------------------------------------------------------------
     # Recalculate (overrides FaceFrameCabinet.recalculate)
     # -----------------------------------------------------------------
@@ -773,6 +854,52 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 rs_mod.show_viewport = has_kick
                 rs_mod.show_render = has_kick
 
+        # Tray Compartment partition. Cavity-height interior divider that
+        # walls a tray-storage strip off one leg. tray_compartment_width
+        # is the clear width of that strip, measured from the leg's outer
+        # side panel inner face. NONE (or zero width) hides the part.
+        partition = parts.get(PART_ROLE_CORNER_PARTITION)
+        if partition is not None:
+            tc = cab_props.tray_compartment
+            tcw = cab_props.tray_compartment_width
+            if tc == 'NONE' or tcw <= 0.0:
+                partition.hide_viewport = True
+                partition.hide_render = True
+            else:
+                partition.hide_viewport = False
+                partition.hide_render = False
+                # Floor (z_back_floor) to ceiling (z_top), spanning the
+                # arm depth from the back panel front face to the face
+                # frame back face. LEFT = constant-Y panel like Left
+                # Side; RIGHT = constant-X panel, Z rotation re-aimed.
+                part_length = z_top - z_back_floor
+                if tc == 'LEFT':
+                    partition.rotation_euler.z = math.radians(-90)
+                    partition.location = (
+                        t,
+                        -depth + fflo + l_scribe + t + tcw,
+                        z_back_floor,
+                    )
+                    _set_mod_inputs(
+                        partition, partition.home_builder.mod_name, (
+                            ('Length', part_length),
+                            ('Width', ld - fft - t),
+                            ('Thickness', t),
+                        ))
+                else:  # RIGHT
+                    partition.rotation_euler.z = math.radians(180)
+                    partition.location = (
+                        width - ffro - r_scribe - (2 * t) - tcw,
+                        -t,
+                        z_back_floor,
+                    )
+                    _set_mod_inputs(
+                        partition, partition.home_builder.mod_name, (
+                            ('Length', part_length),
+                            ('Width', rd - fft - t),
+                            ('Thickness', t),
+                        ))
+
         left_kick = parts.get(PART_ROLE_CORNER_LEFT_KICK)
         if left_kick is not None:
             # Kick origin sits at Left Side's back face, which shifts
@@ -932,29 +1059,101 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         bot_ov = cab_props.default_bottom_overlay
         left_ov = cab_props.default_left_overlay
         right_ov = cab_props.default_right_overlay
-        door_length = (height - kick_height - trw - brw_ff + top_ov + bot_ov
-                       if has_kick
-                       else height - trw - brw_ff + top_ov + bot_ov)
-        z_door = ((kick_height + brw_ff - bot_ov) if has_kick
-                  else (brw_ff - bot_ov))
+        # Opening dimensions - the face frame hole. Height between the
+        # rails; width along each arm from the stile inner edge to the
+        # inside corner.
+        opening_height = stile_length - trw - brw_ff
+        left_opening = depth - rd - lsw
+        right_opening = width - ld - rsw
+
+        # Revolving doors are inset: the panel sits inside the opening
+        # with a reveal to the rails and stile, and the two doors meet
+        # flush at the corner since both are coplanar. Overlay modes
+        # keep the standard sizing - panel over the frame by the
+        # overlay, corner side pulled back one door thickness so the
+        # opposing proud door has room.
+        inset = cab_props.exterior_option == 'REVOLVING_DOORS'
+        if inset:
+            r = INSET_DOOR_REVEAL
+            door_length = opening_height - 2.0 * r
+            z_door = z_ff_floor + brw_ff + r
+            left_door_width = left_opening - r
+            right_door_width = right_opening - r
+            left_door_y = -depth + lsw + r
+            right_door_x = width - rsw - r
+        else:
+            door_length = opening_height + top_ov + bot_ov
+            z_door = z_ff_floor + brw_ff - bot_ov
+            left_door_width = left_opening - dt + left_ov
+            right_door_width = right_opening - dt + right_ov
+            left_door_y = -depth + lsw - left_ov
+            right_door_x = width - rsw + right_ov
+
+        # Door-to-frame standoff: doors stand off the FF front face by
+        # the door-to-frame gap less any inset amount, same as standard
+        # cabinets. Left arm outward normal is +X, right arm is -Y.
+        # Revolving doors override this to full inset: the door outer
+        # face sits flush with the FF front so it clears the frame as
+        # it rotates with the susan. Full inset places the door back
+        # face one door-thickness in from the FF front (standoff -dt) -
+        # the same result the FULL_INSET overlay type produces - and is
+        # forced regardless of the cabinet's own overlay setting.
+        if inset:
+            door_standoff = -dt
+        else:
+            door_standoff = (solver.DOOR_TO_FRAME_GAP
+                             - cab_props.default_door_inset_amount)
 
         left_door = _find_ff_part(self.obj, ff.PART_ROLE_DOOR, 'LEFT')
         if left_door is not None:
-            left_door.location = (ld, -depth + lsw - left_ov, z_door)
+            left_door.location = (ld + door_standoff, left_door_y,
+                                  z_door)
             _set_mod_inputs(left_door, left_door.home_builder.mod_name, (
                 ('Length', door_length),
-                ('Width', depth - rd - lsw - dt + left_ov),
+                ('Width', left_door_width),
                 ('Thickness', dt),
             ))
 
         right_door = _find_ff_part(self.obj, ff.PART_ROLE_DOOR, 'RIGHT')
         if right_door is not None:
-            right_door.location = (width - rsw + right_ov, -rd, z_door)
+            right_door.location = (right_door_x, -rd - door_standoff,
+                                   z_door)
             _set_mod_inputs(right_door, right_door.home_builder.mod_name, (
                 ('Length', door_length),
-                ('Width', width - ld - rsw - dt + right_ov),
+                ('Width', right_door_width),
                 ('Thickness', dt),
             ))
+
+        # One pull for the whole pie cut, on the door and edge chosen
+        # by exterior_option. Opens-first modes put the pull on the
+        # corner-meeting edge of the named door. Bifold modes put it on
+        # the outer (stile-side) edge of the door away from the hinge:
+        # left swing hinges on the left so the pull leads on the right
+        # door, right swing hinges on the right so it leads on the
+        # left. Revolving doors take the same pull placement as bifold
+        # left swing - right door, outer edge.
+        # Spec is (door, width, width_sign, edge); width_sign is -1 for
+        # the Mirror Y True left door and +1 for the right door.
+        ext = cab_props.exterior_option
+        pull_spec = None
+        if ext == 'LEFT_DOOR_OPENS_FIRST':
+            pull_spec = (left_door, left_door_width, -1.0, 'CORNER')
+        elif ext == 'RIGHT_DOOR_OPENS_FIRST':
+            pull_spec = (right_door, right_door_width, 1.0, 'CORNER')
+        elif ext in ('BIFOLD_LEFT_SWING', 'REVOLVING_DOORS'):
+            pull_spec = (right_door, right_door_width, 1.0, 'OUTER')
+        elif ext == 'BIFOLD_RIGHT_SWING':
+            pull_spec = (left_door, left_door_width, -1.0, 'OUTER')
+        pull_door = pull_spec[0] if pull_spec is not None else None
+        for door in (left_door, right_door):
+            if door is None:
+                continue
+            if door is pull_door:
+                _, p_width, p_sign, p_edge = pull_spec
+                self._refresh_door_pull(door, door_length, p_width, dt,
+                                        p_sign, p_edge)
+            else:
+                self._clear_door_pull(door)
 
     # -----------------------------------------------------------------
     # Diagonal corner: recalculate
@@ -1178,6 +1377,39 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 ('Width', kick_height),
                 ('Thickness', t),
             ))
+
+        # ---- Door ---------------------------------------------------
+        # Single overlay door on the diagonal face frame. Origin is the
+        # door back face on the A-B cut plane (flush with the FF front
+        # face); Mirror Z False at build means the slab grows outward
+        # toward the room. Anchored at the left stile inner edge backed
+        # off along the diagonal by left_ov so the door overlays the
+        # stile; Width carries the L/R overlays, Length the top/bottom.
+        dt = cab_props.door_thickness
+        top_ov = cab_props.default_top_overlay
+        bot_ov = cab_props.default_bottom_overlay
+        left_ov = cab_props.default_left_overlay
+        right_ov = cab_props.default_right_overlay
+        diag_door = _find_ff_part(self.obj, ff.PART_ROLE_DOOR, 'DIAGONAL')
+        if diag_door is not None:
+            door_length = stile_length - brw_ff - trw + top_ov + bot_ov
+            z_door = z_ff_floor + brw_ff - bot_ov
+            # Stand the door off the FF front face by the door-to-frame
+            # gap less any inset amount - same offset standard cabinets
+            # apply. Outward normal of the diagonal face is (uy, -ux).
+            standoff = (solver.DOOR_TO_FRAME_GAP
+                        - cab_props.default_door_inset_amount)
+            door_x = rail_origin_x - left_ov * ux + standoff * uy
+            door_y = rail_origin_y - left_ov * uy - standoff * ux
+            diag_door.location = (door_x, door_y, z_door)
+            diag_door.rotation_euler.z = math.radians(90) + theta
+            door_width = rail_length + left_ov + right_ov
+            _set_mod_inputs(diag_door, diag_door.home_builder.mod_name, (
+                ('Length', door_length),
+                ('Width', door_width),
+                ('Thickness', dt),
+            ))
+            self._refresh_door_pull(diag_door, door_length, door_width, dt)
 
         # Cutter: cage box anchored just behind A=(ld, -depth) along
         # -unit_AB, extending in local -X toward (and past) B=(width,

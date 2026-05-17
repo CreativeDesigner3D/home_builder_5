@@ -3547,6 +3547,17 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         else:
             cab_obj.matrix_world = captured_world
 
+        # Apply the active cabinet style to this fresh placement -
+        # door overlay type, face frame sizes, and (once wired)
+        # materials - matching standard cabinet placement.
+        # ensure_default_styles seeds a Default style when the
+        # collection is empty so there is always one to apply.
+        props_hb_face_frame.ensure_default_styles(context)
+        scene_props = context.scene.hb_face_frame
+        idx = scene_props.active_cabinet_style_index
+        if 0 <= idx < len(scene_props.cabinet_styles):
+            scene_props.cabinet_styles[idx].assign_style_to_cabinet(cab_obj)
+
         for o in context.selected_objects:
             o.select_set(False)
         cab_obj.select_set(True)
