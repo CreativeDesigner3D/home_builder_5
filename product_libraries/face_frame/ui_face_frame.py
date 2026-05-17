@@ -107,6 +107,9 @@ def draw_dimensions(layout, root):
         col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
         if cab_props.tray_compartment != 'NONE':
             col.prop(cab_props, 'tray_compartment_width', text="Tray Comp. Width")
+            col.prop(cab_props, 'tray_compartment_qty', text="Divider Qty")
+            col.prop(cab_props, 'tray_compartment_divider_thickness', text="Divider Thickness")
+            col.prop(cab_props, 'tray_compartment_setback', text="Divider Setback")
     # Angled standard cabinet: per-side depth unlocks, single-bay only.
     # When either is on, the face frame becomes the hypotenuse spanning
     # the two front edges; the back stays at cab_props.depth between

@@ -44,6 +44,7 @@ PART_ROLE_DIAGONAL_SIDE_CUTTER = 'DIAGONAL_SIDE_CUTTER'
 PART_ROLE_DIAGONAL_KICK = 'DIAGONAL_KICK'
 PART_ROLE_CORNER_INTERIOR = 'CORNER_INTERIOR'
 PART_ROLE_CORNER_PARTITION = 'CORNER_PARTITION'
+PART_ROLE_CORNER_TRAY_DIVIDER = 'CORNER_TRAY_DIVIDER'
 
 CORNER_PART_ROLES = frozenset({
     PART_ROLE_CORNER_BOTTOM,
@@ -441,6 +442,22 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         partition.obj.rotation_euler.z = math.radians(-90)
         partition.obj.hide_viewport = True
         partition.obj.hide_render = True
+
+        # Tray compartment dividers: up to 10 thin vertical panels that
+        # subdivide the tray compartment strip into slots. Pre-built and
+        # hidden; recalc shows and evenly spaces the first
+        # tray_compartment_qty of them. Parallel to the partition.
+        for i in range(10):
+            div = CabinetPart()
+            div.create('Tray Divider %d' % (i + 1))
+            div.obj.parent = self.obj
+            div.obj['hb_part_role'] = PART_ROLE_CORNER_TRAY_DIVIDER
+            div.obj['hb_corner_divider_index'] = i
+            div.obj['CABINET_PART'] = True
+            div.obj.rotation_euler.y = math.radians(-90)
+            div.obj.rotation_euler.z = math.radians(-90)
+            div.obj.hide_viewport = True
+            div.obj.hide_render = True
 
     # -----------------------------------------------------------------
     # Diagonal corner: build
@@ -899,6 +916,58 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                             ('Width', rd - fft - t),
                             ('Thickness', t),
                         ))
+
+        # Tray compartment dividers. Up to 10 pre-built thin panels; show
+        # and evenly space the first tray_compartment_qty across the
+        # strip, hide the rest. Same orientation as the partition; spacing
+        # follows (strip - qty * thickness) / (qty + 1).
+        dividers = sorted(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == PART_ROLE_CORNER_TRAY_DIVIDER),
+            key=lambda c: c.get('hb_corner_divider_index', 0))
+        if dividers:
+            tc = cab_props.tray_compartment
+            tcw = cab_props.tray_compartment_width
+            qty = cab_props.tray_compartment_qty
+            dthk = cab_props.tray_compartment_divider_thickness
+            setback = cab_props.tray_compartment_setback
+            div_length = z_top - z_back_floor
+            div_spacing = (
+                (tcw - qty * dthk) / (qty + 1) if qty > 0 else 0.0)
+            active = (tc in {'LEFT', 'RIGHT'} and tcw > 0.0
+                      and qty > 0 and div_spacing > 0.0)
+            for k, div in enumerate(dividers):
+                if not active or k >= qty:
+                    div.hide_viewport = True
+                    div.hide_render = True
+                    continue
+                div.hide_viewport = False
+                div.hide_render = False
+                offset = (k + 1) * div_spacing + k * dthk
+                if tc == 'LEFT':
+                    div.rotation_euler.z = math.radians(-90)
+                    div.location = (
+                        t,
+                        -depth + fflo + l_scribe + t + offset,
+                        z_back_floor,
+                    )
+                    _set_mod_inputs(div, div.home_builder.mod_name, (
+                        ('Length', div_length),
+                        ('Width', ld - fft - t - setback),
+                        ('Thickness', dthk),
+                    ))
+                else:  # RIGHT
+                    div.rotation_euler.z = math.radians(180)
+                    div.location = (
+                        width - ffro - r_scribe - t - tcw + offset,
+                        -t,
+                        z_back_floor,
+                    )
+                    _set_mod_inputs(div, div.home_builder.mod_name, (
+                        ('Length', div_length),
+                        ('Width', rd - fft - t - setback),
+                        ('Thickness', dthk),
+                    ))
 
         left_kick = parts.get(PART_ROLE_CORNER_LEFT_KICK)
         if left_kick is not None:

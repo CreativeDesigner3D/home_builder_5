@@ -870,7 +870,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CORNER_LEFT_BACK', 'CORNER_RIGHT_BACK',
         'CORNER_LEFT_SIDE', 'CORNER_RIGHT_SIDE',
         'CORNER_LEFT_KICK', 'CORNER_RIGHT_KICK', 'DIAGONAL_KICK',
-        'CORNER_PARTITION',
+        'CORNER_PARTITION', 'CORNER_TRAY_DIVIDER',
     }
 
     # Roles that read materials from the 5-piece door modifier instead
@@ -2380,6 +2380,23 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         description="Clear width of the tray storage strip walled off by the partition",
         default=units.inch(6.0),
         unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_compartment_qty: IntProperty(
+        name="Tray Divider Qty",
+        description="Number of dividers inside the tray compartment (slots = qty + 1)",
+        default=3, min=0, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_compartment_divider_thickness: FloatProperty(
+        name="Tray Divider Thickness",
+        default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    tray_compartment_setback: FloatProperty(
+        name="Tray Divider Setback",
+        description="Front setback of the tray compartment dividers from the face frame",
+        default=units.inch(1.0), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 
