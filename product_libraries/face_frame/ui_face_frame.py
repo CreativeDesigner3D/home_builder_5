@@ -101,15 +101,26 @@ def draw_dimensions(layout, root):
         col.prop(cab_props, 'left_depth', text="Left Depth")
         col.prop(cab_props, 'right_depth', text="Right Depth")
         col.separator()
-        col.label(text="Pie Cut Options")
-        col.prop(cab_props, 'exterior_option',  text="Exterior")
-        col.prop(cab_props, 'interior_option',  text="Interior")
-        col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
-        if cab_props.tray_compartment != 'NONE':
-            col.prop(cab_props, 'tray_compartment_width', text="Tray Comp. Width")
-            col.prop(cab_props, 'tray_compartment_qty', text="Divider Qty")
-            col.prop(cab_props, 'tray_compartment_divider_thickness', text="Divider Thickness")
-            col.prop(cab_props, 'tray_compartment_setback', text="Divider Setback")
+        if cab_props.corner_type == 'PIE_CUT':
+            col.label(text="Pie Cut Options")
+            col.prop(cab_props, 'exterior_option',  text="Door Swing")
+            # Stacked-door config is upper pie cut only; base pie cut is
+            # full-height door and has no config choice to make.
+            is_upper = root.get('CABINET_TYPE') == 'UPPER'
+            if is_upper:
+                col.prop(cab_props, 'exterior_config', text="Config")
+            col.prop(cab_props, 'interior_option',  text="Interior")
+            col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
+            if cab_props.tray_compartment != 'NONE':
+                col.prop(cab_props, 'tray_compartment_width', text="Tray Comp. Width")
+                col.prop(cab_props, 'tray_compartment_qty', text="Divider Qty")
+                col.prop(cab_props, 'tray_compartment_divider_thickness', text="Divider Thickness")
+                col.prop(cab_props, 'tray_compartment_setback', text="Divider Setback")
+            draw_corner_sections(layout, cab_props)
+        elif cab_props.corner_type == 'DIAGONAL':
+            col.label(text="Exterior Configuration")
+            col.prop(cab_props, 'exterior_config', text="Config")
+            draw_corner_sections(layout, cab_props)
     # Angled standard cabinet: per-side depth unlocks, single-bay only.
     # When either is on, the face frame becomes the hypotenuse spanning
     # the two front edges; the back stays at cab_props.depth between
@@ -129,6 +140,47 @@ def draw_dimensions(layout, root):
         field.prop(cab_props, 'right_depth', text="Right Depth")
         lock_icon = 'UNLOCKED' if cab_props.unlock_right_depth else 'LOCKED'
         right_row.prop(cab_props, 'unlock_right_depth', text="", icon=lock_icon)
+
+
+_CORNER_SECTION_LABELS = {
+    'DOORS':       "Doors",
+    'FALSE_FRONT': "False Front",
+    'OPEN':        "Open",
+}
+
+
+def draw_corner_sections(layout, cab_props):
+    """Per-section height controls for a diagonal corner cabinet.
+
+    One row per section, top to bottom. Each row shows the section's
+    content kind and an editable height with a lock toggle: locked
+    sections hold their height, unlocked sections share the leftover
+    space equally (see _solve_section_heights). Open sections also get
+    a shelf-count field.
+    """
+    sections = cab_props.corner_sections
+    # Nothing to adjust for a lone door section (height is the full
+    # span, no shelves) - skip the box entirely. A lone OPEN section
+    # still shows for its shelf count.
+    has_open = any(s.content == 'OPEN' for s in sections)
+    if len(sections) < 2 and not has_open:
+        return
+    box = layout.box()
+    box.label(text="Sections (top to bottom)")
+    for idx, section in enumerate(sections):
+        kind = _CORNER_SECTION_LABELS.get(section.content, section.content)
+        col = box.column(align=True)
+        col.label(text="%d. %s" % (idx + 1, kind))
+        row = col.row(align=True)
+        field = row.row(align=True)
+        # A single unlocked section has no leftover to share, so its
+        # height is always the full span - lock toggle would be a no-op.
+        field.enabled = section.unlock_height
+        field.prop(section, 'height', text="Height")
+        lock_icon = 'UNLOCKED' if section.unlock_height else 'LOCKED'
+        row.prop(section, 'unlock_height', text="", icon=lock_icon)
+        if section.content == 'OPEN':
+            col.prop(section, 'shelf_qty', text="Shelves")
 
 
 def draw_construction(layout, cab_props):

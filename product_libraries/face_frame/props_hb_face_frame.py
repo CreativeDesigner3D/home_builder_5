@@ -835,6 +835,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Fronts
         'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'INSET_PANEL',
         # Visible toe kick parts
+        'CORNER_MID_RAIL', 'CORNER_FALSE_FRONT',
         'FINISH_TOE_KICK', 'CORNER_LEFT_FINISH_KICK', 'CORNER_RIGHT_FINISH_KICK',
         'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
         # Blind ends + finished back + flush skins / decorative panels
@@ -870,7 +871,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CORNER_LEFT_BACK', 'CORNER_RIGHT_BACK',
         'CORNER_LEFT_SIDE', 'CORNER_RIGHT_SIDE',
         'CORNER_LEFT_KICK', 'CORNER_RIGHT_KICK', 'DIAGONAL_KICK',
-        'CORNER_PARTITION', 'CORNER_TRAY_DIVIDER',
+        'CORNER_PARTITION', 'CORNER_TRAY_DIVIDER', 'CORNER_SHELF',
     }
 
     # Roles that read materials from the 5-piece door modifier instead
@@ -1820,6 +1821,136 @@ class Face_Frame_Mid_Stile_Width(PropertyGroup):
     )  # type: ignore
 
 
+# ---------------------------------------------------------------------------
+# Corner cabinet exterior configuration
+# ---------------------------------------------------------------------------
+class Face_Frame_Corner_Section(PropertyGroup):
+    """One stacked section of a diagonal corner cabinet's front.
+
+    Lives in a CollectionProperty on Face_Frame_Cabinet_Props, ordered
+    top to bottom. content is fixed by the chosen exterior_config preset;
+    the user only adjusts heights. A section's height is auto - an equal
+    share of the leftover space - unless unlock_height is on, mirroring
+    the bay-width / mid-stile lock pattern.
+    """
+    content: EnumProperty(
+        name="Content",
+        items=[
+            ('DOORS',       "Doors",       "Double-door pair"),
+            ('FALSE_FRONT', "False Front", "Fixed false front panel"),
+            ('OPEN',        "Open",        "Open section with shelves"),
+        ],
+        default='DOORS',
+    )  # type: ignore
+    height: FloatProperty(
+        name="Section Height",
+        description="Opening height of this section (used when Unlock Height is on)",
+        default=units.inch(12.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_height: BoolProperty(
+        name="Unlock Height",
+        description="Hold this section's height; the other sections share the leftover space equally",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    shelf_qty: IntProperty(
+        name="Shelf Qty",
+        description="Number of adjustable shelves in an open section",
+        default=2, min=0, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+# exterior_config items vary by cabinet type. Module-level lists keep the
+# string references alive - a dynamic EnumProperty items callback that
+# rebuilt fresh tuples each call would risk them being garbage collected.
+_EXTERIOR_CONFIG_ITEMS = {
+    'BASE': [
+        ('DOORS',             "Full Height Doors",      "One full-height door pair"),
+        ('FALSE_FRONT_DOORS', "False Front with Doors", "False front above a door pair"),
+    ],
+    'UPPER': [
+        ('DOORS',         "Doors",             "One door pair"),
+        ('STACKED_DOORS', "Stacked Doors",     "Two stacked door pairs"),
+        ('HUTCH',         "Hutch",             "Doors on top, open below, no bottom"),
+        ('OPEN_SHELVES',  "Open with Shelves", "Open shelf section, no bottom"),
+    ],
+    'TALL': [
+        ('HUTCH',    "Hutch",    "Upper doors, open middle, base doors"),
+        ('BOOKCASE', "Bookcase", "Open shelves on top, base doors below"),
+    ],
+}
+
+
+# Pie cut exterior configs. Pie cut has two face frames (one per arm);
+# a config splits both arms together. Base pie cut is full-height door
+# only; upper pie cut adds a two-section stacked option.
+_PIE_CUT_CONFIG_ITEMS = {
+    'BASE': [
+        ('DOORS', "Full Height Doors", "One full-height door per arm"),
+    ],
+    'UPPER': [
+        ('DOORS',         "Full Height Doors", "One full-height door per arm"),
+        ('STACKED_DOORS', "Stacked Doors",     "Two stacked doors per arm"),
+    ],
+}
+
+
+def _exterior_config_items(self, context):
+    """Dynamic items for exterior_config, filtered by corner type and
+    cabinet type. Pie cut and diagonal offer different config sets."""
+    obj = self.id_data
+    ctype = obj.get('CABINET_TYPE', 'BASE') if obj is not None else 'BASE'
+    if self.corner_type == 'PIE_CUT':
+        return _PIE_CUT_CONFIG_ITEMS.get(ctype, _PIE_CUT_CONFIG_ITEMS['BASE'])
+    return _EXTERIOR_CONFIG_ITEMS.get(ctype, _EXTERIOR_CONFIG_ITEMS['BASE'])
+
+
+# (cabinet_type, exterior_config) -> ordered tuple of section content kinds,
+# top to bottom. The preset fixes section count and content; section
+# heights stay user-adjustable (see Face_Frame_Corner_Section).
+_CORNER_SECTION_PRESETS = {
+    ('BASE',  'DOORS'):             ('DOORS',),
+    ('BASE',  'FALSE_FRONT_DOORS'): ('FALSE_FRONT', 'DOORS'),
+    ('UPPER', 'DOORS'):             ('DOORS',),
+    ('UPPER', 'STACKED_DOORS'):     ('DOORS', 'DOORS'),
+    ('UPPER', 'HUTCH'):             ('DOORS', 'OPEN'),
+    ('UPPER', 'OPEN_SHELVES'):      ('OPEN',),
+    ('TALL',  'HUTCH'):             ('DOORS', 'OPEN', 'DOORS'),
+    ('TALL',  'BOOKCASE'):          ('OPEN', 'DOORS'),
+}
+
+
+def corner_section_contents(cab_props):
+    """Section content tuple for the cabinet's current type and config,
+    falling back to a single door section for unknown combinations."""
+    obj = cab_props.id_data
+    ctype = obj.get('CABINET_TYPE', 'BASE') if obj is not None else 'BASE'
+    return _CORNER_SECTION_PRESETS.get(
+        (ctype, cab_props.exterior_config), ('DOORS',))
+
+
+def populate_corner_sections(cab_props):
+    """Rebuild cab_props.corner_sections from the current exterior_config
+    preset. Every section starts unlocked so the layout is evenly spaced
+    until the user unlocks specific sections."""
+    contents = corner_section_contents(cab_props)
+    cab_props.corner_sections.clear()
+    for content in contents:
+        sec = cab_props.corner_sections.add()
+        sec.content = content
+        sec.unlock_height = False
+
+
+def _update_exterior_config(self, context):
+    """exterior_config changed: repopulate the section collection from the
+    new preset, then recalc."""
+    populate_corner_sections(self)
+    from . import types_face_frame
+    types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
 def _recompute_blind_stile_width(cab_props, side):
     """Set left_stile_width or right_stile_width from the current stile-type
     and blind-state combination. No-op when the side's unlock flag is True
@@ -2399,8 +2530,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(1.0), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    exterior_config: EnumProperty(
+        name="Exterior Config",
+        description="Stacked-section layout of a diagonal corner cabinet front",
+        items=_exterior_config_items,
+        update=_update_exterior_config,
+    )  # type: ignore
 
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
+    corner_sections: CollectionProperty(type=Face_Frame_Corner_Section)  # type: ignore
 
 
 class Face_Frame_Bay_Props(PropertyGroup):
@@ -4053,6 +4191,7 @@ classes = (
     Face_Frame_Door_Style,
     HB_UL_face_frame_door_styles,
     Face_Frame_Mid_Stile_Width,
+    Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
     Face_Frame_Interior_Item,

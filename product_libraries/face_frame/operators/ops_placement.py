@@ -3018,6 +3018,9 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         if cls.default_cabinet_type == 'UPPER':
             size = scene_props.upper_inside_corner_size
             height = scene_props.upper_cabinet_height
+        elif cls.default_cabinet_type == 'TALL':
+            size = scene_props.tall_inside_corner_size
+            height = scene_props.tall_cabinet_height
         else:
             size = scene_props.base_inside_corner_size
             height = scene_props.base_cabinet_height
