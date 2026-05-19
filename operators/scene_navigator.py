@@ -2,10 +2,13 @@
 Scene Navigator -- GPU-drawn quick scene picker for Home Builder 5.
 
 A modal overlay listing project scenes grouped by Rooms / Layout Views /
-Details. The panel header shows the current scene; clicking a row switches
-scenes. Room rows carry rename and delete buttons, and a New Room button
-sits at the bottom -- each of those closes the navigator and opens the
-corresponding operator dialog. Click outside / Esc / RMB dismisses.
+Details. The panel header shows the current scene and carries a pin
+toggle; clicking a row switches scenes. When pinned, the navigator stays
+open after a switch so several scenes can be picked in a row -- otherwise
+it closes on the first pick. Room rows carry rename and delete buttons,
+and a New Room button sits at the bottom -- each of those closes the
+navigator and opens the corresponding operator dialog. Click outside /
+Esc / RMB dismisses.
 """
 
 import bpy
@@ -73,6 +76,18 @@ NEW_ROOM_BG            = (0.18, 0.18, 0.20, 1.0)
 NEW_ROOM_HOVER_BG      = (0.20, 0.43, 0.70, 1.0)
 SEPARATOR_COLOR        = (1.0, 1.0, 1.0, 0.10)
 
+PIN_GLYPH              = (0.78, 0.78, 0.78, 1.0)
+PIN_GLYPH_ACTIVE       = (1.0, 1.0, 1.0, 1.0)
+PIN_ACTIVE_BG          = (0.20, 0.43, 0.70, 1.0)
+
+
+# ---- Module state -----------------------------------------------------------
+
+# When pinned, the navigator stays open after a scene is picked so several
+# scenes can be switched in a row. Clicking away (or Esc) still closes it.
+# Sticky for the session -- a module global, intentionally not per-instance.
+_pinned = False
+
 
 # ---- Scene helpers ----------------------------------------------------------
 
@@ -92,7 +107,11 @@ def _sort_key(scene):
     return (so, scene.name.lower())
 
 def _parent_room_name(scene):
-    """Resolve a layout view's source wall back to the room scene that owns it."""
+    """Resolve a layout view's source wall back to the room scene that owns it.
+
+    Returns None when the layout view's own name already leads with that
+    room name -- shown as a parent prefix it would just duplicate the room
+    name the row already displays."""
     sw_name = scene.get('SOURCE_WALL')
     if not sw_name:
         return None
@@ -101,6 +120,8 @@ def _parent_room_name(scene):
         return None
     for us in wall.users_scene:
         if _is_room(us):
+            if scene.name.lower().startswith(us.name.lower()):
+                return None
             return us.name
     return None
 
@@ -154,6 +175,17 @@ def _draw_plus_glyph(shader, cx, cy, size, color):
     _draw_rect(shader, cx - thick / 2.0, cy - half, thick, size, color)
 
 
+def _draw_pin_glyph(shader, rect, color):
+    """A small thumbtack -- the pin toggle affordance: a flat head with a
+    short needle dropping from it."""
+    rx, ry, rw, rh = rect
+    cx = rx + rw / 2.0
+    head_w, head_h = 9, 4
+    head_y = ry + rh - 5 - head_h
+    _draw_rect(shader, cx - head_w / 2.0, head_y, head_w, head_h, color)
+    _draw_lines(shader, [(cx, head_y), (cx, ry + 4)], color)
+
+
 # ---- Layout computation -----------------------------------------------------
 
 def _build_layout(region, area, current_scene_name,
@@ -162,7 +194,7 @@ def _build_layout(region, area, current_scene_name,
 
     Returns (panel_rect, entries). panel_rect is (x, y, w, h) in region px
     (y is the bottom edge). entries is a list of tuples:
-        ('panel_header', current_scene_name, rect)
+        ('panel_header', current_scene_name, rect, pin_rect)
         ('header', label, color, rect)
         ('row', scene, parent, color, is_current, rect,
                 rename_rect_or_None, delete_rect_or_None)
@@ -205,7 +237,10 @@ def _build_layout(region, area, current_scene_name,
 
     ph_rect = (content_x, cursor_y - PANEL_HEADER_HEIGHT,
                content_w, PANEL_HEADER_HEIGHT)
-    entries.append(('panel_header', current_scene_name, ph_rect))
+    pin_y = ph_rect[1] + (PANEL_HEADER_HEIGHT - ACTION_BTN_SIZE) / 2.0
+    pin_x = content_x + content_w - ACTION_BTN_RIGHT_PAD - ACTION_BTN_SIZE
+    pin_rect = (pin_x, pin_y, ACTION_BTN_SIZE, ACTION_BTN_SIZE)
+    entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
     cursor_y -= PANEL_HEADER_HEIGHT + SECTION_GAP
 
     for i, (label, color, scenes, parent_fn) in enumerate(groups):
@@ -246,7 +281,7 @@ def _build_layout(region, area, current_scene_name,
 
 # ---- Draw helpers -----------------------------------------------------------
 
-def _draw_panel_header(shader, font_id, rect, current_name):
+def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
     rx, ry, rw, rh = rect
     blf.size(font_id, HEADER_FONT_SIZE)
     label = "CURRENT"
@@ -257,6 +292,18 @@ def _draw_panel_header(shader, font_id, rect, current_name):
                TEXT_PRIMARY, current_name)
     # separator line at the bottom of the header rect
     _draw_rect(shader, rx, ry, rw, 1, SEPARATOR_COLOR)
+    # pin toggle -- when lit, the navigator stays open across scene picks
+    px, py, pw, ph = pin_rect
+    hovered = _point_in_rect(mx, my, pin_rect)
+    if _pinned:
+        bg = PIN_ACTIVE_BG
+    elif hovered:
+        bg = ACTION_HOVER_BG
+    else:
+        bg = ACTION_BG
+    _draw_rect(shader, px, py, pw, ph, bg)
+    glyph = PIN_GLYPH_ACTIVE if (_pinned or hovered) else PIN_GLYPH
+    _draw_pin_glyph(shader, pin_rect, glyph)
 
 
 def _draw_row(shader, font_id, entry, mx, my):
@@ -352,7 +399,8 @@ def draw_scene_navigator(op):
     for entry in op.entries:
         kind = entry[0]
         if kind == 'panel_header':
-            _draw_panel_header(shader, font_id, entry[2], entry[1])
+            _draw_panel_header(shader, font_id, entry[2], entry[1],
+                               entry[3], mx, my)
         elif kind == 'header':
             _, label, color, rect = entry
             rx = rect[0]
@@ -465,6 +513,7 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
             self.report({'WARNING'}, f"Could not delete {scene.name}: {e}")
 
     def modal(self, context, event):
+        global _pinned
         if event.type == 'INBETWEEN_MOUSEMOVE':
             return {'RUNNING_MODAL'}
 
@@ -480,7 +529,14 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
             my = event.mouse_y - self.region.y
             for entry in self.entries or ():
                 kind = entry[0]
-                if kind == 'row':
+                if kind == 'panel_header':
+                    if _point_in_rect(mx, my, entry[3]):
+                        _pinned = not _pinned
+                        self._rebuild_layout(context)
+                        if context.area:
+                            context.area.tag_redraw()
+                        return {'RUNNING_MODAL'}
+                elif kind == 'row':
                     (_, scene, _parent, _color, _is_current, rect,
                      rename_rect, delete_rect) = entry
                     if rename_rect and _point_in_rect(mx, my, rename_rect):
@@ -492,6 +548,16 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                         self._delete_room(context, scene)
                         return {'FINISHED'}
                     if _point_in_rect(mx, my, rect):
+                        # Pinned: switch but keep the navigator open so the
+                        # user can pick another scene. Unpinned: switch and
+                        # close -- the original behavior.
+                        if _pinned:
+                            if scene.name != context.scene.name:
+                                self._switch_to(context, scene.name)
+                                self._rebuild_layout(context)
+                                if context.area:
+                                    context.area.tag_redraw()
+                            return {'RUNNING_MODAL'}
                         self._cleanup(context)
                         if scene.name != context.scene.name:
                             self._switch_to(context, scene.name)

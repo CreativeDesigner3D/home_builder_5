@@ -1,8 +1,9 @@
 """Persistent GPU-drawn control HUD for the 3D viewport.
 
-When the `use_viewport_hud` addon preference is enabled, draws a small
-control strip in the top-left of every 3D viewport: a scene-navigator
-trigger plus the selection-mode picker for the active product library.
+When the `use_viewport_hud` addon preference is enabled, draws controls
+along the top of every 3D viewport: a left-anchored scene-navigator
+trigger (just past the toolbar) and a centered selection-mode picker for
+the active product library.
 A permanent draw handler renders the strip; a persistent modal listener
 routes clicks on widget rects to their actions while passing every other
 event through.
@@ -44,6 +45,7 @@ _mouse_region = None       # region _mouse was measured in (hover is per-region)
 # ---- Layout + style ---------------------------------------------------------
 
 HUD_MARGIN_Y    = 12
+HUD_MARGIN_X    = 8      # nav button inset from the left (toolbar) edge
 BTN_HEIGHT      = 24
 BTN_GAP         = 4
 ROW_GAP         = 6
@@ -372,16 +374,19 @@ _MODAL_TOGGLE_BUTTONS = [
 
 
 def _rows():
-    """HUD rows, top to bottom. Each row is a list of widget groups; groups
-    are separated by GROUP_GAP, widgets within a group by BTN_GAP, and the
-    whole row is centered along the top of the viewport.
+    """Centered HUD rows, top to bottom. Each row is a list of widget groups;
+    groups are separated by GROUP_GAP, widgets within a group by BTN_GAP, and
+    the whole row is centered along the top of the viewport.
 
-    The second row holds the grab toggles. Their visible() checks gate on
-    selection mode and modal-active state, so the row contains at most one
-    rendered button at a time (or zero, in which case compute_layout skips
-    the row entirely)."""
+    The scene-navigator button is NOT in these rows -- compute_layout places
+    it separately, left-anchored just past the toolbar.
+
+    The first row holds the selection-mode picker; the second holds the grab
+    toggles. The toggles' visible() checks gate on selection mode and
+    modal-active state, so that row contains at most one rendered button at a
+    time (or zero, in which case compute_layout skips the row entirely)."""
     return [
-        [[_NAV_BUTTON], _MODE_BUTTONS],
+        [_MODE_BUTTONS],
         [_MODAL_TOGGLE_BUTTONS],
     ]
 
@@ -393,7 +398,16 @@ def compute_layout(context, area):
     x_min, x_max, y_min, y_max = get_visible_window_bounds(area)
     visible_w = x_max - x_min
     placed = []
-    cursor_y = y_max - HUD_MARGIN_Y - BTN_HEIGHT
+    top_y = y_max - HUD_MARGIN_Y - BTN_HEIGHT
+
+    # The scene-navigator button is left-anchored just past the toolbar,
+    # not part of the centered rows -- a fixed spot makes it easy to find
+    # and its panel opens directly below it.
+    if _NAV_BUTTON.visible(context):
+        placed.append((_NAV_BUTTON, (x_min + HUD_MARGIN_X, top_y,
+                                     _NAV_BUTTON.width, BTN_HEIGHT)))
+
+    cursor_y = top_y
     for row in _rows():
         groups = [[w for w in g if w.visible(context)] for g in row]
         groups = [g for g in groups if g]

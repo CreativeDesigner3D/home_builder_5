@@ -657,7 +657,7 @@ class ElevationView(LayoutView):
         upper_cabinets = []
         
         for child in self.wall_obj.children:
-            if child.get('IS_FRAMELESS_CABINET_CAGE'):
+            if child.get('IS_FRAMELESS_CABINET_CAGE') or child.get('IS_FACE_FRAME_CABINET_CAGE'):
                 # Get cabinet position in wall local space
                 cabinet_local_pos = wall_matrix_inv @ child.matrix_world.translation
                 
@@ -806,7 +806,7 @@ class ElevationView(LayoutView):
                                dashed_col: bpy.types.Collection):
         """Recursively sort an object tree into solid and dashed collections.
         
-        Interior parts (IS_FRAMELESS_INTERIOR_PART) go to dashed, all other visible
+        Interior parts (frameless or face frame) go to dashed, all other visible
         geometry goes to solid. Cages and helpers are skipped but their children are processed.
         """
         if not self._is_cage(obj) and not self._is_helper(obj):
@@ -1037,13 +1037,15 @@ class View3D(LayoutView):
     content_collection: bpy.types.Collection = None
     collection_instance: bpy.types.Object = None
     
-    def create(self, name: str = "3D View", perspective: bool = True) -> bpy.types.Scene:
+    def create(self, name: str = "3D View", perspective: bool = True, source_scene=None) -> bpy.types.Scene:
         """
         Create a 3D view.
         
         Args:
             name: Name for the view
             perspective: True for perspective, False for isometric
+            source_scene: Scene to pull walls from (the room). If None,
+                          falls back to all walls in the file.
         
         Returns:
             The created scene
@@ -1052,7 +1054,7 @@ class View3D(LayoutView):
         self.scene['IS_3D_VIEW'] = True
         
         # Find bounds of all walls
-        walls = [obj for obj in bpy.data.objects if 'IS_WALL_BP' in obj]
+        walls = [obj for obj in (source_scene.objects if source_scene else bpy.data.objects) if 'IS_WALL_BP' in obj]
         
         if walls:
             # Calculate center
