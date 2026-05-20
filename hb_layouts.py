@@ -869,7 +869,8 @@ class PlanView(LayoutView):
                     self.content_collection = obj.instance_collection
                     break
     
-    def create(self, name: str = "Floor Plan", source_scene=None) -> bpy.types.Scene:
+    def create(self, name: str = "Floor Plan", source_scene=None,
+               paper_size: str = 'LETTER', landscape: bool = True) -> bpy.types.Scene:
         """
         Create a plan view showing walls from a specific room.
         
@@ -877,6 +878,8 @@ class PlanView(LayoutView):
             name: Name for the view
             source_scene: Scene to pull walls from (current room).
                           If None, falls back to all walls.
+            paper_size: Paper size (LETTER, LEGAL, TABLOID, A4, A3)
+            landscape: If True, use landscape orientation
         
         Returns:
             The created scene
@@ -884,6 +887,8 @@ class PlanView(LayoutView):
         # Create scene (this switches context to the new scene)
         self.create_scene(name)
         self.scene['IS_PLAN_VIEW'] = True
+        # Set paper size before framing so the camera aspect is correct
+        self.set_paper_size(paper_size, landscape)
         
         # Find walls from the source scene (current room) or all objects
         walls = []
@@ -1037,7 +1042,8 @@ class View3D(LayoutView):
     content_collection: bpy.types.Collection = None
     collection_instance: bpy.types.Object = None
     
-    def create(self, name: str = "3D View", perspective: bool = True, source_scene=None) -> bpy.types.Scene:
+    def create(self, name: str = "3D View", perspective: bool = True, source_scene=None,
+               paper_size: str = 'LETTER', landscape: bool = True) -> bpy.types.Scene:
         """
         Create a 3D view.
         
@@ -1046,12 +1052,16 @@ class View3D(LayoutView):
             perspective: True for perspective, False for isometric
             source_scene: Scene to pull walls from (the room). If None,
                           falls back to all walls in the file.
+            paper_size: Paper size (LETTER, LEGAL, TABLOID, A4, A3)
+            landscape: If True, use landscape orientation
         
         Returns:
             The created scene
         """
         self.create_scene(name)
         self.scene['IS_3D_VIEW'] = True
+        # Set paper size so the render resolution matches the sheet
+        self.set_paper_size(paper_size, landscape)
         
         # Find bounds of all walls
         walls = [obj for obj in (source_scene.objects if source_scene else bpy.data.objects) if 'IS_WALL_BP' in obj]
@@ -1215,6 +1225,7 @@ class MultiView(LayoutView):
         'BACK': ('Back Elevation', (math.radians(90), 0, math.radians(180))),          # Looking at back face
         'LEFT': ('Left Side', (0, math.radians(-90), math.radians(-90))),              # Looking at left side
         'RIGHT': ('Right Side', (0, math.radians(90), math.radians(90))),              # Looking at right side
+        'ISO': ('Isometric View', None),  # rotation handled inline in _create_iso_left()
     }
     
     def __init__(self, scene=None):
@@ -1285,6 +1296,14 @@ class MultiView(LayoutView):
         
         # Spacing between views
         gap = units.inch(12)
+        
+        # Iso-left layout: ISO column on the left, with PLAN above FRONT (elevation)
+        # stacked in the right column. Used by compact-room shop drawings (vanity
+        # rooms with one cabinet wall and no islands).
+        if 'ISO' in views:
+            return self._create_iso_left(
+                views, obj_width, obj_depth, obj_height, gap,
+                source_loc, source_rot_matrix_inv, view_name)
         
         # Calculate visual bounds for cross layout
         # All positions are for visual edges, not origins
@@ -1389,6 +1408,186 @@ class MultiView(LayoutView):
         self.title_block.create(self.scene, self.camera)
         
         return self.scene
+    
+    def _create_iso_left(self, views, obj_w, obj_d, obj_h, gap,
+                         source_loc, source_rot_inv, view_name):
+        """Build an iso-left multi-view page.
+        
+        Layout:
+            [ Iso ]   [ Plan ]
+                      [ Elev ]
+        
+        Supports ISO, PLAN and FRONT view types. Other types are ignored in
+        this layout. The ISO rotation Rx(iso_x_angle_deg) @ Rz(-45 deg) shows
+        the source's +X (right end), -Y (cabinet/front side per HB5 wall
+        convention) and +Z (top) faces, with +Z preserved as page-up.
+        iso_x_angle_deg controls the top-vs-front balance — see inline comments.
+        """
+        bb_min, bb_max = self._compute_recursive_bbox(self.source_obj)
+        bb_w = bb_max[0] - bb_min[0]
+        bb_d = bb_max[1] - bb_min[1]
+        bb_h = bb_max[2] - bb_min[2]
+        
+        right_left = 0
+        elev_bottom = 0
+        elev_top = elev_bottom + bb_h
+        elev_right = right_left + bb_w
+        plan_bottom = elev_top + gap
+        plan_top = plan_bottom + bb_d
+        plan_right = right_left + bb_w
+        right_col_height = plan_top - elev_bottom
+        
+        # Iso rotation Rx(theta) @ Rz(-45 deg). theta controls the
+        # top-vs-front balance:
+        #   -35.26 deg = classic isometric (equal top and front)
+        #   more negative (toward -90) = more front, less top
+        #   less negative (toward   0) = more top,   less front
+        # The Rz(-45 deg) is fixed: it picks which front corner of the
+        # source faces the viewer (here, the right-front corner).
+        iso_x_angle_deg = -60.0
+        iso_gap_inches = 30.0  # extra horizontal space between iso column and elev/plan column
+        iso_x_rad = math.radians(iso_x_angle_deg)
+        iso_cos = math.cos(iso_x_rad)
+        iso_sin = math.sin(iso_x_rad)
+        SQRT_HALF = 0.707106781  # cos(45 deg) = sin(45 deg)
+        
+        # Iso projection of source-local (x, y, z) onto page (camera at +Z):
+        #   page_X = SQRT_HALF * (x + y)
+        #   page_Y = SQRT_HALF * iso_cos * (-x + y) - iso_sin * z
+        # iso_sin is negative for theta in (-90, 0), so the -iso_sin * bb_h
+        # height contribution is positive.
+        iso_view_w = SQRT_HALF * (bb_w + bb_d)
+        iso_view_h = SQRT_HALF * iso_cos * (bb_w + bb_d) + (-iso_sin) * bb_h
+        iso_right_edge = right_left - units.inch(iso_gap_inches)
+        iso_left_edge = iso_right_edge - iso_view_w
+        iso_bottom = elev_bottom + (right_col_height - iso_view_h) / 2.0
+        iso_top = iso_bottom + iso_view_h
+        
+        iso_view_matrix = (
+            Matrix.Rotation(iso_x_rad, 3, 'X')
+            @ Matrix.Rotation(math.radians(-45), 3, 'Z')
+        )
+        
+        visible_bounds = []
+        
+        for view_type in views:
+            if view_type == 'ISO':
+                view_label = self.VIEW_TYPES['ISO'][0]
+                view_matrix = iso_view_matrix
+                # Land projection's min-X corner at iso_left_edge and
+                # min-Y corner at iso_bottom. Using the formulas above:
+                #   min page_X at (x_min, y_min, *)
+                #   min page_Y at (x_max, y_min, z_min)
+                base_pos = Vector((
+                    iso_left_edge - SQRT_HALF * (bb_min[0] + bb_min[1]),
+                    iso_bottom
+                    + SQRT_HALF * iso_cos * (bb_max[0] - bb_min[1])
+                    + iso_sin * bb_min[2],
+                    0.0,
+                ))
+                visible_bounds.append((iso_left_edge, iso_bottom,
+                                       iso_right_edge, iso_top))
+            elif view_type == 'PLAN':
+                view_label, base_rotation = self.VIEW_TYPES['PLAN']
+                view_matrix = Euler(base_rotation, 'XYZ').to_matrix()
+                base_pos = Vector((right_left - bb_min[0],
+                                   plan_bottom - bb_min[1], 0.0))
+                visible_bounds.append((right_left, plan_bottom,
+                                       plan_right, plan_top))
+            elif view_type == 'FRONT':
+                view_label, base_rotation = self.VIEW_TYPES['FRONT']
+                view_matrix = Euler(base_rotation, 'XYZ').to_matrix()
+                base_pos = Vector((right_left - bb_min[0],
+                                   elev_bottom - bb_min[2],
+                                   bb_min[1]))
+                visible_bounds.append((right_left, elev_bottom,
+                                       elev_right, elev_top))
+            else:
+                continue
+            
+            instance = bpy.data.objects.new(f"{view_label} Instance", None)
+            instance.empty_display_size = 0.01
+            instance.instance_type = 'COLLECTION'
+            instance.instance_collection = self.content_collection
+            self.scene.collection.objects.link(instance)
+            
+            combined_matrix = view_matrix @ source_rot_inv
+            instance.rotation_euler = combined_matrix.to_euler('XYZ')
+            offset = combined_matrix @ source_loc
+            instance.location = base_pos - offset
+            self.view_instances.append(instance)
+        
+        if not visible_bounds:
+            return self.scene
+        
+        min_x = min(b[0] for b in visible_bounds)
+        min_y = min(b[1] for b in visible_bounds)
+        max_x = max(b[2] for b in visible_bounds)
+        max_y = max(b[3] for b in visible_bounds)
+        
+        total_w = max_x - min_x
+        total_h = max_y - min_y
+        cx = (min_x + max_x) / 2.0
+        cy = (min_y + max_y) / 2.0
+        
+        margin = units.inch(6)
+        ortho_scale = max(total_w, total_h) + margin * 2
+        
+        cam_data = bpy.data.cameras.new(f"{view_name} Camera")
+        cam_data.type = 'ORTHO'
+        cam_data.ortho_scale = ortho_scale
+        
+        self.camera = bpy.data.objects.new(f"{view_name} Camera", cam_data)
+        self.scene.collection.objects.link(self.camera)
+        self.scene.camera = self.camera
+        self.camera.scale = (ortho_scale, ortho_scale, ortho_scale)
+        self.camera.location = (cx, cy, 10)
+        self.camera.rotation_euler = (0, 0, 0)
+        
+        solid_collection = self.get_freestyle_collection('SOLID')
+        if solid_collection:
+            for instance in self.view_instances:
+                if instance.name not in solid_collection.objects:
+                    solid_collection.objects.link(instance)
+        
+        self.title_block = TitleBlock()
+        self.title_block.create(self.scene, self.camera)
+        
+        return self.scene
+    
+    def _compute_recursive_bbox(self, source_obj):
+        """Compute bbox of source_obj plus renderable descendants in
+        source_obj's local coords. Cage and helper objects are skipped.
+        
+        Returns (bb_min, bb_max) as Vectors.
+        """
+        obj_matrix_inv = source_obj.matrix_world.inverted()
+        mn = [float('inf')] * 3
+        mx = [float('-inf')] * 3
+        
+        def visit(o):
+            if not is_cage_object(o) and not is_helper_object(o):
+                try:
+                    if hasattr(o, 'bound_box') and o.type != 'EMPTY':
+                        for c in o.bound_box:
+                            world = o.matrix_world @ Vector(c)
+                            local = obj_matrix_inv @ world
+                            for i in range(3):
+                                if local[i] < mn[i]: mn[i] = local[i]
+                                if local[i] > mx[i]: mx[i] = local[i]
+                except Exception:
+                    pass
+            for ch in o.children:
+                visit(ch)
+        
+        visit(source_obj)
+        
+        if mn[0] == float('inf'):
+            if hasattr(source_obj, 'dimensions'):
+                return Vector((0, 0, 0)), Vector(source_obj.dimensions)
+            return Vector((0, 0, 0)), Vector((1, 1, 1))
+        
+        return Vector(mn), Vector(mx)
     
     def _get_object_dimensions(self, obj):
         """Get object dimensions from GeoNode inputs or bounding box."""

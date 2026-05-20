@@ -139,10 +139,13 @@ def calculate_ortho_scale(paper_size, scale_str, landscape=True):
     
     scale_factor = get_scale_factor(scale_str)
     
+    # Blender's ortho_scale (sensor_fit AUTO) spans the LONGER render axis,
+    # i.e. the long edge of the page -- size the camera to that edge, not the
+    # short one, or the drawing renders at the wrong scale.
     # For imperial scales (inches on paper to feet in reality)
     if not scale_str.startswith('1:'):
-        # Calculate real-world height that fits on paper (in feet)
-        real_height_feet = paper_h * scale_factor
+        # Real-world distance the long page edge represents (in feet)
+        real_height_feet = max(paper_w, paper_h) * scale_factor
         # Convert to meters for Blender
         real_height_meters = real_height_feet * 0.3048
     else:
@@ -151,7 +154,7 @@ def calculate_ortho_scale(paper_size, scale_str, landscape=True):
         # But we need a reference... let's assume 1 inch on paper at 1:1 = 1 meter
         # So at 1:50, 1 inch on paper = 50 meters
         # Paper height in inches * scale = real height in meters
-        real_height_meters = (paper_h / 39.37) * scale_factor  # Convert paper inches to meters, then scale
+        real_height_meters = (max(paper_w, paper_h) / 39.37) * scale_factor  # long edge: paper inches -> meters, then scale
     
     return real_height_meters
 
