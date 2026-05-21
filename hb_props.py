@@ -623,7 +623,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_tick_paper_length: FloatProperty(
         name="Dim Tick Length (Paper)",
         description="Dimension tick mark length on paper in inches",
-        default=3/32,  # 3/32"
+        default=0.05,
         min=0.01,
         max=0.5,
         precision=4,
@@ -634,7 +634,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_line_paper_thickness: FloatProperty(
         name="Dim Line Thickness (Paper)",
         description="Dimension line thickness on paper in inches",
-        default=0.008,  # ~0.2mm fine line
+        default=0.004,
         min=0.001,
         max=0.1,
         precision=4,
@@ -645,7 +645,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_tick_paper_thickness: FloatProperty(
         name="Dim Tick Thickness (Paper)",
         description="Dimension tick thickness on paper in inches",
-        default=0.012,
+        default=0.004,
         min=0.001,
         max=0.1,
         precision=4,
