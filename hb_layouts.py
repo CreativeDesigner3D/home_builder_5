@@ -1540,7 +1540,8 @@ class MultiView(LayoutView):
         
         # Pick the largest scale where composed content fits inside the
         # printable page area (page minus margins).
-        scale_ladder = ('3/8"=1\'', '1/4"=1\'', '3/16"=1\'', '1/8"=1\'')
+        scale_ladder = ('1"=1\'', '3/4"=1\'', '1/2"=1\'',
+                        '3/8"=1\'', '1/4"=1\'', '3/16"=1\'', '1/8"=1\'')
         chosen_scale = None
         for scale_str in scale_ladder:
             iso_gap_m = _layouts_ops.paper_to_world(iso_gap_inches, scale_str)
@@ -1710,6 +1711,19 @@ class MultiView(LayoutView):
         mx = [float('-inf')] * 3
         
         def visit(o):
+            # Skip annotation objects (dim CURVEs + FONT labels). Their
+            # evaluated bound_box reflects the GN-generated geometry --
+            # leader lines, tick marks, glyph meshes -- which often
+            # extends far past the actual feature being annotated and
+            # would inflate the natural ortho_scale enough to drop the
+            # iso-left scale ladder one or two steps coarser than the
+            # cabinet content alone needs. We still walk their children
+            # in case non-annotation geometry is parented underneath
+            # (defensive; no current case).
+            if o.get("IS_2D_ANNOTATION"):
+                for ch in o.children:
+                    visit(ch)
+                return
             if not is_cage_object(o) and not is_helper_object(o):
                 try:
                     if hasattr(o, 'bound_box') and o.type != 'EMPTY':
