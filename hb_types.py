@@ -676,6 +676,49 @@ class GeoNodeDimension(GeoNodeObject):
             decimal_part = text.split('.')[1]
             self.set_input("Decimals", len(decimal_part))
 
+
+class GeoNodeArrow(GeoNodeObject):
+    """A 2D leader/pointer arrow annotation.
+
+    Wraps the GeoNodeArrow geometry-node group (geometry_nodes/
+    GeoNodeArrow.blend): a straight line with an optional arrowhead at
+    the tip, used to point at a feature on a 2D drawing (e.g. a reveal
+    or overlay callout on a shop detail). Unlike GeoNodeDimension this
+    carries no measured text -- it's purely a pointer.
+
+    The underlying curve is a 2-point POLY spline. The arrowhead is
+    instanced on the FIRST control point (the node group selects
+    spline index 0), so point[0] is the arrowHEAD/tip and point[1] is
+    the plain tail. Set the spline points to aim the arrow:
+
+        arrow = GeoNodeArrow()
+        arrow.create("Reveal Arrow")
+        arrow.obj.data.splines[0].points[0].co = (0, 0, 0, 0)      # tip (head)
+        arrow.obj.data.splines[0].points[1].co = (0.05, 0, 0, 0)   # tail
+
+    Node group inputs: Arrow Height, Arrow Length, Line Thickness,
+    Material, Show Arrow. (No text/unit inputs -- see GeoNodeDimension
+    for measured annotations.)
+    """
+
+    def create(self, name):
+        props = bpy.context.scene.home_builder
+
+        super().create_curve('GeoNodeArrow', name)
+        self.obj['IS_2D_ANNOTATION'] = True
+
+        # Line thickness shares the dimension-line setting so arrows and
+        # dims read as the same annotation weight.
+        self.set_input("Line Thickness", props.annotation_dimension_line_thickness)
+        # The node group ships zero-size arrowheads; seed sensible
+        # defaults (matches the residential 2d-detail arrow style).
+        # There's no scene prop for arrowhead size, so use fixed
+        # inch-based values the caller can override per-use.
+        self.set_input("Arrow Height", units.inch(0.25))
+        self.set_input("Arrow Length", units.inch(0.5))
+        self.set_input("Show Arrow", True)
+
+
 class CabinetPartModifier(GeoNodeObject):
 
     mod = None
