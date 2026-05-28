@@ -26,6 +26,9 @@ from ..hb_gpu_draw import (
     draw_text,
     point_in_rect,
 )
+# Sibling module -- safe to import at load (scene_navigator imports viewport_hud
+# only lazily, inside its pin-toggle handler, so there's no import cycle).
+from . import scene_navigator
 
 # operators/ sits one level below the addon root; the AddonPreferences
 # bl_idname is the root package name.
@@ -180,7 +183,11 @@ class _NavButton:
                   FONT_SIZE, TEXT_NORMAL, name)
 
     def on_click(self, context, area, region):
-        # Anchor the navigator panel just below this button.
+        # When pinned, the persistent HUD already draws the navigator panel,
+        # so the button is a no-op (the header pin glyph un-pins). Otherwise
+        # open the transient drop-down modal anchored just below this button.
+        if scene_navigator.is_pinned():
+            return
         anchor_x = anchor_top = -1.0
         for widget, rect in compute_layout(context, area):
             if widget is self:
@@ -497,10 +504,29 @@ def click_hits_widget(context, area, region_x, region_y):
     for _widget, rect in compute_layout(context, area):
         if point_in_rect(region_x, region_y, rect):
             return True
+    # The pinned navigator panel is HUD surface too, so external modals
+    # (grab / placement) pass its clicks through rather than consuming them.
+    if scene_navigator.is_pinned():
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        if region is not None:
+            ax, atop = _nav_anchor(context, area)
+            layout = scene_navigator.build_pinned_layout(
+                context, area, region, ax, atop)
+            if layout and point_in_rect(region_x, region_y, layout[0]):
+                return True
     return False
 
 
 # ---- Draw handler -----------------------------------------------------------
+
+def _nav_anchor(context, area):
+    """(x, top) just under the HUD nav button, for placing the pinned
+    navigator panel. (-1, -1) when the nav button isn't currently laid out."""
+    for widget, rect in compute_layout(context, area):
+        if isinstance(widget, _NavButton):
+            return rect[0], rect[1] - 6
+    return -1.0, -1.0
+
 
 def _draw_hud():
     """Permanent POST_PIXEL callback -- runs once per 3D viewport WINDOW
@@ -529,6 +555,21 @@ def _draw_hud():
     for widget, rect in placed:
         widget.draw(shader, font_id, rect, context, mouse)
     gpu.state.blend_set('NONE')
+
+    # Pinned scene navigator: drawn by THIS permanent handler (not the
+    # transient modal) so it persists while the user designs. Anchored under
+    # the nav button using the layout we just computed.
+    if scene_navigator.is_pinned():
+        ax = atop = -1.0
+        for widget, rect in placed:
+            if isinstance(widget, _NavButton):
+                ax, atop = rect[0], rect[1] - 6
+                break
+        layout = scene_navigator.build_pinned_layout(
+            context, area, region, ax, atop)
+        if layout:
+            scene_navigator.paint_navigator(
+                layout[0], layout[1], mouse[0], mouse[1])
 
 
 # ---- Click listener ---------------------------------------------------------
@@ -583,6 +624,18 @@ class home_builder_OT_viewport_hud_listener(bpy.types.Operator):
                 and in_viewport):
             mx = event.mouse_x - region.x
             my = event.mouse_y - region.y
+            # Pinned navigator panel gets first crack at the press; a hit
+            # inside its rect is consumed, a miss passes through so the
+            # viewport stays interactive.
+            if scene_navigator.is_pinned():
+                ax, atop = _nav_anchor(context, area)
+                layout = scene_navigator.build_pinned_layout(
+                    context, area, region, ax, atop)
+                if layout and point_in_rect(mx, my, layout[0]):
+                    scene_navigator.handle_navigator_click(
+                        context, mx, my, layout[1])
+                    area.tag_redraw()
+                    return {'RUNNING_MODAL'}  # consume
             for widget, rect in compute_layout(context, area):
                 if point_in_rect(mx, my, rect):
                     widget.on_click(context, area, region)

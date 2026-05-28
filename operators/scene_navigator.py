@@ -377,26 +377,24 @@ def _draw_new_room_button(shader, font_id, rect, mx, my):
 
 # ---- Draw callback ----------------------------------------------------------
 
-def draw_scene_navigator(op):
-    """GPU draw callback for the scene navigator overlay."""
-    if op.region is None or op.entries is None:
-        return
-    # Only draw in the region this modal was bound to (skip other 3D views)
-    if bpy.context.region != op.region:
-        return
+def paint_navigator(panel_rect, entries, mx, my):
+    """Stateless GPU paint of the navigator panel.
 
-    mx, my = op.mouse_x, op.mouse_y
-
+    Factored out of the modal draw callback so the persistent viewport HUD
+    can render the SAME panel when the navigator is pinned -- the HUD owns a
+    permanent draw handler that survives designing, where the modal's own
+    handler does not.
+    """
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
 
-    px, py, pw, ph = op.panel_rect
+    px, py, pw, ph = panel_rect
     _draw_rect(shader, px, py, pw, ph, PANEL_BG)
     _draw_rect_outline(shader, px, py, pw, ph, PANEL_BORDER)
 
     font_id = 0
-    for entry in op.entries:
+    for entry in entries:
         kind = entry[0]
         if kind == 'panel_header':
             _draw_panel_header(shader, font_id, entry[2], entry[1],
@@ -413,6 +411,92 @@ def draw_scene_navigator(op):
             _draw_new_room_button(shader, font_id, entry[1], mx, my)
 
     gpu.state.blend_set('NONE')
+
+
+def draw_scene_navigator(op):
+    """GPU draw callback for the transient (unpinned) scene-navigator modal."""
+    if op.region is None or op.entries is None:
+        return
+    # Only draw in the region this modal was bound to (skip other 3D views)
+    if bpy.context.region != op.region:
+        return
+    paint_navigator(op.panel_rect, op.entries, op.mouse_x, op.mouse_y)
+
+
+# ---- Persistent-HUD interface ----------------------------------------------
+# Let the always-on viewport HUD host the navigator while it's pinned, instead
+# of the transient modal below. The HUD calls build_pinned_layout() +
+# paint_navigator() each redraw, and handle_navigator_click() on a press.
+
+def is_pinned():
+    return _pinned
+
+
+def set_pinned(value):
+    global _pinned
+    _pinned = bool(value)
+
+
+def build_pinned_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
+    """Return (panel_rect, entries) for the pinned navigator, else None.
+
+    None when not pinned or the geometry can't be built. Anchored under the
+    HUD nav button via anchor_x / anchor_top, matching the modal drop-down.
+    """
+    if not _pinned or region is None or area is None:
+        return None
+    return _build_layout(region, area, context.scene.name, anchor_x, anchor_top)
+
+
+def handle_navigator_click(context, mx, my, entries):
+    """Dispatch a left-press against pinned-navigator entries.
+
+    Stateless mirror of the modal's hit-testing. Returns True if a navigator
+    element was hit (caller consumes the click), False on a miss (caller
+    passes it through so the viewport stays interactive while pinned). Hits
+    never close the panel -- it's pinned; only the header pin glyph un-pins.
+    """
+    global _pinned
+    for entry in entries or ():
+        kind = entry[0]
+        if kind == 'panel_header':
+            if _point_in_rect(mx, my, entry[3]):
+                _pinned = False          # pin glyph un-pins (hides the panel)
+                return True
+        elif kind == 'row':
+            (_, scene, _parent, _color, _is_current, rect,
+             rename_rect, delete_rect) = entry
+            if rename_rect and _point_in_rect(mx, my, rename_rect):
+                try:
+                    with context.temp_override(scene=scene):
+                        bpy.ops.home_builder.rename_room(
+                            'INVOKE_DEFAULT', scene_name=scene.name)
+                except Exception:
+                    pass
+                return True
+            if delete_rect and _point_in_rect(mx, my, delete_rect):
+                try:
+                    bpy.ops.home_builder.delete_room(
+                        'INVOKE_DEFAULT', scene_name=scene.name)
+                except Exception:
+                    pass
+                return True
+            if _point_in_rect(mx, my, rect):
+                if scene.name != context.scene.name:
+                    try:
+                        bpy.ops.home_builder_layouts.go_to_layout_view(
+                            scene_name=scene.name)
+                    except Exception:
+                        pass
+                return True
+        elif kind == 'new_room':
+            if _point_in_rect(mx, my, entry[1]):
+                try:
+                    bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
+                except Exception:
+                    pass
+                return True
+    return False
 
 
 # ---- Modal operator ---------------------------------------------------------
@@ -532,6 +616,17 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 if kind == 'panel_header':
                     if _point_in_rect(mx, my, entry[3]):
                         _pinned = not _pinned
+                        if _pinned:
+                            # Hand the navigator to the persistent viewport
+                            # HUD, which draws + routes it while you design.
+                            # Close this transient modal so it isn't drawn
+                            # twice. If the HUD is disabled there's nothing to
+                            # hand off to -- fall back to the old in-modal
+                            # pinned behavior (stay open across picks).
+                            from . import viewport_hud
+                            if viewport_hud._hud_enabled():
+                                self._cleanup(context)
+                                return {'FINISHED'}
                         self._rebuild_layout(context)
                         if context.area:
                             context.area.tag_redraw()
