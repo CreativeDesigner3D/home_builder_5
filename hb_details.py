@@ -65,6 +65,13 @@ class DetailView:
         self.scene.unit_settings.system = unit_system
         self.scene.unit_settings.scale_length = unit_scale
         self.scene.unit_settings.length_unit = unit_length
+
+        # Inherit the active product library (Face Frame / Frameless /
+        # Closet) from the source scene. 
+        _src_hb = getattr(original_scene, "home_builder", None)
+        _new_hb = getattr(self.scene, "home_builder", None)
+        if _src_hb is not None and _new_hb is not None:
+            _new_hb.product_tab = _src_hb.product_tab
         
         # Copy snap settings
         new_tool_settings = bpy.context.tool_settings
