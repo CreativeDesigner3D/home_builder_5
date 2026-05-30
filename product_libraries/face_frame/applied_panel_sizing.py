@@ -31,7 +31,8 @@ def _resolve_door_style(cab_obj):
     style_name = cab_obj.get('STYLE_NAME')
     if not style_name:
         return None
-    scene_props = bpy.context.scene.hb_face_frame
+    from .props_hb_face_frame import get_style_props
+    scene_props = get_style_props()
     cab_style = None
     for cs in scene_props.cabinet_styles:
         if cs.name == style_name:

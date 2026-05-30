@@ -14,6 +14,7 @@ from bpy.types import (
 from bpy.props import (
     BoolProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -21,7 +22,7 @@ from bpy.props import (
     EnumProperty,
 )
 from ... import units
-from . import finish_colors, wood_materials
+from . import finish_colors, wood_materials, style_options
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -136,9 +137,27 @@ def get_cabinet_group_category_items(self, context):
 # ---------------------------------------------------------------------------
 # Update callbacks
 # ---------------------------------------------------------------------------
+
+def get_style_props(context=None):
+    """Return the hb_face_frame props that own the shared style pools.
+
+    Cabinet styles and door styles are project-global -- they live on the
+    main scene so every room sees the same set. Route any cabinet_styles /
+    door_styles / active-index access through here instead of reading
+    context.scene.hb_face_frame directly. Per-scene settings (default
+    sizes, selection mode) stay on the active scene.
+    """
+    from ... import hb_project
+    ctx = context or bpy.context
+    main = hb_project.get_main_scene(ctx)
+    if main is not None and hasattr(main, "hb_face_frame"):
+        return main.hb_face_frame
+    return ctx.scene.hb_face_frame
+
+
 def update_cabinet_style_name(self, context):
     """Keep style names unique within the collection."""
-    main = context.scene.hb_face_frame
+    main = get_style_props(context)
     base_name = self.name if self.name else "Style"
     existing = [s.name for s in main.cabinet_styles if s != self]
     if base_name not in existing:
@@ -181,12 +200,222 @@ def get_door_style_enum_items(self, context):
     Reads names from the shared door_styles pool on the scene props.
     """
     items = []
-    ff = context.scene.hb_face_frame
+    ff = get_style_props(context)
     for i, ds in enumerate(ff.door_styles):
         items.append((ds.name, ds.name, ds.name, i))
     if not items:
         items.append(('NONE', "(none defined)", "No door styles defined", 0))
     return items
+
+
+# ---------------------------------------------------------------------------
+# Catalog options + compatibility cascades (baked in style_options.py from the
+# reference partner spreadsheets). These are SPEC selections: they record the
+# correct, compatibility-filtered choices -- wood -> color -> varnish/glaze,
+# overlay -> hinge, and front series -> shape -> panel -- WITHOUT yet driving
+# geometry or material. The existing wood_species / door_overlay_type enums
+# still own rendering + face-frame sizing; wiring these to material / sizing /
+# pricing is a deliberate later pass.
+#
+# Enum item-tuples are built ONCE at module load into module-level dicts. That
+# doubles as the keepalive Blender needs (a callback returning freshly built
+# tuples each call risks GC mid-use -- see the _EXTERIOR_CONFIG_ITEMS note).
+# The callbacks just look the cached list up by the current upstream value.
+
+def _enum_items(values):
+    """[(identifier, name, description, index), ...] from a list of names."""
+    return [(v, v, v, i) for i, v in enumerate(values)]
+
+
+def _hinge_items(rows):
+    """De-duplicated hinge items [(code, desc, desc, index), ...]."""
+    seen, out = set(), []
+    for code, desc, _default in rows:
+        if code in seen:
+            continue
+        seen.add(code)
+        out.append((code, desc, desc, len(out)))
+    return out
+
+
+_NONE_ITEMS = [('NONE', "(none)", "No selection", 0)]
+
+
+def _items_or_none(items):
+    return items if items else _NONE_ITEMS
+
+
+# --- cabinet-style finish caches ---
+_FINISH_WOOD_ITEMS = [(i, lbl, lbl, n)
+                      for n, (i, lbl) in enumerate(style_options.woods_for_ui())]
+_FINISH_COLOR_ITEMS = {w: [(i, lbl, lbl, n)
+                           for n, (i, lbl) in enumerate(style_options.colors_for_wood_ui(w))]
+                       for w in style_options.WOOD_SPECIES}
+_FINISH_VARNISH_ITEMS = {c: _enum_items(style_options.varnishes_for_color(c) or ["N/A"])
+                         for c in style_options.COLORS}
+_FINISH_GLAZE_ITEMS = {c: _enum_items(style_options.glazes_for_color(c))
+                       for c in style_options.COLORS}
+_FINISH_OVERLAY_ITEMS = [(i, lbl, lbl, n)
+                         for n, (i, lbl) in enumerate(style_options.overlays_for_ui())]
+_FINISH_HINGE_ITEMS = {o: _hinge_items(rows)
+                       for o, rows in style_options.OVERLAY_TO_HINGES.items()}
+
+
+def _set_enum_safe(owner, prop, identifier):
+    """Assign an enum identifier only if valid for the prop's current items
+    (assigning an out-of-list identifier raises). No-op on mismatch."""
+    try:
+        setattr(owner, prop, identifier)
+    except (TypeError, ValueError):
+        pass
+
+
+def get_finish_wood_items(self, context):
+    return _items_or_none(_FINISH_WOOD_ITEMS)
+
+
+def get_finish_color_items(self, context):
+    return _items_or_none(_FINISH_COLOR_ITEMS.get(self.finish_wood, []))
+
+
+def get_finish_varnish_items(self, context):
+    return _items_or_none(_FINISH_VARNISH_ITEMS.get(self.finish_color, []))
+
+
+def get_finish_glaze_items(self, context):
+    return _items_or_none(_FINISH_GLAZE_ITEMS.get(self.finish_color, []))
+
+
+def get_finish_overlay_items(self, context):
+    return _items_or_none(_FINISH_OVERLAY_ITEMS)
+
+
+def get_finish_hinge_items(self, context):
+    return _items_or_none(_FINISH_HINGE_ITEMS.get(self.finish_overlay, []))
+
+
+def update_finish_wood(self, context):
+    """Wood gates color: reset to the first compatible color (which cascades
+    on to varnish + glaze through update_finish_color)."""
+    items = _FINISH_COLOR_ITEMS.get(self.finish_wood, [])
+    if items:
+        _set_enum_safe(self, "finish_color", items[0][0])
+    _propagate_cabinet_style(self, context)
+
+
+def update_finish_color(self, context):
+    """Color gates varnish + glaze: reset both to their first compatible."""
+    v = _FINISH_VARNISH_ITEMS.get(self.finish_color, [])
+    if v:
+        _set_enum_safe(self, "finish_varnish", v[0][0])
+    g = _FINISH_GLAZE_ITEMS.get(self.finish_color, [])
+    if g:
+        _set_enum_safe(self, "finish_glaze", g[0][0])
+    _propagate_cabinet_style(self, context)
+
+
+def update_finish_overlay(self, context):
+    """Overlay gates hinge AND drives FF sizing: reset to the overlay's
+    default hinge, then map the catalog overlay onto one of the five FF
+    sizing buckets by setting door_overlay_type (which runs
+    update_face_frame_sizes -> writes the rail/stile widths + reveals)."""
+    default = style_options.default_hinge_for_overlay(self.finish_overlay)
+    if default:
+        _set_enum_safe(self, "finish_hinge", default)
+    bucket = style_options.ff_overlay_bucket(self.finish_overlay)
+    if bucket:
+        _set_enum_safe(self, "door_overlay_type", bucket)
+
+
+# --- door / drawer front catalog caches (series -> shape -> panel) ---
+# front_kind selects which catalog (door vs drawer) the cascade reads, so one
+# pool entry can model either a door or a drawer front.
+_DOOR_SERIES_ITEMS = _enum_items(style_options.DOOR_SERIES)
+_DRAWER_SERIES_ITEMS = _enum_items(style_options.DRAWER_SERIES)
+_DOOR_SHAPE_ITEMS = {s: _enum_items(style_options.door_shapes(s))
+                     for s in style_options.DOOR_SERIES}
+_DRAWER_SHAPE_ITEMS = {s: _enum_items(style_options.door_shapes(s, drawer=True))
+                       for s in style_options.DRAWER_SERIES}
+_DOOR_PANEL_ITEMS = {(s, sh): _enum_items(style_options.door_panels(s, sh))
+                     for s in style_options.DOOR_SERIES
+                     for sh in style_options.door_shapes(s)}
+_DRAWER_PANEL_ITEMS = {(s, sh): _enum_items(style_options.door_panels(s, sh, drawer=True))
+                       for s in style_options.DRAWER_SERIES
+                       for sh in style_options.door_shapes(s, drawer=True)}
+
+
+def _front_is_drawer(self):
+    return getattr(self, "front_kind", "DOOR") == "DRAWER"
+
+
+def get_front_series_items(self, context):
+    return _items_or_none(_DRAWER_SERIES_ITEMS if _front_is_drawer(self) else _DOOR_SERIES_ITEMS)
+
+
+def get_front_shape_items(self, context):
+    table = _DRAWER_SHAPE_ITEMS if _front_is_drawer(self) else _DOOR_SHAPE_ITEMS
+    return _items_or_none(table.get(self.front_series, []))
+
+
+def get_front_panel_items(self, context):
+    table = _DRAWER_PANEL_ITEMS if _front_is_drawer(self) else _DOOR_PANEL_ITEMS
+    return _items_or_none(table.get((self.front_series, self.front_shape), []))
+
+
+def update_front_kind(self, context):
+    """Door<->drawer switch: reset series (cascades to shape + panel), then
+    re-derive frame widths (drawer rails differ from door rails)."""
+    items = _DRAWER_SERIES_ITEMS if _front_is_drawer(self) else _DOOR_SERIES_ITEMS
+    if items:
+        _set_enum_safe(self, "front_series", items[0][0])
+    _apply_series_frame_to_door_style(self)
+    _propagate_door_style(self, context)
+
+
+def update_front_series(self, context):
+    table = _DRAWER_SHAPE_ITEMS if _front_is_drawer(self) else _DOOR_SHAPE_ITEMS
+    items = table.get(self.front_series, [])
+    if items:
+        _set_enum_safe(self, "front_shape", items[0][0])
+    _apply_series_frame_to_door_style(self)
+    _propagate_door_style(self, context)
+
+
+def _apply_series_frame_to_door_style(self):
+    """Derive the door style's construction (stile / rail widths, drawer-rail,
+    panel inset/thickness, slab vs 5-piece) from the catalog series + front
+    kind, and WRITE it into the construction fields. This keeps the catalog
+    (series/shape/panel) as the single source of truth while the existing
+    geometry path (assign_style_to_front) and the applied-panel sizing engine
+    keep reading stile_width / rail_width / door_type unchanged. Widths in the
+    baked spec are inches -> converted with units.inch()."""
+    spec = style_options.frame_for_series(self.front_series)
+    if spec.get('is_slab'):
+        self.door_type = 'SLAB'
+        return
+    self.door_type = '5_PIECE'
+    self.stile_width = units.inch(spec['stile'])
+    # Drawer fronts use the series' drawer-rail width; doors use the rail.
+    rail_in = spec['drw_rail'] if _front_is_drawer(self) else spec['rail']
+    self.rail_width = units.inch(rail_in)
+    if 'panel_inset' in spec:
+        self.panel_inset = units.inch(spec['panel_inset'])
+    if 'panel_thickness' in spec:
+        self.panel_thickness = units.inch(spec['panel_thickness'])
+
+
+def update_front_shape(self, context):
+    table = _DRAWER_PANEL_ITEMS if _front_is_drawer(self) else _DOOR_PANEL_ITEMS
+    items = table.get((self.front_series, self.front_shape), [])
+    if items:
+        _set_enum_safe(self, "front_panel", items[0][0])
+
+
+def update_front_panel(self, context):
+    """Panel chosen -> re-derive the frame construction from the series and
+    push to assigned fronts."""
+    _apply_series_frame_to_door_style(self)
+    _propagate_door_style(self, context)
 
 
 def update_custom_procedural_material(self, context):
@@ -301,7 +530,7 @@ def ensure_default_styles(context):
     on entry so the user never sees an empty-active state. Adds a
     Default cabinet style + Slab door style when empty; idempotent.
     """
-    ff = context.scene.hb_face_frame
+    ff = get_style_props(context)
     if len(ff.cabinet_styles) == 0:
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
@@ -314,7 +543,7 @@ def ensure_default_styles(context):
 
 def update_door_style_name(self, context):
     """Keep door style names unique within the shared collection."""
-    main = context.scene.hb_face_frame
+    main = get_style_props(context)
     base_name = self.name if self.name else "Door Style"
     existing = [s.name for s in main.door_styles if s != self]
     if base_name not in existing:
@@ -399,6 +628,22 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    # ---- 2D drawing presentation ----
+    # Per-style fill colour for 2D layout / shop-drawing views. Cabinets
+    # resolve their style via the STYLE_NAME tag; 2D views tint each
+    # cabinet's elevation / multi-view instance with this colour. Lives on
+    # the style so the colour rides with it across every room sharing the
+    # global pool. Default white = no tint.
+    color_in_2d_drawings: FloatVectorProperty(
+        name="2D Drawing Color",
+        description="Fill color for cabinets of this style in 2D shop drawings",
+        subtype='COLOR',
+        size=3,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0),
+    )  # type: ignore
+
     # ---- Wood / exterior material ----
     wood_species: EnumProperty(
         name="Wood Species",
@@ -431,6 +676,43 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         description="Paint color for cabinet finish",
         items=get_paint_color_enum_items,
         update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # ---- Catalog finish spec (compatibility-filtered; see style_options) ----
+    # The correct wood/color/varnish/glaze + overlay/hinge selections with the
+    # proper cascade. Spec-only for now (does not drive material or FF sizing).
+    finish_wood: EnumProperty(
+        name="Wood Specie",
+        description="Catalog wood specie (gates the available colors)",
+        items=get_finish_wood_items,
+        update=update_finish_wood,
+    )  # type: ignore
+    finish_color: EnumProperty(
+        name="Color",
+        description="Finish color available for the chosen wood specie",
+        items=get_finish_color_items,
+        update=update_finish_color,
+    )  # type: ignore
+    finish_varnish: EnumProperty(
+        name="Varnish",
+        description="Varnish available for the chosen color (stain colors only)",
+        items=get_finish_varnish_items,
+    )  # type: ignore
+    finish_glaze: EnumProperty(
+        name="Glaze",
+        description="Glaze available for the chosen color",
+        items=get_finish_glaze_items,
+    )  # type: ignore
+    finish_overlay: EnumProperty(
+        name="Overlay (catalog)",
+        description="Catalog door overlay (gates the available hinges)",
+        items=get_finish_overlay_items,
+        update=update_finish_overlay,
+    )  # type: ignore
+    finish_hinge: EnumProperty(
+        name="Hinge",
+        description="Hinge available for the chosen overlay",
+        items=get_finish_hinge_items,
     )  # type: ignore
 
     # ---- Interior material ----
@@ -684,7 +966,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         if self.wood_species == 'CUSTOM_PROCEDURAL':
             wood_materials.update_finish_material_custom_procedural(self)
         else:
-            wood_materials.update_finish_material(self)
+            # Standard finish is catalog-driven (finish_wood / finish_color).
+            wood_materials.update_finish_material_from_catalog(self)
         return self.material, self.material_rotated
 
     def get_interior_material(self):
@@ -713,7 +996,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # overlay -> row_type -> (base, tall, upper) widths in inches.
     # Used by update_face_frame_sizes when door_overlay_type changes.
     # All values are inches; conversion to meters happens in the
-    # callback. Tables mirror the Pulito Spaces defaults.
+    # callback. Tables mirror the reference library defaults.
     _FF_SIZE_DEFAULTS = {
         'CLASSIC': {
             'top_rail':    (1.5, 3.5, 3.5),
@@ -1146,7 +1429,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         DOOR_ROLES = {'DOOR'}
         DRAWER_ROLES = {'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
 
-        ff = bpy.context.scene.hb_face_frame
+        ff = get_style_props()
 
         def resolve(name):
             if not name or name == 'NONE':
@@ -1235,39 +1518,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         """
         box = layout.box()
         box.prop(self, "name", text="Style Name")
+        box.prop(self, "color_in_2d_drawings", text="2D Color")
 
-        # Exterior material
+        # Catalog finish spec (compatibility-filtered cascade; drives the
+        # procedural wood material via finish_wood / finish_color).
         col = box.column(align=True)
-        col.prop(self, "wood_species", text="Exterior")
-        if self.wood_species == 'CUSTOM':
-            col.prop(self, "custom_material", text="")
-        elif self.wood_species == 'CUSTOM_PROCEDURAL':
-            col.prop(self, "custom_wood_color_1", text="Color 1")
-            col.prop(self, "custom_wood_color_2", text="Color 2")
-            col.prop(self, "custom_roughness", text="Roughness")
-            col.prop(self, "custom_noise_bump_strength", text="Noise Bump")
-            col.prop(self, "custom_knots_bump_strength", text="Knots Bump")
-            col.prop(self, "custom_wood_bump_strength", text="Wood Bump")
-            row = box.row()
-            row.prop(self, "show_custom_grain_options",
-                     text="Grain Options",
-                     icon='TRIA_DOWN' if self.show_custom_grain_options else 'TRIA_RIGHT',
-                     emboss=False)
-            if self.show_custom_grain_options:
-                gcol = box.column(align=True)
-                gcol.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
-                gcol.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
-                gcol.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
-                gcol.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
-                gcol.prop(self, "custom_noise_detail", text="Noise Detail")
-                gcol.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
-                gcol.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
-                gcol.prop(self, "custom_knots_scale", text="Knots Scale")
-                gcol.prop(self, "custom_knots_darkness", text="Knots Darkness")
-        elif self.wood_species == 'PAINT_GRADE':
-            col.prop(self, "paint_color", text="Paint Color")
-        else:
-            col.prop(self, "stain_color", text="Stain Color")
+        col.label(text="Catalog Finish:")
+        col.prop(self, "finish_wood", text="Wood")
+        col.prop(self, "finish_color", text="Color")
+        col.prop(self, "finish_varnish", text="Varnish")
+        col.prop(self, "finish_glaze", text="Glaze")
 
         # Interior material
         col = box.column(align=True)
@@ -1275,8 +1535,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         if self.interior_material_type == 'CUSTOM':
             col.prop(self, "custom_interior_material", text="")
 
-        # Door overlay (writes to L/R/T/B + inset at apply time)
-        box.prop(self, "door_overlay_type", text="Door Overlay")
+        # Overlay + hinge (catalog). finish_overlay drives the face-frame
+        # sizing engine via door_overlay_type (see update_finish_overlay).
+        col = box.column(align=True)
+        col.prop(self, "finish_overlay", text="Overlay")
+        col.prop(self, "finish_hinge", text="Hinge")
 
         # Door / drawer-front style picks (from the shared pool). The
         # selected names land in self.door_style / self.drawer_front_style;
@@ -1336,6 +1599,36 @@ class Face_Frame_Door_Style(PropertyGroup):
         name="Show Expanded",
         description="Show expanded style options",
         default=False,
+    )  # type: ignore
+
+    # ---- Catalog front spec (series -> shape -> panel; see style_options) ----
+    # front_kind picks which catalog (door vs drawer) the cascade reads. Spec-
+    # only for now -- the construction fields below still drive geometry.
+    front_kind: EnumProperty(
+        name="Front Kind",
+        description="Whether this style is a door front or a drawer front",
+        items=[('DOOR', "Door", "Door front catalog"),
+               ('DRAWER', "Drawer Front", "Drawer front catalog")],
+        default='DOOR',
+        update=update_front_kind,
+    )  # type: ignore
+    front_series: EnumProperty(
+        name="Series",
+        description="Catalog series (gates the available shapes)",
+        items=get_front_series_items,
+        update=update_front_series,
+    )  # type: ignore
+    front_shape: EnumProperty(
+        name="Shape",
+        description="Shape available for the chosen series",
+        items=get_front_shape_items,
+        update=update_front_shape,
+    )  # type: ignore
+    front_panel: EnumProperty(
+        name="Panel",
+        description="Panel available for the chosen series + shape",
+        items=get_front_panel_items,
+        update=update_front_panel,
     )  # type: ignore
 
     # ---- Construction type ----
@@ -1474,7 +1767,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         if not style_name:
             return None
 
-        ff = bpy.context.scene.hb_face_frame
+        ff = get_style_props()
         for cs in ff.cabinet_styles:
             if cs.name == style_name:
                 return cs
@@ -1587,44 +1880,26 @@ class Face_Frame_Door_Style(PropertyGroup):
         box = layout.box()
         box.prop(self, "name", text="Style Name")
 
+        # Catalog front spec (series -> shape -> panel) is the single source
+        # of truth. Series + kind derive the stile / rail widths, drawer-rail,
+        # panel inset/thickness and slab-vs-5-piece (see
+        # _apply_series_frame_to_door_style); the construction fields are
+        # written from it and consumed by the geometry + applied-panel-sizing
+        # engines, so they're no longer shown here.
         col = box.column(align=True)
-        col.label(text="Construction:")
-        col.prop(self, "door_type", text="Type")
+        col.label(text="Door Catalog:")
+        col.prop(self, "front_kind", text="Kind")
+        col.prop(self, "front_series", text="Series")
+        col.prop(self, "front_shape", text="Shape")
+        col.prop(self, "front_panel", text="Panel")
 
-        if self.door_type == 'SLAB':
-            col = box.column(align=True)
-            col.label(text="Edge Profile:")
-            col.prop(self, "edge_profile_type", text="")
-        else:
-            col = box.column(align=True)
-            col.label(text="Frame Dimensions:")
-            col.prop(self, "stile_width", text="Stile Width")
-            col.prop(self, "rail_width", text="Rail Width")
-
-            col = box.column(align=True)
-            col.label(text="Mid Rail:")
-            col.prop(self, "add_mid_rail", text="Add Mid Rail")
-            # Width stays editable even when Add Mid Rail is off: tall
-            # doors above 45.5" get an auto-added mid rail in
-            # assign_style_to_front using this same value, so the user
-            # needs to be able to set it without first toggling Add.
-            col.prop(self, "mid_rail_width", text="Width")
-            if self.add_mid_rail:
-                col.prop(self, "center_mid_rail", text="Center")
-                if not self.center_mid_rail:
-                    col.prop(self, "mid_rail_location", text="Location")
-
-            col = box.column(align=True)
-            col.label(text="Panel:")
-            col.prop(self, "panel_material", text="Material")
-            col.prop(self, "panel_thickness", text="Thickness")
-            col.prop(self, "panel_inset", text="Inset")
-
-        col = box.column(align=True)
-        col.label(text="Profiles:")
-        col.prop(self, "outside_profile", text="Outside")
-        if self.door_type != 'SLAB':
-            col.prop(self, "inside_profile", text="Inside")
+        # Derived frame widths shown read-only so the dealer can see what the
+        # series resolves to (inches; the props themselves drive the geometry).
+        if self.door_type == '5_PIECE':
+            info = box.column(align=True)
+            info.enabled = False
+            info.prop(self, "stile_width", text="Stile Width")
+            info.prop(self, "rail_width", text="Rail Width")
 
         # Assign hits the current selection (anything not a face frame
         # front is silently skipped); Update walks every front already
@@ -3976,38 +4251,44 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # UI: cabinet styles (Options tab, placeholder for Phase 4)
     # =====================================================================
     def draw_cabinet_styles_ui(self, layout, context):
+        # Pool is project-global (main scene); draw it regardless of which
+        # room scene is active.
+        sp = get_style_props(context)
         row = layout.row()
         row.template_list(
             "HB_UL_face_frame_cabinet_styles", "",
-            self, "cabinet_styles",
-            self, "active_cabinet_style_index",
+            sp, "cabinet_styles",
+            sp, "active_cabinet_style_index",
             rows=3,
         )
         side = row.column(align=True)
         side.operator("hb_face_frame.add_cabinet_style", text="", icon='ADD')
         side.operator("hb_face_frame.remove_cabinet_style", text="", icon='REMOVE')
 
-        if self.cabinet_styles and self.active_cabinet_style_index < len(self.cabinet_styles):
-            style = self.cabinet_styles[self.active_cabinet_style_index]
+        if sp.cabinet_styles and sp.active_cabinet_style_index < len(sp.cabinet_styles):
+            style = sp.cabinet_styles[sp.active_cabinet_style_index]
             style.draw_cabinet_style_ui(layout, context)
         else:
             box = layout.box()
             box.label(text="No cabinet styles defined", icon='INFO')
 
     def draw_door_styles_ui(self, layout, context):
+        # Pool is project-global (main scene); draw it regardless of which
+        # room scene is active.
+        sp = get_style_props(context)
         row = layout.row()
         row.template_list(
             "HB_UL_face_frame_door_styles", "",
-            self, "door_styles",
-            self, "active_door_style_index",
+            sp, "door_styles",
+            sp, "active_door_style_index",
             rows=3,
         )
         side = row.column(align=True)
         side.operator("hb_face_frame.add_door_style", text="", icon='ADD')
         side.operator("hb_face_frame.remove_door_style", text="", icon='REMOVE')
 
-        if self.door_styles and self.active_door_style_index < len(self.door_styles):
-            ds = self.door_styles[self.active_door_style_index]
+        if sp.door_styles and sp.active_door_style_index < len(sp.door_styles):
+            ds = sp.door_styles[sp.active_door_style_index]
             ds.draw_door_style_ui(layout, context)
         else:
             box = layout.box()

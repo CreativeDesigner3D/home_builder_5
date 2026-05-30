@@ -1,5 +1,5 @@
 import math
-from . import finish_colors
+from . import finish_colors, style_options
 
 
 def get_color(color_name, color_type='stain'):
@@ -226,3 +226,62 @@ def update_finish_material_custom_procedural(cabinet_style):
                 inp.default_value = cabinet_style.custom_knots_bump_strength
             elif inp.name == 'Wood Bump Strength':
                 inp.default_value = cabinet_style.custom_wood_bump_strength
+
+
+def update_finish_material_from_catalog(cabinet_style):
+    """Drive the procedural Wood material from the catalog finish spec.
+
+    Reads finish_wood (-> grain params) and finish_color (-> Wood Color 1/2)
+    and the baked appearance data in style_options, mirroring
+    update_finish_material but catalog-driven. This is the standard finish
+    path now; CUSTOM / CUSTOM_PROCEDURAL remain wood_species escape hatches.
+    Colors / woods not in the baked tables fall back to white / flat grain.
+    """
+    material = cabinet_style.material
+    material_rotated = cabinet_style.material_rotated
+
+    mat_node = None
+    rotated_node = None
+    for n in material.node_tree.nodes:
+        if n.label == 'Wood':
+            mat_node = n
+            break
+    for n in material_rotated.node_tree.nodes:
+        if n.label == 'Wood':
+            rotated_node = n
+            break
+    if not mat_node or not rotated_node:
+        return
+
+    c1, c2 = style_options.color_rgb(cabinet_style.finish_color)
+    g = style_options.grain_for_wood(cabinet_style.finish_wood)
+
+    for node, rotation in [(mat_node, math.radians(90)), (rotated_node, math.radians(0))]:
+        for inp in node.inputs:
+            nm = inp.name
+            if nm == 'Rotation':
+                inp.default_value[2] = rotation
+            elif nm == 'Wood Color 1':
+                inp.default_value = c1
+            elif nm == 'Wood Color 2':
+                inp.default_value = c2
+            elif nm == 'Noise Scale 1':
+                inp.default_value = g['noise_scale_1']
+            elif nm == 'Noise Scale 2':
+                inp.default_value = g['noise_scale_2']
+            elif nm == 'Texture Variation 1':
+                inp.default_value = g['texture_variation_1']
+            elif nm == 'Texture Variation 2':
+                inp.default_value = g['texture_variation_2']
+            elif nm == 'Noise Detail':
+                inp.default_value = g['noise_detail']
+            elif nm == 'Voronoi Detail 1':
+                inp.default_value = g['voronoi_detail_1']
+            elif nm == 'Voronoi Detail 2':
+                inp.default_value = g['voronoi_detail_2']
+            elif nm == 'Knots Scale':
+                inp.default_value = g['knots_scale']
+            elif nm == 'Knots Darkness':
+                inp.default_value = g['knots_darkness']
+            elif nm == 'Roughness':
+                inp.default_value = g.get('roughness', 1.0)

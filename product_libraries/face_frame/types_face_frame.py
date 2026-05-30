@@ -4258,7 +4258,8 @@ def _reapply_cabinet_style(root):
     style_name = root.get('STYLE_NAME')
     if not style_name:
         return
-    ff = bpy.context.scene.hb_face_frame
+    from .props_hb_face_frame import get_style_props
+    ff = get_style_props()
     for cs in ff.cabinet_styles:
         if cs.name == style_name:
             cs._apply_door_styles_to_fronts(root)

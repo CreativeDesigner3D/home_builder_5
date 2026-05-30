@@ -5,6 +5,8 @@ material wiring.
 import bpy
 from bpy.types import Operator
 
+from ..props_hb_face_frame import get_style_props
+
 
 def _next_unique_name(base, existing):
     """Return base, or base.001 / base.002 / ... if base is taken."""
@@ -24,7 +26,7 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         existing = [s.name for s in ff.cabinet_styles]
         new_style = ff.cabinet_styles.add()
         new_style.name = _next_unique_name("Style", existing)
@@ -44,11 +46,11 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
     def poll(cls, context):
         # Always keep at least one style around so placement / assign
         # paths have something to apply.
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.cabinet_styles) > 1
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         if len(ff.cabinet_styles) <= 1:
             self.report({'WARNING'}, "At least one cabinet style must remain")
             return {'CANCELLED'}
@@ -71,7 +73,7 @@ class hb_face_frame_OT_add_door_style(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         existing = [s.name for s in ff.door_styles]
         new_style = ff.door_styles.add()
         new_style.name = _next_unique_name("Door Style", existing)
@@ -89,11 +91,11 @@ class hb_face_frame_OT_remove_door_style(Operator):
 
     @classmethod
     def poll(cls, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.door_styles) > 1
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         if len(ff.door_styles) <= 1:
             self.report({'WARNING'}, "At least one door style must remain")
             return {'CANCELLED'}
@@ -117,12 +119,12 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
 
     @classmethod
     def poll(cls, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.cabinet_styles) > 0 and len(context.selected_objects) > 0
 
     def execute(self, context):
         from .. import types_face_frame
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         idx = ff.active_cabinet_style_index
         if idx < 0 or idx >= len(ff.cabinet_styles):
             self.report({'WARNING'}, "No active cabinet style")
@@ -158,11 +160,11 @@ class hb_face_frame_OT_update_cabinets_from_style(Operator):
 
     @classmethod
     def poll(cls, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.cabinet_styles) > 0
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         idx = ff.active_cabinet_style_index
         if idx < 0 or idx >= len(ff.cabinet_styles):
             self.report({'WARNING'}, "No active cabinet style")
@@ -194,11 +196,11 @@ class hb_face_frame_OT_assign_door_style_to_selected_fronts(Operator):
 
     @classmethod
     def poll(cls, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.door_styles) > 0 and len(context.selected_objects) > 0
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         idx = ff.active_door_style_index
         if idx < 0 or idx >= len(ff.door_styles):
             self.report({'WARNING'}, "No active door style")
@@ -233,11 +235,11 @@ class hb_face_frame_OT_update_fronts_from_door_style(Operator):
 
     @classmethod
     def poll(cls, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         return len(ff.door_styles) > 0
 
     def execute(self, context):
-        ff = context.scene.hb_face_frame
+        ff = get_style_props(context)
         idx = ff.active_door_style_index
         if idx < 0 or idx >= len(ff.door_styles):
             self.report({'WARNING'}, "No active door style")

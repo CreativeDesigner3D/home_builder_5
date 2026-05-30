@@ -2381,7 +2381,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # so this branch always has something to apply.
         if merged_into is None:
             props_hb_face_frame.ensure_default_styles(context)
-            scene_props = context.scene.hb_face_frame
+            scene_props = props_hb_face_frame.get_style_props(context)
             idx = scene_props.active_cabinet_style_index
             if 0 <= idx < len(scene_props.cabinet_styles):
                 active = scene_props.cabinet_styles[idx]
@@ -3794,7 +3794,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         # ensure_default_styles seeds a Default style when the
         # collection is empty so there is always one to apply.
         props_hb_face_frame.ensure_default_styles(context)
-        scene_props = context.scene.hb_face_frame
+        scene_props = props_hb_face_frame.get_style_props(context)
         idx = scene_props.active_cabinet_style_index
         if 0 <= idx < len(scene_props.cabinet_styles):
             scene_props.cabinet_styles[idx].assign_style_to_cabinet(cab_obj)
