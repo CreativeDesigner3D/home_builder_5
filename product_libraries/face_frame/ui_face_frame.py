@@ -323,6 +323,11 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
+    col.prop(bp, 'finish_bay', text="Finish")
+    if bp.finish_bay:
+        col.prop(bp, 'finish_bay_flush', text="Finish Flush")
+        if bp.finish_bay_flush:
+            col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
 
 
 def _root_opening_size(opening_obj):
@@ -386,6 +391,13 @@ def draw_opening_properties(layout, opening_obj):
     # NONE which has no front to animate).
     if op.front_type not in ('NONE', 'INSET_PANEL'):
         col.prop(op, 'swing_percent', text="Open", slider=True)
+    col.separator()
+    col.prop(op, 'finish_opening', text="Finish Opening")
+    if op.finish_opening:
+        col.prop(op, 'finish_opening_flush', text="Finish Flush")
+        if op.finish_opening_flush:
+            col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
+
     col.separator()
     col.label(text="Overlays")
     for side in ('top', 'bottom', 'left', 'right'):
@@ -877,6 +889,11 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
+    col.prop(bp, 'finish_bay', text="Finish")
+    if bp.finish_bay:
+        col.prop(bp, 'finish_bay_flush', text="Finish Flush")
+        if bp.finish_bay_flush:
+            col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
 
 
 def draw_bays_in_prompts(layout, root):

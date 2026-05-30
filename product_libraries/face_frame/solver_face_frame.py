@@ -193,6 +193,9 @@ class FaceFrameLayout:
             'remove_bottom':      bp.remove_bottom,
             'remove_carcass':     bp.remove_carcass,
             'floating_bay':       bp.floating_bay,
+            'finish_bay':         bp.finish_bay,
+            'finish_bay_flush':   bp.finish_bay_flush,
+            'finish_bay_flush_depth': bp.finish_bay_flush_depth,
             'tree':               self._read_tree_root(bay_obj),
         }
 
@@ -259,6 +262,9 @@ class FaceFrameLayout:
             'remove_bottom':      False,
             'remove_carcass':     False,
             'floating_bay':       False,
+            'finish_bay':         False,
+            'finish_bay_flush':   False,
+            'finish_bay_flush_depth': 0.0,
             'tree':               None,
         }
 

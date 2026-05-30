@@ -181,6 +181,18 @@ PART_ROLE_FINISHED_BACK = 'FINISHED_BACK'
 PART_ROLE_FLUSH_X = 'FLUSH_X'
 TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
 
+# Per-bay finish liner: 1/4 finish-material panels added to the inner
+# faces of a bay's opening (left / right / top / back) when the bay's
+# finish_bay flag is set, so the exterior finish reads inside the
+# opening. Keyed by bay index + face so they reuse-in-place / sweep
+# cleanly across recalcs. See _reconcile_bay_finish_panels.
+PART_ROLE_BAY_FINISH = 'BAY_FINISH'
+TAG_BAY_FINISH_BAY = 'hb_bay_finish_bay'
+TAG_BAY_FINISH_FACE = 'hb_bay_finish_face'
+# Which opening within the bay a finish liner belongs to: an opening
+# leaf index for a per-opening finish, or -1 for a whole-bay finish.
+TAG_BAY_FINISH_OPENING = 'hb_bay_finish_opening'
+
 # Textured-finish applied panels: 1/4 flat parts representing beadboard
 # or shiplap finishes on a side (LEFT / RIGHT / BACK). Distinct roles
 # so a future material pass can shade them differently; geometry is
@@ -1823,6 +1835,7 @@ class FaceFrameCabinet(GeoNodeCage):
             self._reconcile_finished_back(layout)
             self._reconcile_flush_x_strips(layout)
             self._reconcile_textured_panels(layout)
+            self._reconcile_bay_finish_panels(layout)
 
         # Angled cabinet cutter: drives the trapezoidal silhouette on
         # the root cage, top, bottom, and any shelves. Lazy: created
@@ -2216,6 +2229,221 @@ class FaceFrameCabinet(GeoNodeCage):
                 mod[node_input.identifier] = value
         mod.show_viewport = active
         mod.show_render = active
+
+    # =====================================================================
+    # Per-bay finish liner panels (left / right / top / back)
+    # =====================================================================
+    def _reconcile_bay_finish_panels(self, layout):
+        """Spawn / resize / remove finish liner panels for finished bays
+        and finished openings.
+
+        A finished region (a whole bay via finish_bay, or a single opening
+        via finish_opening) gets 1/4 finish-material liner panels on its
+        inner faces so the exterior finish reads inside it. FULL finish
+        lines the full cavity depth on five faces (LEFT / RIGHT / TOP /
+        BACK / BOTTOM); FLUSH finish lines the FF opening with a band flush
+        to the FF front face, running finish_*_flush_depth back (0 = full
+        depth) with no BACK panel (open behind for an appliance). A removed
+        bay bottom drops the BOTTOM panel and runs the verticals to the
+        floor. The geometry is identical for bays and openings - only the
+        region bounds differ - so both route through _finish_region_specs.
+
+        A bay-level finish supersedes per-opening finishes within that bay
+        (the bay liner already covers everything). Liners are keyed by
+        (bay_index, opening_index, face) - opening_index -1 for a bay-level
+        liner - so they reuse in place and sweep cleanly. Angled cabinets
+        are deferred (bay-local Y here assumes square).
+        """
+        existing = {}
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_BAY_FINISH:
+                continue
+            key = (child.get(TAG_BAY_FINISH_BAY),
+                   child.get(TAG_BAY_FINISH_OPENING, -1),
+                   child.get(TAG_BAY_FINISH_FACE))
+            existing[key] = child
+
+        wanted = set()
+        if not layout.is_angled:
+            t = inch(0.25)
+            for bi, bay in enumerate(layout.bays):
+                bay_left_x, bay_right_x = solver._cage_x_bounds(layout, bi)
+                _, bay_dim_y, bay_dim_z = solver.bay_cage_dims(layout, bi)
+                bay_bottom = (solver.bay_bottom_z(layout, bi)
+                              + solver.effective_bottom_rail_width(layout, bi))
+                bay_top = bay_bottom + bay_dim_z
+                bay_to_floor = bool(bay.get('remove_bottom'))
+
+                if bay.get('finish_bay'):
+                    region = dict(
+                        left_x=bay_left_x, right_x=bay_right_x,
+                        bottom_z=bay_bottom, top_z=bay_top,
+                        cage_dim_y=bay_dim_y,
+                        reveals=solver._bay_root_reveals(layout, bi),
+                    )
+                    specs = self._finish_region_specs(
+                        layout, region, bool(bay.get('finish_bay_flush')),
+                        bay.get('finish_bay_flush_depth', 0.0), bay_to_floor, t)
+                    for face, spec in specs:
+                        self._emit_bay_finish_panel(bi, -1, face, spec, t, existing)
+                        wanted.add((bi, -1, face))
+                    continue
+
+                # No bay-level finish -> check each opening leaf. The leaf
+                # rects are bay-local; the bay cage origin (bay_left_x,
+                # bay_bottom) maps them to cabinet-local. An opening only
+                # reaches the floor when the bay bottom is removed AND it's
+                # the bottom-most leaf (cage_z == 0).
+                for leaf in solver.bay_openings(layout, bi)['leaves']:
+                    op_obj = bpy.data.objects.get(leaf['obj_name'])
+                    if op_obj is None:
+                        continue
+                    op = op_obj.face_frame_opening
+                    if not op.finish_opening:
+                        continue
+                    oi = leaf['opening_index']
+                    op_left_x = bay_left_x + leaf['cage_x']
+                    op_bottom = bay_bottom + leaf['cage_z']
+                    region = dict(
+                        left_x=op_left_x,
+                        right_x=op_left_x + leaf['cage_dim_x'],
+                        bottom_z=op_bottom,
+                        top_z=op_bottom + leaf['cage_dim_z'],
+                        cage_dim_y=leaf['cage_dim_y'],
+                        reveals={'left':   leaf['reveal_left'],
+                                 'right':  leaf['reveal_right'],
+                                 'top':    leaf['reveal_top'],
+                                 'bottom': leaf['reveal_bottom']},
+                    )
+                    op_to_floor = bay_to_floor and abs(leaf['cage_z']) < 1e-6
+                    specs = self._finish_region_specs(
+                        layout, region, bool(op.finish_opening_flush),
+                        op.finish_opening_flush_depth, op_to_floor, t)
+                    for face, spec in specs:
+                        self._emit_bay_finish_panel(bi, oi, face, spec, t, existing)
+                        wanted.add((bi, oi, face))
+
+        for key, child in existing.items():
+            if key not in wanted:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor, t):
+        """Build the (face, spec) list for one finished region.
+
+        `region` is cabinet-local: left_x / right_x / bottom_z / top_z, the
+        cavity depth cage_dim_y, and the four reveals (cage edge -> FF
+        opening edge). See _reconcile_bay_finish_panels for the FULL vs
+        FLUSH and to_floor semantics; the math here is shared by bays and
+        openings.
+        """
+        left_x = region['left_x']; right_x = region['right_x']
+        bottom_z = region['bottom_z']; top_z = region['top_z']
+        cage_dim_x = right_x - left_x
+        cage_dim_y = region['cage_dim_y']
+        rev = region['reveals']
+        ff_back_y = -layout.dim_y + layout.fft
+        cavity_back_y = ff_back_y + cage_dim_y
+
+        if flush:
+            # FLUSH band lining the FF opening, flush with the FF front
+            # face. Visible faces sit at the FF opening edges (no reveal)
+            # with thickness OUTBOARD (LEFT -X, RIGHT +X, TOP +Z, BOTTOM
+            # -Z). No BACK panel - open behind for an appliance.
+            op_left_x   = left_x + rev['left']
+            op_right_x  = right_x - rev['right']
+            op_bottom_z = 0.0 if to_floor else bottom_z + rev['bottom']
+            op_top_z    = top_z - rev['top']
+            op_height   = op_top_z - op_bottom_z
+            op_width    = op_right_x - op_left_x
+            ff_front_y  = -layout.dim_y
+            max_depth   = layout.fft + cage_dim_y
+            depth = max_depth if raw_depth <= 0.0 else min(raw_depth, max_depth)
+            band_back_y = ff_front_y + depth   # Mirror-Y anchor edge
+            specs = [
+                ('LEFT',  dict(rot=(0.0, math.radians(-90), 0.0),
+                               mirror_y=True, mirror_z=False,
+                               loc=(op_left_x, band_back_y, op_bottom_z),
+                               length=op_height, width=depth)),
+                ('RIGHT', dict(rot=(0.0, math.radians(-90), 0.0),
+                               mirror_y=True, mirror_z=True,
+                               loc=(op_right_x, band_back_y, op_bottom_z),
+                               length=op_height, width=depth)),
+                ('TOP',   dict(rot=(0.0, 0.0, 0.0),
+                               mirror_y=True, mirror_z=False,
+                               loc=(op_left_x, band_back_y, op_top_z),
+                               length=op_width, width=depth)),
+            ]
+            if not to_floor:
+                specs.append(
+                    ('BOTTOM', dict(rot=(0.0, 0.0, 0.0),
+                                    mirror_y=True, mirror_z=True,
+                                    loc=(op_left_x, band_back_y, op_bottom_z),
+                                    length=op_width, width=depth)))
+        else:
+            # FULL finish lining the full cavity depth on the cavity walls.
+            vert_bottom_z = 0.0 if to_floor else bottom_z
+            vert_height   = top_z - vert_bottom_z
+            specs = [
+                ('LEFT',  dict(rot=(0.0, math.radians(-90), 0.0),
+                               mirror_y=True, mirror_z=True,
+                               loc=(left_x, cavity_back_y, vert_bottom_z),
+                               length=vert_height, width=cage_dim_y)),
+                ('RIGHT', dict(rot=(0.0, math.radians(-90), 0.0),
+                               mirror_y=True, mirror_z=False,
+                               loc=(right_x, cavity_back_y, vert_bottom_z),
+                               length=vert_height, width=cage_dim_y)),
+                ('TOP',   dict(rot=(0.0, 0.0, 0.0),
+                               mirror_y=True, mirror_z=True,
+                               loc=(left_x + t, cavity_back_y, top_z),
+                               length=max(cage_dim_x - 2 * t, 0.0),
+                               width=cage_dim_y)),
+                ('BACK',  dict(rot=(math.radians(90), math.radians(-90), 0.0),
+                               mirror_y=True, mirror_z=False,
+                               loc=(left_x, cavity_back_y, vert_bottom_z),
+                               length=vert_height, width=cage_dim_x)),
+            ]
+            if not to_floor:
+                specs.append(
+                    ('BOTTOM', dict(rot=(0.0, 0.0, 0.0),
+                                    mirror_y=True, mirror_z=False,
+                                    loc=(left_x + t, cavity_back_y, bottom_z),
+                                    length=max(cage_dim_x - 2 * t, 0.0),
+                                    width=cage_dim_y)))
+        return specs
+
+    def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
+                               thickness, existing):
+        """Create or reuse one (bay_index, opening_index, face) finish liner
+        and write its transform + cutpart dims from `spec`. opening_index
+        is -1 for a whole-bay liner. Reuse-by-key keeps object identity
+        stable so downstream view instances don't break.
+        """
+        key = (bay_index, opening_index, face)
+        strip = existing.get(key)
+        if strip is None:
+            if opening_index < 0:
+                name = f'Bay Finish {bay_index + 1} {face.title()}'
+            else:
+                name = f'Opening Finish {bay_index + 1}.{opening_index} {face.title()}'
+            part = CabinetPart()
+            part.create(name)
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_BAY_FINISH
+            part.obj['CABINET_PART'] = True
+            part.obj[TAG_BAY_FINISH_BAY] = bay_index
+            part.obj[TAG_BAY_FINISH_OPENING] = opening_index
+            part.obj[TAG_BAY_FINISH_FACE] = face
+            strip = part.obj
+        else:
+            part = GeoNodeCutpart(strip)
+        rx, ry, rz = spec['rot']
+        strip.rotation_euler = (rx, ry, rz)
+        part.set_input('Mirror Y', spec['mirror_y'])
+        part.set_input('Mirror Z', spec['mirror_z'])
+        strip.location = spec['loc']
+        part.set_input('Length',    spec['length'])
+        part.set_input('Width',     spec['width'])
+        part.set_input('Thickness', thickness)
 
     # =====================================================================
     # Applied textured panels (BEADBOARD / SHIPLAP, 1/4 flat parts)

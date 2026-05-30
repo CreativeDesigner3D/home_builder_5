@@ -1260,6 +1260,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # visible through the opening, so they take the exterior finish
         # material, not the interior material.
         'PARTITION_SKIN',
+        # Per-bay finish liner panels (left / right / top / back) added
+        # when a bay is finished - their whole purpose is to show the
+        # exterior finish inside the opening.
+        'BAY_FINISH',
     }
 
     # Hidden surfaces (interior material on top + bottom + edges).
@@ -1297,6 +1301,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # Roles that read materials from the 5-piece door modifier instead
     # of (or in addition to) the cutpart surface inputs.
     _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+
+    # Interior shelving that follows the bay's finish_bay flag: a finished
+    # bay shows the exterior finish on its shelves too, otherwise they
+    # stay interior. Glass shelves and functional hardware (pullouts /
+    # rollouts / trays) are excluded.
+    _BAY_FINISH_SHELF_ROLES = {
+        'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF', 'VANITY_SHELF',
+    }
 
     def _set_part_surfaces(self, part_obj, surface_mat, edge_mat):
         """Plug surface_mat into Top Surface + Bottom Surface and edge_mat
@@ -1428,6 +1440,27 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
                 continue
 
+            # Interior shelves in a finished region take the exterior
+            # finish so the finished look continues onto the shelving;
+            # shelves elsewhere stay interior. A shelf is finished when its
+            # bay is finished (nearest IS_FACE_FRAME_BAY_CAGE -> finish_bay)
+            # OR its opening is finished (nearest IS_FACE_FRAME_OPENING_CAGE
+            # -> finish_opening).
+            if role in self._BAY_FINISH_SHELF_ROLES:
+                bay_cage = self._bay_cage_for_part(child)
+                opening_cage = self._opening_cage_for_part(child)
+                finished = (
+                    (bay_cage is not None
+                     and bay_cage.face_frame_bay.finish_bay)
+                    or (opening_cage is not None
+                        and opening_cage.face_frame_opening.finish_opening)
+                )
+                if finish_mat is not None and finished:
+                    self._set_part_surfaces(child, finish_mat, finish_mat_rotated)
+                else:
+                    self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+
             if role in self._FINISH_EXTERIOR_ROLES:
                 self._set_part_surfaces(
                     child, finish_mat, finish_mat_rotated,
@@ -1442,6 +1475,34 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 self._set_door_modifier_materials(
                     child, finish_mat, finish_mat_rotated,
                 )
+
+    def _bay_cage_for_part(self, part_obj):
+        """Walk up from a part to its nearest face-frame bay cage
+        (IS_FACE_FRAME_BAY_CAGE) so per-bay flags like finish_bay can be
+        read from bay_cage.face_frame_bay. Returns None if the part isn't
+        under a bay cage (e.g. carcass parts parented to the cabinet root).
+        The tag string mirrors types_face_frame.TAG_BAY_CAGE.
+        """
+        node = part_obj.parent
+        while node is not None:
+            if node.get('IS_FACE_FRAME_BAY_CAGE'):
+                return node
+            node = node.parent
+        return None
+
+    def _opening_cage_for_part(self, part_obj):
+        """Walk up from a part to its nearest face-frame opening cage
+        (IS_FACE_FRAME_OPENING_CAGE) so per-opening flags like
+        finish_opening can be read from opening_cage.face_frame_opening.
+        Returns None if the part isn't under an opening cage. The tag
+        string mirrors types_face_frame.TAG_OPENING_CAGE.
+        """
+        node = part_obj.parent
+        while node is not None:
+            if node.get('IS_FACE_FRAME_OPENING_CAGE'):
+                return node
+            node = node.parent
+        return None
 
     # cabinet_type -> column key in the ff_* width props.
     # LAP_DRAWER behaves as a base-cabinet; PANEL has no per-type
@@ -3064,7 +3125,28 @@ class Face_Frame_Bay_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
-    finish_bay: BoolProperty(name="Finish Bay", default=False)  # type: ignore
+    # Finished interior: the exterior finish material reads inside this
+    # bay's opening, realized by adding finish-material liner panels on
+    # the left / right / top / back inner faces (a shared carcass back /
+    # top can't be re-materialed per-bay, so dedicated liner parts carry
+    # the finish). finish_bay_flush brings those liners flush with the
+    # face frame opening and runs them only finish_bay_flush_depth back
+    # into the opening - the common "refrigerator opening finished flush
+    # X inches" case. Flush off = liner lines the full cavity depth.
+    finish_bay: BoolProperty(
+        name="Finish Bay", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_bay_flush: BoolProperty(
+        name="Finish Flush", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_bay_flush_depth: FloatProperty(
+        name="Flush Depth", default=0.0, unit='LENGTH', precision=4,
+        description="How far the flush finish runs back into the opening; "
+                    "0 runs the full cavity depth",
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # UI-only toggle: in the cabinet_prompts popup each bay shows just
     # its size by default; flipping this expands the bay's secondary
@@ -3380,6 +3462,25 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Unlock Right Overlay",
         description="Use this opening's own right overlay value instead of the cabinet default",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Per-opening finish: the bay-level finish_bay behavior scoped to a
+    # single opening (e.g. one sub-opening of a split bay). The exterior
+    # finish reads inside this opening via liner panels on its inner
+    # faces; finish_opening_flush + finish_opening_flush_depth mirror the
+    # bay flush controls (0 depth = full cavity depth). A bay-level finish
+    # supersedes per-opening finish within that bay.
+    finish_opening: BoolProperty(
+        name="Finish Opening", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_flush: BoolProperty(
+        name="Finish Flush", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_flush_depth: FloatProperty(
+        name="Flush Depth", default=0.0, unit='LENGTH', precision=4,
+        description="How far the flush finish runs back into the opening; "
+                    "0 runs the full cavity depth",
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # Interior items: shelves, accessory labels, and (future) glass
