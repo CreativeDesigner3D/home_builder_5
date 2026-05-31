@@ -238,6 +238,53 @@ def draw_wedge(layout, root):
         box.operator("hb_face_frame.add_refrigerator_wedge", icon='MOD_BEVEL')
 
 
+def _is_floating_shelf(obj):
+    """True when obj (or its cabinet root) is a floating shelf."""
+    root = types_face_frame.find_cabinet_root(obj)
+    return root is not None and bool(root.get('IS_FLOATING_SHELF'))
+
+
+def draw_floating_shelf(layout, root):
+    """Floating shelf prompts: type, dimensions, finished ends, and the
+    Heavy-Duty light groove. Shown in the sidebar
+    (HB_FACE_FRAME_PT_floating_shelf) and the right-click popup. Height
+    (Dim Z) is the shelf's overall thickness."""
+    cab = root.face_frame_cabinet
+    shelf = root.floating_shelf
+
+    layout.prop(shelf, 'shelf_type', text="Type")
+
+    col = layout.column(align=True)
+    col.prop(cab, 'width', text="Width")
+    col.prop(cab, 'depth', text="Depth")
+    col.prop(cab, 'height', text="Thickness")
+
+    box = layout.box()
+    box.label(text="Finished Ends")
+    row = box.row(align=True)
+    row.prop(shelf, 'finish_left', text="Left", toggle=True)
+    row.prop(shelf, 'finish_right', text="Right", toggle=True)
+
+    layout.prop(shelf, 'material_thickness', text="Material Thickness")
+
+    layout.separator()
+    layout.operator("hb_face_frame.duplicate_floating_shelf",
+                    text="Set Quantity & Spacing...", icon='LINENUMBERS_ON')
+
+    # Light groove - Heavy Duty shelves only.
+    if shelf.shelf_type == 'HEAVY_DUTY':
+        gbox = layout.box()
+        gbox.label(text="Light Groove")
+        grow = gbox.row(align=True)
+        grow.prop(shelf, 'include_groove_top', text="Top", toggle=True)
+        grow.prop(shelf, 'include_groove_bottom', text="Bottom", toggle=True)
+        gsub = gbox.column(align=True)
+        gsub.enabled = shelf.include_groove_top or shelf.include_groove_bottom
+        gsub.prop(shelf, 'groove_distance_from_rear', text="Distance From Rear")
+        gsub.prop(shelf, 'groove_width', text="Width")
+        gsub.prop(shelf, 'groove_depth', text="Depth")
+
+
 def _is_leg_product(obj):
     """True when obj (or its cabinet root) is a leg product."""
     root = types_face_frame.find_cabinet_root(obj)
@@ -1078,7 +1125,8 @@ class HB_FACE_FRAME_PT_dimensions(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
-        return root is not None and not root.get('IS_LEG_PRODUCT')
+        return (root is not None and not root.get('IS_LEG_PRODUCT')
+                and not root.get('IS_FLOATING_SHELF'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -1099,7 +1147,8 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
-        return root is not None and not root.get('IS_LEG_PRODUCT')
+        return (root is not None and not root.get('IS_LEG_PRODUCT')
+                and not root.get('IS_FLOATING_SHELF'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -1121,7 +1170,8 @@ class HB_FACE_FRAME_PT_face_frame_defaults(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
-        return root is not None and not root.get('IS_LEG_PRODUCT')
+        return (root is not None and not root.get('IS_LEG_PRODUCT')
+                and not root.get('IS_FLOATING_SHELF'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -1175,13 +1225,35 @@ class HB_FACE_FRAME_PT_all_bays(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
-        return root is not None and not root.get('IS_LEG_PRODUCT')
+        return (root is not None and not root.get('IS_LEG_PRODUCT')
+                and not root.get('IS_FLOATING_SHELF'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
         if root is None:
             return
         draw_all_bays_summary(self.layout, root)
+
+
+class HB_FACE_FRAME_PT_floating_shelf(bpy.types.Panel):
+    """Floating shelf options. Shown only when the active object is a
+    floating shelf; the bay/construction sub-panels are hidden for it."""
+    bl_label = "Floating Shelf"
+    bl_idname = "HB_FACE_FRAME_PT_floating_shelf"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Home Builder"
+    bl_parent_id = "HB_FACE_FRAME_PT_active_cabinet"
+
+    @classmethod
+    def poll(cls, context):
+        return _is_floating_shelf(context.active_object)
+
+    def draw(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return
+        draw_floating_shelf(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_leg_product(bpy.types.Panel):
@@ -1209,6 +1281,7 @@ class HB_FACE_FRAME_PT_leg_product(bpy.types.Panel):
 classes = (
     HB_FACE_FRAME_PT_active_cabinet,
     HB_FACE_FRAME_PT_leg_product,
+    HB_FACE_FRAME_PT_floating_shelf,
     HB_FACE_FRAME_PT_dimensions,
     HB_FACE_FRAME_PT_construction,
     HB_FACE_FRAME_PT_face_frame_defaults,

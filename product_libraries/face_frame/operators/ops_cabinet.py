@@ -2452,6 +2452,119 @@ class hb_face_frame_OT_leg_product_prompts(bpy.types.Operator):
         ui_face_frame.draw_leg_product(self.layout, root)
 
 
+class hb_face_frame_OT_floating_shelf_prompts(bpy.types.Operator):
+    """Popup properties dialog for a floating shelf (right-click entry)."""
+    bl_idname = "hb_face_frame.floating_shelf_prompts"
+    bl_label = "Floating Shelf Properties"
+    bl_description = "Edit the floating shelf's dimensions and finished ends"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and bool(root.get('IS_FLOATING_SHELF'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No floating shelf selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_floating_shelf(self.layout, root)
+
+
+class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
+    """Duplicate the selected floating shelf vertically by a quantity +
+    spacing. Each copy is an independent, separately-editable shelf that
+    inherits the source's dimensions, type, finish, and groove."""
+    bl_idname = "hb_face_frame.duplicate_floating_shelf"
+    bl_label = "Duplicate Floating Shelf"
+    bl_description = "Add stacked copies of this floating shelf at a set spacing"
+    bl_options = {'UNDO'}
+
+    quantity: bpy.props.IntProperty(
+        name="Quantity to Add", default=1, min=1, max=20)  # type: ignore
+    spacing: bpy.props.FloatProperty(
+        name="Spacing Between Shelves", default=inch(12.0),
+        unit='LENGTH', precision=4)  # type: ignore
+
+    _SHELF_PROPS = (
+        'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
+        'include_groove_top', 'include_groove_bottom',
+        'groove_distance_from_rear', 'groove_width', 'groove_depth',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and bool(root.get('IS_FLOATING_SHELF'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'quantity')
+        layout.prop(self, 'spacing')
+
+    def execute(self, context):
+        from .. import props_hb_face_frame
+        src = types_face_frame.find_cabinet_root(context.active_object)
+        if src is None or not src.get('IS_FLOATING_SHELF'):
+            self.report({'WARNING'}, "Select a floating shelf first")
+            return {'CANCELLED'}
+
+        src_ffc = src.face_frame_cabinet
+        src_shelf = src.floating_shelf
+        step = src_ffc.height + self.spacing   # thickness + clear gap
+
+        # Resolve the source's cabinet style so copies share materials.
+        style = None
+        style_name = src.get('STYLE_NAME')
+        if style_name:
+            sp = props_hb_face_frame.get_style_props(context)
+            style = next((s for s in sp.cabinet_styles if s.name == style_name), None)
+
+        new_objs = []
+        for i in range(1, self.quantity + 1):
+            shelf = types_face_frame.FloatingShelfFaceFrameCabinet()
+            shelf.create("Floating Shelf")
+            n = shelf.obj
+            with types_face_frame.suspend_recalc():
+                n.face_frame_cabinet.width = src_ffc.width
+                n.face_frame_cabinet.depth = src_ffc.depth
+                n.face_frame_cabinet.height = src_ffc.height
+                ns = n.floating_shelf
+                for prop in self._SHELF_PROPS:
+                    setattr(ns, prop, getattr(src_shelf, prop))
+            shelf.recalculate()
+
+            n.parent = src.parent
+            if src.parent is not None:
+                n.matrix_parent_inverse = src.matrix_parent_inverse.copy()
+            n.location = src.location.copy()
+            n.location.z = src.location.z + step * i
+            if style is not None:
+                style.assign_style_to_cabinet(n)
+            new_objs.append(n)
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        if new_objs:
+            new_objs[-1].select_set(True)
+            context.view_layer.objects.active = new_objs[-1]
+        self.report({'INFO'}, f"Added {self.quantity} floating shelf(s)")
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_create_cabinet_group,
@@ -2463,6 +2576,8 @@ classes = (
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,
+    hb_face_frame_OT_floating_shelf_prompts,
+    hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
     hb_face_frame_OT_split_opening,

@@ -304,8 +304,24 @@ class HOME_BUILDER_MT_face_frame_leg_product_commands(bpy.types.Menu):
                         text="Delete Leg", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
+    """Right-click menu for a floating shelf root."""
+    bl_label = "Floating Shelf Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.floating_shelf_prompts",
+                        text="Floating Shelf Properties...", icon='WINDOW')
+        layout.operator("hb_face_frame.duplicate_floating_shelf",
+                        text="Set Quantity & Spacing...", icon='LINENUMBERS_ON')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Shelf", icon='X')
+
+
 classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
+    HOME_BUILDER_MT_face_frame_floating_shelf_commands,
     HOME_BUILDER_MT_face_frame_leg_product_commands,
     HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,

@@ -439,6 +439,19 @@ def auto_leg_finish_type(leg_obj):
     return 'INTERMEDIATE'
 
 
+def auto_floating_shelf_finish(shelf_obj):
+    """(finish_left, finish_right) for a floating shelf from its end
+    exposure. An end is finished (gets a closed panel) when EXPOSED /
+    PARTIAL - open to view - and left open when a cabinet / wall covers
+    it (UNEXPOSED). Uses the same vertical-overlap sibling scan as
+    cabinet side exposure, so only neighbours at the shelf's height
+    count; a free-standing shelf finishes both ends.
+    """
+    left_finished = _side_exposure(shelf_obj, 'left')[0] != 'UNEXPOSED'
+    right_finished = _side_exposure(shelf_obj, 'right')[0] != 'UNEXPOSED'
+    return (left_finished, right_finished)
+
+
 def recalc_with_neighbors(cab_obj):
     """Placement convenience: recalc this cabinet, the immediate L/R
     face-frame neighbors whose facing side just changed coverage, and

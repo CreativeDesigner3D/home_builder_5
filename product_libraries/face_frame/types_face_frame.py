@@ -132,6 +132,15 @@ PART_ROLE_LEG_FINISH_X_RIGHT = 'LEG_FINISH_X_RIGHT'
 PART_ROLE_LEG_BACK = 'LEG_BACK'
 PART_ROLE_LEG_NAILER_LEFT = 'LEG_NAILER_LEFT'
 PART_ROLE_LEG_NAILER_RIGHT = 'LEG_NAILER_RIGHT'
+
+# Floating shelf (wall-mounted hollow slab). Built by a dedicated
+# product class that bypasses the bay/solver pipeline; finished boards.
+FLOATING_SHELF_TAG = 'IS_FLOATING_SHELF'
+PART_ROLE_SHELF_FRONT = 'SHELF_FRONT'
+PART_ROLE_SHELF_TOP = 'SHELF_TOP'
+PART_ROLE_SHELF_BOTTOM = 'SHELF_BOTTOM'
+PART_ROLE_SHELF_PANEL_LEFT = 'SHELF_PANEL_LEFT'
+PART_ROLE_SHELF_PANEL_RIGHT = 'SHELF_PANEL_RIGHT'
 PART_ROLE_BLIND_PANEL_LEFT = 'BLIND_PANEL_LEFT'
 PART_ROLE_BLIND_PANEL_RIGHT = 'BLIND_PANEL_RIGHT'
 
@@ -4769,6 +4778,174 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         NR.hide_render = not ibrn
 
 
+class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
+    """Wall-mounted floating shelf (a hollow finished slab).
+
+    NOT a bay/opening product: a fixed parameterized box built directly,
+    parameterized by the cage width / depth + height (height = the
+    shelf's overall thickness) and the ``floating_shelf`` propgroup.
+    Overrides ``recalculate()`` to build its parts (front board, inset
+    top + bottom, and finish-gated left/right end panels) instead of the
+    carcass / solver machinery. No back - it mounts open against a wall.
+
+    ``follow_cursor_z`` makes placement track the cursor's height on the
+    wall instead of dropping to floor / a fixed upper height. LED routes
+    (top / bottom cutouts) are a later pass.
+    """
+    single_placement = False
+    fill_no_bays = True       # fill the wall gap, but always one piece
+    follow_cursor_z = True    # mount at the cursor's height on the wall
+    default_cabinet_type = 'BASE'
+
+    def __init__(self):
+        super().__init__()
+        scene = getattr(bpy.context, 'scene', None)
+        ff_scene = getattr(scene, 'hb_face_frame', None) if scene else None
+        self.default_width = getattr(ff_scene, 'default_cabinet_width', inch(36.0))
+        self.default_depth = inch(12.0)
+        self.default_height = inch(2.5)   # shelf overall thickness
+
+    def _has_toe_kick(self):
+        return False
+
+    def _has_carcass(self):
+        return False
+
+    def create(self, name="Floating Shelf", bay_qty=1):
+        self.create_cabinet_root(name)
+        self.obj[FLOATING_SHELF_TAG] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_floating_shelf_commands'
+        self.recalculate()
+
+    def _ensure_shelf_part(self, role, name, add_groove=False):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        if add_groove:
+            # Light groove (LED channel) for Heavy Duty shelves; driven
+            # + toggled in recalculate().
+            part.add_part_modifier('CPM_CUTOUT', 'Groove')
+        return part.obj
+
+    def _ensure_shelf_parts(self):
+        spec = (
+            (PART_ROLE_SHELF_FRONT, 'Shelf Front', False),
+            (PART_ROLE_SHELF_TOP, 'Shelf Top', True),
+            (PART_ROLE_SHELF_BOTTOM, 'Shelf Bottom', True),
+            (PART_ROLE_SHELF_PANEL_LEFT, 'Shelf Panel Left', False),
+            (PART_ROLE_SHELF_PANEL_RIGHT, 'Shelf Panel Right', False),
+        )
+        return {role: self._ensure_shelf_part(role, name, g)
+                for role, name, g in spec}
+
+    @staticmethod
+    def _set_groove(panel_obj, active, x0, y0, x1, y1, depth, flip_z):
+        """Drive a shelf panel's 'Groove' CPM_CUTOUT (X/Y/End X/End Y/
+        Route Depth/Flip Z) + visibility. No-op if missing."""
+        mod = panel_obj.modifiers.get('Groove')
+        if mod is None or mod.node_group is None:
+            return
+        ng = mod.node_group
+        for name, val in (('X', x0), ('Y', y0), ('End X', x1),
+                          ('End Y', y1), ('Route Depth', depth)):
+            ni = ng.interface.items_tree.get(name)
+            if ni is not None:
+                mod[ni.identifier] = val
+        fz = ng.interface.items_tree.get('Flip Z')
+        if fz is not None:
+            mod[fz.identifier] = flip_z
+        mod.show_viewport = active
+        mod.show_render = active
+
+    def recalculate(self):
+        cab = self.obj.face_frame_cabinet
+        shelf = self.obj.floating_shelf
+
+        width = cab.width
+        thickness = cab.height   # Dim Z = shelf overall thickness
+        depth = cab.depth
+        self.set_input('Dim X', width)
+        self.set_input('Dim Y', depth)
+        self.set_input('Dim Z', thickness)
+
+        mt = shelf.material_thickness
+        fl = shelf.finish_left
+        fr = shelf.finish_right
+
+        parts = self._ensure_shelf_parts()
+        FRONT = parts[PART_ROLE_SHELF_FRONT]
+        TOP = parts[PART_ROLE_SHELF_TOP]
+        BOTTOM = parts[PART_ROLE_SHELF_BOTTOM]
+        LP = parts[PART_ROLE_SHELF_PANEL_LEFT]
+        RP = parts[PART_ROLE_SHELF_PANEL_RIGHT]
+
+        def place(obj, length, w, th, loc, rot, mirror):
+            gn = GeoNodeCutpart(obj)
+            gn.set_input('Length', length)
+            gn.set_input('Width', w)
+            gn.set_input('Thickness', th)
+            obj.location = loc
+            obj.rotation_euler = rot
+            for k, v in mirror.items():
+                gn.set_input(k, v)
+
+        inset_l = mt if fl else 0.0
+        inset_r = mt if fr else 0.0
+        inner_len = width - inset_l - inset_r
+        inner_depth = depth - mt
+
+        # Front board: full width, stands `thickness` tall at the front.
+        place(FRONT, width, thickness, mt, (0.0, -depth, 0.0),
+              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
+        FRONT['IS_FINISHED'] = True
+
+        # Top + bottom: horizontal panels between the end panels, behind
+        # the front board, spanning the remaining depth.
+        place(TOP, inner_len, inner_depth, mt, (inset_l, -depth + mt, thickness),
+              (0.0, 0.0, 0.0), {'Mirror Z': True})
+        TOP['IS_FINISHED'] = True
+        place(BOTTOM, inner_len, inner_depth, mt, (inset_l, -depth + mt, 0.0),
+              (0.0, 0.0, 0.0), {})
+        BOTTOM['IS_FINISHED'] = True
+
+        # End panels: close each end when finished.
+        place(LP, inner_depth, thickness, mt, (0.0, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
+        LP.hide_viewport = not fl
+        LP.hide_render = not fl
+        LP['IS_FINISHED'] = True
+
+        place(RP, inner_depth, thickness, mt, (width, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True})
+        RP.hide_viewport = not fr
+        RP.hide_render = not fr
+        RP['IS_FINISHED'] = True
+
+        # --- Light groove (Heavy Duty shelves only) ---
+        # A routed LED channel on the top and/or bottom face, set a
+        # distance in from the rear edge. Panel-local Y runs front (0)
+        # -> rear (inner_depth), so measure in from inner_depth.
+        hd = shelf.shelf_type == 'HEAVY_DUTY'
+        g_w = shelf.groove_width
+        g_depth = shelf.groove_depth
+        y_far = inner_depth - shelf.groove_distance_from_rear  # rear edge of groove
+        y_near = y_far - g_w                                   # front edge of groove
+        gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
+        # Flip Z picks the cut face; top cuts its top face, bottom its
+        # bottom. Verify against the render and flip if reversed.
+        self._set_groove(TOP, hd and shelf.include_groove_top,
+                         gx0, y_near, gx1, y_far, g_depth, True)
+        self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
+                         gx0, y_near, gx1, y_far, g_depth, False)
+
+
 CABINET_NAME_DISPATCH = {
     "Base Door": BaseFaceFrameCabinet,
     "Base Door Drw": BaseFaceFrameCabinet,
@@ -4785,6 +4962,7 @@ CABINET_NAME_DISPATCH = {
     "Panel": PanelFaceFrameCabinet,
     "Bookcase": BookcaseFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
+    "Floating Shelves": FloatingShelfFaceFrameCabinet,
 }
 
 
@@ -4928,6 +5106,7 @@ WRAP_CLASS_REGISTRY.update({
     'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
     'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
     'LegProductFaceFrameCabinet': LegProductFaceFrameCabinet,
+    'FloatingShelfFaceFrameCabinet': FloatingShelfFaceFrameCabinet,
 })
 
 

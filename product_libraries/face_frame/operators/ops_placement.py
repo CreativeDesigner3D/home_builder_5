@@ -774,6 +774,10 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     if cab_obj.get('IS_LEG_PRODUCT'):
         return None
 
+    # Floating shelves are standalone wall-mounted slabs - never merge.
+    if cab_obj.get('IS_FLOATING_SHELF'):
+        return None
+
     # Force a depsgraph update so cab_obj.matrix_world reflects the
     # parent + location assignments _finalize just made. Without this,
     # the Z-match check in merge_cabinets sees a stale world Z (often
@@ -820,6 +824,8 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
         # A leg product is a filler / post, never a merge target - a
         # cabinet placed against a leg stays independent.
         if sib.get('IS_LEG_PRODUCT'):
+            continue
+        if sib.get('IS_FLOATING_SHELF'):
             continue
         sib_run = sib.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
         sib_run.z = 0.0
@@ -1119,6 +1125,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _place_on_front: bool = True    # which side of the wall
     _fill_mode: bool = True         # False after the user types a width
     _single_placement: bool = False # True for cabinets that don't fill or tile (e.g., Sink)
+    _fill_no_bays: bool = False     # fill the wall gap but stay one piece (no bay array)
+    _follow_cursor_z: bool = False  # Z tracks the cursor's wall height (floating shelf)
     _gap_snap = None                # None | 'LEFT' | 'CENTER' | 'RIGHT' gap-position snap
     _center_snap_state = None       # None | 'WINDOW' - cursor-over-target snap
     _fill_mode_before_center_snap: bool = False   # tracks transient fill->non-fill flip
@@ -1154,6 +1162,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # subclasses like SinkFaceFrameCabinet.
         cls_inst = cls()
         self._single_placement = bool(getattr(cls_inst, 'single_placement', False))
+        self._fill_no_bays = bool(getattr(cls_inst, 'fill_no_bays', False))
+        self._follow_cursor_z = bool(getattr(cls_inst, 'follow_cursor_z', False))
         # Cage depth/height come straight from the cabinet class so the
         # preview matches subclasses with non-standard dims (e.g. the
         # 12"-deep Bookcase) instead of a cabinet_type approximation.
@@ -1163,6 +1173,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._cabinet_width = cls_inst.default_width
             self._auto_bay_qty = False
             self._fill_mode = False
+            self.bay_qty = 1
+        elif self._fill_no_bays:
+            # Fill the gap like a normal cabinet, but always a single
+            # piece - pin bay_qty=1 and never auto-array (floating shelf).
+            self._cabinet_width = scene_props.default_cabinet_width
+            self._auto_bay_qty = False
+            self._fill_mode = True
             self.bay_qty = 1
         else:
             self._cabinet_width = scene_props.default_cabinet_width
@@ -1249,7 +1266,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return self._finalize(context)
 
         if event.type == 'UP_ARROW' and event.value == 'PRESS':
-            if self._single_placement:
+            if self._single_placement or self._fill_no_bays:
                 return {'RUNNING_MODAL'}
             new_qty = min(self.bay_qty + 1, _BAY_QTY_MAX)
             if new_qty != self.bay_qty:
@@ -1260,7 +1277,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return {'RUNNING_MODAL'}
 
         if event.type == 'DOWN_ARROW' and event.value == 'PRESS':
-            if self._single_placement:
+            if self._single_placement or self._fill_no_bays:
                 return {'RUNNING_MODAL'}
             new_qty = max(self.bay_qty - 1, _BAY_QTY_MIN)
             if new_qty != self.bay_qty:
@@ -1647,6 +1664,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Cursor in wall-local coordinates
         local_hit = wall.matrix_world.inverted() @ self.hit_location
         cursor_x = local_hit.x
+
+        # Follow-cursor-Z products (floating shelf) mount at the cursor's
+        # wall-local height rather than the seeded floor / upper Z. Set
+        # before the gap lookup so vertical-overlap is judged at that Z.
+        if self._follow_cursor_z:
+            cage_obj.location.z = local_hit.z
 
         # Decide which side (with hysteresis)
         self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
@@ -2393,6 +2416,15 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             context.view_layer.update()
             selection_target.leg_product.finish_type = \
                 exposure.auto_leg_finish_type(selection_target)
+
+        # Auto-set a floating shelf's finished ends: an end gets a panel
+        # when it's exposed, none when a cabinet / wall abuts it.
+        if selection_target.get('IS_FLOATING_SHELF'):
+            context.view_layer.update()
+            fl, fr = exposure.auto_floating_shelf_finish(selection_target)
+            sp = selection_target.floating_shelf
+            sp.finish_left = fl
+            sp.finish_right = fr
 
         # Apply the active cabinet style to this fresh placement. Skip
         # when a merge absorbed cab_obj into a neighbor - the survivor

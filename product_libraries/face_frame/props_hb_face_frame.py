@@ -1259,6 +1259,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEG_PANEL_LEFT', 'LEG_PANEL_RIGHT', 'LEG_STILE',
         'LEG_TK_STILE', 'LEG_TK_FILLER',
         'LEG_FINISH_X_LEFT', 'LEG_FINISH_X_RIGHT',
+        # Floating shelf boards - finished material
+        'SHELF_FRONT', 'SHELF_TOP', 'SHELF_BOTTOM',
+        'SHELF_PANEL_LEFT', 'SHELF_PANEL_RIGHT',
         # Blind ends + finished back + flush skins / decorative panels
         'BLIND_PANEL_LEFT', 'BLIND_PANEL_RIGHT',
         'FINISHED_BACK', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP',
@@ -4893,8 +4896,66 @@ class Face_Frame_Leg_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Floating_Shelf_Props(PropertyGroup):
+    """Options for a Floating Shelf (a wall-mounted hollow slab).
+
+    Lives on the shelf's cage object alongside face_frame_cabinet; the
+    shelf's recalculate() reads these to build its parts. Width / height
+    / depth come from face_frame_cabinet (cage Dim X/Z/Y) - note height
+    (Dim Z) is the shelf's overall thickness. finish_left / finish_right
+    add a closed end panel on that end (auto-set on placement from the
+    neighbouring exposure, editable after). LED routes are a later pass.
+    """
+    finish_left: BoolProperty(
+        name="Finish Left", default=True, update=_update_cabinet_dim,
+        description="Close the left end with a finished panel",
+    )  # type: ignore
+    finish_right: BoolProperty(
+        name="Finish Right", default=True, update=_update_cabinet_dim,
+        description="Close the right end with a finished panel",
+    )  # type: ignore
+    material_thickness: FloatProperty(
+        name="Material Thickness", default=units.inch(0.75),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    shelf_type: EnumProperty(
+        name="Shelf Type",
+        items=[
+            ('FLOATING', "Floating Shelves",
+             "Cantilevered floating shelf"),
+            ('NON_FLOATING', "Non-Floating Shelves",
+             "Shelf with visible support"),
+            ('HEAVY_DUTY', "Heavy Duty Floating Shelves",
+             "Heavy duty floating shelf; supports a light groove"),
+        ],
+        default='FLOATING',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Light groove (Heavy Duty only) - a routed LED channel on the top
+    # and/or bottom face, set a distance in from the rear edge.
+    include_groove_top: BoolProperty(
+        name="Groove Top", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    include_groove_bottom: BoolProperty(
+        name="Groove Bottom", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_distance_from_rear: FloatProperty(
+        name="Groove Distance From Rear", default=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_width: FloatProperty(
+        name="Groove Width", default=units.inch(0.5),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_depth: FloatProperty(
+        name="Groove Depth", default=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+
+
 classes = (
     Face_Frame_Leg_Props,
+    Face_Frame_Floating_Shelf_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
@@ -4924,6 +4985,7 @@ def register():
     # by the construction code populate these.
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
     bpy.types.Object.leg_product = PointerProperty(type=Face_Frame_Leg_Props)
+    bpy.types.Object.floating_shelf = PointerProperty(type=Face_Frame_Floating_Shelf_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
     bpy.types.Object.face_frame_split = PointerProperty(type=Face_Frame_Split_Props)
@@ -4946,6 +5008,8 @@ def unregister():
         del bpy.types.Object.face_frame_opening
     if hasattr(bpy.types.Object, 'face_frame_bay'):
         del bpy.types.Object.face_frame_bay
+    if hasattr(bpy.types.Object, 'floating_shelf'):
+        del bpy.types.Object.floating_shelf
     if hasattr(bpy.types.Object, 'leg_product'):
         del bpy.types.Object.leg_product
     if hasattr(bpy.types.Object, 'face_frame_cabinet'):
