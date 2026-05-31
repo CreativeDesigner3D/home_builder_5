@@ -43,6 +43,18 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.create_cabinet_group",
                             text="Create Cabinet Group", icon='ADD')
 
+        # Tip-up wedge calculator - refrigerator cabinets only. The root
+        # carries this menu's MENU_ID, so the right-clicked active object
+        # is the cabinet root; find_cabinet_root is used anyway for safety.
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None and root.get('CLASS_NAME') == 'RefrigeratorCabinet':
+            layout.separator()
+            layout.operator("hb_face_frame.add_refrigerator_wedge",
+                            text="Wedge Calculator...", icon='MOD_BEVEL')
+            if root.face_frame_cabinet.wedge_enabled:
+                layout.operator("hb_face_frame.remove_refrigerator_wedge",
+                                text="Remove Wedge", icon='X')
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')

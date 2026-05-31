@@ -84,6 +84,12 @@ class FaceFrameLayout:
         self.kick_inset_right = (cab.inset_toe_kick_right
                                  if self.has_toe_kick else 0.0)
         self.back_bottom_inset = cab.back_bottom_inset
+        # Tip-up wedge inputs (refrigerator / tall). Computed dims are
+        # derived live in wedge_geometry(); only the inputs persist.
+        self.wedge_enabled = getattr(cab, 'wedge_enabled', False)
+        self.wedge_ceiling_height = getattr(cab, 'wedge_ceiling_height', 0.0)
+        self.wedge_fudge = getattr(cab, 'wedge_fudge', 0.0)
+        self.wedge_max_height = getattr(cab, 'wedge_max_height', 0.0)
         self.finish_kick_thickness = cab.finish_toe_kick_thickness
         self.include_finish_kick = cab.include_finish_toe_kick
 
@@ -849,6 +855,63 @@ def loose_kick_rear_rail(layout):
         'width':  layout.tkh,
         'thickness': layout.tkt,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tip-up wedge - back-bottom chamfer so a tall cabinet clears the ceiling
+# ---------------------------------------------------------------------------
+# When a tall cabinet is stood upright by pivoting on its front-bottom edge,
+# the back-bottom corner sweeps an arc of radius = the cabinet's diagonal
+# (sqrt(depth^2 + height^2)). If that diagonal exceeds the available ceiling
+# (minus a fudge allowance) the corner won't clear, so we chamfer it. The
+# wedge height is capped by the base molding that later covers it.
+def compute_wedge(leg_depth, leg_height, ceiling, fudge, max_wedge_height):
+    """Wedge dimensions, ported from CWP's calculator. All lengths in meters.
+
+    Returns (wedge_length, wedge_height, clamped, needed). ``needed`` is False
+    when the diagonal already fits the effective ceiling (both dims 0).
+    ``clamped`` is True when the raw height was capped by max_wedge_height.
+    """
+    effective_ceiling = ceiling - fudge
+    diagonal = math.sqrt(leg_depth * leg_depth + leg_height * leg_height)
+
+    if diagonal <= effective_ceiling:
+        return 0.0, 0.0, False, False
+
+    wedge_height = diagonal - effective_ceiling
+    clamped = False
+    if max_wedge_height > 0.0 and wedge_height > max_wedge_height:
+        wedge_height = max_wedge_height
+        clamped = True
+
+    if effective_ceiling > leg_height:
+        inner = effective_ceiling * effective_ceiling - leg_height * leg_height
+        wedge_length = leg_depth - math.sqrt(inner)
+    else:
+        wedge_length = leg_depth
+
+    if wedge_length < 0.0:
+        wedge_length = 0.0
+
+    return wedge_length, wedge_height, clamped, True
+
+
+def wedge_geometry(layout):
+    """Resolve the cabinet's live wedge from its persisted inputs.
+
+    Reads leg depth / height straight off the layout so the wedge tracks
+    cabinet resizes. Returns (length, height, clamped) when a wedge is
+    enabled AND needed, else None (recalc then cleans up any cutter)."""
+    if not layout.wedge_enabled:
+        return None
+    length, height, clamped, needed = compute_wedge(
+        layout.dim_y, layout.dim_z,
+        layout.wedge_ceiling_height, layout.wedge_fudge,
+        layout.wedge_max_height,
+    )
+    if not needed:
+        return None
+    return length, height, clamped
 
 
 # ---------------------------------------------------------------------------

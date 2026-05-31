@@ -213,6 +213,31 @@ def draw_construction(layout, cab_props):
     draw_finished_ends(box, cab_props)
 
 
+def draw_wedge(layout, root):
+    """Tip-up wedge calculator + live inputs. Refrigerator cabinets only.
+
+    When enabled the three calc inputs are shown as live props (their
+    update callback re-runs recalc, so the chamfer tracks edits); the
+    calculator dialog is still available for the guided preview."""
+    if root.get('CLASS_NAME') != 'RefrigeratorCabinet':
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.label(text="Tip-Up Wedge", icon='MOD_BEVEL')
+    if cab.wedge_enabled:
+        col = box.column(align=True)
+        col.prop(cab, 'wedge_ceiling_height', text="Ceiling")
+        col.prop(cab, 'wedge_fudge', text="Fudge")
+        col.prop(cab, 'wedge_max_height', text="Max Height")
+        row = box.row(align=True)
+        row.operator("hb_face_frame.add_refrigerator_wedge",
+                     text="Calculator", icon='MOD_BEVEL')
+        row.operator("hb_face_frame.remove_refrigerator_wedge",
+                     text="Remove", icon='X')
+    else:
+        box.operator("hb_face_frame.add_refrigerator_wedge", icon='MOD_BEVEL')
+
+
 def draw_face_frame_defaults(layout, cab_props):
     """Default stile and rail widths + per-side overlay defaults.
     Per-opening overrides live on each opening object."""
@@ -1008,6 +1033,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
         if root is None:
             return
         draw_construction(self.layout, root.face_frame_cabinet)
+        draw_wedge(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_face_frame_defaults(bpy.types.Panel):

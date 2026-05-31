@@ -15,6 +15,7 @@ Carcass conventions match frameless (same CabinetPart GeoNode setup):
 - Mirror Z=True means it extrudes in -Z from its origin
 """
 import bpy
+import bmesh
 import math
 from contextlib import contextmanager
 
@@ -327,6 +328,17 @@ ANGLED_CUT_PART_ROLES = frozenset({
     PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
     PART_ROLE_TRAY_LOCKED_SHELF,
     PART_ROLE_INTERIOR_FIXED_SHELF,
+})
+
+# Tip-up wedge cutter (back-bottom chamfer). Same lazy-cutter + boolean
+# pattern as the angled cutter, but the cutter is a triangular-prism MESH
+# and it's driven by the wedge_* cabinet props (see solver.wedge_geometry).
+PART_ROLE_WEDGE_CUTTER = 'WEDGE_CUTTER'
+WEDGE_CUT_MOD_NAME = 'Tip-Up Wedge'
+WEDGE_CUT_PART_ROLES = frozenset({
+    PART_ROLE_LEFT_SIDE, PART_ROLE_RIGHT_SIDE,
+    PART_ROLE_BACK, PART_ROLE_FINISHED_BACK, PART_ROLE_BOTTOM,
+    PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
 })
 
 # Baseline rotation_euler.z for parts that live in the face frame plane.
@@ -1919,6 +1931,18 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             self._cleanup_angled_cutter_and_cuts()
 
+        # Tip-up wedge: chamfer the back-bottom corner when enabled and the
+        # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
+        # it survives part reconciliation, exactly like the angled cutter.
+        wedge = solver.wedge_geometry(layout) if self._has_carcass() else None
+        if wedge is not None:
+            length, height, _clamped = wedge
+            cutter_obj = self._ensure_wedge_cutter()
+            self._position_wedge_cutter(cutter_obj, length, height)
+            self._apply_wedge_cuts(cutter_obj)
+        else:
+            self._cleanup_wedge_cutter_and_cuts()
+
     # =====================================================================
     # Angled cabinet cutter (single-bay, unlock_left/right_depth on)
     # =====================================================================
@@ -2018,6 +2042,102 @@ class FaceFrameCabinet(GeoNodeCage):
         for child in list(self.obj.children):
             if child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER:
                 bpy.data.objects.remove(child, do_unlink=True)
+
+    # =====================================================================
+    # Tip-up wedge cutter (back-bottom chamfer; driven by wedge_* props)
+    # =====================================================================
+    def _ensure_wedge_cutter(self):
+        """Find or lazily create the wedge cutter MESH object. Hidden in
+        the viewport; a boolean still reads its mesh regardless."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Wedge Cutter')
+        cutter = bpy.data.objects.new('Wedge Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_WEDGE_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_wedge_cutter(self, cutter_obj, length, height):
+        """Rebuild the cutter's triangular-prism mesh from the live wedge
+        dims. Cross-section in the Y-Z plane (cabinet back at y=0, front
+        at y=-dim_y, floor z=0):
+          P1 = (-length, 0)       forward point where the cut meets the bottom
+          P2 = (0, height)        upper point where the cut meets the back
+          P3 = (+margin, -margin) back-bottom corner pushed past the faces
+        Extruded along X from -margin to dim_x + margin so it spans both
+        side panels. Differencing the prism chamfers the back-bottom corner.
+        """
+        margin = inch(0.5)
+        dim_x = self.obj.face_frame_cabinet.width
+        p1 = (-length, 0.0)
+        p2 = (0.0, height)
+        p3 = (margin, -margin)
+        x_min, x_max = -margin, dim_x + margin
+        bm = bmesh.new()
+        v1L = bm.verts.new((x_min, p1[0], p1[1]))
+        v2L = bm.verts.new((x_min, p2[0], p2[1]))
+        v3L = bm.verts.new((x_min, p3[0], p3[1]))
+        v1R = bm.verts.new((x_max, p1[0], p1[1]))
+        v2R = bm.verts.new((x_max, p2[0], p2[1]))
+        v3R = bm.verts.new((x_max, p3[0], p3[1]))
+        bm.verts.ensure_lookup_table()
+        bm.faces.new((v1L, v2L, v3L))
+        bm.faces.new((v1R, v3R, v2R))
+        bm.faces.new((v1L, v1R, v2R, v2L))
+        bm.faces.new((v2L, v2R, v3R, v3L))
+        bm.faces.new((v3L, v3R, v1R, v1L))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+
+    def _iter_wedge_cut_targets(self):
+        """Root cage + carcass parts whose back-bottom corner the wedge
+        chamfers. Mirrors _iter_angled_cut_targets."""
+        yield self.obj
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            role = obj.get('hb_part_role')
+            if role == PART_ROLE_WEDGE_CUTTER:
+                continue
+            if role in WEDGE_CUT_PART_ROLES:
+                yield obj
+            stack.extend(obj.children)
+
+    def _apply_wedge_cuts(self, cutter_obj):
+        """Ensure every target carries a boolean DIFFERENCE modifier named
+        WEDGE_CUT_MOD_NAME pointing at the cutter. Idempotent; safe every
+        recalc."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(WEDGE_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=WEDGE_CUT_MOD_NAME, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+
+    def _cleanup_wedge_cutter_and_cuts(self):
+        """Reverse of _apply_wedge_cuts + _ensure_wedge_cutter. No-op when
+        there's nothing to undo."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(WEDGE_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)

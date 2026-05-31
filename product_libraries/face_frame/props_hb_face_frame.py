@@ -2923,6 +2923,30 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Back Bottom Inset", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+
+    # Tip-up wedge (refrigerator / tall cabinets). When enabled, recalc
+    # chamfers the back-bottom corner so the cabinet's tip-up diagonal
+    # clears the ceiling. Inputs persist on the cabinet so the wedge
+    # recomputes live whenever depth / height / ceiling change; the
+    # computed length + height are derived in the solver, not stored.
+    wedge_enabled: BoolProperty(
+        name="Tip-Up Wedge", default=False,
+        description="Chamfer the back-bottom corner so a tall cabinet clears "
+                    "the ceiling when tipped upright into place",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_ceiling_height: FloatProperty(
+        name="Wedge Ceiling Height", default=units.inch(96.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_fudge: FloatProperty(
+        name="Wedge Fudge Allowance", default=units.inch(0.5),
+        unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_max_height: FloatProperty(
+        name="Wedge Max Height", default=units.inch(3.0),
+        unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
+    )  # type: ignore
     inset_toe_kick_left: FloatProperty(
         name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
