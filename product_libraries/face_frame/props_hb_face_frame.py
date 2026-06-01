@@ -2956,6 +2956,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # ---- Angled back extension (trapezoidal back) ----
+    # Per-cabinet, per-end: extend the BACK corner outward in +X (left or
+    # right) by the given amount, splaying that side panel so the back is
+    # wider than the front while depth and the front face frame stay
+    # square. Used to angle a cabinet's back into an angled wall corner so
+    # it provides access into the corner instead of leaving a void. Zero
+    # = square (no extension); either / both ends may be extended.
+    extend_back_left: FloatProperty(
+        name="Extend Back Left X", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Move the back-left corner outward (in -X at the back) "
+                    "by this amount, angling the left side",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    extend_back_right: FloatProperty(
+        name="Extend Back Right X", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Move the back-right corner outward (in +X at the back) "
+                    "by this amount, angling the right side",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     inset_toe_kick_left: FloatProperty(
         name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,

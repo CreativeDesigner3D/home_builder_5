@@ -366,6 +366,20 @@ WEDGE_CUT_PART_ROLES = frozenset({
     PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
 })
 
+# Angled back-extension trim cutter. The full-depth TOP / BOTTOM (and
+# shelves) can't be a trapezoid natively (they are rectangular cutparts),
+# so they are first extended rectangularly to reach the extended back
+# corner, then a boolean DIFFERENCE trims the front overhang along the
+# angled side line - leaving the trapezoid. Same lazy mesh-cutter pattern
+# as the tip-up wedge; driven by extend_back_left / extend_back_right.
+PART_ROLE_BACK_EXT_CUTTER = 'BACK_EXT_CUTTER'
+BACK_EXT_CUT_MOD_NAME = 'Back Extension Trim'
+BACK_EXT_CUT_PART_ROLES = frozenset({
+    PART_ROLE_TOP, PART_ROLE_BOTTOM,
+    PART_ROLE_BAY_SHELF,
+    PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+})
+
 # Baseline rotation_euler.z for parts that live in the face frame plane.
 # Recalc adds face_frame_angle on top so they rotate with the angled
 # FF plane in angled mode; with theta = 0 the values match the build-
@@ -1956,6 +1970,14 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             self._cleanup_angled_cutter_and_cuts()
 
+        # Angled back extension: splay one/both side panels outward at the
+        # back and widen the carcass panels, so the back is wider than the
+        # square front (access into an angled wall corner). Runs after the
+        # part loop so it reshapes the already-positioned sides / back /
+        # top / bottom in place; a no-op when both extends are 0.
+        if self._has_carcass():
+            self._apply_back_extension(layout)
+
         # Tip-up wedge: chamfer the back-bottom corner when enabled and the
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
@@ -2078,8 +2100,292 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
 
     # =====================================================================
+    # Angled back extension (trapezoidal back; extend_back_left / _right)
+    # =====================================================================
+    def _part_input(self, child, name):
+        for m in child.modifiers:
+            if m.type == 'NODES' and m.node_group:
+                for it in m.node_group.interface.items_tree:
+                    if getattr(it, 'in_out', '') == 'INPUT' and it.name == name:
+                        try:
+                            return m[it.identifier]
+                        except Exception:
+                            return None
+        return None
+
+    def _set_part_input(self, child, name, value):
+        for m in child.modifiers:
+            if m.type == 'NODES' and m.node_group:
+                for it in m.node_group.interface.items_tree:
+                    if getattr(it, 'in_out', '') == 'INPUT' and it.name == name:
+                        m[it.identifier] = value
+                        return
+
+    def _angle_side_panel(self, child, side, extend):
+        """Splay one carcass side panel outward at the back by `extend`
+        (meters), pivoting about its FRONT-OUTER corner so the front edge
+        stays put. Analytic transform (no bound-box sampling):
+
+        The side part's origin is its BACK-OUTER corner; its outer edge
+        runs along part-local -Y by Width (= depth). For a RIGHT side the
+        outer x is dim_x; the back-outer corner moves dim_x -> dim_x +
+        extend, the front-outer corner stays at (dim_x, -depth). LEFT
+        mirrors (outer x = 0, back moves to -extend).
+
+        Sets: location = back-corner target, rotation_euler.z = phi so the
+        part-local -Y axis points from the new back toward the fixed
+        front, and Width = the new (hypotenuse) depth.
+        """
+        import math
+        from mathutils import Vector
+        depth = self._part_input(child, 'Width')
+        if depth is None or extend <= 0.0:
+            return None
+        dim_x = self.obj.face_frame_cabinet.width
+        if side == 'RIGHT':
+            outer_x = dim_x
+            back_target = Vector((outer_x + extend, 0.0))
+        else:  # LEFT
+            outer_x = 0.0
+            back_target = Vector((outer_x - extend, 0.0))
+        front_target = Vector((outer_x, -depth))
+        d = front_target - back_target
+        w_new = d.length
+        dn = d.normalized()
+        # part-local front offset is (0, -W): R(phi)*(0,-1) must equal dn.
+        # R(phi)*(0,-1) = (sin phi, -cos phi)  =>  phi = atan2(dn.x, -dn.y)
+        phi = math.atan2(dn.x, -dn.y)
+        child.rotation_euler.z = phi
+        child.location.x = back_target.x
+        child.location.y = back_target.y
+        self._set_part_input(child, 'Width', w_new)
+        # Return the side's OUTER line (front-outer, back-outer) so the
+        # trapezoid trim cutter can align its cut to this exact edge.
+        return (front_target, back_target)
+
+    def _apply_back_extension(self, layout):
+        """Reshape the carcass into a trapezoid wider at the back when
+        extend_back_left / extend_back_right are set. v1 step 1: angle the
+        side panel(s). Back / top / bottom widening follows. No-op (and
+        resets any prior angle) when an end's extend is 0.
+        """
+        cab = self.obj.face_frame_cabinet
+        ext_l = getattr(cab, 'extend_back_left', 0.0) or 0.0
+        ext_r = getattr(cab, 'extend_back_right', 0.0) or 0.0
+        active = ext_l > 0.0 or ext_r > 0.0
+        line_l = None   # (front_outer, back_outer) of the angled left side
+        line_r = None   # ... right side; feed the trim cutter
+        side_thickness = 0.0
+        for child in self.obj.children:
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_LEFT_SIDE:
+                side_thickness = self._part_input(child, 'Thickness') or 0.0
+                if ext_l > 0.0:
+                    line_l = self._angle_side_panel(child, 'LEFT', ext_l)
+                else:
+                    child.rotation_euler.z = 0.0
+            elif role == PART_ROLE_RIGHT_SIDE:
+                side_thickness = self._part_input(child, 'Thickness') or 0.0
+                if ext_r > 0.0:
+                    line_r = self._angle_side_panel(child, 'RIGHT', ext_r)
+                else:
+                    child.rotation_euler.z = 0.0
+            elif role in (PART_ROLE_BACK, PART_ROLE_FINISHED_BACK):
+                # Back panel: X-span is the 'Width' input.
+                self._widen_back_panel(child, ext_l, ext_r, 'Width')
+            elif role == PART_ROLE_REAR_STRETCHER:
+                # Rear stretcher sits along the back; X-span is 'Length'.
+                self._widen_back_panel(child, ext_l, ext_r, 'Length')
+            elif role in (PART_ROLE_TOP, PART_ROLE_BOTTOM):
+                # Full-depth panels: first extend rectangularly to reach
+                # the extended back corner (X-span is 'Length'); the trim
+                # cutter below then removes the front overhang, leaving a
+                # trapezoid that matches the angled side.
+                self._widen_back_panel(child, ext_l, ext_r, 'Length')
+
+        # Trapezoid trim for the full-depth panels (top / bottom / shelves):
+        # boolean-difference the front overhang along the angled side
+        # line(s). Built only when an end is extended; removed otherwise.
+        if active and (line_l is not None or line_r is not None):
+            cutter = self._ensure_back_ext_cutter()
+            self._position_back_ext_cutter(cutter, line_l, line_r, side_thickness)
+            self._apply_back_ext_cuts(cutter)
+        else:
+            self._cleanup_back_ext_cutter_and_cuts()
+
+    def _widen_back_panel(self, child, ext_l, ext_r, span_input):
+        """Stretch a back-row panel's X-span outward to follow the
+        extended back corner(s). The panel stays at the back; only its
+        end(s) move: the right end by +ext_r, the left end by -ext_l.
+        `span_input` is the geometry-node input that controls the panel's
+        X-span ('Width' for the back panel, 'Length' for back stretchers).
+        The panel's origin (its left end) is shifted left by ext_l when
+        the left end grows. Only the panel(s) reaching a cabinet end grow;
+        a segment ending at an interior bay division is left alone.
+
+        The part loop has just set this panel's square span/location, so
+        the deltas are applied on top each recalc (self-correcting).
+        """
+        from mathutils import Vector
+        if ext_l <= 0.0 and ext_r <= 0.0:
+            return
+        width = self._part_input(child, span_input)
+        if width is None:
+            return
+        dim_x = self.obj.face_frame_cabinet.width
+        # Current X-span of this panel in cabinet-local. The back is inset
+        # from each cabinet end by the side panel thickness, so "reaches
+        # the end" is judged with a tolerance of one side thickness plus a
+        # small margin rather than requiring the edge to touch 0 / dim_x.
+        mb = child.matrix_basis
+        xs = [(mb @ Vector(v)).x for v in child.bound_box]
+        x_lo, x_hi = min(xs), max(xs)
+        end_tol = inch(1.0)
+        grow_left = ext_l if x_lo <= end_tol else 0.0
+        grow_right = ext_r if x_hi >= dim_x - end_tol else 0.0
+        if grow_left <= 0.0 and grow_right <= 0.0:
+            return
+        new_width = width + grow_left + grow_right
+        self._set_part_input(child, span_input, new_width)
+        # Growing the right end needs no origin move (Width extends +X from
+        # the fixed left origin). Growing the left end moves the origin -X.
+        if grow_left > 0.0:
+            child.location.x -= grow_left
+
+    # =====================================================================
     # Tip-up wedge cutter (back-bottom chamfer; driven by wedge_* props)
     # =====================================================================
+    def _ensure_back_ext_cutter(self):
+        """Find or lazily create the back-extension trim cutter MESH.
+        Hidden in the viewport; the boolean reads its mesh regardless.
+        Mirrors _ensure_wedge_cutter."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_BACK_EXT_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Back Extension Cutter')
+        cutter = bpy.data.objects.new('Back Extension Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_BACK_EXT_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_back_ext_cutter(self, cutter_obj, line_l, line_r,
+                                  side_thickness):
+        """Rebuild the cutter mesh as one half-space box per angled side,
+        each removing the front overhang outside that side's INNER face -
+        so the rectangularly-extended top / bottom become trapezoids that
+        match the angled sides.
+
+        Each `line` is (front_outer, back_outer) Vector2 in cabinet-local
+        X-Y, as used to place the angled side. The inner face is that line
+        offset toward the cabinet body by `side_thickness`; the box keeps
+        the body side and removes the rest.
+        """
+        import math
+        from mathutils import Vector
+        margin = inch(2.0)
+        dim_x = self.obj.face_frame_cabinet.width
+        dim_y = self.obj.face_frame_cabinet.depth
+        dim_z = self.obj.face_frame_cabinet.height
+        big = (dim_x + dim_y) * 2.0 + inch(12.0)
+        body_center = Vector((dim_x * 0.5, -dim_y * 0.5))
+        z0, z1 = -margin, dim_z + margin
+
+        bm = bmesh.new()
+
+        def add_box(front_outer, back_outer):
+            d = (back_outer - front_outer)
+            if d.length < 1e-6:
+                return
+            dirn = d.normalized()
+            # inward normal candidates; pick the one pointing toward the
+            # body center (that side is kept).
+            n = Vector((-dirn.y, dirn.x))
+            if n.dot(body_center - front_outer) < 0:
+                n = -n
+            # inner face line, offset toward the body by the side thickness
+            f_in = front_outer + n * side_thickness
+            # remove side is away from the body: -n
+            rem = -n
+            # box: u along dirn (both ways), v along rem (0..big = remove),
+            # extruded in z.
+            def P(u, v, z):
+                p = f_in + dirn * u + rem * v
+                return (p.x, p.y, z)
+            us = (-big, big)
+            vs = (-inch(0.05), big)   # tiny bite into the body to avoid a sliver
+            verts = {}
+            for iu, u in enumerate(us):
+                for iv, v in enumerate(vs):
+                    for iz, z in enumerate((z0, z1)):
+                        verts[(iu, iv, iz)] = bm.verts.new(P(u, v, z))
+            bm.verts.ensure_lookup_table()
+
+            def face(a, bb, c, dd):
+                bm.faces.new((verts[a], verts[bb], verts[c], verts[dd]))
+            face((0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1))
+            face((0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0))
+            face((0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0))
+            face((1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1))
+            face((0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0))
+            face((0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
+
+        if line_l is not None:
+            add_box(line_l[0], line_l[1])
+        if line_r is not None:
+            add_box(line_r[0], line_r[1])
+        if bm.faces:
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+        cutter_obj.rotation_euler = (0.0, 0.0, 0.0)
+
+    def _iter_back_ext_cut_targets(self):
+        """Full-depth panels the trapezoid trim applies to. Mirrors
+        _iter_wedge_cut_targets."""
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            role = obj.get('hb_part_role')
+            if role == PART_ROLE_BACK_EXT_CUTTER:
+                continue
+            if role in BACK_EXT_CUT_PART_ROLES:
+                yield obj
+            stack.extend(obj.children)
+
+    def _apply_back_ext_cuts(self, cutter_obj):
+        """Ensure every target carries a boolean DIFFERENCE modifier named
+        BACK_EXT_CUT_MOD_NAME pointing at the cutter. Idempotent."""
+        for part in self._iter_back_ext_cut_targets():
+            mod = part.modifiers.get(BACK_EXT_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(
+                    name=BACK_EXT_CUT_MOD_NAME, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+
+    def _cleanup_back_ext_cutter_and_cuts(self):
+        """Reverse of _apply_back_ext_cuts + _ensure_back_ext_cutter.
+        No-op when there's nothing to undo."""
+        for part in self._iter_back_ext_cut_targets():
+            mod = part.modifiers.get(BACK_EXT_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_BACK_EXT_CUTTER:
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
     def _ensure_wedge_cutter(self):
         """Find or lazily create the wedge cutter MESH object. Hidden in
         the viewport; a boolean still reads its mesh regardless."""

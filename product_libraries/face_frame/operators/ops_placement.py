@@ -4202,6 +4202,9 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         items=[
             ('VOID', "Create Void",
              "Notch both cabinets back so their fronts meet at the corner"),
+            ('FILL', "Angle Back Into Corner",
+             "Angle each cabinet's back into the corner for access, "
+             "instead of leaving a void"),
             ('NONE', "Do Nothing", "Leave the cabinets as placed"),
         ],
         default='VOID',
@@ -4258,6 +4261,12 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
             col.label(text=f"  {placed.name}: {vc * 39.37008:.4f} in")
             col.label(text=f"  {angled.name}: {va * 39.37008:.4f} in")
             col.label(text="Their fronts will meet at the angle bisector.")
+        elif self.action == 'FILL':
+            box = layout.box()
+            col = box.column(align=True)
+            col.label(text="Each cabinet's back will angle into the corner")
+            col.label(text="for access. Fronts and depths stay square.")
+            col.label(text="Fine-tune via Extend Back X on each cabinet.")
         else:
             layout.label(text="No changes will be made to the cabinets.")
 
@@ -4270,6 +4279,35 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         if placed is None or angled is None:
             self.report({'WARNING'}, "Cabinet missing; aborting angled setup")
             return {'CANCELLED'}
+
+        if self.action == 'FILL':
+            # Angle each cabinet's back into the corner (access into the
+            # corner instead of a void). Extend the corner-side back
+            # corner outward in X so its angled side reaches the adjacent
+            # wall; the front + depth stay square. The geometric extend
+            # for a back that just reaches the wall is depth / tan(theta-90)
+            # (theta = interior corner angle). The placed cabinet's corner
+            # end is placed_corner_end; the neighbor's is meeting_side.
+            placed_props = placed.face_frame_cabinet
+            angled_props = angled.face_frame_cabinet
+            theta = math.radians(self.corner_angle_deg)
+            tan_dev = math.tan(theta - math.radians(90.0))
+            if abs(tan_dev) < 1e-6:
+                return {'FINISHED'}
+            ext_placed = max(placed_props.depth / tan_dev, 0.0)
+            ext_angled = max(angled_props.depth / tan_dev, 0.0)
+            with types_face_frame.suspend_recalc():
+                if self.placed_corner_end == 'LEFT':
+                    placed_props.extend_back_left = ext_placed
+                else:
+                    placed_props.extend_back_right = ext_placed
+                if self.meeting_side == 'LEFT':
+                    angled_props.extend_back_left = ext_angled
+                else:
+                    angled_props.extend_back_right = ext_angled
+            types_face_frame.recalculate_face_frame_cabinet(placed)
+            types_face_frame.recalculate_face_frame_cabinet(angled)
+            return {'FINISHED'}
 
         void_current, void_angled = self._compute_voids()
         if void_current <= 0.0 and void_angled <= 0.0:

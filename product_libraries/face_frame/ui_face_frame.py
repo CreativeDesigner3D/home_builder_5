@@ -209,6 +209,12 @@ def draw_construction(layout, cab_props):
     draw_blind_corners(box, cab_props)
 
     box = layout.box()
+    box.label(text="Angled Back Extension", icon='MOD_BEVEL')
+    col = box.column(align=True)
+    col.prop(cab_props, 'extend_back_left', text="Extend Back Left X")
+    col.prop(cab_props, 'extend_back_right', text="Extend Back Right X")
+
+    box = layout.box()
     box.label(text="Finished Ends and Backs")
     draw_finished_ends(box, cab_props)
 
