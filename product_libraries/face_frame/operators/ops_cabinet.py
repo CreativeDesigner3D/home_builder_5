@@ -1765,6 +1765,13 @@ def _build_recipe_into(recipe, parent_obj, child_index,
             # per-cabinet after placement.
             props.unlock_size = True
             props.size = 0.508  # 20"
+        elif size_role == 'BOOKCASE_STORAGE_BOTTOM':
+            # Pins the Bookcase Storage Unit's bottom door zone to a fixed
+            # 30" so the open-shelf zone above flexes with cabinet height.
+            # A constant, not a scene preference; stays editable per-cabinet
+            # after placement.
+            props.unlock_size = True
+            props.size = 0.762  # 30"
 
     if kind == 'leaf':
         config = recipe[1]

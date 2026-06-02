@@ -1248,6 +1248,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE',
         # Fronts
         'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'INSET_PANEL',
+        # Furniture / veneer wood top (dresser products)
+        'FURNITURE_TOP',
         # Visible toe kick parts
         'CORNER_MID_RAIL', 'CORNER_FALSE_FRONT',
         'FINISH_TOE_KICK', 'CORNER_LEFT_FINISH_KICK', 'CORNER_RIGHT_FINISH_KICK',
@@ -2970,6 +2972,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "by this amount, angling the left side",
         update=_update_cabinet_dim,
     )  # type: ignore
+    furniture_top: BoolProperty(
+        name="Furniture Top",
+        default=False,
+        description="Add an overhanging veneer wood top sitting proud on "
+                    "the carcass (dresser / furniture products)",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    furniture_top_thickness: FloatProperty(
+        name="Wood Top Thickness", default=units.inch(1.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Thickness of the furniture wood top",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    furniture_top_overhang: FloatProperty(
+        name="Wood Top Overhang", default=units.inch(1.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang of the wood top past the carcass on the "
+                    "left, right, and front (the back stays flush)",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     extend_back_right: FloatProperty(
         name="Extend Back Right X", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
@@ -4436,9 +4458,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     def draw_bedroom_bookcase_library_ui(self, layout, context):
         self._draw_catalog_grid(layout, [
-            "Bookcase", "Bookcase Upper", "Bookcase Corner",
-            "Bookcase Corner Upper", "Window Seat", "Dresser",
-            "Night Stand",
+            "Bookcase", "Bookcase Storage Unit",
+            "Bookcase Upper", "Bookcase Corner",
+            "Bookcase Corner Upper", "Window Seat",
+            "5 Drawer Dresser", "6 Drawer Dresser",
+            "Night Stand", "3 Drawer Night Stand",
         ], columns=2)
 
     # =====================================================================

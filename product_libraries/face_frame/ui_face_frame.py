@@ -215,6 +215,13 @@ def draw_construction(layout, cab_props):
     col.prop(cab_props, 'extend_back_right', text="Extend Back Right X")
 
     box = layout.box()
+    box.prop(cab_props, 'furniture_top', text="Furniture Wood Top")
+    if cab_props.furniture_top:
+        col = box.column(align=True)
+        col.prop(cab_props, 'furniture_top_thickness', text="Thickness")
+        col.prop(cab_props, 'furniture_top_overhang', text="Overhang")
+
+    box = layout.box()
     box.label(text="Finished Ends and Backs")
     draw_finished_ends(box, cab_props)
 

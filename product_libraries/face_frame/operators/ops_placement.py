@@ -83,6 +83,14 @@ def _find_wall_root(obj):
     return None
 
 
+def _upper_mount_z(cabinet_class, scene_props):
+    """Floor->bottom Z for an upper at placement. Defaults to the scene
+    wall-cabinet location; a class may override via `default_z_location`
+    (e.g. Bookcase Upper sits on base cabinets, so 36")."""
+    z = getattr(cabinet_class, 'default_z_location', None)
+    return z if z is not None else scene_props.default_wall_cabinet_location
+
+
 def _cabinet_type_for_name(cabinet_name):
     """Map a library cabinet name to its cabinet_type code.
 
@@ -1297,7 +1305,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         cage_obj.location.y = cursor_loc.y
         cabinet_type = _cabinet_type_for_name(self.cabinet_name)
         if cabinet_type == 'UPPER':
-            cage_obj.location.z = scene_props.default_wall_cabinet_location
+            cage_obj.location.z = _upper_mount_z(
+                types_face_frame.get_cabinet_class(self.cabinet_name), scene_props)
         else:
             cage_obj.location.z = cursor_loc.z
 
@@ -2206,7 +2215,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             # the snap target's Z so a row stays at one height.
             if cabinet_type == 'UPPER':
                 scene_props = context.scene.hb_face_frame
-                cage_obj.location.z = scene_props.default_wall_cabinet_location
+                cage_obj.location.z = _upper_mount_z(
+                    types_face_frame.get_cabinet_class(self.cabinet_name), scene_props)
             else:
                 cage_obj.location.z = snap_target.location.z
         else:
@@ -3441,7 +3451,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         cage_obj.location.x = cursor_loc.x
         cage_obj.location.y = cursor_loc.y
         if cls.default_cabinet_type == 'UPPER':
-            cage_obj.location.z = scene_props.default_wall_cabinet_location
+            cage_obj.location.z = _upper_mount_z(cls, scene_props)
         else:
             cage_obj.location.z = cursor_loc.z
 
@@ -3652,7 +3662,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
         if self._cabinet_class.default_cabinet_type == 'UPPER':
             scene_props = context.scene.hb_face_frame
-            cage_obj.location.z = scene_props.default_wall_cabinet_location
+            cage_obj.location.z = _upper_mount_z(self._cabinet_class, scene_props)
         else:
             cage_obj.location.z = 0.0
 
@@ -3908,7 +3918,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
         if self._cabinet_class.default_cabinet_type == 'UPPER':
             scene_props = context.scene.hb_face_frame
-            cage_obj.location.z = scene_props.default_wall_cabinet_location
+            cage_obj.location.z = _upper_mount_z(self._cabinet_class, scene_props)
         else:
             cage_obj.location.z = 0.0
 

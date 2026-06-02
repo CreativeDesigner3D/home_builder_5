@@ -372,6 +372,12 @@ WEDGE_CUT_PART_ROLES = frozenset({
 # corner, then a boolean DIFFERENCE trims the front overhang along the
 # angled side line - leaving the trapezoid. Same lazy mesh-cutter pattern
 # as the tip-up wedge; driven by extend_back_left / extend_back_right.
+# Furniture / veneer wood top: an overhanging slab sitting proud on the
+# carcass top, used by dresser products. Managed by _apply_furniture_top
+# (ensure / position / cleanup), gated on the furniture_top cabinet prop;
+# in _FINISH_EXTERIOR_ROLES so the material walk gives it the cabinet's
+# exterior wood finish.
+PART_ROLE_FURNITURE_TOP = 'FURNITURE_TOP'
 PART_ROLE_BACK_EXT_CUTTER = 'BACK_EXT_CUTTER'
 BACK_EXT_CUT_MOD_NAME = 'Back Extension Trim'
 BACK_EXT_CUT_PART_ROLES = frozenset({
@@ -593,6 +599,10 @@ class FaceFrameCabinet(GeoNodeCage):
     default_height = inch(34.5)
     default_depth = inch(24)
     default_cabinet_type = 'BASE'
+    # Optional floor->bottom mount height for uppers at placement. None =
+    # use the scene wall-cabinet location; a subclass may pin a value
+    # (read by ops_placement._upper_mount_z).
+    default_z_location = None
 
     # =====================================================================
     # Construction
@@ -1978,6 +1988,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if self._has_carcass():
             self._apply_back_extension(layout)
 
+        # Furniture / veneer wood top: an overhanging slab sitting proud
+        # on the carcass top (dresser / furniture products). Managed like
+        # the cutters so it tracks width / depth / height; a no-op when
+        # furniture_top is off.
+        self._apply_furniture_top(layout)
+
         # Tip-up wedge: chamfer the back-bottom corner when enabled and the
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
@@ -2162,6 +2178,68 @@ class FaceFrameCabinet(GeoNodeCage):
         # Return the side's OUTER line (front-outer, back-outer) so the
         # trapezoid trim cutter can align its cut to this exact edge.
         return (front_target, back_target)
+
+    # =====================================================================
+    # Furniture / veneer wood top (dresser products)
+    # =====================================================================
+    def _ensure_furniture_top(self):
+        """Find or lazily create the furniture-top CabinetPart - a flat
+        slab parented to the cabinet root, tagged PART_ROLE_FURNITURE_TOP
+        and CABINET_PART so the material walk picks it up. Reused across
+        recalcs; sizing / placement is done by _position_furniture_top."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_FURNITURE_TOP:
+                return child
+        top = CabinetPart()
+        top.create('Wood Top')
+        top.obj.parent = self.obj
+        top.obj['hb_part_role'] = PART_ROLE_FURNITURE_TOP
+        top.obj['CABINET_PART'] = True
+        # Flat slab orientation: Length -> +X, Width -> -Y (Mirror Y),
+        # Thickness -> +Z (Mirror Z False) so it sits proud ON the carcass
+        # top rather than extending down into the case.
+        top.set_input('Mirror Y', True)
+        top.set_input('Mirror Z', False)
+        return top.obj
+
+    def _position_furniture_top(self, top_obj):
+        """Size + place the furniture top from the cabinet width / depth /
+        height and the furniture_top_overhang / _thickness props. The back
+        edge stays flush (against the wall); the left, right, and front
+        edges overhang by furniture_top_overhang."""
+        cab = self.obj.face_frame_cabinet
+        dim_x = cab.width
+        dim_y = cab.depth
+        dim_z = cab.height
+        oh = cab.furniture_top_overhang
+        th = cab.furniture_top_thickness
+        part = GeoNodeCutpart(top_obj)
+        part.set_input('Length', dim_x + oh * 2.0)   # left + right overhang
+        part.set_input('Width', dim_y + oh)           # front overhang; back flush
+        part.set_input('Thickness', th)
+        # Origin at the back-left corner of the case top, shifted -X by the
+        # overhang. Width runs -Y from y=0 (back flush). Thickness runs +Z.
+        top_obj.location = Vector((-oh, 0.0, dim_z))
+        top_obj.rotation_euler = (0.0, 0.0, 0.0)
+
+    def _cleanup_furniture_top(self):
+        """Remove the furniture-top part (furniture_top toggled off, or a
+        non-carcass / non-furniture cabinet)."""
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_FURNITURE_TOP:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    def _apply_furniture_top(self, layout):
+        """Build / position the veneer wood top when furniture_top is on and
+        the cabinet has a carcass; otherwise ensure it is gone. Called once
+        per recalc (after _apply_back_extension) so it tracks width / depth /
+        height changes - the managed-part lifecycle mirrors the cutters."""
+        cab = self.obj.face_frame_cabinet
+        if getattr(cab, 'furniture_top', False) and self._has_carcass():
+            top_obj = self._ensure_furniture_top()
+            self._position_furniture_top(top_obj)
+        else:
+            self._cleanup_furniture_top()
 
     def _apply_back_extension(self, layout):
         """Reshape the carcass into a trapezoid wider at the back when
@@ -4601,6 +4679,84 @@ class FloatingBaseFaceFrameCabinet(BaseFaceFrameCabinet):
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
 
 
+class FurnitureFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Shared base for freestanding furniture products (dressers, night
+    stands): a base cabinet with a flush (wide-bottom-rail) kick instead
+    of a recessed toe kick. The drawer / door layout is applied by the
+    placement operator via default_bay_config; the flush kick is forced
+    here at create time so it holds regardless of the scene toe-kick
+    default. Subclasses set the default height, the bay layout (by name),
+    and whether a veneer wood top is added.
+    """
+
+    def create(self, name="Furniture Cabinet", bay_qty=1):
+        self.create_cabinet_root(name)
+        # Furniture base: the face frame's bottom rail runs to the floor
+        # (no recess), rather than the NOTCH default.
+        self.obj.face_frame_cabinet.toe_kick_type = 'FLUSH'
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
+
+
+class FiveDrawerDresserCabinet(FurnitureFaceFrameCabinet):
+    """48"-tall dresser: split top row (two drawers) over three single
+    drawers - five fronts. Gets a veneer wood top (added in a later pass)."""
+
+    def __init__(self):
+        super().__init__()
+        # Spec height; overrides the inherited base_cabinet_height.
+        self.default_height = inch(48.0)
+
+    def create(self, name="5 Drawer Dresser", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        # Veneer wood top - an overhanging slab on the case. Setting the
+        # prop fires the recalc callback, which builds it via
+        # _apply_furniture_top now that the carcass exists.
+        self.obj.face_frame_cabinet.furniture_top = True
+
+
+class SixDrawerDresserCabinet(FurnitureFaceFrameCabinet):
+    """60"-tall dresser: five equal rows, the top row split into two
+    side-by-side drawers (six fronts). Carries a veneer wood top like the
+    five-drawer."""
+
+    def __init__(self):
+        super().__init__()
+        # Spec height; overrides the inherited base_cabinet_height.
+        self.default_height = inch(60.0)
+
+    def create(self, name="6 Drawer Dresser", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        # Veneer wood top - same overhanging slab as the five-drawer.
+        self.obj.face_frame_cabinet.furniture_top = True
+
+
+class NightStandFaceFrameCabinet(FurnitureFaceFrameCabinet):
+    """24"-tall night stand: double doors, flush kick, veneer wood top.
+    The double-door layout is applied by the placement operator via
+    default_bay_config."""
+
+    def __init__(self):
+        super().__init__()
+        self.default_height = inch(24.0)
+
+    def create(self, name="Night Stand", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj.face_frame_cabinet.furniture_top = True
+
+
+class ThreeDrawerNightStandCabinet(FurnitureFaceFrameCabinet):
+    """24"-tall night stand: a single column of three equal drawers,
+    flush kick, veneer wood top."""
+
+    def __init__(self):
+        super().__init__()
+        self.default_height = inch(24.0)
+
+    def create(self, name="3 Drawer Night Stand", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj.face_frame_cabinet.furniture_top = True
+
+
 class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
     """Standard base cabinet sized for a sink. Default width is pulled
     from sink_cabinet_width; the bay defaults to false-front-over-doors
@@ -4639,6 +4795,48 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.obj.location.z = scene.hb_face_frame.default_wall_cabinet_location
+
+
+class BookcaseUpperFaceFrameCabinet(UpperFaceFrameCabinet):
+    """Open-shelf upper bookcase meant to sit on top of base cabinets.
+    Same upper construction (no toe kick), but each bay has its bottom
+    panel removed (open underneath) and the default mount height is 36"
+    off the floor (default_z_location) instead of the over-counter wall
+    location. The open-with-shelves layout is applied by the placement
+    operator via default_bay_config ('OPEN_WITH_SHELVES')."""
+
+    # Placement reads this for the floor->bottom mount height (see
+    # ops_placement._upper_mount_z); 36" sits it on a base-cabinet run.
+    default_z_location = inch(36.0)
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            props = scene.hb_face_frame
+            # Keep the same top-of-cabinet clearance from the ceiling as a
+            # standard upper (top sits at ceiling - top_clearance), but
+            # start at the lower 36" mount instead of the 54" wall location
+            # -> taller by the difference. upper_cabinet_height already
+            # bakes in (ceiling - top_clearance - wall_location), so adding
+            # back (wall_location - our mount Z) re-tops it at the ceiling
+            # clearance from the lower start.
+            self.default_height = (
+                props.upper_cabinet_height
+                + (props.default_wall_cabinet_location - self.default_z_location))
+
+    def create(self, name="Bookcase Upper", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        # Mount height for the direct-create / thumbnail path (placement
+        # applies the same value via default_z_location).
+        self.obj.location.z = self.default_z_location
+        # Open underneath: drop each bay's bottom panel. Snapshot the bay
+        # refs first - each remove_bottom write triggers a recalc that
+        # reconciles carcass parts; suspend_recalc batches them.
+        bay_objs = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]
+        with suspend_recalc():
+            for bay_obj in bay_objs:
+                bay_obj.face_frame_bay.remove_bottom = True
 
 
 class TallFaceFrameCabinet(FaceFrameCabinet):
@@ -4750,6 +4948,16 @@ class BookcaseFaceFrameCabinet(TallFaceFrameCabinet):
         self.default_depth = inch(12.0)
 
     def create(self, name="Bookcase", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+
+
+class BookcaseStorageUnitFaceFrameCabinet(BookcaseFaceFrameCabinet):
+    """Bookcase with a storage base: open adjustable shelves on top over a
+    double-door cabinet below. Same 12" deep tall body as the plain
+    bookcase; the split layout is applied by the placement operator via
+    default_bay_config ('BOOKCASE_STORAGE')."""
+
+    def create(self, name="Bookcase Storage Unit", bay_qty=1):
         super().create(name, bay_qty=bay_qty)
 
 
@@ -5257,16 +5465,22 @@ CABINET_NAME_DISPATCH = {
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,
     "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
+    "5 Drawer Dresser": FiveDrawerDresserCabinet,
+    "6 Drawer Dresser": SixDrawerDresserCabinet,
+    "Night Stand": NightStandFaceFrameCabinet,
+    "3 Drawer Night Stand": ThreeDrawerNightStandCabinet,
     "Sink": SinkFaceFrameCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
     "Upper Stacked": UpperFaceFrameCabinet,
+    "Bookcase Upper": BookcaseUpperFaceFrameCabinet,
     "Tall": TallFaceFrameCabinet,
     "Tall Stacked": TallFaceFrameCabinet,
     "Refrigerator Cabinet": RefrigeratorCabinet,
     "Built in Tall": BuiltInTallFaceFrameCabinet,
     "Panel": PanelFaceFrameCabinet,
     "Bookcase": BookcaseFaceFrameCabinet,
+    "Bookcase Storage Unit": BookcaseStorageUnitFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
 }

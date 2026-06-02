@@ -49,6 +49,14 @@ RENDERABLE_CATALOG = (
     "Deluxe",
     # Specialty bedroom & bookcase products.
     "Bookcase",
+    "Bookcase Storage Unit",
+    "Bookcase Upper",
+    # Freestanding furniture - flush kick + veneer wood top, built and
+    # populated via the bay preset path like the other base products.
+    "5 Drawer Dresser",
+    "6 Drawer Dresser",
+    "Night Stand",
+    "3 Drawer Night Stand",
 )
 
 

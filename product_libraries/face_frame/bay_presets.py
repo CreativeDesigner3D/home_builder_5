@@ -99,8 +99,21 @@ BASE_PRESETS = {
                                  L('DOUBLE_DOOR')),
     'FOUR_DRAWERS':            H(L('DRAWER', size_role='TOP_DRAWER'),
                                  L('DRAWER'), L('DRAWER'), L('DRAWER')),
+    # Dresser stacks - all rows EQUAL height (no TOP_DRAWER pin), so the
+    # mid rails space evenly. BOTH split the TOP row into two side-by-side
+    # drawers (V node): FIVE_DRAWERS has three single rows below it (five
+    # fronts, four rows); SIX_DRAWERS has four single rows below (six
+    # fronts, five rows).
+    'FIVE_DRAWERS':            H(V(L('DRAWER'), L('DRAWER')),
+                                 L('DRAWER'), L('DRAWER'), L('DRAWER')),
+    'SIX_DRAWERS':             H(V(L('DRAWER'), L('DRAWER')),
+                                 L('DRAWER'), L('DRAWER'), L('DRAWER'),
+                                 L('DRAWER')),
     'THREE_DRAWERS':           H(L('DRAWER', size_role='TOP_DRAWER'),
                                  L('DRAWER'), L('DRAWER')),
+    # Night stand: three EQUAL-height drawers (no TOP_DRAWER pin),
+    # matching the furniture line's even spacing.
+    'THREE_DRAWERS_EQUAL':     H(L('DRAWER'), L('DRAWER'), L('DRAWER')),
     'TWO_DRAWERS':             H(L('DRAWER'), L('DRAWER')),
     'ONE_DRAWER':              L('DRAWER'),
     'FALSE_FRONT':             L('FALSE_FRONT'),
@@ -146,6 +159,11 @@ TALL_PRESETS = {
     'TALL_PULLOUT':               L('PULLOUT'),
     'OPEN_WITH_SHELVES':          L('OPEN_WITH_SHELVES'),
     'OPEN':                       L('OPEN'),
+    # Bookcase Storage Unit: open adjustable shelves on top over a double-
+    # door storage base. The bottom doors pin to tall_cabinet_split_height
+    # (TALL_SPLIT_BOTTOM) so the shelf zone above flexes with cabinet height.
+    'BOOKCASE_STORAGE':           H(L('OPEN_WITH_SHELVES'),
+                                    L('DOUBLE_DOOR', size_role='BOOKCASE_STORAGE_BOTTOM')),
 }
 
 
@@ -345,4 +363,26 @@ def default_bay_config(cabinet_name, bay_width):
         # Bookcase: a 12" deep tall cabinet with a single open bay of
         # adjustable shelves.
         return 'OPEN_WITH_SHELVES'
+    if cabinet_name == 'Bookcase Storage Unit':
+        # Bookcase with a storage base: open shelves on top, double doors
+        # (pinned to the standard lower height) below.
+        return 'BOOKCASE_STORAGE'
+    if cabinet_name == 'Bookcase Upper':
+        # Open-shelf upper bookcase: a single open bay of adjustable shelves
+        # (bottom panel removed per the cabinet class).
+        return 'OPEN_WITH_SHELVES'
+    if cabinet_name == '5 Drawer Dresser':
+        # Dresser: split top row (two drawers) over three single equal
+        # drawers - five fronts.
+        return 'FIVE_DRAWERS'
+    if cabinet_name == '6 Drawer Dresser':
+        # Dresser: five equal rows, the top row split into two
+        # side-by-side drawers (six fronts).
+        return 'SIX_DRAWERS'
+    if cabinet_name == 'Night Stand':
+        # Furniture night stand: double doors by default.
+        return 'DOUBLE_DOOR'
+    if cabinet_name == '3 Drawer Night Stand':
+        # Furniture night stand: a single column of three equal drawers.
+        return 'THREE_DRAWERS_EQUAL'
     return None
