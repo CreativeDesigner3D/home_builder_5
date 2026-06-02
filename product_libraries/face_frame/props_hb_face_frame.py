@@ -3412,6 +3412,19 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
 
 
+# Front-type options for a face-frame opening. Module-level so operators
+# (e.g. the split-opening dialog) can build per-opening enums from the
+# same canonical list the opening PropertyGroup uses.
+FRONT_TYPE_ITEMS = [
+    ('NONE', "None", "No front (open shelving)"),
+    ('DOOR', "Door", "Hinged door"),
+    ('DRAWER_FRONT', "Drawer Front", "Drawer front"),
+    ('PULLOUT', "Pullout", "Door front on a pullout slide; supports pullout accessories"),
+    ('FALSE_FRONT', "False Front", "Decorative drawer-style panel; fixed (does not open)"),
+    ('INSET_PANEL', "Inset Panel", "1/4\" panel filling the face frame opening; no overlay, no swing"),
+]
+
+
 class Face_Frame_Opening_Props(PropertyGroup):
     """Per-opening state for face frame cabinets. Attached to each
     opening's cage object as bpy.types.Object.face_frame_opening.
@@ -3446,14 +3459,6 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
 
-    FRONT_TYPE_ITEMS = [
-        ('NONE', "None", "No front (open shelving)"),
-        ('DOOR', "Door", "Hinged door"),
-        ('DRAWER_FRONT', "Drawer Front", "Drawer front"),
-        ('PULLOUT', "Pullout", "Door front on a pullout slide; supports pullout accessories"),
-        ('FALSE_FRONT', "False Front", "Decorative drawer-style panel; fixed (does not open)"),
-        ('INSET_PANEL', "Inset Panel", "1/4\" panel filling the face frame opening; no overlay, no swing"),
-    ]
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
         update=_update_front_type,

@@ -618,6 +618,41 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         default=(False,) * MAX_SPLIT_OPENINGS,
         update=split_preview.tag_redraw,
     )  # type: ignore
+    # Per-opening contents (front type). No EnumVectorProperty exists, so
+    # one enum per slot; slot i maps to opening i, the original takes the
+    # last slot (count - 1), mirroring `sizes` / `unlocks`.
+    front_type_0: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_1: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_2: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_3: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_4: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_5: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_6: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
+    front_type_7: bpy.props.EnumProperty(
+        name="Contents", items=props_hb_face_frame.FRONT_TYPE_ITEMS,
+        default='NONE',
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -647,8 +682,18 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
         self.sizes = zeros
         self.unlocks = falses
         opening = context.view_layer.objects.active
+        # Default per-opening contents to the existing behavior: new
+        # openings get the root's default front, the original (last slot)
+        # keeps its current front_type -- so an untouched dialog produces
+        # an identical result to before this field existed.
+        default_front = types_face_frame.default_front_type_for_root(root)
+        orig_front = (opening.face_frame_opening.front_type
+                      if opening is not None else 'NONE')
+        for i in range(MAX_SPLIT_OPENINGS):
+            setattr(self, f'front_type_{i}', default_front)
+        setattr(self, f'front_type_{self.count - 1}', orig_front)
         split_preview.add_preview(self, opening.name if opening else "")
-        return context.window_manager.invoke_props_dialog(self, width=360)
+        return context.window_manager.invoke_props_dialog(self, width=420)
 
     def cancel(self, context):
         # Drop the preview overlay when the dialog is dismissed
@@ -669,7 +714,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             first_label, last_label = 'Left', 'Right'
 
         layout.separator()
-        layout.label(text="Opening Sizes")
+        layout.label(text="Opening Sizes & Contents")
         for i in range(self.count):
             if i == 0:
                 label = first_label
@@ -683,6 +728,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             field.prop(self, 'sizes', index=i, text=label)
             lock_icon = 'UNLOCKED' if self.unlocks[i] else 'LOCKED'
             row.prop(self, 'unlocks', index=i, text="", icon=lock_icon)
+            row.prop(self, f'front_type_{i}', text="")
 
     def execute(self, context):
         split_preview.remove_preview()
@@ -738,7 +784,6 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             # children; the original takes the last slot (index count - 1).
             new_count = max(0, self.count - 1)
             new_openings = []
-            default_front = types_face_frame.default_front_type_for_root(root)
             for i in range(new_count):
                 new_op = types_face_frame.FaceFrameOpening()
                 new_op.create('Opening')
@@ -747,10 +792,10 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
                 new_op.obj.face_frame_opening.opening_index = next_idx + i
                 new_op.obj.face_frame_opening.size = self.sizes[i]
                 new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
-                # New openings inherit the root's default front type. Splits
-                # don't copy from the original opening - the original keeps
-                # its own front_type, the new siblings get the default.
-                new_op.obj.face_frame_opening.front_type = default_front
+                # Per-opening contents chosen in the dialog (defaults match
+                # the previous behavior -- new openings get the root default).
+                new_op.obj.face_frame_opening.front_type = getattr(
+                    self, f'front_type_{i}')
                 new_openings.append(new_op.obj)
 
             # Re-parent original under split as the last child.
@@ -758,6 +803,11 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             original['hb_split_child_index'] = new_count
             op_props.size = self.sizes[new_count]
             op_props.unlock_size = self.unlocks[new_count]
+            # Original opening's chosen contents (last slot). Assign only on
+            # change so an untouched dialog leaves its front_type exactly as-is.
+            orig_front = getattr(self, f'front_type_{new_count}')
+            if op_props.front_type != orig_front:
+                op_props.front_type = orig_front
 
             types_face_frame.recalculate_face_frame_cabinet(root)
 
