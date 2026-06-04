@@ -208,6 +208,18 @@ def get_door_style_enum_items(self, context):
     return items
 
 
+def get_drawer_front_style_enum_items(self, context):
+    """Dynamic items for the cabinet style's drawer-front picker. Reads names
+    from the drawer_front_styles pool (independent from door_styles)."""
+    items = []
+    ff = get_style_props(context)
+    for i, ds in enumerate(ff.drawer_front_styles):
+        items.append((ds.name, ds.name, ds.name, i))
+    if not items:
+        items.append(('NONE', "(none defined)", "No drawer front styles defined", 0))
+    return items
+
+
 # ---------------------------------------------------------------------------
 # Catalog options + compatibility cascades (baked in style_options.py from the
 # reference partner spreadsheets). These are SPEC selections: they record the
@@ -328,8 +340,9 @@ def update_finish_overlay(self, context):
 
 
 # --- door / drawer front catalog caches (series -> shape -> panel) ---
-# front_kind selects which catalog (door vs drawer) the cascade reads, so one
-# pool entry can model either a door or a drawer front.
+# _front_is_drawer (which pool the style lives in) selects which catalog the
+# cascade reads -- the door_styles pool models doors, drawer_front_styles
+# models drawer fronts.
 _DOOR_SERIES_ITEMS = _enum_items(style_options.DOOR_SERIES)
 _DRAWER_SERIES_ITEMS = _enum_items(style_options.DRAWER_SERIES)
 _DOOR_SHAPE_ITEMS = {s: _enum_items(style_options.door_shapes(s))
@@ -345,7 +358,14 @@ _DRAWER_PANEL_ITEMS = {(s, sh): _enum_items(style_options.door_panels(s, sh, dra
 
 
 def _front_is_drawer(self):
-    return getattr(self, "front_kind", "DOOR") == "DRAWER"
+    """A style reads the DRAWER catalog when it lives in the
+    drawer_front_styles pool (vs door_styles). Derived from the RNA path so
+    there is no separate Kind property. Defaults to door (False) if the path
+    can't be read (e.g. transient / unlinked)."""
+    try:
+        return "drawer_front_styles" in self.path_from_id()
+    except Exception:
+        return False
 
 
 def get_front_series_items(self, context):
@@ -360,16 +380,6 @@ def get_front_shape_items(self, context):
 def get_front_panel_items(self, context):
     table = _DRAWER_PANEL_ITEMS if _front_is_drawer(self) else _DOOR_PANEL_ITEMS
     return _items_or_none(table.get((self.front_series, self.front_shape), []))
-
-
-def update_front_kind(self, context):
-    """Door<->drawer switch: reset series (cascades to shape + panel), then
-    re-derive frame widths (drawer rails differ from door rails)."""
-    items = _DRAWER_SERIES_ITEMS if _front_is_drawer(self) else _DOOR_SERIES_ITEMS
-    if items:
-        _set_enum_safe(self, "front_series", items[0][0])
-    _apply_series_frame_to_door_style(self)
-    _propagate_door_style(self, context)
 
 
 def update_front_series(self, context):
@@ -596,13 +606,24 @@ def ensure_default_styles(context):
         ds = ff.door_styles.add()
         ds.name = "Default"
         ff.active_door_style_index = 0
+    if len(ff.drawer_front_styles) == 0:
+        ds = ff.drawer_front_styles.add()
+        ds.name = "Default Drawer Front"
+        ff.active_drawer_front_style_index = 0
 
 
 def update_door_style_name(self, context):
-    """Keep door style names unique within the shared collection."""
+    """Keep style names unique within the style's OWN pool (door_styles or
+    drawer_front_styles -- independent lists, so a name may repeat across
+    pools). Pool is read from the RNA path."""
     main = get_style_props(context)
+    try:
+        in_drawer = "drawer_front_styles" in self.path_from_id()
+    except Exception:
+        in_drawer = False
+    pool = main.drawer_front_styles if in_drawer else main.door_styles
     base_name = self.name if self.name else "Door Style"
-    existing = [s.name for s in main.door_styles if s != self]
+    existing = [s.name for s in pool if s != self]
     if base_name not in existing:
         return
     i = 1
@@ -968,8 +989,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
     drawer_front_style: EnumProperty(
         name="Drawer Front Style",
-        description="Door style applied to drawer fronts on cabinets carrying this style",
-        items=get_door_style_enum_items,
+        description="Drawer front style applied to drawer fronts on cabinets carrying this style",
+        items=get_drawer_front_style_enum_items,
         update=_propagate_cabinet_style,
     )  # type: ignore
 
@@ -989,13 +1010,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     )  # type: ignore
     ss_drawer_grain: StringProperty(
         name="Drawer Grain",
-        description="Drawer front grain direction for the style section page",
-        default="Vertical",
+        description="Override the drawer-front grain on the style section page; "
+                    "blank uses the drawer front style's grain direction",
+        default="",
     )  # type: ignore
     ss_drawer_top_opening_height: StringProperty(
         name="Top Opening Height",
-        description="Top drawer opening height for the style section page",
-        default="5\"",
+        description="Override the top drawer opening height on the style section "
+                    "page; blank uses hb_face_frame.top_drawer_opening_height",
+        default="",
     )  # type: ignore
     ss_drawer_slides: StringProperty(
         name="Drawer Slides",
@@ -1434,14 +1457,22 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
     def _door_style_grain(self, front_obj):
         """Grain direction ('VERTICAL' / 'HORIZONTAL', default VERTICAL) of the
-        door style assigned to front_obj, resolved by DOOR_STYLE_NAME in the
-        shared project-global pool (same lookup as _apply_door_styles_to_fronts).
+        style assigned to front_obj, resolved by DOOR_STYLE_NAME. A DOOR-role
+        front resolves in the door_styles pool; a drawer front in the separate
+        drawer_front_styles pool. The two are independent lists, so a name may
+        appear in both -- the front's role picks the right pool.
         """
         ds_name = front_obj.get('DOOR_STYLE_NAME')
-        if ds_name:
-            for ds in get_style_props().door_styles:
-                if ds.name == ds_name:
-                    return ds.grain_direction
+        if not ds_name:
+            return 'VERTICAL'
+        ff = get_style_props()
+        role = front_obj.get('hb_part_role')
+        pool = (ff.drawer_front_styles
+                if role in ('DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT')
+                else ff.door_styles)
+        for ds in pool:
+            if ds.name == ds_name:
+                return ds.grain_direction
         return 'VERTICAL'
 
     def _set_door_modifier_materials(self, front_obj, finish_mat, finish_mat_rotated):
@@ -1734,16 +1765,18 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
         ff = get_style_props()
 
-        def resolve(name):
+        def resolve(name, pool):
             if not name or name == 'NONE':
                 return None
-            for ds in ff.door_styles:
+            for ds in pool:
                 if ds.name == name:
                     return ds
             return None
 
-        door_ds = resolve(self.door_style)
-        drawer_ds = resolve(self.drawer_front_style)
+        # door_style resolves in door_styles, drawer_front_style in the
+        # separate drawer_front_styles pool (independent lists).
+        door_ds = resolve(self.door_style, ff.door_styles)
+        drawer_ds = resolve(self.drawer_front_style, ff.drawer_front_styles)
         if door_ds is None and drawer_ds is None:
             return
 
@@ -1852,6 +1885,20 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         col.prop(self, "door_style", text="Door")
         col.prop(self, "drawer_front_style", text="Drawer Front")
 
+        # Style-section descriptor fields (free text; print on the Style
+        # Section page, no geometric effect). Corner treatment + fin opening
+        # edge are cabinet-level; box construction is the drawer box. Same
+        # props the Style Sections panel edits, so setting them here fills
+        # the section automatically. (Drawer grain comes from the door
+        # style; top drawer opening height from the project Face Frame
+        # settings -- both shown on the page without a field here.)
+        col = box.column(align=True)
+        col.label(text="Style Section Details:")
+        col.prop(self, "ss_corner_treatment", text="Corner Treatment")
+        col.prop(self, "ss_fin_opening_edge", text="Fin Opening Edge")
+        col.prop(self, "ss_drawer_slides", text="Drawer Slides")
+        col.prop(self, "ss_drawer_box_construction", text="Box Construction")
+
         # Face frame sizes grid - 7 row types x 3 cabinet types. Rails
         # carry per-cell unlock toggles; stiles are always overlay-driven
         # and render as read-only inch labels. Collapsed by default
@@ -1904,16 +1951,9 @@ class Face_Frame_Door_Style(PropertyGroup):
     )  # type: ignore
 
     # ---- Catalog front spec (series -> shape -> panel; see style_options) ----
-    # front_kind picks which catalog (door vs drawer) the cascade reads. Spec-
-    # only for now -- the construction fields below still drive geometry.
-    front_kind: EnumProperty(
-        name="Front Kind",
-        description="Whether this style is a door front or a drawer front",
-        items=[('DOOR', "Door", "Door front catalog"),
-               ('DRAWER', "Drawer Front", "Drawer front catalog")],
-        default='DOOR',
-        update=update_front_kind,
-    )  # type: ignore
+    # Whether this style reads the DOOR or DRAWER catalog is implied by which
+    # pool it lives in (door_styles vs drawer_front_styles); see
+    # _front_is_drawer (path-based). No stored "kind" property.
     front_series: EnumProperty(
         name="Series",
         description="Catalog series (gates the available shapes)",
@@ -2232,8 +2272,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         # written from it and consumed by the geometry + applied-panel-sizing
         # engines, so they're no longer shown here.
         col = box.column(align=True)
-        col.label(text="Door Catalog:")
-        col.prop(self, "front_kind", text="Kind")
+        col.label(text="Catalog:")
         col.prop(self, "front_series", text="Series")
         col.prop(self, "front_shape", text="Shape")
         col.prop(self, "front_panel", text="Panel")
@@ -2259,15 +2298,23 @@ class Face_Frame_Door_Style(PropertyGroup):
             rrow.prop(self, "unlock_rail_width", text="",
                       icon='UNLOCKED' if self.unlock_rail_width else 'LOCKED')
 
-        # Assign hits the current selection (anything not a face frame
-        # front is silently skipped); Update walks every front already
-        # tagged with this style name.
+        # Assign by Painting starts a modal brush: click fronts in the
+        # viewport to apply THIS style. Door styles paint door fronts,
+        # drawer-front styles paint drawer fronts (kind derived from the
+        # pool this style lives in). Update re-applies to every matching
+        # front already tagged with the style name.
+        try:
+            kind = 'DRAWER' if "drawer_front_styles" in self.path_from_id() else 'DOOR'
+        except Exception:
+            kind = 'DOOR'
         row = box.row(align=True)
         row.scale_y = 1.3
-        row.operator("hb_face_frame.assign_door_style_to_selected_fronts",
-                     text="Assign Door Style", icon='BRUSH_DATA')
-        row.operator("hb_face_frame.update_fronts_from_door_style",
-                     text="Update Fronts", icon='FILE_REFRESH')
+        op = row.operator("hb_face_frame.paint_assign_front_style",
+                          text="Assign by Painting", icon='BRUSH_DATA')
+        op.kind = kind
+        op = row.operator("hb_face_frame.update_fronts_from_style",
+                          text="Update Fronts", icon='FILE_REFRESH')
+        op.kind = kind
 
 
 class HB_UL_face_frame_door_styles(UIList):
@@ -4085,6 +4132,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # ---- Options section toggles ----
     show_cabinet_styles: BoolProperty(name="Show Cabinet Styles", default=False)  # type: ignore
     show_door_styles: BoolProperty(name="Show Door Styles", default=False)  # type: ignore
+    door_style_tab: EnumProperty(
+        name="Style Tab",
+        description="Switch between the door style and drawer front style lists",
+        items=[('DOOR', "Door Styles", "Edit door styles"),
+               ('DRAWER', "Drawer Front Styles", "Edit drawer front styles")],
+        default='DOOR',
+    )  # type: ignore
     show_finished_ends_options: BoolProperty(name="Show Finished Ends and Backs", default=False)  # type: ignore
     show_general_options: BoolProperty(name="Show General Options", default=False)  # type: ignore
     show_face_frame_options: BoolProperty(name="Show Face Frame Options", default=False)  # type: ignore
@@ -4167,6 +4221,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # style and another as the drawer-front style via integer indices.
     door_styles: CollectionProperty(type=Face_Frame_Door_Style)  # type: ignore
     active_door_style_index: IntProperty(name="Active Door Style Index", default=0)  # type: ignore
+    drawer_front_styles: CollectionProperty(type=Face_Frame_Door_Style)  # type: ignore
+    active_drawer_front_style_index: IntProperty(name="Active Drawer Front Style Index", default=0)  # type: ignore
 
     # ---- Default placement behaviour ----
     fill_cabinets: BoolProperty(
@@ -4874,26 +4930,43 @@ class Face_Frame_Scene_Props(PropertyGroup):
             box.label(text="No cabinet styles defined", icon='INFO')
 
     def draw_door_styles_ui(self, layout, context):
-        # Pool is project-global (main scene); draw it regardless of which
-        # room scene is active.
+        # Door styles and drawer front styles are SEPARATE project-global
+        # pools (independent lists). A tab switches between them so only one
+        # list + editor draws at a time; the catalog the editor reads is
+        # implied by the pool (see _front_is_drawer), so neither shows a Kind
+        # field.
         sp = get_style_props(context)
+        tab_row = layout.row()
+        tab_row.prop(sp, "door_style_tab", expand=True)
+
+        if sp.door_style_tab == 'DRAWER':
+            coll, idx_attr = "drawer_front_styles", "active_drawer_front_style_index"
+            add_op = "hb_face_frame.add_drawer_front_style"
+            rem_op = "hb_face_frame.remove_drawer_front_style"
+            empty = "No drawer front styles defined"
+        else:
+            coll, idx_attr = "door_styles", "active_door_style_index"
+            add_op = "hb_face_frame.add_door_style"
+            rem_op = "hb_face_frame.remove_door_style"
+            empty = "No door styles defined"
+
         row = layout.row()
         row.template_list(
             "HB_UL_face_frame_door_styles", "",
-            sp, "door_styles",
-            sp, "active_door_style_index",
+            sp, coll,
+            sp, idx_attr,
             rows=3,
         )
         side = row.column(align=True)
-        side.operator("hb_face_frame.add_door_style", text="", icon='ADD')
-        side.operator("hb_face_frame.remove_door_style", text="", icon='REMOVE')
+        side.operator(add_op, text="", icon='ADD')
+        side.operator(rem_op, text="", icon='REMOVE')
 
-        if sp.door_styles and sp.active_door_style_index < len(sp.door_styles):
-            ds = sp.door_styles[sp.active_door_style_index]
-            ds.draw_door_style_ui(layout, context)
+        pool = getattr(sp, coll)
+        idx = getattr(sp, idx_attr)
+        if pool and idx < len(pool):
+            pool[idx].draw_door_style_ui(layout, context)
         else:
-            box = layout.box()
-            box.label(text="No door styles defined", icon='INFO')
+            layout.box().label(text=empty, icon='INFO')
 
     # =====================================================================
     # UI: master draw entry point (called by view3d_sidebar)
@@ -4955,7 +5028,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
             box = col.box()
             row = box.row()
             row.alignment = 'LEFT'
-            row.prop(self, 'show_door_styles', text="Door Styles",
+            row.prop(self, 'show_door_styles', text="Door & Drawer Front Styles",
                      icon='TRIA_DOWN' if self.show_door_styles else 'TRIA_RIGHT', emboss=False)
             if self.show_door_styles:
                 self.draw_door_styles_ui(box, context)
