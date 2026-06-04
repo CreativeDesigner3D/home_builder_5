@@ -1100,6 +1100,12 @@ def _detect_blind_corner_neighbor(cab_obj):
         neighbor, intrusion = result
         if 'IS_FACE_FRAME_CABINET_CAGE' not in neighbor:
             continue
+        # A true L-shaped corner cabinet (corner_type != 'NONE') already
+        # resolves the corner geometrically - a cabinet placed next to it
+        # just butts its arm and needs no blind-void configuration, so
+        # don't treat it as a blind neighbor (would falsely pop the dialog).
+        if _is_corner_cabinet(neighbor):
+            continue
 
         # Axis angle between the two walls. Interior corner angle is its
         # supplement (90 deg axis angle -> 90 deg square corner; 45 deg
@@ -3422,9 +3428,9 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
     Snaps the cabinet to whichever wall corner is closer to the cursor.
     Off-wall, drops at the cursor position with no rotation. Corner
-    cabinets don't take a typed width or a bay count - the dimensions
-    come from scene corner-size props, and the build is always one
-    cabinet at one corner.
+    cabinets take a typed uniform SIZE (width == depth, square plan) but
+    no bay count - the dimensions seed from scene corner-size props, and
+    the build is always one cabinet at one corner.
     """
     bl_idname = "hb_face_frame.place_corner_cabinet"
     bl_label = "Place Face Frame Corner Cabinet"
@@ -3527,6 +3533,19 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         # (cancel typing) and ENTER (commit) without our own ESC
         # handler eating the event.
         if self.placement_state == hb_placement.PlacementState.TYPING:
+            if self.handle_typing_event(event):
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
+
+        # A bare number key starts typing the uniform SIZE (the mixin
+        # auto-starts toward get_default_typing_target -> WIDTH). This must
+        # be routed while in PLACING state; the TYPING block above only
+        # fires once typing has already begun, so without this a digit
+        # press would never start size typing (offset arrows still work
+        # because they call start_typing directly).
+        if (event.type in hb_placement.NUMBER_KEYS
+                and event.value == 'PRESS'
+                and self.placement_state == hb_placement.PlacementState.PLACING):
             if self.handle_typing_event(event):
                 self._update_header(context)
                 return {'RUNNING_MODAL'}
@@ -3821,6 +3840,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         if self.placement_state == hb_placement.PlacementState.TYPING:
             typed = self.get_typed_display_string()
             label = {
+                hb_placement.TypingTarget.WIDTH: "Size",
                 hb_placement.TypingTarget.OFFSET_X: "Offset (←)",
                 hb_placement.TypingTarget.OFFSET_RIGHT: "Offset (→)",
             }.get(self.typing_target, "Value")
@@ -3842,23 +3862,48 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
                 f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
             )
         msg = (f"Place {self.cabinet_name} - move cursor near a wall corner."
-               f"{offset_hint}  -  ←/→: gap offset   "
+               f"{offset_hint}  -  type a size   ←/→: gap offset   "
                f"LMB commits, Esc cancels.")
         hb_placement.draw_header_text(context, msg)
 
     # ---------------- typed-input handlers ----------------
 
     def get_default_typing_target(self):
-        # Corner cabinets have no typed width; arrows enter typing mode
-        # and set the target explicitly.
-        return hb_placement.TypingTarget.OFFSET_X
+        # A bare number types the cabinet's uniform SIZE. Arrows switch
+        # the target to a gap-edge offset explicitly (see
+        # _handle_offset_arrow), so offset typing still works.
+        return hb_placement.TypingTarget.WIDTH
+
+    def _apply_size(self, size):
+        """Set the corner cabinet's uniform footprint on the preview cage.
+
+        Corner cabinets are square in plan, so a typed size drives Dim X
+        and Dim Y together (width == depth). The per-arm stub depths
+        (left_depth / right_depth) are unaffected. Re-runs positioning so
+        the resized cage stays corner-snapped to the cursor's wall corner.
+        """
+        if size <= 0:
+            return
+        self._cabinet_width = size
+        self._cabinet_depth = size
+        if self._preview_cage is not None:
+            self._preview_cage.set_input('Dim X', size)
+            self._preview_cage.set_input('Dim Y', size)
+        self._position_from_hit(bpy.context)
 
     def on_typed_value_changed(self):
-        """Live preview offset typing - apply, render, restore."""
+        """Live preview while typing. WIDTH (the default target) resizes
+        the cage to a uniform footprint; OFFSET_X / OFFSET_RIGHT preview a
+        gap-edge offset (apply, render, restore - committed only on Enter).
+        """
         if not self.typed_value:
             return
         parsed = self.parse_typed_distance()
         if parsed is None or parsed < 0:
+            return
+        if self.typing_target == hb_placement.TypingTarget.WIDTH:
+            if parsed > 0:
+                self._apply_size(parsed)
             return
         if self._gap_wall is None:
             return
@@ -3874,9 +3919,14 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             self._right_offset = old_val
 
     def apply_typed_value(self):
-        """Commit offset on Enter and lock the position."""
+        """Commit on Enter. WIDTH sets the uniform footprint size;
+        OFFSET_X / OFFSET_RIGHT lock the cabinet at that gap-edge offset.
+        """
         parsed = self.parse_typed_distance()
-        if (parsed is not None and parsed >= 0
+        if self.typing_target == hb_placement.TypingTarget.WIDTH:
+            if parsed is not None and parsed > 0:
+                self._apply_size(parsed)
+        elif (parsed is not None and parsed >= 0
                 and self._gap_wall is not None):
             if self.typing_target == hb_placement.TypingTarget.OFFSET_X:
                 self._left_offset = parsed
@@ -4010,6 +4060,15 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         else:
             cab_obj.matrix_world = captured_world
 
+        # Push the placement size (uniform width == depth) onto the real
+        # cabinet. cabinet.create() sized it from the scene corner-size
+        # prop; a typed size lives only on the operator, so apply it here.
+        # Fold the two dim writes into a single recalc.
+        cab_props = cab_obj.face_frame_cabinet
+        with types_face_frame.suspend_recalc():
+            cab_props.width = self._cabinet_width
+            cab_props.depth = self._cabinet_depth
+
         # Apply the active cabinet style to this fresh placement -
         # door overlay type, face frame sizes, and (once wired)
         # materials - matching standard cabinet placement.
@@ -4109,12 +4168,25 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         default=units.inch(3.0),
         min=0.0, unit='LENGTH', precision=4,
     )  # type: ignore
+    placed_stile_width: bpy.props.FloatProperty(
+        name="Placed Cabinet Stile Width",
+        description=(
+            "Width of the placed cabinet's corner stile that meets the "
+            "blind end. Independent of the exposed blind stile width so "
+            "each side of the corner can be sized separately"
+        ),
+        default=units.inch(3.0),
+        min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
 
     def invoke(self, context, event):
         scene = context.scene
         ff_scene = getattr(scene, 'hb_face_frame', None)
         if ff_scene is not None:
             self.blind_stile_width = ff_scene.ff_blind_stile_width
+            # Seed the placed stile to match, so default behaviour (a
+            # symmetric corner) is unchanged unless the user edits it.
+            self.placed_stile_width = ff_scene.ff_blind_stile_width
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
@@ -4148,6 +4220,10 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         row = layout.row(align=True)
         row.label(text="Exposed Blind Stile Width:")
         row.prop(self, 'blind_stile_width', text="")
+
+        row = layout.row(align=True)
+        row.label(text="Placed Cabinet Stile Width:")
+        row.prop(self, 'placed_stile_width', text="")
 
     def execute(self, context):
         blind_obj = bpy.data.objects.get(self.blind_cabinet_name)
@@ -4208,12 +4284,11 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
                 blind_props.blind_amount_left = new_blind_amount
                 blind_props.left_stile_width = final_stile_w
                 placed_props.right_stile_type = 'BLIND'
-                # The placed cabinet's corner stile reads the SAME exposed
-                # width as the blind cabinet's blind stile, so the two meet
-                # symmetrically at the corner. (The blind stile's extra
-                # 0.75" accept-adjacent add is hidden, so it is NOT included
-                # in the placed stile.)
-                placed_props.right_stile_width = self.blind_stile_width
+                # The placed cabinet's corner stile is sized independently
+                # from the exposed blind stile (each side of the corner is
+                # editable). The default seeds to the same value, so the
+                # corner stays symmetric unless the user overrides it.
+                placed_props.right_stile_width = self.placed_stile_width
             else:  # 'RIGHT'
                 # Shrinking from the right edge requires no location
                 # shift since the origin sits at the left edge.
@@ -4223,9 +4298,9 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
                 blind_props.blind_amount_right = new_blind_amount
                 blind_props.right_stile_width = final_stile_w
                 placed_props.left_stile_type = 'BLIND'
-                # See the LEFT-branch note: placed corner stile matches the
-                # exposed blind stile width for a symmetric corner.
-                placed_props.left_stile_width = self.blind_stile_width
+                # See the LEFT-branch note: the placed corner stile is sized
+                # independently from the exposed blind stile width.
+                placed_props.left_stile_width = self.placed_stile_width
 
         return {'FINISHED'}
 

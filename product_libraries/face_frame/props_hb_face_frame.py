@@ -1468,7 +1468,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         ff = get_style_props()
         role = front_obj.get('hb_part_role')
         pool = (ff.drawer_front_styles
-                if role in ('DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT')
+                if role in ('DRAWER_FRONT', 'FALSE_FRONT')
                 else ff.door_styles)
         for ds in pool:
             if ds.name == ds_name:
@@ -1755,13 +1755,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 entry.width = mid_stile_w
 
     def _apply_door_styles_to_fronts(self, cabinet_obj):
-        """Walk every front under cabinet_obj. DOOR-role fronts get
-        self.door_style; DRAWER_FRONT / PULLOUT_FRONT / FALSE_FRONT get
-        self.drawer_front_style. Other roles (INSET_PANEL, structural
-        parts, hardware) are skipped.
+        """Walk every front under cabinet_obj. DOOR-role and PULLOUT_FRONT
+        fronts get self.door_style (a pullout is a door on a slide, so it
+        reads the door pool, not the drawer-front pool); DRAWER_FRONT /
+        FALSE_FRONT get self.drawer_front_style. Other roles (INSET_PANEL,
+        structural parts, hardware) are skipped.
         """
-        DOOR_ROLES = {'DOOR'}
-        DRAWER_ROLES = {'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+        DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+        DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT'}
 
         ff = get_style_props()
 
@@ -2135,10 +2136,11 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=_propagate_door_style,
     )  # type: ignore
 
-    # Front roles this style will act on (DOOR fronts read door_style on the
-    # parent cabinet style, the rest read drawer_front_style).
-    _DOOR_FRONT_ROLES = {'DOOR'}
-    _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT'}
+    # Front roles this style will act on (DOOR + PULLOUT_FRONT read door_style
+    # on the parent cabinet style - a pullout is a door on a slide; the rest
+    # read drawer_front_style).
+    _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+    _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT'}
     _STYLEABLE_ROLES = _DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
 
     def get_parent_cabinet_style(self, front_obj):
