@@ -118,7 +118,11 @@ BASE_PRESETS = {
     'ONE_DRAWER':              L('DRAWER'),
     'FALSE_FRONT':             L('FALSE_FRONT'),
     'PULLOUT':                 L('PULLOUT'),
-    'PULLOUT_WITH_DRAWER':     H(L('DRAWER'), L('PULLOUT')),
+    # Top drawer pins to top_drawer_opening_height (like the drawer+door
+    # combos) so it lines up with adjacent drawer fronts instead of
+    # splitting the bay evenly with the pullout below.
+    'PULLOUT_WITH_DRAWER':     H(L('DRAWER', size_role='TOP_DRAWER'),
+                                 L('PULLOUT')),
     'MICROWAVE_WITH_DRAWER':   H(L('APPLIANCE', accessory_label='MICROWAVE'),
                                  L('DRAWER')),
     'OPEN_WITH_SHELVES':       L('OPEN_WITH_SHELVES'),

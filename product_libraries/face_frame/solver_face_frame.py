@@ -2931,6 +2931,10 @@ def front_leaves(layout, rect, cab_props, opening_props):
     leaf['role'] = role
     leaf['name'] = base_name
     leaf['part_dims'] = (height, width, cab_props.door_thickness)
+    # Carry the hinge so the pull placer can special-case a flip door
+    # (TOP / BOTTOM hinge) -- it can't infer a horizontal hinge from the
+    # part's location.x sign the way it does for LEFT / RIGHT.
+    leaf['hinge'] = opening_props.hinge_side
     return [leaf]
 
 

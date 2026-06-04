@@ -4289,6 +4289,17 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
                 # editable). The default seeds to the same value, so the
                 # corner stays symmetric unless the user overrides it.
                 placed_props.right_stile_width = self.placed_stile_width
+                # The placed cabinet's RIGHT (corner) side is concealed by
+                # the perpendicular blind cabinet's body. Exposure detection
+                # only inspects same-wall siblings, so it can't see the
+                # perpendicular cover and would leave the side FINISHED -
+                # pin it UNFINISHED. Setting the enum also flips
+                # right_finish_end_auto off (its update callback), so a
+                # later exposure recalc won't re-finish it.
+                placed_props.right_finished_end_condition = 'UNFINISHED'
+                # Unfinished-against-a-neighbor side takes the 0.25" scribe
+                # (the solver reads the typed scribe for UNFINISHED sides).
+                placed_props.right_scribe = units.inch(0.25)
             else:  # 'RIGHT'
                 # Shrinking from the right edge requires no location
                 # shift since the origin sits at the left edge.
@@ -4301,6 +4312,12 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
                 # See the LEFT-branch note: the placed corner stile is sized
                 # independently from the exposed blind stile width.
                 placed_props.left_stile_width = self.placed_stile_width
+                # See the LEFT-branch note: the placed cabinet's LEFT (corner)
+                # side is concealed by the blind body; pin it UNFINISHED
+                # (also turns left_finish_end_auto off via the callback).
+                placed_props.left_finished_end_condition = 'UNFINISHED'
+                # See the LEFT-branch note: 0.25" neighbor scribe.
+                placed_props.left_scribe = units.inch(0.25)
 
         return {'FINISHED'}
 

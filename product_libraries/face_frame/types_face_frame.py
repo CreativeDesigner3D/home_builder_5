@@ -4473,6 +4473,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # its vertical placement follows the door / cabinet-type formula
         # (top-of-door on a base cabinet), not the drawer formula.
         is_pullout = role == PART_ROLE_PULLOUT_FRONT
+        # A flip door (TOP / BOTTOM hinge) has its hinge along a horizontal
+        # edge, so the pull sits centered on the OPPOSITE edge with a
+        # horizontal bar (like a drawer pull), not on the left/right edge
+        # like a swing door. hinge is threaded in via the leaf descriptor.
+        hinge = leaf.get('hinge')
+        is_flip = (kind == 'door' and hinge in ('TOP', 'BOTTOM'))
         pull_obj = pulls.resolve_pull_object(scene_props, kind)
         if pull_obj is None:
             return None
@@ -4499,7 +4505,18 @@ class FaceFrameCabinet(GeoNodeCage):
         # that vertical door-pull bars need doesn't apply, so vert_half
         # is 0 for pullouts.
         vert_half = 0.0 if is_pullout else half_pull_len
-        if kind == 'drawer' and not is_pullout:
+        if is_flip:
+            # Flip door: pull centered on the UNHINGED edge. TOP hinge
+            # (flip up) -> unhinged edge is the bottom, so the pull sits
+            # near the door bottom; BOTTOM hinge (flip / tilt down) ->
+            # unhinged edge is the top, near the door top. The bar is
+            # rotated flat below (no vertical extent), so no half-bar edge
+            # correction is needed here.
+            if hinge == 'TOP':
+                x = scene_props.pull_vertical_location_upper
+            else:  # BOTTOM
+                x = length - scene_props.pull_vertical_location_base
+        elif kind == 'drawer' and not is_pullout:
             if scene_props.center_pulls_on_drawer_front:
                 x = length / 2.0
             else:
@@ -4537,9 +4554,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # back across the cabinet). Detecting that lets us flip the
         # pull to the correct edge without needing to thread
         # hinge_side through the leaf descriptor.
-        if kind == 'drawer':
-            # Drawers always horizontally centered. center_pulls_on_drawer_front
-            # controls the vertical position, not horizontal.
+        if kind == 'drawer' or is_flip:
+            # Drawers and flip doors: pull horizontally centered.
+            # (center_pulls_on_drawer_front controls the drawer pull's
+            # vertical position, not horizontal.)
             y = -width / 2.0
         elif front_part.obj.location.x < 0.0:
             # Right-hinged door: hinge at Y = -width, unhinged at Y = 0.
@@ -4564,8 +4582,9 @@ class FaceFrameCabinet(GeoNodeCage):
         # in door-local +Z, which is away from the cabinet (beyond the
         # door front). Bar axis stays along door-local +X = vertical for
         # doors. For drawers (and pullouts) we add rotation_z = 90 deg
-        # so the bar runs horizontal across the drawer front.
-        rot_z = math.radians(90.0) if kind == 'drawer' else 0.0
+        # so the bar runs horizontal across the drawer front. Flip doors
+        # (TOP / BOTTOM hinge) use the same horizontal-bar orientation.
+        rot_z = math.radians(90.0) if (kind == 'drawer' or is_flip) else 0.0
         instance.rotation_euler = (math.radians(-90.0), 0.0, rot_z)
         instance['hb_part_role'] = 'PULL'
         instance['IS_CABINET_PULL'] = True

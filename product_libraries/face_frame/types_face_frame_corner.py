@@ -899,7 +899,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             is_section_part = (
                 (role == ff.PART_ROLE_DOOR and side in ('LEFT', 'RIGHT'))
                 or (role == PART_ROLE_CORNER_MID_RAIL
-                    and side in ('LEFT', 'RIGHT')))
+                    and side in ('LEFT', 'RIGHT'))
+                or role == PART_ROLE_CORNER_SHELF)
             if is_section_part:
                 for pull in list(child.children):
                     bpy.data.objects.remove(pull, do_unlink=True)
@@ -954,6 +955,79 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             right_rail.obj.rotation_euler.z = math.radians(180)
             right_rail.set_input('Mirror Y', True)
         self.obj['hb_pie_section_sig'] = sig
+
+    def _make_pie_cut_shelf(self, section_index, shelf_index):
+        """Create one L-shaped pie-cut CORNER_SHELF, built like the Top /
+        Bottom panels: a rectangular panel rotated into the corner with a
+        CPM_CORNERNOTCH 'Front Notch' carving the L. Returns the object.
+        """
+        shelf = CabinetPart()
+        shelf.create('Pie Cut Shelf %d.%d' % (section_index + 1, shelf_index + 1))
+        shelf.obj.parent = self.obj
+        shelf.obj['hb_part_role'] = PART_ROLE_CORNER_SHELF
+        shelf.obj['hb_face_frame_side'] = 'PIE'
+        shelf.obj['hb_corner_section_index'] = section_index
+        shelf.obj['hb_corner_shelf_index'] = shelf_index
+        shelf.obj['CABINET_PART'] = True
+        shelf.obj.rotation_euler.z = math.radians(-90)
+        notch = shelf.add_part_modifier('CPM_CORNERNOTCH', 'Front Notch')
+        notch.set_input('Flip X', True)
+        notch.set_input('Flip Y', True)
+        notch.mod.show_viewport = True
+        notch.mod.show_render = True
+        return shelf.obj
+
+    def _ensure_pie_cut_section_shelves(self, section_index, qty):
+        """Idempotently make exactly `qty` pie-cut CORNER_SHELF parts exist
+        for `section_index` (create missing, remove extras). Count is
+        auto-by-height, so it is reconciled here each recalc rather than in
+        _reconcile_pie_cut_sections.
+        """
+        existing = sorted(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == PART_ROLE_CORNER_SHELF
+             and c.get('hb_corner_section_index') == section_index),
+            key=lambda c: c.get('hb_corner_shelf_index', 0))
+        while len(existing) > qty:
+            bpy.data.objects.remove(existing.pop(), do_unlink=True)
+        for k in range(len(existing), qty):
+            self._make_pie_cut_shelf(section_index, k)
+
+    def _position_pie_cut_shelves(self, section_index, qty, sec_z0, sec_h,
+                                  depth, width, t, fft, ld, rd,
+                                  fflo, ffro, l_scribe, r_scribe):
+        """Stack the section's pie-cut CORNER_SHELF parts evenly and size /
+        notch them to match the Top / Bottom panels (same Length / Width
+        and Front Notch formulas). No-op if qty <= 0 or the section is too
+        short to fit the shelves.
+        """
+        if qty <= 0:
+            return
+        interior_h = sec_h - qty * solver.SHELF_THICKNESS
+        if interior_h <= 0.0:
+            return
+        gap = interior_h / (qty + 1)
+        for k in range(qty):
+            shelf = next(
+                (c for c in self.obj.children
+                 if c.get('hb_part_role') == PART_ROLE_CORNER_SHELF
+                 and c.get('hb_corner_section_index') == section_index
+                 and c.get('hb_corner_shelf_index') == k),
+                None)
+            if shelf is None:
+                continue
+            z_shelf = sec_z0 + (k + 1) * gap + k * solver.SHELF_THICKNESS
+            shelf.location = (0.0, 0.0, z_shelf)
+            _set_mod_inputs(shelf, shelf.home_builder.mod_name, (
+                ('Length', depth - t - fflo - l_scribe),
+                ('Width', width - t - ffro - r_scribe),
+                ('Thickness', solver.SHELF_THICKNESS),
+            ))
+            _set_mod_inputs(shelf, 'Front Notch', (
+                ('X', depth - rd + fft - t - fflo - l_scribe),
+                ('Y', width - ld + fft - t - ffro - r_scribe),
+                ('Route Depth', inch(0.76)),
+            ))
 
     def _recalculate_pie_cut(self):
         """Write dimensions and positions to all pie cut carcass parts
@@ -1397,6 +1471,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             sections, z_open_top - z_open_bot, n_sec - 1, mrw)
 
         ext = cab_props.exterior_option
+        # Upper pie-cut corners get adjustable shelves behind their doors
+        # (auto by section height), L-shaped like the Top/Bottom panels.
+        is_upper = self.default_cabinet_type == 'UPPER'
         z_cursor = z_open_bot
         for i in range(n_sec - 1, -1, -1):
             sec_h = sec_heights[i]
@@ -1456,6 +1533,15 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         door, door_length, p_width, dt, p_sign, p_edge)
                 else:
                     self._clear_door_pull(door)
+
+            if is_upper:
+                # Adjustable shelves behind the doors, auto by section
+                # height; L-shaped to match the Top / Bottom panels.
+                qty = solver.auto_shelf_qty(sec_h)
+                self._ensure_pie_cut_section_shelves(i, qty)
+                self._position_pie_cut_shelves(
+                    i, qty, sec_z0, sec_h, depth, width, t, fft, ld, rd,
+                    fflo, ffro, l_scribe, r_scribe)
 
             z_cursor = sec_z0 + sec_h
             if i > 0:
@@ -1595,6 +1681,83 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     clip.operation = 'DIFFERENCE'
                     clip.object = back_cutter_obj
         self.obj['hb_diag_section_sig'] = sig
+
+    def _make_corner_shelf(self, section_index, shelf_index,
+                           cutter_obj, back_cutter_obj):
+        """Create one diagonal CORNER_SHELF part for a section, carved to
+        the pentagon silhouette by the diagonal cutter and clipped at the
+        rear corner by the back cutter - the same boolean pair the
+        Top/Bottom panels use, so the shelf footprint matches them.
+        Returns the new object.
+        """
+        shelf = CabinetPart()
+        shelf.create('Diagonal Shelf %d.%d' % (section_index + 1, shelf_index + 1))
+        shelf.obj.parent = self.obj
+        shelf.obj['hb_part_role'] = PART_ROLE_CORNER_SHELF
+        shelf.obj['hb_face_frame_side'] = 'DIAGONAL'
+        shelf.obj['hb_corner_section_index'] = section_index
+        shelf.obj['hb_corner_shelf_index'] = shelf_index
+        shelf.obj['CABINET_PART'] = True
+        shelf.set_input('Mirror Y', True)
+        if cutter_obj is not None:
+            cut = shelf.obj.modifiers.new(name='Diagonal Cut', type='BOOLEAN')
+            cut.operation = 'DIFFERENCE'
+            cut.object = cutter_obj
+        if back_cutter_obj is not None:
+            clip = shelf.obj.modifiers.new(name='Clip Back Cut', type='BOOLEAN')
+            clip.operation = 'DIFFERENCE'
+            clip.object = back_cutter_obj
+        return shelf.obj
+
+    def _ensure_diagonal_section_shelves(self, section_index, qty,
+                                         cutter_obj, back_cutter_obj):
+        """Idempotently make exactly `qty` CORNER_SHELF parts exist for
+        `section_index`, creating any missing and removing extras. Used
+        for DOORS-section shelves whose count is auto-by-height: the
+        section signature can't gate an auto count, so it is reconciled
+        here on each recalc rather than in _reconcile_diagonal_sections.
+        """
+        existing = sorted(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == PART_ROLE_CORNER_SHELF
+             and c.get('hb_corner_section_index') == section_index),
+            key=lambda c: c.get('hb_corner_shelf_index', 0))
+        while len(existing) > qty:
+            bpy.data.objects.remove(existing.pop(), do_unlink=True)
+        for k in range(len(existing), qty):
+            self._make_corner_shelf(section_index, k, cutter_obj, back_cutter_obj)
+
+    def _position_diagonal_shelves(self, section_index, qty, sec_z0, sec_h,
+                                   t, width, depth, fflo, ffro):
+        """Stack the section's CORNER_SHELF parts evenly and size them to
+        the inset Top/Bottom footprint (one material thickness in from the
+        two backs; the boolean cutters carve the pentagon front). Shared by
+        OPEN sections (count = Shelf Qty) and UPPER DOORS sections
+        (count = auto-by-height). No-op if qty <= 0 or the section is too
+        short to fit the shelves.
+        """
+        if qty <= 0:
+            return
+        interior_h = sec_h - qty * solver.SHELF_THICKNESS
+        if interior_h <= 0.0:
+            return
+        gap = interior_h / (qty + 1)
+        for k in range(qty):
+            shelf = next(
+                (c for c in self.obj.children
+                 if c.get('hb_part_role') == PART_ROLE_CORNER_SHELF
+                 and c.get('hb_corner_section_index') == section_index
+                 and c.get('hb_corner_shelf_index') == k),
+                None)
+            if shelf is None:
+                continue
+            z_shelf = sec_z0 + (k + 1) * gap + k * solver.SHELF_THICKNESS
+            shelf.location = (t, -t, z_shelf)
+            _set_mod_inputs(shelf, shelf.home_builder.mod_name, (
+                ('Length', width - ffro - 2.0 * t),
+                ('Width', depth - fflo - 2.0 * t),
+                ('Thickness', solver.SHELF_THICKNESS),
+            ))
 
     def _recalculate_diagonal(self):
         """Drive dimensions and positions for diagonal carcass parts
@@ -1857,6 +2020,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         z_open_top = height - trw
         sec_heights = _solve_section_heights(
             sections, z_open_top - z_open_bot, n_sec - 1, mrw)
+        # Upper corner cabinets get adjustable shelves behind their doors
+        # (auto by section height), reusing the Top/Bottom boolean cutters.
+        is_upper = self.default_cabinet_type == 'UPPER'
+        diag_cutter = parts.get(PART_ROLE_DIAGONAL_CUTTER)
+        diag_back_cutter = parts.get(PART_ROLE_CORNER_BACK_CUTTER)
         z_cursor = z_open_bot
         for i in range(n_sec - 1, -1, -1):
             sec_h = sec_heights[i]
@@ -1899,6 +2067,15 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     self._refresh_door_pull(
                         d_right, door_length, leaf_width, dt,
                         width_sign=-1.0, edge='OUTER')
+                if is_upper:
+                    # Adjustable shelves behind the doors, auto by section
+                    # height. (FALSE_FRONT = sink apron, no shelves; OPEN
+                    # handles its own shelf stack below.)
+                    qty = solver.auto_shelf_qty(sec_h)
+                    self._ensure_diagonal_section_shelves(
+                        i, qty, diag_cutter, diag_back_cutter)
+                    self._position_diagonal_shelves(
+                        i, qty, sec_z0, sec_h, t, width, depth, fflo, ffro)
             elif sections[i].content == 'FALSE_FRONT':
                 # One fixed panel spanning the section opening, proud of
                 # the FF like a door but with no pull and no center gap.
@@ -1918,40 +2095,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                             ('Thickness', dt),
                         ))
             elif sections[i].content == 'OPEN':
-                # Shelves following the carcass. Each shelf is a full
-                # L-bounding panel inset one material thickness from the
-                # two back panels; the diagonal boolean cutter (attached
-                # in the reconcile) carves the pentagon front so the
-                # shelf silhouette matches the Bottom panel. Shelf k
-                # stacks from the section floor with equal gaps above
-                # and below.
-                qty = sections[i].shelf_qty
-                if qty > 0:
-                    interior_h = sec_h - qty * solver.SHELF_THICKNESS
-                    if interior_h > 0.0:
-                        gap = interior_h / (qty + 1)
-                        for k in range(qty):
-                            shelf = next(
-                                (c for c in self.obj.children
-                                 if c.get('hb_part_role')
-                                 == PART_ROLE_CORNER_SHELF
-                                 and c.get('hb_corner_section_index') == i
-                                 and c.get('hb_corner_shelf_index') == k),
-                                None)
-                            if shelf is None:
-                                continue
-                            z_shelf = (sec_z0 + (k + 1) * gap
-                                       + k * solver.SHELF_THICKNESS)
-                            # Inset from both back panels by one material
-                            # thickness so the shelf butts the backs;
-                            # axis-aligned like the Bottom panel.
-                            shelf.location = (t, -t, z_shelf)
-                            _set_mod_inputs(
-                                shelf, shelf.home_builder.mod_name, (
-                                    ('Length', width - ffro - 2.0 * t),
-                                    ('Width', depth - fflo - 2.0 * t),
-                                    ('Thickness', solver.SHELF_THICKNESS),
-                                ))
+                # Open shelves (created in the reconcile from the section's
+                # Shelf Qty); position to match the Top/Bottom silhouette.
+                self._position_diagonal_shelves(
+                    i, sections[i].shelf_qty, sec_z0, sec_h,
+                    t, width, depth, fflo, ffro)
             z_cursor = sec_z0 + sec_h
             if i > 0:
                 # Mid rail between section i and the section above it.
