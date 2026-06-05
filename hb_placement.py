@@ -1280,7 +1280,10 @@ def draw_placement_dimensions(operator, context):
     call context.area.tag_redraw().
     """
     specs = getattr(operator, '_placement_dim_specs', None)
-    if not specs:
+    # Optional facing arrow (corner-cabinet free placement). World-space
+    # line segments [(start, end), ...]; drawn after the dims below.
+    facing = getattr(operator, '_facing_arrow_segments', None)
+    if not specs and not facing:
         return
 
     region = context.region
@@ -1298,7 +1301,7 @@ def draw_placement_dimensions(operator, context):
     font_id = 0
     blf.size(font_id, 14)
 
-    for spec in specs:
+    for spec in (specs or []):
         s_world = spec.start
         e_world = spec.end
         text = spec.text
@@ -1363,6 +1366,24 @@ def draw_placement_dimensions(operator, context):
             blf.position(font_id, tx_pos, ty_pos, 0)
             blf.color(font_id, *color)
             blf.draw(font_id, text)
+
+    # Facing arrow - a single bright polyline (shaft + arrowhead) drawn
+    # over the dims so the open-face direction reads at a glance.
+    if facing:
+        arrow_pts = []
+        for s_world, e_world in facing:
+            s_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, s_world)
+            e_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, e_world)
+            if s_screen is None or e_screen is None:
+                continue
+            arrow_pts.append(tuple(s_screen))
+            arrow_pts.append(tuple(e_screen))
+        if arrow_pts:
+            gpu.state.line_width_set(2.5)
+            shader.bind()
+            shader.uniform_float("color", (1.0, 0.85, 0.1, 0.95))
+            batch = batch_for_shader(shader, 'LINES', {"pos": arrow_pts})
+            batch.draw(shader)
 
     gpu.state.blend_set('NONE')
     gpu.state.line_width_set(1.0)

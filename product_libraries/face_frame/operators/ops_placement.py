@@ -363,6 +363,37 @@ def _bay_under_cursor(hit_object):
     return None
 
 
+def _corner_snap_target_under_cursor(hit_object, hit_location):
+    """Resolve a CORNER cabinet under the cursor as a snap target, even
+    when it is parented to a wall.
+
+    The generic detect_cabinet_snap_target -> find_cabinet_bp stops the
+    parent walk at IS_WALL_BP, so a wall-mounted corner cabinet is never
+    returned. For a peninsula we DO want to continue a run off such a
+    corner's projecting return, so this resolves the cabinet cage WITHOUT
+    the wall cutoff (via _cabinet_under_cursor) and accepts only corner
+    cabinets - ordinary wall cabinets remain non-targets off-wall.
+
+    Side is decided exactly like detect_cabinet_snap_target (hit X vs the
+    cabinet's local mid-width). Returns (corner_obj, 'LEFT'|'RIGHT') or
+    (None, None).
+    """
+    if hit_location is None:
+        return (None, None)
+    cab = _cabinet_under_cursor(hit_object)
+    if cab is None or not _is_corner_cabinet(cab):
+        return (None, None)
+    try:
+        width = hb_types.GeoNodeObject(cab).get_input('Dim X')
+    except Exception:
+        return (None, None)
+    if width is None:
+        return (None, None)
+    local = cab.matrix_world.inverted() @ hit_location
+    side = 'LEFT' if local.x < width / 2 else 'RIGHT'
+    return (cab, side)
+
+
 def _facing_axes(obj):
     """World front (-Y) and width (+X) axes of a Mirror-Y cage,
     flattened to the floor plane and normalized.
@@ -503,6 +534,10 @@ def _compute_corner_left_snap_transform(snap_obj, new_object_width):
         y = -corner_depth - the end of the left arm.
       - Rotation: corner's Z rotation + pi/2
 
+    Uses matrix_world (not local loc/rot) so it is correct whether the
+    corner cabinet is free-standing OR parented to a wall - the latter
+    lets a peninsula run snap off a wall-mounted corner's left return.
+
     Returns (Vector, Euler) world-space, or None if corner depth
     isn't readable.
     """
@@ -514,14 +549,48 @@ def _compute_corner_left_snap_transform(snap_obj, new_object_width):
     except AttributeError:
         return None
 
+    mw = snap_obj.matrix_world
+    base_rot = mw.to_euler()
+    rot_z = base_rot.z
     local_offset = Vector((0, -(corner_depth + new_object_width), 0))
-    rot_z = snap_obj.rotation_euler.z
     world_offset = Matrix.Rotation(rot_z, 4, 'Z') @ local_offset
-    new_loc = snap_obj.location + world_offset
+    new_loc = mw.translation + world_offset
 
-    new_rot = snap_obj.rotation_euler.copy()
-    new_rot.z = new_rot.z + math.pi / 2
-    return (new_loc, new_rot)
+    base_rot.z = rot_z + math.pi / 2
+    return (new_loc, base_rot)
+
+
+def _compute_corner_right_snap_transform(snap_obj, new_object_width):
+    """RIGHT-return snap transform for a face frame corner cabinet -
+    the mirror of _compute_corner_left_snap_transform.
+
+    The corner cabinet's right arm runs along its local +X by the Dim X
+    footprint width; the arm's outer end is the bounding-box right face
+    at x = Dim X. Continuing a run "to the right" keeps the corner's
+    orientation and butts the new cabinet's left edge (local x = 0) to
+    that end - so the offset is just (Dim X, 0, 0) and the rotation is
+    unchanged.
+
+    World-space (matrix_world), so it works for a free-standing OR a
+    wall-mounted corner cabinet. For a free-standing corner this matches
+    the old generic box-snap result exactly (offset == Dim X, same rot).
+
+    Returns (Vector, Euler) world-space, or None if Dim X is unreadable.
+    """
+    try:
+        width = hb_types.GeoNodeObject(snap_obj).get_input('Dim X')
+    except Exception:
+        return None
+    if width is None:
+        return None
+
+    mw = snap_obj.matrix_world
+    base_rot = mw.to_euler()
+    rot_z = base_rot.z
+    local_offset = Vector((width, 0.0, 0.0))
+    world_offset = Matrix.Rotation(rot_z, 4, 'Z') @ local_offset
+    new_loc = mw.translation + world_offset
+    return (new_loc, base_rot)
 
 
 def _hit_face_of_cabinet(cab_obj, hit_location):
@@ -1229,7 +1298,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     bl_description = (
         "Place a face frame cabinet on a wall or on the floor. "
         "Up/Down arrows adjust bay quantity, Left/Right arrows set "
-        "gap offset, W or numbers type width, Esc cancels."
+        "gap offset, W or numbers type width, R rotates 90 on the "
+        "floor, Esc cancels."
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -1259,6 +1329,14 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _center_snap_state = None       # None | 'WINDOW' - cursor-over-target snap
     _fill_mode_before_center_snap: bool = False   # tracks transient fill->non-fill flip
     _cabinet_snap_side = None       # None | 'LEFT' | 'RIGHT' off-wall cabinet-to-cabinet snap
+
+    # Free-placement rotation (radians, Z). R rotates the cage in 90 deg
+    # steps while placing on the floor. Stored as state (not mutated
+    # directly on the cage) because _position_free rewrites the cage's
+    # rotation every mousemove - a direct += would be clobbered on the
+    # next frame. On-wall / cabinet-snap orientation ignores this; the
+    # wall/snap dictates facing there.
+    _free_rotation_z: float = 0.0
 
     # Gap-relative offset state. None means "not set"; the cabinet
     # follows the cursor and auto-snaps to gap edges/center as before.
@@ -1332,6 +1410,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         else:
             cage_obj.location.z = cursor_loc.z
 
+        # Fresh free-placement rotation each session.
+        self._free_rotation_z = 0.0
+
         self.init_placement(context)
         if self.region is None:
             self._delete_preview()
@@ -1377,6 +1458,21 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         if (event.type == 'W' and event.value == 'PRESS'
                 and self.placement_state == hb_placement.PlacementState.PLACING):
             self.start_typing(hb_placement.TypingTarget.WIDTH)
+            self._update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # 'R' rotates the cage 90 deg about Z for free (floor) placement.
+        # We bump the stored angle and re-run positioning from the last
+        # hit so the preview updates immediately; _position_free applies
+        # _free_rotation_z (on-wall / snap positioning ignores it - the
+        # wall/snap owns facing there). Re-positioning rather than
+        # mutating the cage directly keeps the angle from being clobbered
+        # on the next mousemove.
+        if (event.type == 'R' and event.value == 'PRESS'
+                and self.placement_state == hb_placement.PlacementState.PLACING):
+            self._free_rotation_z = (
+                self._free_rotation_z + math.radians(90)) % math.radians(360)
+            self._position_from_hit(context)
             self._update_header(context)
             return {'RUNNING_MODAL'}
 
@@ -1659,7 +1755,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 f"{self.cabinet_name}  -  {bay_label} ({mode})  -  "
                 f"width: {width_in:.1f}\"  -  side: {side}{offset_hint}  -  "
                 "W/numbers: width   Up/Down: bays   "
-                "←/→: gap offset   "
+                "←/→: gap offset   R: rotate 90   "
                 "Click: place   Esc: cancel"
             )
 
@@ -1742,6 +1838,45 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._position_facing_bay(
                     context, hit_cab, _bay_under_cursor(self.hit_object))
                 return
+
+        # Standard-cabinet facing-bay (island-style). Once the user has
+        # rotated the cage with R (_free_rotation_z != 0), a hit on the
+        # FRONT face of an existing face-frame cabinet places this cabinet
+        # across a 48" aisle facing that bay - the same snap the Sink gets
+        # for free, now opt-in for any cabinet. Gated on rotation so it
+        # never changes default placement; checked BEFORE wall detection
+        # for the same reason as the Sink block (a front-face hit would
+        # otherwise grab the wall behind the run). _position_facing_bay
+        # sets the facing orientation itself, so it overrides the raw R
+        # angle - R is only the intent signal here.
+        if (self.cabinet_name != 'Sink'
+                and self._free_rotation_z != 0.0):
+            # Over a Range (or other facing appliance) -> face it across
+            # the aisle, same as the Sink's automatic range snap.
+            range_obj = _range_under_cursor(self.hit_object)
+            if range_obj is not None:
+                self._position_facing_range(context, range_obj)
+                return
+            hit_cab = _cabinet_under_cursor(self.hit_object)
+            if (hit_cab is not None
+                    and _hit_face_of_cabinet(
+                        hit_cab, self.hit_location) == 'FRONT'):
+                self._position_facing_bay(
+                    context, hit_cab, _bay_under_cursor(self.hit_object))
+                return
+
+        # Corner-cabinet return snap (peninsula). If the cursor is over a
+        # corner cabinet - free-standing OR wall-mounted - hand off to
+        # free placement, whose snap detection continues the run off the
+        # hovered return. Checked BEFORE wall detection: a wall-mounted
+        # corner sits on a wall, so _detect_wall would otherwise grab that
+        # wall and place the new cabinet on it instead of off the return.
+        corner_obj, _corner_side = _corner_snap_target_under_cursor(
+            self.hit_object, self.hit_location)
+        if (corner_obj is not None
+                and corner_obj is not self._preview_cage.obj):
+            self._position_free(context)
+            return
 
         wall = _detect_wall(self, context)
         if wall is not None:
@@ -2143,9 +2278,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             range_obj.matrix_world.translation.z)
 
     def _position_facing_bay(self, context, cab_obj, bay_obj):
-        """Place the sink facing a face frame cabinet across a 48"
+        """Place the cage facing a face frame cabinet across a 48"
         aisle, centered on bay_obj. bay_obj is the bay cage under the
-        cursor, or None to center on the cabinet as a whole.
+        cursor, or None to center on the cabinet as a whole. Used by the
+        Sink (automatic) and by any cabinet once rotated with R (opt-in,
+        island-style).
 
         The aisle is measured to the cabinet's front face; only the
         lateral center comes from the bay.
@@ -2194,6 +2331,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # snap targets when the hit is on a deep child part.
         snap_target, snap_side = self.detect_cabinet_snap_target(
             self.hit_object, self.hit_location)
+        # Wall-mounted corner cabinets are excluded by find_cabinet_bp
+        # (it stops at IS_WALL_BP). Resolve one here so a peninsula run
+        # can snap off its projecting return; ordinary wall cabinets are
+        # still skipped (the helper accepts only corner cabinets).
+        if snap_target is None:
+            snap_target, snap_side = _corner_snap_target_under_cursor(
+                self.hit_object, self.hit_location)
         if snap_target is cage_obj:
             snap_target = None
             snap_side = None
@@ -2218,13 +2362,18 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         snap_result = None
         if snap_target is not None and snap_side is not None:
-            if _is_corner_cabinet(snap_target) and snap_side == 'LEFT':
-                # Corner cabinets need special LEFT-snap geometry: the
-                # new cabinet pivots 90 CCW onto the perpendicular wall
-                # and aligns with the corner's left_depth, not its
-                # bounding-box left face.
-                snap_result = _compute_corner_left_snap_transform(
-                    snap_target, self._cabinet_width)
+            if _is_corner_cabinet(snap_target):
+                # Corner cabinets continue a run off a return (arm), not
+                # off a bounding-box face. LEFT pivots 90 CCW down the
+                # -Y arm; RIGHT keeps orientation and butts to the +X
+                # arm end. Both are world-space, so this works for a
+                # free-standing OR wall-mounted corner (peninsula).
+                if snap_side == 'LEFT':
+                    snap_result = _compute_corner_left_snap_transform(
+                        snap_target, self._cabinet_width)
+                else:
+                    snap_result = _compute_corner_right_snap_transform(
+                        snap_target, self._cabinet_width)
             else:
                 snap_result = self.compute_cabinet_snap_transform(
                     snap_target, snap_side, self._cabinet_width)
@@ -2240,7 +2389,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 scene_props = context.scene.hb_face_frame
                 cage_obj.location.z = _upper_mount_z(_cls, scene_props)
             else:
-                cage_obj.location.z = snap_target.location.z
+                # World Z, not local: a wall-mounted corner cabinet's
+                # location.z is wall-local, so a row off it would inherit
+                # the wrong height. matrix_world folds in the parent.
+                cage_obj.location.z = snap_target.matrix_world.translation.z
         else:
             self._cabinet_snap_side = None
             cage_obj.location.x = self.hit_location.x
@@ -2248,7 +2400,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             if cabinet_type != 'UPPER' and not _mounts_as_upper(
                     types_face_frame.get_cabinet_class(self.cabinet_name)):
                 cage_obj.location.z = self.hit_location.z
-            cage_obj.rotation_euler = (0, 0, 0)
+            # Free placement honors the R-key rotation (90 deg steps).
+            cage_obj.rotation_euler = (0, 0, self._free_rotation_z)
 
         self._placement_dim_specs = self._build_dim_specs_free(context)
         if context.area is not None:
@@ -3456,6 +3609,22 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
     _corner_side = None  # None | 'LEFT' | 'RIGHT'
     _selected_wall = None
 
+    # Free (peninsula) placement: R cycles the cage through the 4
+    # orientations so the open/diagonal face can point any direction.
+    # Stored as state because _position_free rewrites the cage rotation
+    # every mousemove (a direct mutate would be clobbered next frame).
+    # Ignored on-wall, where the wall corner dictates facing.
+    _free_rotation_z: float = 0.0
+    # World-space line segments [(start, end), ...] for the GPU facing
+    # arrow drawn out the open face during free placement; None / empty
+    # when on a wall. Read by draw_placement_dimensions.
+    _facing_arrow_segments = None
+    # On a wall the cabinet follows the cursor and R toggles its rotation
+    # in place between the two valid front orientations: 0 deg (False) and
+    # -90 deg (True). (Off-wall placement uses the free 4-way
+    # _free_rotation_z instead.)
+    _wall_flip: bool = False
+
     # Gap-relative offset state. When an offset is active, corner snap
     # is disabled and the cabinet sits in the free (un-rotated) state
     # at gap_left_boundary + left_offset (or right equivalent).
@@ -3517,6 +3686,11 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         self.register_placement_object(cage_obj)
         self.add_placement_dim_handler(context)
 
+        # Fresh free-placement rotation each session.
+        self._free_rotation_z = 0.0
+        self._facing_arrow_segments = None
+        self._wall_flip = False
+
         context.window_manager.modal_handler_add(self)
         self._update_header(context)
         return {'RUNNING_MODAL'}
@@ -3555,6 +3729,25 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             return self._finalize(context)
+
+        # 'R' rotates the cabinet's facing. Off-wall (peninsula) it
+        # cycles all four 90 deg orientations; on a wall only 0 deg
+        # (LEFT corner) and -90 deg (RIGHT corner) are valid on the front,
+        # so it toggles between the two ends instead. Re-runs positioning
+        # from the last hit so the preview + facing arrow update at once.
+        if (event.type == 'R' and event.value == 'PRESS'
+                and self.placement_state == hb_placement.PlacementState.PLACING):
+            if self._selected_wall is not None:
+                # On a wall: flip the rotation in place (0 <-> -90). The
+                # cabinet keeps following the cursor; only its facing
+                # changes.
+                self._wall_flip = not self._wall_flip
+            else:
+                self._free_rotation_z = (
+                    self._free_rotation_z + math.radians(90)) % math.radians(360)
+            self._position_from_hit(context)
+            self._update_header(context)
+            return {'RUNNING_MODAL'}
 
         # Left/right arrows: type a gap-edge offset. Inert off-wall.
         if event.type == 'LEFT_ARROW' and event.value == 'PRESS':
@@ -3677,55 +3870,56 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             self._reposition_with_offsets(context)
             return
 
-        # Corner snap detection. Only available when the gap actually
-        # reaches that wall end; an existing cabinet (or adjacent-wall
-        # intrusion) at a corner removes that corner from the option.
+        # The corner cabinet FOLLOWS THE CURSOR along the wall; R toggles
+        # its rotation in place between the two valid front orientations
+        # (0 deg / -90 deg). When the cursor nears a wall end it SNAPS the
+        # footprint flush to that corner (like a standard cabinet) - that
+        # snap is positional only; the rotation stays whatever R has set.
+        #
+        # On the front of a wall only 0 and -90 are valid (the perpendicular
+        # arm must run along the wall). Corner cabinets are square
+        # (Dim X == Dim Y), so the along-wall footprint is identical for
+        # both; only the cage origin offset differs:
+        #   0 deg : origin is the cabinet's left edge  -> x = placement_x
+        #   -90 deg: the body extends LEFT of the origin (right arm swings
+        #            into the room, left arm runs back along the wall), so
+        #            the origin is the right edge      -> x = placement_x + extent
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
+        cabinet_extent = min(self._cabinet_width, gap_width)
+        placement_x = max(gap_start, min(snap_x, gap_end - cabinet_extent))
+
+        # Corner snap (positional). Engages only when the gap actually
+        # reaches that wall end. Hysteresis: a wider release band once
+        # snapped so it doesn't chatter at the threshold. _corner_side is
+        # the snap indicator (drives the green snap dim); it no longer
+        # drives rotation.
         engage_tol = max(self._cabinet_width / 2, units.inch(6.0))
         release_tol = engage_tol + units.inch(2.0)
         left_thresh = release_tol if self._corner_side == 'LEFT' else engage_tol
         right_thresh = release_tol if self._corner_side == 'RIGHT' else engage_tol
         eps = units.inch(0.1)
-
-        near_left_corner = (cursor_x < left_thresh) and (gap_start <= eps)
-        near_right_corner = (
-            (cursor_x > wall_length - right_thresh)
-            and (gap_end >= wall_length - eps)
-        )
-
-        if near_left_corner and near_right_corner:
-            self._corner_side = (
-                'LEFT' if cursor_x < wall_length / 2 else 'RIGHT'
-            )
-        elif near_left_corner:
+        near_left = (cursor_x < left_thresh) and (gap_start <= eps)
+        near_right = ((cursor_x > wall_length - right_thresh)
+                      and (gap_end >= wall_length - eps))
+        if near_left and near_right:
+            near_left = cursor_x < wall_length / 2
+            near_right = not near_left
+        if near_left:
             self._corner_side = 'LEFT'
-        elif near_right_corner:
+            placement_x = gap_start
+        elif near_right:
             self._corner_side = 'RIGHT'
+            placement_x = gap_end - cabinet_extent
         else:
             self._corner_side = None
 
-        # Position based on snap state
-        gap_width = max(gap_end - gap_start, units.inch(1.0))
-        if self._corner_side == 'LEFT':
-            cage_obj.location.x = 0.0
-            cage_obj.location.y = 0.0
-            cage_obj.rotation_euler = (0, 0, 0)
-            placement_x = 0.0
-            cabinet_extent = self._cabinet_width
-        elif self._corner_side == 'RIGHT':
-            cage_obj.location.x = wall_length
-            cage_obj.location.y = 0.0
+        cage_obj.location.y = 0.0
+        if self._wall_flip:
             cage_obj.rotation_euler = (0, 0, math.radians(-90))
-            placement_x = wall_length - self._cabinet_depth
-            cabinet_extent = self._cabinet_depth
+            cage_obj.location.x = placement_x + cabinet_extent
         else:
-            # Free along wall: cursor-centered, clamped into the gap.
-            cabinet_extent = min(self._cabinet_width, gap_width)
-            placement_x = max(
-                gap_start, min(snap_x, gap_end - cabinet_extent)
-            )
-            cage_obj.location.x = placement_x
-            cage_obj.location.y = 0.0
             cage_obj.rotation_euler = (0, 0, 0)
+            cage_obj.location.x = placement_x
 
         if _mounts_as_upper(self._cabinet_class):
             scene_props = context.scene.hb_face_frame
@@ -3738,6 +3932,8 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             context, wall, wall_length,
             gap_start, gap_end, placement_x, cabinet_extent,
         )
+        # Show the facing arrow on-wall too, for the snapped corner.
+        self._facing_arrow_segments = self._build_facing_arrow(cage_obj)
         if context.area is not None:
             context.area.tag_redraw()
 
@@ -3755,18 +3951,76 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             world = cage_obj.matrix_world.copy()
             cage_obj.parent = None
             cage_obj.matrix_world = world
-            cage_obj.rotation_euler = (0, 0, 0)
         self._corner_side = None
         self._selected_wall = None
+        self._wall_flip = False
 
         cage_obj.location.x = self.hit_location.x
         cage_obj.location.y = self.hit_location.y
         if self._cabinet_class.default_cabinet_type != 'UPPER':
             cage_obj.location.z = self.hit_location.z
+        # Honor the R-key facing rotation (90 deg steps).
+        cage_obj.rotation_euler = (0, 0, self._free_rotation_z)
 
         self._placement_dim_specs = self._build_dim_specs_free(context)
+        # Facing arrow points out the open/diagonal face; follows the
+        # cage rotation we just set.
+        self._facing_arrow_segments = self._build_facing_arrow(cage_obj)
         if context.area is not None:
             context.area.tag_redraw()
+
+    def _build_facing_arrow(self, cage_obj):
+        """World-space line segments for the GPU arrow that points out the
+        cage's open / diagonal face during free placement.
+
+        The corner cabinet's local frame puts the wall corner at the
+        origin and the room (open-face) corner at (width, -depth); the
+        open face therefore looks out along the (+X, -Y) bisector. We
+        anchor the arrow at the plan centre, at mid cabinet height, and
+        point it that way - so it rotates with the R-key facing.
+
+        Returns [(start, end), ...] Vectors (shaft + two head segments),
+        or None if the direction degenerates.
+        """
+        w = self._cabinet_width
+        d = self._cabinet_depth
+        h = self._cabinet_height
+        local_base = Vector((w / 2.0, -d / 2.0, h / 2.0))
+        local_dir = Vector((w, -d, 0.0))
+        if local_dir.length < 1e-6:
+            local_dir = Vector((1.0, -1.0, 0.0))
+
+        # Compose the world matrix from matrix_basis rather than reading
+        # matrix_world: we get here right after setting rotation_euler /
+        # location, and matrix_world is depsgraph-stale within the same
+        # call (the R-key bug - arrow lagged a frame until a mousemove).
+        # matrix_basis recomputes synchronously from loc/rot/scale; the
+        # parent (wall) matrix is stable, so this is fresh in both free
+        # and on-wall states.
+        if cage_obj.parent is not None:
+            m = (cage_obj.parent.matrix_world
+                 @ cage_obj.matrix_parent_inverse
+                 @ cage_obj.matrix_basis)
+        else:
+            m = cage_obj.matrix_basis
+        base = m @ local_base
+        dir_w = m.to_3x3() @ local_dir
+        dir_w.z = 0.0
+        if dir_w.length < 1e-6:
+            return None
+        dir_w.normalize()
+
+        length = max(w, d) * 0.6
+        tip = base + dir_w * length
+        # Arrowhead: two short segments swept back from the tip.
+        perp = Vector((-dir_w.y, dir_w.x, 0.0))
+        back = tip - dir_w * (length * 0.28)
+        head_w = length * 0.16
+        return [
+            (base, tip),
+            (tip, back + perp * head_w),
+            (tip, back - perp * head_w),
+        ]
 
     # ---------------- placement dimensions ----------------
 
@@ -3863,7 +4117,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             )
         msg = (f"Place {self.cabinet_name} - move cursor near a wall corner."
                f"{offset_hint}  -  type a size   ←/→: gap offset   "
-               f"LMB commits, Esc cancels.")
+               f"R: rotate facing   LMB commits, Esc cancels.")
         hb_placement.draw_header_text(context, msg)
 
     # ---------------- typed-input handlers ----------------
@@ -4010,9 +4264,15 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             cabinet_extent = max(min(self._cabinet_width, available), min_w)
             placement_x = cab_right - cabinet_extent
 
-        cage_obj.location.x = placement_x
+        # Honor the R rotation flip (0 / -90) here too; origin is the left
+        # edge at 0 deg, the right edge at -90 deg (the body extends left).
         cage_obj.location.y = 0.0
-        cage_obj.rotation_euler = (0, 0, 0)
+        if self._wall_flip:
+            cage_obj.rotation_euler = (0, 0, math.radians(-90))
+            cage_obj.location.x = placement_x + cabinet_extent
+        else:
+            cage_obj.rotation_euler = (0, 0, 0)
+            cage_obj.location.x = placement_x
 
         if _mounts_as_upper(self._cabinet_class):
             scene_props = context.scene.hb_face_frame

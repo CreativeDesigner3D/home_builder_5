@@ -4118,15 +4118,33 @@ class home_builder_walls_OT_hide_wall(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Custom-prop marker stamped on every object that "Isolate Selected
+# Walls" hides, so "Show All Walls" can restore EXACTLY those objects
+# (islands, appliances, other walls' content) without disturbing
+# anything the user hid manually.
+ISOLATE_HIDDEN_TAG = 'HB_ISOLATED_HIDDEN'
+
+
 class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
-    """Show all hidden walls in the scene"""
+    """Show all objects hidden by Isolate Selected Walls"""
     bl_idname = "home_builder_walls.show_all_walls"
     bl_label = "Show All Walls"
-    bl_description = "Unhide all hidden walls and their children"
+    bl_description = "Unhide everything hidden by Isolate Selected Walls"
     bl_options = {'UNDO'}
 
     def execute(self, context):
         count = 0
+        # Restore everything the isolate command hid (marker-stamped),
+        # clearing the marker as we go.
+        for obj in context.scene.objects:
+            if obj.get(ISOLATE_HIDDEN_TAG):
+                obj.hide_set(False)
+                obj.hide_viewport = False
+                del obj[ISOLATE_HIDDEN_TAG]
+                count += 1
+
+        # Backward-compat: blends isolated before the marker existed have
+        # hidden walls + children with no marker. Unhide those too.
         for obj in context.scene.objects:
             if obj.get('IS_WALL_BP') and (obj.hide_get() or obj.hide_viewport):
                 obj.hide_set(False)
@@ -4137,9 +4155,9 @@ class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
                 count += 1
 
         if count > 0:
-            self.report({'INFO'}, f"Restored {count} hidden wall(s)")
+            self.report({'INFO'}, f"Restored {count} hidden object(s)")
         else:
-            self.report({'INFO'}, "No hidden walls found")
+            self.report({'INFO'}, "No hidden objects found")
         return {'FINISHED'}
 
 
@@ -4168,17 +4186,39 @@ class home_builder_walls_OT_isolate_selected_walls(bpy.types.Operator):
             elif obj.parent and obj.parent.get('IS_WALL_BP'):
                 selected_wall_bps.add(obj.parent)
 
+        if not selected_wall_bps:
+            self.report({'WARNING'}, "No wall selected")
+            return {'CANCELLED'}
+
+        # Keep visible: the selected wall(s) plus every descendant
+        # (cabinets / parts / dims parented under them). Everything else
+        # in the scene gets hidden - other walls AND their content, but
+        # also free-standing content like islands / peninsulas
+        # (IS_CAGE_GROUP or parentless cabinet cages), appliances, and
+        # obstacles, none of which parent to a wall. "Isolate" should
+        # leave only the chosen wall's run on screen.
+        keep = set(selected_wall_bps)
+        for wall in selected_wall_bps:
+            keep.update(wall.children_recursive)
+
         hidden_count = 0
         for obj in context.scene.objects:
-            if obj.get('IS_WALL_BP') and obj not in selected_wall_bps:
-                obj.hide_set(True)
-                obj.hide_viewport = True
-                for child in obj.children_recursive:
-                    child.hide_set(True)
-                    child.hide_viewport = True
-                hidden_count += 1
+            if obj in keep:
+                continue
+            # Never hide cameras / lights - hiding them would blank the
+            # viewport, and they aren't room content.
+            if obj.type in {'CAMERA', 'LIGHT'}:
+                continue
+            # Skip anything already hidden so we don't claim (and later
+            # reveal via Show All Walls) objects the user hid themselves.
+            if obj.hide_get() or obj.hide_viewport:
+                continue
+            obj.hide_set(True)
+            obj.hide_viewport = True
+            obj[ISOLATE_HIDDEN_TAG] = True
+            hidden_count += 1
 
-        self.report({'INFO'}, f"Isolated {len(selected_wall_bps)} wall(s), hid {hidden_count} other(s)")
+        self.report({'INFO'}, f"Isolated {len(selected_wall_bps)} wall(s), hid {hidden_count} object(s)")
         return {'FINISHED'}
 
 
