@@ -4,6 +4,16 @@ from .. import hb_layouts
 from .. import hb_details
 
 CATEGORY_NAME = "Home Builder"
+
+def _hide_2d_drawing_panels(context):
+    """True when the user has opted to hide HB5's 2D drawing panels.
+    """
+    try:
+        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+    except (KeyError, AttributeError):
+        return False
+    return bool(getattr(prefs, "hide_2d_drawing_panels", False))
+
 # =============================================================================
 # HOME BUILDER UI PANELS
 # All panels in the "Home Builder" category tab
@@ -636,6 +646,8 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
         # Only show when not in a detail view
         if context.scene.get('IS_DETAIL_VIEW'):
             return False
+        if _hide_2d_drawing_panels(context):
+            return False
         return True
 
     def draw(self, context):
@@ -934,7 +946,11 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
     bl_category = CATEGORY_NAME
     bl_order = 4
     bl_options = {'DEFAULT_CLOSED'}
-    
+
+    @classmethod
+    def poll(cls, context):
+        return not _hide_2d_drawing_panels(context)
+
     def draw(self, context):
         layout = self.layout
         is_detail_view = context.scene.get('IS_DETAIL_VIEW', False)
@@ -993,7 +1009,11 @@ class HOME_BUILDER_PT_annotations(bpy.types.Panel):
     bl_category = CATEGORY_NAME
     bl_order = 5
     bl_options = {'DEFAULT_CLOSED'}
-    
+
+    @classmethod
+    def poll(cls, context):
+        return not _hide_2d_drawing_panels(context)
+
     def draw(self, context):
         layout = self.layout
 

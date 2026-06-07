@@ -85,6 +85,12 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    hide_2d_drawing_panels: bpy.props.BoolProperty(
+        name="Hide 2D Drawing Panels",
+        description="Hide the Layout Views, 2D Details, and Annotations ",
+        default=False,
+    ) # type: ignore
+
     wall_color: bpy.props.FloatVectorProperty(name="Wall Color",
                                    description="The color of walls",
                                    size=4,
@@ -197,6 +203,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         layout = self.layout
 
         layout.prop(self, "use_viewport_hud")
+        layout.prop(self, "hide_2d_drawing_panels")
         
         # Layout view defaults
         box = layout.box()
