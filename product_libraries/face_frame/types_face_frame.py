@@ -3024,6 +3024,20 @@ class FaceFrameCabinet(GeoNodeCage):
                 panel_obj.parent = self.obj
                 panel_obj[TAG_APPLIED_PANEL_SIDE] = side
 
+            # Stamp the parent cabinet's style onto the panel root so the
+            # panel's own recalc tail (_reapply_cabinet_style) materials its
+            # parts. The inset-panel fronts and the auto split mid-rails /
+            # mid-stiles are torn down and rebuilt every recalc; with no
+            # STYLE_NAME the panel's own recalc leaves the rebuilt parts
+            # unmaterialed (rendered white). A parent recalc would walk
+            # them, but a panel-scoped recalc (e.g. the panel dim writes
+            # below) has no following parent walk. _apply_door_styles_to_
+            # fronts is a no-op on INSET_PANEL roles, so this only adds the
+            # finish. Re-stamped each reconcile to track a parent restyle.
+            parent_style = self.obj.get('STYLE_NAME')
+            if parent_style:
+                panel_obj['STYLE_NAME'] = parent_style
+
             location, rotation_z, width, height, depth = (
                 applied_panel_geometry(layout, side)
             )

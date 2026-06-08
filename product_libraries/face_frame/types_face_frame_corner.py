@@ -36,6 +36,15 @@ PART_ROLE_CORNER_LEFT_KICK = 'CORNER_LEFT_KICK'
 PART_ROLE_CORNER_RIGHT_KICK = 'CORNER_RIGHT_KICK'
 PART_ROLE_CORNER_LEFT_FINISH_KICK = 'CORNER_LEFT_FINISH_KICK'
 PART_ROLE_CORNER_RIGHT_FINISH_KICK = 'CORNER_RIGHT_FINISH_KICK'
+# Loose ladder sub-base (LOOSE / LOOSE_FLUSH): the two existing kick
+# boards serve as the front rails along each arm front; these four close
+# the L-perimeter frame - a rear rail along each wall plus a short end
+# board at each arm's outer end. Built only for BASE/TALL corners and
+# shown only when the kick type is LOOSE / LOOSE_FLUSH.
+PART_ROLE_CORNER_LOOSE_REAR_LEFT = 'CORNER_LOOSE_REAR_LEFT'
+PART_ROLE_CORNER_LOOSE_REAR_RIGHT = 'CORNER_LOOSE_REAR_RIGHT'
+PART_ROLE_CORNER_LOOSE_END_LEFT = 'CORNER_LOOSE_END_LEFT'
+PART_ROLE_CORNER_LOOSE_END_RIGHT = 'CORNER_LOOSE_END_RIGHT'
 
 # Diagonal-specific roles. The cutter is a child of the cabinet root
 # carrying GeoNodeCage geometry; carcass parts that need the 45 degree
@@ -67,6 +76,10 @@ CORNER_PART_ROLES = frozenset({
     PART_ROLE_CORNER_RIGHT_KICK,
     PART_ROLE_CORNER_LEFT_FINISH_KICK,
     PART_ROLE_CORNER_RIGHT_FINISH_KICK,
+    PART_ROLE_CORNER_LOOSE_REAR_LEFT,
+    PART_ROLE_CORNER_LOOSE_REAR_RIGHT,
+    PART_ROLE_CORNER_LOOSE_END_LEFT,
+    PART_ROLE_CORNER_LOOSE_END_RIGHT,
     PART_ROLE_DIAGONAL_CUTTER,
     PART_ROLE_DIAGONAL_SIDE_CUTTER,
     PART_ROLE_DIAGONAL_KICK,
@@ -224,6 +237,41 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
     def _has_toe_kick(self):
         return self.default_cabinet_type in ('BASE', 'TALL')
 
+    def _corner_kick_flags(self, cab_props):
+        """Derive toe-kick presentation flags from toe_kick_type for the
+        corner recalc paths. Mirrors the straight-cabinet semantics so all
+        five base types work on corners:
+          NOTCH    - recessed kick: sides run to the floor with a front-
+                     bottom notch, recessed kick boards (+ optional finish
+                     kick), FF sits above the kick.
+          FLUSH    - no recess: sides to the floor (no notch), no kick
+                     boards, FF bottom rail + stiles run to the floor.
+          FLOATING - sides float by kick_height, kick left open (no boards
+                     or ladder), FF above the kick.
+          LOOSE / LOOSE_FLUSH - float like FLOATING; a separate corner
+                     ladder sub-base is built by the per-shape recalc
+                     (recessed for LOOSE, flush for LOOSE_FLUSH). For the
+                     carcass / FF / kick-board flags they read as FLOATING.
+        Uppers (no kick) collapse to sides-to-floor, no kick parts.
+        """
+        has_kick = self._has_toe_kick()
+        tk = cab_props.toe_kick_type if has_kick else 'NOTCH'
+        return SimpleNamespace(
+            has_kick=has_kick,
+            tk=tk,
+            # Front kick boards are shown for NOTCH (recessed subfront)
+            # AND LOOSE / LOOSE_FLUSH (they double as the ladder's front
+            # rails along each arm). FLUSH / FLOATING hide them.
+            front_rails=has_kick and tk in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH'),
+            side_notch=has_kick and tk == 'NOTCH',
+            sides_to_floor=(not has_kick) or tk in ('NOTCH', 'FLUSH'),
+            ff_to_floor=has_kick and tk == 'FLUSH',
+            finish=(has_kick and tk == 'NOTCH'
+                    and cab_props.include_finish_toe_kick),
+            loose=has_kick and tk in ('LOOSE', 'LOOSE_FLUSH'),
+            loose_flush=has_kick and tk == 'LOOSE_FLUSH',
+        )
+
     # -----------------------------------------------------------------
     # Carcass build (overrides FaceFrameCabinet._build_carcass_parts)
     # -----------------------------------------------------------------
@@ -238,6 +286,35 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         else:
             raise NotImplementedError(
                 f"Corner type {self.default_corner_type!r} not yet supported")
+
+    def _build_corner_loose_ladder_parts(self):
+        """Create the six LOOSE / LOOSE_FLUSH ladder parts shared by both
+        corner shapes: two front kick rails (which also serve as the NOTCH
+        recessed subfront on the pie cut) plus the L-perimeter rear rails
+        and arm end boards. Orientation: Y-running boards use the Left Kick
+        convention (rot X=-90, Z=90, Mirror Y); X-running boards use the
+        Right Kick convention (rot X=-90, Z=180, Mirror Y + Mirror Z).
+        Positioned / shown by _position_corner_loose_ladder in recalc.
+        """
+        specs = (
+            ('Left Kick',             PART_ROLE_CORNER_LEFT_KICK,        90,  False),
+            ('Right Kick',            PART_ROLE_CORNER_RIGHT_KICK,       180, True),
+            ('Loose Kick Rear Left',  PART_ROLE_CORNER_LOOSE_REAR_LEFT,  90,  False),
+            ('Loose Kick Rear Right', PART_ROLE_CORNER_LOOSE_REAR_RIGHT, 180, True),
+            ('Loose Kick End Left',   PART_ROLE_CORNER_LOOSE_END_LEFT,   180, True),
+            ('Loose Kick End Right',  PART_ROLE_CORNER_LOOSE_END_RIGHT,  90,  False),
+        )
+        for name, role, z_deg, mirror_z in specs:
+            part = CabinetPart()
+            part.create(name)
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = role
+            part.obj['CABINET_PART'] = True
+            part.obj.rotation_euler.x = math.radians(-90)
+            part.obj.rotation_euler.z = math.radians(z_deg)
+            part.set_input('Mirror Y', True)
+            if mirror_z:
+                part.set_input('Mirror Z', True)
 
     def _build_pie_cut_parts(self):
         """Create the pie cut carcass parts. Dimensions and positions
@@ -335,31 +412,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # cabinet_type change can show / hide via the recalc path
         # without rebuilding parts.
         if self._has_toe_kick():
-            left_kick = CabinetPart()
-            left_kick.create('Left Kick')
-            left_kick.obj.parent = self.obj
-            left_kick.obj['hb_part_role'] = PART_ROLE_CORNER_LEFT_KICK
-            left_kick.obj['CABINET_PART'] = True
-            left_kick.obj.rotation_euler.x = math.radians(-90)
-            left_kick.obj.rotation_euler.z = math.radians(90)
-            left_kick.set_input('Mirror Y', True)
+            self._build_corner_loose_ladder_parts()
 
-            right_kick = CabinetPart()
-            right_kick.create('Right Kick')
-            right_kick.obj.parent = self.obj
-            right_kick.obj['hb_part_role'] = PART_ROLE_CORNER_RIGHT_KICK
-            right_kick.obj['CABINET_PART'] = True
-            right_kick.obj.rotation_euler.x = math.radians(-90)
-            right_kick.obj.rotation_euler.z = math.radians(180)
-            right_kick.set_input('Mirror Y', True)
-            right_kick.set_input('Mirror Z', True)
-
-            # Finish toe kick: 0.25" cosmetic facing applied to the
-            # front of each kick subfront. Same orientation as the
-            # subfront; recalc shifts the position forward by
-            # finish_thickness so the finish kick's back face is
-            # flush with the subfront's front. Hidden in recalc when
-            # include_finish_toe_kick is off.
+            # Finish toe kicks: 0.25" cosmetic facing on each kick subfront
+            # (pie-cut NOTCH only; the diagonal uses its diagonal kick).
+            # Recalc shifts them forward by finish_thickness and hides them
+            # when include_finish_toe_kick is off.
             left_finish = CabinetPart()
             left_finish.create('Left Finish Kick')
             left_finish.obj.parent = self.obj
@@ -679,6 +737,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             diag_kick.obj['CABINET_PART'] = True
             diag_kick.obj.rotation_euler.x = math.radians(90)
             diag_kick.set_input('Mirror Z', True)
+            # Loose ladder parts - the same L sub-base as the pie cut.
+            # The diagonal kick above is the NOTCH front; these L parts
+            # are shown only for LOOSE / LOOSE_FLUSH by the shared
+            # positioner (which hides the diagonal kick when loose).
+            self._build_corner_loose_ladder_parts()
 
         # Doors, mid rails, and per-section content are reconciled by
         # _reconcile_diagonal_sections from cab_props.corner_sections;
@@ -1029,6 +1092,112 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 ('Route Depth', inch(0.76)),
             ))
 
+    def _position_corner_loose_ladder(self, parts, *, t, kick_height,
+                                      depth, width, ld, rd, fft,
+                                      front_setback, left_scribe, right_scribe,
+                                      il, ir, ibl, ibr,
+                                      show_front_rails, ladder_vis):
+        """Position the corner LOOSE / LOOSE_FLUSH toe-kick ladder. Shared
+        by the pie-cut and diagonal recalcs so both build the identical
+        L-perimeter sub-base ("same as the pie cut"): two front kick rails
+        forming an L (front-left at X=fl_x running Y, front-right at Y=fr_y
+        running X), a rear rail down each wall, and a short end board across
+        each arm's outer end. The four toe-kick insets are applied -
+        LEFT/RIGHT pull each arm's outer end inboard (the end board is its
+        return closeout); BACK LEFT/RIGHT pull each rear rail off its wall.
+
+        Geometry is cabinet-local; callers pass their own per-side scribe
+        (the pie-cut keeps it in l_scribe/r_scribe with fflo/ffro = 0; the
+        diagonal keeps it in fflo/ffro). `show_front_rails` gates the two
+        front kicks (the pie-cut shows them for NOTCH too; the diagonal
+        shows a diagonal kick for NOTCH and these only when loose);
+        `ladder_vis` (= loose) gates the rear rails + end boards. Board
+        thickness t extends toward the cabinet interior; Width is the kick
+        height (stands on the floor at z=0).
+        """
+        fl_x = ld - fft - front_setback     # front-left rail X (left kick)
+        fr_y = -rd + fft + front_setback    # front-right rail Y (right kick)
+        WX = left_scribe + ibl              # left-wall rail X
+        WY = -right_scribe - ibr            # back-wall rail Y
+        LY = -depth + il                    # left arm outer end Y
+        RX = width - ir                     # right arm outer end X
+
+        left_kick = parts.get(PART_ROLE_CORNER_LEFT_KICK)
+        if left_kick is not None:
+            left_kick.hide_viewport = not show_front_rails
+            left_kick.hide_render = not show_front_rails
+            # Origin at the Left Side's back face (shifts with the left
+            # scribe); the inside-corner end is anchored to the FF so only
+            # the outer end moves with the left inset (il).
+            left_kick.location = (fl_x, -depth + il + t + left_scribe, 0.0)
+            _set_mod_inputs(left_kick, left_kick.home_builder.mod_name, (
+                ('Length',
+                 depth - rd + front_setback + fft - t - left_scribe - il),
+                ('Width', kick_height),
+                ('Thickness', t),
+            ))
+
+        right_kick = parts.get(PART_ROLE_CORNER_RIGHT_KICK)
+        if right_kick is not None:
+            right_kick.hide_viewport = not show_front_rails
+            right_kick.hide_render = not show_front_rails
+            right_kick.location = (
+                width - ir - t - right_scribe, fr_y, 0.0)
+            _set_mod_inputs(right_kick, right_kick.home_builder.mod_name, (
+                ('Length',
+                 width - ld + front_setback + fft - t - right_scribe - ir),
+                ('Width', kick_height),
+                ('Thickness', t),
+            ))
+
+        rear_left = parts.get(PART_ROLE_CORNER_LOOSE_REAR_LEFT)
+        if rear_left is not None:
+            rear_left.hide_viewport = not ladder_vis
+            rear_left.hide_render = not ladder_vis
+            if ladder_vis:
+                rear_left.location = (WX + t, LY, 0.0)
+                _set_mod_inputs(rear_left, rear_left.home_builder.mod_name, (
+                    ('Length', WY - LY),
+                    ('Width', kick_height),
+                    ('Thickness', t),
+                ))
+
+        rear_right = parts.get(PART_ROLE_CORNER_LOOSE_REAR_RIGHT)
+        if rear_right is not None:
+            rear_right.hide_viewport = not ladder_vis
+            rear_right.hide_render = not ladder_vis
+            if ladder_vis:
+                rear_right.location = (RX, WY - t, 0.0)
+                _set_mod_inputs(rear_right, rear_right.home_builder.mod_name, (
+                    ('Length', RX - WX - t),
+                    ('Width', kick_height),
+                    ('Thickness', t),
+                ))
+
+        end_left = parts.get(PART_ROLE_CORNER_LOOSE_END_LEFT)
+        if end_left is not None:
+            end_left.hide_viewport = not ladder_vis
+            end_left.hide_render = not ladder_vis
+            if ladder_vis:
+                end_left.location = (fl_x, LY, 0.0)
+                _set_mod_inputs(end_left, end_left.home_builder.mod_name, (
+                    ('Length', fl_x - WX),
+                    ('Width', kick_height),
+                    ('Thickness', t),
+                ))
+
+        end_right = parts.get(PART_ROLE_CORNER_LOOSE_END_RIGHT)
+        if end_right is not None:
+            end_right.hide_viewport = not ladder_vis
+            end_right.hide_render = not ladder_vis
+            if ladder_vis:
+                end_right.location = (RX, fr_y, 0.0)
+                _set_mod_inputs(end_right, end_right.home_builder.mod_name, (
+                    ('Length', WY - fr_y),
+                    ('Width', kick_height),
+                    ('Thickness', t),
+                ))
+
     def _recalculate_pie_cut(self):
         """Write dimensions and positions to all pie cut carcass parts
         from cab_props. Backs and sides shift up by (kick_height + brw)
@@ -1052,6 +1221,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         has_kick = self._has_toe_kick()
         kick_height = cab_props.toe_kick_height if has_kick else 0.0
         kick_setback = cab_props.toe_kick_setback
+        # Per-type toe-kick presentation (see _corner_kick_flags).
+        kf = self._corner_kick_flags(cab_props)
 
         # Slice 3 has no face frame yet, so overlays are zero and
         # finished ends are off. These plug into the reference formulas
@@ -1070,6 +1241,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         z_back_floor = (kick_height + brw) if has_kick else brw
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
         z_top = height - t
+
+        # Side panels run to the floor (NOTCH / FLUSH / upper) or float by
+        # the kick height (FLOATING / LOOSE / LOOSE_FLUSH leave the kick
+        # open). The front-bottom notch is only carved for NOTCH.
+        side_z = 0.0 if kf.sides_to_floor else kick_height
+        side_len = height if kf.sides_to_floor else height - kick_height
 
         parts = _children_by_corner_role(self.obj)
 
@@ -1140,9 +1317,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # outer edge at Y=-depth). The face frame stile - which
             # extends Y=-depth..Y=-depth+lsw - covers the resulting gap
             # so long as l_scribe < lsw - t. Width unchanged.
-            left_side.location = (0.0, -depth + fflo + l_scribe, 0.0)
+            left_side.location = (0.0, -depth + fflo + l_scribe, side_z)
             _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
-                ('Length', height),
+                ('Length', side_len),
                 ('Width', ld - fft),
                 ('Thickness', t),
             ))
@@ -1153,17 +1330,17 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             ))
             ls_mod = left_side.modifiers.get('Notch Front Bottom')
             if ls_mod is not None:
-                ls_mod.show_viewport = has_kick
-                ls_mod.show_render = has_kick
+                ls_mod.show_viewport = kf.side_notch
+                ls_mod.show_render = kf.side_notch
 
         right_side = parts.get(PART_ROLE_CORNER_RIGHT_SIDE)
         if right_side is not None:
             # r_scribe shifts the side in -X (away from the face frame
             # outer edge at X=width). Right stile covers the gap.
             # Width unchanged.
-            right_side.location = (width - ffro - r_scribe, 0.0, 0.0)
+            right_side.location = (width - ffro - r_scribe, 0.0, side_z)
             _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
-                ('Length', height),
+                ('Length', side_len),
                 ('Width', rd - fft),
                 ('Thickness', t),
             ))
@@ -1174,8 +1351,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             ))
             rs_mod = right_side.modifiers.get('Notch Front Bottom')
             if rs_mod is not None:
-                rs_mod.show_viewport = has_kick
-                rs_mod.show_render = has_kick
+                rs_mod.show_viewport = kf.side_notch
+                rs_mod.show_render = kf.side_notch
 
         # Tray Compartment partition. Cavity-height interior divider that
         # walls a tray-storage strip off one leg. tray_compartment_width
@@ -1275,41 +1452,38 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         ('Thickness', dthk),
                     ))
 
-        left_kick = parts.get(PART_ROLE_CORNER_LEFT_KICK)
-        if left_kick is not None:
-            # Kick origin sits at Left Side's back face, which shifts
-            # with l_scribe. Length shrinks by the same amount; the
-            # inside-corner end of the kick is anchored to the face
-            # frame and doesn't move.
-            left_kick.location = (
-                ld - fft - kick_setback, -depth + t + fflo + l_scribe, 0.0)
-            _set_mod_inputs(left_kick, left_kick.home_builder.mod_name, (
-                ('Length',
-                 depth - rd + kick_setback + fft - t - fflo - l_scribe),
-                ('Width', kick_height),
-                ('Thickness', t),
-            ))
+        # Front kick boards double as the ladder front rails for LOOSE /
+        # LOOSE_FLUSH; LOOSE_FLUSH pulls them flush to the arm front
+        # (setback 0) while NOTCH / LOOSE keep the recess setback.
+        front_setback = 0.0 if kf.loose_flush else kick_setback
 
-        right_kick = parts.get(PART_ROLE_CORNER_RIGHT_KICK)
-        if right_kick is not None:
-            # Mirror of left: origin at Right Side's back face which
-            # shifts with r_scribe; Length shrinks accordingly.
-            right_kick.location = (
-                width - t - ffro - r_scribe,
-                -rd + fft + kick_setback, 0.0)
-            _set_mod_inputs(right_kick, right_kick.home_builder.mod_name, (
-                ('Length',
-                 width - ld + kick_setback + fft - t - ffro - r_scribe),
-                ('Width', kick_height),
-                ('Thickness', t),
-            ))
+        # Toe-kick insets (corner). LEFT/RIGHT pull each arm's OUTER end
+        # inboard; BACK LEFT/RIGHT pull each arm's rear (wall-side) rail
+        # off its wall. Applied to the LOOSE / LOOSE_FLUSH ladder only
+        # (kf.loose) - the end boards act as the outer-end return
+        # closeouts. NOTCH / FLUSH / FLOATING ignore them (no ladder).
+        il  = cab_props.inset_toe_kick_left       if kf.loose else 0.0
+        ir  = cab_props.inset_toe_kick_right      if kf.loose else 0.0
+        ibl = cab_props.inset_toe_kick_back_left  if kf.loose else 0.0
+        ibr = cab_props.inset_toe_kick_back_right if kf.loose else 0.0
+        # L-perimeter loose ladder (shared with the diagonal). The four
+        # insets above are passed through; the pie-cut keeps its scribe in
+        # l_scribe / r_scribe (fflo / ffro are 0 here) and shows the front
+        # kicks for NOTCH too (they are the recessed subfront).
+        self._position_corner_loose_ladder(
+            parts, t=t, kick_height=kick_height, depth=depth, width=width,
+            ld=ld, rd=rd, fft=fft, front_setback=front_setback,
+            left_scribe=l_scribe, right_scribe=r_scribe,
+            il=il, ir=ir, ibl=ibl, ibr=ibr,
+            show_front_rails=kf.front_rails, ladder_vis=kf.loose)
 
         # Finish toe kicks: 0.25" facing on the front of each subfront.
         # ft shifts each finish kick forward into the room by its own
         # thickness; Length shrinks by ft so both finish kicks meet at
         # the (slightly forward) inside corner of the finish-kick plane.
         ft = cab_props.finish_toe_kick_thickness
-        finish_visible = has_kick and cab_props.include_finish_toe_kick
+        # Finish kicks face the recessed NOTCH subfront only.
+        finish_visible = kf.finish
 
         left_finish = parts.get(PART_ROLE_CORNER_LEFT_FINISH_KICK)
         if left_finish is not None:
@@ -1363,8 +1537,14 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         rsw = cab_props.right_stile_width
         trw = cab_props.top_rail_width
         brw_ff = cab_props.bottom_rail_width
-        z_ff_floor = kick_height if has_kick else 0.0
-        stile_length = height - kick_height if has_kick else height
+        # FLUSH drops the FF to the floor: stiles run full height and the
+        # bottom rail grows down by kick_height (brw_eff). All other types
+        # keep the FF above the kick. z_open_bot below stays constant
+        # across types (z_ff_floor + brw_eff), so doors / sections don't
+        # shift when the kick type changes.
+        z_ff_floor = 0.0 if (kf.ff_to_floor or not has_kick) else kick_height
+        stile_length = height - z_ff_floor
+        brw_eff = brw_ff + (kick_height if kf.ff_to_floor else 0.0)
 
         left_stile = _find_ff_part(self.obj, ff.PART_ROLE_LEFT_STILE, 'LEFT')
         if left_stile is not None:
@@ -1407,7 +1587,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             left_bot_rail.location = (ld - fft, -depth + lsw, z_ff_floor)
             _set_mod_inputs(left_bot_rail, left_bot_rail.home_builder.mod_name, (
                 ('Length', depth - rd - lsw),
-                ('Width', brw_ff),
+                ('Width', brw_eff),
                 ('Thickness', fft),
             ))
 
@@ -1416,7 +1596,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             right_bot_rail.location = (width - rsw, -rd + fft, z_ff_floor)
             _set_mod_inputs(right_bot_rail, right_bot_rail.home_builder.mod_name, (
                 ('Length', width - ld - lsw + fft),
-                ('Width', brw_ff),
+                ('Width', brw_eff),
                 ('Thickness', fft),
             ))
 
@@ -1465,7 +1645,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # Vertical section layout: opening from the top of the bottom
         # rail to the underside of the top rail, split per the section
         # heights (unlocked sections share the remainder equally).
-        z_open_bot = z_ff_floor + brw_ff
+        z_open_bot = z_ff_floor + brw_eff
         z_open_top = height - trw
         sec_heights = _solve_section_heights(
             sections, z_open_top - z_open_bot, n_sec - 1, mrw)
@@ -1787,6 +1967,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         brw = cab_props.bottom_rail_width
         has_kick = self._has_toe_kick()
         kick_height = cab_props.toe_kick_height if has_kick else 0.0
+        kf = self._corner_kick_flags(cab_props)
+        # Side panels float by kick_height for FLOATING / LOOSE /
+        # LOOSE_FLUSH; run to the floor otherwise (with a front-bottom
+        # notch only for NOTCH). Mirrors the pie-cut side handling.
+        side_z = 0.0 if kf.sides_to_floor else kick_height
+        side_len = height if kf.sides_to_floor else height - kick_height
 
         # Left / Right scribe = how far the carcass body recedes from
         # the FF diagonal endpoints A (left) and B (right). At scribe=0
@@ -1851,9 +2037,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # arm length; the boolean carves whatever crosses the cut.
         left_side = parts.get(PART_ROLE_CORNER_LEFT_SIDE)
         if left_side is not None:
-            left_side.location = (0.0, -depth + fflo, 0.0)
+            left_side.location = (0.0, -depth + fflo, side_z)
             _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
-                ('Length', height),
+                ('Length', side_len),
                 ('Width', ld + fflo),
                 ('Thickness', t),
             ))
@@ -1864,14 +2050,14 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             ))
             ls_mod = left_side.modifiers.get('Notch Front Bottom')
             if ls_mod is not None:
-                ls_mod.show_viewport = has_kick
-                ls_mod.show_render = has_kick
+                ls_mod.show_viewport = kf.side_notch
+                ls_mod.show_render = kf.side_notch
 
         right_side = parts.get(PART_ROLE_CORNER_RIGHT_SIDE)
         if right_side is not None:
-            right_side.location = (width - ffro, 0.0, 0.0)
+            right_side.location = (width - ffro, 0.0, side_z)
             _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
-                ('Length', height),
+                ('Length', side_len),
                 ('Width', rd + ffro),
                 ('Thickness', t),
             ))
@@ -1882,8 +2068,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             ))
             rs_mod = right_side.modifiers.get('Notch Front Bottom')
             if rs_mod is not None:
-                rs_mod.show_viewport = has_kick
-                rs_mod.show_render = has_kick
+                rs_mod.show_viewport = kf.side_notch
+                rs_mod.show_render = kf.side_notch
 
         # ---- Face frame -------------------------------------------------
         # Face frame parts sit on the diagonal plane. Baseline rotations
@@ -1911,8 +2097,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         uy = diag_dy_ff / diag_len_ff
         theta = math.atan2(diag_dy_ff, diag_dx_ff)
 
-        z_ff_floor = kick_height if has_kick else 0.0
-        stile_length = (height - kick_height) if has_kick else height
+        # FLUSH drops the FF (stiles + bottom rail) to the floor and grows
+        # the bottom rail down by kick_height (brw_eff); every other kick
+        # type keeps the FF above the kick. Matches the pie-cut FF floor.
+        z_ff_floor = 0.0 if (kf.ff_to_floor or not has_kick) else kick_height
+        stile_length = height - z_ff_floor
+        brw_eff = brw_ff + (kick_height if kf.ff_to_floor else 0.0)
         rail_length = diag_len_ff - lsw - rsw
         rail_origin_x = ld + lsw * ux
         rail_origin_y = -depth + lsw * uy
@@ -1946,7 +2136,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             bot_rail.rotation_euler.z = theta
             _set_mod_inputs(bot_rail, bot_rail.home_builder.mod_name, (
                 ('Length', rail_length),
-                ('Width', brw_ff),
+                ('Width', brw_eff),
                 ('Thickness', fft),
             ))
             bot_rail.hide_viewport = open_base
@@ -1971,8 +2161,16 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # scribes the resulting line is parallel to A-B (same angle as
         # the FF); for asymmetric cases the kick angle adapts so it
         # connects cleanly to both notches.
+        # Diagonal kick is the NOTCH recessed subfront on the diagonal
+        # face; LOOSE / LOOSE_FLUSH use the shared L ladder instead
+        # (below), FLUSH / FLOATING have no kick board - so show it for
+        # NOTCH only.
+        diag_notch = kf.has_kick and kf.tk == 'NOTCH'
         diag_kick = parts.get(PART_ROLE_DIAGONAL_KICK)
-        if diag_kick is not None and has_kick:
+        if diag_kick is not None:
+            diag_kick.hide_viewport = not diag_notch
+            diag_kick.hide_render = not diag_notch
+        if diag_kick is not None and diag_notch:
             kick_setback = cab_props.toe_kick_setback
             kick_left_x = ld + fflo - kick_setback
             kick_left_y = -depth + fflo + t
@@ -1989,6 +2187,23 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 ('Width', kick_height),
                 ('Thickness', t),
             ))
+
+        # Loose ladder (LOOSE / LOOSE_FLUSH): the same L sub-base as the
+        # pie cut, inscribed in the diagonal footprint. front_setback
+        # flushes the front rails for LOOSE_FLUSH; the four insets apply
+        # on loose only. The diagonal keeps its per-side scribe in
+        # fflo / ffro (the pie-cut keeps it in l_scribe / r_scribe).
+        front_setback = 0.0 if kf.loose_flush else cab_props.toe_kick_setback
+        il  = cab_props.inset_toe_kick_left       if kf.loose else 0.0
+        ir  = cab_props.inset_toe_kick_right      if kf.loose else 0.0
+        ibl = cab_props.inset_toe_kick_back_left  if kf.loose else 0.0
+        ibr = cab_props.inset_toe_kick_back_right if kf.loose else 0.0
+        self._position_corner_loose_ladder(
+            parts, t=t, kick_height=kick_height, depth=depth, width=width,
+            ld=ld, rd=rd, fft=fft, front_setback=front_setback,
+            left_scribe=fflo, right_scribe=ffro,
+            il=il, ir=ir, ibl=ibl, ibr=ibr,
+            show_front_rails=kf.loose, ladder_vis=kf.loose)
 
         # ---- Sections: mid rails + per-section content --------------
         # The FF opening between the bottom and top rails is divided into
@@ -2016,7 +2231,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # Opening runs from the top of the bottom rail to the underside
         # of the top rail. When the base is open the bottom rail is gone,
         # so the lowest opening starts at the carcass floor instead.
-        z_open_bot = z_back_floor if open_base else z_ff_floor + brw_ff
+        z_open_bot = z_back_floor if open_base else z_ff_floor + brw_eff
         z_open_top = height - trw
         sec_heights = _solve_section_heights(
             sections, z_open_top - z_open_bot, n_sec - 1, mrw)

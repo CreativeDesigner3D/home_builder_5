@@ -536,9 +536,10 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
         return (bay_bottom_z(layout, bay_index)
                 - ends_down_drop(layout, side)
                 - side_extend_down(layout, side))
-    # LOOSE floats the carcass exactly like FLOATING - the difference is
-    # that LOOSE also builds a ladder sub-base under the cabinet.
-    if layout.toe_kick_type in ('FLOATING', 'LOOSE'):
+    # LOOSE / LOOSE_FLUSH float the carcass exactly like FLOATING - the
+    # difference is they also build a ladder sub-base under the cabinet
+    # (LOOSE_FLUSH's ladder sits flush to the front, LOOSE's is recessed).
+    if layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH'):
         return bay_bottom_z(layout, bay_index)
     if layout.bays[bay_index].get('floating_bay'):
         return bay_bottom_z(layout, bay_index)
@@ -868,8 +869,21 @@ def right_kick_return_dims(layout):
 # set back from the cabinet front by the setback. Straight cabinets only
 # for v1 - angled / corner ladders are deferred.
 def has_loose_kick(layout):
-    """True when this cabinet should build a loose ladder sub-base."""
-    return layout.has_toe_kick and layout.toe_kick_type == 'LOOSE'
+    """True when this cabinet should build a loose ladder sub-base.
+    Both LOOSE and LOOSE_FLUSH build the ladder; they differ only in the
+    ladder's front setback (see loose_kick_setback)."""
+    return (layout.has_toe_kick
+            and layout.toe_kick_type in ('LOOSE', 'LOOSE_FLUSH'))
+
+
+def loose_kick_setback(layout):
+    """Front setback for the loose ladder. LOOSE recesses the ladder
+    front by the cabinet's toe_kick_setback (tks); LOOSE_FLUSH sets it to
+    0 so the ladder front sits flush with the cabinet front face. Used by
+    loose_kick_end (board length) and loose_kick_front_rail (front Y)."""
+    if layout.toe_kick_type == 'LOOSE_FLUSH':
+        return 0.0
+    return layout.tks
 
 
 def loose_kick_x_bounds(layout):
@@ -890,7 +904,10 @@ def loose_kick_end(layout, side):
     x = x_left if side == 'LEFT' else x_right
     return {
         'x': x, 'y': 0.0, 'z': 0.0,
-        'length': layout.dim_y - layout.tks,
+        # Length spans from the cabinet back to the ladder front face;
+        # LOOSE_FLUSH (setback 0) runs the full depth so the ladder is
+        # flush with the cabinet front.
+        'length': layout.dim_y - loose_kick_setback(layout),
         'width':  layout.tkh,
         'thickness': layout.tkt,
     }
@@ -912,7 +929,9 @@ def loose_kick_front_rail(layout):
     x0, length = _loose_kick_rail_x_length(layout)
     return {
         'x': x0,
-        'y': -layout.dim_y + layout.tks,
+        # Front face set back by the ladder setback (0 for LOOSE_FLUSH ->
+        # flush with the cabinet front).
+        'y': -layout.dim_y + loose_kick_setback(layout),
         'z': 0.0,
         'length': length,
         'width':  layout.tkh,

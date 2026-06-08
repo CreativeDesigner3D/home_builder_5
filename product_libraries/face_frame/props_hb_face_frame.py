@@ -1492,6 +1492,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CORNER_LEFT_BACK', 'CORNER_RIGHT_BACK',
         'CORNER_LEFT_SIDE', 'CORNER_RIGHT_SIDE',
         'CORNER_LEFT_KICK', 'CORNER_RIGHT_KICK', 'DIAGONAL_KICK',
+        # Corner loose ladder rear rails + end boards (utility sub-base,
+        # same interior material as the corner kicks above).
+        'CORNER_LOOSE_REAR_LEFT', 'CORNER_LOOSE_REAR_RIGHT',
+        'CORNER_LOOSE_END_LEFT', 'CORNER_LOOSE_END_RIGHT',
         'CORNER_PARTITION', 'CORNER_TRAY_DIVIDER', 'CORNER_SHELF',
         'CORNER_ANGLED_BACK',
     }
@@ -3318,6 +3322,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
              "Sides float by toe_kick_height; a separate ladder sub-base "
              "(front + rear rail + two end boards) is built on the floor "
              "for the cabinet to sit on"),
+            ('LOOSE_FLUSH', "Loose Flush (Ladder Base)",
+             "Like Loose, but the ladder sub-base sits FLUSH with the "
+             "cabinet front (setback 0) instead of recessed"),
         ],
         default='NOTCH',
         update=_update_cabinet_dim,
@@ -3491,6 +3498,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     inset_toe_kick_right: FloatProperty(
         name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Corner cabinets only: pull each arm's rear (wall-side) toe-kick /
+    # loose-ladder rail away from its wall by this amount (left arm off
+    # the left wall, right arm off the back wall). 0 = flush to the wall.
+    inset_toe_kick_back_left: FloatProperty(
+        name="Inset Toe Kick Back Left", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    inset_toe_kick_back_right: FloatProperty(
+        name="Inset Toe Kick Back Right", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     include_finish_toe_kick: BoolProperty(
@@ -4906,6 +4924,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row = layout.row()
         row.label(text="Top Drawer Opening Height:")
         row.prop(self, 'top_drawer_opening_height', text="")
+        # Re-sync existing drawer-preset cabinets to the value above
+        # (changing it does not re-flow cabinets already built).
+        row.operator('hb_face_frame.refresh_top_drawer_openings',
+                     text="", icon='FILE_REFRESH')
 
         row = layout.row()
         row.label(text="Upper Stacked Top Height:")

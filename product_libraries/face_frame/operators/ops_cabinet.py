@@ -1756,6 +1756,11 @@ def _build_recipe_into(recipe, parent_obj, child_index,
         means the recalc triggered by the size write sees a locked
         node and leaves the value alone.
         """
+        # Persist the role on the node object so a later re-sync (the Top
+        # Drawer Opening Height refresh) can find these nodes; size_role
+        # itself is only a transient recipe slot, not stored anywhere.
+        if size_role:
+            props.id_data['SIZE_ROLE'] = size_role
         if size_role == 'TOP_DRAWER':
             # Scene-level preference, not per-cabinet.
             props.unlock_size = True
@@ -2932,6 +2937,37 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
+    """Re-apply the scene Top Drawer Opening Height to every drawer-preset
+    top opening in the current scene.
+
+    Cabinets pin their top drawer opening to the scene value when built
+    (the 'TOP_DRAWER' size role, stamped on the opening as SIZE_ROLE);
+    changing the value afterward does not re-flow existing cabinets, so
+    this pushes the current value back out to them.
+    """
+    bl_idname = "hb_face_frame.refresh_top_drawer_openings"
+    bl_label = "Refresh Top Drawer Openings"
+    bl_description = ("Re-apply the Top Drawer Opening Height to existing "
+                      "drawer-preset cabinets in this scene")
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        val = context.scene.hb_face_frame.top_drawer_opening_height
+        count = 0
+        for obj in context.scene.objects:
+            if obj.get('SIZE_ROLE') != 'TOP_DRAWER':
+                continue
+            op = obj.face_frame_opening
+            # unlock_size BEFORE size: the size write fires a recalc, and an
+            # unlocked node would just redistribute over the new value.
+            op.unlock_size = True
+            op.size = val
+            count += 1
+        self.report({'INFO'}, f"Refreshed {count} top drawer opening(s)")
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_draw_cabinet,
     hb_face_frame_OT_create_cabinet_group,
@@ -2963,6 +2999,7 @@ classes = (
     hb_face_frame_OT_insert_bay,
     hb_face_frame_OT_delete_bay,
     hb_face_frame_OT_set_equal_door_width,
+    hb_face_frame_OT_refresh_top_drawer_openings,
 )
 
 
