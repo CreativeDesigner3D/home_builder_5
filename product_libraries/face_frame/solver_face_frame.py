@@ -67,6 +67,14 @@ class FaceFrameLayout:
         self.bt = cab.back_thickness
         self.fft = cab.face_frame_thickness
 
+        # Cabinet default overlays. Retained for the removed-mid-rail gap
+        # math (collapse a dropped rail to a 3/32" front reveal); also the
+        # fallback when an adjacent neighbor isn't a leaf opening. _cab_props
+        # is kept so _read_tree_node can resolve each leaf's per-side overlay.
+        self._cab_props = cab
+        self.default_top_overlay = cab.default_top_overlay
+        self.default_bottom_overlay = cab.default_bottom_overlay
+
         # Toe kick (cabinet baseline; bay kick_height adds on top)
         self.has_toe_kick = self.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER')
         # Top construction style: bases and lap drawers use front + rear
@@ -258,6 +266,13 @@ class FaceFrameLayout:
                 (ov[i].width if i < len(ov) and ov[i].active else sp.splitter_width)
                 for i in range(n_split)
             ]
+            # Per-splitter member removal (mid rails only). A removed member
+            # is dropped (no FF part, no backing) and its gap collapsed in
+            # _walk_tree. Default False = normal member.
+            splitter_removes = [
+                (ov[i].remove_member if i < len(ov) else False)
+                for i in range(n_split)
+            ]
             return {
                 'kind':            'split',
                 'obj_name':        obj.name,
@@ -266,6 +281,7 @@ class FaceFrameLayout:
                 'unlock_size':     sp.unlock_size,
                 'splitter_width':  sp.splitter_width,
                 'splitter_widths': splitter_widths,
+                'splitter_removes': splitter_removes,
                 'add_backing':     sp.add_backing,
                 'children':        [self._read_tree_node(c) for c in children],
             }
@@ -277,6 +293,10 @@ class FaceFrameLayout:
             'size':         op.size,
             'unlock_size':  op.unlock_size,
             'opening_index': op.opening_index,
+            # Resolved per-side overlays, used by the removed-mid-rail gap
+            # math so the collapse accounts for a per-opening overlay override.
+            'overlay_top':    resolved_overlay(self._cab_props, op, 'top'),
+            'overlay_bottom': resolved_overlay(self._cab_props, op, 'bottom'),
         }
 
     def _make_default_bay(self):
@@ -2383,6 +2403,15 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     })
 
 
+def _child_overlay(child, side, default):
+    """Resolved overlay on one side of a child node. Leaves carry their
+    own snapshotted overlays; a nested split node has none, so the
+    cabinet default is used. Feeds the removed-mid-rail gap collapse."""
+    if child.get('kind') == 'leaf':
+        return child.get('overlay_' + side, default)
+    return default
+
+
 def _walk_tree(node, layout, bay_index,
                cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                reveals, leaves, splitters, backings):
@@ -2414,13 +2443,31 @@ def _walk_tree(node, layout, bay_index,
     n_children = len(children)
     n_splitters = n_children - 1
     splitter_w = node['splitter_width']
-    # Per-splitter widths (member i uses widths[i]); fall back to a
+    # Per-splitter widths (member i uses eff_widths[i]); fall back to a
     # uniform list for snapshots predating the per-index field. Each
     # member can differ now, so consumption is the sum, not count * w.
     widths = node.get('splitter_widths')
     if not widths or len(widths) != n_splitters:
         widths = [splitter_w] * n_splitters
-    splitter_total = sum(widths)
+    removes = node.get('splitter_removes')
+    if not removes or len(removes) != n_splitters:
+        removes = [False] * n_splitters
+
+    # A removed mid rail (H-split member) emits NO face-frame member and
+    # NO backing; its splitter space collapses so the two overlay fronts
+    # sit MID_RAIL_REMOVED_GAP apart. front_gap = space - ov_above -
+    # ov_below, so space = gap + ov_above + ov_below. Removal is H-only
+    # (mid rails); a V-split mid stile ignores the flag (members stay).
+    eff_widths = list(widths)
+    if node['axis'] == 'H':
+        for i in range(n_splitters):
+            if removes[i]:
+                ov_above = _child_overlay(children[i], 'bottom',
+                                          layout.default_bottom_overlay)
+                ov_below = _child_overlay(children[i + 1], 'top',
+                                          layout.default_top_overlay)
+                eff_widths[i] = MID_RAIL_REMOVED_GAP + ov_above + ov_below
+    splitter_total = sum(eff_widths)
 
     if node['axis'] == 'H':
         ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
@@ -2455,16 +2502,19 @@ def _walk_tree(node, layout, bay_index,
                 leaves=leaves, splitters=splitters, backings=backings,
             )
             if i < n_children - 1:
-                # Mid rail sits below this child's FF bottom edge.
-                w_i = widths[i]
-                splitter_top_z = child_ff_bottom_z
-                splitter_bottom_z = splitter_top_z - w_i
-                _emit_h_splitter(
-                    node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
-                    reveals, splitter_top_z, splitter_bottom_z,
-                    splitter_index=i, splitter_w=w_i, layout=layout,
-                    splitters=splitters, backings=backings,
-                )
+                # Mid rail sits below this child's FF bottom edge. A removed
+                # member emits nothing (no rail, no backing) - only the
+                # collapsed gap is consumed so the fronts land 3/32" apart.
+                w_i = eff_widths[i]
+                if not removes[i]:
+                    splitter_top_z = child_ff_bottom_z
+                    splitter_bottom_z = splitter_top_z - w_i
+                    _emit_h_splitter(
+                        node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
+                        reveals, splitter_top_z, splitter_bottom_z,
+                        splitter_index=i, splitter_w=w_i, layout=layout,
+                        splitters=splitters, backings=backings,
+                    )
                 cur_z_top = child_ff_bottom_z - w_i
     else:
         ff_avail_x = cage_dim_x - reveals['left'] - reveals['right']
@@ -2499,7 +2549,7 @@ def _walk_tree(node, layout, bay_index,
                 leaves=leaves, splitters=splitters, backings=backings,
             )
             if i < n_children - 1:
-                w_i = widths[i]
+                w_i = eff_widths[i]
                 splitter_left_x = child_ff_right_x
                 _emit_v_splitter(
                     node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
@@ -2588,6 +2638,12 @@ def resolved_overlay(cab_props, opening_props, side):
 # residential hinge / slide hardware.
 DOOR_MAX_SWING_ANGLE = math.radians(100.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
+# Front-to-front reveal left when a mid rail is removed between two
+# (typically drawer) openings. The split is kept but the face-frame
+# member + its backing are dropped; the solver collapses the splitter
+# space to this gap plus the two adjacent overlays so the fronts sit
+# this far apart. See _walk_tree.
+MID_RAIL_REMOVED_GAP = inch(0.09375)   # 3/32"
 TRIVIEW_DOOR_REVEAL = inch(0.125)   # gap where adjacent mirror doors meet
 TRIVIEW_FRAME_WIDTH = inch(1.25)    # tri-view stile / rail width (spec default)
 # Forward offset of door / drawer front from the face frame face.

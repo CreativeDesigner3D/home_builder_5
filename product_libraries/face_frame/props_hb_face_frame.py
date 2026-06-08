@@ -4110,6 +4110,17 @@ class Face_Frame_Splitter_Width(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    remove_member: BoolProperty(
+        name="Remove Member",
+        description=(
+            "Drop this splitter's face-frame member (and its carcass backing). "
+            "The opening stays split; the solver collapses the gap so the two "
+            "fronts sit 3/32\" apart. Used between drawers"
+        ),
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
 
 class Face_Frame_Split_Props(PropertyGroup):
     """Per-split-node state. Attached to each split node Empty as

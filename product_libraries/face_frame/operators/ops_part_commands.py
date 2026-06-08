@@ -1151,11 +1151,54 @@ class hb_face_frame_OT_set_cabinet_part_size(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
+    """Remove the mid rail the user clicked. The opening stays SPLIT - only
+    the face-frame member and its carcass backing are dropped, and the solver
+    collapses the splitter space so the two (typically drawer) fronts close to
+    a 3/32" reveal (MID_RAIL_REMOVED_GAP in solver_face_frame).
+
+    Stored as remove_member on the owning split node's per-splitter entry,
+    keyed by the part's hb_splitter_index, so it survives recalc. The rail
+    object is gone afterward and can't be right-clicked - rebuild the bay via
+    Change Bay if it's needed back.
+    """
+    bl_idname = "hb_face_frame.remove_mid_rail"
+    bl_label = "Remove Mid Rail"
+    bl_description = (
+        "Remove this mid rail. Keeps the split; drops the member + its backing "
+        "and closes the two fronts to a 3/32\" gap"
+    )
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role')
+                == types_face_frame.PART_ROLE_BAY_MID_RAIL)
+
+    def execute(self, context):
+        obj = context.active_object
+        split = _find_owning_split_node(obj)
+        if split is None:
+            self.report({'WARNING'}, "No split node found for this mid rail")
+            return {'CANCELLED'}
+        # Lazily grow the per-splitter collection to cover this index, then
+        # set remove_member (its update callback fires the cabinet recalc).
+        idx = obj.get('hb_splitter_index', 0)
+        coll = split.face_frame_split.splitter_widths
+        while len(coll) <= idx:
+            coll.add()
+        coll[idx].remove_member = True
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,
+    hb_face_frame_OT_remove_mid_rail,
     hb_face_frame_OT_set_misc_part_dimensions,
     hb_face_frame_OT_set_door_part_dimensions,
     hb_face_frame_OT_assign_active_door_style,

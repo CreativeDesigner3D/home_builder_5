@@ -212,6 +212,14 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.remove_bottom_rail",
                             text="Remove Bottom Rail", icon='X')
 
+        # A mid rail can be removed (mainly between drawers). The split
+        # stays; the FF member + its backing drop and the solver closes
+        # the two fronts to a 3/32" reveal. No restore here - rebuild the
+        # bay via Change Bay if needed.
+        if role == types_face_frame.PART_ROLE_BAY_MID_RAIL:
+            layout.operator("hb_face_frame.remove_mid_rail",
+                            text="Remove Mid Rail", icon='X')
+
         # Mid stiles keep their deeper properties popup (extend up /
         # down) as an additional item.
         if role == types_face_frame.PART_ROLE_MID_STILE:
