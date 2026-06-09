@@ -1881,6 +1881,13 @@ def apply_opening_preset(opening_obj, config, **overrides):
                          ACCESSORY interior item. Used by the bay
                          presets to set 'Microwave' instead of the
                          default 'Appliance' on appliance labels.
+      no_shelves       - strip ADJUSTABLE_SHELF items AFTER the
+                         front_type write. Must run after, not before:
+                         writing front_type = DOOR fires
+                         _update_front_type, which re-seeds a shelf
+                         item on any door opening that lacks one. Used
+                         by the sink presets so the plumbing zone under
+                         the basin comes in empty.
     """
     preset = _OPENING_PRESETS[config]
     op_props = opening_obj.face_frame_opening
@@ -1915,6 +1922,13 @@ def apply_opening_preset(opening_obj, config, **overrides):
     op_props.is_tilt_out = bool(preset.get('tilt_out'))
     if 'hinge_side' in preset:
         op_props.hinge_side = preset['hinge_side']
+
+    # Post-front_type shelf strip (see docstring: the DOOR write above
+    # re-seeds a shelf, so this must come after it).
+    if overrides.get('no_shelves'):
+        for i in range(len(op_props.interior_items) - 1, -1, -1):
+            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+                op_props.interior_items.remove(i)
 
     # Apply post-preset overrides. accessory_label targets the most
     # recent ACCESSORY item - for fresh openings the preset just added
@@ -2869,6 +2883,11 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         # kitchen sink / cooktop default to a 36" sink base.
         self.width = (inch(20.0) if self.appliance_kind == 'VANITY_SINK'
                       else inch(36.0))
+        # Sinks default to an open interior (plumbing under the basin);
+        # cooktop bays keep the shelf default. Still user-selectable in
+        # the dialog.
+        if self.appliance_kind != 'COOKTOP':
+            self.interior = 'OPEN'
         return context.window_manager.invoke_props_dialog(self, width=320)
 
     def draw(self, context):

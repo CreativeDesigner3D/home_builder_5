@@ -1521,13 +1521,24 @@ class FaceFrameCabinet(GeoNodeCage):
             else:
                 unlocked.append(c)
 
+        # Vanity door rule: an unlocked child stamped SIZE_ROLE
+        # 'VANITY_DOOR' takes its share plus VANITY_DOOR_EXTRA_WIDTH,
+        # deducted from the pool first. Mirrors the geometry rule in
+        # solver_face_frame._redistribute_sizes; both must agree or the
+        # stored sizes drift from the built fronts.
+        extra_total = sum(
+            solver.VANITY_DOOR_EXTRA_WIDTH for c in unlocked
+            if c.get('SIZE_ROLE') == 'VANITY_DOOR'
+        )
         remainder = parent_dim - n_splitters * splitter_w - locked_total
-        share = remainder / len(unlocked) if unlocked else 0.0
+        share = ((remainder - extra_total) / len(unlocked)) if unlocked else 0.0
 
         _DISTRIBUTING_WIDTHS.add(id(self.obj))
         try:
             for c in unlocked:
-                self._write_node_size(c, share)
+                extra = (solver.VANITY_DOOR_EXTRA_WIDTH
+                         if c.get('SIZE_ROLE') == 'VANITY_DOOR' else 0.0)
+                self._write_node_size(c, share + extra)
         finally:
             _DISTRIBUTING_WIDTHS.discard(id(self.obj))
 

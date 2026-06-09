@@ -288,6 +288,7 @@ class FaceFrameLayout:
                 'axis':            sp.axis,
                 'size':            sp.size,
                 'unlock_size':     sp.unlock_size,
+                'size_role':       obj.get('SIZE_ROLE'),
                 'splitter_width':  sp.splitter_width,
                 'splitter_widths': splitter_widths,
                 'splitter_removes': splitter_removes,
@@ -301,6 +302,7 @@ class FaceFrameLayout:
             'obj_name':     obj.name,
             'size':         op.size,
             'unlock_size':  op.unlock_size,
+            'size_role':    obj.get('SIZE_ROLE'),
             'opening_index': op.opening_index,
             # Resolved per-side overlays, used by the removed-mid-rail gap
             # math so the collapse accounts for a per-opening overlay override.
@@ -2338,6 +2340,14 @@ def _bay_root_reveals(layout, bay_index):
     }
 
 
+# A vanity door zone (SIZE_ROLE 'VANITY_DOOR') always lands this much
+# wider than the sibling it shares its split with: the extra is taken
+# out of the pool before shares are computed, so with one door beside
+# one drawer stack the door ends up share + 2" and the stack share - 2".
+# Must match the rule in types_face_frame._redistribute_split_node.
+VANITY_DOOR_EXTRA_WIDTH = inch(4.0)
+
+
 def _redistribute_sizes(children, available, splitter_total):
     """Distribute `available` along children; siblings with unlock_size
     hold their stored value, the rest evenly share the remainder. This
@@ -2347,15 +2357,32 @@ def _redistribute_sizes(children, available, splitter_total):
     `splitter_total` is the SUM of all splitter member widths in this
     node (members may differ now that each can hold its own width), so
     the caller passes the total rather than count * uniform width.
+
+    An unlocked child carrying size_role 'VANITY_DOOR' takes its share
+    plus VANITY_DOOR_EXTRA_WIDTH, the extra deducted from the pool, so
+    the door stays that much wider than its siblings through resizes.
+    A locked vanity door holds its stored value like any locked child.
     """
     consumed_by_splitters = splitter_total
     locked_total = sum(
         c['size'] for c in children if c['unlock_size']
     )
     unlocked = [c for c in children if not c['unlock_size']]
+    extra_total = sum(
+        VANITY_DOOR_EXTRA_WIDTH for c in unlocked
+        if c.get('size_role') == 'VANITY_DOOR'
+    )
     remainder = available - consumed_by_splitters - locked_total
-    share = remainder / len(unlocked) if unlocked else 0.0
-    return [c['size'] if c['unlock_size'] else share for c in children]
+    share = ((remainder - extra_total) / len(unlocked)) if unlocked else 0.0
+    sizes = []
+    for c in children:
+        if c['unlock_size']:
+            sizes.append(c['size'])
+        elif c.get('size_role') == 'VANITY_DOOR':
+            sizes.append(share + VANITY_DOOR_EXTRA_WIDTH)
+        else:
+            sizes.append(share)
+    return sizes
 
 
 # Backing kind is implied by the split's axis: H-splits (mid rails)

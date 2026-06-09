@@ -66,16 +66,22 @@ BASE_PRESETS = {
                                  L('DOUBLE_DOOR')),
     # Sink-style: false front (apron above the basin) over door(s). Top
     # zone size pinned to top_drawer_opening_height like the drawer
-    # combos so the apron lines up with adjacent drawer fronts.
+    # combos so the apron lines up with adjacent drawer fronts. The
+    # door zone is the plumbing space under the basin -- no_shelves
+    # strips the shelf that _update_front_type auto-seeds on doors.
     'FALSE_FRONT_DOOR':        H(L('FALSE_FRONT', size_role='TOP_DRAWER'),
-                                 L('RIGHT_DOOR')),
+                                 L('RIGHT_DOOR', no_shelves=True)),
     'FALSE_FRONT_DOUBLE_DOOR': H(L('FALSE_FRONT', size_role='TOP_DRAWER'),
-                                 L('DOUBLE_DOOR')),
+                                 L('DOUBLE_DOOR', no_shelves=True)),
     # Vanity Special: false front apron over a door beside a stack of two
     # drawers. The apron pins to top_drawer_opening_height like the other
     # false-front presets.
+    # The door is the plumbing zone (no_shelves) and always lands 4"
+    # wider than the drawer stack beside it (VANITY_DOOR size role; the
+    # redistribution rule lives in solver_face_frame._redistribute_sizes).
     'VANITY_SPECIAL':          H(L('FALSE_FRONT', size_role='TOP_DRAWER'),
-                                 V(L('LEFT_DOOR'),
+                                 V(L('LEFT_DOOR', size_role='VANITY_DOOR',
+                                     no_shelves=True),
                                    H(L('DRAWER'), L('DRAWER')))),
     # Vanity Combination: a top row of drawer / sink false front / drawer
     # over a double door. The false front pins to a fixed sink width
@@ -85,14 +91,15 @@ BASE_PRESETS = {
                                    L('FALSE_FRONT', size_role='VANITY_SINK_WIDTH'),
                                    L('DRAWER'),
                                    size_role='TOP_DRAWER'),
-                                 L('DOUBLE_DOOR')),
+                                 L('DOUBLE_DOOR', no_shelves=True)),
     # Vanity Deluxe: the Combination's drawer / sink false front / drawer
     # top row over a bottom row of a door beside a stack of two drawers.
     'VANITY_DELUXE':           H(V(L('DRAWER'),
                                    L('FALSE_FRONT', size_role='VANITY_SINK_WIDTH'),
                                    L('DRAWER'),
                                    size_role='TOP_DRAWER'),
-                                 V(L('LEFT_DOOR'),
+                                 V(L('LEFT_DOOR', size_role='VANITY_DOOR',
+                                     no_shelves=True),
                                    H(L('DRAWER'), L('DRAWER')))),
     'TWO_DRAWERS_DOUBLE_DOOR': H(V(L('DRAWER'), L('DRAWER'),
                                    size_role='TOP_DRAWER'),
