@@ -600,6 +600,11 @@ def draw_opening_properties(layout, opening_obj):
         if op.add_apron:
             col.prop(op, 'apron_height', text="Apron Height")
 
+    # Tilt-out flag (false fronts only): label-only -- the 2D elevation
+    # prints TILT-OUT instead of FALSE. No geometry change.
+    if op.front_type == 'FALSE_FRONT':
+        col.prop(op, 'is_tilt_out', text="Tilt-Out")
+
     col.separator()
     col.prop(op, 'finish_opening', text="Finish Opening")
     if op.finish_opening:

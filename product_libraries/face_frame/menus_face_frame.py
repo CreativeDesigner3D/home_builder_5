@@ -293,6 +293,7 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('SEP',),
         ('DRAWER',            "Drawer"),
         ('FALSE_FRONT',       "False Front"),
+        ('TILT_OUT',          "Tilt-Out"),
         ('PULLOUT',           "Pullout"),
         ('SEP',),
         ('INSET_PANEL',       "Inset Panel"),

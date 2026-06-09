@@ -4039,6 +4039,17 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
         update=_update_front_type,
     )  # type: ignore
+    # Tilt-out: a FALSE_FRONT on hinges (tray behind). Geometrically
+    # identical to a plain false front, so it's a flag rather than a
+    # front_type -- the only behavioral difference is the 2D elevation
+    # label (TILT-OUT instead of FALSE, read by Spaces). Set / cleared
+    # by the TILT_OUT opening preset; lives on the persistent opening
+    # cage so it survives recalcs.
+    is_tilt_out: BoolProperty(
+        name="Tilt-Out",
+        description="Label this false front as a tilt-out on 2D drawings",
+        default=False,
+    )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
         ('LEFT', "Left", "Single door, hinged on the left edge"),
