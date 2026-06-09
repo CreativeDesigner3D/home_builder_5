@@ -22,7 +22,7 @@ from contextlib import contextmanager
 
 from mathutils import Vector, Matrix, Euler
 
-from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox
+from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox, GeoNodeRectangle
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
@@ -309,6 +309,15 @@ PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+# Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
+# top of an appliance bay so plan views read like a dealer drawing.
+# Wiped + recreated every recalc (sized from the live bay cage); the
+# durable signal is the APPLIANCE_BAY custom prop on the bay cage.
+PART_ROLE_APPLIANCE_ANNOTATION = 'APPLIANCE_ANNOTATION'
+APPLIANCE_ANNO_SIDE_MARGIN = inch(2.0)     # square inset from each bay side
+APPLIANCE_ANNO_Z_LIFT = inch(0.5)          # square sits this far above the bay top
+APPLIANCE_ANNO_TEXT_SIZE = inch(2.0)
+APPLIANCE_ANNO_LINE_THICKNESS = inch(0.05)
 # Interior tree dividers: physical parts at split-node boundaries.
 PART_ROLE_INTERIOR_DIVISION = 'INTERIOR_DIVISION'
 PART_ROLE_INTERIOR_FIXED_SHELF = 'INTERIOR_FIXED_SHELF'
@@ -2084,6 +2093,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # top / bottom in place; a no-op when both extends are 0.
         if self._has_carcass():
             self._apply_back_extension(layout)
+
+        # Appliance bay annotation (square + SINK / COOKTOP word) on top
+        # of stamped bays and the dedicated sink cabinet's basin bay.
+        # Unconditional so stale annotations are wiped even when the
+        # trigger goes away.
+        self._apply_appliance_annotations(layout)
 
         # Furniture / veneer wood top: an overhanging slab sitting proud
         # on the carcass top (dresser / furniture products). Managed like
@@ -4196,6 +4211,66 @@ class FaceFrameCabinet(GeoNodeCage):
                     mod[node_input.identifier] = value
             mod.show_viewport = active
             mod.show_render = active
+
+    def _bay_has_false_front(self, bay_obj):
+        """True when any opening in the bay is a FALSE_FRONT -- the
+        cleanest signal that the bay houses a sink basin (a working
+        drawer can't sit in front of one)."""
+        for child in bay_obj.children_recursive:
+            if not child.get(TAG_OPENING_CAGE):
+                continue
+            if child.face_frame_opening.front_type == 'FALSE_FRONT':
+                return True
+        return False
+
+    def _create_appliance_annotation(self, bay_obj, kind):
+        """One GeoNodeRectangle (square outline + centered word) flat on
+        top of the bay, parented to the bay cage so it rides the cabinet
+        into every 2D view. Bay-local frame: origin front-left-bottom,
+        +Y toward the back, top at Dim Z."""
+        cage = GeoNodeCage(bay_obj)
+        dim_x = cage.get_input('Dim X')
+        dim_y = cage.get_input('Dim Y')
+        dim_z = cage.get_input('Dim Z')
+        margin = min(APPLIANCE_ANNO_SIDE_MARGIN, dim_x * 0.25)
+        rect = GeoNodeRectangle()
+        rect.create(f"{kind.title()} Annotation")
+        rect.obj.parent = bay_obj
+        rect.obj.location = (margin, dim_y / 4.0, dim_z + APPLIANCE_ANNO_Z_LIFT)
+        rect.set_input('Dim X', dim_x - margin * 2.0)
+        rect.set_input('Dim Y', dim_y / 2.0)
+        rect.set_input('Line Thickness', APPLIANCE_ANNO_LINE_THICKNESS)
+        rect.set_input('Text', kind)
+        rect.set_input('Text Size', APPLIANCE_ANNO_TEXT_SIZE)
+        rect.set_input('Text Y Offset', 0)
+        rect.obj['hb_part_role'] = PART_ROLE_APPLIANCE_ANNOTATION
+        rect.obj['IS_2D_ANNOTATION'] = True
+        rect.obj['APPLIANCE_ANNOTATION'] = True
+        rect.obj['IS_SINK_ANNOTATION' if kind == 'SINK'
+                 else 'IS_COOKTOP_ANNOTATION'] = True
+        return rect
+
+    def _apply_appliance_annotations(self, layout):
+        """Wipe-and-recreate the square + word annotation on every
+        appliance bay (same lifecycle as accessory labels, so it tracks
+        bay size/drop). Triggers: an APPLIANCE_BAY stamp on the bay cage
+        (set by hb_face_frame.add_appliance_to_bay), or -- for the
+        dedicated SinkFaceFrameCabinet -- the bay holding the false
+        front (the basin bay), no stamp required."""
+        for child in list(self.obj.children_recursive):
+            if child.get('hb_part_role') == PART_ROLE_APPLIANCE_ANNOTATION:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+        is_sink_cabinet = self.obj.get('CLASS_NAME') == 'SinkFaceFrameCabinet'
+        for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
+            if bay_obj.hide_viewport:
+                continue
+            kind = bay_obj.get('APPLIANCE_BAY')
+            if not kind and is_sink_cabinet and self._bay_has_false_front(bay_obj):
+                kind = 'SINK'
+            if kind not in ('SINK', 'COOKTOP'):
+                continue
+            self._create_appliance_annotation(bay_obj, kind)
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
         """Position and size a single bay cage from the solver. Cascades

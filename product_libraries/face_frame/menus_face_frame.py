@@ -361,6 +361,23 @@ class HOME_BUILDER_MT_face_frame_add_appliance(bpy.types.Menu):
                                  text=label, icon=icon)
             op.appliance_kind = kind
 
+        # Remove entry only when the bay currently carries an appliance:
+        # a SINK / COOKTOP stamp, or (dedicated sink cabinet) the
+        # auto-detected annotation child.
+        bay = context.active_object
+        kind = bay.get('APPLIANCE_BAY') if bay is not None else None
+        if kind not in ('SINK', 'COOKTOP') and bay is not None:
+            kind = None
+            for child in bay.children:
+                if child.get('APPLIANCE_ANNOTATION'):
+                    kind = ('SINK' if child.get('IS_SINK_ANNOTATION')
+                            else 'COOKTOP')
+                    break
+        if kind in ('SINK', 'COOKTOP'):
+            layout.separator()
+            layout.operator("hb_face_frame.remove_appliance_from_bay",
+                            text=f"Remove {kind.title()}", icon='X')
+
 
 class HOME_BUILDER_MT_face_frame_leg_product_commands(bpy.types.Menu):
     """Right-click menu for a leg product root."""

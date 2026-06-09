@@ -2790,9 +2790,10 @@ def _set_opening_interior(op_props, interior):
 class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     """Configure the active BASE bay as a sink or cooktop bay: apply a
     sink-style front preset, set the bay width, optionally drop the bay,
-    and set the door interior. (3D appliance models and the 2D
-    SINK/COOKTOP annotation are deferred. The apron config builds
-    full-height doors with a top apron on the door opening.)
+    and set the door interior. Stamps APPLIANCE_BAY on the bay cage so
+    the recalc annotation pass draws the square + SINK/COOKTOP word on
+    top of the bay. (3D appliance models are deferred. The apron config
+    builds full-height doors with a top apron on the door opening.)
     """
     bl_idname = "hb_face_frame.add_appliance_to_bay"
     bl_label = "Add Appliance to Bay"
@@ -2902,6 +2903,11 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                 self.report({'WARNING'},
                             f"Bay does not accept preset {preset!r}")
                 return {'CANCELLED'}
+            # Durable annotation signal: the bay cage persists across
+            # recalcs, so _apply_appliance_annotations can rebuild the
+            # square + word from this stamp every pass.
+            bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
+                                    else 'SINK')
             bp = bay.face_frame_bay
             # Width setter auto-locks unlock_width.
             bp.width = self.width
@@ -2937,6 +2943,57 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
 
         self.report({'INFO'},
                     f"Configured {self.appliance_kind.replace('_', ' ').title()} bay")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_appliance_from_bay(bpy.types.Operator):
+    """Remove the sink / cooktop designation from the active bay: marks
+    the bay non-appliance (APPLIANCE_BAY = 'NONE' -- an explicit opt-out
+    so the dedicated sink cabinet's auto-detect doesn't re-add it) and
+    clears the sink apron flag on the bay's door openings. The recalc
+    annotation pass then wipes the square + word. The bay's front layout
+    is left as-is (use Change Bay to reconfigure it).
+    """
+    bl_idname = "hb_face_frame.remove_appliance_from_bay"
+    bl_label = "Remove Appliance from Bay"
+    bl_options = {'UNDO'}
+
+    bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.TAG_BAY_CAGE))
+
+    def execute(self, context):
+        bay = None
+        if self.bay_name:
+            o = bpy.data.objects.get(self.bay_name)
+            if o is not None and o.get(types_face_frame.TAG_BAY_CAGE):
+                bay = o
+        if bay is None:
+            o = context.active_object
+            if o is not None and o.get(types_face_frame.TAG_BAY_CAGE):
+                bay = o
+        if bay is None:
+            self.report({'WARNING'}, "Select a bay first")
+            return {'CANCELLED'}
+        root = types_face_frame.find_cabinet_root(bay)
+        if root is None:
+            self.report({'WARNING'}, "Bay is not part of a cabinet")
+            return {'CANCELLED'}
+
+        with types_face_frame.suspend_recalc():
+            bay['APPLIANCE_BAY'] = 'NONE'
+            for child in bay.children_recursive:
+                if not child.get(types_face_frame.TAG_OPENING_CAGE):
+                    continue
+                op_props = child.face_frame_opening
+                if op_props.front_type == 'DOOR' and op_props.add_apron:
+                    op_props.add_apron = False
+            types_face_frame.recalculate_face_frame_cabinet(root)
+
+        self.report({'INFO'}, "Removed appliance from bay")
         return {'FINISHED'}
 
 
@@ -2999,6 +3056,7 @@ classes = (
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
     hb_face_frame_OT_add_appliance_to_bay,
+    hb_face_frame_OT_remove_appliance_from_bay,
     hb_face_frame_OT_insert_bay,
     hb_face_frame_OT_delete_bay,
     hb_face_frame_OT_set_equal_door_width,
