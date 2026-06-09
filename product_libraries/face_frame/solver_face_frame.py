@@ -87,6 +87,15 @@ class FaceFrameLayout:
                               if self.has_toe_kick else 'FLOATING')
         self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
         self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
+        # Refrigerator cabinet: per-side raise of the carcass side + end
+        # stile up to the top of the fridge opening, plus the per-cabinet
+        # opening height that datum is built from.
+        self.raise_left_to_refrigerator_height = getattr(
+            cab, 'raise_left_to_refrigerator_height', False)
+        self.raise_right_to_refrigerator_height = getattr(
+            cab, 'raise_right_to_refrigerator_height', False)
+        self.refrigerator_opening_height = getattr(
+            cab, 'refrigerator_opening_height', 0.0)
         # Hutch option (uppers): left/right sides + end stiles drop below
         # the box bottom by this amount (see ends_down_drop / side_bottom_z).
         self.extend_left_end_down = getattr(cab, 'extend_left_end_down', False)
@@ -515,6 +524,29 @@ def side_extend_down(layout, side='LEFT'):
     return max(0.0, amount) if on else 0.0
 
 
+def raise_side_to_refrigerator(layout, side='LEFT'):
+    """True when this end's carcass side + end stile should lift off the
+    floor to the top of the refrigerator opening (refrigerator cabinets).
+    Left and right are independent; supersedes that side's stile-to-floor."""
+    if side == 'RIGHT':
+        return getattr(layout, 'raise_right_to_refrigerator_height', False)
+    return getattr(layout, 'raise_left_to_refrigerator_height', False)
+
+
+def refrigerator_raise_z(layout, bay_index):
+    """Z (from floor) of the top of the refrigerator opening - where a raised
+    side / end stile bottoms out so it lines up with the bottom of the mid
+    rail above the opening (spanning only the door zone).
+
+    effective_bottom_rail_width is 0 when the bay's bottom rail is removed
+    (the refrigerator cabinet's default), so the opening runs from the top
+    of the kick; with a bottom rail present the opening starts one rail up.
+    Either way this lands the raised end at the underside of the mid rail."""
+    return (bay_bottom_z(layout, bay_index)
+            + effective_bottom_rail_width(layout, bay_index)
+            + getattr(layout, 'refrigerator_opening_height', 0.0))
+
+
 def side_bottom_z(layout, bay_index, side='LEFT'):
     """Z of the carcass side panel's bottom edge.
 
@@ -530,6 +562,10 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     by kick_height on that side, so the inset region is open from
     the floor up to the cabinet bottom panel.
     """
+    # Refrigerator per-side raise wins over every other anchor: the
+    # side lifts to the top of the fridge opening (door zone only).
+    if raise_side_to_refrigerator(layout, side):
+        return refrigerator_raise_z(layout, bay_index)
     if not layout.has_toe_kick:
         # Uppers: anchor at the box bottom, dropped by the hutch amount
         # (side + stile) and the over-stool amount (sides only).
@@ -1170,14 +1206,22 @@ def left_end_stile_position(layout):
     endpoint of the FF outer plane (FF-x = 0); in angled mode that
     sits at world (0, -effective_left_depth) instead of (0, -dim_y).
     """
-    bottom_z = (0.0 if left_stile_to_floor(layout)
-                else bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT'))
+    if raise_side_to_refrigerator(layout, 'LEFT'):
+        bottom_z = refrigerator_raise_z(layout, 0)
+    elif left_stile_to_floor(layout):
+        bottom_z = 0.0
+    else:
+        bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
     return ff_outer_world_pos(layout, 0.0, bottom_z)
 
 
 def left_end_stile_dims(layout):
-    bottom_z = (0.0 if left_stile_to_floor(layout)
-                else bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT'))
+    if raise_side_to_refrigerator(layout, 'LEFT'):
+        bottom_z = refrigerator_raise_z(layout, 0)
+    elif left_stile_to_floor(layout):
+        bottom_z = 0.0
+    else:
+        bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
     top_z = bay_top_z(layout, 0)
     return (top_z - bottom_z, layout.lsw, layout.fft)
 
@@ -1189,15 +1233,23 @@ def right_end_stile_position(layout):
     in angled mode that sits at world (dim_x, -effective_right_depth).
     """
     last = layout.bay_count - 1
-    bottom_z = (0.0 if right_stile_to_floor(layout)
-                else bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT'))
+    if raise_side_to_refrigerator(layout, 'RIGHT'):
+        bottom_z = refrigerator_raise_z(layout, last)
+    elif right_stile_to_floor(layout):
+        bottom_z = 0.0
+    else:
+        bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
     return ff_outer_world_pos(layout, face_frame_length(layout), bottom_z)
 
 
 def right_end_stile_dims(layout):
     last = layout.bay_count - 1
-    bottom_z = (0.0 if right_stile_to_floor(layout)
-                else bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT'))
+    if raise_side_to_refrigerator(layout, 'RIGHT'):
+        bottom_z = refrigerator_raise_z(layout, last)
+    elif right_stile_to_floor(layout):
+        bottom_z = 0.0
+    else:
+        bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
     top_z = bay_top_z(layout, last)
     return (top_z - bottom_z, layout.rsw, layout.fft)
 

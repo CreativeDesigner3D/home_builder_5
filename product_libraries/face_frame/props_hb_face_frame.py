@@ -2524,6 +2524,33 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_refrigerator_opening_height(self, context):
+    """Per-cabinet refrigerator opening height.
+
+    Drives the bottom APPLIANCE opening node (SIZE_ROLE == 'REFRIGERATOR')
+    and keeps back_bottom_inset in sync so the carcass back keeps spanning
+    only the door zone above the opening (kick + bottom rail + opening +
+    mid rail - mt, mirroring the create-time formula). Batched under
+    suspend_recalc so the inset + node-size writes collapse into one recalc.
+    """
+    from . import types_face_frame
+    cab_obj = self.id_data
+    value = self.refrigerator_opening_height
+    with types_face_frame.suspend_recalc():
+        self.back_bottom_inset = (
+            self.toe_kick_height
+            + self.bottom_rail_width
+            + value
+            + self.bay_mid_rail_width
+            - self.material_thickness
+        )
+        for child in cab_obj.children_recursive:
+            if child.get('SIZE_ROLE') == 'REFRIGERATOR':
+                op = child.face_frame_opening
+                op.unlock_size = True
+                op.size = value
+
+
 def _update_remove_bottom(self, context):
     """Update callback for a bay's remove_bottom toggle.
 
@@ -3174,6 +3201,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     extend_right_stile_to_floor: BoolProperty(
         name="Extend Right Stile To Floor", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Refrigerator cabinet: per-cabinet opening height + per-side raise.
+    # refrigerator_opening_height drives the bottom appliance opening node
+    # and keeps the carcass back in sync (see _update_refrigerator_opening_height).
+    # The two raise toggles lift that side's carcass side panel AND end stile
+    # up to the top of the fridge opening so the side spans only the door zone
+    # (consumed in solver_face_frame: side_bottom_z + left/right_end_stile_*).
+    refrigerator_opening_height: FloatProperty(
+        name="Refrigerator Opening Height", default=units.inch(62.0),
+        unit='LENGTH', precision=4,
+        update=_update_refrigerator_opening_height,
+    )  # type: ignore
+    raise_left_to_refrigerator_height: BoolProperty(
+        name="Raise Left To Refrigerator Height", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    raise_right_to_refrigerator_height: BoolProperty(
+        name="Raise Right To Refrigerator Height", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
 

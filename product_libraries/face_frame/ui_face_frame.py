@@ -259,6 +259,25 @@ def draw_construction(layout, cab_props):
     draw_finished_ends(box, cab_props)
 
 
+def draw_refrigerator_options(layout, root):
+    """Refrigerator opening height + per-side raise. Refrigerator cabinets only.
+
+    Opening Height drives the bottom appliance opening node and keeps the
+    carcass back in sync. Raise Left / Right lift that side's carcass side
+    panel AND end stile to the top of the opening, so the side spans only the
+    door zone above the fridge (handy for sliding a wider unit past one end)."""
+    if root.get('CLASS_NAME') != 'RefrigeratorCabinet':
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.label(text="Refrigerator", icon='MOD_BUILD')
+    box.prop(cab, 'refrigerator_opening_height', text="Opening Height")
+    row = box.row(align=True)
+    row.label(text="Raise Side Up:")
+    row.prop(cab, 'raise_left_to_refrigerator_height', text="Left", toggle=True)
+    row.prop(cab, 'raise_right_to_refrigerator_height', text="Right", toggle=True)
+
+
 def draw_wedge(layout, root):
     """Tip-up wedge calculator + live inputs. Refrigerator cabinets only.
 
@@ -1150,6 +1169,7 @@ def draw_cabinet_wide(layout, root):
     box = layout.box()
     box.label(text="Construction", icon='MODIFIER')
     draw_construction(box, cab_props)
+    draw_refrigerator_options(layout, root)
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)
@@ -1224,6 +1244,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
         if root is None:
             return
         draw_construction(self.layout, root.face_frame_cabinet)
+        draw_refrigerator_options(self.layout, root)
         draw_wedge(self.layout, root)
 
 

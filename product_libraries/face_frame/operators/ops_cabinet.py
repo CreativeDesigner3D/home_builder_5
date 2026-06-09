@@ -553,6 +553,9 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             ui_face_frame.draw_bays_in_prompts(layout, root)
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
+            # Refrigerator opening height + per-side raise (self-gated
+            # to refrigerator cabinets); root carries the CLASS_NAME.
+            ui_face_frame.draw_refrigerator_options(layout, root)
         elif self.active_tab == 'FACE_FRAME':
             ui_face_frame.draw_face_frame_defaults(layout, cab_props)
 

@@ -5600,6 +5600,11 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         # user can tweak from the cabinet prompts after.
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
+            # Seed the per-cabinet opening height from the scene default
+            # via dict-set so its update callback (which would walk for a
+            # not-yet-built opening node) doesn't fire mid-create.
+            cab_props['refrigerator_opening_height'] = (
+                scene.hb_face_frame.refrigerator_height)
             cab_props.back_bottom_inset = (
                 cab_props.toe_kick_height
                 + cab_props.bottom_rail_width

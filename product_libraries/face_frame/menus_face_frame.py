@@ -205,6 +205,15 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Toggle Stile to Floor",
                             icon='TRIA_DOWN_BAR')
 
+        # Finished-end condition is per-side: shown on the left / right
+        # carcass side panels. The operator derives the side from the
+        # clicked part's role and shows only that side's enum.
+        if role in (types_face_frame.PART_ROLE_LEFT_SIDE,
+                    types_face_frame.PART_ROLE_RIGHT_SIDE):
+            layout.operator("hb_face_frame.set_finished_end_condition",
+                            text="Set Finished End Condition...",
+                            icon='MOD_SOLIDIFY')
+
         # Bottom rail can be removed. The rail spans the bays in its
         # segment; the operator sets Remove Bottom across that whole span
         # so the rail the user clicked goes away as one piece.

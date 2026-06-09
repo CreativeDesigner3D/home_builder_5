@@ -1193,8 +1193,72 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
         return {'FINISHED'}
 
 
+_SIDE_PANEL_ROLES = frozenset({
+    types_face_frame.PART_ROLE_LEFT_SIDE,
+    types_face_frame.PART_ROLE_RIGHT_SIDE,
+})
+
+
+class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
+    """Set the finished-end condition for the clicked side panel.
+
+    Launched from a left / right carcass side's right-click menu. Resolves
+    the side from the clicked part's role and shows only that side's
+    finished-end type enum (plus the flush-X amount when FLUSH_X is chosen).
+    Editing the enum fires its existing update callback, which flips that
+    side's finish-end auto flag off so exposure detection won't clobber the
+    user's choice.
+    """
+    bl_idname = "hb_face_frame.set_finished_end_condition"
+    bl_label = "Set Finished End Condition"
+    bl_description = "Set the finished-end condition for this side"
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side",
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='LEFT',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        return obj.get('hb_part_role') in _SIDE_PANEL_ROLES
+
+    def invoke(self, context, event):
+        # The clicked side panel is the active object; derive the side from
+        # its role so the dialog edits the matching cabinet prop.
+        obj = context.active_object
+        if (obj is not None
+                and obj.get('hb_part_role') == types_face_frame.PART_ROLE_RIGHT_SIDE):
+            self.side = 'RIGHT'
+        else:
+            self.side = 'LEFT'
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            layout.label(text="No face frame cabinet selected", icon='INFO')
+            return
+        cab = root.face_frame_cabinet
+        key = self.side.lower()
+        layout.prop(cab, f'{key}_finished_end_condition',
+                    text=f"{self.side.title()} Finished End")
+        # FLUSH_X needs its strip width to be meaningful.
+        if getattr(cab, f'{key}_finished_end_condition') == 'FLUSH_X':
+            layout.prop(cab, f'{key}_flush_x_amount', text="Flush Amount")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_set_part_width,
+    hb_face_frame_OT_set_finished_end_condition,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,
