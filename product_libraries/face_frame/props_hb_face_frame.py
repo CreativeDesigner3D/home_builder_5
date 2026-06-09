@@ -5114,14 +5114,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
         # two labeled rows: freestanding appliances vs appliance cabinets.
         # NOTE: there is no dedicated "Oven" product, so the Oven button
         # maps to "Built in Tall" (the built-in tall oven tower).
+        self._draw_catalog_labeled_row(layout, "Cabinet", [
+            ("Sink", "Sink"), ("Refrigerator", "Refrigerator Cabinet"),
+            ("Oven", "Built in Tall"),
+        ])
         self._draw_catalog_labeled_row(layout, "Standalone", [
             ("Dishwasher", "Dishwasher"), ("Range", "Range"),
             ("Hood", "Range Hood"),
             ("Refrigerator", "Standalone Refrigerator"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Cabinet", [
-            ("Sink", "Sink"), ("Refrigerator", "Refrigerator Cabinet"),
-            ("Oven", "Built in Tall"),
         ])
 
     # =====================================================================
@@ -5137,12 +5137,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # UI: parts library
     # =====================================================================
     def draw_part_library_ui(self, layout, context):
-        self._draw_catalog_labeled_row(layout, "Vanity", [
-            ("End Leg", "Vanity End Leg Assembly"),
-            ("Support Leg", "Vanity Support Leg"),
-            ("Fixed Shelf", "Vanity Fixed Shelf"),
-        ])
-        self._draw_catalog_labeled_row(layout, "General", [
+        # Vanity parts hidden for now -- re-add when the Vanity part
+        # products are created:
+        # self._draw_catalog_labeled_row(layout, "Vanity", [
+        #     ("End Leg", "Vanity End Leg Assembly"),
+        #     ("Support Leg", "Vanity Support Leg"),
+        #     ("Fixed Shelf", "Vanity Fixed Shelf"),
+        # ])
+        # General label hidden for now (only row in Parts); blank label omits it.
+        self._draw_catalog_labeled_row(layout, "", [
             ("Panel", "Panel"), ("Leg", "Leg Product"), ("Door", "Door"),
             ("Misc", "Misc Part"), ("Floating Shelf", "Floating Shelves"),
         ])
@@ -5446,8 +5449,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
             # users can scan top-down.
             sections = [
                 ('show_cabinet_library',          "Standard Cabinets",            self.draw_cabinet_library_ui),
-                ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
                 ('show_appliance_library',        "Appliance Products",           self.draw_appliance_library_ui),
+                ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
                 ('show_vanity_library',           "Vanities",                     self.draw_vanity_library_ui),
                 ('show_part_library',             "Parts",                        self.draw_part_library_ui),
                 ('show_specialty_bath_library',   "Specialty Bath",               self.draw_specialty_bath_library_ui),
