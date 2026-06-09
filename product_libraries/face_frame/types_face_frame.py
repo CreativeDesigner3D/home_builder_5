@@ -5729,6 +5729,19 @@ class PanelFaceFrameCabinet(FaceFrameCabinet):
         self.create_carcass(has_toe_kick=False, bay_qty=bay_qty)
 
 
+class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
+    """Standalone face frame + doors: a carcass-less panel (identical to the
+    Panel product) whose openings default to working DOORS instead of inset
+    panels. Split / change openings afterward exactly like a Panel.
+
+    `default_opening_front_type` is read by default_front_type_for_root when
+    each opening is first built. Panel-derived, so it MUST be registered in
+    WRAP_CLASS_REGISTRY or recalc re-wraps it as the base carcass cabinet
+    (it would gain a carcass) - see Panel / Mirror Frame.
+    """
+    default_opening_front_type = 'DOOR'
+
+
 class MirrorFrameFaceFrameCabinet(PanelFaceFrameCabinet):
     """Mirror frame: the same flat face-frame panel as the 'Panel' product
     (no carcass - just rails / stiles), 38" wide x 28" tall x 0.75", hung on
@@ -6572,6 +6585,7 @@ CABINET_NAME_DISPATCH = {
     "Refrigerator Cabinet": RefrigeratorCabinet,
     "Built in Tall": BuiltInTallFaceFrameCabinet,
     "Panel": PanelFaceFrameCabinet,
+    "Face Frame and Doors": FaceFrameAndDoorsCabinet,
     "Bookcase": BookcaseFaceFrameCabinet,
     "Bookcase Storage Unit": BookcaseStorageUnitFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
@@ -6635,6 +6649,13 @@ def default_front_type_for_root(root):
     """
     if root is None:
         return 'NONE'
+    # A product class can override the default via default_opening_front_type
+    # (e.g. FF & Doors defaults its openings to DOOR). Resolve the wrapper
+    # class by CLASS_NAME the same way recalc does.
+    cls = WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME'), FaceFrameCabinet)
+    override = getattr(cls, 'default_opening_front_type', None)
+    if override:
+        return override
     if root.face_frame_cabinet.cabinet_type == 'PANEL':
         return 'INSET_PANEL'
     return 'NONE'
@@ -6722,6 +6743,7 @@ WRAP_CLASS_REGISTRY.update({
     'BookcaseFaceFrameCabinet': BookcaseFaceFrameCabinet,
     'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,
     'PanelFaceFrameCabinet': PanelFaceFrameCabinet,
+    'FaceFrameAndDoorsCabinet': FaceFrameAndDoorsCabinet,
     'LegProductFaceFrameCabinet': LegProductFaceFrameCabinet,
     'FloatingShelfFaceFrameCabinet': FloatingShelfFaceFrameCabinet,
 })

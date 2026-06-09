@@ -5200,8 +5200,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     def draw_misc_library_ui(self, layout, context):
         # One row, short labels (matches the other categories). NOTE:
-        # "Face Frame and Doors" and "X-Frame Ends" are not in the catalog
-        # dispatch yet -- those two buttons don't place anything.
+        # "X-Frame Ends" is not in the catalog dispatch yet -- that button
+        # doesn't place anything.
         self._draw_catalog_labeled_row(layout, "", [
             ("Half Wall", "Half Wall"), ("Support", "Support Frame"),
             ("FF & Doors", "Face Frame and Doors"),

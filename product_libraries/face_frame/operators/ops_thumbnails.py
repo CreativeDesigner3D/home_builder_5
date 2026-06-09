@@ -74,6 +74,9 @@ RENDERABLE_CATALOG = (
     # geometry (no bay preset applies; default_bay_config returns None).
     "Half Wall",
     "Support Frame",
+    # FF & Doors: carcass-less panel whose opening defaults to a door
+    # (no bay preset; default_bay_config returns None).
+    "Face Frame and Doors",
 )
 
 
