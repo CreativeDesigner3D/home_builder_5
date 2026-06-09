@@ -5675,10 +5675,13 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         cab_props.extend_right_stile_to_floor = True
         # Raise the back so it only spans the door zone above the
         # refrigerator. Mirrors the standard back z_origin formula
-        # (top of bottom rail - mt) but anchored at the top of the
-        # mid rail above the appliance opening: kick + bottom rail +
-        # appliance + mid rail - mt. Captured at create-time; the
-        # user can tweak from the cabinet prompts after.
+        # (top of rail - mt) anchored at the top of the mid rail above
+        # the appliance opening: kick + appliance + mid rail - mt. No
+        # bottom_rail term: the bays carry remove_bottom (set below),
+        # so the appliance opening starts at the kick top with no rail
+        # below it. Captured at create-time; the user can tweak from
+        # the cabinet prompts after (same formula in
+        # _update_refrigerator_opening_height).
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             # Seed the per-cabinet opening height from the scene default
@@ -5688,7 +5691,6 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
                 scene.hb_face_frame.refrigerator_height)
             cab_props.back_bottom_inset = (
                 cab_props.toe_kick_height
-                + cab_props.bottom_rail_width
                 + scene.hb_face_frame.refrigerator_height
                 + cab_props.bay_mid_rail_width
                 - cab_props.material_thickness

@@ -3110,11 +3110,13 @@ ACCESSORY_Y_OFFSET = inch(1.0)         # nudge into the cavity so it reads
 
 def auto_shelf_qty(opening_height):
     """Default count of adjustable shelves for an opening of `opening_height`
-    interior height: one shelf per ~12 inches, with a one-shelf floor.
-    Used for both initial seeding (when an interior item is added) and
-    live recompute (when unlock_shelf_qty is False).
+    interior height: one shelf per ~12 inches. No floor -- an opening
+    under 12" is too short to usefully split, so it defaults to 0
+    shelves (e.g. the door zone above a refrigerator). Used for both
+    initial seeding (when an interior item is added) and live recompute
+    (when unlock_shelf_qty is False).
     """
-    return max(1, int((opening_height or 0.0) / inch(12.0)))
+    return int((opening_height or 0.0) / inch(12.0))
 
 
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,

@@ -2532,9 +2532,13 @@ def _update_refrigerator_opening_height(self, context):
 
     Drives the bottom APPLIANCE opening node (SIZE_ROLE == 'REFRIGERATOR')
     and keeps back_bottom_inset in sync so the carcass back keeps spanning
-    only the door zone above the opening (kick + bottom rail + opening +
-    mid rail - mt, mirroring the create-time formula). Batched under
-    suspend_recalc so the inset + node-size writes collapse into one recalc.
+    only the door zone above the opening (kick + opening + mid rail - mt,
+    mirroring the create-time formula). No bottom_rail term: the fridge
+    cabinet's bays carry remove_bottom, so the appliance opening starts
+    at the kick top with no rail below it -- adding the rail width here
+    floated the back above the mid rail, leaving a gap behind the door
+    zone. Batched under suspend_recalc so the inset + node-size writes
+    collapse into one recalc.
     """
     from . import types_face_frame
     cab_obj = self.id_data
@@ -2542,7 +2546,6 @@ def _update_refrigerator_opening_height(self, context):
     with types_face_frame.suspend_recalc():
         self.back_bottom_inset = (
             self.toe_kick_height
-            + self.bottom_rail_width
             + value
             + self.bay_mid_rail_width
             - self.material_thickness
@@ -4831,7 +4834,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     refrigerator_height: FloatProperty(
         name="Refrigerator Height",
         description="Default refrigerator height",
-        default=units.inch(62.0),
+        default=units.inch(69.0),
         unit='LENGTH',
         precision=4,
     )  # type: ignore
@@ -4839,7 +4842,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     refrigerator_cabinet_width: FloatProperty(
         name="Refrigerator Cabinet Width",
         description="Default refrigerator cabinet width",
-        default=units.inch(38.0),
+        default=units.inch(40.0),
         unit='LENGTH',
         precision=4,
     )  # type: ignore
