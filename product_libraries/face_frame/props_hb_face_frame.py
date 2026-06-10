@@ -2957,6 +2957,21 @@ _CORNER_SECTION_PRESETS = {
     ('TALL',  'BOOKCASE'):          ('OPEN', 'DOORS'),
 }
 
+# Optional per-section DEFAULT heights for a preset, ordered like the
+# preset's content tuple (top to bottom). A non-None entry pins that
+# section when the config is selected (height written + unlock_height
+# on) so it starts at a sensible opening size instead of an equal
+# share - e.g. the bookcase's bottom door opening at 24". Configs not
+# listed (or None entries) keep the unlocked equal-share default. The
+# sentinel 'TOP_DRAWER' resolves to the scene's
+# hb_face_frame.top_drawer_opening_height at populate time (same size
+# role the bay presets use), so the false front lines up with adjacent
+# drawer fronts.
+_CORNER_SECTION_DEFAULT_HEIGHTS = {
+    ('TALL', 'BOOKCASE'): (None, units.inch(24.0)),
+    ('BASE', 'FALSE_FRONT_DOORS'): ('TOP_DRAWER', None),
+}
+
 
 def corner_section_contents(cab_props):
     """Section content tuple for the cabinet's current type and config,
@@ -2969,14 +2984,36 @@ def corner_section_contents(cab_props):
 
 def populate_corner_sections(cab_props):
     """Rebuild cab_props.corner_sections from the current exterior_config
-    preset. Every section starts unlocked so the layout is evenly spaced
-    until the user unlocks specific sections."""
+    preset. Sections start unlocked (evenly spaced) unless the preset
+    carries a default height for them in _CORNER_SECTION_DEFAULT_HEIGHTS,
+    in which case the section is pinned to that height (e.g. the
+    bookcase's bottom door opening at 24")."""
     contents = corner_section_contents(cab_props)
+    obj = cab_props.id_data
+    ctype = obj.get('CABINET_TYPE', 'BASE') if obj is not None else 'BASE'
+    defaults = _CORNER_SECTION_DEFAULT_HEIGHTS.get(
+        (ctype, cab_props.exterior_config), ())
     cab_props.corner_sections.clear()
-    for content in contents:
+    for i, content in enumerate(contents):
         sec = cab_props.corner_sections.add()
         sec.content = content
-        sec.unlock_height = False
+        h = defaults[i] if i < len(defaults) else None
+        if h == 'TOP_DRAWER':
+            # Scene-level size preference; None during first-load /
+            # unregister when the scene props aren't attached yet.
+            ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+            h = (ff_scene.top_drawer_opening_height
+                 if ff_scene is not None else None)
+        if h is not None:
+            # Unlock BEFORE writing the height: each write fires a
+            # recalc, and the recalc's height-sync overwrites an
+            # unlocked section's height with the solved share - so a
+            # height written first would be clobbered before the
+            # unlock landed.
+            sec.unlock_height = True
+            sec.height = h
+        else:
+            sec.unlock_height = False
 
 
 def _update_exterior_config(self, context):

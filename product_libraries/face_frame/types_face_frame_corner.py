@@ -58,6 +58,10 @@ PART_ROLE_CORNER_TRAY_DIVIDER = 'CORNER_TRAY_DIVIDER'
 PART_ROLE_CORNER_MID_RAIL = 'CORNER_MID_RAIL'
 PART_ROLE_CORNER_FALSE_FRONT = 'CORNER_FALSE_FRONT'
 PART_ROLE_CORNER_SHELF = 'CORNER_SHELF'
+# Fixed shelf at a section boundary (TALL hutch / bookcase): full
+# L-bounding panel like Top/Bottom, top face flush with the top of
+# its mid rail. Carved by the same Diagonal Cut + Clip Back Cut pair.
+PART_ROLE_CORNER_FIXED_SHELF = 'CORNER_FIXED_SHELF'
 # Clip-back: a uniform 45 degree chamfer on the rear (wall-corner)
 # of any corner cabinet. A GeoNodeCage cutter carves the rear
 # corner off the bottom, top, and both backs; an angled back
@@ -772,7 +776,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         clip_roles = {
             PART_ROLE_CORNER_BOTTOM, PART_ROLE_CORNER_TOP,
             PART_ROLE_CORNER_LEFT_BACK, PART_ROLE_CORNER_RIGHT_BACK,
-            PART_ROLE_CORNER_SHELF,
+            PART_ROLE_CORNER_SHELF, PART_ROLE_CORNER_FIXED_SHELF,
         }
         for part in self.obj.children:
             if part.get('hb_part_role') not in clip_roles:
@@ -1665,6 +1669,14 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         for i in range(n_sec - 1, -1, -1):
             sec_h = sec_heights[i]
             sec_z0 = z_cursor
+            # Mirror the solved share into the height prop so the greyed
+            # Height field reads the live opening size instead of the
+            # prop default (12"). System write inside recalculate(); the
+            # _RECALCULATING guard short-circuits the update callback's
+            # re-entrant recalc.
+            if (not sections[i].unlock_height
+                    and abs(sections[i].height - sec_h) > 1e-7):
+                sections[i].height = sec_h
             if inset:
                 r = INSET_DOOR_REVEAL
                 door_length = sec_h - 2.0 * r
@@ -1791,6 +1803,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 role == PART_ROLE_CORNER_MID_RAIL
                 or role == PART_ROLE_CORNER_FALSE_FRONT
                 or role == PART_ROLE_CORNER_SHELF
+                or role == PART_ROLE_CORNER_FIXED_SHELF
                 or (role == ff.PART_ROLE_DOOR
                     and side in ('DIAGONAL_LEFT', 'DIAGONAL_RIGHT')))
             if is_section_part:
@@ -1884,6 +1897,30 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     cut.object = cutter_obj
                 if back_cutter_obj is not None:
                     clip = shelf.obj.modifiers.new(
+                        name='Clip Back Cut', type='BOOLEAN')
+                    clip.operation = 'DIFFERENCE'
+                    clip.object = back_cutter_obj
+        # TALL hutch / bookcase: one FIXED shelf per section boundary,
+        # top face flush with the top of its mid rail (positioned in
+        # the recalc). Full L-bounding panel like Top/Bottom - the same
+        # boolean pair carves the pentagon front and the rear clip.
+        if self.default_cabinet_type == 'TALL':
+            for j in range(n - 1):
+                fixed = CabinetPart()
+                fixed.create('Diagonal Fixed Shelf %d' % (j + 1))
+                fixed.obj.parent = self.obj
+                fixed.obj['hb_part_role'] = PART_ROLE_CORNER_FIXED_SHELF
+                fixed.obj['hb_face_frame_side'] = 'DIAGONAL'
+                fixed.obj['hb_corner_section_index'] = j
+                fixed.obj['CABINET_PART'] = True
+                fixed.set_input('Mirror Y', True)
+                if cutter_obj is not None:
+                    cut = fixed.obj.modifiers.new(
+                        name='Diagonal Cut', type='BOOLEAN')
+                    cut.operation = 'DIFFERENCE'
+                    cut.object = cutter_obj
+                if back_cutter_obj is not None:
+                    clip = fixed.obj.modifiers.new(
                         name='Clip Back Cut', type='BOOLEAN')
                     clip.operation = 'DIFFERENCE'
                     clip.object = back_cutter_obj
@@ -2284,6 +2321,14 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         for i in range(n_sec - 1, -1, -1):
             sec_h = sec_heights[i]
             sec_z0 = z_cursor
+            # Mirror the solved share into the height prop so the greyed
+            # Height field reads the live opening size instead of the
+            # prop default (12"). System write inside recalculate(); the
+            # _RECALCULATING guard short-circuits the update callback's
+            # re-entrant recalc.
+            if (not sections[i].unlock_height
+                    and abs(sections[i].height - sec_h) > 1e-7):
+                sections[i].height = sec_h
             if sections[i].content == 'DOORS':
                 # Double-door pair filling this section. Same horizontal
                 # layout as a single-opening pair; Length and Z come from
@@ -2380,6 +2425,20 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                             ('Width', mrw),
                             ('Thickness', fft),
                         ))
+                # TALL hutch / bookcase: fixed shelf at this boundary,
+                # top face flush with the TOP of the mid rail. Same
+                # full L footprint as Top/Bottom; the boolean cutters
+                # carve the pentagon front + rear clip.
+                fixed = _find_corner_part(
+                    self.obj, PART_ROLE_CORNER_FIXED_SHELF, 'DIAGONAL',
+                    i - 1)
+                if fixed is not None:
+                    fixed.location = (0.0, 0.0, z_cursor + mrw - t)
+                    _set_mod_inputs(fixed, fixed.home_builder.mod_name, (
+                        ('Length', width - t - ffro),
+                        ('Width', depth - t - fflo),
+                        ('Thickness', t),
+                    ))
                 z_cursor += mrw
 
         # Cutter: cage box anchored just behind A=(ld, -depth) along
