@@ -2419,56 +2419,10 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
                         "No face frame cabinets or appliances selected")
             return {'CANCELLED'}
 
-        loc, rot, w, d, h = self._calculate_group_bounds(roots)
-
-        group = hb_types.GeoNodeCage()
-        group.create("New Cabinet Group")
-        group.obj['IS_CAGE_GROUP'] = True
-        group.obj.parent = None
-        group.obj.location = loc
-        group.obj.rotation_euler = rot
-        group.set_input('Dim X', w)
-        group.set_input('Dim Y', d)
-        group.set_input('Dim Z', h)
-        # Mirror Y so the group cage matches face frame's cabinet
-        # convention: origin at back, geometry extending -Y into the room.
-        group.set_input('Mirror Y', True)
-        # Right-click menu dispatch: ui/menu_apend reads MENU_ID off the
-        # active object and shows the named Menu class.
-        group.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_group_commands'
-
         bpy.ops.object.select_all(action='DESELECT')
-
-        # Reparent preserving world transforms - the user placed these
-        # cabinets where they wanted them and the group shouldn't shift
-        # them at creation time. The cabinet roots' own cages stay
-        # in the scene but hide_viewport=True keeps their wireframes
-        # from cluttering the group cage; child parts (carcass, doors,
-        # drawers) remain visible because hide_viewport doesn't
-        # propagate to children.
-        for root in roots:
-            world_matrix = root.matrix_world.copy()
-            root.parent = group.obj
-            root.matrix_world = world_matrix
-            # Cabinet cages get hidden so only the group cage shows;
-            # appliances keep their visible geometry on the root, so
-            # hiding them would make the dishwasher / range disappear.
-            if root.get(types_face_frame.TAG_CABINET_CAGE):
-                root.hide_viewport = True
-
-        # Shade the group cage like a cabinet (solid, addon's cabinet
-        # color, drawn in front). Same helper frameless uses on its
-        # cabinet roots; dont_show_parent=False forces application
-        # even though the group cage has cabinet-cage children that
-        # would normally suppress the toggle.
-        toggle_cabinet_color(
-            group.obj, True,
-            type_name=types_face_frame.TAG_CABINET_CAGE,
-            dont_show_parent=False,
-        )
-
-        group.obj.select_set(True)
-        context.view_layer.objects.active = group.obj
+        group_obj = create_cabinet_group_from_roots(roots)
+        group_obj.select_set(True)
+        context.view_layer.objects.active = group_obj
         return {'FINISHED'}
 
     def _calculate_group_bounds(self, roots):
@@ -2523,6 +2477,76 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         rotation = (0, 0, 0)
 
         return (location, rotation, overall_w, overall_d, overall_h)
+
+
+def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
+    """Programmatic core of hb_face_frame.create_cabinet_group: wrap the
+    given cabinet / appliance roots in a new IS_CAGE_GROUP cage,
+    preserving each root's world transform. Returns the group cage
+    object (None for an empty roots list).
+
+    No bpy.ops and no selection handling, so it is callable from any
+    context -- the operator delegates here, and Spaces' 2D generation
+    calls it directly to auto-group ungrouped free-standing runs
+    (peninsulas) so the island view machinery can target them.
+    """
+    if not roots:
+        return None
+    loc, rot, w, d, h = (hb_face_frame_OT_create_cabinet_group.
+                         _calculate_group_bounds(None, roots))
+
+    group = hb_types.GeoNodeCage()
+    group.create(name)
+    group.obj['IS_CAGE_GROUP'] = True
+    group.obj.parent = None
+    group.obj.location = loc
+    group.obj.rotation_euler = rot
+    group.set_input('Dim X', w)
+    group.set_input('Dim Y', d)
+    group.set_input('Dim Z', h)
+    # Mirror Y so the group cage matches face frame's cabinet
+    # convention: origin at back, geometry extending -Y into the room.
+    group.set_input('Mirror Y', True)
+    # Right-click menu dispatch: ui/menu_apend reads MENU_ID off the
+    # active object and shows the named Menu class.
+    group.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_group_commands'
+
+    # Flush the depsgraph BEFORE reparenting: assigning root.matrix_world
+    # below computes each root's basis against the cage's CURRENT
+    # matrix_world, and a freshly created object's matrix_world is
+    # identity until a depsgraph update folds in the location set above.
+    # Without this, every member lands displaced by the cage's location
+    # (basis was computed as if the cage sat at the origin).
+    bpy.context.view_layer.update()
+
+    # Reparent preserving world transforms - the user placed these
+    # cabinets where they wanted them and the group shouldn't shift
+    # them at creation time. The cabinet roots' own cages stay
+    # in the scene but hide_viewport=True keeps their wireframes
+    # from cluttering the group cage; child parts (carcass, doors,
+    # drawers) remain visible because hide_viewport doesn't
+    # propagate to children.
+    for root in roots:
+        world_matrix = root.matrix_world.copy()
+        root.parent = group.obj
+        root.matrix_world = world_matrix
+        # Cabinet cages get hidden so only the group cage shows;
+        # appliances keep their visible geometry on the root, so
+        # hiding them would make the dishwasher / range disappear.
+        if root.get(types_face_frame.TAG_CABINET_CAGE):
+            root.hide_viewport = True
+
+    # Shade the group cage like a cabinet (solid, addon's cabinet
+    # color, drawn in front). Same helper frameless uses on its
+    # cabinet roots; dont_show_parent=False forces application
+    # even though the group cage has cabinet-cage children that
+    # would normally suppress the toggle.
+    toggle_cabinet_color(
+        group.obj, True,
+        type_name=types_face_frame.TAG_CABINET_CAGE,
+        dont_show_parent=False,
+    )
+    return group.obj
 
 
 def _find_group_cage(obj):
