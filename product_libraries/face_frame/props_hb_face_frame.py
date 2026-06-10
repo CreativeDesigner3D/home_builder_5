@@ -2067,6 +2067,67 @@ class HB_UL_face_frame_cabinet_styles(UIList):
 # ---------------------------------------------------------------------------
 # Door Style - shared pool, referenced from cabinet styles via index
 # ---------------------------------------------------------------------------
+RAIL_SIZE_ANNOTATION_TAG = 'DOOR_ANNOTATION'
+
+
+def _sync_rail_size_annotation(front_obj, part, top_rail_width,
+                               right_stile_width, active):
+    """Maintain the '<N>R' rail-size FONT callout on a 5-piece front.
+
+    Shown when the front's rail width deviates from the catalog spec
+    (the style's rail unlock, or a locked per-front frame override) so
+    the shop drawing calls out the non-standard rail. Parented to the
+    front, it is torn down with the front on every recalc (the pivot
+    wipe removes children_recursive) and recreated here; it rides into
+    elevations like any other IS_2D_ANNOTATION FONT under the cabinet,
+    where the Spaces elevation pass links it to IGNORE freestyle.
+
+    Idempotent: an existing annotation is removed first, covering live
+    style edits (unlock toggled off) with no front rebuild in between.
+    Placement matches the legacy convention: text sits centered on the
+    top rail, inset 1" from the hinge-far stile, just proud of the
+    face (part-local; Mirror Y flips the cross-width axis).
+    """
+    for child in list(front_obj.children):
+        if child.get(RAIL_SIZE_ANNOTATION_TAG):
+            bpy.data.objects.remove(child, do_unlink=True)
+    if not active:
+        return
+
+    inches = units.meter_to_inch(top_rail_width)
+    label = ('%g' % round(inches, 3)) + 'R'
+
+    fd = bpy.data.curves.new('Rail Size Annotation', type='FONT')
+    fd.body = label
+    fd.size = 0.04
+    fd.align_x = 'RIGHT'
+    fd.align_y = 'CENTER'
+    text_obj = bpy.data.objects.new('Rail Size Annotation', fd)
+    text_obj[RAIL_SIZE_ANNOTATION_TAG] = True
+    text_obj['IS_2D_ANNOTATION'] = True
+    text_obj.color = (0.0, 0.0, 0.0, 1.0)
+    for coll in front_obj.users_collection:
+        coll.objects.link(text_obj)
+    if not text_obj.users_collection:
+        bpy.context.scene.collection.objects.link(text_obj)
+    text_obj.parent = front_obj
+    text_obj.rotation_euler.z = -1.5707963267948966  # -90 deg
+
+    try:
+        front_length = part.get_input('Length')
+        front_width = part.get_input('Width')
+    except Exception:
+        return
+    try:
+        mirror_y = bool(part.get_input('Mirror Y'))
+    except Exception:
+        mirror_y = False
+    text_obj.location.x = front_length - top_rail_width / 2.0
+    y = front_width - right_stile_width - units.inch(1.0)
+    text_obj.location.y = -y if mirror_y else y
+    text_obj.location.z = units.inch(0.76)
+
+
 def _front_frame_store(front_obj):
     """Persistent home for a front's locked frame overrides.
 
@@ -2154,11 +2215,15 @@ class Face_Frame_Door_Style(PropertyGroup):
     # Wood-grain run direction for this front. HORIZONTAL feeds the 5-piece
     # panel the rotated finish material (finish_mat_rotated) so the panel
     # grain runs across; VERTICAL uses finish_mat (see
-    # _set_door_modifier_materials).
+    # _set_door_modifier_materials). NONE renders like VERTICAL (only
+    # HORIZONTAL is special-cased in the material walk) but carries no
+    # grain spec: the Style Section page skips its Grain row, for
+    # painted / non-grained fronts where a grain callout is noise.
     grain_direction: EnumProperty(
         name="Grain Direction",
         description="Direction the wood grain runs on this front",
         items=[
+            ('NONE', "None", "No grain direction (painted / non-grained fronts; no callout on the style section)"),
             ('VERTICAL', "Vertical", "Grain runs vertically"),
             ('HORIZONTAL', "Horizontal", "Grain runs horizontally"),
         ],
@@ -2338,6 +2403,9 @@ class Face_Frame_Door_Style(PropertyGroup):
             for mod in list(front_obj.modifiers):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
+            # Slabs carry no rails; drop a stale rail-size callout left
+            # over from a live 5-piece -> slab style edit.
+            _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
             front_obj['DOOR_STYLE_NAME'] = self.name
             return True
 
@@ -2448,6 +2516,16 @@ class Face_Frame_Door_Style(PropertyGroup):
                 door_style_mod.set_input("Add Mid Rail", False)
             except Exception:
                 pass
+
+        # Rail-size callout ('3R'): rail width deviates from the catalog
+        # via the style's rail unlock, or via a locked per-front frame
+        # override whose top rail differs from the style.
+        _sync_rail_size_annotation(
+            front_obj, part, eff_top_rail, eff_right_stile,
+            active=(self.unlock_rail_width
+                    or (frame_locked
+                        and abs(eff_top_rail - self.rail_width) > 1e-6)),
+        )
 
         # Material inheritance from the parent cabinet style lands once
         # cabinet-style material walking is implemented.

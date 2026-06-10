@@ -352,6 +352,16 @@ def recalc_cabinet_exposure(cab_obj):
     """
     if not _is_face_frame_carcass(cab_obj):
         return
+    # Leg products pass the carcass test (cabinet_type BASE) so they
+    # stay visible to the neighbor coverage scan - but their finish is
+    # the leg_product.finish_type (auto_leg_finish_type), NOT the
+    # cabinet finished-end conditions. Stamping conditions here put an
+    # un-removable finished-end callout on legs in the 2D drawings
+    # (the Leg Properties UI only exposes finish_type), e.g. a leg
+    # beside a dishwasher carrying a '4\" FLUSH FIN' note nothing
+    # could clear. Skip the stamp; legs keep their neighbor role.
+    if cab_obj.get('IS_LEG_PRODUCT'):
+        return
     cab = cab_obj.face_frame_cabinet
     scene_props = bpy.context.scene.hb_face_frame
 

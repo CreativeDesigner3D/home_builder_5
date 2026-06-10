@@ -984,9 +984,38 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         """
         if self.has_start_point:
             return None
-        if not self._active_track_lines or len(self._active_track_lines) != 1:
-            return None
         if not self.hit_location:
+            return None
+        # Surface-snap case: the cursor is sliding along an existing wall
+        # FACE, but the axis tracking lines run through the corner on the
+        # wall's ORIGIN line - parallel to the face, offset by the wall
+        # thickness - so they never engage and the typed distance was
+        # silently discarded. Measure along the snapped wall instead:
+        # anchor = the nearest acquired track point projected onto the
+        # face line, direction = the wall axis toward the cursor. Also
+        # covers non-axis-aligned walls, which the X/Y line logic never
+        # handled.
+        if (self.snap_wall is not None and self.snap_surface
+                and self.snap_location is not None and self.track_points):
+            hit = Vector(self.hit_location)
+            hit.z = 0.0
+            rot_z = self.snap_wall.matrix_world.to_euler().z
+            wall_dir = Vector((math.cos(rot_z), math.sin(rot_z), 0.0))
+            snap_loc = Vector(self.snap_location)
+            snap_loc.z = 0.0
+            tp2 = min(
+                self.track_points,
+                key=lambda t: (Vector((t.x, t.y, 0.0)) - hit).length)
+            tp3 = Vector((tp2.x, tp2.y, 0.0))
+            anchor = snap_loc + wall_dir * wall_dir.dot(tp3 - snap_loc)
+            along = wall_dir.dot(hit - anchor)
+            if abs(along) < 1e-9:
+                # Cursor dead on the corner: direction is ambiguous,
+                # slide along the wall first to pick a side.
+                return None
+            direction = wall_dir if along > 0.0 else -wall_dir
+            return anchor, direction
+        if not self._active_track_lines or len(self._active_track_lines) != 1:
             return None
         tp, axis = self._active_track_lines[0]
         hit = Vector(self.hit_location)
