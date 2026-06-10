@@ -318,6 +318,9 @@ APPLIANCE_ANNO_SIDE_MARGIN = inch(2.0)     # square inset from each bay side
 APPLIANCE_ANNO_Z_LIFT = inch(0.5)          # square sits this far above the bay top
 APPLIANCE_ANNO_TEXT_SIZE = inch(2.0)
 APPLIANCE_ANNO_LINE_THICKNESS = inch(0.05)
+# Word pulled toward the bay FRONT (-Y) so it stays readable in
+# elevations when an upper cabinet hangs over the sink / cooktop.
+APPLIANCE_ANNO_TEXT_Y_OFFSET = inch(-4.0)
 # Interior tree dividers: physical parts at split-node boundaries.
 PART_ROLE_INTERIOR_DIVISION = 'INTERIOR_DIVISION'
 PART_ROLE_INTERIOR_FIXED_SHELF = 'INTERIOR_FIXED_SHELF'
@@ -4253,7 +4256,7 @@ class FaceFrameCabinet(GeoNodeCage):
         rect.set_input('Line Thickness', APPLIANCE_ANNO_LINE_THICKNESS)
         rect.set_input('Text', kind)
         rect.set_input('Text Size', APPLIANCE_ANNO_TEXT_SIZE)
-        rect.set_input('Text Y Offset', 0)
+        rect.set_input('Text Y Offset', APPLIANCE_ANNO_TEXT_Y_OFFSET)
         rect.obj['hb_part_role'] = PART_ROLE_APPLIANCE_ANNOTATION
         rect.obj['IS_2D_ANNOTATION'] = True
         rect.obj['APPLIANCE_ANNOTATION'] = True
