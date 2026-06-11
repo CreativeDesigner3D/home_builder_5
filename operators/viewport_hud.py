@@ -4,9 +4,11 @@ When the `use_viewport_hud` addon preference is enabled, draws controls
 along the top of every 3D viewport: a left-anchored scene-navigator
 trigger (just past the toolbar) and a centered selection-mode picker for
 the active product library.
-A permanent draw handler renders the strip; a persistent modal listener
-routes clicks on widget rects to their actions while passing every other
-event through.
+A permanent draw handler renders the strip; addon keymap entries route
+clicks and hover moves on widget rects to their actions while passing
+every other event through. No persistent modal operator is used --
+Blender skips autosave while ANY modal operator is running, so the old
+always-on listener silently disabled autosave for the whole session.
 
 Widgets are intentionally thin -- they read and write the per-product
 selection-mode properties, which already own their update callbacks, so
@@ -38,11 +40,11 @@ _ADDON_PKG = __package__.rsplit(".", 1)[0]
 # ---- Module state -----------------------------------------------------------
 
 _draw_handle = None        # permanent SpaceView3D draw handler
-_hud_shutdown = False      # set by unregister(); listener exits on next event
-_generation = 0            # bumped each register() to retire stale listeners
-_active_gen = None         # generation of the currently live listener
+_hud_shutdown = False      # set by unregister(); gates the draw + keymap ops
 _mouse = (-1, -1)          # last cursor pos, region-local
 _mouse_region = None       # region _mouse was measured in (hover is per-region)
+_last_hover_key = None     # layout index of the widget under the cursor
+_addon_keymaps = []        # [(keymap, keymap_item), ...] for cleanup
 
 
 # ---- Layout + style ---------------------------------------------------------
@@ -112,26 +114,6 @@ _FF_SELECTION = _SelectionWiring(
 _FL_SELECTION = _SelectionWiring(
     'hb_frameless', 'frameless_selection_mode',
     None, _frameless_ui_visible)
-
-
-def _viewport_under_cursor(context, event):
-    """Resolve the VIEW_3D area + WINDOW region under the cursor from
-    absolute event coords. A window-level modal cannot trust context.area,
-    and hit-testing the layout directly also lets the HUD work across every
-    viewport in the window. Returns (area, region) or (None, None)."""
-    win = context.window
-    if win is None:
-        return (None, None)
-    mx, my = event.mouse_x, event.mouse_y
-    for area in win.screen.areas:
-        if area.type != 'VIEW_3D':
-            continue
-        for region in area.regions:
-            if region.type == 'WINDOW' and (
-                    region.x <= mx < region.x + region.width and
-                    region.y <= my < region.y + region.height):
-                return (area, region)
-    return (None, None)
 
 
 # ---- Widgets ----------------------------------------------------------------
@@ -572,155 +554,158 @@ def _draw_hud():
                 layout[0], layout[1], mouse[0], mouse[1])
 
 
-# ---- Click listener ---------------------------------------------------------
+# ---- Click + hover routing (addon keymap) -----------------------------------
+# Replaces the old persistent modal listener. Blender's autosave timer skips
+# the save and merely reschedules whenever ANY modal operator handler is
+# live (wm_files.cc), so an always-running listener disabled autosave for
+# the entire session. The HUD now hooks LEFTMOUSE / MOUSEMOVE through addon
+# keymap entries instead: each event invokes a short-lived operator that
+# either handles the hit and finishes or returns PASS_THROUGH immediately.
+# Nothing persists in the modal handler list, so autosave runs normally.
 
-class home_builder_OT_viewport_hud_listener(bpy.types.Operator):
-    """Background modal that routes viewport clicks to HUD widgets. Passes
-    every event through except a left-press landing on a widget rect, so it
-    never interferes with viewport navigation, gizmos, or other modals."""
-    bl_idname = "home_builder.viewport_hud_listener"
-    bl_label = "Home Builder Viewport HUD Listener"
+
+def _hud_event_poll(context):
+    """Shared poll for the keymap operators: HUD on, real viewport region.
+    A failed poll lets the event continue down the keymap untouched."""
+    return (not _hud_shutdown
+            and _hud_enabled()
+            and context.area is not None
+            and context.area.type == 'VIEW_3D'
+            and context.region is not None
+            and context.region.type == 'WINDOW')
+
+
+class home_builder_OT_hud_click(bpy.types.Operator):
+    """Routes a viewport left-press to HUD widgets. A press landing on the
+    pinned navigator panel or a widget rect is handled and consumed; any
+    other press passes through, so selection, gizmos, tools and other
+    modals behave exactly as before."""
+    bl_idname = "home_builder.hud_click"
+    bl_label = "Home Builder HUD Click"
     bl_options = {'INTERNAL'}
 
+    @classmethod
+    def poll(cls, context):
+        return _hud_event_poll(context)
+
     def invoke(self, context, event):
-        global _active_gen
-        # One live listener per generation; a stale one retires itself below.
-        if _active_gen == _generation:
-            return {'CANCELLED'}
-        self._gen = _generation
-        _active_gen = _generation
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
+        area = context.area
+        region = context.region
+        mx, my = event.mouse_region_x, event.mouse_region_y
 
-    def modal(self, context, event):
-        global _active_gen
-
-        # Retire on shutdown or when a newer generation has taken over.
-        if _hud_shutdown or self._gen != _generation:
-            if _active_gen == self._gen:
-                _active_gen = None
-            return {'CANCELLED'}
-
-        # Stay alive but inert while the HUD preference is off, so toggling
-        # it back on does not require a re-arm.
-        if not _hud_enabled():
-            return {'PASS_THROUGH'}
-
-        # context.area / context.region are unreliable for a window-level
-        # modal, so resolve the viewport under the cursor from absolute
-        # event coords instead.
-        area, region = _viewport_under_cursor(context, event)
-        in_viewport = area is not None and region is not None
-
-        if event.type == 'MOUSEMOVE':
-            if in_viewport:
-                global _mouse, _mouse_region
-                _mouse = (event.mouse_x - region.x, event.mouse_y - region.y)
-                _mouse_region = region
+        # Pinned navigator panel gets first crack at the press; a hit
+        # inside its rect is consumed, a miss falls through to widgets.
+        if scene_navigator.is_pinned():
+            ax, atop = _nav_anchor(context, area)
+            layout = scene_navigator.build_pinned_layout(
+                context, area, region, ax, atop)
+            if layout and point_in_rect(mx, my, layout[0]):
+                scene_navigator.handle_navigator_click(
+                    context, mx, my, layout[1])
                 area.tag_redraw()
-            return {'PASS_THROUGH'}
+                return {'FINISHED'}
 
-        if (event.type == 'LEFTMOUSE' and event.value == 'PRESS'
-                and in_viewport):
-            mx = event.mouse_x - region.x
-            my = event.mouse_y - region.y
-            # Pinned navigator panel gets first crack at the press; a hit
-            # inside its rect is consumed, a miss passes through so the
-            # viewport stays interactive.
-            if scene_navigator.is_pinned():
-                ax, atop = _nav_anchor(context, area)
-                layout = scene_navigator.build_pinned_layout(
-                    context, area, region, ax, atop)
-                if layout and point_in_rect(mx, my, layout[0]):
-                    scene_navigator.handle_navigator_click(
-                        context, mx, my, layout[1])
-                    area.tag_redraw()
-                    return {'RUNNING_MODAL'}  # consume
-            for widget, rect in compute_layout(context, area):
-                if point_in_rect(mx, my, rect):
-                    widget.on_click(context, area, region)
-                    area.tag_redraw()
-                    return {'RUNNING_MODAL'}  # consume -- keep it off the viewport
-            return {'PASS_THROUGH'}
+        for widget, rect in compute_layout(context, area):
+            if point_in_rect(mx, my, rect):
+                widget.on_click(context, area, region)
+                area.tag_redraw()
+                return {'FINISHED'}
+        return {'PASS_THROUGH'}
 
+
+class home_builder_OT_hud_hover(bpy.types.Operator):
+    """Tracks the cursor for HUD hover highlights. Stores the region-local
+    mouse position for the draw handler and tags a redraw only when the
+    hovered widget changes (or while the pinned navigator is open, which
+    paints its own internal hover) -- cheaper than the old listener, which
+    redrew the viewport on every mouse move."""
+    bl_idname = "home_builder.hud_hover"
+    bl_label = "Home Builder HUD Hover"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return _hud_event_poll(context)
+
+    def invoke(self, context, event):
+        global _mouse, _mouse_region, _last_hover_key
+        _mouse = (event.mouse_region_x, event.mouse_region_y)
+        _mouse_region = context.region
+
+        hover_key = None
+        for i, (_widget, rect) in enumerate(
+                compute_layout(context, context.area)):
+            if point_in_rect(_mouse[0], _mouse[1], rect):
+                hover_key = i
+                break
+        if hover_key != _last_hover_key or scene_navigator.is_pinned():
+            _last_hover_key = hover_key
+            context.area.tag_redraw()
         return {'PASS_THROUGH'}
 
 
 # ---- Lifecycle --------------------------------------------------------------
 
-def _start_listener():
-    """Timer callback: ensure a listener for the current generation is live.
-    Retries shortly if no usable window exists yet (e.g. right at startup).
-    Returns None to unregister the timer once satisfied.
+def _register_keymaps():
+    """Hook the HUD operators into the addon keyconfig. `any=True` matches
+    regardless of modifier state, mirroring the old listener which consumed
+    widget presses with any modifiers held. No-op in background mode."""
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if not kc:
+        return
+    km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+    kmi = km.keymap_items.new(
+        home_builder_OT_hud_click.bl_idname, 'LEFTMOUSE', 'PRESS',
+        any=True, head=True)
+    _addon_keymaps.append((km, kmi))
+    kmi = km.keymap_items.new(
+        home_builder_OT_hud_hover.bl_idname, 'MOUSEMOVE', 'ANY',
+        any=True, head=True)
+    _addon_keymaps.append((km, kmi))
 
-    The modal must be invoked under a window override -- a modal operator
-    started from a timer with no window in context is added to nothing and
-    never receives events."""
-    if _hud_shutdown:
-        return None
-    if _active_gen == _generation:
-        return None
-    wm = bpy.context.window_manager
-    window = wm.windows[0] if (wm and wm.windows) else None
-    if window is None:
-        return 0.5
-    try:
-        with bpy.context.temp_override(window=window):
-            bpy.ops.home_builder.viewport_hud_listener('INVOKE_DEFAULT')
-    except Exception:
-        return 0.5
-    return None
+
+def _unregister_keymaps():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
 
 
 def ensure_listener():
-    """Re-arm the click listener. Called on file load -- modal operators do
-    not survive a .blend load, but _active_gen is a module global and still
-    points at the dead listener, so _start_listener would treat it as live
-    and no-op. Bump the generation (any handler that did survive retires
-    itself on its next event via the _gen mismatch) and clear the gate so
-    the timer actually starts a fresh listener."""
-    global _generation, _active_gen
-    if _hud_shutdown:
-        return
-    _generation += 1
-    _active_gen = None
-    if not bpy.app.timers.is_registered(_start_listener):
-        bpy.app.timers.register(_start_listener, first_interval=0.1)
+    """Kept for API compatibility -- the load_post handler used to re-arm
+    the modal listener here. Keymap entries survive .blend loads, so there
+    is nothing to re-arm anymore."""
+    return
 
 
 classes = (
-    home_builder_OT_viewport_hud_listener,
+    home_builder_OT_hud_click,
+    home_builder_OT_hud_hover,
 )
 
 
 def register():
-    global _draw_handle, _hud_shutdown, _generation
+    global _draw_handle, _hud_shutdown
     _hud_shutdown = False
-    _generation += 1
     for cls in classes:
         bpy.utils.register_class(cls)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_hud, (), 'WINDOW', 'POST_PIXEL')
-    # Cannot invoke a modal during register(); defer the first start.
-    bpy.app.timers.register(_start_listener, first_interval=0.1)
+    _register_keymaps()
 
 
 def unregister():
-    global _draw_handle, _hud_shutdown, _active_gen
-    # Flip the flag first so the live listener retires on its next event.
+    global _draw_handle, _hud_shutdown
     _hud_shutdown = True
-    _active_gen = None
+    _unregister_keymaps()
     if _draw_handle is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
         except Exception:
             pass
         _draw_handle = None
-    if bpy.app.timers.is_registered(_start_listener):
-        try:
-            bpy.app.timers.unregister(_start_listener)
-        except Exception:
-            pass
     for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)
