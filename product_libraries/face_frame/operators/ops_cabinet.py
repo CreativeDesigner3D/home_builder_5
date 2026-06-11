@@ -588,6 +588,11 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.split_opening"
     bl_label = "Split Opening"
+    bl_description = (
+        "Divide the selected opening into stacked or side-by-side "
+        "openings (for example, a drawer above a door). A dialog lets "
+        "you set how many openings to create and the size of each one"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     axis: bpy.props.EnumProperty(
@@ -1123,6 +1128,11 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.add_interior_item"
     bl_label = "Add Interior Item"
+    bl_description = (
+        "Add an interior item (shelf, drawer, rollout, etc.) to the "
+        "selected opening or region. Item details can be edited in "
+        "the properties panel afterwards"
+    )
     bl_options = {'UNDO'}
 
     kind: bpy.props.EnumProperty(
@@ -1195,6 +1205,7 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.remove_interior_item"
     bl_label = "Remove Interior Item"
+    bl_description = "Remove the selected interior item from this opening"
     bl_options = {'UNDO'}
 
     index: bpy.props.IntProperty(
@@ -1388,6 +1399,10 @@ class hb_face_frame_OT_add_interior_division(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.add_interior_division"
     bl_label = "Add Interior Division"
+    bl_description = (
+        "Split the selected opening or region into a left and right "
+        "side with a vertical division"
+    )
     bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(
@@ -1435,6 +1450,10 @@ class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.add_interior_fixed_shelf"
     bl_label = "Add Interior Fixed Shelf"
+    bl_description = (
+        "Split the selected opening or region into a bottom and top "
+        "section with a fixed shelf"
+    )
     bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(
@@ -1514,6 +1533,10 @@ class hb_face_frame_OT_remove_interior_split(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.remove_interior_split"
     bl_label = "Remove Interior Split"
+    bl_description = (
+        "Remove the division or fixed shelf next to this region and "
+        "combine the two sides back into one"
+    )
     bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(
@@ -1615,6 +1638,10 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.show_interior_add_menu"
     bl_label = "Add Interior..."
+    bl_description = (
+        "Show a menu of items that can be added to this opening or "
+        "region (divisions, shelves, drawers, rollouts, and more)"
+    )
     bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(
@@ -1952,6 +1979,10 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.change_opening"
     bl_label = "Change Opening"
+    bl_description = (
+        "Change the selected opening to a preset front type (door, "
+        "drawer, pullout, open shelves, etc.) in one click"
+    )
     bl_options = {'UNDO'}
 
     config: bpy.props.EnumProperty(
@@ -2059,6 +2090,11 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.change_bay"
     bl_label = "Change Bay"
+    bl_description = (
+        "Replace the doors, drawers, and openings in the selected bay(s) "
+        "with a preset layout. Custom options open a dialog to set the "
+        "number and size of openings yourself"
+    )
     bl_options = {'UNDO'}
 
     config: bpy.props.StringProperty(
@@ -2842,6 +2878,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.add_appliance_to_bay"
     bl_label = "Add Appliance to Bay"
+    bl_description = (
+        "Turn the selected base bay into a sink or cooktop bay. Sets "
+        "the bay width and front layout and labels the bay on 2D drawings"
+    )
     bl_options = {'UNDO'}
 
     appliance_kind: bpy.props.EnumProperty(
@@ -3006,6 +3046,10 @@ class hb_face_frame_OT_remove_appliance_from_bay(bpy.types.Operator):
     """
     bl_idname = "hb_face_frame.remove_appliance_from_bay"
     bl_label = "Remove Appliance from Bay"
+    bl_description = (
+        "Remove the sink or cooktop label from the selected bay. The "
+        "bay's front layout is left as-is; use Change Bay to reconfigure it"
+    )
     bl_options = {'UNDO'}
 
     bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
