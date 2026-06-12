@@ -590,7 +590,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_text_paper_height: FloatProperty(
         name="Text Height (Paper)",
         description="Text height on paper in inches",
-        default=3/32,  # 3/32" standard architectural text
+        default=0.15,
         min=0.01,
         max=1.0,
         precision=4,
@@ -601,7 +601,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_line_paper_thickness: FloatProperty(
         name="Line Thickness (Paper)",
         description="Annotation line thickness on paper in inches",
-        default=0.01,  # ~0.25mm medium line weight
+        default=0.004,
         min=0.001,
         max=0.1,
         precision=4,
@@ -612,7 +612,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_text_paper_height: FloatProperty(
         name="Dim Text Height (Paper)",
         description="Dimension text height on paper in inches",
-        default=3/32,  # 3/32" standard
+        default=0.15,  # matched to annotation_text_paper_height
         min=0.01,
         max=1.0,
         precision=4,
@@ -623,7 +623,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_tick_paper_length: FloatProperty(
         name="Dim Tick Length (Paper)",
         description="Dimension tick mark length on paper in inches",
-        default=0.05,
+        default=0.04,
         min=0.01,
         max=0.5,
         precision=4,
@@ -645,7 +645,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
     annotation_dim_tick_paper_thickness: FloatProperty(
         name="Dim Tick Thickness (Paper)",
         description="Dimension tick thickness on paper in inches",
-        default=0.004,
+        default=0.002,
         min=0.001,
         max=0.1,
         precision=4,
