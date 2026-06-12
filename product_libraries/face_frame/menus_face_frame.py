@@ -61,6 +61,20 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.ungroup_cabinet",
                             text="Ungroup Cabinet", icon='GROUP')
 
+        # Show Applied Panels - only when the right-clicked cabinet has
+        # applied finished-end panels (children tagged
+        # TAG_APPLIED_PANEL_SIDE). Runs the existing selection-mode flip
+        # (Finished Ends panel has the same button): every applied
+        # panel's cage becomes clickable for right-click editing and the
+        # host cabinet cages drop out of the way. Any standard mode in
+        # the picker (Cabinets, Bays, ...) returns to normal.
+        if active_root is not None and any(
+                child.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                for child in active_root.children):
+            layout.separator()
+            layout.operator("hb_face_frame.show_applied_panels",
+                            text="Show Applied Panels", icon='HIDE_OFF')
+
         # Tip-up wedge calculator - refrigerator cabinets only. The root
         # carries this menu's MENU_ID, so the right-clicked active object
         # is the cabinet root; find_cabinet_root is used anyway for safety.

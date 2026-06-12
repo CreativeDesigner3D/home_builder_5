@@ -3821,9 +3821,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     # Door swing for the diagonal face's DOORS sections. Per-cabinet,
     # applied to every DOORS section (matches the pie cut's per-cabinet
-    # exterior_option swing handling). DOUBLE_DOOR is the historical
-    # behaviour; the single swings build one full-width leaf hinged on
-    # the named edge, pull on the unhinged edge.
+    # exterior_option swing handling). The single swings build one
+    # full-width leaf hinged on the named edge, pull on the unhinged
+    # edge. Default LEFT_SWING (was DOUBLE_DOOR historically; changed
+    # by request -- note an old blend's diagonal cabinet left at the
+    # default will read LEFT_SWING after this change and flip on its
+    # next recalc).
     diag_door_swing: EnumProperty(
         name="Door Swing",
         description="Door leaf layout for the diagonal face's door sections",
@@ -3832,7 +3835,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('LEFT_SWING',  "Left Swing",  "Single full-width door hinged on the left edge"),
             ('RIGHT_SWING', "Right Swing", "Single full-width door hinged on the right edge"),
         ],
-        default='DOUBLE_DOOR',
+        default='LEFT_SWING',
         update=_update_cabinet_dim,
     )  # type: ignore
     clip_back_amount: FloatProperty(
