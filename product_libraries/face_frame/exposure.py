@@ -282,19 +282,27 @@ def _back_exposure(cab_obj):
 # Finish-type resolution + per-cabinet recalc
 # ---------------------------------------------------------------------------
 
-def _resolve_finish_type(scene_props, exposure_state, dishwasher_adjacent):
+def _resolve_finish_type(scene_props, exposure_state, dishwasher_adjacent,
+                         side='left'):
     """Priority rule: dishwasher beats partial beats fully-exposed
     beats unexposed. Returns a value from FIN_END_ITEMS.
 
     The dishwasher branch reads the scene preference rather than a
     hardwired FLUSH_X, so shops that don't run a flush fin next to a
     dishwasher can pick a different type (or Unfinished for none).
+
+    EXPOSED resolves per side: BACK reads the scene's
+    default_finished_back_type, L/R the default_finished_end_type --
+    a shop often runs a different treatment on an exposed island
+    back than on exposed ends.
     """
     if dishwasher_adjacent:
         return scene_props.dishwasher_finished_end_type
     if exposure_state == 'PARTIAL':
         return 'FINISHED'
     if exposure_state == 'EXPOSED':
+        if side == 'back':
+            return scene_props.default_finished_back_type
         return scene_props.default_finished_end_type
     return 'UNFINISHED'
 
@@ -327,7 +335,7 @@ def _apply_side(cab, side, state, dishwasher, wall_edge, scene_props):
         setattr(cab, f'{side}_dishwasher_adjacent', dishwasher)
     if not getattr(cab, f'{side}_finish_end_auto'):
         return
-    finish = _resolve_finish_type(scene_props, state, dishwasher)
+    finish = _resolve_finish_type(scene_props, state, dishwasher, side)
     setattr(cab, f'{side}_finished_end_condition', finish)
     if side != 'back':
         setattr(cab, f'{side}_scribe',

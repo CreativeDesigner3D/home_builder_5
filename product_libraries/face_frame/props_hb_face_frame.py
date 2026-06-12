@@ -4701,6 +4701,16 @@ class Face_Frame_Scene_Props(PropertyGroup):
         name="Default Finished End Type",
         items=FIN_END_ITEMS, default='FINISHED',
     )  # type: ignore
+    # Backs get their own default (a shop often runs a different
+    # treatment on an exposed island back than on exposed ends).
+    # Defaults to FINISHED so existing scenes behave as before until
+    # the user picks something else. Read by exposure._resolve_finish_
+    # type for side == 'back'; L/R keep default_finished_end_type.
+    default_finished_back_type: EnumProperty(
+        name="Default Finished Back Type",
+        description="Finished-end type auto-applied to exposed cabinet backs",
+        items=FIN_END_ITEMS, default='FINISHED',
+    )  # type: ignore
     # What exposure auto-pick writes to a side that abuts a dishwasher
     # (or other panel-ready appliance). Default UNFINISHED: the side
     # comes in unfinished with the standard 0.25" neighbor scribe, and
@@ -5459,10 +5469,12 @@ class Face_Frame_Scene_Props(PropertyGroup):
         # user just doesn't access them here.
         col = layout.column(align=True)
         col.prop(self, 'default_finished_end_type', text="Type")
+        col.prop(self, 'default_finished_back_type', text="Back Type")
         col.prop(self, 'dishwasher_finished_end_type', text="Dishwasher Side")
         # The amount field serves whichever default resolves to FLUSH_X;
         # exposure auto-pick seeds the per-cabinet amount from it.
         if (self.default_finished_end_type == 'FLUSH_X'
+                or self.default_finished_back_type == 'FLUSH_X'
                 or self.dishwasher_finished_end_type == 'FLUSH_X'):
             col.prop(self, 'default_flush_x_amount', text="Flush X Amount")
         col.separator()
@@ -5483,7 +5495,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
         # applied panels can exist in the scene. Surface the Show Applied
         # Panels operator here so it's reachable from the same panel that
         # configures the finish type.
-        if self.default_finished_end_type != 'FINISHED':
+        if (self.default_finished_end_type != 'FINISHED'
+                or self.default_finished_back_type != 'FINISHED'):
             col.separator()
             col.operator(
                 "hb_face_frame.show_applied_panels",

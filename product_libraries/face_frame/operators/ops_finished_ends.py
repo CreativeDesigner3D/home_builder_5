@@ -1,9 +1,10 @@
 """Finished-ends bulk operations.
 
 Two operators:
-- apply_finished_ends_to_exposed: writes scene.default_finished_end_type
-  to every cabinet side whose exposure is not UNEXPOSED (skips sides
-  the user has manually pinned by leaving auto on).
+- apply_finished_ends_to_exposed: writes the scene's per-side default
+  (default_finished_end_type for L/R, default_finished_back_type for
+  backs) to every cabinet side whose exposure is not UNEXPOSED (skips
+  sides the user has manually pinned by leaving auto on).
 - recalculate_side_exposure: re-arms auto on every side and re-runs
   exposure detection scene-wide. Drives the matching button in the
   Finished Ends and Backs panel.
@@ -55,7 +56,7 @@ class HB_FACE_FRAME_OT_apply_finished_ends_to_exposed(bpy.types.Operator):
                         and getattr(cab, f'{side}_dishwasher_adjacent')
                     )
                     finish = exposure._resolve_finish_type(
-                        scene_props, state, dishwasher,
+                        scene_props, state, dishwasher, side,
                     )
                     setattr(cab, f'{side}_finished_end_condition', finish)
                     # Re-arm: the user-edit callback flips auto off on any

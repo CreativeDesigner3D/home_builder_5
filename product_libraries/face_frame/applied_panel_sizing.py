@@ -328,14 +328,23 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
          per the Pulito formula: 2*door_rail + bay_mid_rail -
          (top_overlay + bottom_overlay). Z-position locked to match
          the cabinet's mid rail in absolute cabinet space.
-      2. Mid stile: any region whose width >= 21" gets a single
-         vertical splitter at its center. Applied to every region
-         independently - if a mid rail exists, both upper and lower
-         regions are checked separately.
+      2. Mid stile, NO mid rails: a panel >= 21" wide builds as TWO
+         REAL BAYS -- the mid stile is a true bay divider, so the
+         cabinet prompts read "2 bays" and per-bay editing works.
+         (Was an in-bay V-split historically; converted by request.
+         Existing single-bay panels migrate on their next recalc.)
+      3. Mid stile, WITH mid rails (rail-matched LEFT / RIGHT
+         panels): unchanged -- one bay, full-width H-split rail(s),
+         and any leaf region >= 21" wide gets a centered in-bay
+         V-split, each region checked independently. A bay divider
+         runs full height and would cut the matched rail, so the
+         rail look stays split-tree based.
 
-    Wipe-and-rebuild on every call. Panels have no user state on
-    their openings (all default front_type) so rebuilding is safe and
-    idempotent.
+    Bay quantity is reconciled in place (insert_bay / delete_bay), so
+    a panel flips structure cleanly when a rail appears or disappears
+    on the source cabinet. Trees are wipe-and-rebuild on every call;
+    panels have no user state on their openings (all default
+    front_type) so rebuilding is safe and idempotent.
 
     Gated by cab.panel_frame_auto.
     """
@@ -346,21 +355,57 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
         return
 
     rails = _detect_panel_mid_rails(cab_obj, side, panel_bay_obj)
-    panel_width = panel_obj.face_frame_cabinet.width
-    add_mid_stile = panel_width >= _MID_STILE_WIDTH_THRESHOLD
+    panel_props = panel_obj.face_frame_cabinet
+    wide = panel_props.width >= _MID_STILE_WIDTH_THRESHOLD
+
+    # Bay quantity: real-bay mid stile only when no rails are in play.
+    # insert_bay / delete_bay manage their own recalc guards and were
+    # built to run on a live cabinet -- call them OUTSIDE the suspend
+    # block. insert_bay clones the anchor bay's tree, which is fine:
+    # every bay tree is wiped + rebuilt below.
+    desired_qty = 2 if (wide and not rails) else 1
+    bays = _sorted_panel_bays(panel_obj)
+    pcab = types_face_frame._wrap_cabinet(panel_obj)
+    while len(bays) < desired_qty:
+        pcab.insert_bay(len(bays) - 1, 'AFTER')
+        bays = _sorted_panel_bays(panel_obj)
+    while len(bays) > desired_qty:
+        pcab.delete_bay(len(bays) - 1)
+        bays = _sorted_panel_bays(panel_obj)
+
+    add_mid_stile = wide and desired_qty == 1
 
     # All mutation inside suspend_recalc so intermediate prop writes
     # don't trigger panel recalcs that would run the size redistributor
     # against a half-built tree and overwrite locked sizes with
-    # share-of-remainder values.
+    # share-of-remainder values. One panel recalc fires at exit.
     with types_face_frame.suspend_recalc():
-        _wipe_bay_tree(panel_bay_obj)
-        if not rails and not add_mid_stile:
-            _create_opening_under(panel_bay_obj, child_index=0, opening_index=0)
-            return
-        _build_panel_tree(
-            panel_bay_obj, rails, add_mid_stile, cab_obj, side,
-        )
+        # The bay divider renders at the panel's own mid_stile_widths;
+        # match it to the door-style stile so a real-bay stile prints
+        # at the same width the in-bay V-split used.
+        stile_w = _mid_stile_width_for_panel(
+            cab_obj, cab_obj.face_frame_cabinet, side)
+        for entry in panel_props.mid_stile_widths:
+            entry.width = stile_w
+
+        for bay_obj in bays:
+            _wipe_bay_tree(bay_obj)
+            if not rails and not add_mid_stile:
+                _create_opening_under(bay_obj, child_index=0,
+                                      opening_index=0)
+                continue
+            _build_panel_tree(
+                bay_obj, rails, add_mid_stile, cab_obj, side,
+            )
+
+
+def _sorted_panel_bays(panel_obj):
+    """The panel's bay cages in bay-index order."""
+    return sorted(
+        [c for c in panel_obj.children
+         if c.get(types_face_frame.TAG_BAY_CAGE)],
+        key=lambda b: b.face_frame_bay.bay_index,
+    )
 
 
 def _find_panel_bay(panel_obj):
