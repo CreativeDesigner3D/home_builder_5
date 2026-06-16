@@ -250,6 +250,24 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.mid_stile_prompts",
                             text="Mid Stile Properties...", icon='WINDOW')
 
+        # Make Editable / Revert to Parametric. Applying a part's GeoNode(s)
+        # turns it into real, hand-editable mesh that the recalc then leaves
+        # alone; Revert restores parametric control. Works on structural
+        # cutparts AND door / drawer fronts (each has its own apply / revert
+        # path - see the operators).
+        is_manual = bool(obj.get('IS_MANUAL_PART')) if obj is not None else False
+        can_make_editable = (
+            ops_part_commands._can_make_editable(obj)
+            or ops_part_commands._can_make_front_editable(obj))
+        if is_manual:
+            layout.separator()
+            layout.operator("hb_face_frame.revert_part_to_parametric",
+                            text="Revert to Parametric", icon='FILE_REFRESH')
+        elif can_make_editable:
+            layout.separator()
+            layout.operator("hb_face_frame.make_part_editable",
+                            text="Make Editable", icon='EDITMODE_HLT')
+
 
 class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
     """Right-click menu for an interior part (shelf, pullout, mesh part,

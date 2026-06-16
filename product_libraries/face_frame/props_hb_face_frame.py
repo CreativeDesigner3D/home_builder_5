@@ -1903,6 +1903,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
                 continue
+            # Manual (applied / hand-edited) fronts have no Door Style modifier
+            # to drive - re-styling would add geometry onto the baked mesh.
+            if child.get('IS_MANUAL_PART'):
+                continue
             role = child.get('hb_part_role')
             if role in DOOR_ROLES and door_ds is not None:
                 door_ds.assign_style_to_front(child)

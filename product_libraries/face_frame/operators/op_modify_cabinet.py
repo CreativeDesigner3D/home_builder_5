@@ -41,6 +41,10 @@ SNAP_PX = 8.0
 SNAP_FRACTIONS = (inch(1.0), inch(0.5), inch(0.25), inch(0.125))
 MIN_BAY_WIDTH = inch(2.0)
 MIN_OPENING_SIZE = inch(1.0)
+# How far the cursor must travel off the grab point before the typed-
+# value target switches sides. Keeps the active opening stable under
+# jitter; the user flips it by dragging decisively the other way.
+ACTIVE_DIR_DEADZONE = inch(0.25)
 LOCK_TINT = (0.95, 0.55, 0.10, 0.10)        # warm tint for locked bays
 HOVER_LINE = (1.00, 0.85, 0.20, 1.00)
 ACTIVE_LINE = (1.00, 0.65, 0.10, 1.00)
@@ -48,6 +52,10 @@ GHOST_LINE = (0.85, 0.85, 0.85, 0.35)
 DIM_TEXT = (1.00, 1.00, 1.00, 1.00)
 SNAP_MARKER = (0.40, 0.85, 1.00, 1.00)
 LOCK_GLYPH = (1.00, 0.85, 0.20, 1.00)
+# The opening the typed value will set: cool fill + bright label, so
+# it reads as 'this is what changes' against the plain DIM_TEXT sibling.
+ACTIVE_TINT = (0.20, 0.70, 1.00, 0.18)
+ACTIVE_DIM_TEXT = (0.40, 0.90, 1.00, 1.00)
 
 
 # ---------------------------------------------------------------------------
@@ -701,7 +709,18 @@ def _draw_callback(op, context):
                     _draw_text(scr.x, scr.y, _format_inches(cur),
                                DIM_TEXT, size=14)
         elif b['kind'] == 'BAY_EDGE':
+            # The bay the typed value sets is the one dragged toward
+            # (snapshot[0] is the LEFT bay); tint + brighten it.
+            active_left = op._active_is_primary()
+            active_idx = (b['left_bay_idx'] if active_left
+                          else b['right_bay_idx'])
             for bay_idx in (b['left_bay_idx'], b['right_bay_idx']):
+                is_active = (bay_idx == active_idx)
+                if is_active:
+                    corners = _bay_rect_screen(region, rv3d, cab,
+                                               layout, bay_idx)
+                    if corners is not None:
+                        _draw_quad_2d(shader, corners, ACTIVE_TINT)
                 x0 = solver.bay_x_position(layout, bay_idx)
                 x1 = x0 + layout.bays[bay_idx]['width']
                 zmid = 0.5 * (solver.bay_bottom_z(layout, bay_idx)
@@ -711,14 +730,23 @@ def _draw_callback(op, context):
                 if scr is not None:
                     _draw_text(scr.x, scr.y,
                                _format_inches(layout.bays[bay_idx]['width']),
-                               DIM_TEXT, size=14)
+                               ACTIVE_DIM_TEXT if is_active else DIM_TEXT,
+                               size=17 if is_active else 14)
         else:
             # MID_STILE / MID_RAIL: label the two affected children's
-            # current size at their rect centers.
+            # current size at their rect centers. The opening the typed
+            # value will set (the side the user dragged toward) is tinted
+            # and labelled bright; its sibling stays plain.
+            active_primary = op._active_is_primary()
+            active_name = None
+            if len(snap) == 2:
+                active_name = (snap[0]['name'] if active_primary
+                               else snap[1]['name'])
             for state in snap:
                 obj = bpy.data.objects.get(state['name'])
                 if obj is None:
                     continue
+                is_active = (state['name'] == active_name)
                 pg = (obj.face_frame_opening
                       if obj.get(types_face_frame.TAG_OPENING_CAGE)
                       else obj.face_frame_split)
@@ -740,6 +768,13 @@ def _draw_callback(op, context):
                     cage_bottom_z = (
                         solver.bay_bottom_z(layout, bi)
                         + layout.bays[bi]['bottom_rail_width'])
+                    if is_active:
+                        # Fill the active opening so the user sees exactly
+                        # which rectangle their typed value resizes.
+                        corners = _opening_rect_screen(
+                            region, rv3d, cab, layout, leaf_match, bi)
+                        if corners is not None:
+                            _draw_quad_2d(shader, corners, ACTIVE_TINT)
                     cx_ff = (cage_left_x + leaf_match['cage_x']
                              + leaf_match['cage_dim_x'] * 0.5)
                     cz_ff = (cage_bottom_z + leaf_match['cage_z']
@@ -749,7 +784,8 @@ def _draw_callback(op, context):
                     if scr is not None:
                         _draw_text(scr.x, scr.y,
                                    _format_inches(pg.size),
-                                   DIM_TEXT, size=14)
+                                   ACTIVE_DIM_TEXT if is_active else DIM_TEXT,
+                                   size=17 if is_active else 14)
         # Snap marker
         if op._snap_kind is not None:
             if b['axis'] == 'X':
@@ -816,6 +852,7 @@ class _GrabBaseMixin:
     _snap_kind = None
     _typed = ''
     _typing = False
+    _active_dir = 1   # +1/-1: latched drag direction picking the typed target
     _lock_targets = None        # list[dict] populated by draw, consumed by LMB
 
     @classmethod
@@ -1374,7 +1411,32 @@ class _GrabBaseMixin:
             b['cabinet_obj'], layout)
         self._drag_active = True
         self._drag_snapshot = self._snapshot_neighbors(b)
+        # Seed the typed-value target from which side of the boundary
+        # the user grabbed, so a type-without-drag still has a sensible
+        # target. _apply_drag refines this live from the drag direction.
+        center = b.get('ff_z') if b.get('axis') == 'Z' else b.get('ff_x')
+        grabbed = ff_z if b.get('axis') == 'Z' else ff_x
+        self._active_dir = (1 if center is None or grabbed >= center
+                            else -1)
         return True
+
+    def _active_is_primary(self):
+        """Whether the latched drag direction targets the PRIMARY
+        snapshot entry (snapshot[0]) for a paired drag.
+
+        Primary is the TOP child for a MID_RAIL (axis Z, +Z side) and
+        the LEFT child / LEFT bay for a MID_STILE / BAY_EDGE (axis X,
+        -X side), so primary sits on the positive axis side iff the
+        drag axis is Z. The user sets the opening they drag toward, so
+        a positive latched direction targets the positive-side child.
+        Single-neighbor drags have no secondary, so always primary.
+        """
+        b = self._drag_boundary
+        if b is None or not self._drag_snapshot \
+                or len(self._drag_snapshot) < 2:
+            return True
+        primary_positive = (b.get('axis') == 'Z')
+        return (self._active_dir > 0) == primary_positive
 
     def _apply_drag(self, context, event):
         if not self._drag_active:
@@ -1396,6 +1458,11 @@ class _GrabBaseMixin:
         ff_x_now, ff_z_now, _w = hit
         cursor_axis_now = self._drag_axis_value(b, ff_x_now, ff_z_now)
         cursor_delta = cursor_axis_now - self._drag_origin_ff
+        # Latch the typed-value target to the drag direction once the
+        # cursor clears the deadzone (jitter-stable; flip by dragging
+        # the other way). Carries the cursor-side seed until then.
+        if abs(cursor_delta) > ACTIVE_DIR_DEADZONE:
+            self._active_dir = 1 if cursor_delta > 0 else -1
         # Anchor proposed position on the boundary's drag-start value,
         # not its live value. Reading the live value compounds movement
         # across mousemoves: each pass would add cursor_delta on top of
@@ -1407,14 +1474,25 @@ class _GrabBaseMixin:
         # value via the sign convention used below.
         if self._typing and self._typed:
             try:
-                primary_orig = (self._drag_snapshot[0]['value']
-                                if self._drag_snapshot else 0.0)
+                snap = self._drag_snapshot or []
+                primary_orig = snap[0]['value'] if snap else 0.0
                 sign = b.get('primary_sign', 1.0)
                 typed_size = self._parse_typed(self._typed)
+                # Direction-selected target: the typed value sizes the
+                # opening the user dragged toward. A paired drag
+                # conserves the two openings' summed size, so 'set the
+                # secondary to T' == 'set the primary to total - T' -
+                # express the goal as a primary target and reuse the
+                # existing primary math below.
+                if len(snap) == 2 and not self._active_is_primary():
+                    total = snap[0]['value'] + snap[1]['value']
+                    primary_target = total - typed_size
+                else:
+                    primary_target = typed_size
                 # Positive primary-growth delta = sign * (new - orig)
                 # along the drag axis, so:
                 proposed_axis = (self._drag_origin_boundary
-                                 + sign * (typed_size - primary_orig))
+                                 + sign * (primary_target - primary_orig))
             except ValueError:
                 return
         snap_mode = 'OFF' if (self._snap_disabled_temp or self._typing) \
@@ -1664,8 +1742,15 @@ class _GrabBaseMixin:
 
         # Numeric input during a drag
         if self._drag_active and event.value == 'PRESS':
+            # Top-row AND numpad digits. The extraction below pulls
+            # the digit straight out of 'NUMPAD_0' (event.type[-1]
+            # is '0'), so numpad keys need no separate mapping.
             if event.type in ('ZERO', 'ONE', 'TWO', 'THREE', 'FOUR',
-                              'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE'):
+                              'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE',
+                              'NUMPAD_0', 'NUMPAD_1', 'NUMPAD_2',
+                              'NUMPAD_3', 'NUMPAD_4', 'NUMPAD_5',
+                              'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8',
+                              'NUMPAD_9'):
                 digit = event.type[-1] if event.type[-1].isdigit() \
                     else {'ZERO': '0', 'ONE': '1', 'TWO': '2',
                           'THREE': '3', 'FOUR': '4', 'FIVE': '5',
@@ -1676,11 +1761,11 @@ class _GrabBaseMixin:
                 self._apply_drag(context, event)
                 context.area.tag_redraw()
                 return {'RUNNING_MODAL'}
-            if event.type == 'PERIOD':
+            if event.type in ('PERIOD', 'NUMPAD_PERIOD'):
                 self._typed += '.'
                 self._typing = True
                 return {'RUNNING_MODAL'}
-            if event.type == 'SLASH':
+            if event.type in ('SLASH', 'NUMPAD_SLASH'):
                 self._typed += '/'
                 self._typing = True
                 return {'RUNNING_MODAL'}

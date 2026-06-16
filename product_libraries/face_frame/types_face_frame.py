@@ -1729,6 +1729,25 @@ class FaceFrameCabinet(GeoNodeCage):
             if not role:
                 continue
 
+            # Manual / frozen parts opt out of the parametric rewrite.
+            # IS_MANUAL_PART is set by hb_face_frame.make_part_editable
+            # once the cutpart GN has been applied to real mesh: the user
+            # has hand-edited this board, so its location / dims / rotation
+            # / visibility are left exactly as they are. Skipped BEFORE the
+            # FF rotation block so a frozen stile / rail isn't re-rotated.
+            #
+            # Self-heal: a part whose cutpart GN modifier is gone has been
+            # applied (by make_part_editable, or by hand in the modifier
+            # stack) and has no inputs to push - set_input would raise. It
+            # is manual by construction, so stamp the flag and skip. This
+            # keeps recalc crash-proof regardless of how a part was applied.
+            if child.type == 'MESH':
+                _mn = child.home_builder.mod_name
+                if _mn and _mn not in child.modifiers:
+                    child['IS_MANUAL_PART'] = True
+            if child.get('IS_MANUAL_PART'):
+                continue
+
             # FF plane rotation. Hits stiles, rails, and kick subfronts;
             # leaves other parts (sides, back, panels) at their built-in
             # rotation_euler. Idempotent in square mode (theta = 0).
@@ -4577,6 +4596,14 @@ class FaceFrameCabinet(GeoNodeCage):
         Also handles legacy doors that were direct children of the
         opening (pre-pivot) by deleting them.
         """
+        # Manual fronts: the user applied + hand-edited the front(s) under
+        # this opening via hb_face_frame.make_part_editable. The flag lives on
+        # the OPENING cage (not the front) because front objects are torn down
+        # and rebuilt here on every recalc - the opening survives. Skip the
+        # wipe + rebuild so the applied front persists; Revert clears the flag
+        # to resume normal rebuilding.
+        if opening_obj.get('IS_MANUAL_FRONT'):
+            return
         op_props = opening_obj.face_frame_opening
         front_type = op_props.front_type
         cab_props = self.obj.face_frame_cabinet

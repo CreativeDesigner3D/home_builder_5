@@ -1155,6 +1155,257 @@ class hb_face_frame_OT_set_cabinet_part_size(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Cutpart inputs the recalc dispatch does NOT re-apply. It rewrites
+# Length / Width / Thickness / position / rotation every pass, but the
+# Mirror flags are set ONCE at part creation - so a part made editable and
+# later reverted renders with the wrong mirroring unless we stash the mirror
+# values and restore them. L/W/T are stashed too so downstream readers
+# (shop dims / cut list) have a fallback while the part is manual.
+_MANUAL_STASH_INPUTS = (
+    ('HB_MANUAL_LENGTH', 'Length'),
+    ('HB_MANUAL_WIDTH', 'Width'),
+    ('HB_MANUAL_THICKNESS', 'Thickness'),
+    ('HB_MANUAL_MIRROR_X', 'Mirror X'),
+    ('HB_MANUAL_MIRROR_Y', 'Mirror Y'),
+    ('HB_MANUAL_MIRROR_Z', 'Mirror Z'),
+)
+_MANUAL_MIRROR_INPUTS = _MANUAL_STASH_INPUTS[3:]
+_MANUAL_STASH_KEYS = tuple(k for k, _ in _MANUAL_STASH_INPUTS)
+
+
+def _stash_part_inputs(obj):
+    """Record a part's cutpart inputs as HB_MANUAL_* props before its GN is
+    applied, so Revert can rebuild it faithfully - the Mirror flags in
+    particular, which recalc never re-applies."""
+    try:
+        gn = GeoNodeCutpart(obj)
+    except Exception:
+        return
+    for key, inp in _MANUAL_STASH_INPUTS:
+        try:
+            obj[key] = gn.get_input(inp)
+        except Exception:
+            pass
+
+
+def _restore_mirror_inputs(obj):
+    """Re-apply stashed Mirror X/Y/Z to a freshly re-added cutpart GN on
+    Revert. No-op without a stash (a part applied by hand outside Make
+    Editable keeps the GN's default mirrors)."""
+    try:
+        gn = GeoNodeCutpart(obj)
+    except Exception:
+        return
+    for key, inp in _MANUAL_MIRROR_INPUTS:
+        if key in obj.keys():
+            gn.set_input(inp, bool(obj[key]))
+
+
+def _is_manual_part(obj):
+    """True if obj is a face-frame part currently under manual control."""
+    return bool(obj and obj.get('IS_MANUAL_PART') and obj.get('hb_part_role'))
+
+
+# Door / drawer front roles. Fronts are a SEPARATE editable path from
+# structural cutparts: a front object is torn down and rebuilt on every
+# recalc, so its 'manual' state is stored on the OPENING cage (IS_MANUAL_FRONT,
+# which survives the rebuild) and the front-rebuild + door-style passes skip a
+# manual opening (types_face_frame._update_fronts_in_opening,
+# props_hb_face_frame._apply_door_styles_to_fronts).
+_FRONT_EDITABLE_ROLES = frozenset({
+    'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT',
+})
+
+
+def _front_opening_cage(obj):
+    """Walk up to the front's Opening cage (the durable anchor), or None."""
+    p = obj
+    while p is not None:
+        if p.get('IS_FACE_FRAME_OPENING_CAGE'):
+            return p
+        p = p.parent
+    return None
+
+
+def _can_make_editable(obj):
+    """True if obj is a STRUCTURAL cutpart that can be made editable: a MESH
+    face-frame part with its cutpart modifier present, not already manual, and
+    not a front (fronts go through the front path)."""
+    if obj is None or obj.type != 'MESH':
+        return False
+    role = obj.get('hb_part_role')
+    if not role or role in _FRONT_EDITABLE_ROLES:
+        return False
+    if obj.get('IS_MANUAL_PART'):
+        return False
+    if has_door_style_modifier(obj):
+        return False
+    mn = obj.home_builder.mod_name
+    return bool(mn) and mn in obj.modifiers
+
+
+def _can_make_front_editable(obj):
+    """True if obj is a door / drawer front that can be made editable: a MESH
+    front (FRONT roles) with an Opening cage ancestor, not already manual."""
+    if obj is None or obj.type != 'MESH':
+        return False
+    if obj.get('IS_MANUAL_PART'):
+        return False
+    if obj.get('hb_part_role') not in _FRONT_EDITABLE_ROLES:
+        return False
+    return _front_opening_cage(obj) is not None
+
+
+class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
+    """Apply a part's GeoNode(s) so its mesh becomes real, editable geometry
+    and flag it as manual, so the cabinet recalc leaves it alone (it keeps its
+    position / dims / rotation and stops following width / depth / style
+    changes). Two paths:
+
+    - STRUCTURAL cutpart (side / rail / stile / top / bottom / ...): apply the
+      cutpart modifier, flag IS_MANUAL_PART on the part. The recalc dispatch
+      skips it (CONVENTIONS - manual parts).
+    - DOOR / DRAWER FRONT: a front is torn down and rebuilt every recalc, so
+      flag IS_MANUAL_FRONT on the OPENING cage (which survives the rebuild) and
+      IS_MANUAL_PART on the front; the front-rebuild + door-style passes skip a
+      manual opening, so the applied front persists.
+
+    Use Revert to Parametric to restore either."""
+    bl_idname = "hb_face_frame.make_part_editable"
+    bl_label = "Make Editable"
+    bl_description = ("Apply this part's geometry so it can be edited in Edit "
+                      "Mode. The part will stop following cabinet changes")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Enabled when ANY selected object is editable - structural cutpart or
+        # door / drawer front - so a multi-selection applies in one click.
+        return any(_can_make_editable(o) or _can_make_front_editable(o)
+                   for o in context.selected_objects)
+
+    @staticmethod
+    def _apply_one(context, obj):
+        """Apply one STRUCTURAL part's cutpart GeoNode and flag it manual."""
+        mn = obj.home_builder.mod_name
+        # Stash the part's inputs (dims + mirror flags) BEFORE applying so
+        # Revert can restore them and downstream readers have a fallback.
+        _stash_part_inputs(obj)
+        # Apply only the cutpart modifier; any downstream system modifier
+        # (e.g. a corner notch) stays live on top of the now-real mesh.
+        with context.temp_override(object=obj, active_object=obj,
+                                   selected_objects=[obj]):
+            bpy.ops.object.modifier_apply(modifier=mn)
+        obj['IS_MANUAL_PART'] = True
+
+    @staticmethod
+    def _apply_front_one(context, obj):
+        """Bake a door / drawer front: apply every NODES modifier (cutpart +
+        Door Style) to real mesh, then flag the front AND its opening cage so
+        the recalc stops rebuilding it. No dim / mirror stash is needed -
+        Revert lets the solver rebuild the front from scratch."""
+        for mname in [m.name for m in obj.modifiers if m.type == 'NODES']:
+            if mname in obj.modifiers:
+                with context.temp_override(object=obj, active_object=obj,
+                                           selected_objects=[obj]):
+                    bpy.ops.object.modifier_apply(modifier=mname)
+        obj['IS_MANUAL_PART'] = True
+        cage = _front_opening_cage(obj)
+        if cage is not None:
+            cage['IS_MANUAL_FRONT'] = True
+
+    def execute(self, context):
+        # Snapshot eligible targets before mutating (applying a modifier
+        # changes what _can_make_* returns). Fall back to the active object.
+        pool = list(context.selected_objects) or [context.active_object]
+        structural = [o for o in pool if _can_make_editable(o)]
+        fronts = [o for o in pool if _can_make_front_editable(o)]
+        if not structural and not fronts:
+            self.report({'WARNING'}, "No editable parts selected")
+            return {'CANCELLED'}
+        for obj in structural:
+            self._apply_one(context, obj)
+        for obj in fronts:
+            self._apply_front_one(context, obj)
+        n = len(structural) + len(fronts)
+        self.report({'INFO'},
+                    f"{n} part(s) editable - parametric updates off")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
+    """Discard manual edits and restore a part to parametric control, then
+    recalc so it follows the cabinet's width / depth / style again. A
+    STRUCTURAL part is rebuilt in place (re-add its cutpart GN, restore the
+    stashed mirror flags). A DOOR / DRAWER FRONT is rebuilt from scratch by
+    the recalc once its opening's IS_MANUAL_FRONT flag is cleared. Hand-edited
+    geometry is lost."""
+    bl_idname = "hb_face_frame.revert_part_to_parametric"
+    bl_label = "Revert to Parametric"
+    bl_description = ("Discard manual edits and let this part follow cabinet "
+                      "changes again. Hand edits are lost")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Enabled when ANY selected object is a manual part, so a batch can
+        # be reverted in one click.
+        return any(_is_manual_part(o) for o in context.selected_objects)
+
+    @staticmethod
+    def _revert_one(obj, ng):
+        """Restore one manual part to parametric control.
+
+        Front: clear IS_MANUAL_FRONT on the opening cage (+ the front's
+        IS_MANUAL_PART); the cabinet recalc then wipes the baked front and
+        rebuilds it fresh - no in-place work needed here.
+
+        Structural: rebuild in place - re-add the cutpart GN and restore the
+        stashed mirror flags (recalc rewrites L/W/T/position but not mirrors).
+        """
+        cage = _front_opening_cage(obj)
+        if obj.get('hb_part_role') in _FRONT_EDITABLE_ROLES and cage is not None:
+            if 'IS_MANUAL_FRONT' in cage.keys():
+                del cage['IS_MANUAL_FRONT']
+            if 'IS_MANUAL_PART' in obj.keys():
+                del obj['IS_MANUAL_PART']
+            return
+        obj.modifiers.clear()
+        obj.data.clear_geometry()
+        mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
+        mod.node_group = ng
+        mod.show_viewport = True
+        obj.home_builder.mod_name = mod.name
+        _restore_mirror_inputs(obj)
+        for key in ('IS_MANUAL_PART',) + _MANUAL_STASH_KEYS:
+            if key in obj.keys():
+                del obj[key]
+
+    def execute(self, context):
+        ng = bpy.data.node_groups.get('GeoNodeCutpart')
+        if ng is None:
+            self.report({'ERROR'}, "GeoNodeCutpart node group not loaded")
+            return {'CANCELLED'}
+        targets = [o for o in context.selected_objects if _is_manual_part(o)]
+        if not targets and _is_manual_part(context.active_object):
+            targets = [context.active_object]
+        if not targets:
+            self.report({'WARNING'}, "No manual parts selected")
+            return {'CANCELLED'}
+        # Revert each in place, then recalc each affected cabinet ONCE.
+        roots = {}
+        for obj in targets:
+            self._revert_one(obj, ng)
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is not None:
+                roots[root.name] = root
+        for root in roots.values():
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        self.report({'INFO'},
+                    f"{len(targets)} part(s) restored to parametric")
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
     """Remove the mid rail the user clicked. The opening stays SPLIT - only
     the face-frame member and its carcass backing are dropped, and the solver
@@ -1275,6 +1526,8 @@ classes = (
     hb_face_frame_OT_toggle_door_part_front_kind,
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_cabinet_part_size,
+    hb_face_frame_OT_make_part_editable,
+    hb_face_frame_OT_revert_part_to_parametric,
 )
 
 
