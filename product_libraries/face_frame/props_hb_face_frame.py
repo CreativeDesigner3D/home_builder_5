@@ -725,6 +725,41 @@ class Face_Frame_Special_Effect(PropertyGroup):
     pass
 
 
+def get_cabinet_extra_front_style_items(self, context):
+    """Items for an extra-front-style row on a cabinet style. Resolves the
+    pool by the row's RNA path (the _front_is_drawer trick): a row living in
+    extra_drawer_front_styles reads the drawer-front pool, otherwise the door
+    pool. Works on a collection item as self because it derives the pool from
+    the path, not the row's own state."""
+    ff = get_style_props(context)
+    try:
+        drawer = "extra_drawer_front_styles" in self.path_from_id()
+    except Exception:
+        drawer = False
+    pool = ff.drawer_front_styles if drawer else ff.door_styles
+    items = [(ds.name, ds.name, ds.name, i) for i, ds in enumerate(pool)]
+    if not items:
+        items.append(('NONE', "(none defined)", "No front styles defined", 0))
+    return items
+
+
+class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
+    """One additional door- or drawer-front style listed on a cabinet style.
+
+    The primary door_style / drawer_front_style drives the geometry; these
+    extra entries document the OTHER front styles a designer assigns to this
+    cabinet style's cabinets in 3D, so the Style Section page can list every
+    front style in use, not just the primary. Pure documentation -- no
+    geometric effect. The pool (door vs drawer front) is fixed by which
+    collection the row lives in.
+    """
+    style: EnumProperty(
+        name="Front Style",
+        description="Additional front style shown on the Style Section page",
+        items=get_cabinet_extra_front_style_items,
+    )  # type: ignore
+
+
 class Face_Frame_Cabinet_Style(PropertyGroup):
     """Face frame cabinet style: wood species, finish color, interior
     material, door overlay, and references to a door style + drawer front
@@ -1208,6 +1243,20 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     special_effect_index: IntProperty(
         name="Special Effect Index",
         default=0,
+    )  # type: ignore
+
+    # ---- Extra front styles (Style Section documentation) ----
+    # The primary door_style / drawer_front_style drives geometry; these list
+    # the ADDITIONAL door / drawer-front styles a designer has assigned to this
+    # cabinet style's cabinets in 3D, so the Style Section page documents every
+    # front style in use. Pure documentation -- no geometric effect.
+    extra_door_styles: CollectionProperty(
+        name="Extra Door Styles",
+        type=Face_Frame_Cabinet_Extra_Front_Style,
+    )  # type: ignore
+    extra_drawer_front_styles: CollectionProperty(
+        name="Extra Drawer Front Styles",
+        type=Face_Frame_Cabinet_Extra_Front_Style,
     )  # type: ignore
 
     # ---- Cached materials (lazy-loaded from face_frame_assets/materials/cabinet_material.blend) ----
@@ -2048,7 +2097,29 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         row.label(text="FRONTS")
         col = box.column(align=True)
         self._draw_toggle_field(col, "door_style", "Door", "ss_door")
+        # Extra door styles: additional front styles listed on the Style
+        # Section page (documentation only; no geometric effect).
+        for i, ex in enumerate(self.extra_door_styles):
+            r = col.row(align=True)
+            r.prop(ex, "style", text="")
+            op = r.operator("hb_face_frame.remove_cabinet_extra_front_style",
+                            text="", icon='X', emboss=False)
+            op.kind = 'DOOR'
+            op.index = i
+        col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                     text="Add Door Style", icon='ADD').kind = 'DOOR'
+
+        col.separator()
         self._draw_toggle_field(col, "drawer_front_style", "Drawer Front", "ss_drawer")
+        for i, ex in enumerate(self.extra_drawer_front_styles):
+            r = col.row(align=True)
+            r.prop(ex, "style", text="")
+            op = r.operator("hb_face_frame.remove_cabinet_extra_front_style",
+                            text="", icon='X', emboss=False)
+            op.kind = 'DRAWER'
+            op.index = i
+        col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                     text="Add Drawer Front Style", icon='ADD').kind = 'DRAWER'
 
         box = main.box()
         row = box.row()
@@ -6070,6 +6141,7 @@ classes = (
     Face_Frame_Floating_Shelf_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
+    Face_Frame_Cabinet_Extra_Front_Style,
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
     Face_Frame_Door_Style,

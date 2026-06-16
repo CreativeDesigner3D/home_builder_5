@@ -65,6 +65,19 @@ class HB_GENERAL_OT_menu(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _delete_object_subtree(obj):
+    """Remove ``obj`` and every descendant from bpy.data.
+
+    Used when deleting a face frame sub-assembly cage that has no dedicated
+    delete operator (an opening cage). Stock ``object.delete`` removes only the
+    selected objects, which orphans the cage's parts; removing the whole subtree
+    takes them with it.
+    """
+    for descendant in list(obj.children_recursive):
+        bpy.data.objects.remove(descendant, do_unlink=True)
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 class HB_GENERAL_OT_delete(bpy.types.Operator):
     """HB5-aware delete: routes to the correct delete operator for the
     selected asset, falling back to Blender's object delete otherwise.
@@ -109,9 +122,42 @@ class HB_GENERAL_OT_delete(bpy.types.Operator):
 
         obj = context.active_object
 
-        if types_face_frame.find_cabinet_root(obj) is not None:
+        # A dimension / label (IS_2D_ANNOTATION) or an individual cabinet part
+        # (CABINET_PART / hb_part_role) is a SUB-object of a product, not the
+        # product itself. Deleting one must remove ONLY that object, never the
+        # cabinet it annotates or belongs to: find_cabinet_root() below walks
+        # up to the cage and would otherwise take the whole product down. The
+        # cabinet CAGE must be the active object to delete the entire product.
+        if obj is not None and (obj.get('IS_2D_ANNOTATION')
+                                or obj.get('CABINET_PART')
+                                or obj.get('hb_part_role')):
+            bpy.ops.object.delete(confirm=False)
+            return {'FINISHED'}
+
+        # Face frame cabinet: ONLY the cage (the cabinet root) deletes the
+        # whole product. A descendant that resolves to a cabinet root but is not
+        # the root itself (an opening cage, a bay, ...) deletes only the selected
+        # object -- the cage must be the active object to take the product down.
+        ff_root = types_face_frame.find_cabinet_root(obj)
+        if ff_root is not None and ff_root is obj:
             bpy.ops.hb_face_frame.delete_cabinet()
-        elif hb_utils.get_cabinet_bp(obj) is not None:
+            return {'FINISHED'}
+        if ff_root is not None:
+            # A sub-assembly of the cabinet (not the cage). Delete it AND its
+            # parts: a bare object.delete would orphan the children.
+            if obj.get('IS_FACE_FRAME_BAY_CAGE'):
+                # Proper bay removal: wipes the bay subtree (openings, fronts,
+                # pulls, interior) plus its mid-stile / mid-div pair and
+                # reindexes the rest. Refuses on the last remaining bay.
+                bpy.ops.hb_face_frame.delete_bay(
+                    bay_index=obj.get('hb_bay_index', 0))
+            else:
+                # Opening cage (or other sub-cage): no dedicated operator, so
+                # remove the cage and everything under it.
+                _delete_object_subtree(obj)
+            return {'FINISHED'}
+
+        if hb_utils.get_cabinet_bp(obj) is not None:
             bpy.ops.hb_frameless.delete_cabinet()
         elif hb_utils.get_appliance_bp(obj) is not None:
             bpy.ops.hb_frameless.delete_appliance()

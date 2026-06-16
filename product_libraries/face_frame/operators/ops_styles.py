@@ -649,10 +649,63 @@ class hb_face_frame_OT_remove_special_effect(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
+    """Add an extra door- or drawer-front style row to the active cabinet
+    style. The row is shown on the Style Section page (DOORS / DRAWERS); it
+    documents an additional front style assigned to this style's cabinets in
+    3D and has no geometric effect."""
+    bl_idname = "hb_face_frame.add_cabinet_extra_front_style"
+    bl_label = "Add Front Style"
+    bl_description = ("Add an additional front style shown on the "
+                      "Style Section page")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", "Door style"),
+               ('DRAWER', "Drawer", "Drawer front style")],
+        default='DOOR')  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context)
+        if style is None:
+            self.report({'ERROR'}, "No active cabinet style.")
+            return {'CANCELLED'}
+        coll = (style.extra_drawer_front_styles if self.kind == 'DRAWER'
+                else style.extra_door_styles)
+        coll.add()
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
+    """Remove an extra front-style row from the active cabinet style."""
+    bl_idname = "hb_face_frame.remove_cabinet_extra_front_style"
+    bl_label = "Remove Front Style"
+    bl_description = "Remove this front style from the Style Section page"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", "Door style"),
+               ('DRAWER', "Drawer", "Drawer front style")],
+        default='DOOR')  # type: ignore
+    index: bpy.props.IntProperty(name="Index", default=-1)  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context)
+        if style is None:
+            return {'CANCELLED'}
+        coll = (style.extra_drawer_front_styles if self.kind == 'DRAWER'
+                else style.extra_door_styles)
+        if 0 <= self.index < len(coll):
+            coll.remove(self.index)
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_PG_temp_special_effect,
     hb_face_frame_OT_add_special_effects,
     hb_face_frame_OT_remove_special_effect,
+    hb_face_frame_OT_add_cabinet_extra_front_style,
+    hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_cabinet_style,
     hb_face_frame_OT_remove_cabinet_style,
     hb_face_frame_OT_add_door_style,
