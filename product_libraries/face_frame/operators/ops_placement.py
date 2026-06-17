@@ -1965,9 +1965,22 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             gap_end = wall_geo.get_input('Length')
             snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
 
-        gap_width = max(gap_end - gap_start, units.inch(1.0))
+        # Per-side placement hold-off: hold cabinets back from doors /
+        # windows, open wall ends, and outside corners by the scene
+        # default (inside corners run flush). The TRUE gap is snapshotted
+        # for the offset path so an arrow-key offset reads from the real
+        # edge (overriding the hold-off on that side); the live snap / fill
+        # below operates on the held-off span.
+        holdoff_amt = context.scene.hb_face_frame.cabinet_placement_holdoff
+        self._left_holdoff, self._right_holdoff = self.compute_gap_holdoffs(
+            wall, gap_start, gap_end, holdoff_amt,
+            place_on_front=self._place_on_front,
+            wall_thickness=wall_thickness,
+            object_z_start=cage_obj.location.z,
+            object_height=cabinet_height,
+        )
 
-        # Snapshot the gap so offset typing can re-derive placement
+        # Snapshot the TRUE gap so offset typing can re-derive placement
         # without re-detecting the gap. Tracked on self so a subsequent
         # MOUSEMOVE-driven call refreshes the boundaries naturally
         # while the cabinet is still cursor-following (no lock yet).
@@ -1976,11 +1989,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._gap_wall = wall
 
         # If the user has typed an offset, hand off to the offset path.
-        # The offset positioning ignores cursor-based snap entirely.
+        # That path measures from the true boundaries and re-applies the
+        # hold-off only on the side the user did NOT type.
         if self._left_offset is not None or self._right_offset is not None:
             self._gap_snap = None
             self._reposition_with_offsets(context)
             return
+
+        # Apply the hold-off to the live (cursor-following) span.
+        gap_start += self._left_holdoff
+        gap_end -= self._right_holdoff
+        gap_width = max(gap_end - gap_start, units.inch(1.0))
 
         # Snap to gap edges or center with a fixed-floor tolerance
         # (so narrow cabinets still get a usable zone) and a small
@@ -2465,10 +2484,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         except Exception:
             wall_thickness = 0.0
 
-        full_left = self._gap_left_boundary
-        full_right = self._gap_right_boundary
         has_left = self._left_offset is not None
         has_right = self._right_offset is not None
+        # _gap_*_boundary are the TRUE wall / opening edges. A side the
+        # user typed is measured from the true edge (its placement
+        # hold-off is overridden by the explicit offset); a side the
+        # user did NOT type keeps its default hold-off, so the cabinet
+        # still stands off a door / window / open end / outside corner.
+        left_holdoff = getattr(self, '_left_holdoff', 0.0)
+        right_holdoff = getattr(self, '_right_holdoff', 0.0)
+        full_left = self._gap_left_boundary + (0.0 if has_left else left_holdoff)
+        full_right = self._gap_right_boundary - (0.0 if has_right else right_holdoff)
         min_w = units.inch(1.0)
 
         if has_left and has_right:

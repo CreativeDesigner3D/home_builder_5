@@ -4950,6 +4950,19 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=True,
     )  # type: ignore
 
+    cabinet_placement_holdoff: FloatProperty(
+        name="Cabinet Placement Hold-off",
+        description=(
+            "Hold cabinets back from entry doors, windows, open wall "
+            "ends, and outside corners by this amount during placement. "
+            "Inside corners run flush. Arrow-key offsets override this "
+            "per side."
+        ),
+        default=units.inch(5.0),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
     # ---- Cabinet sizes ----
     default_top_cabinet_clearance: FloatProperty(
         name="Default Top Cabinet Clearance",

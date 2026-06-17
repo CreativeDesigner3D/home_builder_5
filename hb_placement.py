@@ -895,6 +895,136 @@ class PlacementMixin:
 
         return (gap_start, gap_end, snap_x)
 
+    def _wall_end_is_inside_corner(self, wall_geo, side, place_on_front):
+        """True if this wall end meets a neighbor at an INSIDE corner for
+        the given placement side.
+
+        Inside corner == the neighboring wall runs toward the cabinet
+        (placement) side of this wall, so cabinet runs on both walls
+        converge and should meet flush. An open end or an outside (convex)
+        corner is NOT an inside corner. Decided geometrically from the
+        neighbor's direction vs. this wall's placement-side normal, so it
+        is independent of the miter-angle sign convention. Front cabinets
+        sit on wall-local -Y, back on +Y; at an inside corner the neighbor
+        extends toward that side (verified: nbr-dir . placement-normal > 0).
+        """
+        from . import hb_types
+        adj = wall_geo.get_connected_wall(side)
+        if adj is None:
+            return False
+        wall_obj = wall_geo.obj
+        try:
+            length = wall_geo.get_input('Length')
+        except Exception:
+            return False
+        if side == 'left':
+            vtx = wall_obj.matrix_world @ Vector((0.0, 0.0, 0.0))
+        else:
+            vtx = wall_obj.matrix_world @ Vector((length, 0.0, 0.0))
+        adj_obj = adj.obj
+        try:
+            adj_len = adj.get_input('Length')
+        except Exception:
+            adj_len = 0.0
+        adj_start = adj_obj.matrix_world @ Vector((0.0, 0.0, 0.0))
+        adj_end = adj_obj.matrix_world @ Vector((adj_len, 0.0, 0.0))
+        adj_axis = adj_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        adj_axis.z = 0.0
+        if adj_axis.length < 1e-8:
+            return False
+        adj_axis.normalize()
+        # Neighbor direction pointing AWAY from the shared vertex.
+        d_nbr = adj_axis if (adj_start - vtx).length <= (adj_end - vtx).length \
+            else -adj_axis
+        ny = wall_obj.matrix_world.to_3x3() @ Vector((0.0, 1.0, 0.0))
+        ny.z = 0.0
+        if ny.length < 1e-8:
+            return False
+        ny.normalize()
+        side_normal = -ny if place_on_front else ny
+        return d_nbr.dot(side_normal) > 1e-4
+
+    def compute_gap_holdoffs(self, wall_obj, gap_start, gap_end, holdoff,
+                             place_on_front=True, wall_thickness=0.0,
+                             object_z_start=None, object_height=None):
+        """Per-side placement hold-off for a gap on a wall.
+
+        Returns (left_holdoff, right_holdoff) - how far a cabinet should be
+        held back from each gap boundary. A boundary earns the hold-off
+        when it is:
+          * a door / window edge that VERTICALLY OVERLAPS the object (a
+            high window a base passes under does not count), or
+          * an open wall end or an outside corner.
+        Inside corners and neighbor-cabinet edges earn 0 (run flush).
+
+        `holdoff` is the configured set-back (m); <= 0 disables. The two
+        hold-offs are scaled down together if they would leave < 1" of
+        usable gap, so a narrow gap between two openings still places.
+        """
+        from . import hb_types
+        if holdoff <= 0.0:
+            return (0.0, 0.0)
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall_obj)
+            wall_length = wall_geo.get_input('Length')
+        except Exception:
+            return (0.0, 0.0)
+
+        end_tol = units.inch(0.5)
+        edge_tol = units.inch(0.25)
+        check_vertical = (object_z_start is not None and
+                          object_height is not None)
+        if check_vertical:
+            object_z_end = object_z_start + object_height
+
+        # Opening edges (x_start, x_end) for openings that vertically
+        # overlap the object - the only openings that actually bound it.
+        opening_spans = []
+        for child in wall_obj.children:
+            if not ('IS_ENTRY_DOOR_BP' in child or 'IS_WINDOW_BP' in child):
+                continue
+            try:
+                geo = hb_types.GeoNodeObject(child)
+                w = geo.get_input('Dim X')
+            except Exception:
+                continue
+            if check_vertical:
+                cz0 = child.location.z
+                try:
+                    cz1 = cz0 + geo.get_input('Dim Z')
+                except Exception:
+                    cz1 = cz0
+                if not (object_z_start < cz1 and cz0 < object_z_end):
+                    continue
+            x0 = child.location.x
+            opening_spans.append((x0, x0 + w))
+
+        def boundary_holdoff(x, is_left):
+            if is_left and abs(x - 0.0) <= end_tol:
+                return 0.0 if self._wall_end_is_inside_corner(
+                    wall_geo, 'left', place_on_front) else holdoff
+            if (not is_left) and abs(x - wall_length) <= end_tol:
+                return 0.0 if self._wall_end_is_inside_corner(
+                    wall_geo, 'right', place_on_front) else holdoff
+            for ox0, ox1 in opening_spans:
+                if is_left and abs(x - ox1) <= edge_tol:
+                    return holdoff
+                if (not is_left) and abs(x - ox0) <= edge_tol:
+                    return holdoff
+            return 0.0
+
+        left_h = boundary_holdoff(gap_start, True)
+        right_h = boundary_holdoff(gap_end, False)
+
+        true_w = gap_end - gap_start
+        max_total = max(true_w - units.inch(1.0), 0.0)
+        total = left_h + right_h
+        if total > max_total and total > 0.0:
+            s = max_total / total
+            left_h *= s
+            right_h *= s
+        return (left_h, right_h)
+
 
 def draw_header_text(context, text: str):
     """
