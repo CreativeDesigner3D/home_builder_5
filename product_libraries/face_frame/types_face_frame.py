@@ -5919,6 +5919,8 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
     - Bay's bottom panel removed (refrigerator zone is open underneath).
     - Both end stiles extend to the floor since there's no kick recess
       to clear behind them.
+    - Toe kick height is 0 (no kick recess); the open fridge zone runs
+      to the floor.
     - Carcass back is raised by refrigerator_height so it spans only
       the door zone, leaving the lower zone open at the back as well.
     - Bay tree is preset to doors-on-top + appliance-on-bottom, with
@@ -5939,6 +5941,11 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         cab_props = self.obj.face_frame_cabinet
         cab_props.extend_left_stile_to_floor = True
         cab_props.extend_right_stile_to_floor = True
+        # No toe kick: the open fridge zone runs to the floor and the end
+        # stiles already extend down, so there's no kick recess. Set
+        # BEFORE the back_bottom_inset formula below (and create_carcass)
+        # so both the single build recalc and that formula read 0.
+        cab_props.toe_kick_height = 0.0
         # Raise the back so it only spans the door zone above the
         # refrigerator. Mirrors the standard back z_origin formula
         # (top of rail - mt) anchored at the top of the mid rail above
