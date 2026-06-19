@@ -83,6 +83,16 @@ def _hud_enabled():
     return bool(p and getattr(p, "use_viewport_hud", False))
 
 
+def _s():
+    """Global UI scale (Resolution Scale x DPI). The GPU-drawn HUD is in raw
+    pixels, so every dimension is multiplied by this to track Blender's UI
+    instead of staying fixed-size on high-DPI / scaled setups."""
+    try:
+        return bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        return 1.0
+
+
 def _product_ui_visible(context, product_tab):
     """Selection-mode widgets show only on the matching product tab and
     only in a real room scene -- mirrors the sidebar panels' gating."""
@@ -132,25 +142,27 @@ class _NavButton:
     @property
     def width(self):
         # Sized to the current scene name so it doubles as a status display.
-        blf.size(0, FONT_SIZE)
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
         text_w = blf.dimensions(0, bpy.context.scene.name)[0]
-        return int(NAV_TEXT_LEFT + text_w + NAV_PAD_RIGHT)
+        return int((NAV_TEXT_LEFT + NAV_PAD_RIGHT) * s + text_w)
 
     def visible(self, context):
         return True
 
     def draw(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
+        s = _s()
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         draw_rect(shader, rx, ry, rw, rh,
                   BTN_HOVER_BG if hovered else BTN_BG)
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
         # Hamburger glyph -- three stacked bars, left-aligned. blf can't
         # render Blender's icon set in a GPU pass, so it's drawn by hand.
-        bar_w = 12
-        bar_h = 2
-        gap = 3
-        gx = rx + 9
+        bar_w = 12 * s
+        bar_h = 2 * s
+        gap = 3 * s
+        gx = rx + 9 * s
         total = bar_h * 3 + gap * 2
         gy = ry + (rh - total) / 2.0
         for i in range(3):
@@ -159,10 +171,11 @@ class _NavButton:
         # Current scene name -- shows the active scene at a glance and is
         # itself the target that opens the navigator.
         name = context.scene.name
-        blf.size(font_id, FONT_SIZE)
+        font_sz = FONT_SIZE * s
+        blf.size(font_id, font_sz)
         label_h = blf.dimensions(font_id, name)[1]
-        draw_text(font_id, rx + NAV_TEXT_LEFT, ry + (rh - label_h) / 2.0,
-                  FONT_SIZE, TEXT_NORMAL, name)
+        draw_text(font_id, rx + NAV_TEXT_LEFT * s, ry + (rh - label_h) / 2.0,
+                  font_sz, TEXT_NORMAL, name)
 
     def on_click(self, context, area, region):
         # When pinned, the persistent HUD already draws the navigator panel,
@@ -174,7 +187,7 @@ class _NavButton:
         for widget, rect in compute_layout(context, area):
             if widget is self:
                 anchor_x = rect[0]
-                anchor_top = rect[1] - 6
+                anchor_top = rect[1] - 6 * _s()
                 break
         try:
             with context.temp_override(area=area, region=region):
@@ -190,7 +203,10 @@ class _ModeButton:
     supplies the per-product props (scene group, enum, optional master
     enable bool), so one class serves both the face frame and frameless
     pickers."""
-    width = MODE_BTN_WIDTH
+
+    @property
+    def width(self):
+        return int(MODE_BTN_WIDTH * _s())
 
     def __init__(self, wiring, mode_value, label):
         self.wiring = wiring
@@ -226,7 +242,7 @@ class _ModeButton:
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
 
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
-        _draw_centered_text(font_id, rect, FONT_SIZE, color, self.label)
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self.label)
 
     def on_click(self, context, area, region):
         props = self._props(context)
@@ -277,10 +293,11 @@ class _ModalToggleButton:
     def width(self):
         # Size to the longer of the two possible labels so the rect
         # doesn't shift width when state flips.
-        blf.size(0, FONT_SIZE)
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
         w_enable = blf.dimensions(0, self.enable_label)[0]
         w_disable = blf.dimensions(0, self.disable_label)[0]
-        return int(max(w_enable, w_disable)) + 24  # text + horizontal pad
+        return int(max(w_enable, w_disable) + 24 * s)  # text + horizontal pad
 
     def visible(self, context):
         if not _face_frame_ui_visible(context):
@@ -306,7 +323,7 @@ class _ModalToggleButton:
         draw_rect(shader, rx, ry, rw, rh, bg)
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
         color = TEXT_ACTIVE if active else TEXT_NORMAL
-        _draw_centered_text(font_id, rect, FONT_SIZE, color, self._label())
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self._label())
 
     def on_click(self, context, area, region):
         if active_modal_idname() == self.op_idname:
@@ -386,15 +403,22 @@ def compute_layout(context, area):
     listener so their rects cannot drift apart."""
     x_min, x_max, y_min, y_max = get_visible_window_bounds(area)
     visible_w = x_max - x_min
+    s = _s()
+    margin_y = HUD_MARGIN_Y * s
+    margin_x = HUD_MARGIN_X * s
+    btn_h = BTN_HEIGHT * s
+    group_gap = GROUP_GAP * s
+    btn_gap = BTN_GAP * s
+    row_gap = ROW_GAP * s
     placed = []
-    top_y = y_max - HUD_MARGIN_Y - BTN_HEIGHT
+    top_y = y_max - margin_y - btn_h
 
     # The scene-navigator button is left-anchored just past the toolbar,
     # not part of the centered rows -- a fixed spot makes it easy to find
     # and its panel opens directly below it.
     if _NAV_BUTTON.visible(context):
-        placed.append((_NAV_BUTTON, (x_min + HUD_MARGIN_X, top_y,
-                                     _NAV_BUTTON.width, BTN_HEIGHT)))
+        placed.append((_NAV_BUTTON, (x_min + margin_x, top_y,
+                                     _NAV_BUTTON.width, btn_h)))
 
     cursor_y = top_y
     for row in _rows():
@@ -402,19 +426,19 @@ def compute_layout(context, area):
         groups = [g for g in groups if g]
         if not groups:
             continue
-        row_w = GROUP_GAP * (len(groups) - 1)
+        row_w = group_gap * (len(groups) - 1)
         for g in groups:
-            row_w += sum(w.width for w in g) + BTN_GAP * (len(g) - 1)
+            row_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
         cursor_x = x_min + (visible_w - row_w) / 2.0
         for gi, group in enumerate(groups):
             if gi > 0:
-                cursor_x += GROUP_GAP
+                cursor_x += group_gap
             for wi, w in enumerate(group):
                 if wi > 0:
-                    cursor_x += BTN_GAP
-                placed.append((w, (cursor_x, cursor_y, w.width, BTN_HEIGHT)))
+                    cursor_x += btn_gap
+                placed.append((w, (cursor_x, cursor_y, w.width, btn_h)))
                 cursor_x += w.width
-        cursor_y -= BTN_HEIGHT + ROW_GAP
+        cursor_y -= btn_h + row_gap
     return placed
 
 
