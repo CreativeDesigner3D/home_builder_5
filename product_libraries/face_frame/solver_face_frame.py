@@ -3290,15 +3290,55 @@ ACCESSORY_Y_OFFSET = inch(1.0)         # nudge into the cavity so it reads
                                        # cleanly against the cabinet back
 
 
-def auto_shelf_qty(opening_height):
-    """Default count of adjustable shelves for an opening of `opening_height`
-    interior height: one shelf per ~12 inches. No floor -- an opening
-    under 12" is too short to usefully split, so it defaults to 0
-    shelves (e.g. the door zone above a refrigerator). Used for both
-    initial seeding (when an interior item is added) and live recompute
-    (when unlock_shelf_qty is False).
+def auto_shelf_qty(opening_height, depth):
+    """Catalog count of adjustable shelves for an interior opening, keyed on
+    the opening's interior HEIGHT and the CABINET DEPTH (CWP spec).
+
+    Shallow cabinets (depth < 18") take more shelves per inch of opening
+    height than deeper ones, so the bracket table is depth-dependent. An
+    opening shorter than the first bracket gets 0 (e.g. the door zone above
+    a refrigerator). Heights / depth are compared in inches; the count caps
+    at 4 (the catalog's tallest listed opening, 66").
+
+    CWP catalog (Opening Height -> Shelves):
+        Depth < 18"      : <15->0  15-20->1  >20-32->2  >32-44->3  >44-66->4
+        Depth 18" to 30" : <20->0  20-28->1  >28-40->2  >40-52->3  >52-66->4
+
+    The earlier rule was a flat one-shelf-per-12" (``int(h / 12)``), which
+    ignored depth -- it over-shelved deep cabinets (the "refrigerator gets
+    too many shelves" report) and under-shelved shallow uppers (the "above
+    the range not enough shelves" report). Used for both initial seeding
+    (when an interior item is added) and live recompute (unlock_shelf_qty
+    False). Openings taller than 66" are not in the catalog and clamp to 4.
     """
-    return int((opening_height or 0.0) / inch(12.0))
+    in_per_m = 1.0 / inch(1.0)
+    h = (opening_height or 0.0) * in_per_m
+    d = (depth or 0.0) * in_per_m
+    # First step is inclusive ("15 to 20" includes 15 and 20); the rest are
+    # exclusive ("Over 20", "Over 28", ...). EPS absorbs float jitter so a
+    # value sitting exactly on a boundary lands in the lower (catalog) bracket.
+    eps = 0.01
+    if d < 18.0:
+        qty = 0
+        if h >= 15.0 - eps:
+            qty = 1
+        if h > 20.0 + eps:
+            qty = 2
+        if h > 32.0 + eps:
+            qty = 3
+        if h > 44.0 + eps:
+            qty = 4
+    else:
+        qty = 0
+        if h >= 20.0 - eps:
+            qty = 1
+        if h > 28.0 + eps:
+            qty = 2
+        if h > 40.0 + eps:
+            qty = 3
+        if h > 52.0 + eps:
+            qty = 4
+    return qty
 
 
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,

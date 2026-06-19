@@ -1790,7 +1790,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 # the section's qty is locked (synced into shelf_qty so
                 # the UI shows the live count); unlock to override.
                 sec = sections[i]
-                auto_qty = solver.auto_shelf_qty(sec_h)
+                auto_qty = solver.auto_shelf_qty(sec_h, depth)
                 if not sec.unlock_shelf_qty and sec.shelf_qty != auto_qty:
                     # System write; the _RECALCULATING guard short-
                     # circuits the update callback's re-entrant recalc.
@@ -2425,7 +2425,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     # override. (FALSE_FRONT = sink apron, no shelves; OPEN
                     # handles its own shelf stack below.)
                     sec = sections[i]
-                    auto_qty = solver.auto_shelf_qty(sec_h)
+                    auto_qty = solver.auto_shelf_qty(sec_h, depth)
                     if (not sec.unlock_shelf_qty
                             and sec.shelf_qty != auto_qty):
                         # System write; the _RECALCULATING guard short-

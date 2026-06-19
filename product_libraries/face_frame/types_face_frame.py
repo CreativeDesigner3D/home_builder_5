@@ -5192,7 +5192,7 @@ class FaceFrameCabinet(GeoNodeCage):
         for region_props, region_z in self._walk_interior_regions(
             opening_obj, rect,
         ):
-            auto_qty = solver.auto_shelf_qty(region_z)
+            auto_qty = solver.auto_shelf_qty(region_z, layout.dim_y)
             for item in region_props.interior_items:
                 if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
                     if item.shelf_qty != auto_qty:
