@@ -6,8 +6,9 @@ from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
 from .. import split_preview
-from ....units import inch
+from ....units import inch, meter_to_inch
 from .... import hb_types, hb_utils
+from .... import accessory_registry
 from ...frameless.operators.ops_placement import toggle_cabinet_color
 
 
@@ -1736,6 +1737,38 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.half_depth = False
             op.target_name = target_name
 
+            # Operator buttons in a popup_menu default to EXEC context,
+            # which would skip invoke() and add the default item without
+            # showing the picker. Force INVOKE so the props dialog opens.
+            layout.operator_context = 'INVOKE_DEFAULT'
+            op = layout.operator(
+                "hb_face_frame.add_interior_accessory",
+                text="Interior Accessory...",
+            )
+            op.target_name = target_name
+            op.host = "opening_interior_accessory"
+
+            op = layout.operator(
+                "hb_face_frame.add_interior_accessory",
+                text="Blind Corner Accessory...",
+            )
+            op.target_name = target_name
+            op.host = "blind_corner_hardware"
+
+            # Drawer accessories only make sense on a drawer-front opening
+            # (front_type == DRAWER_FRONT), so gate the entry on that.
+            drawer_obj = (bpy.data.objects.get(target_name)
+                          if target_name else _ctx.active_object)
+            drawer_fo = (getattr(drawer_obj, 'face_frame_opening', None)
+                         if drawer_obj is not None else None)
+            if drawer_fo is not None and drawer_fo.front_type == 'DRAWER_FRONT':
+                op = layout.operator(
+                    "hb_face_frame.add_interior_accessory",
+                    text="Drawer Accessory...",
+                )
+                op.target_name = target_name
+                op.host = "drawer_accessory"
+
         context.window_manager.popup_menu(
             draw_fn, title="Add Interior", icon='ADD',
         )
@@ -2038,6 +2071,283 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
                 types_face_frame.recalculate_face_frame_cabinet(opening_obj)
 
         self.report({'INFO'}, f"Changed {len(openings)} opening(s)")
+
+        # A PULLOUT opening prompts for its accessory model + min-width check.
+        if self.config == 'PULLOUT' and active is not None \
+                and active.get(types_face_frame.TAG_OPENING_CAGE):
+            return bpy.ops.hb_face_frame.add_pullout_accessory(
+                'INVOKE_DEFAULT', opening_name=active.name)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Operator: choose a pullout accessory model for pullout opening(s).
+# The product list comes from whatever catalog the host application
+# registered in accessory_registry (HB5 ships none), so HB5 stays
+# catalog-agnostic. Selecting a model is data only - it records a code on
+# the opening and has no 3D effect.
+# ---------------------------------------------------------------------------
+_PULLOUT_HOST = "opening_interior_pullout"
+# Enum item lists must stay alive at module scope: Blender keeps only the
+# char* of each string, so a list built and dropped inside the callback can
+# be garbage-collected and crash the UI.
+_pullout_category_items = []
+_pullout_product_items = []
+
+
+def _pullout_category_enum(self, context):
+    _pullout_category_items.clear()
+    for cat in accessory_registry.categories(_PULLOUT_HOST):
+        _pullout_category_items.append((cat, cat, cat))
+    if not _pullout_category_items:
+        _pullout_category_items.append(
+            ('NONE', "(no catalog)", "No accessory catalog is registered"))
+    return _pullout_category_items
+
+
+def _pullout_product_enum(self, context):
+    _pullout_product_items.clear()
+    for it in accessory_registry.get_items(_PULLOUT_HOST):
+        if it.get('category') != self.category:
+            continue
+        code = it.get('code')
+        if not code:
+            continue
+        name = it.get('name', code)
+        mw = it.get('min_opening_w')
+        label = name if mw is None else "%s  (min %g\")" % (name, mw)
+        _pullout_product_items.append((code, label, name))
+    if not _pullout_product_items:
+        _pullout_product_items.append(('NONE', "(none)", "No models in this category"))
+    return _pullout_product_items
+
+
+def _opening_width_in(opening_obj):
+    if opening_obj is None:
+        return None
+    return meter_to_inch(opening_obj.dimensions.x)
+
+
+def _find_pullout_openings(bay_obj):
+    """Descendant opening cages of bay_obj whose front_type is PULLOUT."""
+    found = []
+    stack = list(getattr(bay_obj, 'children', []))
+    while stack:
+        o = stack.pop()
+        stack.extend(o.children)
+        if o.get(types_face_frame.TAG_OPENING_CAGE):
+            fo = getattr(o, 'face_frame_opening', None)
+            if fo is not None and fo.front_type == 'PULLOUT':
+                found.append(o)
+    return found
+
+
+def _find_bay(opening_obj):
+    """The bay cage that owns this opening, walking up parents."""
+    p = getattr(opening_obj, 'parent', None)
+    while p is not None:
+        if p.get(types_face_frame.TAG_BAY_CAGE):
+            return p
+        p = p.parent
+    return None
+
+
+class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
+    """Choose a pullout accessory model for the selected pullout
+    opening(s) and show the model's minimum opening width."""
+    bl_idname = "hb_face_frame.add_pullout_accessory"
+    bl_label = "Pullout Model"
+    bl_description = (
+        "Choose a pullout accessory model for the opening and show its "
+        "minimum opening width"
+    )
+    bl_options = {'UNDO'}
+
+    category: bpy.props.EnumProperty(name="Category", items=_pullout_category_enum)  # type: ignore
+    product: bpy.props.EnumProperty(name="Model", items=_pullout_product_enum)  # type: ignore
+    # Explicit target so the bay route (where the active object is the bay,
+    # not the freshly-built pullout opening) doesn't depend on selection.
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_width: bpy.props.FloatProperty(
+        name="Opening Width", unit='LENGTH', precision=4, min=0.0,
+        description="Clear opening width for the pullout (sets the bay width)",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        # Always invoked programmatically (with an explicit opening_name, or
+        # with a pullout opening active), so don't gate on context here --
+        # the real target is resolved and validated in invoke / execute.
+        return True
+
+    def _resolve_opening(self, context):
+        """Target opening: the cached opening_name if set, else the active
+        object when it is an opening cage."""
+        if self.opening_name:
+            return bpy.data.objects.get(self.opening_name)
+        obj = context.active_object
+        if obj is not None and obj.get(types_face_frame.TAG_OPENING_CAGE):
+            return obj
+        return None
+
+    def invoke(self, context, event):
+        opening_obj = self._resolve_opening(context)
+        if opening_obj is None:
+            self.report({'WARNING'}, "Select a pullout opening first")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        bay = _find_bay(opening_obj)
+        if bay is not None and getattr(bay, 'face_frame_bay', None) is not None:
+            self.opening_width = bay.face_frame_bay.width
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "category")
+        layout.prop(self, "product")
+        layout.prop(self, "opening_width")
+        box = layout.box()
+        item = accessory_registry.lookup(_PULLOUT_HOST, self.product)
+        if item is None:
+            box.label(text="No model selected")
+            return
+        box.label(text="Model: %s" % item.get('name', self.product))
+        mw = item.get('min_opening_w')
+        if mw is None:
+            box.label(text="Minimum opening width: not specified")
+        else:
+            box.label(text="Minimum opening width: %g\"" % mw)
+            ow = meter_to_inch(self.opening_width)
+            if ow + 1e-6 < mw:
+                box.label(
+                    text="Opening width %g\" is below the %g\" minimum" % (ow, mw),
+                    icon='ERROR')
+
+    def execute(self, context):
+        if self.opening_name:
+            target = bpy.data.objects.get(self.opening_name)
+            openings = [target] if target is not None \
+                and target.get(types_face_frame.TAG_OPENING_CAGE) else []
+        else:
+            active = context.active_object
+            openings = [o for o in context.selected_objects
+                        if o.get(types_face_frame.TAG_OPENING_CAGE)]
+            if active is not None and active.get(types_face_frame.TAG_OPENING_CAGE) \
+                    and active not in openings:
+                openings.append(active)
+        if not openings:
+            self.report({'WARNING'}, "Select a pullout opening first")
+            return {'CANCELLED'}
+
+        code = "" if self.product in ('NONE', '') else self.product
+        with types_face_frame.suspend_recalc():
+            for opening_obj in openings:
+                op_props = opening_obj.face_frame_opening
+                if op_props.front_type != 'PULLOUT':
+                    apply_opening_preset(opening_obj, 'PULLOUT')
+                op_props.pullout_accessory_code = code
+                bay = _find_bay(opening_obj)
+                if bay is not None and self.opening_width > 0.0 \
+                        and getattr(bay, 'face_frame_bay', None) is not None:
+                    bay.face_frame_bay.width = self.opening_width
+                types_face_frame.recalculate_face_frame_cabinet(opening_obj)
+
+        if code:
+            self.report({'INFO'}, "Set pullout model on %d opening(s)" % len(openings))
+        else:
+            self.report({'INFO'}, "Cleared pullout model on %d opening(s)" % len(openings))
+        return {'FINISHED'}
+
+
+_INTERIOR_HOST = "opening_interior_accessory"
+_interior_product_items = []
+
+
+def _interior_product_enum(self, context):
+    _interior_product_items.clear()
+    for it in accessory_registry.get_items(self.host):
+        code = it.get('code')
+        if not code:
+            continue
+        name = it.get('name', code)
+        mw = it.get('min_opening_w')
+        label = name if mw is None else "%s  (min %g\")" % (name, mw)
+        _interior_product_items.append((code, label, name))
+    if not _interior_product_items:
+        _interior_product_items.append(('NONE', "(none)", "No accessories available"))
+    return _interior_product_items
+
+
+class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
+    """Add a catalog interior accessory (used behind a standard swing
+    door) to the selected opening or region as an ACCESSORY interior
+    item. Data only -- drives the 2D legend + pricing, no 3D effect."""
+    bl_idname = "hb_face_frame.add_interior_accessory"
+    bl_label = "Add Accessory"
+    bl_description = (
+        "Add an accessory from the catalog to the selected opening and "
+        "show its minimum opening width"
+    )
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    host: bpy.props.StringProperty(default=_INTERIOR_HOST, options={'HIDDEN'})  # type: ignore
+    product: bpy.props.EnumProperty(name="Accessory", items=_interior_product_enum)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def invoke(self, context, event):
+        target = _resolve_interior_target(self, context)
+        if target is None or _interior_items_target(target) is None:
+            self.report({'WARNING'}, "Select an opening or interior region first")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "product")
+        box = layout.box()
+        item = accessory_registry.lookup(self.host, self.product)
+        if item is None:
+            box.label(text="No accessory selected")
+            return
+        box.label(text="Accessory: %s" % item.get('name', self.product))
+        mw = item.get('min_opening_w')
+        if mw is None:
+            box.label(text="Minimum opening width: not specified")
+        else:
+            box.label(text="Minimum opening width: %g\"" % mw)
+            target = _resolve_interior_target(self, context)
+            ow = _opening_width_in(target) if target is not None else None
+            if ow is not None and ow + 1e-6 < mw:
+                box.label(text="Opening is %g\" wide - below the minimum" % ow,
+                          icon='ERROR')
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            self.report({'WARNING'}, "Could not resolve target")
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            self.report({'WARNING'}, "Select an opening or interior region first")
+            return {'CANCELLED'}
+        if self.product in ('NONE', ''):
+            self.report({'WARNING'}, "No accessory selected")
+            return {'CANCELLED'}
+        entry = accessory_registry.lookup(self.host, self.product)
+        name = entry.get('name', self.product) if entry else self.product
+        item = target_props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = name
+        item.accessory_code = self.product
+        target_props.interior_items_index = len(target_props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        self.report({'INFO'}, "Added %s" % name)
         return {'FINISHED'}
 
 
@@ -2184,6 +2494,13 @@ class hb_face_frame_OT_change_bay(bpy.types.Operator):
                         f"Changed {changed} bay(s), skipped {skipped}")
         else:
             self.report({'INFO'}, f"Changed {changed} bay(s)")
+
+        # If the active bay's new layout has exactly one pullout opening,
+        # prompt for its accessory model (with the min-width check).
+        pullouts = _find_pullout_openings(active)
+        if len(pullouts) == 1:
+            return bpy.ops.hb_face_frame.add_pullout_accessory(
+                'INVOKE_DEFAULT', opening_name=pullouts[0].name)
         return {'FINISHED'}
 
 
@@ -3160,6 +3477,8 @@ classes = (
     hb_face_frame_OT_show_interior_add_menu,
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
+    hb_face_frame_OT_add_pullout_accessory,
+    hb_face_frame_OT_add_interior_accessory,
     hb_face_frame_OT_add_appliance_to_bay,
     hb_face_frame_OT_remove_appliance_from_bay,
     hb_face_frame_OT_insert_bay,

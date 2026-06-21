@@ -4535,6 +4535,14 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # ACCESSORY: product code from the host application's accessory catalog,
+    # set when the accessory is picked from the catalog rather than typed as
+    # a free label. Drives the 2D legend + pricing; no 3D effect. Empty for a
+    # hand-typed accessory_label.
+    accessory_code: StringProperty(
+        name="Accessory Code", default="",
+    )  # type: ignore
+
 
 # Front-type options for a face-frame opening. Module-level so operators
 # (e.g. the split-opening dialog) can build per-opening enums from the
@@ -4587,6 +4595,17 @@ class Face_Frame_Opening_Props(PropertyGroup):
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
         update=_update_front_type,
+    )  # type: ignore
+
+    # PULLOUT model: an accessory product code chosen for a PULLOUT
+    # opening. Stored as a bare string code; the display name, price and
+    # minimum opening width are looked up from whatever accessory catalog
+    # the host application registers (see accessory_registry). Empty when
+    # no model is chosen. No 3D effect -- drives 2D annotation and pricing.
+    pullout_accessory_code: StringProperty(
+        name="Pullout Model",
+        description="Accessory product code selected for this pullout opening",
+        default="",
     )  # type: ignore
     # Tilt-out: a FALSE_FRONT on hinges (tray behind). Geometrically
     # identical to a plain false front, so it's a flag rather than a
