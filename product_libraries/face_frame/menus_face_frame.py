@@ -191,7 +191,8 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Set Door Frame...", icon='MOD_BEVEL')
 
         # Face frame members (stiles / rails / splitters) keep their role-aware
-        # Set Width; any other cabinet cutpart gets direct size editing.
+        # Set Width. Every other cabinet part adjusts its size via Make
+        # Editable (below) - there is no direct Set Size command.
         if role in ops_part_commands._ROLES_WITH_WIDTH:
             current_w = ops_part_commands.get_current_width(obj)
             if current_w is None:
@@ -200,9 +201,6 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                 width_text = f"Set Width: {units.unit_to_string(context.scene.unit_settings, current_w)}"
             layout.operator("hb_face_frame.set_part_width",
                             text=width_text, icon='ARROW_LEFTRIGHT')
-        else:
-            layout.operator("hb_face_frame.set_cabinet_part_size",
-                            text="Set Size...", icon='ARROW_LEFTRIGHT')
 
         # Scribe only makes sense at the cabinet's outer edges: end
         # stiles (left / right) and the top rail (top_scribe).
@@ -260,7 +258,10 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         can_make_editable = (
             ops_part_commands._can_make_editable(obj)
             or ops_part_commands._can_make_front_editable(obj))
-        if is_manual:
+        # Hood parts have no parametric-revert path (no cabinet recalc to
+        # re-drive them) - rebuild the hood to restore - so Revert is offered
+        # only for non-hood manual parts.
+        if is_manual and not obj.get('IS_WOOD_HOOD_PART'):
             layout.separator()
             layout.operator("hb_face_frame.revert_part_to_parametric",
                             text="Revert to Parametric", icon='FILE_REFRESH')

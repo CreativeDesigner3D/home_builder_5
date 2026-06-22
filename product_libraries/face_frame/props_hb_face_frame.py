@@ -537,9 +537,12 @@ def _propagate_cabinet_style(self, context):
     target_name = self.name
     with types_face_frame.suspend_recalc():
         for obj in context.scene.objects:
-            if (obj.get('IS_FACE_FRAME_CABINET_CAGE')
-                    and obj.get('STYLE_NAME') == target_name):
+            if obj.get('STYLE_NAME') != target_name:
+                continue
+            if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
                 self.assign_style_to_cabinet(obj)
+            elif obj.get('APPLIANCE_TYPE') == 'HOOD':
+                self.assign_style_to_hood(obj)
 
 
 def _propagate_door_style(self, context):
@@ -557,9 +560,11 @@ def _propagate_door_style(self, context):
 def update_face_frame_sizes(self, context):
     """door_overlay_type change handler. Writes new widths into every
     locked rail cell + every stile cell based on the overlay. Unlocked
-    rails keep the user's value. The cabinet-side propagation (Update
-    Cabinets op) is intentionally manual - this only rewrites style
-    props, never touches scene cabinets.
+    rails keep the user's value. The bulk width writes are coalesced
+    under suspend_propagate(); a single _propagate_cabinet_style at the
+    end then pushes the new sizes to every scene cabinet carrying this
+    style (same auto-propagation as the other style props - the manual
+    Update Cabinets op is a force-resync fallback, not the normal path).
     """
     defaults = self._FF_SIZE_DEFAULTS.get(
         self.door_overlay_type, self._FF_SIZE_DEFAULTS['CLASSIC'])
@@ -1595,6 +1600,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # to re-trigger it.
         from . import types_face_frame
         types_face_frame.recalculate_face_frame_cabinet(cabinet_obj)
+
+    def assign_style_to_hood(self, hood_obj):
+        """Apply this cabinet style's exterior finish to a wood hood and
+        tag it with the style name. Hoods have no face frame, overlay, or
+        door, so only the finish material is meaningful - the width /
+        overlay / door wiring is intentionally skipped. The STYLE_NAME tag
+        lets style edits and Update Cabinets re-reach the hood (see
+        _propagate_cabinet_style).
+        """
+        finish_mat, finish_mat_rotated = self.get_finish_material()
+        if finish_mat is None:
+            return
+        hood_obj['STYLE_NAME'] = self.name
+        from ..common import wood_hoods
+        wood_hoods.apply_finish_to_hood(hood_obj, finish_mat, finish_mat_rotated)
 
     # =================================================================
     # Material walking
@@ -5987,14 +6007,17 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
         if sp.cabinet_styles and sp.active_cabinet_style_index < len(sp.cabinet_styles):
             style = sp.cabinet_styles[sp.active_cabinet_style_index]
-            # Assign hits the current selection; Update walks every cabinet
-            # already tagged with this style name.
+            # Assign to Selected hits the current selection; Assign by
+            # Painting is a modal click-to-assign; Update walks every
+            # cabinet already tagged with this style name.
             btn = layout.row(align=True)
             btn.scale_y = 1.3
             btn.operator("hb_face_frame.assign_style_to_selected_cabinets",
-                         text="Assign Style", icon='BRUSH_DATA')
+                         text="Assign to Selected", icon='RESTRICT_SELECT_OFF')
+            btn.operator("hb_face_frame.paint_assign_cabinet_style",
+                         text="Assign by Painting", icon='BRUSH_DATA')
             btn.operator("hb_face_frame.update_cabinets_from_style",
-                         text="Update Cabinets", icon='FILE_REFRESH')
+                         text="", icon='FILE_REFRESH')
             style.draw_cabinet_style_ui(layout, context)
         else:
             box = layout.box()

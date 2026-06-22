@@ -1393,17 +1393,20 @@ def _front_opening_cage(obj):
 
 def _can_make_editable(obj):
     """True if obj is a STRUCTURAL cutpart that can be made editable: a MESH
-    face-frame part with its cutpart modifier present, not already manual, and
-    not a front (fronts go through the front path)."""
+    cutpart with its modifier present, not already manual, and not a front
+    (fronts go through the front path). Face-frame parts qualify by part role;
+    wood-hood cutparts qualify by their HOOD part tag (they carry no role)."""
     if obj is None or obj.type != 'MESH':
-        return False
-    role = obj.get('hb_part_role')
-    if not role or role in _FRONT_EDITABLE_ROLES:
         return False
     if obj.get('IS_MANUAL_PART'):
         return False
     if has_door_style_modifier(obj):
         return False
+    if not obj.get('IS_WOOD_HOOD_PART'):
+        # Face-frame parts must carry a non-front part role.
+        role = obj.get('hb_part_role')
+        if not role or role in _FRONT_EDITABLE_ROLES:
+            return False
     mn = obj.home_builder.mod_name
     return bool(mn) and mn in obj.modifiers
 

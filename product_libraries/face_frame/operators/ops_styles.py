@@ -69,9 +69,19 @@ def _copy_cabinet_style(src, dst):
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    # The per-style finish materials are lazily created and owned by each
+    # style (get_finish_material names them "<style> Finish"). Copying the
+    # pointer would make the new style share the source's material datablock,
+    # so resolving the new style's finish recolors that shared material and
+    # changes every cabinet using it. Leave these empty so the new style
+    # builds its own; custom_material / custom_interior_material are the
+    # user's explicit picks and stay shared.
+    own_materials = ('material', 'material_rotated',
+                     'interior_material', 'interior_material_rotated')
     for prop in src.bl_rna.properties:
         pid = prop.identifier
-        if pid in ('rna_type', 'name') or pid in cascade or prop.is_readonly:
+        if (pid in ('rna_type', 'name') or pid in cascade
+                or pid in own_materials or prop.is_readonly):
             continue
         if prop.type == 'COLLECTION':
             _copy_collection(getattr(src, pid), getattr(dst, pid))
@@ -261,23 +271,34 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             return {'CANCELLED'}
         style = ff.cabinet_styles[idx]
 
-        # Resolve every selected object up to its cabinet root, dedupe
-        roots = []
+        # Resolve every selected object up to its cabinet root OR wood-hood
+        # cage; dedupe across both pools.
+        from ...common import wood_hoods
+        cab_roots = []
+        hood_roots = []
         seen = set()
         for obj in context.selected_objects:
             root = types_face_frame.find_cabinet_root(obj)
-            if root is None or root.name in seen:
+            if root is not None:
+                if root.name not in seen:
+                    seen.add(root.name)
+                    cab_roots.append(root)
                 continue
-            seen.add(root.name)
-            roots.append(root)
+            hood = wood_hoods.find_hood_root(obj)
+            if hood is not None and hood.name not in seen:
+                seen.add(hood.name)
+                hood_roots.append(hood)
 
-        if not roots:
-            self.report({'WARNING'}, "No face frame cabinets in selection")
+        if not cab_roots and not hood_roots:
+            self.report({'WARNING'}, "No face frame cabinets or wood hoods in selection")
             return {'CANCELLED'}
 
-        for root in roots:
+        for root in cab_roots:
             style.assign_style_to_cabinet(root)
-        self.report({'INFO'}, f"Applied '{style.name}' to {len(roots)} cabinet(s)")
+        for hood in hood_roots:
+            style.assign_style_to_hood(hood)
+        n = len(cab_roots) + len(hood_roots)
+        self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
 
 
@@ -302,19 +323,192 @@ class hb_face_frame_OT_update_cabinets_from_style(Operator):
         style = ff.cabinet_styles[idx]
         target_name = style.name
 
-        # Walk every object in the scene; match by cage marker + STYLE_NAME
-        roots = [
-            obj for obj in context.scene.objects
-            if obj.get('IS_FACE_FRAME_CABINET_CAGE') and obj.get('STYLE_NAME') == target_name
-        ]
-        if not roots:
-            self.report({'INFO'}, f"No cabinets tagged with '{target_name}'")
+        from ...common import wood_hoods
+        # Walk the scene; match cabinets by cage marker and wood hoods by
+        # APPLIANCE_TYPE, both gated on STYLE_NAME.
+        cab_roots = []
+        hood_roots = []
+        for obj in context.scene.objects:
+            if obj.get('STYLE_NAME') != target_name:
+                continue
+            if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+                cab_roots.append(obj)
+            elif obj.get('APPLIANCE_TYPE') == 'HOOD':
+                hood_roots.append(obj)
+        if not cab_roots and not hood_roots:
+            self.report({'INFO'}, f"No cabinets or hoods tagged with '{target_name}'")
             return {'FINISHED'}
 
-        for root in roots:
+        for root in cab_roots:
             style.assign_style_to_cabinet(root)
-        self.report({'INFO'}, f"Updated {len(roots)} cabinet(s) tagged '{target_name}'")
+        for hood in hood_roots:
+            style.assign_style_to_hood(hood)
+        n = len(cab_roots) + len(hood_roots)
+        self.report({'INFO'}, f"Updated {n} item(s) tagged '{target_name}'")
         return {'FINISHED'}
+
+
+class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
+    """Modal paint-assign: click cabinets in the viewport to apply the active
+    cabinet style. Each click resolves the part under the cursor up to its
+    cabinet root and assigns the style to that one cabinet. Mirrors the
+    front-style paint tool. Stays active until Esc / right-click."""
+    bl_idname = "hb_face_frame.paint_assign_cabinet_style"
+    bl_label = "Assign by Painting"
+    bl_description = "Click cabinets in the viewport to assign the active cabinet style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        ff = get_style_props(context)
+        return len(ff.cabinet_styles) > 0
+
+    def _active_style(self, ff):
+        idx = ff.active_cabinet_style_index
+        return ff.cabinet_styles[idx] if 0 <= idx < len(ff.cabinet_styles) else None
+
+    def _region_under_mouse(self, context, event):
+        """The VIEW_3D WINDOW region + rv3d under the cursor, with region-
+        relative coords. Window-absolute mouse coords are used so painting
+        works regardless of which region the modal was started in (the
+        operator is launched from the N-panel)."""
+        x, y = event.mouse_x, event.mouse_y
+        for area in context.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for region in area.regions:
+                if (region.type == 'WINDOW'
+                        and region.x <= x < region.x + region.width
+                        and region.y <= y < region.y + region.height):
+                    rv3d = area.spaces.active.region_3d
+                    return region, rv3d, (x - region.x, y - region.y)
+        return None, None, None
+
+    def _cabinet_under_cursor(self, context, event):
+        from bpy_extras import view3d_utils
+        from .. import types_face_frame
+        region, rv3d, coord = self._region_under_mouse(context, event)
+        if region is None:
+            return None
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        depsgraph = context.evaluated_depsgraph_get()
+        hit, loc, nrm, fidx, obj, mat = context.scene.ray_cast(depsgraph, origin, direction)
+        if not hit or obj is None:
+            return None
+        # The hit may be any cabinet or hood part -- resolve to the cabinet
+        # root, else fall back to the wood-hood cage.
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is not None:
+            return root
+        from ...common import wood_hoods
+        return wood_hoods.find_hood_root(obj)
+
+    def _paint(self, context, event):
+        ff = get_style_props(context)
+        style = self._active_style(ff)
+        if style is None:
+            return
+        root = self._cabinet_under_cursor(context, event)
+        if root is None:
+            return
+        if root.get('IS_FACE_FRAME_CABINET_CAGE'):
+            style.assign_style_to_cabinet(root)
+        elif root.get('APPLIANCE_TYPE') == 'HOOD':
+            style.assign_style_to_hood(root)
+        else:
+            return
+        if root.name not in self._painted:
+            self._painted.add(root.name)
+            self._count += 1
+        context.workspace.status_text_set(
+            f"Applied '{style.name}' to {self._count} item(s)  |  Esc / RMB to finish")
+
+    def _set_hover(self, context, root):
+        """Highlight the cabinet under the cursor by selecting its root, so it's
+        clear which cabinet a click will assign. Only ONE hovered cabinet is
+        highlighted at a time; passing None clears it. Selection is restored
+        when the tool finishes."""
+        if root is self._hovered:
+            return
+        prev = self._hovered
+        if prev is not None:
+            try:
+                prev.select_set(False)
+            except Exception:
+                pass
+        if root is not None:
+            try:
+                root.select_set(True)
+                context.view_layer.objects.active = root
+            except Exception:
+                pass
+        self._hovered = root
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _hover(self, context, event):
+        self._set_hover(context, self._cabinet_under_cursor(context, event))
+
+    def modal(self, context, event):
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            return self._finish(context)
+        if event.type == 'MOUSEMOVE':
+            self._hover(context, event)
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            self._paint(context, event)
+            return {'RUNNING_MODAL'}
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        return {'RUNNING_MODAL'}
+
+    def _restore_selection(self, context):
+        """Restore the selection captured at invoke (the paint hover mutated it)."""
+        for ob in list(context.selected_objects):
+            try:
+                ob.select_set(False)
+            except Exception:
+                pass
+        for name in self._orig_sel:
+            ob = bpy.data.objects.get(name)
+            if ob is not None:
+                try:
+                    ob.select_set(True)
+                except Exception:
+                    pass
+        context.view_layer.objects.active = (
+            bpy.data.objects.get(self._orig_active) if self._orig_active else None)
+
+    def _finish(self, context):
+        self._set_hover(context, None)
+        self._restore_selection(context)
+        context.window.cursor_modal_restore()
+        context.workspace.status_text_set(None)
+        if context.area is not None:
+            context.area.tag_redraw()
+        self.report({'INFO'}, f"Assigned cabinet style to {self._count} cabinet(s)")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Run from the 3D viewport")
+            return {'CANCELLED'}
+        if self._active_style(get_style_props(context)) is None:
+            self.report({'WARNING'}, "No active cabinet style to assign")
+            return {'CANCELLED'}
+        self._count = 0
+        self._painted = set()
+        self._hovered = None
+        # Capture selection so the hover highlight can be undone on finish.
+        self._orig_sel = [o.name for o in context.selected_objects]
+        active = context.view_layer.objects.active
+        self._orig_active = active.name if active else None
+        context.window.cursor_modal_set('PAINT_BRUSH')
+        context.workspace.status_text_set(
+            "Paint-assign: hover highlights a cabinet, click to assign  |  Esc / RMB to finish")
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
 
 
 class hb_face_frame_OT_assign_door_style_to_selected_fronts(Operator):
@@ -763,6 +957,7 @@ classes = (
     hb_face_frame_OT_remove_drawer_front_style,
     hb_face_frame_OT_assign_style_to_selected_cabinets,
     hb_face_frame_OT_update_cabinets_from_style,
+    hb_face_frame_OT_paint_assign_cabinet_style,
     hb_face_frame_OT_assign_door_style_to_selected_fronts,
     hb_face_frame_OT_update_fronts_from_door_style,
     hb_face_frame_OT_paint_assign_front_style,

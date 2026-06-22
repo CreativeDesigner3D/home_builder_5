@@ -61,7 +61,7 @@ def _panel(hood_obj, name):
     p.create(name)
     p.obj.parent = hood_obj
     p.obj[HOOD_PART_TAG] = True
-    p.obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
+    p.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
     return p
 
 
@@ -198,7 +198,7 @@ def _mesh_part(hood_obj, name, verts, faces):
     me.update()
     obj = bpy.data.objects.new(name, me)
     obj[HOOD_PART_TAG] = True
-    obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
+    obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
     cols = hood_obj.users_collection or [bpy.context.scene.collection]
     for c in cols:
         c.objects.link(obj)
@@ -347,6 +347,66 @@ _STYLE_BUILDERS = {
 }
 
 
+def find_hood_root(obj):
+    """Walk up from obj to the wood-hood cage (APPLIANCE_TYPE == 'HOOD'), or
+    None if obj is not part of a wood hood. Mirrors the cabinet-root walk so
+    the cabinet-style assign / paint tools can target hoods the same way."""
+    cur = obj
+    while cur is not None:
+        if cur.get('APPLIANCE_TYPE') == 'HOOD':
+            return cur
+        cur = cur.parent
+    return None
+
+
+def apply_finish_to_hood(hood_obj, finish_mat, finish_mat_rotated=None):
+    """Push a cabinet style's exterior finish onto every wood-hood part.
+    Driven cutpart parts get their Top/Bottom Surface + edge inputs set the
+    same way face-frame cabinet parts do; plain-mesh parts (the angled
+    Traditional / Villa / Chimney styles) take the material in slot 0. Parts
+    are matched by HOOD_PART_TAG so nothing else under the cage is touched. A
+    None finish material no-ops (e.g. an unresolved custom material)."""
+    if finish_mat is None:
+        return
+    edge_mat = finish_mat_rotated or finish_mat
+    for child in hood_obj.children_recursive:
+        if not child.get(HOOD_PART_TAG) or child.type != 'MESH':
+            continue
+        if any(m.type == 'NODES' and m.node_group for m in child.modifiers):
+            part = GeoNodeCutpart(child)
+            for slot, mat in (("Top Surface", finish_mat),
+                              ("Bottom Surface", finish_mat),
+                              ("Edge W1", edge_mat), ("Edge W2", edge_mat),
+                              ("Edge L1", edge_mat), ("Edge L2", edge_mat)):
+                try:
+                    part.set_input(slot, mat)
+                except Exception:
+                    pass
+        elif child.data is not None:
+            if child.data.materials:
+                child.data.materials[0] = finish_mat
+            else:
+                child.data.materials.append(finish_mat)
+
+
+def _reapply_cabinet_style_finish(hood_obj):
+    """If the hood carries an assigned cabinet style (STYLE_NAME), re-push that
+    style's finish onto the freshly built parts so a rebuild / resize keeps the
+    assigned look. Lazy, guarded import: hoods live in the shared 'common'
+    library and must not hard-depend on the face-frame product."""
+    name = hood_obj.get('STYLE_NAME')
+    if not name:
+        return
+    try:
+        from ..face_frame.props_hb_face_frame import get_style_props
+        ff = get_style_props()
+        style = next((s for s in ff.cabinet_styles if s.name == name), None)
+        if style is not None:
+            style.assign_style_to_hood(hood_obj)
+    except Exception:
+        pass
+
+
 def build_wood_hood(hood_obj, style):
     """Wipe + rebuild the hood's parts for ``style``. Parts are driven, so
     they resize with the hood cage afterward. Unknown styles fall back to
@@ -355,6 +415,7 @@ def build_wood_hood(hood_obj, style):
     builder = _STYLE_BUILDERS.get(style, _build_box)
     builder(hood_obj)
     hood_obj[HOOD_STYLE_PROP] = style
+    _reapply_cabinet_style_finish(hood_obj)
 
 
 class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
