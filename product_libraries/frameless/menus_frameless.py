@@ -347,11 +347,12 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.appliance_prompts", text="Appliance Prompts")
         obj = context.active_object
         if obj is not None and obj.get('APPLIANCE_TYPE') == 'HOOD':
-            layout.operator("home_builder.build_wood_hood",
-                            text="Build Wood Hood", icon='MOD_BEVEL')
+            layout.operator("home_builder.wood_hood_prompts",
+                            text="Wood Hood Prompts", icon='MOD_BEVEL')
+        else:
+            layout.operator("hb_frameless.appliance_prompts", text="Appliance Prompts")
         layout.separator()
         layout.operator("hb_frameless.delete_appliance", text="Delete Appliance")
 

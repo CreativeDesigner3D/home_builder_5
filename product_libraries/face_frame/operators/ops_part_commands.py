@@ -1455,9 +1455,15 @@ class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
     def _apply_one(context, obj):
         """Apply one STRUCTURAL part's cutpart GeoNode and flag it manual."""
         mn = obj.home_builder.mod_name
-        # Stash the part's inputs (dims + mirror flags) BEFORE applying so
-        # Revert can restore them and downstream readers have a fallback.
-        _stash_part_inputs(obj)
+        # Stash the parametric state BEFORE applying so Revert can restore it.
+        # Hood cutparts have no cabinet recalc to re-drive them, so snapshot the
+        # full recipe (inputs + drivers + transform); face-frame parts only need
+        # the inputs the recalc reads back.
+        if obj.get('IS_WOOD_HOOD_PART'):
+            from ...common import wood_hoods
+            wood_hoods.snapshot_hood_part(obj)
+        else:
+            _stash_part_inputs(obj)
         # Apply only the cutpart modifier; any downstream system modifier
         # (e.g. a corner notch) stays live on top of the now-real mesh.
         with context.temp_override(object=obj, active_object=obj,

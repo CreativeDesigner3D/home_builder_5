@@ -258,10 +258,16 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         can_make_editable = (
             ops_part_commands._can_make_editable(obj)
             or ops_part_commands._can_make_front_editable(obj))
-        # Hood parts have no parametric-revert path (no cabinet recalc to
-        # re-drive them) - rebuild the hood to restore - so Revert is offered
-        # only for non-hood manual parts.
-        if is_manual and not obj.get('IS_WOOD_HOOD_PART'):
+        # Hood parts have no cabinet recalc to re-drive them, so they revert via
+        # their own snapshot path (home_builder.revert_hood_part) which restores
+        # just the clicked part. A hood part made editable before the snapshot
+        # feature has no snapshot - rebuild the hood to restore it.
+        if is_manual and obj is not None and obj.get('IS_WOOD_HOOD_PART'):
+            if obj.get('HOOD_PARAMETRIC_SNAPSHOT'):
+                layout.separator()
+                layout.operator("home_builder.revert_hood_part",
+                                text="Revert to Parametric", icon='FILE_REFRESH')
+        elif is_manual:
             layout.separator()
             layout.operator("hb_face_frame.revert_part_to_parametric",
                             text="Revert to Parametric", icon='FILE_REFRESH')

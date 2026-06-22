@@ -13,9 +13,10 @@ own builder falls back to the plain box so the command always produces
 geometry.
 """
 
+import json
 import math
 import bpy
-from bpy.props import EnumProperty
+from bpy.props import EnumProperty, FloatProperty
 
 from ...hb_types import GeoNodeObject, GeoNodeCutpart
 from ...units import inch
@@ -23,6 +24,10 @@ from ...units import inch
 
 HOOD_PART_TAG = "IS_WOOD_HOOD_PART"
 HOOD_STYLE_PROP = "WOOD_HOOD_STYLE"
+# JSON snapshot of a hood part's parametric recipe (modifier node group +
+# input values, drivers, transform), stashed when the part is Made Editable so
+# it can be reverted to parametric one part at a time. See snapshot_hood_part.
+HOOD_SNAPSHOT_PROP = "HOOD_PARAMETRIC_SNAPSHOT"
 HOOD_MATERIAL = inch(0.75)
 
 WOOD_HOOD_STYLE_ITEMS = [
@@ -407,6 +412,164 @@ def _reapply_cabinet_style_finish(hood_obj):
         pass
 
 
+def _ser_value(val):
+    """JSON-safe form of a geometry-node input value. Scalars/strings pass
+    through; ID pointers (materials / objects) are stored by name + type;
+    vectors / colors become lists. Anything else returns None (skipped)."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float, str)):
+        return val
+    if isinstance(val, bpy.types.Material):
+        return {'__idtype__': 'Material', 'name': val.name}
+    if isinstance(val, bpy.types.Object):
+        return {'__idtype__': 'Object', 'name': val.name}
+    try:
+        return [v for v in val]
+    except TypeError:
+        return None
+
+
+def _deser_value(sval):
+    """Inverse of _ser_value: re-resolve ID pointers by name (None if the
+    datablock is gone), pass scalars / lists through unchanged."""
+    if isinstance(sval, dict):
+        idt = sval.get('__idtype__')
+        if idt == 'Material':
+            return bpy.data.materials.get(sval.get('name'))
+        if idt == 'Object':
+            return bpy.data.objects.get(sval.get('name'))
+        return None
+    return sval
+
+
+def snapshot_hood_part(hood_part):
+    """Capture a driven hood cutpart's full parametric recipe -- its modifier
+    node group + input values, every driver (data path / index / expression /
+    SINGLE_PROP variables), and the transform -- as a JSON string on the part.
+    Called right before Make Editable bakes the part to mesh so restore can
+    rebuild exactly this one part later. Returns False (no snapshot written) for
+    a part with no geometry-node modifier (e.g. the angled styles' plain
+    meshes), which can't be reverted this way."""
+    mn = getattr(hood_part.home_builder, 'mod_name', '')
+    mod = hood_part.modifiers.get(mn) if mn else None
+    if mod is None or mod.type != 'NODES' or mod.node_group is None:
+        return False
+    data = {
+        'mod_name': mn,
+        'node_group': mod.node_group.name,
+        'inputs': {},
+        'drivers': [],
+        'location': list(hood_part.location),
+        'rotation_euler': list(hood_part.rotation_euler),
+        'scale': list(hood_part.scale),
+    }
+    for item in mod.node_group.interface.items_tree:
+        if getattr(item, 'item_type', '') != 'SOCKET':
+            continue
+        if getattr(item, 'in_out', '') != 'INPUT':
+            continue
+        if getattr(item, 'socket_type', '') == 'NodeSocketGeometry':
+            continue
+        ident = item.identifier
+        try:
+            sval = _ser_value(mod[ident])
+        except (KeyError, TypeError):
+            continue
+        if sval is not None:
+            data['inputs'][ident] = sval
+    ad = hood_part.animation_data
+    if ad:
+        for fc in ad.drivers:
+            drv = fc.driver
+            variables = []
+            for v in drv.variables:
+                tgt = v.targets[0]
+                variables.append({'name': v.name, 'data_path': tgt.data_path})
+            data['drivers'].append({
+                'data_path': fc.data_path,
+                'array_index': fc.array_index,
+                'expression': drv.expression,
+                'variables': variables,
+            })
+    hood_part[HOOD_SNAPSHOT_PROP] = json.dumps(data)
+    return True
+
+
+def restore_hood_part(hood_part):
+    """Rebuild ONE made-editable hood part from its snapshot: re-add the cutpart
+    geometry-node modifier with the captured inputs, recreate every driver
+    against the live hood cage, and restore the transform. All driver variables
+    on hood parts target the hood cage, so they are re-pointed at the part's
+    hood root. Clears the manual flag + snapshot on success. Other parts (driven
+    or manual) are untouched. Returns False -- leaving the part as-is so the
+    caller can fall back to a full hood rebuild -- if the snapshot, hood cage, or
+    node group can't be resolved."""
+    raw = hood_part.get(HOOD_SNAPSHOT_PROP)
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return False
+    hood_root = find_hood_root(hood_part)
+    if hood_root is None:
+        return False
+    ng = bpy.data.node_groups.get(data.get('node_group'))
+    if ng is None:
+        return False
+    # Drop the baked mesh and any leftover drivers (the location / rotation
+    # drivers survive the Make-Editable modifier_apply) before rebuilding.
+    if hood_part.animation_data:
+        for fc in list(hood_part.animation_data.drivers):
+            hood_part.animation_data.drivers.remove(fc)
+    hood_part.modifiers.clear()
+    if hood_part.data is not None and hasattr(hood_part.data, 'clear_geometry'):
+        hood_part.data.clear_geometry()
+    mod = hood_part.modifiers.new(name=data.get('node_group'), type='NODES')
+    mod.node_group = ng
+    hood_part.home_builder.mod_name = mod.name
+    for ident, sval in data.get('inputs', {}).items():
+        try:
+            mod[ident] = _deser_value(sval)
+        except (KeyError, TypeError):
+            pass
+    hood_part.location = data.get('location', list(hood_part.location))
+    hood_part.rotation_euler = data.get('rotation_euler',
+                                        list(hood_part.rotation_euler))
+    hood_part.scale = data.get('scale', list(hood_part.scale))
+    old_mn = data.get('mod_name')
+    for drv in data.get('drivers', []):
+        dp = drv['data_path']
+        on_modifier = dp.startswith('modifiers[')
+        # The part's own modifier may come back under a new name; re-point its
+        # driver paths. Cage-targeted variable paths are left as captured.
+        if on_modifier and old_mn:
+            dp = dp.replace('modifiers["%s"]' % old_mn,
+                            'modifiers["%s"]' % mod.name, 1)
+        try:
+            # Modifier inputs are scalar custom props (no array index); object
+            # transform channels (location / rotation) are indexed.
+            if on_modifier:
+                fc = hood_part.driver_add(dp)
+            else:
+                fc = hood_part.driver_add(dp, drv['array_index'])
+        except (TypeError, RuntimeError):
+            continue
+        fc.driver.expression = drv['expression']
+        for var in drv['variables']:
+            nv = fc.driver.variables.new()
+            nv.type = 'SINGLE_PROP'
+            nv.name = var['name']
+            nv.targets[0].id = hood_root
+            nv.targets[0].data_path = var['data_path']
+    for key in ('IS_MANUAL_PART', HOOD_SNAPSHOT_PROP):
+        if key in hood_part.keys():
+            del hood_part[key]
+    hood_part.update_tag()
+    return True
+
+
 def build_wood_hood(hood_obj, style):
     """Wipe + rebuild the hood's parts for ``style``. Parts are driven, so
     they resize with the hood cage afterward. Unknown styles fall back to
@@ -449,7 +612,120 @@ class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (HOME_BUILDER_OT_build_wood_hood,)
+class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
+    """Unified wood-hood dialog: edit the hood's size and style in one place.
+    For range hoods this replaces the generic appliance prompts and the
+    separate build command. Size is pushed to the cage and the driven parts
+    are rebuilt live as the size or style changes (static angled / shiplap
+    styles read the cage size at build time, so they track too)."""
+
+    bl_idname = "home_builder.wood_hood_prompts"
+    bl_label = "Wood Hood Prompts"
+    bl_description = "Edit the size and style of the selected wood hood"
+    bl_options = {'UNDO'}
+
+    width: FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
+    height: FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
+    depth: FloatProperty(name="Depth", unit='LENGTH', precision=5)  # type: ignore
+    style: EnumProperty(name="Style", items=WOOD_HOOD_STYLE_ITEMS, default='BOX')  # type: ignore
+
+    hood = None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.get('APPLIANCE_TYPE') == 'HOOD'
+
+    def invoke(self, context, event):
+        self.hood = context.active_object
+        wrap = _HoodWrap(self.hood)
+        self.width = wrap.get_input('Dim X')
+        self.depth = wrap.get_input('Dim Y')
+        self.height = wrap.get_input('Dim Z')
+        existing = self.hood.get(HOOD_STYLE_PROP)
+        if existing in {i[0] for i in WOOD_HOOD_STYLE_ITEMS}:
+            self.style = existing
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def _apply(self):
+        # Set the cage size before rebuilding so the static styles, which read
+        # the cage dims at build time, pick up the new dimensions.
+        wrap = _HoodWrap(self.hood)
+        wrap.set_input('Dim X', self.width)
+        wrap.set_input('Dim Y', self.depth)
+        wrap.set_input('Dim Z', self.height)
+        build_wood_hood(self.hood, self.style)
+
+    def check(self, context):
+        self._apply()
+        return True
+
+    def execute(self, context):
+        self._apply()
+        self.report({'INFO'}, "Built %s wood hood" % self.style)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+
+        row = col.row(align=True)
+        row.label(text="Width:")
+        row.prop(self, 'width', text="")
+
+        row = col.row(align=True)
+        row.label(text="Height:")
+        row.prop(self, 'height', text="")
+
+        row = col.row(align=True)
+        row.label(text="Depth:")
+        row.prop(self, 'depth', text="")
+
+        layout.prop(self, 'style')
+
+
+class HOME_BUILDER_OT_revert_hood_part(bpy.types.Operator):
+    """Revert a made-editable wood-hood part to parametric control, restoring
+    just that part from the snapshot taken when it was made editable. Other
+    parts -- driven or manually edited -- are left untouched. Hand edits to the
+    reverted part are lost. Needs the snapshot (parts made editable before the
+    snapshot feature have none -- rebuild the hood to restore those)."""
+
+    bl_idname = "home_builder.revert_hood_part"
+    bl_label = "Revert to Parametric"
+    bl_description = ("Discard manual edits on this hood part and let it follow "
+                      "the hood again. Hand edits are lost")
+    bl_options = {'UNDO'}
+
+    @staticmethod
+    def _is_revertable(obj):
+        return bool(obj is not None
+                    and obj.get(HOOD_PART_TAG)
+                    and obj.get('IS_MANUAL_PART')
+                    and obj.get(HOOD_SNAPSHOT_PROP))
+
+    @classmethod
+    def poll(cls, context):
+        return any(cls._is_revertable(o) for o in context.selected_objects)
+
+    def execute(self, context):
+        targets = [o for o in context.selected_objects if self._is_revertable(o)]
+        if not targets and self._is_revertable(context.active_object):
+            targets = [context.active_object]
+        done = sum(1 for o in targets if restore_hood_part(o))
+        if done == 0:
+            self.report({'WARNING'}, "No revertable hood parts (no snapshot)")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "%d hood part(s) restored to parametric" % done)
+        return {'FINISHED'}
+
+
+_CLASSES = (
+    HOME_BUILDER_OT_build_wood_hood,
+    HOME_BUILDER_OT_wood_hood_prompts,
+    HOME_BUILDER_OT_revert_hood_part,
+)
 
 
 def register():
