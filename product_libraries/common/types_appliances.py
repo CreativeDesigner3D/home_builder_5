@@ -44,6 +44,7 @@ class Appliance(GeoNodeCage):
         appliance_text = GeoNodeText()
         appliance_text.create('Appliance Text', appliance_type, props.annotation_text_size)
         appliance_text.obj.parent = self.obj
+        appliance_text.obj['IS_APPLIANCE_TEXT'] = True
         appliance_text.obj.rotation_euler.x = math.radians(90)
         appliance_text.driver_location("x", 'dim_x/2', [dim_x])
         appliance_text.driver_location("y", '-dim_y', [dim_y])
@@ -128,6 +129,7 @@ class Refrigerator(Appliance):
         # Add refrigerator-specific properties
         self.add_property('Counter Depth', 'CHECKBOX', False)
         self.add_property('Has Water Line', 'CHECKBOX', True)
+        self.add_property('Panel Ready', 'CHECKBOX', False)
         
     def set_counter_depth(self, is_counter_depth=True):
         """Configure as counter-depth refrigerator."""
