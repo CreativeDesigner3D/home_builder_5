@@ -241,7 +241,17 @@ def draw_construction(layout, cab_props):
     box.label(text="Angled Back Extension", icon='MOD_BEVEL')
     col = box.column(align=True)
     col.prop(cab_props, 'extend_back_left', text="Extend Back Left X")
+    # Convert this end's extension into an attached wing instead of splaying
+    # the carcass: the carcass stays square and a flat panel is added along
+    # the same angled line. Only meaningful when the extend above is non-zero.
+    row = col.row()
+    row.enabled = cab_props.extend_back_left != 0.0
+    row.prop(cab_props, 'wing_attached_left', text="Attach as Wing")
+    col.separator()
     col.prop(cab_props, 'extend_back_right', text="Extend Back Right X")
+    row = col.row()
+    row.enabled = cab_props.extend_back_right != 0.0
+    row.prop(cab_props, 'wing_attached_right', text="Attach as Wing")
 
     box = layout.box()
     box.prop(cab_props, 'furniture_top', text="Furniture Wood Top")

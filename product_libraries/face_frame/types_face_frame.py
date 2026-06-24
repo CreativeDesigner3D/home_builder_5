@@ -482,6 +482,10 @@ PART_ROLE_FURNITURE_TOP = 'FURNITURE_TOP'
 # ends are extended down (hutch). Managed by _apply_hutch_back; in
 # _FINISH_EXTERIOR_ROLES so it gets the cabinet's finish material.
 PART_ROLE_HUTCH_BACK = 'HUTCH_BACK'
+# Attached wing: an angled return panel on an end, built from that end's
+# extend_back value when its "Attach as Wing" option is on (carcass stays
+# square). Managed by _apply_wing; finished on its outer face only.
+PART_ROLE_WING = 'WING'
 PART_ROLE_BACK_EXT_CUTTER = 'BACK_EXT_CUTTER'
 BACK_EXT_CUT_MOD_NAME = 'Back Extension Trim'
 BACK_EXT_CUT_PART_ROLES = frozenset({
@@ -2404,6 +2408,33 @@ class FaceFrameCabinet(GeoNodeCage):
                         m[it.identifier] = value
                         return
 
+    def _back_ext_line(self, side, extend, depth):
+        """The outer line of a back-extended / wing end, in cabinet-local XY.
+
+        Returns (front_target, back_target, phi, w_new): front_target is the
+        fixed front-outer corner; back_target is the back-outer corner moved
+        out (signed) by `extend`; phi orients a part's local -Y axis from the
+        new back toward the fixed front; w_new is the hypotenuse length.
+        Shared by _angle_side_panel (carcass splay) and the attached wing so
+        both sit on the exact same edge.
+        """
+        from mathutils import Vector
+        dim_x = self.obj.face_frame_cabinet.width
+        if side == 'RIGHT':
+            outer_x = dim_x
+            back_target = Vector((outer_x + extend, 0.0))
+        else:  # LEFT
+            outer_x = 0.0
+            back_target = Vector((outer_x - extend, 0.0))
+        front_target = Vector((outer_x, -depth))
+        d = front_target - back_target
+        w_new = d.length
+        dn = d.normalized()
+        # part-local front offset is (0, -W): R(phi)*(0,-1) must equal dn.
+        # R(phi)*(0,-1) = (sin phi, -cos phi)  =>  phi = atan2(dn.x, -dn.y)
+        phi = math.atan2(dn.x, -dn.y)
+        return front_target, back_target, phi, w_new
+
     def _angle_side_panel(self, child, side, extend):
         """Splay one carcass side panel outward at the back by `extend`
         (meters), pivoting about its FRONT-OUTER corner so the front edge
@@ -2429,20 +2460,8 @@ class FaceFrameCabinet(GeoNodeCage):
         depth = self._part_input(child, 'Width')
         if depth is None or extend == 0.0:
             return None
-        dim_x = self.obj.face_frame_cabinet.width
-        if side == 'RIGHT':
-            outer_x = dim_x
-            back_target = Vector((outer_x + extend, 0.0))
-        else:  # LEFT
-            outer_x = 0.0
-            back_target = Vector((outer_x - extend, 0.0))
-        front_target = Vector((outer_x, -depth))
-        d = front_target - back_target
-        w_new = d.length
-        dn = d.normalized()
-        # part-local front offset is (0, -W): R(phi)*(0,-1) must equal dn.
-        # R(phi)*(0,-1) = (sin phi, -cos phi)  =>  phi = atan2(dn.x, -dn.y)
-        phi = math.atan2(dn.x, -dn.y)
+        front_target, back_target, phi, w_new = self._back_ext_line(
+            side, extend, depth)
         child.rotation_euler.z = phi
         child.location.x = back_target.x
         child.location.y = back_target.y
@@ -2587,8 +2606,18 @@ class FaceFrameCabinet(GeoNodeCage):
         resets any prior angle) when an end's extend is 0.
         """
         cab = self.obj.face_frame_cabinet
-        ext_l = getattr(cab, 'extend_back_left', 0.0) or 0.0
-        ext_r = getattr(cab, 'extend_back_right', 0.0) or 0.0
+        raw_l = getattr(cab, 'extend_back_left', 0.0) or 0.0
+        raw_r = getattr(cab, 'extend_back_right', 0.0) or 0.0
+        # "Attach as Wing" converts an end's back extension into a separate
+        # angled return panel: the carcass stays SQUARE for that end and the
+        # extension is built as a wing below instead. Only active when the
+        # end's extend is non-zero.
+        wing_l = bool(getattr(cab, 'wing_attached_left', False)) and raw_l != 0.0
+        wing_r = bool(getattr(cab, 'wing_attached_right', False)) and raw_r != 0.0
+        # Carcass-effective extends: zero on a wing end so the splay / widen /
+        # trim below leave it square; the raw value drives the wing instead.
+        ext_l = 0.0 if wing_l else raw_l
+        ext_r = 0.0 if wing_r else raw_r
         # Either end may be POSITIVE (outward, back wider) or NEGATIVE
         # (inward, back narrower); only exactly 0 is a no-op for that end.
         active = ext_l != 0.0 or ext_r != 0.0
@@ -2649,6 +2678,73 @@ class FaceFrameCabinet(GeoNodeCage):
             self._apply_back_ext_cuts(cutter)
         else:
             self._cleanup_back_ext_cutter_and_cuts()
+
+        # Wing attached: for an end whose "Attach as Wing" is on (and its
+        # extend is non-zero), the carcass above stayed square (wing ends were
+        # zeroed out of ext_l / ext_r); add the angled return panel along the
+        # line the raw extend defines. Off / 0 -> removed.
+        self._apply_wing(layout, 'LEFT', raw_l if wing_l else 0.0)
+        self._apply_wing(layout, 'RIGHT', raw_r if wing_r else 0.0)
+
+    def _apply_wing(self, layout, side, extend):
+        """Build / remove the attached wing on one end. `extend` is the raw
+        extend_back value (already gated on the wing checkbox by the caller);
+        0 removes the wing. The wing is a flat angled return panel standing on
+        the same (front-outer, back-outer) line the back extension would have
+        used, with the carcass kept square."""
+        if extend != 0.0 and self._has_carcass():
+            wing_obj = self._ensure_wing(side)
+            self._position_wing(wing_obj, layout, side, extend)
+        else:
+            self._cleanup_wing(side)
+
+    def _ensure_wing(self, side):
+        """Find or lazily create one end's wing CabinetPart - a bare finished
+        panel tagged PART_ROLE_WING (+ CABINET_PART so the material walk
+        finishes its outer face) and WING_SIDE so the two ends stay distinct.
+        Same base orientation as a carcass side (Length up, Width across);
+        Mirror Z matches the side so the finished outer face is Bottom."""
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_WING
+                    and child.get('WING_SIDE') == side):
+                return child
+        wing = CabinetPart()
+        wing.create('Wing')
+        wing.obj.parent = self.obj
+        wing.obj['hb_part_role'] = PART_ROLE_WING
+        wing.obj['CABINET_PART'] = True
+        wing.obj['WING_SIDE'] = side
+        wing.obj.rotation_euler.y = math.radians(-90)
+        wing.set_input('Mirror Y', True)
+        wing.set_input('Mirror Z', side == 'LEFT')
+        return wing.obj
+
+    def _position_wing(self, wing_obj, layout, side, extend):
+        """Stand the wing on the angled end line: full side height, the
+        hypotenuse as its Width, pivoted to phi at the back-outer corner.
+        Reuses _back_ext_line (shared with the carcass splay) and the solver's
+        square side position / dims, so the wing tracks height / depth and
+        sits at the side's base Z."""
+        if side == 'LEFT':
+            pos = solver.left_side_position(layout)
+            length, width, thickness = solver.left_side_dims(layout)
+        else:
+            pos = solver.right_side_position(layout)
+            length, width, thickness = solver.right_side_dims(layout)
+        _front, back_target, phi, w_new = self._back_ext_line(side, extend, width)
+        part = GeoNodeCutpart(wing_obj)
+        part.set_input('Length', length)       # full cabinet (side) height
+        part.set_input('Width', w_new)         # hypotenuse along the end line
+        part.set_input('Thickness', thickness)
+        wing_obj.rotation_euler.z = phi
+        wing_obj.location = (back_target.x, back_target.y, pos[2])
+
+    def _cleanup_wing(self, side):
+        """Remove one end's wing (checkbox off or extend back to 0)."""
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == PART_ROLE_WING
+                    and child.get('WING_SIDE') == side):
+                bpy.data.objects.remove(child, do_unlink=True)
 
     def _apply_bottom_extension(self, layout):
         """Overhang the carcass bottom panel(s) laterally past the side(s) to

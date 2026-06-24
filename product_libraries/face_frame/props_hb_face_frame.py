@@ -1873,6 +1873,18 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 else:
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
                 continue
+            if role == 'WING':
+                # Attached wing: a free-standing angled return, finished on its
+                # OUTER face only (Bottom Surface = finish, like a FINISHED
+                # side); inner face + edges stay interior. Mirror Z is set per
+                # side at create so Bottom = the outer face.
+                self._set_part_surfaces_split(
+                    child,
+                    top_mat=interior_mat,
+                    bottom_mat=finish_mat,
+                    edge_mat=interior_mat_rotated,
+                )
+                continue
 
             # Interior shelves in a finished region take the exterior
             # finish so the finished look continues onto the shelving;
@@ -4070,6 +4082,32 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "X. Positive moves it outward (+X, back wider than front); "
                     "NEGATIVE moves it inward (back narrower than front, e.g. "
                     "into an acute corner). 0 = square.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # ---- Wing Attached (convert the back extension into a wing) ----
+    # Per-cabinet, per-end modifier of extend_back_left / extend_back_right.
+    # When ON (and that end's extend is non-zero): instead of splaying the
+    # carcass into a trapezoid, keep the carcass SQUARE and add a flat wing
+    # panel along the SAME angled line the extension would have used. So the
+    # wing's angle / depth come entirely from the extend value - no separate
+    # size. No-op when that end's extend is 0. Built in the cabinet recalc
+    # (_apply_back_extension branches on these).
+    wing_attached_left: BoolProperty(
+        name="Attach Left as Wing",
+        default=False,
+        description="Convert the LEFT end's back extension into an attached "
+                    "wing: keep the carcass square and add a flat angled panel "
+                    "along the extension line. No effect when Extend Back Left "
+                    "is 0.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wing_attached_right: BoolProperty(
+        name="Attach Right as Wing",
+        default=False,
+        description="Convert the RIGHT end's back extension into an attached "
+                    "wing: keep the carcass square and add a flat angled panel "
+                    "along the extension line. No effect when Extend Back Right "
+                    "is 0.",
         update=_update_cabinet_dim,
     )  # type: ignore
     # Extend Bottom (uppers): push the carcass bottom panel laterally past
