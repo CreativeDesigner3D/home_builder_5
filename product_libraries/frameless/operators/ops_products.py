@@ -406,10 +406,142 @@ class hb_frameless_OT_convert_to_door_panel(bpy.types.Operator):
         self.report({'INFO'}, "Converted to door panel")
         return {'FINISHED'}
 
+def get_selected_floating_shelves(context):
+    """Return the unique floating-shelf product cages among the selection.
+
+    Walks up from each selected object so child parts resolve to their
+    product cage, and de-duplicates so two parts of the same shelf count once.
+    """
+    shelves = []
+    for obj in context.selected_objects:
+        bp = get_product_bp(obj)
+        if bp and bp.get('PART_TYPE') == 'FLOATING_SHELF' and bp not in shelves:
+            shelves.append(bp)
+    return shelves
+
+
+class FloatingShelfRow(bpy.types.PropertyGroup):
+    """One row in the multi-shelf adjust dialog: a shelf's elevation + thickness."""
+    obj_name: bpy.props.StringProperty()  # type: ignore
+    elevation: bpy.props.FloatProperty(name="Elevation", unit='LENGTH', precision=5)  # type: ignore
+    thickness: bpy.props.FloatProperty(name="Thickness", unit='LENGTH', precision=5)  # type: ignore
+
+
+class hb_frameless_OT_adjust_floating_shelves(bpy.types.Operator):
+    bl_idname = "hb_frameless.adjust_floating_shelves"
+    bl_label = "Adjust Floating Shelves"
+    bl_description = "Set the floor height, spacing, and size of the selected floating shelves"
+    bl_options = {'UNDO'}
+
+    bottom_height: bpy.props.FloatProperty(name="Bottom Height", unit='LENGTH', precision=5)  # type: ignore
+    spacing: bpy.props.FloatProperty(name="Spacing", unit='LENGTH', precision=5)  # type: ignore
+    shelves: bpy.props.CollectionProperty(type=FloatingShelfRow)  # type: ignore
+
+    # Previous summary values, used to detect which field the user edited.
+    _prev_bottom = 0.0
+    _prev_spacing = 0.0
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_selected_floating_shelves(context)) > 1
+
+    @staticmethod
+    def _parent_z(obj):
+        return obj.parent.matrix_world.translation.z if obj.parent else 0.0
+
+    def invoke(self, context, event):
+        shelves = get_selected_floating_shelves(context)
+        # Sort bottom-to-top by world height so row order matches the model.
+        shelves.sort(key=lambda o: o.matrix_world.translation.z)
+
+        self.shelves.clear()
+        for bp in shelves:
+            cage = hb_types.GeoNodeCage(bp)
+            row = self.shelves.add()
+            row.obj_name = bp.name
+            row.elevation = bp.matrix_world.translation.z
+            row.thickness = cage.get_input('Dim Z')
+
+        self.bottom_height = self.shelves[0].elevation
+        if len(self.shelves) > 1:
+            first = self.shelves[0]
+            self.spacing = self.shelves[1].elevation - (first.elevation + first.thickness)
+        self._prev_bottom = self.bottom_height
+        self._prev_spacing = self.spacing
+
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def check(self, context):
+        eps = 1e-6
+        bottom_changed = abs(self.bottom_height - self._prev_bottom) > eps
+        spacing_changed = abs(self.spacing - self._prev_spacing) > eps
+
+        if bottom_changed or spacing_changed:
+            # Redistribute every shelf from the bottom using a uniform clear
+            # gap (top face of one shelf to the bottom face of the next).
+            z = self.bottom_height
+            for row in self.shelves:
+                row.elevation = z
+                z += row.thickness + self.spacing
+        else:
+            # A per-shelf elevation/thickness was edited - keep those values
+            # and refresh the summary fields from the lowest shelf.
+            if len(self.shelves) > 0:
+                self.bottom_height = self.shelves[0].elevation
+            if len(self.shelves) > 1:
+                first = self.shelves[0]
+                self.spacing = self.shelves[1].elevation - (first.elevation + first.thickness)
+
+        self.apply_to_scene(context)
+        self._prev_bottom = self.bottom_height
+        self._prev_spacing = self.spacing
+        return True
+
+    def apply_to_scene(self, context):
+        for row in self.shelves:
+            obj = bpy.data.objects.get(row.obj_name)
+            if obj is None:
+                continue
+            cage = hb_types.GeoNodeCage(obj)
+            cage.set_input('Dim Z', row.thickness)
+            # location.z is relative to the parent (wall sits on the floor at
+            # z=0), so convert the desired world elevation back to local.
+            obj.location.z = row.elevation - self._parent_z(obj)
+            hb_utils.run_calc_fix(context, obj)
+
+    def execute(self, context):
+        self.apply_to_scene(context)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+
+        box = layout.box()
+        box.label(text="Distribution")
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Bottom Height:")
+        row.prop(self, 'bottom_height', text="")
+        row = col.row(align=True)
+        row.label(text="Spacing (clear gap):")
+        row.prop(self, 'spacing', text="")
+
+        box = layout.box()
+        box.label(text="Shelves (bottom to top)")
+        col = box.column(align=True)
+        for i, row in enumerate(self.shelves):
+            r = col.row(align=True)
+            r.label(text=f"{i + 1}:")
+            r.prop(row, 'elevation', text="Elev")
+            r.prop(row, 'thickness', text="Thick")
+
+
 classes = (
+    FloatingShelfRow,
     hb_frameless_OT_product_prompts,
     hb_frameless_OT_delete_product,
     hb_frameless_OT_convert_to_door_panel,
+    hb_frameless_OT_adjust_floating_shelves,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

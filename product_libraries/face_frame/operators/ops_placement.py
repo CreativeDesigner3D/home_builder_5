@@ -2011,7 +2011,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # wall-local height rather than the seeded floor / upper Z. Set
         # before the gap lookup so vertical-overlap is judged at that Z.
         if self._follow_cursor_z:
-            cage_obj.location.z = local_hit.z
+            # Snap the shelf's mounting height to the nearest whole inch
+            # and keep it on or above the floor.
+            z_in = round(units.meter_to_inch(local_hit.z))
+            cage_obj.location.z = max(0.0, units.inch(z_in))
 
         # Decide which side (with hysteresis)
         self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
@@ -2702,6 +2705,59 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 s, e, units.unit_to_string(unit_settings, right_offset),
                 offset_color,
             ))
+
+        # Floating shelf: floor-to-shelf-bottom height plus the clear gap
+        # to the nearest shelf above and below (when one overlaps this X
+        # span on the same wall side).
+        if getattr(self, '_follow_cursor_z', False):
+            shelf_z = cage_obj.location.z
+            shelf_top = shelf_z + cabinet_height
+            if shelf_z > units.inch(0.5):
+                x_floor = placement_x - units.inch(2.0)
+                fs = wm @ Vector((x_floor, y_dim, 0.0))
+                fe = wm @ Vector((x_floor, y_dim, shelf_z))
+                specs.append(hb_placement.PlacementDimSpec(
+                    fs, fe, units.unit_to_string(unit_settings, shelf_z), None,
+                ))
+
+            # Vertical neighbours: nearest floating shelf above and below
+            # whose X span overlaps, drawn to the RIGHT so they clear the
+            # floor dim. Green to flag the adjacency.
+            p_center = placement_x + cabinet_width / 2.0
+            x_gap = placement_x + cabinet_width + units.inch(2.0)
+            snap_green = (0.30, 0.95, 0.40, 1.0)
+            best_below = None  # (gap, top_of_lower, this_bottom)
+            best_above = None  # (gap, this_top, bottom_of_upper)
+            for sib in wall.children:
+                if sib is cage_obj or not sib.get('IS_FLOATING_SHELF'):
+                    continue
+                sib_back = abs((sib.rotation_euler.z % (2.0 * math.pi)) - math.pi) < 0.1
+                if sib_back == self._place_on_front:
+                    continue
+                sib_w = sib.face_frame_cabinet.width
+                sib_center = ((sib.location.x - sib_w / 2.0) if sib_back
+                              else (sib.location.x + sib_w / 2.0))
+                if abs(sib_center - p_center) >= (sib_w + cabinet_width) / 2.0:
+                    continue
+                nz0 = sib.location.z
+                nz1 = nz0 + sib.face_frame_cabinet.height
+                if nz1 <= shelf_z + 1e-6:
+                    gap = shelf_z - nz1
+                    if best_below is None or gap < best_below[0]:
+                        best_below = (gap, nz1, shelf_z)
+                elif nz0 >= shelf_top - 1e-6:
+                    gap = nz0 - shelf_top
+                    if best_above is None or gap < best_above[0]:
+                        best_above = (gap, shelf_top, nz0)
+            for entry in (best_below, best_above):
+                if entry is None:
+                    continue
+                gap, z_lo, z_hi = entry
+                gs = wm @ Vector((x_gap, y_dim, z_lo))
+                ge = wm @ Vector((x_gap, y_dim, z_hi))
+                specs.append(hb_placement.PlacementDimSpec(
+                    gs, ge, units.unit_to_string(unit_settings, gap), snap_green,
+                ))
 
         return specs
 

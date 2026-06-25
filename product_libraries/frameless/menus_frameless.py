@@ -269,6 +269,19 @@ class HOME_BUILDER_MT_floating_shelf_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        # Collect distinct floating-shelf products in the selection so the
+        # multi-shelf adjust tool only appears when there are 2+ to align.
+        shelf_bps = set()
+        for o in context.selected_objects:
+            cur = o
+            while cur:
+                if cur.get('PART_TYPE') == 'FLOATING_SHELF':
+                    shelf_bps.add(cur.name)
+                    break
+                cur = cur.parent
+        if len(shelf_bps) > 1:
+            layout.operator("hb_frameless.adjust_floating_shelves", text="Adjust Spacing & Heights...")
+            layout.separator()
         layout.operator("hb_frameless.product_prompts", text="Floating Shelf Prompts")
         layout.separator()
         layout.operator("hb_frameless.delete_product", text="Delete Floating Shelf")

@@ -443,6 +443,16 @@ class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
                         text="Floating Shelf Properties...", icon='WINDOW')
         layout.operator("hb_face_frame.duplicate_floating_shelf",
                         text="Set Quantity & Spacing...", icon='LINENUMBERS_ON')
+        # Multi-shelf editor - only when 2+ distinct floating shelves are
+        # selected (align their floor height, spacing, and thickness).
+        roots = set()
+        for o in context.selected_objects:
+            r = types_face_frame.find_cabinet_root(o)
+            if r is not None and r.get('IS_FLOATING_SHELF'):
+                roots.add(r.name)
+        if len(roots) > 1:
+            layout.operator("hb_face_frame.adjust_floating_shelves",
+                            text="Adjust Spacing & Heights...", icon='LINENUMBERS_ON')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Shelf", icon='X')

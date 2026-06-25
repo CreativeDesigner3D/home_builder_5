@@ -328,6 +328,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     dim_total_width = None  # Dimension showing total cabinet width
     dim_left_offset = None  # Dimension showing left offset from gap edge
     dim_right_offset = None  # Dimension showing right offset from gap edge
+    dim_height_to_floor = None  # Vertical dim: floor to shelf bottom (cursor-Z products)
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -700,6 +701,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.dim_right_offset.obj.show_in_front = True
         self.register_placement_object(self.dim_right_offset.obj)
         
+        # Height-to-floor dimension (shown for cursor-Z products like shelves)
+        self.dim_height_to_floor = hb_types.GeoNodeDimension()
+        self.dim_height_to_floor.create("Dim_Height_To_Floor")
+        self.dim_height_to_floor.set_input("Text Size", placement_text_size)
+        self.dim_height_to_floor.obj.show_in_front = True
+        self.register_placement_object(self.dim_height_to_floor.obj)
+        
         # Center snap indicator line (green vertical line)
         self.create_centerline()
     
@@ -756,6 +764,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             bpy.data.objects.remove(self.dim_left_offset.obj, do_unlink=True)
         if self.dim_right_offset and self.dim_right_offset.obj:
             bpy.data.objects.remove(self.dim_right_offset.obj, do_unlink=True)
+        if self.dim_height_to_floor and self.dim_height_to_floor.obj:
+            bpy.data.objects.remove(self.dim_height_to_floor.obj, do_unlink=True)
         if self.centerline_obj:
             bpy.data.objects.remove(self.centerline_obj, do_unlink=True)
             self.centerline_obj = None
@@ -901,6 +911,59 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         # Update centerline visibility and position
         self.update_centerline(context, total_width, cabinet_height)
+
+        # Floor-height dimension for cursor-Z products (e.g. Floating Shelves)
+        self.update_height_dimension(context)
+
+    def update_height_dimension(self, context):
+        """Vertical dimension from the floor to the shelf bottom.
+
+        Only shown for cursor-Z products (Floating Shelves / Valance) and only
+        in elevation/3D views - in plan view the height reads into the screen.
+        """
+        dim = self.dim_height_to_floor
+        if not dim:
+            return
+        if not self.cursor_z_tracking or not self.preview_cage:
+            dim.obj.hide_set(True)
+            return
+
+        region = self.region
+        rv3d = region.data
+        view_matrix = rv3d.view_matrix
+        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
+        if abs(view_dir.z) > 0.7:
+            dim.obj.hide_set(True)
+            return
+
+        height = self.preview_cage.obj.location.z
+        if height <= units.inch(0.25):
+            dim.obj.hide_set(True)
+            return
+
+        dim.obj.parent = None
+        if self.selected_wall:
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            wall_matrix = self.selected_wall.matrix_world
+            wall_rotation_z = self.selected_wall.rotation_euler.z
+            if self.place_on_front:
+                dim_y = -units.inch(1)
+            else:
+                dim_y = wall_thickness + units.inch(1)
+            local_pos = Vector((self.placement_x, dim_y, 0))
+            dim.obj.location = wall_matrix @ local_pos
+            dim.obj.rotation_euler = (0, math.radians(-90), wall_rotation_z)
+        else:
+            base = self.preview_cage.obj.location
+            dim.obj.location = Vector((base.x, base.y - units.inch(1), 0))
+            dim.obj.rotation_euler = (0, math.radians(-90), 0)
+
+        # Measure along local X; the rotation maps local X to world up so the
+        # printed value is the floor-to-shelf-bottom height.
+        dim.obj.data.splines[0].points[1].co = (height, 0, 0, 1)
+        dim.set_decimal()
+        dim.obj.hide_set(False)
 
     def update_centerline(self, context, total_width, cabinet_height):
         """Update centerline indicator position and visibility."""
@@ -1640,6 +1703,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.dim_total_width = None
         self.dim_left_offset = None
         self.dim_right_offset = None
+        self.dim_height_to_floor = None
 
         # Products that follow cursor Z with inch snapping, fill gap with qty 1
         if self.cabinet_name in ('Floating Shelves', 'Valance'):
@@ -1701,6 +1765,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.dim_left_offset.obj.hide_set(True)
         if self.dim_right_offset:
             self.dim_right_offset.obj.hide_set(True)
+        if self.dim_height_to_floor:
+            self.dim_height_to_floor.obj.hide_set(True)
         
         self.update_snap(context, event)
         
