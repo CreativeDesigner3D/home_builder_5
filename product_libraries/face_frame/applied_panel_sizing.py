@@ -240,9 +240,16 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     if side == 'BACK':
         return
     cab = cab_obj.face_frame_cabinet
+    # A stile dropped to the floor fills the toe-kick recess on that end, so
+    # the panel's parts must NOT be notched there. side LEFT/RIGHT maps to the
+    # cabinet's same-side end stile. (toe_kick_type == 'NOTCH' below already
+    # excludes FLUSH, where the stile is always to-floor.)
+    stile_to_floor = (cab.extend_left_stile_to_floor if side == 'LEFT'
+                      else cab.extend_right_stile_to_floor)
     active = (
         cab.cabinet_type in ('BASE', 'TALL')
         and cab.toe_kick_type == 'NOTCH'
+        and not stile_to_floor
     )
 
     facing_role = _FACING_STILE_ROLE.get(side)

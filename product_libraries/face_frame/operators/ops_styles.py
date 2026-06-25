@@ -147,6 +147,45 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_move_cabinet_style(Operator):
+    """Move the active cabinet style up or down in the list"""
+    bl_idname = "hb_face_frame.move_cabinet_style"
+    bl_label = "Move Cabinet Style"
+    bl_description = ("Reorder the active cabinet style. 2D shop-drawing fill "
+                      "colours follow list order -- the first style is white, "
+                      "the rest take palette colours -- so moving a style "
+                      "changes which one stays white")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: bpy.props.EnumProperty(
+        name="Direction",
+        items=[('UP', "Up", "Move the style up"),
+               ('DOWN', "Down", "Move the style down")],
+        default='UP',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        ff = get_style_props(context)
+        return len(ff.cabinet_styles) > 1
+
+    def execute(self, context):
+        ff = get_style_props(context)
+        count = len(ff.cabinet_styles)
+        idx = ff.active_cabinet_style_index
+        if idx < 0 or idx >= count:
+            return {'CANCELLED'}
+        new_idx = idx - 1 if self.direction == 'UP' else idx + 1
+        if new_idx < 0 or new_idx >= count:
+            return {'CANCELLED'}
+        # Styles are referenced by name (STYLE_NAME on cabinets), so reordering
+        # the pool is safe -- only the order-driven 2D colour assignment
+        # (Spaces assign_style_colors, applied at page generation) changes.
+        ff.cabinet_styles.move(idx, new_idx)
+        ff.active_cabinet_style_index = new_idx
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_add_door_style(Operator):
     """Add a new face frame door style"""
     bl_idname = "hb_face_frame.add_door_style"
@@ -951,6 +990,7 @@ classes = (
     hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_cabinet_style,
     hb_face_frame_OT_remove_cabinet_style,
+    hb_face_frame_OT_move_cabinet_style,
     hb_face_frame_OT_add_door_style,
     hb_face_frame_OT_remove_door_style,
     hb_face_frame_OT_add_drawer_front_style,

@@ -156,16 +156,30 @@ def get_style_props(context=None):
 
 
 def update_cabinet_style_name(self, context):
-    """Keep style names unique within the collection."""
+    """Keep style names unique within the collection AND propagate a rename
+    to every cabinet already tagged with this style (its STYLE_NAME), so an
+    assigned cabinet keeps resolving -- and 2D-colouring -- after a rename.
+    The prior name is tracked in rename_anchor because Blender's update
+    callback does not expose the old value."""
     main = get_style_props(context)
     base_name = self.name if self.name else "Style"
     existing = [s.name for s in main.cabinet_styles if s != self]
-    if base_name not in existing:
-        return
-    i = 1
-    while f"{base_name}.{i:03d}" in existing:
-        i += 1
-    self.name = f"{base_name}.{i:03d}"
+    final = base_name
+    if base_name in existing:
+        i = 1
+        while f"{base_name}.{i:03d}" in existing:
+            i += 1
+        final = f"{base_name}.{i:03d}"
+    old = self.rename_anchor
+    if old and old != final:
+        for obj in bpy.data.objects:
+            if obj.get('STYLE_NAME') == old:
+                obj['STYLE_NAME'] = final
+    self.rename_anchor = final
+    # Apply the de-duplicated name last. If this re-enters the callback,
+    # final is already unique and anchor == final, so it is a clean no-op.
+    if self.name != final:
+        self.name = final
 
 
 def get_stain_color_enum_items(self, context):
@@ -810,6 +824,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         description="Cabinet style name",
         default="Style",
         update=update_cabinet_style_name,
+    )  # type: ignore
+    rename_anchor: StringProperty(
+        name="Rename Anchor",
+        description="Internal: the style's previous name, used to propagate a "
+                    "rename to cabinets tagged with the old STYLE_NAME",
+        default="",
+        options={'HIDDEN'},
     )  # type: ignore
 
     show_expanded: BoolProperty(
@@ -6169,6 +6190,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         side = row.column(align=True)
         side.operator("hb_face_frame.add_cabinet_style", text="", icon='ADD')
         side.operator("hb_face_frame.remove_cabinet_style", text="", icon='REMOVE')
+        # Reorder: 2D fill colours follow list order (first style = white), so
+        # moving a style up/down changes which one is left white.
+        side.separator()
+        side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_UP').direction = 'UP'
+        side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_DOWN').direction = 'DOWN'
 
         if sp.cabinet_styles and sp.active_cabinet_style_index < len(sp.cabinet_styles):
             style = sp.cabinet_styles[sp.active_cabinet_style_index]
@@ -6597,8 +6623,25 @@ classes = (
 _register_classes, _unregister_classes = bpy.utils.register_classes_factory(classes)
 
 
+@bpy.app.handlers.persistent
+def _seed_style_rename_anchors(_dummy):
+    """On file load, seed each cabinet style's rename_anchor from its current
+    name. Files saved before rename-propagation existed have empty anchors;
+    without this seed their first rename could not re-tag assigned cabinets."""
+    for scene in bpy.data.scenes:
+        ff = getattr(scene, 'hb_face_frame', None)
+        if ff is None:
+            continue
+        for style in getattr(ff, 'cabinet_styles', ()):
+            if not style.rename_anchor:
+                style.rename_anchor = style.name
+
+
 def register():
     _register_classes()
+
+    if _seed_style_rename_anchors not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_seed_style_rename_anchors)
 
     # Object-level pointer properties: face frame cabinets and bays carry
     # their state on the cage object directly. Only objects that get tagged
@@ -6634,6 +6677,9 @@ def unregister():
         del bpy.types.Object.leg_product
     if hasattr(bpy.types.Object, 'face_frame_cabinet'):
         del bpy.types.Object.face_frame_cabinet
+
+    if _seed_style_rename_anchors in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_seed_style_rename_anchors)
 
     _unregister_classes()
     for pcoll in preview_collections.values():
