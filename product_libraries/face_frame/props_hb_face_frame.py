@@ -597,6 +597,21 @@ def update_face_frame_sizes(self, context):
     _propagate_cabinet_style(self, context)
 
 
+# Out-of-box default front for a freshly created door / drawer-front style
+# (ensure_default_styles). Craftsman / Square / Solid Wood Recessed is a
+# common starting point; without it a new style falls on the alphabetical-
+# first series. Applied in cascade order (series resets shape, shape resets
+# panel) so each level sticks; valid for both the door and drawer catalogs.
+_DEFAULT_FRONT = ("Craftsman", "Square", "Solid Wood Recessed")
+
+
+def _apply_default_front_style(ds):
+    series, shape, panel = _DEFAULT_FRONT
+    _set_enum_safe(ds, "front_series", series)
+    _set_enum_safe(ds, "front_shape", shape)
+    _set_enum_safe(ds, "front_panel", panel)
+
+
 def ensure_default_styles(context):
     """Make sure the scene carries at least one cabinet style and one
     door style. Operators that read from those collections call this
@@ -610,11 +625,13 @@ def ensure_default_styles(context):
         ff.active_cabinet_style_index = 0
     if len(ff.door_styles) == 0:
         ds = ff.door_styles.add()
-        ds.name = "Default"
+        ds.name = "Craftsman Square Recessed Panel"
+        _apply_default_front_style(ds)
         ff.active_door_style_index = 0
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
-        ds.name = "Default Drawer Front"
+        ds.name = "Craftsman Square Recessed Panel"
+        _apply_default_front_style(ds)
         ff.active_drawer_front_style_index = 0
 
 
