@@ -4870,7 +4870,14 @@ class FaceFrameCabinet(GeoNodeCage):
         split-node-local for these parts.
         """
         for descendant in list(bay_obj.children_recursive):
-            if descendant.get('hb_part_role') in BAY_SPLITTER_ROLES:
+            # BAY_SPLITTER_ROLES catches mid rails / mid stiles. The
+            # IS_BAY_SPLITTER_RAIL marker also catches a bay splitter that
+            # was retagged BOTTOM_RAIL (remove_bottom open-bottom bays) so
+            # the rebuild stays idempotent -- real cabinet bottom rails are
+            # parented to the cabinet, never under the bay, so they are out
+            # of this sweep's reach.
+            if (descendant.get('hb_part_role') in BAY_SPLITTER_ROLES
+                    or descendant.get('IS_BAY_SPLITTER_RAIL')):
                 bpy.data.objects.remove(descendant, do_unlink=True)
 
         for rect in splitter_rects:
@@ -4904,9 +4911,18 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom-front-left corner in bay-local coords."""
         rail = CabinetPart()
         idx = rect['splitter_index'] + 1
-        rail.create(f'Bay Mid Rail {idx}')
+        # A remove_bottom bay's lowest framed splitter is the section's
+        # bottom rail, not a mid rail (e.g. refrigerator cabinet). Tag it
+        # BOTTOM_RAIL so pricing / manufacturing / the toe-kick detail
+        # reader classify it correctly; IS_BAY_SPLITTER_RAIL keeps the
+        # reconcile sweep able to clean it on rebuild.
+        as_bottom = bool(rect.get('as_bottom_rail'))
+        rail.create(f'Bottom Rail {idx}' if as_bottom
+                    else f'Bay Mid Rail {idx}')
         rail.obj.parent = split_obj
-        rail.obj['hb_part_role'] = PART_ROLE_BAY_MID_RAIL
+        rail.obj['hb_part_role'] = (PART_ROLE_BOTTOM_RAIL if as_bottom
+                                    else PART_ROLE_BAY_MID_RAIL)
+        rail.obj['IS_BAY_SPLITTER_RAIL'] = True
         rail.obj['CABINET_PART'] = True
         rail.obj['hb_split_node_name'] = rect['split_node_name']
         rail.obj['hb_splitter_index'] = rect['splitter_index']

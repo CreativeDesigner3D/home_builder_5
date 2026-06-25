@@ -306,6 +306,11 @@ class FaceFrameLayout:
             'unlock_size':  op.unlock_size,
             'size_role':    obj.get('SIZE_ROLE'),
             'opening_index': op.opening_index,
+            # Whether the bottom-most leaf has a front decides if a
+            # remove_bottom bay's capping splitter is a real bottom rail
+            # (frontless: appliance / open shelving) or a true mid rail
+            # (a door/drawer/pullout below). See _walk_tree.
+            'front_type':   op.front_type,
             # Resolved per-side overlays, used by the removed-mid-rail gap
             # math so the collapse accounts for a per-opening overlay override.
             'overlay_top':    resolved_overlay(self._cab_props, op, 'top'),
@@ -2563,11 +2568,16 @@ def _backing_thickness_for_role(layout, role):
 
 def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
                      reveals, splitter_top_z, splitter_bottom_z,
-                     splitter_index, splitter_w, layout, splitters, backings):
+                     splitter_index, splitter_w, layout, splitters, backings,
+                     as_bottom_rail=False):
     """Append the mid rail rect for an H-split between two consecutive
     children, plus the matching backing rect if backing_kind isn't
     NONE. All coords are BAY-local. `splitter_w` is this member's own
-    width (per-index; the caller resolves the override / scalar)."""
+    width (per-index; the caller resolves the override / scalar).
+
+    `as_bottom_rail` flags the lowest framed rail of a remove_bottom bay
+    (see _walk_tree); the rect still routes through the mid-rail builder,
+    which tags the part BOTTOM_RAIL instead of BAY_MID_RAIL."""
     ff_left_x = cage_x + reveals['left']
     ff_width = cage_dim_x - reveals['left'] - reveals['right']
     # Cabinet: bay cage origin sits at the back of the face frame, so a
@@ -2579,6 +2589,7 @@ def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     splitter_y = _ff_front_y_bay_local(layout)
     splitters.append({
         'role':            'BAY_MID_RAIL',
+        'as_bottom_rail':  as_bottom_rail,
         'split_node_name': node['obj_name'],
         'splitter_index':  splitter_index,
         'x':               ff_left_x,
@@ -2669,10 +2680,22 @@ def _child_overlay(child, side, default):
 
 def _walk_tree(node, layout, bay_index,
                cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
-               reveals, leaves, splitters, backings):
+               reveals, leaves, splitters, backings,
+               is_bay_root=False):
     """Recursively descend a tree node. Emits leaf rects, splitter
     rects (mid rails / mid stiles), and backing rects (divisions /
-    shelves) into the three lists provided by the caller."""
+    shelves) into the three lists provided by the caller.
+
+    ``is_bay_root`` is True only for the bay's top-level node. When the
+    bay drops its bottom rail (remove_bottom) AND its bottom-most child is
+    a frontless opening (front_type NONE -- an appliance / open-shelf zone
+    that runs open to the kick, e.g. a refrigerator cabinet), the splitter
+    capping it is the lowest framed rail, so it is emitted as a real
+    BOTTOM_RAIL (sized to the bay's bottom_rail_width) rather than a mid
+    rail. A bottom opening WITH a front (stacked doors, drawers, pullout)
+    keeps a true mid rail between the two fronts -- otherwise the rail
+    width/role shift would collide the two fronts. Only fires at the bay
+    root H-split, where the bottom-most child reaches the bay bottom."""
     if node['kind'] == 'leaf':
         leaves.append({
             'obj_name':       node['obj_name'],
@@ -2714,6 +2737,12 @@ def _walk_tree(node, layout, bay_index,
     # ov_below, so space = gap + ov_above + ov_below. Removal is H-only
     # (mid rails); a V-split mid stile ignores the flag (members stay).
     eff_widths = list(widths)
+    # When the bay drops its bottom rail and the bottom-most child runs
+    # open to the kick, the LAST root H-split splitter is the lowest
+    # framed rail -> build it as a BOTTOM_RAIL (sized to the bay's
+    # bottom_rail_width) instead of a mid rail. Set the width here, before
+    # splitter_total, so the layout math and the emitted rail agree.
+    bottom_rail_splitter_index = None
     if node['axis'] == 'H':
         for i in range(n_splitters):
             if removes[i]:
@@ -2722,6 +2751,16 @@ def _walk_tree(node, layout, bay_index,
                 ov_below = _child_overlay(children[i + 1], 'top',
                                           layout.default_top_overlay)
                 eff_widths[i] = MID_RAIL_REMOVED_GAP + ov_above + ov_below
+        bay = layout.bays[bay_index]
+        if (is_bay_root and n_splitters >= 1
+                and bay.get('remove_bottom')
+                and children[-1].get('kind') == 'leaf'
+                and children[-1].get('front_type') == 'NONE'
+                and not removes[n_splitters - 1]):
+            bottom_rail_splitter_index = n_splitters - 1
+            brw = bay.get('bottom_rail_width') or 0.0
+            if brw > 0:
+                eff_widths[bottom_rail_splitter_index] = brw
     splitter_total = sum(eff_widths)
 
     if node['axis'] == 'H':
@@ -2769,6 +2808,7 @@ def _walk_tree(node, layout, bay_index,
                         reveals, splitter_top_z, splitter_bottom_z,
                         splitter_index=i, splitter_w=w_i, layout=layout,
                         splitters=splitters, backings=backings,
+                        as_bottom_rail=(i == bottom_rail_splitter_index),
                     )
                 cur_z_top = child_ff_bottom_z - w_i
     else:
@@ -2842,6 +2882,7 @@ def bay_openings(layout, bay_index):
         cage_dim_x=cage_dim_x_, cage_dim_y=cage_dim_y_, cage_dim_z=cage_dim_z_,
         reveals=_bay_root_reveals(layout, bay_index),
         leaves=leaves, splitters=splitters, backings=backings,
+        is_bay_root=True,
     )
     return {'leaves': leaves, 'splitters': splitters, 'backings': backings}
 
@@ -4374,48 +4415,4 @@ def editable_boundaries_cabinet(cabinet_obj, layout):
         'ff_x_low': 0.0,
         'ff_x_high': ff_len,
     }
-    # OUTER_BOTTOM — horizontal line at the cabinet's floor. Translates
-    # cabinet location along +ff_z_world so the top stays put. For
-    # floor-anchored types (base, tall) this lifts the cabinet off the
-    # floor; the user is responsible for re-seating it if needed.
-    yield {
-        'kind': 'OUTER_BOTTOM',
-        'axis': 'Z',
-        'primary_sign': -1.0,
-        'translate': True,
-        'translate_axis': 'Z',
-        'cabinet_obj': cabinet_obj,
-        'dim_attr': 'height',
-        'ff_z': 0.0,
-        'ff_x_low': 0.0,
-        'ff_x_high': ff_len,
-    }
-
-def mouse_to_ff_local_with_basis(region, rv3d, mouse_xy, basis):
-    """Project a mouse position onto an FF outer plane defined by the
-    given basis tuple (origin_w, x_axis_w, z_axis_w, normal_w). Returns
-    (ff_x, ff_z, world_hit) or None.
-
-    Companion to mouse_to_ff_local. Used by the modify-cabinet operator
-    during drags that translate the cabinet's location: a frozen basis
-    captured at drag start gives cursor_delta a stable reference frame,
-    avoiding compounding drift as the cabinet moves under the cursor.
-    """
-    from bpy_extras import view3d_utils
-    from mathutils.geometry import intersect_line_plane
-    if region is None or rv3d is None:
-        return None
-    co2d = (mouse_xy[0], mouse_xy[1])
-    ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co2d)
-    ray_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, co2d)
-    if ray_origin is None or ray_dir is None:
-        return None
-    origin_w, x_axis_w, z_axis_w, normal_w = basis
-    hit = intersect_line_plane(
-        ray_origin, ray_origin + ray_dir, origin_w, normal_w,
-    )
-    if hit is None:
-        return None
-    rel = hit - origin_w
-    return (rel.dot(x_axis_w), rel.dot(z_axis_w), hit)
-
+    # OUTER_BOTTOM — horizontal line at the cabinet'
