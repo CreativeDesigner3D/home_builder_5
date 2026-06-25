@@ -2808,6 +2808,13 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
             if root.get(types_face_frame.TAG_CABINET_CAGE):
                 cab_props = root.face_frame_cabinet
                 cw, cd, ch = cab_props.width, cab_props.depth, cab_props.height
+            elif root.get('IS_FACE_FRAME_MISC_PART'):
+                # Misc Part: a lone board with Length/Width/Thickness inputs
+                # (no Dim X/Y/Z), same Mirror-Y frame as a cabinet.
+                geo = hb_types.GeoNodeObject(root)
+                cw = geo.get_input('Length')
+                cd = geo.get_input('Width')
+                ch = geo.get_input('Thickness')
             else:
                 # Appliance: dims come off the GeoNodeObject inputs.
                 geo = hb_types.GeoNodeObject(root)
