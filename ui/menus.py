@@ -92,6 +92,8 @@ class HOME_BUILDER_MT_door_commands(bpy.types.Menu):
         layout.operator("home_builder_doors_windows.flip_door_hand", text="Flip Door Hand")
         layout.operator("home_builder_doors_windows.toggle_double_door", text="Toggle Double Door")
         layout.separator()
+        layout.operator("home_builder_doors_windows.duplicate_door", text="Duplicate Door")
+        layout.separator()
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Door").object_type = 'DOOR'
 
 
@@ -101,6 +103,8 @@ class HOME_BUILDER_MT_window_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_doors_windows.window_prompts", text="Window Prompts")
+        layout.separator()
+        layout.operator("home_builder_doors_windows.duplicate_window", text="Duplicate Window")
         layout.separator()
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Window").object_type = 'WINDOW'
 

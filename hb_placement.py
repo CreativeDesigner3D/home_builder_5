@@ -437,7 +437,8 @@ class PlacementMixin:
     # Wall Children Utilities
     # -------------------------------------------------------------------------
     
-    def get_wall_children_sorted(self, wall_obj, exclude_obj=None) -> list:
+    def get_wall_children_sorted(self, wall_obj, exclude_obj=None,
+                                 object_z_start=None, object_height=None) -> list:
         """
         Get all placed objects on a wall, sorted by X location.
         Useful for finding gaps and snap points.
@@ -458,21 +459,35 @@ class PlacementMixin:
                 continue
             # Get object bounds on wall
             x_start = child.location.x
-            # Try to get width from geometry node input
+            # Try to get width + height from geometry node inputs
             x_end = x_start
+            child_z_start = child.location.z
+            child_z_end = child_z_start
             if hasattr(child, 'home_builder') and child.home_builder.mod_name:
                 try:
                     from . import hb_types
                     geo_obj = hb_types.GeoNodeObject(child)
                     width = geo_obj.get_input('Dim X')
+                    height = geo_obj.get_input('Dim Z')
                     x_end = x_start + width
+                    child_z_end = child_z_start + height
                 except:
                     pass
+            # Vertical filtering (opt-in): skip children whose Z range doesn't
+            # overlap the placed object, so e.g. a base cabinet doesn't block a
+            # window mounted above it. Two ranges overlap iff start1 < end2 and
+            # start2 < end1. Mirrors find_placement_gap_by_side.
+            if object_z_start is not None and object_height is not None:
+                object_z_end = object_z_start + object_height
+                if not (object_z_start < child_z_end and child_z_start < object_z_end):
+                    continue
             children.append((x_start, x_end, child))
             
         return sorted(children, key=lambda x: x[0])
     
-    def find_placement_gap(self, wall_obj, cursor_x: float, object_width: float, exclude_obj=None) -> tuple:
+    def find_placement_gap(self, wall_obj, cursor_x: float, object_width: float,
+                           exclude_obj=None, object_z_start=None,
+                           object_height=None) -> tuple:
         """
         Find the available gap at cursor position on a wall.
         
@@ -490,7 +505,9 @@ class PlacementMixin:
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_length = wall.get_input('Length')
         
-        children = self.get_wall_children_sorted(wall_obj, exclude_obj)
+        children = self.get_wall_children_sorted(
+            wall_obj, exclude_obj,
+            object_z_start=object_z_start, object_height=object_height)
         
         if not children:
             # Empty wall - full length available

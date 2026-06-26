@@ -581,7 +581,8 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         cursor_x = hb_snap.snap_value_to_grid(local_loc.x)
 
         gap_start, gap_end, _ = self.find_placement_gap(
-            self.selected_wall, cursor_x, 0.0, exclude_obj=placed)
+            self.selected_wall, cursor_x, 0.0, exclude_obj=placed,
+            object_z_start=z_offset, object_height=obj_height)
         cursor_x = max(gap_start, min(cursor_x, gap_end))
 
         self.placement_x = cursor_x
@@ -608,8 +609,11 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         world_loc = Vector(self.hit_location)
         local_loc = self.selected_wall.matrix_world.inverted() @ world_loc
         start_x = hb_snap.snap_value_to_grid(local_loc.x)
+        obj_height = self.get_placed_object_height()
+        z_offset = self.get_two_point_z_offset(bpy.context)
         gap_start, gap_end, _ = self.find_placement_gap(
-            self.selected_wall, start_x, 0.0, exclude_obj=placed)
+            self.selected_wall, start_x, 0.0, exclude_obj=placed,
+            object_z_start=z_offset, object_height=obj_height)
         start_x = max(gap_start, min(start_x, gap_end))
         self.width_start_x = start_x
         self.width_start_wall = self.selected_wall
@@ -805,7 +809,8 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
 
         gap_start, gap_end, snap_x = self.find_placement_gap(
             self.selected_wall, cursor_x, obj_width,
-            exclude_obj=self.placed_obj.obj
+            exclude_obj=self.placed_obj.obj,
+            object_z_start=z_offset, object_height=obj_height
         )
         self.gap_left_boundary = gap_start
         self.gap_right_boundary = gap_end
@@ -1298,11 +1303,140 @@ class home_builder_doors_windows_OT_delete_door_window(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Duplicate (copy-and-place) for placed doors / windows
+# ---------------------------------------------------------------------------
+# Native Shift-D copies a placed door/window object but never runs cut_wall, so
+# the wall is never cut for the copy and it doesn't read as an opening. These
+# operators instead clone the SELECTED object's edited state (size, mount
+# height, and for doors the swing) onto a fresh object and run the normal
+# placement modal -- the user drags the copy into position and the left-click
+# drop cuts the wall through the same path as a first-time place.
+
+def _copy_geo_value_inputs(src_geo, dst_geo):
+    """Copy every parametric (non-geometry) input from one GeoNode object onto
+    another, matched by socket name. Geometry sockets and sockets missing on
+    either node group are skipped. Clones a placed door/window's edited state
+    onto its duplicate."""
+    try:
+        src_mod = src_geo.obj.modifiers[src_geo.obj.home_builder.mod_name]
+        dst_mod = dst_geo.obj.modifiers[dst_geo.obj.home_builder.mod_name]
+    except (KeyError, AttributeError, TypeError):
+        return
+    if not src_mod.node_group or not dst_mod.node_group:
+        return
+    src_tree = src_mod.node_group.interface.items_tree
+    for item in dst_mod.node_group.interface.items_tree:
+        if getattr(item, 'item_type', '') != 'SOCKET':
+            continue
+        if getattr(item, 'in_out', '') != 'INPUT':
+            continue
+        if getattr(item, 'socket_type', '') == 'NodeSocketGeometry':
+            continue
+        if item.name not in src_tree:
+            continue
+        try:
+            dst_geo.set_input(item.name, src_geo.get_input(item.name))
+        except Exception:
+            pass
+
+
+def _find_door_swing_child(obj):
+    """Return the GeoNodeDoorSwing child of a placed door, or None (open doors
+    and windows have none)."""
+    for child in obj.children:
+        hb = getattr(child, 'home_builder', None)
+        if hb and (hb.mod_name or '').startswith('GeoNodeDoorSwing'):
+            return child
+    return None
+
+
+class _DuplicateWallObjectBase(_PlaceWallObjectBase):
+    """Copy-and-place: seed the placement modal from the SELECTED door/window
+    instead of scene defaults, preserving its edited size / swing / mount
+    height. Drag, height-aware snapping and cut_wall-on-drop are all inherited
+    from the place operator. Not registered; concrete subclasses set
+    SOURCE_FLAG and inherit a place operator for the per-type config."""
+    SOURCE_FLAG = ""   # BP flag the selected source object must carry
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and bool(context.object.get(cls.SOURCE_FLAG))
+
+    def execute(self, context):
+        source = context.object
+        self._source = hb_types.GeoNodeCage(source)
+        self._source_z = source.location.z
+        self._source_has_swing = _find_door_swing_child(source) is not None
+        return super().execute(context)
+
+    def create_placed_object(self, context):
+        # Match the source's swing presence (open-door copy gets no swing) before
+        # the fresh object is built, then clone the source's parametric state.
+        self.HAS_SWING = self._source_has_swing
+        super().create_placed_object(context)
+        _copy_geo_value_inputs(self._source, self.placed_obj)
+        if self.HAS_SWING and self.swing_obj is not None:
+            src_swing = _find_door_swing_child(self._source.obj)
+            if src_swing is not None:
+                _copy_geo_value_inputs(
+                    hb_types.GeoNodeObject(src_swing), self.swing_obj)
+
+    def get_two_point_z_offset(self, context):
+        # Mount the copy at the source's height, not the scene default.
+        return getattr(self, '_source_z', 0.0)
+
+
+# IMPORTANT: these inherit only the NON-registered _DuplicateWallObjectBase and
+# repeat the per-type config, rather than subclassing the registered place
+# operators. Registering an operator that subclasses an already-registered
+# operator breaks the PARENT's execute() RNA binding (it makes place_window /
+# place_door silently stop working). Keep the config in sync with the matching
+# place operator above.
+class home_builder_doors_windows_OT_duplicate_window(_DuplicateWallObjectBase):
+    bl_idname = "home_builder_doors_windows.duplicate_window"
+    bl_label = "Duplicate Window"
+    bl_description = "Duplicate the selected window and place the copy on a wall"
+
+    OBJECT_NAME = "Window"
+    OBJECT_LABEL = "window"
+    BP_FLAG = "IS_WINDOW_BP"
+    MENU_ID = "HOME_BUILDER_MT_window_commands"
+    WIDTH_PROP_NAME = "window_width"
+    HEIGHT_PROP_NAME = "window_height"
+    Z_OFFSET_PROP_NAME = "window_height_from_floor"
+    TEXT_KIND = "WINDOW"
+    TEXT_NAME = "Window Text"
+    RESET_Z_WHEN_FREE = False
+    SOURCE_FLAG = "IS_WINDOW_BP"
+
+
+class home_builder_doors_windows_OT_duplicate_door(_DuplicateWallObjectBase):
+    bl_idname = "home_builder_doors_windows.duplicate_door"
+    bl_label = "Duplicate Door"
+    bl_description = "Duplicate the selected door and place the copy on a wall"
+
+    OBJECT_NAME = "Door"
+    OBJECT_LABEL = "door"
+    BP_FLAG = "IS_ENTRY_DOOR_BP"
+    MENU_ID = "HOME_BUILDER_MT_door_commands"
+    WIDTH_PROP_NAME = "door_single_width"
+    HEIGHT_PROP_NAME = "door_height"
+    TEXT_KIND = "DOOR"
+    TEXT_NAME = "Door Text"
+    HAS_SWING = True
+    SWING_LIST = SINGLE_DOOR_SWINGS
+    SOURCE_FLAG = "IS_ENTRY_DOOR_BP"
+
+
+
 classes = (
     home_builder_doors_windows_OT_place_door,
     home_builder_doors_windows_OT_place_double_door,
     home_builder_doors_windows_OT_place_open_door,
     home_builder_doors_windows_OT_place_window,
+    home_builder_doors_windows_OT_duplicate_window,
+    home_builder_doors_windows_OT_duplicate_door,
     home_builder_doors_windows_OT_door_prompts,
     home_builder_doors_windows_OT_window_prompts,
     home_builder_doors_windows_OT_flip_door_swing,
