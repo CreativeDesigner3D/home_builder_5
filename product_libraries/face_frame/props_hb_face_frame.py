@@ -441,10 +441,12 @@ def update_front_shape(self, context):
 
 
 def update_front_panel(self, context):
-    """Panel chosen -> re-derive the frame construction from the series and
-    push to assigned fronts."""
+    """Panel chosen -> re-derive the frame construction from the series, push
+    to assigned fronts, and re-apply materials so a Prep-for-Glass panel
+    renders as glass immediately (and switching away restores the finish)."""
     _apply_series_frame_to_door_style(self)
     _propagate_door_style(self, context)
+    _reapply_materials_for_door_style(self, context)
 
 
 def update_rail_width(self, context):
@@ -470,15 +472,15 @@ def update_unlock_frame_widths(self, context):
     _propagate_door_style(self, context)
 
 
-def update_grain_direction(self, context):
-    """Grain direction changed -> re-apply materials to every cabinet with a
-    front using this door style, so the panel (5-piece) / face (slab) grain
-    rotation takes effect immediately without a manual recalc. Material
-    application lives on the CABINET style (_apply_materials_to_cabinet), so
-    resolve each affected front's cabinet root + cabinet style and re-run it
-    once per cabinet. Scoped to the active scene (same as _propagate_door_style).
-    """
-    target = self.name
+def _reapply_materials_for_door_style(door_style, context):
+    """Re-run the CABINET material walk for every cabinet with a front using
+    ``door_style``. Material application lives on the cabinet style
+    (_apply_materials_to_cabinet), so a door-style change that affects a
+    front's surfaces -- grain rotation OR a Prep-for-Glass panel -- only
+    takes effect once that walk re-runs. Resolve each affected front's
+    cabinet root + cabinet style and run it once per cabinet. Scoped to the
+    active scene (same as _propagate_door_style)."""
+    target = door_style.name
     ff = get_style_props()
     styles_by_name = {cs.name: cs for cs in ff.cabinet_styles}
     seen = set()
@@ -497,6 +499,13 @@ def update_grain_direction(self, context):
         cs = styles_by_name.get(cab.get('STYLE_NAME'))
         if cs is not None:
             cs._apply_materials_to_cabinet(cab)
+
+
+def update_grain_direction(self, context):
+    """Grain direction changed -> re-apply materials to every cabinet with a
+    front using this door style so the grain rotation takes effect
+    immediately, no manual recalc."""
+    _reapply_materials_for_door_style(self, context)
 
 
 def update_custom_procedural_material(self, context):
@@ -1821,6 +1830,67 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 return ds.grain_direction
         return 'VERTICAL'
 
+    def _door_style_is_glass(self, front_obj):
+        """True if the style assigned to front_obj is a 'Prep for Glass' panel
+        (the centre panel should render as glass). Resolved by DOOR_STYLE_NAME
+        in the role-appropriate pool, same lookup as _door_style_grain."""
+        ds_name = front_obj.get('DOOR_STYLE_NAME')
+        if not ds_name:
+            return False
+        ff = get_style_props()
+        role = front_obj.get('hb_part_role')
+        pool = (ff.drawer_front_styles
+                if role in ('DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT')
+                else ff.door_styles)
+        for ds in pool:
+            if ds.name == ds_name:
+                return getattr(ds, 'front_panel', '') == 'Prep for Glass'
+        return False
+
+    @staticmethod
+    def _get_glass_panel_material():
+        """Get/create the 'Door Panel Glass' material for prep-for-glass door
+        panels. Mirrors the Pulito reference: a Glass BSDF mixed 50/50 with a
+        Transparent shader -- near-clear, very slight blue tint, roughness 0,
+        IOR 1.45. Cached by name. Socket writes are guarded so a renamed input
+        on a future Blender can't raise."""
+        name = "Door Panel Glass"
+        mat = bpy.data.materials.get(name)
+        if mat is not None:
+            return mat
+        mat = bpy.data.materials.new(name=name)
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+        output = nodes.new('ShaderNodeOutputMaterial')
+        output.location = (400, 0)
+        mix = nodes.new('ShaderNodeMixShader')
+        mix.location = (200, 0)
+        if 'Fac' in mix.inputs:
+            mix.inputs['Fac'].default_value = 0.5
+        glass = nodes.new('ShaderNodeBsdfGlass')
+        glass.location = (0, 100)
+        if 'Color' in glass.inputs:
+            glass.inputs['Color'].default_value = (0.95, 0.97, 1.0, 1.0)
+        if 'Roughness' in glass.inputs:
+            glass.inputs['Roughness'].default_value = 0.0
+        if 'IOR' in glass.inputs:
+            glass.inputs['IOR'].default_value = 1.45
+        transparent = nodes.new('ShaderNodeBsdfTransparent')
+        transparent.location = (0, -100)
+        if 'Color' in transparent.inputs:
+            transparent.inputs['Color'].default_value = (1.0, 1.0, 1.0, 1.0)
+        links.new(transparent.outputs['BSDF'], mix.inputs[1])
+        links.new(glass.outputs['BSDF'], mix.inputs[2])
+        links.new(mix.outputs['Shader'], output.inputs['Surface'])
+        # Blender 5.x EEVEE-Next dropped Material.blend_method; set only if present.
+        if hasattr(mat, 'blend_method'):
+            mat.blend_method = 'BLEND'
+        if hasattr(mat, 'use_backface_culling'):
+            mat.use_backface_culling = False
+        return mat
+
     def _set_door_modifier_materials(self, front_obj, finish_mat, finish_mat_rotated):
         """Set Stile / Rail / Panel material on a front's 'Door Style'
         CPM_5PIECEDOOR modifier, when present. Slab fronts have no
@@ -1835,6 +1905,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         if (self._door_style_grain(front_obj) == 'HORIZONTAL'
                 and finish_mat_rotated is not None):
             panel_mat = finish_mat_rotated
+        # Prep-for-glass fronts render the centre panel as glass, not wood.
+        if self._door_style_is_glass(front_obj):
+            panel_mat = self._get_glass_panel_material()
         for mod in front_obj.modifiers:
             if mod.type != 'NODES' or not mod.node_group:
                 continue
@@ -1846,8 +1919,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             if 'Rail Material' in tree and finish_mat_rotated is not None:
                 mod[tree['Rail Material'].identifier] = finish_mat_rotated
             if 'Panel Material' in tree and panel_mat is not None:
-                # Glass-panel override is v2. Panel grain follows the door
-                # style's grain_direction (see above).
+                # panel_mat is the glass material for prep-for-glass fronts,
+                # else the finish (rotated for HORIZONTAL grain -- see above).
                 mod[tree['Panel Material'].identifier] = panel_mat
             break
 
@@ -2734,6 +2807,11 @@ class Face_Frame_Door_Style(PropertyGroup):
         # built front - is reliable where the recalc-time backfill is not.
         if not front_obj.get('MENU_ID'):
             front_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+
+        # Tag prep-for-glass fronts so the 2D drawing layer can hatch the glass
+        # panel (Spaces reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
+        # Set on every style assignment so it tracks the current panel choice.
+        front_obj['IS_PREP_FOR_GLASS'] = (self.front_panel == 'Prep for Glass')
 
         from ... import hb_types
 
