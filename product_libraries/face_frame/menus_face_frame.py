@@ -302,6 +302,8 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
                     text="Change Opening")
+        layout.operator("hb_face_frame.accessory_menu",
+                        text="Add Accessory...", icon='ADD')
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Horizontal", icon='SNAP_EDGE')

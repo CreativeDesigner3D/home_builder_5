@@ -4095,9 +4095,15 @@ def ff_local_to_world(cabinet_obj, layout, ff_x, ff_z):
     return origin_w + x_axis_w * ff_x + z_axis_w * ff_z
 
 
-def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
-    """Project a mouse position onto the cabinet's FF outer plane and
-    return (ff_x, ff_z) plus the world-space hit point.
+def mouse_to_ff_local_with_basis(region, rv3d, mouse_xy, basis):
+    """Project a mouse position onto a FF outer plane defined by a
+    precomputed world-space basis; return (ff_x, ff_z) plus the
+    world-space hit point.
+
+    basis is the (origin_w, x_axis_w, z_axis_w, normal_w) tuple from
+    face_frame_world_basis. Use this instead of mouse_to_ff_local when
+    the cabinet's matrix_world is mid-update (e.g. translate-style drags),
+    so the projection reference frame stays frozen for the whole drag.
 
     Returns (ff_x, ff_z, world_hit) on success, None on failure (parallel
     ray, projection failed, or behind viewer).
@@ -4106,7 +4112,6 @@ def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
     ff_z is vertical (matches world Z relative to cabinet's floor).
     """
     from bpy_extras import view3d_utils
-    from mathutils import Vector
     from mathutils.geometry import intersect_line_plane
     if region is None or rv3d is None:
         return None
@@ -4115,8 +4120,7 @@ def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
     ray_dir = view3d_utils.region_2d_to_vector_3d(region, rv3d, co2d)
     if ray_origin is None or ray_dir is None:
         return None
-    origin_w, x_axis_w, z_axis_w, normal_w = face_frame_world_basis(
-        cabinet_obj, layout)
+    origin_w, x_axis_w, z_axis_w, normal_w = basis
     hit = intersect_line_plane(
         ray_origin, ray_origin + ray_dir, origin_w, normal_w,
     )
@@ -4126,6 +4130,24 @@ def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
     ff_x = rel.dot(x_axis_w)
     ff_z = rel.dot(z_axis_w)
     return (ff_x, ff_z, hit)
+
+
+def mouse_to_ff_local(cabinet_obj, layout, region, rv3d, mouse_xy):
+    """Project a mouse position onto the cabinet's FF outer plane and
+    return (ff_x, ff_z) plus the world-space hit point.
+
+    Derives the FF basis from the cabinet's current matrix_world. For
+    drags that move the cabinet underneath the cursor, freeze the basis
+    once and use mouse_to_ff_local_with_basis instead.
+
+    Returns (ff_x, ff_z, world_hit) on success, None on failure (parallel
+    ray, projection failed, or behind viewer).
+
+    ff_x is along the FF (0 at left endpoint, face_frame_length at right);
+    ff_z is vertical (matches world Z relative to cabinet's floor).
+    """
+    basis = face_frame_world_basis(cabinet_obj, layout)
+    return mouse_to_ff_local_with_basis(region, rv3d, mouse_xy, basis)
 
 
 def bay_edge_ff_x(layout, edge_index):
