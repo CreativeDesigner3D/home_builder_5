@@ -612,9 +612,19 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     # LOOSE / LOOSE_FLUSH float the carcass exactly like FLOATING - the
     # difference is they also build a ladder sub-base under the cabinet
     # (LOOSE_FLUSH's ladder sits flush to the front, LOOSE's is recessed).
-    if layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH'):
-        return bay_bottom_z(layout, bay_index)
-    if layout.bays[bay_index].get('floating_bay'):
+    # Floating carcass (cabinet-level FLOATING / LOOSE / LOOSE_FLUSH, or a
+    # per-bay floating_bay on this end bay) normally anchors the side at the
+    # bay bottom. But when the end stile on this side is run to the floor
+    # (a "leg"), the finished side drops with it so the leg reads solid down
+    # to the floor. The side belongs to an end bay (LEFT = bay 0, RIGHT =
+    # last bay), so the matching end-stile-to-floor flag governs the drop.
+    floating = (layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH')
+                or layout.bays[bay_index].get('floating_bay'))
+    if floating:
+        side_stile_to_floor = (left_stile_to_floor(layout) if side == 'LEFT'
+                               else right_stile_to_floor(layout))
+        if side_stile_to_floor:
+            return 0.0
         return bay_bottom_z(layout, bay_index)
     # NOTCH / FLUSH default to floor unless this side has a kick inset.
     if side == 'LEFT' and layout.kick_inset_left > 0:
