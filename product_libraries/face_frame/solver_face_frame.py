@@ -3325,6 +3325,11 @@ def front_leaves(layout, rect, cab_props, opening_props):
     front_type = opening_props.front_type
     if front_type == 'NONE':
         return []
+    # APPLIANCE openings carry no door/drawer front; the left/right filler
+    # stiles are built directly in _update_fronts_in_opening (see
+    # appliance_filler_widths), not as front leaves.
+    if front_type == 'APPLIANCE':
+        return []
     role, base_name = _FRONT_TYPE_TO_ROLE_NAME[front_type]
 
     if front_type == 'INSET_PANEL':
@@ -3379,6 +3384,38 @@ def front_leaves(layout, rect, cab_props, opening_props):
     # part's location.x sign the way it does for LEFT / RIGHT.
     leaf['hinge'] = opening_props.hinge_side
     return [leaf]
+
+
+def appliance_filler_widths(rect, opening_props):
+    """Return (left_width, right_width) for an APPLIANCE opening's filler stiles.
+
+    ``clear`` is the face-frame opening width (cage minus side reveals). Two
+    input modes, mirroring the legacy appliance opening:
+      * set_appliance_width ON  -> the user gives the appliance width; the
+        remainder ``clear - appliance_width`` is split evenly into two fillers.
+      * set_appliance_width OFF -> the user gives each filler width directly;
+        the appliance simply occupies whatever clear width remains.
+    include_fillers OFF returns (0, 0) so the opening can be reserved as an
+    appliance with no fillers built yet. Widths are clamped to be >= 0 and to
+    never exceed the clear opening (scaled down together if they would).
+    """
+    if not getattr(opening_props, 'include_fillers', True):
+        return (0.0, 0.0)
+    clear = rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
+    if clear <= 0.0:
+        return (0.0, 0.0)
+    if getattr(opening_props, 'set_appliance_width', True):
+        appl = max(0.0, min(opening_props.appliance_width, clear))
+        each = max(0.0, (clear - appl) / 2.0)
+        return (each, each)
+    left = max(0.0, opening_props.left_filler_amount)
+    right = max(0.0, opening_props.right_filler_amount)
+    total = left + right
+    if total > clear and total > 0.0:
+        scale = clear / total
+        left *= scale
+        right *= scale
+    return (left, right)
 
 
 # ---------------------------------------------------------------------------

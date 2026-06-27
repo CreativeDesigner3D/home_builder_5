@@ -715,9 +715,22 @@ def draw_opening_properties(layout, opening_obj):
         if op.front_type == 'FALSE_FRONT':
             fcol.prop(op, 'is_tilt_out', text="Tilt-Out")
 
+        # Appliance: filler stiles fitting an appliance. Two input modes
+        # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
+        if op.front_type == 'APPLIANCE':
+            fcol.prop(op, 'include_fillers', text="Include Fillers")
+            if op.include_fillers:
+                fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
+                if op.set_appliance_width:
+                    fcol.prop(op, 'appliance_width', text="Appliance Width")
+                else:
+                    frow = fcol.row(align=True)
+                    frow.prop(op, 'left_filler_amount', text="Left Filler")
+                    frow.prop(op, 'right_filler_amount', text="Right Filler")
+
     # Open: swing / motion amount, kept separate from the front-type
     # controls. INSET_PANEL has no motion; NONE has no front to animate.
-    if op.front_type not in ('NONE', 'INSET_PANEL'):
+    if op.front_type not in ('NONE', 'INSET_PANEL', 'APPLIANCE'):
         opbox = layout.box()
         opbox.prop(op, 'swing_percent', text="Open", slider=True)
 

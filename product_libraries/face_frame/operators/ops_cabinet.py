@@ -1915,10 +1915,10 @@ _OPENING_PRESETS = {
     # Tilt-out: a drawer-styled front hinged on the bottom (its own front_type
     # now, not a FALSE_FRONT + label flag).
     'TILT_OUT':          {'front_type': 'TILT_OUT'},
-    # APPLIANCE: open opening with no shelves and an 'Appliance' label.
-    # Reuses the ACCESSORY interior kind for the label until a dedicated
-    # APPLIANCE front_type or interior kind lands.
-    'APPLIANCE':         {'front_type': 'NONE',
+    # APPLIANCE: appliance front_type (auto left/right filler stiles fitting
+    # the appliance width) with no shelves. The ACCESSORY 'Appliance' label is
+    # kept so the appliance name still prints on 2D drawings / legend.
+    'APPLIANCE':         {'front_type': 'APPLIANCE',
                           'shelves': 'CLEAR',
                           'appliance_label': True},
 }

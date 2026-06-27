@@ -4754,6 +4754,7 @@ FRONT_TYPE_ITEMS = [
     ('FALSE_FRONT', "False Front", "Decorative drawer-style panel; fixed (does not open)"),
     ('TILT_OUT', "Tilt-Out", "Drawer-style front hinged on the bottom; tilts down to open"),
     ('INSET_PANEL', "Inset Panel", "1/4\" panel filling the face frame opening; no overlay, no swing"),
+    ('APPLIANCE', "Appliance", "Open opening sized for an appliance; adds left/right filler stiles to fit the appliance width"),
 ]
 
 
@@ -4841,6 +4842,46 @@ class Face_Frame_Opening_Props(PropertyGroup):
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
         update=_update_front_type,
+    )  # type: ignore
+
+    # ---- APPLIANCE front type: filler stiles fitting an appliance ----
+    # When front_type == 'APPLIANCE' the opening carries no door/drawer;
+    # instead up to two narrow face-frame filler stiles are added at the
+    # left/right inboard edges so the clear opening matches the appliance
+    # width. Two input modes, toggled by set_appliance_width:
+    #   ON  -> user types appliance_width; left/right fillers are computed
+    #          at build time as (clear_opening - appliance_width)/2 each.
+    #   OFF -> user types left/right filler widths directly; the appliance
+    #          width is whatever clear opening remains.
+    # include_fillers gates whether the filler parts are built, so an
+    # opening can be reserved as an appliance without fillers yet.
+    set_appliance_width: BoolProperty(
+        name="Set Appliance Width",
+        description="Enter the appliance width and split the remainder into equal left/right fillers; off lets you type each filler width directly",
+        default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+    appliance_width: FloatProperty(
+        name="Appliance Width",
+        description="Width of the appliance the opening must fit; fillers fill the remainder",
+        default=units.inch(24.0), unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    include_fillers: BoolProperty(
+        name="Include Fillers",
+        description="Build the left/right filler stiles; off reserves the opening as an appliance with no fillers",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    left_filler_amount: FloatProperty(
+        name="Left Filler",
+        description="Width of the left filler stile (used directly when Set Appliance Width is off)",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_filler_amount: FloatProperty(
+        name="Right Filler",
+        description="Width of the right filler stile (used directly when Set Appliance Width is off)",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # PULLOUT model: an accessory product code chosen for a PULLOUT

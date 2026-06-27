@@ -356,6 +356,13 @@ PART_ROLE_DRAWER_BOX = 'DRAWER_BOX'
 # Front roles that share the same panel geometry today. Keeping them
 # grouped here so reconciliation can iterate the set instead of
 # spelling each role out.
+# Left/right filler stiles built inside an APPLIANCE opening (no door/drawer).
+# Sits in the face-frame plane like a stile but is wiped + rebuilt per recalc
+# like a front part, so it's grouped with FRONT_PART_ROLES rather than the
+# cabinet-level FACE_FRAME_PART_ROLES (it has no per-part unlock width; its
+# width comes from the opening's appliance/filler props).
+PART_ROLE_APPLIANCE_FILLER = 'APPLIANCE_FILLER'
+
 FRONT_PART_ROLES = frozenset({
     PART_ROLE_DOOR,
     PART_ROLE_DRAWER_FRONT,
@@ -364,6 +371,7 @@ FRONT_PART_ROLES = frozenset({
     PART_ROLE_TILT_OUT,
     PART_ROLE_INSET_PANEL,
     PART_ROLE_APRON,
+    PART_ROLE_APPLIANCE_FILLER,
 })
 
 FRONT_TYPE_TO_ROLE = {
@@ -5135,6 +5143,47 @@ class FaceFrameCabinet(GeoNodeCage):
                 apron.set_input('Length', apron_h)
                 apron.set_input('Width', full_w)
                 apron.set_input('Thickness', fft)
+
+        # APPLIANCE openings: filler stiles at the left/right inboard edges so
+        # the clear opening matches the appliance width. Built directly here
+        # (no front pivot); PART_ROLE_APPLIANCE_FILLER is in FRONT_PART_ROLES so
+        # they wipe + rebuild on every recalc. Oriented like a stile (Length ->
+        # vertical, Width -> horizontal, Thickness -> face-frame depth) and
+        # parented to the opening cage so they ride the angled-FF rotation the
+        # same way the apron does.
+        if front_type == 'APPLIANCE':
+            left_w, right_w = solver.appliance_filler_widths(rect, op_props)
+            clear_h = (rect['cage_dim_z'] - rect['reveal_top']
+                       - rect['reveal_bottom'])
+            fft = cab_props.face_frame_thickness
+            z0 = rect['reveal_bottom']
+            filler_specs = []
+            if left_w > 0.0:
+                filler_specs.append(
+                    ('Left Appliance Filler', rect['reveal_left'], left_w))
+            if right_w > 0.0:
+                x_right = rect['cage_dim_x'] - rect['reveal_right'] - right_w
+                filler_specs.append(
+                    ('Right Appliance Filler', x_right, right_w))
+            for fname, x0, fw in filler_specs:
+                if clear_h <= 0.0 or fw <= 0.0:
+                    continue
+                filler = CabinetPart()
+                filler.create(fname)
+                filler.obj.parent = opening_obj
+                filler.obj['hb_part_role'] = PART_ROLE_APPLIANCE_FILLER
+                filler.obj['CABINET_PART'] = True
+                filler.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                filler.obj.rotation_euler.y = math.radians(-90)
+                filler.obj.rotation_euler.z = math.radians(90)
+                filler.set_input('Mirror Y', True)
+                # Mirror Z False so the filler's thickness sits in the
+                # face-frame plane (proud), not behind it.
+                filler.set_input('Mirror Z', False)
+                filler.obj.location = (x0, 0.0, z0)
+                filler.set_input('Length', clear_h)
+                filler.set_input('Width', fw)
+                filler.set_input('Thickness', fft)
 
     def _build_drawer_look_fronts(self, front, leaf, op_props):
         """Lay N applied drawer fronts on a DOOR leaf so it reads exactly
