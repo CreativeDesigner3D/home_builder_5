@@ -428,8 +428,13 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
         """Apply highlight/dim to a single object."""
         # Skip walls, doors, windows, cutting objects - they are not part of
         # the face frame hierarchy and shouldn't be touched by mode toggling.
+        # 2D annotations (dimension text, numbered callouts) parented onto a
+        # cabinet are skipped too: they author their own colour and must keep
+        # it, otherwise the not-highlighted branch resets them to white and
+        # they disappear on layout-view output.
         if any(t in obj for t in ('IS_WALL_BP', 'IS_ENTRY_DOOR_BP',
-                                  'IS_WINDOW_BP', 'IS_CUTTING_OBJ')):
+                                  'IS_WINDOW_BP', 'IS_CUTTING_OBJ',
+                                  'IS_2D_ANNOTATION')):
             return
         # A cabinet group cage is a container the user reaches INTO via a
         # selection mode (Cabinets shows its member cabinet cages, etc.),
