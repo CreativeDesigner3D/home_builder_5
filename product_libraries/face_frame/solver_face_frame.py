@@ -3656,11 +3656,19 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
 
 
 def _rollout_descriptors(rect, cage_dim_y, item):
-    qty = item.qty
-    if qty <= 0:
+    # Per-box stack: each box in item.rollout_boxes carries its own height,
+    # so the boxes are placed bottom to top by a running Z sum rather than a
+    # uniform step. Items saved before per-box heights have an empty
+    # rollout_boxes collection until the recalc migrates them; fall back to a
+    # uniform stack of qty boxes at rollout_height so geometry is unchanged
+    # in the meantime.
+    if len(item.rollout_boxes):
+        heights = [box.height for box in item.rollout_boxes]
+    else:
+        heights = [item.rollout_height] * item.qty
+    if not heights:
         return []
     cage_dim_x = rect['cage_dim_x']
-    item_height = item.rollout_height
     bottom_gap = item.bottom_gap
     distance_between = item.distance_between
     setback = item.item_setback
@@ -3670,8 +3678,8 @@ def _rollout_descriptors(rect, cage_dim_y, item):
     box_dy = max(0.0, cage_dim_y - setback)
 
     out = []
-    for k in range(qty):
-        z = bottom_gap + k * (item_height + distance_between)
+    z = bottom_gap
+    for k, item_height in enumerate(heights):
         out.append({
             'kind':         'ROLLOUT_BOX',
             'role':         'ROLLOUT_BOX',
@@ -3680,6 +3688,7 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'position':     (PULLOUT_SPACER_THICKNESS, setback, z),
             'dims':         (box_dx, box_dy, item_height),
         })
+        z += item_height + distance_between
     out.extend(_assembly_spacers(
         rect, spacer_height, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
         'Rollout Spacer',

@@ -3052,6 +3052,39 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+# Standard rollout box heights (inches) keyed by the preset enum id, plus the
+# matching enum items. CUSTOM is intentionally absent from the map: it leaves
+# a box's height untouched so a typed value stands.
+_ROLLOUT_HEIGHT_PRESETS_IN = {
+    'IN_4_625': 4.625,
+    'IN_6_5': 6.5,
+    'IN_8_375': 8.375,
+    'IN_11_625': 11.625,
+}
+
+ROLLOUT_HEIGHT_PRESET_ITEMS = [
+    ('IN_4_625',  '4 5/8"',  'Standard 4 5/8" rollout box height'),
+    ('IN_6_5',    '6 1/2"',  'Standard 6 1/2" rollout box height'),
+    ('IN_8_375',  '8 3/8"',  'Standard 8 3/8" rollout box height'),
+    ('IN_11_625', '11 5/8"', 'Standard 11 5/8" rollout box height'),
+    ('CUSTOM',    'Custom',  'Type an exact box height in the field beside it'),
+]
+
+
+def _update_rollout_box_preset(self, context):
+    """A rollout box's preset writes its inch value into the box's height
+    (the field the solver reads when stacking boxes); CUSTOM leaves height
+    alone for a typed value. The inner write is suspended so it coalesces
+    into the one recalc below.
+    """
+    from . import types_face_frame
+    inches = _ROLLOUT_HEIGHT_PRESETS_IN.get(self.height_preset)
+    with types_face_frame.suspend_recalc():
+        if inches is not None:
+            self.height = units.inch(inches)
+    _update_cabinet_dim(self, context)
+
+
 def _update_refrigerator_opening_height(self, context):
     """Per-cabinet refrigerator opening height.
 
@@ -4574,6 +4607,26 @@ class Face_Frame_Bay_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
+    """One drawer box in a ROLLOUT stack. Each box carries its own height
+    so a stack can mix sizes; height_preset picks a standard size (or
+    Custom to type one). The preset writes its value into `height`, which
+    the solver reads when stacking the boxes bottom to top.
+    """
+    height_preset: EnumProperty(
+        name="Height",
+        description="Standard rollout box height, or Custom to type an exact value",
+        items=ROLLOUT_HEIGHT_PRESET_ITEMS, default='IN_4_625',
+        update=_update_rollout_box_preset,
+    )  # type: ignore
+    height: FloatProperty(
+        name="Box Height",
+        description="Height of this rollout drawer box",
+        default=units.inch(4.625), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
 class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     """One interior item attached to an opening - shelf, accessory, etc.
     Holds every kind's data side-by-side; the recalc reads only the
@@ -4681,6 +4734,14 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         default=units.inch(3.625), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Per-box rollout heights: each ROLLOUT box is an entry here with its
+    # own height, so a stack can mix sizes. Empty on items saved before this
+    # field; the recalc seeds it once from rollout_height x qty (migration)
+    # and the solver falls back to that uniform stack until it does. For a
+    # ROLLOUT the box count is len(rollout_boxes); qty/unlock_qty are now
+    # PULLOUT_SHELF-only.
+    rollout_boxes: CollectionProperty(type=Face_Frame_Rollout_Box)  # type: ignore
+    rollout_boxes_index: IntProperty(default=0)  # type: ignore
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked
@@ -6728,6 +6789,7 @@ classes = (
     Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
+    Face_Frame_Rollout_Box,
     Face_Frame_Interior_Item,
     Face_Frame_Interior_Region_Props,
     Face_Frame_Drawer_Look_Opening,

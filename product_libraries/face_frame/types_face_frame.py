@@ -5637,6 +5637,17 @@ class FaceFrameCabinet(GeoNodeCage):
                 if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
                     if item.shelf_qty != auto_qty:
                         item.shelf_qty = auto_qty
+                elif (item.kind == 'ROLLOUT'
+                      and len(item.rollout_boxes) == 0 and item.qty > 0):
+                    # One-time migration of rollouts saved before per-box
+                    # heights: seed one box per qty at the old uniform
+                    # height. Guarded on an empty collection so it runs once;
+                    # the writes re-enter recalc but the _RECALCULATING guard
+                    # absorbs that.
+                    for _ in range(item.qty):
+                        box = item.rollout_boxes.add()
+                        box.height_preset = 'CUSTOM'
+                        box.height = item.rollout_height
 
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,

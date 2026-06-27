@@ -1194,6 +1194,12 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
             item.shelf_setback = inch(6.0)
         else:
             item.kind = self.kind
+            # Seed a couple of default boxes for a new rollout; the box
+            # count is the list length and each box defaults to the
+            # smallest standard height (4 5/8").
+            if self.kind == 'ROLLOUT':
+                for _ in range(2):
+                    item.rollout_boxes.add()
 
         # Field defaults on the prop class (shelf_qty=1, qty=2, tray_qty=3,
         # vanity_z=11", ...) cover the initial values; the recalc owns
@@ -1260,6 +1266,65 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_add_rollout_box(bpy.types.Operator):
+    """Append a drawer box to a rollout stack. Targets the interior item
+    at item_index on the resolved opening / region. New boxes default to
+    the smallest standard height (4 5/8")."""
+    bl_idname = "hb_face_frame.add_rollout_box"
+    bl_label = "Add Rollout Box"
+    bl_description = "Add another drawer box to this rollout stack"
+    bl_options = {'UNDO'}
+
+    item_index: bpy.props.IntProperty(default=-1)  # type: ignore
+    target_name: bpy.props.StringProperty(default="")  # type: ignore
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            return {'CANCELLED'}
+        if not (0 <= self.item_index < len(target_props.interior_items)):
+            return {'CANCELLED'}
+        item = target_props.interior_items[self.item_index]
+        item.rollout_boxes.add()
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_rollout_box(bpy.types.Operator):
+    """Remove the drawer box at box_index from the rollout stack on the
+    interior item at item_index."""
+    bl_idname = "hb_face_frame.remove_rollout_box"
+    bl_label = "Remove Rollout Box"
+    bl_description = "Remove this drawer box from the rollout stack"
+    bl_options = {'UNDO'}
+
+    item_index: bpy.props.IntProperty(default=-1)  # type: ignore
+    box_index: bpy.props.IntProperty(default=-1)  # type: ignore
+    target_name: bpy.props.StringProperty(default="")  # type: ignore
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            return {'CANCELLED'}
+        if not (0 <= self.item_index < len(target_props.interior_items)):
+            return {'CANCELLED'}
+        item = target_props.interior_items[self.item_index]
+        if 0 <= self.box_index < len(item.rollout_boxes):
+            item.rollout_boxes.remove(self.box_index)
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Interior split operators
 # ---------------------------------------------------------------------------
@@ -1301,10 +1366,19 @@ def _copy_interior_items(src, dst):
             try:
                 setattr(d, prop.identifier, getattr(s, prop.identifier))
             except (AttributeError, TypeError):
-                # Skip props we can't copy (pointer types, etc.); none
-                # of those exist on Face_Frame_Interior_Item today, but
-                # the loop is defensive against future additions.
+                # Skip props we can't copy (pointer types, etc.); the
+                # generic loop also can't assign the rollout_boxes
+                # collection, which is deep-copied just below.
                 pass
+        # rollout_boxes is a nested collection setattr can't assign; copy
+        # each box explicitly so per-box rollout heights survive the
+        # flat -> tree migration on split.
+        if hasattr(s, 'rollout_boxes'):
+            d.rollout_boxes.clear()
+            for sb in s.rollout_boxes:
+                db = d.rollout_boxes.add()
+                db.height_preset = sb.height_preset
+                db.height = sb.height
 
 
 def _split_active_region(target, axis):
@@ -4027,6 +4101,8 @@ classes = (
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
     hb_face_frame_OT_remove_interior_item,
+    hb_face_frame_OT_add_rollout_box,
+    hb_face_frame_OT_remove_rollout_box,
     hb_face_frame_OT_add_interior_division,
     hb_face_frame_OT_add_interior_fixed_shelf,
     hb_face_frame_OT_remove_interior_split,

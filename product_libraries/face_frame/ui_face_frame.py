@@ -851,17 +851,38 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
             sub.prop(item, 'shelf_setback', text="Setback")
-        elif item.kind in {'PULLOUT_SHELF', 'ROLLOUT'}:
+        elif item.kind == 'PULLOUT_SHELF':
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             field.enabled = item.unlock_qty
             field.prop(item, 'qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_qty', text="", icon=lock_icon)
-            if item.kind == 'PULLOUT_SHELF':
-                sub.prop(item, 'pullout_thickness', text="Thickness")
-            else:
-                sub.prop(item, 'rollout_height', text="Box Height")
+            sub.prop(item, 'pullout_thickness', text="Thickness")
+            sub.prop(item, 'distance_between', text="Gap Between")
+            sub.prop(item, 'bottom_gap', text="Bottom Gap")
+            sub.prop(item, 'item_setback', text="Front Setback")
+            sub.prop(item, 'spacer_height', text="Spacer Width")
+        elif item.kind == 'ROLLOUT':
+            # One row per box: each box picks its own standard height (or
+            # Custom to type one). The box count is the number of rows.
+            for j, box in enumerate(item.rollout_boxes):
+                brow = sub.row(align=True)
+                brow.label(text=f"Box {j + 1}")
+                brow.prop(box, 'height_preset', text="")
+                if box.height_preset == 'CUSTOM':
+                    brow.prop(box, 'height', text="")
+                rm_box = brow.operator(
+                    "hb_face_frame.remove_rollout_box", text="", icon='X',
+                )
+                rm_box.item_index = i
+                rm_box.box_index = j
+                rm_box.target_name = target_name
+            add_box = sub.operator(
+                "hb_face_frame.add_rollout_box", text="Add Box", icon='ADD',
+            )
+            add_box.item_index = i
+            add_box.target_name = target_name
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
