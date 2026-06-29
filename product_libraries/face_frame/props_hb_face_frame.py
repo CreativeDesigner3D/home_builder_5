@@ -3052,6 +3052,21 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_panel_split_auto(self, context):
+    """Auto-openings toggle on an applied panel. Recalc the HOST cabinet
+    so _reconcile_applied_panels re-runs the split: auto on re-applies the
+    width ladder, auto off preserves the current bay count. On a non-panel
+    cabinet (the flag is on the shared propgroup) this is a plain recalc."""
+    from . import types_face_frame
+    obj = self.id_data
+    if obj is None:
+        return
+    if obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE) and obj.parent is not None:
+        types_face_frame.recalculate_face_frame_cabinet(obj.parent)
+    else:
+        types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
 # Standard rollout box heights (inches) keyed by the preset enum id, plus the
 # matching enum items. CUSTOM is intentionally absent from the map: it leaves
 # a box's height untouched so a typed value stands.
@@ -3821,6 +3836,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # per cabinet rather than per-side - builder style is uniform within
     # a cabinet in practice. Easy to split later if that doesn't hold.
     panel_frame_auto: BoolProperty(name="Auto Panel Frame Widths", default=True)  # type: ignore
+    # Applied-panel opening count. Auto (default) follows the width
+    # ladder; inserting/deleting a bay on the panel flips this off so the
+    # manual count survives the host recalc. On the shared propgroup but
+    # only read for applied panels (PanelFaceFrameCabinet roots).
+    panel_split_auto: BoolProperty(
+        name="Auto Openings", default=True,
+        description="When on, the applied panel's number of openings "
+                    "follows its width. Inserting or deleting a bay "
+                    "turns this off so your opening count survives "
+                    "recalculation",
+        update=_update_panel_split_auto)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
         unit='LENGTH', precision=4,
@@ -4163,6 +4189,35 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         unit='LENGTH', precision=4,
         description="Overhang of the wood top past the carcass on the "
                     "left, right, and front (the back stays flush)",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Per-side furniture wood top overhang past the carcass. Replaces the
+    # single furniture_top_overhang above (kept for backward data compat,
+    # used as the legacy fallback in _position_furniture_top). Front / left
+    # / right default to 1" (the old uniform default); back defaults to 0"
+    # (flush against the wall, the previous fixed behavior).
+    furniture_top_overhang_front: FloatProperty(
+        name="Wood Top Front Overhang", default=units.inch(1.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang of the wood top past the front of the carcass",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    furniture_top_overhang_back: FloatProperty(
+        name="Wood Top Back Overhang", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang of the wood top past the back of the carcass",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    furniture_top_overhang_left: FloatProperty(
+        name="Wood Top Left Overhang", default=units.inch(1.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang of the wood top past the left side of the carcass",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    furniture_top_overhang_right: FloatProperty(
+        name="Wood Top Right Overhang", default=units.inch(1.0), min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang of the wood top past the right side of the carcass",
         update=_update_cabinet_dim,
     )  # type: ignore
     extend_left_end_down: BoolProperty(

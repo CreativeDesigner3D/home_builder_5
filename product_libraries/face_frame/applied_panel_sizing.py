@@ -139,14 +139,25 @@ def resolve_panel_sizing(cab_obj, side, panel_condition):
     if not cab.panel_frame_auto:
         return None
     if panel_condition in ('WORKING_FF', 'FALSE_FF'):
-        return _match_cabinet_widths(cab, side)
-    # PANELED: 5-piece door drives the rail formula for all three
-    # sides including BACK. Stile formula is shared (cabinet-based).
-    # SLAB or missing door style falls back to the match-cabinet path.
-    door_style = _resolve_door_style(cab_obj)
-    if door_style is None or door_style.door_type != '5_PIECE':
-        return _match_cabinet_widths(cab, side)
-    return _match_5_piece_door(cab, door_style, side)
+        sizes = _match_cabinet_widths(cab, side)
+    else:
+        # PANELED: 5-piece door drives the rail formula for all three
+        # sides including BACK. SLAB or missing door style falls back to
+        # the match-cabinet path.
+        door_style = _resolve_door_style(cab_obj)
+        if door_style is None or door_style.door_type != '5_PIECE':
+            sizes = _match_cabinet_widths(cab, side)
+        else:
+            sizes = _match_5_piece_door(cab, door_style, side)
+    # The back panel has no cabinet face frame at its ends to align to,
+    # so its left/right stiles match the mid stiles - a uniform stile
+    # width reads cleanly across the whole back. LEFT/RIGHT panels keep
+    # the corner-aligned widths from _stile_widths.
+    if side == 'BACK':
+        msw = _mid_stile_width_for_panel(cab_obj, cab, side)
+        sizes['left_stile_width'] = msw
+        sizes['right_stile_width'] = msw
+    return sizes
 
 
 def apply_panel_sizing(cab_obj, panel_obj, side, panel_condition):
@@ -431,8 +442,17 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
     # _create_mid_parts_at guard converge to a clean state on recalc.
     _strip_panel_carcass_parts(panel_obj)
 
-    rails = _detect_panel_mid_rails(cab_obj, side, panel_bay_obj)
     panel_props = panel_obj.face_frame_cabinet
+    # Manual mode: the user has pinned this panel's openings - via insert /
+    # delete bay or an Opening-mode H / V split (both flip panel_split_auto
+    # off). Leave the whole opening tree untouched so those edits survive
+    # the host recalc; only the carcass-part strip above runs. Frame widths
+    # still flow through apply_panel_sizing, gated separately by
+    # panel_frame_auto.
+    if not panel_props.panel_split_auto:
+        return
+
+    rails = _detect_panel_mid_rails(cab_obj, side, panel_bay_obj)
     wide = panel_props.width >= _MID_STILE_WIDTH_THRESHOLD
     # Openings scale with width when the panel splits into real bays
     # (no rail-matched H-split in play); see the width ladder above.

@@ -562,6 +562,10 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             # dims above are the editor); multi-bay gets a compact box
             # per bay with editable size + an expand toggle for more.
             ui_face_frame.draw_bays_in_prompts(layout, root)
+            # Applied panels: surface the auto-openings toggle so a user
+            # can return a manually-pinned panel to width-driven openings.
+            if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+                layout.prop(cab_props, 'panel_split_auto')
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated
@@ -843,6 +847,13 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             orig_front = getattr(self, f'front_type_{new_count}')
             if op_props.front_type != orig_front:
                 op_props.front_type = orig_front
+
+            # A custom split inside an applied panel pins it to manual
+            # mode so the host recalc stops wiping / rebuilding the
+            # opening tree (mirrors insert / delete bay). Without this the
+            # next recalc would revert the user's split.
+            if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+                root.face_frame_cabinet.panel_split_auto = False
 
             types_face_frame.recalculate_face_frame_cabinet(root)
 
@@ -3027,6 +3038,13 @@ class hb_face_frame_OT_insert_bay(bpy.types.Operator):
         cab = types_face_frame._wrap_cabinet(root)
         cab.insert_bay(self.bay_index, self.direction)
 
+        # A user-driven insert on an applied panel pins its opening count
+        # so the host recalc's auto-split stops overriding it. The auto
+        # path calls insert_bay as a method (not via this operator), so it
+        # won't trip this. Setting the flag recalcs the host panel.
+        if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+            root.face_frame_cabinet.panel_split_auto = False
+
         # Reapply the cabinet's current selection mode so the new bay's
         # cage / opening / parts inherit the right visual treatment
         # instead of staying on default colors. Scoped via
@@ -3067,6 +3085,11 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
         if not ok:
             self.report({'ERROR'}, "Cannot delete the only remaining bay")
             return {'CANCELLED'}
+        # A user-driven delete on an applied panel pins its opening count
+        # so the host recalc's auto-split stops overriding it (the auto
+        # path calls delete_bay as a method, not via this operator).
+        if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+            root.face_frame_cabinet.panel_split_auto = False
         return {'FINISHED'}
 
 

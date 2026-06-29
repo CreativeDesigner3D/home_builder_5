@@ -2518,22 +2518,28 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _position_furniture_top(self, top_obj):
         """Size + place the furniture top from the cabinet width / depth /
-        height and the furniture_top_overhang / _thickness props. The back
-        edge stays flush (against the wall); the left, right, and front
-        edges overhang by furniture_top_overhang."""
+        height and the per-side furniture_top_overhang_* / _thickness props.
+        Each edge (front / back / left / right) overhangs the carcass
+        independently. Falls back to the legacy uniform furniture_top_overhang
+        (and a flush back) for data saved before the per-side props."""
         cab = self.obj.face_frame_cabinet
         dim_x = cab.width
         dim_y = cab.depth
         dim_z = cab.height
-        oh = cab.furniture_top_overhang
+        legacy = cab.furniture_top_overhang
+        ohl = getattr(cab, 'furniture_top_overhang_left', legacy)
+        ohr = getattr(cab, 'furniture_top_overhang_right', legacy)
+        ohf = getattr(cab, 'furniture_top_overhang_front', legacy)
+        ohb = getattr(cab, 'furniture_top_overhang_back', 0.0)
         th = cab.furniture_top_thickness
         part = GeoNodeCutpart(top_obj)
-        part.set_input('Length', dim_x + oh * 2.0)   # left + right overhang
-        part.set_input('Width', dim_y + oh)           # front overhang; back flush
+        part.set_input('Length', dim_x + ohl + ohr)   # left + right overhang
+        part.set_input('Width', dim_y + ohf + ohb)    # front + back overhang
         part.set_input('Thickness', th)
-        # Origin at the back-left corner of the case top, shifted -X by the
-        # overhang. Width runs -Y from y=0 (back flush). Thickness runs +Z.
-        top_obj.location = Vector((-oh, 0.0, dim_z))
+        # Origin at the case top back-left corner, shifted -X by the left
+        # overhang and +Y by the back overhang. Width runs -Y from the back
+        # edge (y = ohb) past the front (y = -(dim_y + ohf)). Thickness +Z.
+        top_obj.location = Vector((-ohl, ohb, dim_z))
         top_obj.rotation_euler = (0.0, 0.0, 0.0)
 
     def _cleanup_furniture_top(self):

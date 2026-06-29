@@ -1424,6 +1424,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _single_placement: bool = False # True for cabinets that don't fill or tile (e.g., Sink)
     _fill_no_bays: bool = False     # fill the wall gap but stay one piece (no bay array)
     _follow_cursor_z: bool = False  # Z tracks the cursor's wall height (floating shelf)
+    _floor_z: float = 0.0           # floor height for free placement (seeded from 3D cursor)
     _gap_snap = None                # None | 'LEFT' | 'CENTER' | 'RIGHT' gap-position snap
     _center_snap_state = None       # None | 'WINDOW' - cursor-over-target snap
     _fill_mode_before_center_snap: bool = False   # tracks transient fill->non-fill flip
@@ -1508,6 +1509,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.location.z = _upper_mount_z(_cls, scene_props)
         else:
             cage_obj.location.z = cursor_loc.z
+        # Floor reference for free placement. Seeded from the 3D cursor so
+        # a deliberately raised cursor is honored (rough-in shelves /
+        # islands); 0 (floor) by default. Free placement uses this instead
+        # of the raycast hit Z, which in a non-plan view (e.g. a front
+        # elevation) is the cursor's on-screen height rather than the
+        # floor - that floated floor cabinets up off the ground.
+        self._floor_z = cursor_loc.z
 
         # Fresh free-placement rotation each session.
         self._free_rotation_z = 0.0
@@ -2520,7 +2528,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.location.y = self.hit_location.y
             if cabinet_type != 'UPPER' and not _mounts_as_upper(
                     types_face_frame.get_cabinet_class(self.cabinet_name)):
-                cage_obj.location.z = self.hit_location.z
+                # Floor cabinets sit on the floor. Use the floor reference,
+                # not the raycast hit Z: in a non-plan view the hit is on a
+                # vertical surface at the cursor's screen height, which would
+                # float the cabinet up off the floor.
+                cage_obj.location.z = self._floor_z
             # Free placement honors the R-key rotation (90 deg steps).
             cage_obj.rotation_euler = (0, 0, self._free_rotation_z)
 
@@ -3866,6 +3878,10 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
             cage_obj.location.z = _upper_mount_z(cls, scene_props)
         else:
             cage_obj.location.z = cursor_loc.z
+        # Floor reference for free placement (see place_cabinet): use this
+        # instead of the raycast hit Z so floor cabinets don't float up in
+        # a non-plan view (front elevation).
+        self._floor_z = cursor_loc.z
 
         self.init_placement(context)
         if self.region is None:
@@ -4147,7 +4163,9 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         cage_obj.location.x = self.hit_location.x
         cage_obj.location.y = self.hit_location.y
         if self._cabinet_class.default_cabinet_type != 'UPPER':
-            cage_obj.location.z = self.hit_location.z
+            # Floor, not the raycast hit Z (front-elevation views put the
+            # hit at the cursor's screen height - see place_cabinet).
+            cage_obj.location.z = getattr(self, '_floor_z', 0.0)
         # Honor the R-key facing rotation (90 deg steps).
         cage_obj.rotation_euler = (0, 0, self._free_rotation_z)
 

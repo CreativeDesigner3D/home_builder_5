@@ -319,7 +319,11 @@ def draw_construction(layout, cab_props):
         if cab_props.furniture_top:
             col = box.column(align=True)
             col.prop(cab_props, 'furniture_top_thickness', text="Thickness")
-            col.prop(cab_props, 'furniture_top_overhang', text="Overhang")
+            col.label(text="Overhang")
+            col.prop(cab_props, 'furniture_top_overhang_front', text="Front")
+            col.prop(cab_props, 'furniture_top_overhang_back', text="Back")
+            col.prop(cab_props, 'furniture_top_overhang_left', text="Left")
+            col.prop(cab_props, 'furniture_top_overhang_right', text="Right")
 
 
 def draw_refrigerator_options(layout, root):
