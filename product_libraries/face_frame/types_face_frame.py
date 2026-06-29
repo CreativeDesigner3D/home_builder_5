@@ -17,6 +17,7 @@ Carcass conventions match frameless (same CabinetPart GeoNode setup):
 import bpy
 import bmesh
 import math
+from types import SimpleNamespace
 import os
 from contextlib import contextmanager
 
@@ -6708,6 +6709,13 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         tkh = 0.0 if leg.is_column else leg.toe_kick_height
         finish = leg.finish_type
         only_stile = leg.only_stile
+        # A side carrying an applied paneled end (Paneled / False FF /
+        # Working FF) hands its finished face to the applied panel, so
+        # the leg's own side panel + Finish-X band on that side drop out.
+        left_paneled = (cab.left_finished_end_condition
+                        in APPLIED_PANEL_END_TYPES)
+        right_paneled = (cab.right_finished_end_condition
+                         in APPLIED_PANEL_END_TYPES)
         # v2 reads
         olp = leg.override_left_panel_depth
         orp = leg.override_right_panel_depth
@@ -6757,7 +6765,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         place(L, height, l_depth, mt, (l_x, l_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
-        l_visible = not (finish == 'FINISH_RIGHT' or only_stile)
+        l_visible = not (finish == 'FINISH_RIGHT' or only_stile) and not left_paneled
         L.hide_viewport = not l_visible
         L.hide_render = not l_visible
         L['IS_FINISHED'] = (finish != 'INTERMEDIATE')
@@ -6768,7 +6776,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         place(R, height, r_depth, mt, (width, r_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
-        r_visible = finish in ('FINISH_RIGHT', 'FINISH_BOTH') and not only_stile
+        r_visible = finish in ('FINISH_RIGHT', 'FINISH_BOTH') and not only_stile and not right_paneled
         R.hide_viewport = not r_visible
         R.hide_render = not r_visible
         R['IS_FINISHED'] = True
@@ -6814,7 +6822,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         place(FXL, height, fx_width, fxl_t, (0.0, -depth + fft + fx_width, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
-        fxl_vis = finish in ('INTERMEDIATE', 'FINISH_RIGHT') and not only_stile
+        fxl_vis = finish in ('INTERMEDIATE', 'FINISH_RIGHT') and not only_stile and not left_paneled
         FXL.hide_viewport = not fxl_vis
         FXL.hide_render = not fxl_vis
         FXL['IS_FINISHED'] = True
@@ -6825,7 +6833,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         place(FXR, height, fx_width, fxr_t, (width, -depth + fft + fx_width, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
-        fxr_vis = finish in ('FINISH_LEFT', 'INTERMEDIATE') and not only_stile
+        fxr_vis = finish in ('FINISH_LEFT', 'INTERMEDIATE') and not only_stile and not right_paneled
         FXR.hide_viewport = not fxr_vis
         FXR.hide_render = not fxr_vis
         FXR['IS_FINISHED'] = True
@@ -6855,6 +6863,26 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
               {'Mirror X': False, 'Mirror Y': True})
         NR.hide_viewport = not ibrn
         NR.hide_render = not ibrn
+
+        # --- Applied finished-end panels (Left / Right) --------------
+        # The leg recalc bypasses the bay solver, so the shared
+        # _reconcile_applied_panels needs a minimal layout snapshot: just
+        # the fields applied_panel_geometry and the scribe-offset helpers
+        # read (overall dims, face-frame thickness, each side's finish
+        # condition + scribe). Only Left / Right are offered in the leg
+        # UI; Back stays UNFINISHED so no back panel is built. A side left
+        # UNFINISHED produces no panel, so this is opt-in and cheap.
+        leg_layout = SimpleNamespace(
+            dim_x=width,
+            dim_y=depth,
+            dim_z=height,
+            fft=fft,
+            l_fin_end=cab.left_finished_end_condition,
+            r_fin_end=cab.right_finished_end_condition,
+            l_scribe=cab.left_scribe,
+            r_scribe=cab.right_scribe,
+        )
+        self._reconcile_applied_panels(leg_layout)
 
 
 class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):

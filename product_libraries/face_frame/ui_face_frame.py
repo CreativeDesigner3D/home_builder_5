@@ -445,35 +445,64 @@ def draw_leg_product(layout, root):
     vrow.prop(leg, 'is_appliance_leg', text="Appliance", toggle=True)
     vrow.prop(leg, 'is_island_leg', text="Island", toggle=True)
 
+    # Material Thickness / Face Frame Thickness are intentionally not
+    # exposed here - users never change them (recalc still reads the
+    # propgroup defaults).
     col = layout.column(align=True)
-    col.prop(leg, 'material_thickness', text="Material Thickness")
-    col.prop(leg, 'face_frame_thickness', text="Face Frame Thickness")
     sub = col.column(align=True)
     sub.enabled = not leg.is_column
     sub.prop(leg, 'toe_kick_height', text="Toe Kick Height")
     sub.prop(leg, 'toe_kick_setback', text="Toe Kick Setback")
 
+    # Rarely-touched sections collapse (closed by default) to keep the
+    # dialog short. Toggle state lives on the leg_product propgroup.
     dbox = layout.box()
-    dbox.label(text="Panel Depth Overrides")
-    dcol = dbox.column(align=True)
-    dcol.prop(leg, 'override_left_panel_depth', text="Left (0 = auto)")
-    dcol.prop(leg, 'override_right_panel_depth', text="Right (0 = auto)")
+    dbox.prop(leg, 'show_panel_depth',
+              icon='TRIA_DOWN' if leg.show_panel_depth else 'TRIA_RIGHT',
+              emboss=False, text="Panel Depth Overrides")
+    if leg.show_panel_depth:
+        dcol = dbox.column(align=True)
+        dcol.prop(leg, 'override_left_panel_depth', text="Left (0 = auto)")
+        dcol.prop(leg, 'override_right_panel_depth', text="Right (0 = auto)")
 
     nbox = layout.box()
-    nbox.label(text="Back & Nailers")
-    nrow = nbox.row(align=True)
-    nrow.prop(leg, 'include_back_left_nailer', text="Left Nailer", toggle=True)
-    nrow.prop(leg, 'include_back_right_nailer', text="Right Nailer", toggle=True)
-    nsub = nbox.column(align=True)
-    nsub.enabled = leg.include_back_left_nailer or leg.include_back_right_nailer
-    nsub.prop(leg, 'back_width', text="Back Width")
-    nsub.prop(leg, 'back_thickness', text="Back Thickness")
-    nsub.prop(leg, 'nailer_width', text="Nailer Width")
-    nsub.prop(leg, 'nailer_thickness', text="Nailer Thickness")
+    nbox.prop(leg, 'show_back_nailers',
+              icon='TRIA_DOWN' if leg.show_back_nailers else 'TRIA_RIGHT',
+              emboss=False, text="Back & Nailers")
+    if leg.show_back_nailers:
+        nrow = nbox.row(align=True)
+        nrow.prop(leg, 'include_back_left_nailer', text="Left Nailer", toggle=True)
+        nrow.prop(leg, 'include_back_right_nailer', text="Right Nailer", toggle=True)
+        nsub = nbox.column(align=True)
+        nsub.enabled = leg.include_back_left_nailer or leg.include_back_right_nailer
+        nsub.prop(leg, 'back_width', text="Back Width")
+        nsub.prop(leg, 'back_thickness', text="Back Thickness")
+        nsub.prop(leg, 'nailer_width', text="Nailer Width")
+        nsub.prop(leg, 'nailer_thickness', text="Nailer Thickness")
 
     fbox = layout.box()
-    fbox.label(text="Finish-X Bands")
-    fbox.prop(leg, 'flush_x_panel_width', text="Band Width")
+    fbox.prop(leg, 'show_finish_x',
+              icon='TRIA_DOWN' if leg.show_finish_x else 'TRIA_RIGHT',
+              emboss=False, text="Finish-X Bands")
+    if leg.show_finish_x:
+        fbox.prop(leg, 'flush_x_panel_width', text="Band Width")
+
+    # Applied finished-end panels on the leg's Left / Right sides.
+    # Mirrors the cabinet Finished Ends control: choosing Paneled /
+    # False FF / Working FF spawns an applied panel on that side, built
+    # in LegProductFaceFrameCabinet.recalculate via
+    # _reconcile_applied_panels.
+    ebox = layout.box()
+    ebox.label(text="Finished Ends")
+    ecol = ebox.column(align=True)
+    for side, slabel in (('left', 'Left'), ('right', 'Right')):
+        erow = ecol.row(align=True)
+        erow.label(text=slabel)
+        erow.prop(cab, f'{side}_finished_end_condition', text="")
+        if getattr(cab, f'{side}_finished_end_condition') not in (
+                'UNFINISHED', 'FLUSH_X'):
+            erow.prop(cab, f'{side}_side_finished_extend_back',
+                      text="Extend Back")
 
 
 def draw_face_frame_defaults(layout, cab_props):

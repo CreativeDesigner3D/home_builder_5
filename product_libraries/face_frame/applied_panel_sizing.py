@@ -244,13 +244,23 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     # the panel's parts must NOT be notched there. side LEFT/RIGHT maps to the
     # cabinet's same-side end stile. (toe_kick_type == 'NOTCH' below already
     # excludes FLUSH, where the stile is always to-floor.)
-    stile_to_floor = (cab.extend_left_stile_to_floor if side == 'LEFT'
-                      else cab.extend_right_stile_to_floor)
-    active = (
-        cab.cabinet_type in ('BASE', 'TALL')
-        and cab.toe_kick_type == 'NOTCH'
-        and not stile_to_floor
-    )
+    # Leg products keep their toe kick on the leg_product propgroup (and
+    # is_column / only_stile suppress it), not on the cabinet-level
+    # toe-kick fields - so the applied-panel notch must follow those,
+    # else it stays notched even when the leg's toe kick height is 0.
+    is_leg = bool(cab_obj.get('IS_LEG_PRODUCT'))
+    if is_leg:
+        leg = cab_obj.leg_product
+        active = ((not leg.is_column) and (not leg.only_stile)
+                  and leg.toe_kick_height > 0.0)
+    else:
+        stile_to_floor = (cab.extend_left_stile_to_floor if side == 'LEFT'
+                          else cab.extend_right_stile_to_floor)
+        active = (
+            cab.cabinet_type in ('BASE', 'TALL')
+            and cab.toe_kick_type == 'NOTCH'
+            and not stile_to_floor
+        )
 
     facing_role = _FACING_STILE_ROLE.get(side)
     if facing_role is None:
@@ -270,8 +280,13 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     # first for RIGHT.
     left_stile, right_stile = _stile_widths(cab, side)
     facing_width = right_stile if side == 'LEFT' else left_stile
-    setback = cab.toe_kick_setback
-    kick = cab.toe_kick_height
+    if is_leg:
+        setback = cab_obj.leg_product.toe_kick_setback
+        kick = (0.0 if cab_obj.leg_product.is_column
+                else cab_obj.leg_product.toe_kick_height)
+    else:
+        setback = cab.toe_kick_setback
+        kick = cab.toe_kick_height
 
     # Axis mapping differs by part because their local rotations
     # differ. Bottom rail: X = depth-into-the-rail (setback), Y = kick

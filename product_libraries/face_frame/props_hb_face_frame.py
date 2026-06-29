@@ -6652,6 +6652,18 @@ class Face_Frame_Leg_Props(PropertyGroup):
         description="Column variant: no toe kick (runs full height)",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Collapsible-section toggles for the Leg Properties dialog. UI
+    # state only (no recalc); rarely-touched sections default closed
+    # to keep the popup short.
+    show_panel_depth: BoolProperty(
+        name="Panel Depth Overrides", default=False,
+    )  # type: ignore
+    show_back_nailers: BoolProperty(
+        name="Back & Nailers", default=False,
+    )  # type: ignore
+    show_finish_x: BoolProperty(
+        name="Finish-X Bands", default=False,
+    )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
