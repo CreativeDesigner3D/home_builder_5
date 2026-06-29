@@ -2304,6 +2304,7 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
 
     wall_length: bpy.props.FloatProperty(name="Width",unit='LENGTH',precision=6)# type: ignore
     wall_height: bpy.props.FloatProperty(name="Height",unit='LENGTH',precision=6)# type: ignore
+    wall_end_height: bpy.props.FloatProperty(name="End Height",unit='LENGTH',precision=6)# type: ignore
     wall_thickness: bpy.props.FloatProperty(name="Depth",unit='LENGTH',precision=6)# type: ignore
 
     @classmethod
@@ -2313,6 +2314,8 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
     def check(self, context):
         self.wall.set_input('Length', self.wall_length)
         self.wall.set_input('Height', self.wall_height)
+        if self.wall.has_input('End Height'):
+            self.wall.set_input('End Height', self.wall_end_height)
         self.wall.set_input('Thickness', self.wall_thickness)
         calculate_wall_miter_angles(self.wall.obj)
         left_wall = self.wall.get_connected_wall('left')
@@ -2328,6 +2331,10 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         self.wall = hb_types.GeoNodeWall(context.object)
         self.wall_length = self.wall.get_input('Length')
         self.wall_height = self.wall.get_input('Height')
+        if self.wall.has_input('End Height'):
+            # 0 == flat: leaving End Height at 0 means the wall just follows
+            # Height. Users set a non-zero End Height only when they want a slope.
+            self.wall_end_height = self.wall.get_input('End Height')
         self.wall_thickness = self.wall.get_input('Thickness')
         self.previous_rotation = self.wall.obj.rotation_euler.z
         wm = context.window_manager
@@ -2357,6 +2364,11 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         row1 = col.row(align=True)
         row1.label(text='Height:')
         row1.prop(self, 'wall_height', text="")      
+
+        if self.wall.has_input('End Height'):
+            row1 = col.row(align=True)
+            row1.label(text='End Height:')
+            row1.prop(self, 'wall_end_height', text="")
 
         row1 = col.row(align=True)
         row1.label(text='Thickness:')
