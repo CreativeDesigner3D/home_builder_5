@@ -167,6 +167,10 @@ PART_ROLE_TOP_RAIL = 'TOP_RAIL'
 PART_ROLE_BOTTOM_RAIL = 'BOTTOM_RAIL'
 PART_ROLE_LEFT_STILE = 'LEFT_STILE'
 PART_ROLE_RIGHT_STILE = 'RIGHT_STILE'
+# Optional 'stile in lieu of leg' lower stiles on a refrigerator cabinet
+# (floor -> top of fridge opening). Built only on RefrigeratorCabinet.
+PART_ROLE_LEFT_REFRIG_STILE = 'LEFT_REFRIG_STILE'
+PART_ROLE_RIGHT_REFRIG_STILE = 'RIGHT_REFRIG_STILE'
 PART_ROLE_MID_STILE = 'MID_STILE'
 PART_ROLE_MID_RAIL = 'MID_RAIL'
 
@@ -587,6 +591,8 @@ def _overstool_profile_poly():
 FF_ROTATION_BASELINE_Z = {
     PART_ROLE_LEFT_STILE:        math.pi / 2,
     PART_ROLE_RIGHT_STILE:       math.pi / 2,
+    PART_ROLE_LEFT_REFRIG_STILE:  math.pi / 2,
+    PART_ROLE_RIGHT_REFRIG_STILE: math.pi / 2,
     PART_ROLE_TOP_RAIL:          0.0,
     PART_ROLE_BOTTOM_RAIL:       0.0,
     PART_ROLE_TOE_KICK_SUBFRONT: 0.0,
@@ -1955,6 +1961,33 @@ class FaceFrameCabinet(GeoNodeCage):
             elif role == PART_ROLE_RIGHT_STILE:
                 pos = solver.right_end_stile_position(layout)
                 length, width, thickness = solver.right_end_stile_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
+
+            # ---- Refrigerator 'stile in lieu of leg' (floor -> opening top) ----
+            elif role == PART_ROLE_LEFT_REFRIG_STILE:
+                visible = solver.has_refrig_stile(layout, 'LEFT')
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.left_refrig_stile_position(layout)
+                length, width, thickness = solver.left_refrig_stile_dims(layout)
+                child.location = pos
+                part.set_input('Length', length)
+                part.set_input('Width', width)
+                part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_RIGHT_REFRIG_STILE:
+                visible = solver.has_refrig_stile(layout, 'RIGHT')
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.right_refrig_stile_position(layout)
+                length, width, thickness = solver.right_refrig_stile_dims(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -6465,6 +6498,34 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         with suspend_recalc():
             for bay_obj in bay_objs:
                 bay_obj.face_frame_bay.remove_bottom = True
+
+        # ----- Refrigerator stiles (in lieu of leg) -----
+        # Two optional lower stiles (floor -> top of fridge opening), one per
+        # end, hidden unless refrigerator_stile_left/right is on. Built here (not
+        # in create_carcass) so only refrigerator cabinets carry them; the
+        # generic recalc positions/hides them by role. Mirror the End Stile setup
+        # so a lower stile lines up exactly beneath its (raised) end stile.
+        left_refrig = CabinetPart()
+        left_refrig.create('Left Refrigerator Stile')
+        left_refrig.obj.parent = self.obj
+        left_refrig.obj['hb_part_role'] = PART_ROLE_LEFT_REFRIG_STILE
+        left_refrig.obj['CABINET_PART'] = True
+        left_refrig.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        left_refrig.obj.rotation_euler.y = math.radians(-90)
+        left_refrig.obj.rotation_euler.z = math.radians(90)
+        left_refrig.set_input('Mirror Y', True)
+        left_refrig.set_input('Mirror Z', True)
+
+        right_refrig = CabinetPart()
+        right_refrig.create('Right Refrigerator Stile')
+        right_refrig.obj.parent = self.obj
+        right_refrig.obj['hb_part_role'] = PART_ROLE_RIGHT_REFRIG_STILE
+        right_refrig.obj['CABINET_PART'] = True
+        right_refrig.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        right_refrig.obj.rotation_euler.y = math.radians(-90)
+        right_refrig.obj.rotation_euler.z = math.radians(90)
+        right_refrig.set_input('Mirror Y', False)
+        right_refrig.set_input('Mirror Z', True)
 
 
 class BuiltInTallFaceFrameCabinet(TallFaceFrameCabinet):

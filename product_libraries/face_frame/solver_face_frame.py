@@ -96,6 +96,12 @@ class FaceFrameLayout:
             cab, 'raise_right_to_refrigerator_height', False)
         self.refrigerator_opening_height = getattr(
             cab, 'refrigerator_opening_height', 0.0)
+        # 'Stile in lieu of leg' toggles: mirrored onto the layout so
+        # has_refrig_stile / raise_side_to_refrigerator can read them.
+        self.refrigerator_stile_left = getattr(
+            cab, 'refrigerator_stile_left', False)
+        self.refrigerator_stile_right = getattr(
+            cab, 'refrigerator_stile_right', False)
         # Hutch option (uppers): left/right sides + end stiles drop below
         # the box bottom by this amount (see ends_down_drop / side_bottom_z).
         self.extend_left_end_down = getattr(cab, 'extend_left_end_down', False)
@@ -536,10 +542,25 @@ def side_extend_down(layout, side='LEFT'):
 def raise_side_to_refrigerator(layout, side='LEFT'):
     """True when this end's carcass side + end stile should lift off the
     floor to the top of the refrigerator opening (refrigerator cabinets).
-    Left and right are independent; supersedes that side's stile-to-floor."""
+    Left and right are independent; supersedes that side's stile-to-floor.
+    Turning on that side's 'stile in lieu of leg' also raises the end stile:
+    the separate lower stile fills the floor-to-opening zone below it."""
     if side == 'RIGHT':
-        return getattr(layout, 'raise_right_to_refrigerator_height', False)
-    return getattr(layout, 'raise_left_to_refrigerator_height', False)
+        base = getattr(layout, 'raise_right_to_refrigerator_height', False)
+    else:
+        base = getattr(layout, 'raise_left_to_refrigerator_height', False)
+    return base or has_refrig_stile(layout, side)
+
+
+def has_refrig_stile(layout, side='LEFT'):
+    """True when this end builds a separate face-frame stile from the floor to
+    the top of the refrigerator opening, in lieu of a leg (refrigerator
+    cabinets). Independent per side; also raises that side's end stile via
+    raise_side_to_refrigerator so the two stack into the door-zone stile above
+    and the floor-to-opening stile below."""
+    if side == 'RIGHT':
+        return getattr(layout, 'refrigerator_stile_right', False)
+    return getattr(layout, 'refrigerator_stile_left', False)
 
 
 def refrigerator_raise_z(layout, bay_index):
@@ -1368,6 +1389,30 @@ def right_end_stile_dims(layout):
         bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
     top_z = bay_top_z(layout, last)
     return (top_z - bottom_z, layout.rsw, layout.fft)
+
+
+def left_refrig_stile_position(layout):
+    """'Stile in lieu of leg': floor-anchored lower stile on the LEFT, sharing
+    the left end stile's X. Bottoms at Z = 0; tops at the refrigerator opening
+    (where the raised end stile begins), so the two abut into one continuous
+    stile split at the opening top."""
+    return ff_outer_world_pos(layout, 0.0, 0.0)
+
+
+def left_refrig_stile_dims(layout):
+    top_z = refrigerator_raise_z(layout, 0)
+    return (top_z, layout.lsw, layout.fft)
+
+
+def right_refrig_stile_position(layout):
+    """Mirror of left_refrig_stile_position on the RIGHT end."""
+    return ff_outer_world_pos(layout, face_frame_length(layout), 0.0)
+
+
+def right_refrig_stile_dims(layout):
+    last = layout.bay_count - 1
+    top_z = refrigerator_raise_z(layout, last)
+    return (top_z, layout.rsw, layout.fft)
 
 
 # ---------------------------------------------------------------------------

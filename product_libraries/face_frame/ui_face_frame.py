@@ -343,6 +343,10 @@ def draw_refrigerator_options(layout, root):
     row.label(text="Raise Side Up:")
     row.prop(cab, 'raise_left_to_refrigerator_height', text="Left", toggle=True)
     row.prop(cab, 'raise_right_to_refrigerator_height', text="Right", toggle=True)
+    row = box.row(align=True)
+    row.label(text="Stile In Lieu Of Leg:")
+    row.prop(cab, 'refrigerator_stile_left', text="Left", toggle=True)
+    row.prop(cab, 'refrigerator_stile_right', text="Right", toggle=True)
 
 
 def draw_wedge(layout, root):

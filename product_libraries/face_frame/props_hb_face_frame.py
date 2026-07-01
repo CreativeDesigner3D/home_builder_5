@@ -4019,6 +4019,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Raise Right To Refrigerator Height", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # "Stile in lieu of leg": build a separate face-frame stile from the floor
+    # to the top of the fridge opening on that side (in place of a leg). Turning
+    # it on also raises that side's end stile to the opening top (via
+    # solver.raise_side_to_refrigerator), so the end stile spans the door zone
+    # above and this lower stile fills the floor-to-opening zone below. Width
+    # matches that side's end stile. Geometry + 2D only for now.
+    refrigerator_stile_left: BoolProperty(
+        name="Refrigerator Stile In Lieu Of Leg (Left)", default=False,
+        description="Add a floor-to-opening face-frame stile on the left in "
+                    "lieu of a leg; also raises the left end stile to the "
+                    "opening top",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    refrigerator_stile_right: BoolProperty(
+        name="Refrigerator Stile In Lieu Of Leg (Right)", default=False,
+        description="Add a floor-to-opening face-frame stile on the right in "
+                    "lieu of a leg; also raises the right end stile to the "
+                    "opening top",
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     extend_left_stile_up: BoolProperty(name="Extend Left Stile Up", default=False)  # type: ignore
     extend_left_stile_down: BoolProperty(name="Extend Left Stile Down", default=False)  # type: ignore
