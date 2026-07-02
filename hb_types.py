@@ -571,7 +571,65 @@ class GeoNodeDoorSwing(GeoNodeObject):
         self.set_input("Door Thickness",units.inch(1.5))
 
 
-class GeoNodeDimension(GeoNodeObject):  
+def ensure_dimension_text_offset_basis(ng):
+    """Rewire GeoNodeDimension's text offsets to span the page plane for
+    ANY dim orientation. Idempotent versioning fixup for the node group
+    shipped in GeoNodeDimension.blend (and embedded in existing files).
+
+    As authored, 'Offset Text X Amount' translated the text in its
+    READING frame (Combine XYZ.013 -> Transform) -- which stays screen-
+    horizontal -- and 'Offset Text Amount' offsets along the curve
+    NORMAL. On a vertical dimension both act horizontally (the normal of
+    a vertical line is horizontal), so no input combination could move
+    the text up/down. Fix: apply the X amount along the curve TANGENT at
+    the text anchor instead (rotate (x,0,0) by the existing tangent
+    alignment and add it to the anchor offset after Switch.002).
+    Horizontal dims are unchanged (tangent == old reading direction);
+    vertical dims gain X = along the line, Y = off the line.
+
+    Called at dimension creation and from the Move Text modal so files
+    saved before the fix heal on first use. Silently leaves unexpected
+    topologies alone.
+    """
+    if ng is None or ng.nodes.get('Text X Tangent Rotate'):
+        return
+    cx = ng.nodes.get('Combine XYZ.013')
+    xform = ng.nodes.get('Transform')
+    align_t = ng.nodes.get('Align Rotation to Vector.003')
+    sw2 = ng.nodes.get('Switch.002')
+    sp4 = ng.nodes.get('Set Position.004')
+    template = ng.nodes.get('Vector Rotate.001')
+    if not all((cx, xform, align_t, sw2, sp4, template)):
+        return
+    # 1) Disconnect the reading-frame translate; zero the stale value.
+    for link in list(cx.outputs[0].links):
+        if link.to_node == xform:
+            ng.links.remove(link)
+    xform.inputs['Translation'].default_value = (0.0, 0.0, 0.0)
+    # 2) Rotate (x, 0, 0) into the curve-tangent frame (same rotation
+    #    source the perpendicular path aligns against).
+    rot = ng.nodes.new(template.bl_idname)
+    rot.name = 'Text X Tangent Rotate'
+    rot.label = 'Text X Tangent Rotate'
+    rot.rotation_type = template.rotation_type
+    rot.location = (sw2.location.x, sw2.location.y - 220)
+    ng.links.new(cx.outputs['Vector'], rot.inputs['Vector'])
+    ng.links.new(align_t.outputs['Rotation'], rot.inputs['Rotation'])
+    # 3) Sum with the switched perpendicular offset -> text anchor.
+    add = ng.nodes.new('ShaderNodeVectorMath')
+    add.name = 'Text Offset Add'
+    add.label = 'Text Offset Add'
+    add.operation = 'ADD'
+    add.location = (sw2.location.x + 180, sw2.location.y - 110)
+    for link in list(sw2.outputs['Output'].links):
+        if link.to_node == sp4:
+            ng.links.remove(link)
+    ng.links.new(sw2.outputs['Output'], add.inputs[0])
+    ng.links.new(rot.outputs['Vector'], add.inputs[1])
+    ng.links.new(add.outputs['Vector'], sp4.inputs['Offset'])
+
+
+class GeoNodeDimension(GeoNodeObject):
 
     @staticmethod
     def get_unit_type():
@@ -599,7 +657,11 @@ class GeoNodeDimension(GeoNodeObject):
         props = bpy.context.scene.home_builder
 
         super().create_curve('GeoNodeDimension',name)
-        self.obj['IS_2D_ANNOTATION'] = True  
+        # Versioning fixup: text offsets must span the page plane for
+        # vertical dims too (no-op once patched; see the function docs).
+        ensure_dimension_text_offset_basis(
+            bpy.data.node_groups.get('GeoNodeDimension'))
+        self.obj['IS_2D_ANNOTATION'] = True
         self.obj['IS_DIMENSION'] = True  
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_dimension_commands'  # right-click commands (ui/menus.py)
         self.set_input("Tick Length",props.annotation_dimension_tick_length)

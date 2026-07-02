@@ -411,6 +411,11 @@ class HOME_BUILDER_OT_move_dimension_text(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def invoke(self, context, event):
+        # Files saved before the text-offset fix carry the old node
+        # group where vertical dims could only move horizontally --
+        # heal it before driving the offsets (no-op when current).
+        hb_types.ensure_dimension_text_offset_basis(
+            bpy.data.node_groups.get('GeoNodeDimension'))
         self.dimensions = []
         self.reference_dim = None
         self.initial_mouse_2d = Vector((event.mouse_region_x,
