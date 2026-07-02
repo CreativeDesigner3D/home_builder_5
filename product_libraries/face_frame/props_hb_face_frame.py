@@ -2740,6 +2740,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=update_unlock_frame_widths,
     )  # type: ignore
 
+    show_rail_annotation: BoolProperty(
+        name="Show Rail Callout",
+        description="Show the rail-size callout (e.g. '3R') on fronts whose "
+                    "rail width deviates from the catalog spec",
+        default=True,
+        update=_propagate_door_style,
+    )  # type: ignore
+
     stile_width: FloatProperty(
         name="Stile Width",
         description="Width of left and right stiles",
@@ -3047,9 +3055,10 @@ class Face_Frame_Door_Style(PropertyGroup):
         # override whose top rail differs from the style.
         _sync_rail_size_annotation(
             front_obj, part, eff_top_rail, eff_right_stile,
-            active=(self.unlock_rail_width
-                    or (frame_locked
-                        and abs(eff_top_rail - self.rail_width) > 1e-6)),
+            active=(self.show_rail_annotation
+                    and (self.unlock_rail_width
+                         or (frame_locked
+                             and abs(eff_top_rail - self.rail_width) > 1e-6))),
         )
 
         # Material inheritance from the parent cabinet style lands once
@@ -3096,6 +3105,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             rfield.prop(self, "rail_width", text="Rail Width")
             rrow.prop(self, "unlock_rail_width", text="",
                       icon='UNLOCKED' if self.unlock_rail_width else 'LOCKED')
+            box.prop(self, "show_rail_annotation", text="Show Rail Callout")
 
         # Assign by Painting starts a modal brush: click fronts in the
         # viewport to apply THIS style. Door styles paint door fronts,
