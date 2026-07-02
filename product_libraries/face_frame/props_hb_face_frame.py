@@ -6431,9 +6431,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         #     ("Support Leg", "Vanity Support Leg"),
         #     ("Fixed Shelf", "Vanity Fixed Shelf"),
         # ])
-        # General label hidden for now (only row in Parts); blank label omits it.
+        # Split into two rows of three; blank labels keep the rows unlabeled.
         self._draw_catalog_labeled_row(layout, "", [
             ("Panel", "Panel"), ("Leg", "Leg Product"), ("Door", "Door"),
+        ])
+        self._draw_catalog_labeled_row(layout, "", [
             ("Misc", "Misc Part"), ("Floating Shelf", "Floating Shelves"),
             ("Valance", "Valance"),
         ])
