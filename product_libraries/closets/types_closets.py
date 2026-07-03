@@ -66,6 +66,13 @@ PART_ROLE_CUBBY_DIVISION = 'CLOSET_CUBBY_DIVISION'
 PART_ROLE_CUBBY_SHELF = 'CLOSET_CUBBY_SHELF'
 # Double-sided island structure.
 PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
+# Corner-clearance bridge parts (starter-root children, lazily created
+# by _layout_bridge_parts). Driven by starter-root idprops so the types
+# module stays hot-reloadable:
+#   hb_bridge_left / hb_bridge_right       1 = top bridge shelf on that end
+#   hb_bridge_w_left / hb_bridge_w_right   span (m) past the end panel
+#   hb_bridge_bot_left / hb_bridge_bot_right  1 = bottom shelf (+ kick)
+PART_ROLE_BRIDGE_SHELF = 'CLOSET_BRIDGE_SHELF'
 # Opening idprops: insert configuration, reconciled by regenerators on
 # every recalc (create/remove children to match, then lay out).
 PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
@@ -95,6 +102,17 @@ PROP_OPENING_SIDE = 'hb_opening_side'    # 'FRONT' (default) | 'BACK'
 # would otherwise recurse; the callbacks consult these sets and bail.
 _RECALCULATING = set()
 _DISTRIBUTING_WIDTHS = set()
+
+
+def _remove_part_tree(obj):
+    """Remove a part AND its descendants. bpy.data.objects.remove()
+    re-homes a removed object's children to the world keeping their
+    LOCAL transform, so deleting a front alone strands its pull near
+    the scene origin. Any part that can carry children (fronts with
+    pulls) must be removed through this."""
+    for child in list(obj.children):
+        _remove_part_tree(child)
+    bpy.data.objects.remove(obj, do_unlink=True)
 
 
 def _set_part_hidden(obj, hidden):
@@ -466,6 +484,7 @@ class ClosetStarter(GeoNodeCage):
             self._layout_panels(layout, scene_props)
             self._layout_bays(layout, scene_props, sp)
             self._layout_starter_parts(layout, scene_props, sp)
+            self._layout_bridge_parts(layout, scene_props, sp)
 
             # Hanging starters anchor at their TOP (the wall mount): a
             # height edit grows the unit downward. The last-applied
@@ -915,7 +934,7 @@ class ClosetStarter(GeoNodeCage):
                     and c.get('hb_bay_door')]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
         while len(existing) > qty:
-            bpy.data.objects.remove(existing.pop(), do_unlink=True)
+            _remove_part_tree(existing.pop())  # front + its pull
         while len(existing) < qty:
             name = ('Hamper Front' if bay_obj.get(PROP_BAY_IS_HAMPER)
                     else 'Door')
@@ -979,7 +998,7 @@ class ClosetStarter(GeoNodeCage):
                     if c.get('hb_part_role') == PART_ROLE_DOOR]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
         while len(existing) > qty:
-            bpy.data.objects.remove(existing.pop(), do_unlink=True)
+            _remove_part_tree(existing.pop())  # front + its pull
         while len(existing) < qty:
             name = 'Hamper Front' if opening.get(PROP_IS_HAMPER) else 'Door'
             obj = self._make_front(opening, name, PART_ROLE_DOOR, side)
@@ -1004,7 +1023,7 @@ class ClosetStarter(GeoNodeCage):
         fronts.sort(key=lambda o: o.get('hb_drawer_index', 0))
         boxes.sort(key=lambda o: o.get('hb_drawer_index', 0))
         while len(fronts) > qty:
-            bpy.data.objects.remove(fronts.pop(), do_unlink=True)
+            _remove_part_tree(fronts.pop())  # front + its pull
         while len(boxes) > qty:
             bpy.data.objects.remove(boxes.pop(), do_unlink=True)
         while len(fronts) < qty:
@@ -1137,6 +1156,76 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Thickness', scene_props.countertop_thickness)
             _set_part_hidden(ctop, not sp.include_countertop)
 
+    def _bridge_part(self, side, slot):
+        for c in self.obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_BRIDGE_SHELF
+                    and c.get('hb_bridge_side') == side
+                    and c.get('hb_bridge_slot') == slot):
+                return c
+        return None
+
+    def _layout_bridge_parts(self, layout, scene_props, sp):
+        """Corner-clearance bridge shelves (idprop-driven, lazy-created
+        like the countertop). When a starter is pulled back from a wall
+        corner to leave access clearance beside a perpendicular
+        neighbor, the top bridge shelf spans the gap from this starter's
+        end panel to the neighbor's body; an optional bottom shelf +
+        kick close the gap at the floor. Parts ride the corner-side
+        bay's depth and shelf heights so they line up with that bay's
+        fixed shelves (top_z / bottom_z are shelf undersides)."""
+        st = scene_props.shelf_thickness
+        for side in ('LEFT', 'RIGHT'):
+            key = side.lower()
+            enabled = bool(self.obj.get(f'hb_bridge_{key}'))
+            span = float(self.obj.get(f'hb_bridge_w_{key}', 0.0))
+            bottom_on = (enabled
+                         and bool(self.obj.get(f'hb_bridge_bot_{key}')))
+            bay = layout['bays'][0 if side == 'LEFT' else -1]
+            base_x = -span if side == 'LEFT' else sp.width
+            specs = (
+                ('TOP', enabled),
+                ('BOTTOM', bottom_on),
+                ('KICK', bottom_on and bay['floor'] and bay['kick'] > 0.0),
+            )
+            for slot, slot_on in specs:
+                part_obj = self._bridge_part(side, slot)
+                show = slot_on and span > 1e-4
+                if part_obj is None:
+                    if not show:
+                        continue
+                    part = CabinetPart()
+                    part.create(f"{side.title()} Bridge "
+                                + ('Toe Kick' if slot == 'KICK'
+                                   else 'Shelf'))
+                    part.obj.parent = self.obj
+                    part.obj['hb_part_role'] = PART_ROLE_BRIDGE_SHELF
+                    part.obj['hb_bridge_side'] = side
+                    part.obj['hb_bridge_slot'] = slot
+                    if slot == 'KICK':
+                        # Same stand-up orientation as the bay kicks.
+                        part.obj.rotation_euler.x = math.radians(-90)
+                    part.set_input('Mirror Y', True)
+                    part_obj = part.obj
+                cut = GeoNodeCutpart(part_obj)
+                if slot == 'KICK':
+                    # The strip runs past the far end of the gap by the
+                    # kick setback so it meets the neighbor's recessed
+                    # kick line instead of stopping at its side panel
+                    # (legacy parity with the Pulito bridge kick).
+                    kick_len = span + sp.toe_kick_setback
+                    kick_x = -kick_len if side == 'LEFT' else sp.width
+                    part_obj.location = (
+                        kick_x, -bay['depth'] + sp.toe_kick_setback, 0.0)
+                    cut.set_input('Length', kick_len)
+                    cut.set_input('Width', bay['kick'])
+                else:
+                    z = bay['z0'] + (bay['top_z'] if slot == 'TOP'
+                                     else bay['bottom_z'])
+                    part_obj.location = (base_x, 0.0, z)
+                    cut.set_input('Length', span)
+                    cut.set_input('Width', bay['depth'])
+                cut.set_input('Thickness', st)
+                _set_part_hidden(part_obj, not show)
 
     # -----------------------------------------------------------------
     # Structural mutation (insert / delete bay)

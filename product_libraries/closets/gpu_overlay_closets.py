@@ -203,6 +203,26 @@ def _iter_opening_cages(bay):
             yield child
 
 
+def _starter_shown(starter, space=None):
+    """False when the closet is hidden in the viewport (wall hidden with
+    its children, subtree hidden, isolate / local view, collection off)
+    so its labels and grab handles vanish with it. The cages can't carry
+    this test - toggle_mode hides/shows them per selection mode - so
+    probe a structural part that is always visible when the closet is:
+    the first partition panel (never design-hidden, present on every
+    starter class including L shelves)."""
+    for child in starter.children:
+        if child.get('hb_part_role') == types_closets.PART_ROLE_PANEL:
+            try:
+                if (space is not None
+                        and getattr(space, 'type', '') == 'VIEW_3D'):
+                    return child.visible_get(viewport=space)
+                return child.visible_get()
+            except Exception:
+                return True
+    return True
+
+
 def _anchor_world(cage, fx, fz):
     """World point on a cage's front face at fractional X / Z."""
     dim_x, dim_z = split_preview._cage_dims(cage)
@@ -242,8 +262,11 @@ def compute_labels(context, region, rv3d):
         pass
     blf.size(0, FONT_SIZE * s)
 
+    space = getattr(context, 'space_data', None)
     targets = []   # (obj, kind, editable, locked, anchor, value, prefix)
     for starter in _iter_starter_roots(scene):
+        if not _starter_shown(starter, space):
+            continue
         if mode == 'Starters':
             for kind, anchor, value, prefix in _starter_label_targets(starter):
                 targets.append((starter, kind, True, False,
@@ -373,6 +396,8 @@ def compute_labels(context, region, rv3d):
         bay_w_rects = {name: rect for name, kind, _e, _l, rect, _t in labels
                        if kind == 'BAY_W'}
         for starter in _iter_starter_roots(scene):
+            if not _starter_shown(starter, space):
+                continue
             for bay in _iter_bay_cages(starter):
                 bp = bay.hb_closet_bay
                 # Lock glyph flush right of the bay's width label.

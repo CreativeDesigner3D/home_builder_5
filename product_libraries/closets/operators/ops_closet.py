@@ -57,6 +57,126 @@ def _apply_selection_shading(context, root_obj, keep_active=True):
         pass
 
 
+def _detect_corner_closet_neighbor(root_obj):
+    """Find closet starters on adjacent perpendicular walls that meet
+    root_obj at its wall's corners. Returns a list of
+    ``(neighbor, placed_end, gap)`` tuples - one per qualifying end, so
+    a closet filling a wall between two occupied corners yields both -
+    where ``placed_end`` is which end of the placed starter faces that
+    corner ('LEFT' = its low-x end) and ``gap`` is the current distance
+    between that end and the neighbor's intrusion boundary on this
+    wall. Empty list when nothing qualifies.
+
+    Adapted from face_frame's _detect_blind_corner_neighbor, reduced to
+    what closets need: square (~90 deg) corners only, closet-starter
+    neighbors only. L-shelf corner units resolve the corner themselves,
+    so they never qualify as a neighbor. Gates mirror face_frame: the
+    neighbor must share a height band with the placed starter and have
+    a footprint corner near the wall corner (a far closet on the same
+    adjacent wall projects the same intrusion, so intrusion alone can't
+    disambiguate), and the placed starter's corner-side edge must sit at
+    the wall end or at the intrusion boundary (within 1")."""
+    matches = []
+    wall = root_obj.parent
+    if wall is None or 'IS_WALL_BP' not in wall:
+        return matches
+    try:
+        wall_geo = hb_types.GeoNodeWall(wall)
+        wall_length = wall_geo.get_input('Length')
+    except Exception:
+        return matches
+
+    sp = root_obj.hb_closet_starter
+    cab_left = root_obj.location.x
+    cab_right = cab_left + sp.width
+    our_z0 = root_obj.matrix_world.translation.z
+    our_z1 = our_z0 + sp.height
+
+    EDGE_TOL = units.inch(1.0)
+    ANGLE_TOL_DEG = 5.0
+    CORNER_NEAR_TOL = units.inch(8.0)
+    Z_TOL = units.inch(0.25)
+    our_inv = wall.matrix_world.inverted()
+
+    for direction in ('left', 'right'):
+        adj_node = wall_geo.get_connected_wall(direction=direction)
+        if adj_node is None:
+            continue
+
+        # Square-corner gate on the walls' length axes.
+        a_axis = wall.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        b_axis = adj_node.obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        a_axis.z = 0.0
+        b_axis.z = 0.0
+        if a_axis.length < 1e-8 or b_axis.length < 1e-8:
+            continue
+        a_axis.normalize()
+        b_axis.normalize()
+        cos = max(-1.0, min(1.0, a_axis.dot(b_axis)))
+        if abs(math.degrees(math.acos(cos)) - 90.0) > ANGLE_TOL_DEG:
+            continue
+
+        corner_local = Vector(
+            (wall_length if direction == 'right' else 0.0, 0.0))
+        best_obj = None
+        best_intrusion = 0.0
+        for child in adj_node.obj.children:
+            if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
+                continue
+            if types_closets.TAG_STARTER_CAGE not in child:
+                continue
+            if str(child.get('CLASS_NAME', '')).startswith('LShelf'):
+                continue
+            try:
+                geo = hb_types.GeoNodeObject(child)
+                child_w = geo.get_input('Dim X')
+                child_d = geo.get_input('Dim Y')
+                child_h = geo.get_input('Dim Z')
+            except Exception:
+                continue
+            child_z0 = child.matrix_world.translation.z
+            if not (our_z0 < child_z0 + child_h - Z_TOL
+                    and child_z0 < our_z1 - Z_TOL):
+                continue
+            local_corners = [
+                Vector((0.0, 0.0, 0.0)),
+                Vector((child_w, 0.0, 0.0)),
+                Vector((0.0, -child_d, 0.0)),
+                Vector((child_w, -child_d, 0.0)),
+            ]
+            corners_our = [our_inv @ (child.matrix_world @ c)
+                           for c in local_corners]
+            if min((c.xy - corner_local).length
+                   for c in corners_our) > CORNER_NEAR_TOL:
+                continue
+            if direction == 'left':
+                intrusion = max(
+                    (c.x for c in corners_our if c.x > 0), default=0.0)
+            else:
+                intrusion = max(
+                    (wall_length - c.x for c in corners_our
+                     if c.x < wall_length),
+                    default=0.0)
+            if intrusion > best_intrusion:
+                best_intrusion = intrusion
+                best_obj = child
+        if best_obj is None:
+            continue
+
+        if direction == 'left':
+            gap = cab_left - best_intrusion
+            qualifies = (cab_left <= EDGE_TOL or abs(gap) <= EDGE_TOL)
+        else:
+            gap = (wall_length - best_intrusion) - cab_right
+            qualifies = (cab_right >= wall_length - EDGE_TOL
+                         or abs(gap) <= EDGE_TOL)
+        if not qualifies:
+            continue
+        placed_end = 'LEFT' if direction == 'left' else 'RIGHT'
+        matches.append((best_obj, placed_end, max(gap, 0.0)))
+    return matches
+
+
 # ---------------------------------------------------------------------------
 # Selection mode toggle
 # ---------------------------------------------------------------------------
@@ -781,6 +901,28 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         root.select_set(True)
         context.view_layer.objects.active = root
         _apply_selection_shading(context, root)
+
+        # Adjacent perpendicular closets at this wall's corners: pop the
+        # clearance dialog so the user sets the access gap + bridge
+        # shelves per occupied end (face_frame's blind-corner flow; one
+        # dialog covers both ends when the closet fills the wall between
+        # two neighbors). Corner L units resolve the corner themselves -
+        # skip. Silent when nothing qualifies: placement just finishes.
+        if not getattr(self, '_is_corner', False):
+            matches = _detect_corner_closet_neighbor(root)
+            if matches:
+                kwargs = {'closet_name': root.name}
+                for neighbor, placed_end, gap in matches:
+                    k = placed_end.lower()
+                    kwargs[f'has_{k}'] = True
+                    kwargs[f'neighbor_{k}'] = neighbor.name
+                    kwargs[f'gap_{k}'] = gap
+                try:
+                    bpy.ops.hb_closets.set_corner_clearance(
+                        'INVOKE_DEFAULT', **kwargs)
+                except RuntimeError:
+                    pass
+
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
         width_str = units.unit_to_string(
@@ -1113,11 +1255,10 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _active_opening_for_insert(context):
-    """Resolve the opening the insert dialogs target. On double islands a
-    bay has FRONT and BACK openings - prefer the one the active object
-    lives under, falling back to the FRONT opening."""
-    obj = context.active_object
+def _opening_for_insert(obj):
+    """Resolve the opening an insert/config command targets from one
+    object. On double islands a bay has FRONT and BACK openings - prefer
+    the one obj lives under, falling back to the FRONT opening."""
     opening = types_closets.find_opening_cage(obj)
     if opening is not None and not obj.get(types_closets.TAG_BAY_CAGE):
         return opening
@@ -1130,6 +1271,60 @@ def _active_opening_for_insert(context):
         if c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == 'FRONT':
             return c
     return openings[0] if openings else opening
+
+
+def _active_opening_for_insert(context):
+    return _opening_for_insert(context.active_object)
+
+
+def _selection_pool(context):
+    """Selected objects + the active object (a right-click menu command
+    runs on the active object, but shift-selected cages stay selected)."""
+    pool = list(context.selected_objects)
+    active = context.active_object
+    if active is not None and active not in pool:
+        pool.append(active)
+    return pool
+
+
+def _selected_openings(context):
+    """Distinct target openings across the whole selection, so a config
+    command applies to every shift-selected opening (or bay), not just
+    the active one."""
+    openings = []
+    for obj in _selection_pool(context):
+        opening = _opening_for_insert(obj)
+        if opening is not None and opening not in openings:
+            openings.append(opening)
+    return openings
+
+
+def _selected_bays(context):
+    """Distinct bay cages across the whole selection (any selected
+    object under a bay maps to that bay)."""
+    bays = []
+    for obj in _selection_pool(context):
+        bay = types_closets.find_bay_cage(obj)
+        if bay is not None and bay not in bays:
+            bays.append(bay)
+    return bays
+
+
+def _reselect_cages(context, cages):
+    """Restore a multi-cage selection after the shading pass
+    (toggle_mode deselects everything). A config change can rebuild
+    segment cages, so dead references are skipped."""
+    for o in list(context.selected_objects):
+        o.select_set(False)
+    alive = []
+    for cage in cages:
+        try:
+            cage.select_set(True)
+            alive.append(cage)
+        except (ReferenceError, RuntimeError):
+            continue
+    if alive:
+        context.view_layer.objects.active = alive[0]
 
 
 class _ClosetInsertDialog:
@@ -1296,8 +1491,9 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
 
 
 class hb_closets_OT_change_bay(bpy.types.Operator):
-    """Rebuild the active bay as a standard configuration (clears the
-    bay's current contents first)."""
+    """Rebuild every selected bay as a standard configuration (clears
+    the bays' current contents first). Shift-select several bays to
+    change them all at once; anything selected under a bay counts."""
     bl_idname = "hb_closets.change_bay"
     bl_label = "Bay Configuration"
     bl_options = {'UNDO'}
@@ -1312,14 +1508,30 @@ class hb_closets_OT_change_bay(bpy.types.Operator):
         return types_closets.find_bay_cage(context.active_object) is not None
 
     def execute(self, context):
-        bay = types_closets.find_bay_cage(context.active_object)
-        if bay is None:
+        bays = _selected_bays(context)
+        if not bays:
             return {'CANCELLED'}
-        root = types_closets.find_starter_root(bay)
-        if not types_closets.apply_bay_config(bay, self.config):
+        applied = 0
+        roots = []
+        for bay in bays:
+            try:
+                if not types_closets.apply_bay_config(bay, self.config):
+                    continue
+            except ReferenceError:
+                # An earlier apply rebuilt this cage out from under us.
+                continue
+            applied += 1
+            root = types_closets.find_starter_root(bay)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not applied:
             return {'CANCELLED'}
-        _apply_finish(root)
-        _apply_selection_shading(context, root)
+        for root in roots:
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        _reselect_cages(context, bays)
+        if applied > 1:
+            self.report({'INFO'}, f"Changed {applied} bays")
         return {'FINISHED'}
 
 
@@ -1416,8 +1628,9 @@ class hb_closets_OT_paste_opening(bpy.types.Operator):
 
 
 class hb_closets_OT_change_opening(bpy.types.Operator):
-    """Swap the active opening to a standard configuration (clears its
-    current contents first)."""
+    """Swap every selected opening to a standard configuration (clears
+    their current contents first). Shift-select several openings to
+    change them all at once."""
     bl_idname = "hb_closets.change_opening"
     bl_label = "Change Opening"
     bl_options = {'UNDO'}
@@ -1434,14 +1647,31 @@ class hb_closets_OT_change_opening(bpy.types.Operator):
                 is not None)
 
     def execute(self, context):
-        opening = _active_opening_for_insert(context)
-        if opening is None:
+        openings = _selected_openings(context)
+        if not openings:
             return {'CANCELLED'}
-        root = types_closets.find_starter_root(opening)
-        if not types_closets.apply_opening_config(opening, self.config):
+        applied = 0
+        roots = []
+        for opening in openings:
+            try:
+                if not types_closets.apply_opening_config(
+                        opening, self.config):
+                    continue
+            except ReferenceError:
+                # An earlier apply re-segmented this cage away.
+                continue
+            applied += 1
+            root = types_closets.find_starter_root(opening)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not applied:
             return {'CANCELLED'}
-        _apply_finish(root)
-        _apply_selection_shading(context, root)
+        for root in roots:
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        _reselect_cages(context, openings)
+        if applied > 1:
+            self.report({'INFO'}, f"Changed {applied} openings")
         return {'FINISHED'}
 
 
@@ -1693,6 +1923,161 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
+    """Pull a closet back from wall corners occupied by perpendicular
+    neighbors, leaving an access clearance, with optional bridge shelves
+    spanning the gap (mirrors face_frame's blind-corner dialog flow).
+    Handles one or both ends in a single dialog: a closet filling a
+    wall between two occupied corners gets a section per side.
+
+    Invoked two ways: from the placement modal with the identity props
+    filled in (they're SKIP_SAVE so stale names never leak into a later
+    invocation), or bare from the starter right-click menu, in which
+    case invoke() re-detects corner neighbors for the active starter.
+    """
+    bl_idname = "hb_closets.set_corner_clearance"
+    bl_label = "Corner Clearance"
+    bl_options = {'UNDO'}
+
+    closet_name: bpy.props.StringProperty(
+        name="Closet Name", default="",
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    has_left: bpy.props.BoolProperty(
+        name="Has Left", default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    has_right: bpy.props.BoolProperty(
+        name="Has Right", default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    neighbor_left: bpy.props.StringProperty(
+        name="Left Neighbor", default="",
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    neighbor_right: bpy.props.StringProperty(
+        name="Right Neighbor", default="",
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    gap_left: bpy.props.FloatProperty(
+        name="Left Gap", default=0.0, subtype='DISTANCE', unit='LENGTH',
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    gap_right: bpy.props.FloatProperty(
+        name="Right Gap", default=0.0, subtype='DISTANCE', unit='LENGTH',
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    clearance_left: bpy.props.FloatProperty(
+        name="Clearance", subtype='DISTANCE', unit='LENGTH',
+        default=units.inch(12.0), min=0.0,
+        description=(
+            "Gap between this closet's left end panel and the adjacent "
+            "closet's body"))  # type: ignore
+    top_left: bpy.props.BoolProperty(
+        name="Include Top Bridge Shelf", default=True,
+        description=(
+            "Span the clearance gap with a shelf at the corner bay's "
+            "top shelf height"))  # type: ignore
+    bottom_left: bpy.props.BoolProperty(
+        name="Include Bottom Bridge", default=False,
+        description=(
+            "Also bridge the gap at the bottom shelf height (adds a "
+            "kick strip on floor-mounted bays)"))  # type: ignore
+    clearance_right: bpy.props.FloatProperty(
+        name="Clearance", subtype='DISTANCE', unit='LENGTH',
+        default=units.inch(12.0), min=0.0,
+        description=(
+            "Gap between this closet's right end panel and the adjacent "
+            "closet's body"))  # type: ignore
+    top_right: bpy.props.BoolProperty(
+        name="Include Top Bridge Shelf", default=True,
+        description=(
+            "Span the clearance gap with a shelf at the corner bay's "
+            "top shelf height"))  # type: ignore
+    bottom_right: bpy.props.BoolProperty(
+        name="Include Bottom Bridge", default=False,
+        description=(
+            "Also bridge the gap at the bottom shelf height (adds a "
+            "kick strip on floor-mounted bays)"))  # type: ignore
+
+    def _sides(self):
+        return [s for s, has in (('left', self.has_left),
+                                 ('right', self.has_right)) if has]
+
+    def _fill_from_matches(self, matches):
+        for neighbor, placed_end, gap in matches:
+            if placed_end == 'LEFT':
+                self.has_left = True
+                self.neighbor_left = neighbor.name
+                self.gap_left = gap
+            else:
+                self.has_right = True
+                self.neighbor_right = neighbor.name
+                self.gap_right = gap
+
+    def invoke(self, context, event):
+        if not self.closet_name:
+            root = types_closets.find_starter_root(context.active_object)
+            if root is None:
+                self.report({'INFO'}, "No closet starter selected")
+                return {'CANCELLED'}
+            matches = _detect_corner_closet_neighbor(root)
+            if not matches:
+                self.report({'INFO'},
+                            "No adjacent closet at a wall corner")
+                return {'CANCELLED'}
+            self.closet_name = root.name
+            self._fill_from_matches(matches)
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        layout = self.layout
+        for side in self._sides():
+            box = layout.box()
+            box.label(
+                text=f"{getattr(self, 'neighbor_' + side)} occupies "
+                     f"the corner on the {side}.")
+            box.prop(self, f'clearance_{side}')
+            box.prop(self, f'top_{side}')
+            if getattr(self, f'top_{side}'):
+                box.prop(self, f'bottom_{side}')
+
+    def execute(self, context):
+        root = bpy.data.objects.get(self.closet_name)
+        if root is None:
+            self.report({'WARNING'}, "Closet missing; aborting")
+            return {'CANCELLED'}
+        sides = self._sides()
+        if not sides:
+            return {'CANCELLED'}
+        sp = root.hb_closet_starter
+
+        # Shrink from each occupied corner end; the body between keeps
+        # its placement (a LEFT reduction shifts the origin right, a
+        # RIGHT reduction only trims width). Clamp the TOTAL so the
+        # starter can't collapse, splitting any clamped shortfall
+        # proportionally; each side's actual (possibly clamped)
+        # reduction feeds that side's bridge span so the shelves always
+        # exactly fill the real gaps.
+        red = {s: getattr(self, f'clearance_{s}') - getattr(self, f'gap_{s}')
+               for s in sides}
+        total_red = sum(red.values())
+        new_width = max(sp.width - total_red, units.inch(6.0))
+        total_actual = sp.width - new_width
+        factor = (total_actual / total_red
+                  if total_red > 1e-9 and total_actual < total_red - 1e-9
+                  else 1.0)
+
+        for side in sides:
+            actual = red[side] * factor
+            span = getattr(self, f'gap_{side}') + actual
+            top_on = getattr(self, f'top_{side}') and span > 1e-4
+            root[f'hb_bridge_{side}'] = 1 if top_on else 0
+            root[f'hb_bridge_w_{side}'] = float(max(span, 0.0))
+            root[f'hb_bridge_bot_{side}'] = (
+                1 if (top_on and getattr(self, f'bottom_{side}')) else 0)
+            if side == 'left':
+                root.location.x += actual
+
+        sp.width = new_width  # update callback relays out
+        types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 classes = (
     hb_closets_OT_toggle_mode,
     hb_closets_OT_place_starter,
@@ -1716,6 +2101,7 @@ classes = (
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,
     hb_closets_OT_bay_prompts,
+    hb_closets_OT_set_corner_clearance,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

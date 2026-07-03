@@ -15,6 +15,10 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_closets.starter_prompts",
                         text="Starter Properties...", icon='WINDOW')
+        # Re-opens the placement-time clearance dialog; cancels itself
+        # with an info report when no corner neighbor qualifies.
+        layout.operator("hb_closets.set_corner_clearance",
+                        text="Corner Clearance...", icon='SNAP_EDGE')
         layout.separator()
         layout.operator("hb_closets.delete_starter",
                         text="Delete Starter", icon='X')

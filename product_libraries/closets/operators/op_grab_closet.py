@@ -131,8 +131,21 @@ def _collect_boundaries(scene, mode=None):
     if mode is None:
         mode = _current_mode()
     out = []
+    try:
+        from .. import gpu_overlay_closets as ov
+        _space = getattr(bpy.context, 'space_data', None)
+
+        def _shown(r):
+            return ov._starter_shown(r, _space)
+    except Exception:
+        def _shown(r):
+            return True
     for root in scene.objects:
         if not root.get(types_closets.TAG_STARTER_CAGE):
+            continue
+        # Hidden closets (wall hidden/isolated) grow no grab handles -
+        # same visibility rule as the overlay labels.
+        if not _shown(root):
             continue
         mw = split_preview._world_matrix(root)
         w, h, d = _starter_dims(root)
@@ -444,6 +457,18 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         self._axis2d.normalize()
         self._snapshot = self._take_snapshot(b)
 
+    @staticmethod
+    def _end_shift_vector(root, shift):
+        """Displacement that slides root by ``shift`` along its own
+        local X, expressed in the space root.location lives in (the
+        parent's space; world when unparented). The old code added the
+        WORLD X axis to location - correct only on unrotated walls,
+        since location is wall-local: on a rotated wall the world
+        vector lands in the wrong frame and the closet slides the
+        wrong way. Placement always writes matrix_parent_inverse =
+        identity, so parent space == location space."""
+        return root.rotation_euler.to_matrix() @ Vector((shift, 0.0, 0.0))
+
     def _take_snapshot(self, b):
         snap = {'kind': b['kind']}
         root = bpy.data.objects.get(b['root'])
@@ -568,12 +593,11 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             new_w = max(MIN_STARTER_WIDTH, new_w)
             if b['kind'] == 'END_L':
                 # Keep the right edge planted: shift the origin by the
-                # width change along the starter's local X.
+                # width change along the starter's local X (in location
+                # space - see _end_shift_vector).
                 shift = (snap['width'] - new_w)
-                axis_local = Vector((1.0, 0.0, 0.0))
-                world_axis = (root.matrix_world.to_3x3() @ axis_local)
                 root.location = (Vector(snap['loc'])
-                                 + world_axis * shift)
+                                 + self._end_shift_vector(root, shift))
             sp.width = new_w
             self._drag_text = "W " + units.unit_to_string(us, new_w)
         elif b['kind'] == 'TOP':
@@ -780,8 +804,8 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             sp = root.hb_closet_starter
             if b['kind'] == 'END_L':
                 shift = snap['width'] - value
-                world_axis = root.matrix_world.to_3x3() @ Vector((1, 0, 0))
-                root.location = Vector(snap['loc']) + world_axis * shift
+                root.location = (Vector(snap['loc'])
+                                 + self._end_shift_vector(root, shift))
             sp.width = max(MIN_STARTER_WIDTH, value)
         elif b['kind'] == 'TOP':
             root.hb_closet_starter.height = max(MIN_STARTER_HEIGHT, value)
