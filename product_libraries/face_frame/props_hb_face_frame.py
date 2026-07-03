@@ -5764,13 +5764,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=True,
         update=update_face_frame_selection_mode,
     )  # type: ignore
-    # Editable size labels drawn by dim_edit_overlay in Bays / Openings
-    # mode. Per scene so a room can hide them without a preference trip;
+    # Editable size labels drawn by dim_edit_overlay in Bays / Openings /
+    # Face Frame modes. Per scene so a room can hide them without a preference trip;
     # toggled from the overlay's own Sizes pill in the viewport. No
     # update callback -- the overlay's click handler tags the redraw.
     selection_mode_show_sizes: BoolProperty(
         name="Show Sizes",
-        description="Show clickable bay-width / opening-height labels in Bay and Opening selection modes",
+        description="Show clickable size labels in Bay, Opening, and Face Frame selection modes",
         default=True,
     )  # type: ignore
 

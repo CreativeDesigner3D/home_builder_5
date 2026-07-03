@@ -1,9 +1,10 @@
-"""Editable dimension overlay for Bay / Opening selection modes.
+"""Editable dimension overlay for Bay / Opening / Face Frame selection modes.
 
-While the face-frame selection mode is 'Bays' or 'Openings', a
-POST_PIXEL draw handler paints a value label on every bay (its width)
-or every leaf opening (its height) of every face-frame cabinet in the
-viewport. Clicking a label starts a short-lived modal that captures
+While the face-frame selection mode is 'Bays', 'Openings' or 'Face
+Frame', a POST_PIXEL draw handler paints a value label on every bay
+(its width), every leaf opening (its height), or every face-frame
+member (its width -- stiles, rails, bay splitters) of every face-frame
+cabinet in the viewport. Clicking a label starts a short-lived modal that captures
 typed input (same distance grammar as placement typing: inches,
 fractions, feet'inches"); Enter commits the value through the same
 properties the sidebar edits, so redistribution and auto-hold behave
@@ -17,6 +18,11 @@ identically to a sidebar edit:
   parent is an H-split are height-editable; bay-root openings and
   V-split children show a dimmed, read-only label (their height is
   driven by the bay / cabinet).
+- Part width -> the same per-role targets the right-click Set Width
+  dialog writes (ops_part_commands._fan_out_value), with the matching
+  unlock flag flipped first so a later style apply keeps the value.
+  Between-bay mid rails carry no width command, so they show a dimmed,
+  read-only label of the built width.
 
 Architecture mirrors operators/viewport_hud.py deliberately: a
 permanent draw handler plus an addon-keymap click operator that
@@ -37,8 +43,10 @@ from bpy_extras import view3d_utils
 from ... import units
 from ... import hb_placement
 from ...hb_gpu_draw import get_visible_window_bounds
+from ...hb_types import GeoNodeCutpart
 from . import types_face_frame
 from . import split_preview
+from .operators import ops_part_commands
 
 # ---- Style -------------------------------------------------------------
 
@@ -95,9 +103,9 @@ def parse_distance(text):
 # ---- Gating -------------------------------------------------------------
 
 def _active_mode(context):
-    """'Bays' / 'Openings' when the overlay should draw, else None.
-    Mirrors the HUD's gating: real room scene, FACE FRAME tab, selection
-    mode enabled and set to one of the two overlay modes."""
+    """'Bays' / 'Openings' / 'Face Frame' when the overlay should draw,
+    else None. Mirrors the HUD's gating: real room scene, FACE FRAME tab,
+    selection mode enabled and set to one of the overlay modes."""
     scene = context.scene
     if scene is None or scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return None
@@ -108,7 +116,7 @@ def _active_mode(context):
     if ff is None or not getattr(ff, 'face_frame_selection_mode_enabled', False):
         return None
     mode = getattr(ff, 'face_frame_selection_mode', '')
-    return mode if mode in ('Bays', 'Openings') else None
+    return mode if mode in ('Bays', 'Openings', 'Face Frame') else None
 
 
 def _sizes_shown(context):
@@ -119,6 +127,8 @@ def _sizes_shown(context):
 # ---- Sizes toggle pill ----------------------------------------------------
 # Drawn in the slot the HUD's second row occupies for the grab toggles in
 # other modes (that row is empty in Bays / Openings, so nothing collides).
+# In Face Frame mode the grab toggle DOES occupy row two, so the pill
+# drops one more row there.
 # Constants mirror operators/viewport_hud.py so the pill sits flush with
 # the HUD without importing its layout.
 
@@ -130,7 +140,8 @@ _TOGGLE_LABEL = "Sizes"
 
 def _toggle_rect(context, area):
     """Region-local rect for the Sizes pill: centered, one HUD row below
-    the selection-mode picker."""
+    the selection-mode picker (two below in Face Frame mode, where the
+    grab toggle owns row two)."""
     s = 1.0
     try:
         s = bpy.context.preferences.system.ui_scale
@@ -141,7 +152,8 @@ def _toggle_rect(context, area):
     w = blf.dimensions(0, _TOGGLE_LABEL)[0] + 24 * s
     h = _HUD_BTN_H * s
     row1_y = y_max - _HUD_MARGIN_Y * s - h
-    y = row1_y - (h + _HUD_ROW_GAP * s)
+    rows_down = 2 if _active_mode(bpy.context) == 'Face Frame' else 1
+    y = row1_y - rows_down * (h + _HUD_ROW_GAP * s)
     x = x_min + ((x_max - x_min) - w) / 2.0
     return (x, y, w, h)
 
@@ -177,6 +189,28 @@ def _opening_height_editable(opening):
     if parent is None or not parent.get(types_face_frame.TAG_SPLIT_NODE):
         return False
     return getattr(parent.face_frame_split, 'axis', 'H') == 'H'
+
+
+def _iter_face_frame_parts(cabinet):
+    """Face-frame members under a cabinet root -- the same hb_part_role
+    rule Face Frame selection mode highlights (stiles, rails, bay
+    splitters). Conditional parts the recalc has parked (hide_render)
+    are skipped, matching Parts mode."""
+    for child in cabinet.children_recursive:
+        if child.hide_render:
+            continue
+        if child.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES:
+            yield child
+
+
+def _part_anchor_world(part):
+    """World-space centre of a member's bounding box. Unlike cages, parts
+    are real built meshes, so bound_box is authoritative."""
+    bb = part.bound_box
+    centre = Vector(((bb[0][0] + bb[6][0]) / 2.0,
+                     (bb[0][1] + bb[6][1]) / 2.0,
+                     (bb[0][2] + bb[6][2]) / 2.0))
+    return part.matrix_world @ centre
 
 
 def _label_anchor_world(cage):
@@ -226,7 +260,7 @@ def compute_labels(context, region, rv3d):
             targets = [(bay, 'BAY', True, bay.face_frame_bay.unlock_width,
                         bay.face_frame_bay.width)
                        for bay in _iter_bay_cages(cabinet)]
-        else:
+        elif mode == 'Openings':
             targets = []
             for bay in _iter_bay_cages(cabinet):
                 for op in _iter_opening_cages(bay):
@@ -236,8 +270,30 @@ def compute_labels(context, region, rv3d):
                              else split_preview._cage_dims(op)[1])
                     targets.append((op, 'OPENING', editable,
                                     editable and props.unlock_size, value))
+        else:
+            # Face Frame: member widths. Editable labels read
+            # _get_current_width -- the same per-role props the Set Width
+            # dialog writes -- so typing back the shown value is a no-op.
+            targets = []
+            for part in _iter_face_frame_parts(cabinet):
+                role = part.get('hb_part_role')
+                editable = role in ops_part_commands._ROLES_WITH_WIDTH
+                try:
+                    if editable:
+                        value = ops_part_commands._get_current_width(
+                            part, role, cabinet)
+                        locked = types_face_frame.part_width_is_unlocked(part)
+                    else:
+                        # Between-bay mid rails have no width command;
+                        # show the built width read-only.
+                        value = GeoNodeCutpart(part).get_input('Width')
+                        locked = False
+                except Exception:
+                    continue
+                targets.append((part, 'PART', editable, locked, value))
         for cage, kind, editable, locked, value in targets:
-            anchor = _label_anchor_world(cage)
+            anchor = (_part_anchor_world(cage) if kind == 'PART'
+                      else _label_anchor_world(cage))
             if anchor is None:
                 continue
             pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
@@ -357,6 +413,23 @@ def _commit(obj, kind, value):
             props.unlock_size = True
         props.size = value
         return True
+    if kind == 'PART':
+        role = obj.get('hb_part_role')
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is None or role not in ops_part_commands._ROLES_WITH_WIDTH:
+            return False
+        name = obj.name
+        # Same sequence as the Set Width dialog: flip the unlock first so
+        # a later style apply keeps the value. For bay-internal splitters
+        # the flag write can recalc + rebuild the part, so re-resolve by
+        # name (stable across recalc) before fanning out.
+        ops_part_commands._flip_unlock_for_role(obj, role, root)
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            return False
+        with types_face_frame.suspend_recalc():
+            ops_part_commands._fan_out_value(obj, role, root, value)
+        return True
     return False
 
 
@@ -375,21 +448,35 @@ def _reset_to_auto(obj, kind):
         if props.unlock_size:
             props.unlock_size = False
             return True
+        return False
+    if kind == 'PART':
+        role = obj.get('hb_part_role')
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is None or role not in ops_part_commands._ROLES_WITH_WIDTH:
+            return False
+        if not types_face_frame.part_width_is_unlocked(obj):
+            return False
+        # _lock_for_role clears the per-role unlock flag(s); each flag's
+        # own update callback reverts the width to the default + recalcs.
+        ops_part_commands._lock_for_role(obj, role, root)
+        return True
     return False
 
 
 # ---- Edit modal ------------------------------------------------------------
 
 class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
-    """Type a new value for the clicked bay-width / opening-height label.
-    Enter commits, Esc / right-click / click-away cancels."""
+    """Type a new value for the clicked bay-width / opening-height /
+    part-width label. Enter commits, Esc / right-click / click-away
+    cancels."""
     bl_idname = "hb_face_frame.edit_dim_label"
     bl_label = "Edit Dimension Label"
     bl_options = {'INTERNAL', 'UNDO'}
 
     target_name: bpy.props.StringProperty(options={'HIDDEN'})  # type: ignore
     kind: bpy.props.EnumProperty(
-        items=[('BAY', "Bay Width", ""), ('OPENING', "Opening Height", "")],
+        items=[('BAY', "Bay Width", ""), ('OPENING', "Opening Height", ""),
+               ('PART', "Part Width", "")],
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
