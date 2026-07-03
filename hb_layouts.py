@@ -719,6 +719,11 @@ class ElevationView(LayoutView):
 
         dim = hb_types.GeoNodeDimension()
         dim.create(f"Dim_{cabinet_info['obj'].name}")
+        # GeoNodeObject.create_curve ignores the name argument and hardcodes
+        # "Dimension"; rename explicitly so downstream by-name passes can
+        # recognize these auto width dims (vs. user-placed dimensions).
+        dim.obj.name = f"Dim_{cabinet_info['obj'].name}"
+        dim.obj.data.name = dim.obj.name
         dim.obj['IS_2D_ANNOTATION'] = True
         
         # The create method links to bpy.context.scene, but we need it in self.scene
