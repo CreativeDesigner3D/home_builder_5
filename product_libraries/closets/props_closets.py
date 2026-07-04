@@ -328,6 +328,17 @@ class Closets_Scene_Props(PropertyGroup):
         default=True,
         update=pulls_closets.update_room)  # type: ignore
 
+    closet_rod_type: EnumProperty(
+        name="Rod Type",
+        items=pulls_closets.ROD_TYPES,
+        default='OVAL',
+        update=pulls_closets.update_room)  # type: ignore
+    closet_rod_finish: EnumProperty(
+        name="Rod Finish",
+        items=pulls_closets.ROD_FINISHES,
+        default='Polished Chrome',
+        update=pulls_closets.update_room)  # type: ignore
+
     closet_drawer_box: EnumProperty(
         name="Drawer Box",
         description="Drawer box system used by every closet drawer",
@@ -446,6 +457,12 @@ class Closets_Scene_Props(PropertyGroup):
             row = box.row()
             row.prop(self, 'pull_horizontal_offset')
             box.prop(self, 'center_pulls_on_drawer_front')
+
+        box = col.box()
+        row = box.row()
+        row.label(text="Rods")
+        row.prop(self, 'closet_rod_type', text="")
+        row.prop(self, 'closet_rod_finish', text="")
 
         box = col.box()
         row = box.row()

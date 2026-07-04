@@ -32,6 +32,20 @@ PULL_FINISHES = [
     ('Slate', "Slate", ""),
 ]
 
+ROD_FINISHES = [
+    ('Black', "Black", ""),
+    ('Matte Aluminum', "Matte Aluminum", ""),
+    ('Matte Gold', "Matte Gold", ""),
+    ('Matte Nickel', "Matte Nickel", ""),
+    ('Polished Chrome', "Polished Chrome", ""),
+    ('Slate Graphite', "Slate Graphite", ""),
+]
+
+ROD_TYPES = [
+    ('OVAL', "Signature", "Oval profile"),
+    ('ROUND', "Round", "Round profile"),
+]
+
 _enum_cache = None
 # One loaded source object per selection; instances share its mesh data.
 _pull_cache = {'selection': '', 'object': None}

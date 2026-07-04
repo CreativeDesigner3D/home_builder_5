@@ -168,7 +168,9 @@ class ClosetRod(GeoNodeObject):
         self.set_input('Radius', const.ROD_RADIUS)
         self.set_input('Cup Depth', const.ROD_CUP_DEPTH)
         self.set_input('Cup Depth 2', const.ROD_CUP_DEPTH_2)
-        self.set_input('Is Oval', False)
+        # Profile/finish are (re)written from the scene rod options on
+        # every recalc - this is just the creation default.
+        self.set_input('Is Oval', True)
 
 
 # ---------------------------------------------------------------------------
@@ -709,7 +711,22 @@ class ClosetStarter(GeoNodeCage):
                 rod_y = -min(const.ROD_FROM_REAR, max(depth - const.ROD_RADIUS,
                                                       const.ROD_RADIUS))
                 child.location = (0.0, rod_y, z)
-                GeoNodeObject(child).set_input('Dim X', width)
+                rod_geo = GeoNodeObject(child)
+                rod_geo.set_input('Dim X', width)
+                # Rod profile + finish follow the scene rod options.
+                props = bpy.context.scene.hb_closets
+                rod_geo.set_input(
+                    'Is Oval',
+                    getattr(props, 'closet_rod_type', 'OVAL') == 'OVAL')
+                try:
+                    from . import pulls_closets
+                    rod_mat = pulls_closets.load_finish_material(
+                        getattr(props, 'closet_rod_finish',
+                                'Polished Chrome'))
+                    if rod_mat is not None:
+                        rod_geo.set_input('Material', rod_mat)
+                except Exception:
+                    pass
             elif role is not None:
                 groups.setdefault(role, []).append(child)
 
