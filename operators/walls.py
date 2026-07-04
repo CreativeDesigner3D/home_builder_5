@@ -2411,6 +2411,31 @@ def _crs_parse_distance(s):
         return None
 
 
+# --- Endpoint-drag tuning (change_room_size free-end drags) ---
+ENDPOINT_GRAB_RADIUS = 0.25   # meters: cursor-to-endpoint pick distance
+ENDPOINT_SNAP_DIST = 0.15     # meters: along-axis distance at which a snap stop engages
+ENDPOINT_PERP_TOL = 0.15      # meters: max off-axis distance for corner snap stops
+ENDPOINT_MIN_LENGTH = 0.05    # meters: shortest length an endpoint drag may leave
+
+
+def _wall_free_endpoints(wall_obj):
+    """Return the subset of ('start', 'end') that are free (unshared) ends.
+
+    Only open-chain extremities qualify: the start of the first wall and the
+    end of the last wall (both, for an isolated wall). Closed loops have no
+    free ends, so corner drags there stay with the perpendicular-offset model.
+    """
+    chain, idx, is_closed = get_wall_chain_info(wall_obj)
+    if chain is None or is_closed:
+        return ()
+    free = []
+    if idx == 0:
+        free.append('start')
+    if idx == len(chain) - 1:
+        free.append('end')
+    return tuple(free)
+
+
 def _draw_change_room_size_highlight(op):
     """GPU draw callback: highlights the wall under the cursor (idle) or the
     wall currently being dragged (drag). During drag, also renders live
@@ -2486,6 +2511,33 @@ def _draw_change_room_size_highlight(op):
                     perp = -perp
             return perp
 
+        # Endpoint drag: length label, dragged-end marker, snap indicator.
+        # (The body-drag offset/neighbor labels below self-skip in this mode
+        # because their outward normals are None.)
+        if getattr(op, '_drag_mode', 'BODY') == 'ENDPOINT':
+            seg = p2 - p1
+            if seg.length > 2:
+                seg_dir = seg.normalized()
+                perp = Vector((-seg_dir.y, seg_dir.x))
+                mid = (p1 + p2) * 0.5
+                if getattr(op, '_typing', False):
+                    label_text = f"{getattr(op, '_typed_value', '')}_"
+                else:
+                    label_text = units.unit_to_string(
+                        unit_settings, getattr(op, '_current_offset', 0.0))
+                _draw_dim_text((mid + perp * 30).x, (mid + perp * 30).y,
+                               label_text, dim_color)
+            ep_screen = p2 if getattr(op, '_drag_endpoint', 'end') == 'end' else p1
+            snap_hit = getattr(op, '_snap_hit', None)
+            if snap_hit is not None:
+                # Green marker while snapped; diamond = face snap (matches
+                # the draw_walls indicator language), crosshair = corner.
+                _draw_snap_point(ep_screen.x, ep_screen.y,
+                                 (0.2, 1.0, 0.4, 0.95), 12, 8,
+                                 diamond=(snap_hit[1] == 'face'))
+            else:
+                _draw_snap_point(ep_screen.x, ep_screen.y, dim_color, 9, 6)
+
         # Offset label near the dragged wall. While typing, show the typed
         # string with a trailing "_" cursor so the user sees their input
         # verbatim. Otherwise show the parsed/measured offset in scene units.
@@ -2527,6 +2579,18 @@ def _draw_change_room_size_highlight(op):
             _draw_dim_text((n_mid + n_perp * 30).x, (n_mid + n_perp * 30).y,
                            units.unit_to_string(unit_settings, n_length), dim_color)
 
+    # Idle: mark the free endpoint under the cursor as grabbable
+    if not drag_active:
+        hover_ep = getattr(op, '_hover_endpoint', None)
+        if hover_ep is not None and hover_ep[0].name in bpy.data.objects:
+            hs, he = get_wall_endpoints(hover_ep[0])
+            hp = he if hover_ep[1] == 'end' else hs
+            hp_screen = view3d_utils.location_3d_to_region_2d(
+                region, rv3d, Vector((hp.x, hp.y, 0.02)))
+            if hp_screen is not None:
+                _draw_snap_point(hp_screen.x, hp_screen.y,
+                                 (1.00, 0.65, 0.15, 0.95), 10, 7)
+
     gpu.state.line_width_set(1.0)
     gpu.state.blend_set('NONE')
 
@@ -2536,14 +2600,22 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     session, the user can drag multiple walls; each left-click-press on a wall
     starts a drag, and left-click-release commits that drag. Esc/right-click
     cancels either the current drag (if dragging) or the whole session
-    (if idle). Enter confirms and exits."""
+    (if idle). Enter confirms and exits.
+
+    Two drag modes:
+    - BODY: grab a wall body and drag perpendicular (the original room-resize
+      behavior; neighbors pivot/resize to follow).
+    - ENDPOINT: grab a free end of an open chain and slide it along the wall's
+      own axis (angle locked, only Length changes). The end snaps to other
+      walls' face lines and endpoint alignments, which is how an interior wall
+      gets butted cleanly against an exterior wall."""
 
     bl_idname = "home_builder_walls.change_room_size"
     bl_label = "Change Room Size"
     bl_description = (
         "Click and drag walls to resize the room. Left-click a wall, drag "
-        "perpendicular, release to commit. Drag more walls as needed. "
-        "Enter to confirm, Esc to cancel"
+        "perpendicular, release to commit. Drag a free wall end to change "
+        "its length (snaps to other walls). Enter to confirm, Esc to cancel"
     )
     bl_options = {'UNDO'}
 
@@ -2566,6 +2638,14 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     _typing = False                # numeric-input mode is active during drag
     _typed_value = ""              # accumulated keypresses for numeric input
     _typed_exited = False          # flag: next MOUSEMOVE should re-anchor drag origin
+    _drag_mode = 'BODY'            # 'BODY' = perpendicular offset, 'ENDPOINT' = free-end drag
+    _drag_endpoint = None          # 'start' or 'end' — which free end is being dragged
+    _drag_fixed_pt = None          # Vector2: pinned opposite endpoint (world XY)
+    _drag_axis_dir = None          # Vector2: unit vector, pinned end -> dragged end
+    _drag_t_grab_offset = 0.0      # along-axis grab offset so the end doesn't jump to the cursor
+    _endpoint_snap_candidates = None  # [(t, kind, Vector2)] precomputed at drag start
+    _snap_hit = None               # (Vector2, kind) currently-engaged snap stop, for the indicator
+    _hover_endpoint = None         # (wall_obj, 'start'|'end') free end under cursor while idle
 
     @classmethod
     def poll(cls, context):
@@ -2672,6 +2752,157 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
             outward_sign = 1.0
         return outward_sign * left_normal, is_closed
 
+    # ---------- Endpoint (free-end) drags ----------
+
+    def _find_free_endpoint_under_cursor(self, context, event):
+        """Return (wall_obj, 'start'|'end') for the nearest free open-chain
+        end within grab radius of the cursor, or None. Endpoint picking runs
+        before wall-body picking so free ends stay grabbable even though they
+        sit on the wall segment itself."""
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return None
+        p = hit.xy
+        best = None
+        best_dist = ENDPOINT_GRAB_RADIUS
+        for obj in context.scene.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            start_2d, end_2d = get_wall_endpoints(obj)
+            for which, pt in (('start', start_2d), ('end', end_2d)):
+                d = (p - pt).length
+                if d < best_dist:
+                    best_dist = d
+                    best = (obj, which)
+        if best is None:
+            return None
+        # Chain detection is the expensive part, so freeness is verified only
+        # for the winning candidate rather than per wall in the loop above.
+        if best[1] in _wall_free_endpoints(best[0]):
+            return best
+        return None
+
+    def _build_endpoint_snap_candidates(self, wall_obj):
+        """Precompute snap stops along the drag axis: t values (distance from
+        the pinned end) where the dragged end would land on another wall's
+        face line, plus alignments with other walls' endpoints that sit near
+        the axis. Only the dragged wall changes during an endpoint drag, so
+        this runs once at drag start."""
+        cands = []
+        fixed = self._drag_fixed_pt
+        axis = self._drag_axis_dir
+        for obj in bpy.context.scene.objects:
+            if 'IS_WALL_BP' not in obj or obj is wall_obj:
+                continue
+            gw = hb_types.GeoNodeWall(obj)
+            if not gw.has_modifier():
+                continue
+            e_len = gw.get_input('Length')
+            e_thk = gw.get_input('Thickness')
+            wm = obj.matrix_world
+            ed = Vector((wm[0][0], wm[1][0])).normalized()
+            ep = Vector((wm[0][1], wm[1][1])).normalized()
+            eo = Vector((wm[0][3], wm[1][3]))
+            # Face lines: back face at local Y=0, front face at Y=thickness
+            for offset in (0.0, e_thk):
+                base = eo + ep * offset
+                denom = axis.x * ed.y - axis.y * ed.x
+                if abs(denom) < 1e-10:
+                    continue  # drag axis parallel to this face
+                rel = base - fixed
+                t = (rel.x * ed.y - rel.y * ed.x) / denom
+                u = (rel.x * axis.y - rel.y * axis.x) / denom
+                if t > ENDPOINT_MIN_LENGTH and -0.001 <= u <= e_len + 0.001:
+                    cands.append((t, 'face', fixed + axis * t))
+            # Corner alignments: project endpoints near the axis onto it
+            e_start, e_end = get_wall_endpoints(obj)
+            for pt in (e_start, e_end):
+                rel = pt - fixed
+                t = rel.dot(axis)
+                if t <= ENDPOINT_MIN_LENGTH:
+                    continue
+                if (rel - axis * t).length <= ENDPOINT_PERP_TOL:
+                    cands.append((t, 'endpoint', fixed + axis * t))
+        return cands
+
+    def _start_endpoint_drag(self, context, event, wall_obj, which):
+        """Begin an angle-locked drag of a free wall end. The opposite end is
+        pinned; the dragged end slides along the wall's own axis, changing
+        Length only (a 'start' drag also translates the wall origin so the
+        pinned end stays put). The wall never rotates, so miters and
+        constraint targets are unaffected."""
+        start_2d, end_2d = get_wall_endpoints(wall_obj)
+        fixed, dragged = (start_2d, end_2d) if which == 'end' else (end_2d, start_2d)
+        axis = dragged - fixed
+        if axis.length < 1e-6:
+            return False, "Wall has zero length"
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return False, "Cannot project cursor onto Z=0 plane"
+        cur_len = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+        self._drag_snapshot = self._snapshot_walls()
+        self._drag_wall = wall_obj
+        self._drag_mode = 'ENDPOINT'
+        self._drag_endpoint = which
+        self._drag_fixed_pt = fixed
+        self._drag_axis_dir = axis.normalized()
+        self._drag_t_grab_offset = cur_len - (hit.xy - fixed).dot(self._drag_axis_dir)
+        self._endpoint_snap_candidates = self._build_endpoint_snap_candidates(wall_obj)
+        self._snap_hit = None
+        self._drag_active = True
+        self._current_offset = cur_len
+        self._last_error = None
+        return True, ""
+
+    def _apply_endpoint_length(self, new_len):
+        """Set the dragged wall's Length so its dragged end lands at
+        fixed + axis * new_len. 'end' drags only change Length; 'start' drags
+        also move the wall origin backward along the axis so the far end
+        (and any successor constrained to it) stays pinned."""
+        wall_obj = self._drag_wall
+        hb_types.GeoNodeWall(wall_obj).set_input('Length', new_len)
+        if self._drag_endpoint == 'start':
+            new_start = self._drag_fixed_pt + self._drag_axis_dir * new_len
+            wall_obj.location.x = new_start.x
+            wall_obj.location.y = new_start.y
+        self._current_offset = new_len
+
+    def _update_endpoint_drag(self, context, event):
+        hit = self._mouse_to_world_z0(context, event)
+        if hit is None:
+            return
+        raw_t = (hit.xy - self._drag_fixed_pt).dot(self._drag_axis_dir)
+        # If typing just exited, re-anchor the grab offset so the current
+        # cursor position maps to the current (typed-then-kept) length.
+        if self._typed_exited:
+            self._drag_t_grab_offset = self._current_offset - raw_t
+            self._typed_exited = False
+        proposed = raw_t + self._drag_t_grab_offset
+        # Engage the nearest precomputed snap stop within range
+        self._snap_hit = None
+        best = None
+        for t, kind, pt in self._endpoint_snap_candidates:
+            d = abs(t - proposed)
+            if d <= ENDPOINT_SNAP_DIST and (best is None or d < best[0]):
+                best = (d, t, kind, pt)
+        if best is not None:
+            proposed = best[1]
+            self._snap_hit = (best[3], best[2])
+        new_len = max(proposed, ENDPOINT_MIN_LENGTH)
+        self._restore_walls(self._drag_snapshot)
+        self._apply_endpoint_length(new_len)
+        self._last_error = None
+
+    def _baseline_offset(self):
+        """The value _current_offset should return to at the drag baseline:
+        0 for body drags (no offset), the snapshot length for endpoint drags."""
+        if self._drag_mode == 'ENDPOINT' and self._drag_wall is not None \
+                and self._drag_snapshot is not None:
+            state = self._drag_snapshot.get(self._drag_wall.name)
+            if state is not None:
+                return state['length']
+        return 0.0
+
     # ---------- Drag lifecycle ----------
 
     def _start_drag(self, context, event, wall_obj):
@@ -2716,6 +2947,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._drag_succ_wall = succ_wall
         self._drag_pred_outward = pred_outward
         self._drag_succ_outward = succ_outward
+        self._drag_mode = 'BODY'
         self._drag_active = True
         self._current_offset = 0.0
         self._last_error = None
@@ -2756,6 +2988,13 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._typing = False
         self._typed_value = ""
         self._typed_exited = False
+        self._drag_mode = 'BODY'
+        self._drag_endpoint = None
+        self._drag_fixed_pt = None
+        self._drag_axis_dir = None
+        self._drag_t_grab_offset = 0.0
+        self._endpoint_snap_candidates = None
+        self._snap_hit = None
         self._current_offset = 0.0
         self._last_error = None
 
@@ -2791,22 +3030,32 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
             else:
                 # Empty after backspace: restore baseline, stay in typing mode
                 self._restore_walls(self._drag_snapshot)
-                self._current_offset = 0.0
+                self._current_offset = self._baseline_offset()
                 self._last_error = None
         else:
             # Already empty: exit typing mode
             self._stop_typing()
             self._restore_walls(self._drag_snapshot)
-            self._current_offset = 0.0
+            self._current_offset = self._baseline_offset()
             self._last_error = None
 
     def _apply_typed_value_live(self):
-        """Parse the current typed_value and apply as the wall's offset."""
+        """Parse the current typed_value and apply it: perpendicular offset
+        in BODY mode, absolute wall Length in ENDPOINT mode."""
         val = _crs_parse_distance(self._typed_value)
         self._restore_walls(self._drag_snapshot)
+        self._snap_hit = None
         if val is None:
             # Unparseable partial input (e.g. just "-" or ".") — leave at baseline
-            self._current_offset = 0.0
+            self._current_offset = self._baseline_offset()
+            self._last_error = None
+            return
+        if self._drag_mode == 'ENDPOINT':
+            if val < ENDPOINT_MIN_LENGTH:
+                self._current_offset = self._baseline_offset()
+                self._last_error = "Length must be positive"
+                return
+            self._apply_endpoint_length(val)
             self._last_error = None
             return
         self._current_offset = val
@@ -2825,8 +3074,15 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         if area is None:
             return
         if self._typing:
-            text = (f"Change Room Size — Typing offset: {self._typed_value}_   |   "
+            label = "length" if self._drag_mode == 'ENDPOINT' else "offset"
+            text = (f"Change Room Size — Typing {label}: {self._typed_value}_   |   "
                     "Enter: commit   |   Backspace: erase   |   Esc: stop typing")
+        elif self._drag_active and self._drag_mode == 'ENDPOINT':
+            msg = f"Length: {self._current_offset:.3f} m"
+            if self._last_error:
+                msg += f"   [{self._last_error}]"
+            text = (f"Change Room Size — {msg}   |   "
+                    "Release: commit drag   |   Type digits for exact length   |   Esc: cancel drag")
         elif self._drag_active:
             msg = f"Offset: {self._current_offset:+.3f} m"
             if self._last_error:
@@ -2834,7 +3090,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
             text = (f"Change Room Size — {msg}   |   "
                     "Release: commit drag   |   Type digits for exact value   |   Esc: cancel drag")
         else:
-            text = ("Change Room Size — click+drag a wall   |   "
+            text = ("Change Room Size — click+drag a wall body or a free wall end   |   "
                     "Enter: confirm   |   Esc: cancel all")
         area.header_text_set(text)
 
@@ -2850,6 +3106,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 pass
             self._draw_handle = None
         self._hover_wall = None
+        self._hover_endpoint = None
 
     # ---------- Entry / event loop ----------
 
@@ -2865,9 +3122,11 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         context.view_layer.objects.active = None
         self._session_snapshot = self._snapshot_walls()
         self._drag_active = False
+        self._drag_mode = 'BODY'
         self._current_offset = 0.0
         self._last_error = None
         self._hover_wall = None
+        self._hover_endpoint = None
         self.region = context.region
         context.window.cursor_modal_set('SCROLL_XY')
         self._update_header(context)
@@ -2922,9 +3181,13 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         # --- MOUSEMOVE ---
         if event.type == 'MOUSEMOVE':
             if self._drag_active and not self._typing:
-                self._update_drag(context, event)
+                if self._drag_mode == 'ENDPOINT':
+                    self._update_endpoint_drag(context, event)
+                else:
+                    self._update_drag(context, event)
                 self._update_header(context)
             elif not self._drag_active:
+                self._hover_endpoint = self._find_free_endpoint_under_cursor(context, event)
                 new_hover = self._find_wall_under_cursor(context, event)
                 if new_hover is not self._hover_wall:
                     self._hover_wall = new_hover
@@ -2941,6 +3204,15 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         # --- LEFTMOUSE ---
         if event.type == 'LEFTMOUSE':
             if event.value == 'PRESS' and not self._drag_active:
+                # Free wall ends win over the wall body so they stay grabbable
+                endpoint = self._find_free_endpoint_under_cursor(context, event)
+                if endpoint is not None:
+                    ok, msg = self._start_endpoint_drag(
+                        context, event, endpoint[0], endpoint[1])
+                    if not ok:
+                        self.report({'WARNING'}, msg)
+                    self._update_header(context)
+                    return {'RUNNING_MODAL'}
                 wall = self._find_wall_under_cursor(context, event)
                 if wall is not None:
                     ok, msg = self._start_drag(context, event, wall)

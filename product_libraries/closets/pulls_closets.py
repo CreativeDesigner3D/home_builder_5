@@ -333,6 +333,15 @@ def _apply_finish_to_pull(pull_obj, finish=None):
     mats.append(mat)
 
 
+def current_pull_stem():
+    """Display name of the active pull selection (file stem)."""
+    selection = getattr(bpy.context.scene.hb_closets,
+                        'closet_pull', DEFAULT_PULL)
+    if not selection or selection == 'NONE':
+        return ''
+    return os.path.splitext(selection)[0]
+
+
 def resolve_pull_object(selection=None, finish=None):
     """The loaded source object for the pull selection (scene prop when
     not overridden; cached, reloaded when the selection changes), with

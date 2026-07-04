@@ -143,6 +143,8 @@ def _strip_style(front_obj):
     for mod in list(front_obj.modifiers):
         if mod.type == 'NODES' and 'Door Style' in mod.name:
             front_obj.modifiers.remove(mod)
+    if 'DOOR_STYLE_NAME' in front_obj:
+        del front_obj['DOOR_STYLE_NAME']
 
 
 def apply_style_to_front(front_obj, is_drawer, style=None):
