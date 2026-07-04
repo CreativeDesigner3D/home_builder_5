@@ -12,6 +12,7 @@ intentionally not ported - closets don't need them yet.
 """
 import bpy
 import math
+import os
 from mathutils import Vector
 
 from .... import hb_types, hb_placement, hb_snap, units
@@ -1030,7 +1031,9 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     def _drop_preview(self):
         if self._preview is not None:
             try:
-                bpy.data.objects.remove(self._preview, do_unlink=True)
+                # Tree remove: a preview part may have grown children
+                # (rod hangers) that a bare remove would strand.
+                types_closets._remove_part_tree(self._preview)
             except ReferenceError:
                 pass
         self._preview = None
@@ -1827,7 +1830,9 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                 remove_obj = False
 
         if remove_obj:
-            bpy.data.objects.remove(obj, do_unlink=True)
+            # Tree remove: rods carry hanger children (a bare remove
+            # would strand them at the world origin).
+            types_closets._remove_part_tree(obj)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
@@ -2096,6 +2101,152 @@ class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_change_hanger(bpy.types.Operator):
+    """Pick the model for the selected hanger (Room Default follows the
+    sidebar Hangers option). The dropdown previews live in the dialog."""
+    bl_idname = "hb_closets.change_hanger"
+    bl_label = "Change Hanger"
+    bl_options = {'UNDO'}
+
+    def _items(self, context):
+        from .. import pulls_closets
+        return pulls_closets.hanger_override_enum_items(self, context)
+
+    hanger_model: bpy.props.EnumProperty(
+        name="Hanger", items=_items)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.get('IS_CLOSET_HANGER')
+
+    def _apply(self, context):
+        from .. import pulls_closets
+        obj = context.active_object
+        if obj is None or not obj.get('IS_CLOSET_HANGER'):
+            return
+        if self.hanger_model == 'SCENE':
+            if 'hb_hanger_model' in obj:
+                del obj['hb_hanger_model']
+            selection = getattr(context.scene.hb_closets,
+                                'closet_hanger_model',
+                                pulls_closets.DEFAULT_HANGER)
+        else:
+            obj['hb_hanger_model'] = self.hanger_model
+            selection = self.hanger_model
+        model = pulls_closets.resolve_hanger_object(selection)
+        if model is not None and obj.data is not model.data:
+            obj.data = model.data
+
+    def check(self, context):
+        # Live preview while the dialog is open (legacy behavior).
+        self._apply(context)
+        return True
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        current = obj.get('hb_hanger_model', '') if obj else ''
+        self.hanger_model = current if current else 'SCENE'
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        self.layout.prop(self, 'hanger_model')
+
+    def execute(self, context):
+        self._apply(context)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_randomize_hangers(bpy.types.Operator):
+    """Randomly assign a hanger model to every hanger in the room
+    (stored as per-hanger overrides - right-click a hanger and pick
+    Room Default to reset one)"""
+    bl_idname = "hb_closets.randomize_hangers"
+    bl_label = "Randomize Hangers"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        import random
+        from .. import pulls_closets
+        files = pulls_closets.get_hanger_files()
+        if len(files) < 2:
+            self.report({'INFO'},
+                        "Install the model pack to get more hangers")
+            return {'CANCELLED'}
+        count = 0
+        for obj in context.scene.objects:
+            if not obj.get(pulls_closets.TAG_HANGER):
+                continue
+            rod = obj.parent
+            if rod is None or rod.get('hb_preview'):
+                continue
+            # Only garments that FIT this rod's section: the rod's
+            # opening-local height is its clearance to the section
+            # bottom, so double-hang rods draw shirts while long-hang
+            # sections can pull dresses and coats.
+            candidates = pulls_closets.hangers_that_fit(rod.location.z)
+            if not candidates:
+                continue
+            choice = random.choice(candidates)
+            obj['hb_hanger_model'] = choice
+            model = pulls_closets.resolve_hanger_object(choice)
+            if model is not None and obj.data is not model.data:
+                obj.data = model.data
+            count += 1
+        if not count:
+            self.report({'INFO'}, "No hangers in the room")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Randomized {count} hangers")
+        return {'FINISHED'}
+
+
+class hb_closets_OT_install_model_pack(bpy.types.Operator):
+    """Install a downloaded model pack (.zip of hanger .blend files)
+    into the user data folder - packed models never live in the
+    library itself"""
+    bl_idname = "hb_closets.install_model_pack"
+    bl_label = "Install Model Pack"
+
+    filepath: bpy.props.StringProperty(
+        subtype='FILE_PATH', options={'SKIP_SAVE'})  # type: ignore
+    filter_glob: bpy.props.StringProperty(
+        default="*.zip", options={'HIDDEN'})  # type: ignore
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        import zipfile
+        from .. import pulls_closets
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'WARNING'}, "Select a model pack .zip")
+            return {'CANCELLED'}
+        dest = pulls_closets.user_hangers_dir(create=True)
+        installed = 0
+        try:
+            with zipfile.ZipFile(self.filepath) as zf:
+                for member in zf.namelist():
+                    # Flatten to basenames: only .blend payloads land in
+                    # the user folder (also defuses zip path traversal).
+                    name = os.path.basename(member)
+                    if not name.lower().endswith('.blend'):
+                        continue
+                    with zf.open(member) as src, \
+                            open(os.path.join(dest, name), 'wb') as out:
+                        out.write(src.read())
+                    installed += 1
+        except zipfile.BadZipFile:
+            self.report({'ERROR'}, "Not a valid .zip file")
+            return {'CANCELLED'}
+        if not installed:
+            self.report({'WARNING'}, "No models found in the pack")
+            return {'CANCELLED'}
+        pulls_closets.refresh()
+        self.report({'INFO'}, f"Installed {installed} models")
+        return {'FINISHED'}
+
+
 class hb_closets_OT_add_molding(bpy.types.Operator):
     """Add crown molding along the top of every closet in the room
     using the selected profile (re-run after layout changes; clears
@@ -2170,6 +2321,9 @@ classes = (
     hb_closets_OT_set_corner_clearance,
     hb_closets_OT_add_molding,
     hb_closets_OT_delete_molding,
+    hb_closets_OT_change_hanger,
+    hb_closets_OT_install_model_pack,
+    hb_closets_OT_randomize_hangers,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

@@ -17,6 +17,7 @@ import bpy
 # Shared asset convention (origin at mounting-face center, bar along X);
 # the length helper is library-agnostic, so reuse it.
 from ..face_frame.pulls import pull_length  # noqa: F401  (re-exported)
+from ...units import inch
 
 
 HANDLES_DIR = os.path.join(os.path.dirname(__file__), 'assets', 'handles')
@@ -45,6 +46,198 @@ ROD_TYPES = [
     ('OVAL', "Signature", "Oval profile"),
     ('ROUND', "Round", "Round profile"),
 ]
+
+# ---------------------------------------------------------------------------
+# Display hangers: three per rod (ends + center), instancing a model
+# from assets/hangers/. Instances share the model's mesh data, so a
+# model swap updates every rod in the room in one write.
+# ---------------------------------------------------------------------------
+HANGERS_DIR = os.path.join(os.path.dirname(__file__), 'assets', 'hangers')
+DEFAULT_HANGER = 'Hanger Model.blend'
+TAG_HANGER = 'IS_CLOSET_HANGER'
+_HANGER_END_OFFSET = inch(6.0)
+
+
+def user_hangers_dir(create=False):
+    """User-installed hanger models. Only the bare hanger ships with
+    the library; the clothes models install as a downloadable pack
+    (Install Model Pack button) into the extension's user data folder,
+    so they never live in the repo."""
+    root = bpy.utils.extension_path_user(
+        '.'.join(__package__.split('.')[:3]), path='user_data',
+        create=create)
+    d = os.path.join(root, 'hangers')
+    if create:
+        os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _hanger_path(filename):
+    """Resolve a hanger blend across the bundled folder and the
+    user-installed pack (bundled wins on a name clash)."""
+    for folder in (HANGERS_DIR, user_hangers_dir()):
+        p = os.path.join(folder, filename)
+        if os.path.exists(p):
+            return p
+    return None
+
+_hanger_enum_cache = None
+_hanger_override_enum_cache = None
+# One loaded source object per model file (several can be live at once
+# when hangers carry per-object overrides).
+_hanger_models = {}
+# Garment drop length per model file (measured from the mesh, cached).
+_hanger_drops = {}
+
+
+def get_hanger_files():
+    """Sorted hanger model blends from the bundled folder AND the
+    user-installed pack, the bare hanger hoisted first (= dynamic-enum
+    default)."""
+    names = set()
+    for folder in (HANGERS_DIR, user_hangers_dir()):
+        if os.path.isdir(folder):
+            names.update(f for f in os.listdir(folder)
+                         if f.lower().endswith('.blend'))
+    files = sorted(names)
+    if DEFAULT_HANGER in files:
+        files.remove(DEFAULT_HANGER)
+        files.insert(0, DEFAULT_HANGER)
+    return files
+
+
+def hanger_enum_items(self, context):
+    global _hanger_enum_cache
+    if _hanger_enum_cache is None:
+        items = [(f, os.path.splitext(f)[0], "")
+                 for f in get_hanger_files()]
+        items.append(('NONE', "None", "No hangers"))
+        _hanger_enum_cache = items
+    return _hanger_enum_cache
+
+
+def hanger_override_enum_items(self, context):
+    """Items for the per-hanger right-click override: Room Default
+    first (follow the scene Hangers option), then the models."""
+    global _hanger_override_enum_cache
+    if _hanger_override_enum_cache is None:
+        items = [('SCENE', "Room Default",
+                  "Follow the Hangers option in the sidebar")]
+        items += [(f, os.path.splitext(f)[0], "")
+                  for f in get_hanger_files()]
+        _hanger_override_enum_cache = items
+    return _hanger_override_enum_cache
+
+
+def resolve_hanger_object(selection):
+    """Loaded source object for a hanger model (one cache slot per
+    model - overrides can keep several live at once). None for NONE /
+    missing assets."""
+    if not selection or selection == 'NONE':
+        return None
+    cached = _hanger_models.get(selection)
+    if cached is not None:
+        try:
+            cached.name
+            return cached
+        except ReferenceError:
+            pass
+    path = _hanger_path(selection)
+    if path is None:
+        return None
+    try:
+        with bpy.data.libraries.load(path) as (src, dst):
+            dst.objects = list(src.objects)
+    except Exception:
+        return None
+    obj = next((o for o in dst.objects if o is not None), None)
+    if obj is None:
+        return None
+    _hanger_models[selection] = obj
+    return obj
+
+
+def hanger_drop_length(selection):
+    """How far a model's garment hangs below the rod, measured from the
+    mesh (origin sits at the rod hook; the drop is the extent below
+    it). Cached per model file."""
+    drop = _hanger_drops.get(selection)
+    if drop is not None:
+        return drop
+    obj = resolve_hanger_object(selection)
+    if obj is None or obj.data is None or not len(obj.data.vertices):
+        drop = 0.0
+    else:
+        drop = max(0.0, -min(v.co.z for v in obj.data.vertices))
+    _hanger_drops[selection] = drop
+    return drop
+
+
+def hangers_that_fit(clearance):
+    """Model files whose garment clears the space below a rod (with a
+    little air). Long dresses/coats only qualify in long-hang sections;
+    everything falls back to the shortest model so a very low rod still
+    gets SOMETHING on it."""
+    files = get_hanger_files()
+    limit = clearance - inch(0.5)
+    fits = [f for f in files if hanger_drop_length(f) <= limit]
+    if fits:
+        return fits
+    shortest = min(files, key=hanger_drop_length, default=None)
+    return [shortest] if shortest else []
+
+
+def reconcile_rod_hangers(rod_obj, rod_length):
+    """Create/remove/refresh the three display hangers on one rod
+    (called from the rod layout every recalc). Hangers parent to the
+    rod at 6" in from each end plus the center, hanging in the rod's
+    local frame the way the models were authored. Rods too short for
+    the end offsets - and the None selection - carry no hangers.
+
+    A hanger can carry a per-object model override (hb_hanger_model,
+    set from its right-click menu); overridden hangers keep their model
+    when the room selection changes."""
+    existing = [c for c in rod_obj.children if c.get(TAG_HANGER)]
+    # Placement previews carry no hangers - the preview rod is deleted
+    # on every commit/cancel and its hangers would be left behind.
+    if rod_obj.get('hb_preview'):
+        for c in existing:
+            bpy.data.objects.remove(c, do_unlink=True)
+        return
+    selection = getattr(bpy.context.scene.hb_closets,
+                        'closet_hanger_model', DEFAULT_HANGER)
+    show = (selection and selection != 'NONE'
+            and rod_length > 2.0 * _HANGER_END_OFFSET + inch(2.0))
+    model = resolve_hanger_object(selection) if show else None
+    if model is None:
+        for c in existing:
+            bpy.data.objects.remove(c, do_unlink=True)
+        return
+    while len(existing) > 3:
+        bpy.data.objects.remove(existing.pop(), do_unlink=True)
+    while len(existing) < 3:
+        o = bpy.data.objects.new('Hanger', model.data)
+        try:
+            bpy.context.scene.collection.objects.link(o)
+        except RuntimeError:
+            pass
+        o.parent = rod_obj
+        o[TAG_HANGER] = True
+        o['MENU_ID'] = 'HOME_BUILDER_MT_closet_hanger_commands'
+        existing.append(o)
+    xs = (_HANGER_END_OFFSET, rod_length / 2.0,
+          rod_length - _HANGER_END_OFFSET)
+    for o, x in zip(existing, xs):
+        override = o.get('hb_hanger_model', '')
+        m = resolve_hanger_object(override) if override else None
+        if m is None:
+            m = model
+        if o.data is not m.data:
+            o.data = m.data
+        if not o.get('MENU_ID'):
+            o['MENU_ID'] = 'HOME_BUILDER_MT_closet_hanger_commands'
+        o.location = (x, 0.0, 0.0)
+        o.rotation_euler = (0.0, 0.0, 0.0)
 
 _enum_cache = None
 # One loaded source object per selection; instances share its mesh data.
@@ -98,10 +291,14 @@ def pull_enum_items(self, context):
 
 
 def refresh():
-    global _enum_cache
+    global _enum_cache, _hanger_enum_cache, _hanger_override_enum_cache
     _enum_cache = None
     _pull_cache['selection'] = ''
     _pull_cache['object'] = None
+    _hanger_enum_cache = None
+    _hanger_override_enum_cache = None
+    _hanger_models.clear()
+    _hanger_drops.clear()
 
 
 def load_finish_material(name):

@@ -725,6 +725,7 @@ class ClosetStarter(GeoNodeCage):
                                 'Polished Chrome'))
                     if rod_mat is not None:
                         rod_geo.set_input('Material', rod_mat)
+                    pulls_closets.reconcile_rod_hangers(child, width)
                 except Exception:
                     pass
             elif role is not None:
@@ -1896,7 +1897,7 @@ def clear_opening_contents(opening):
     for child in list(opening.children):
         if child.get('hb_part_role') in (PART_ROLE_ROD,
                                          PART_ROLE_FIXED_SHELF):
-            bpy.data.objects.remove(child, do_unlink=True)
+            _remove_part_tree(child)  # rods carry hanger children
 
 
 def clear_bay_contents(bay_obj):

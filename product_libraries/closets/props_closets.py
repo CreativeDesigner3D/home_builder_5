@@ -338,6 +338,11 @@ class Closets_Scene_Props(PropertyGroup):
         items=pulls_closets.ROD_FINISHES,
         default='Polished Chrome',
         update=pulls_closets.update_room)  # type: ignore
+    closet_hanger_model: EnumProperty(
+        name="Hangers",
+        description="Display hanger model shown on closet rods",
+        items=pulls_closets.hanger_enum_items,
+        update=pulls_closets.update_room)  # type: ignore
 
     closet_drawer_box: EnumProperty(
         name="Drawer Box",
@@ -463,6 +468,13 @@ class Closets_Scene_Props(PropertyGroup):
         row.label(text="Rods")
         row.prop(self, 'closet_rod_type', text="")
         row.prop(self, 'closet_rod_finish', text="")
+        row = box.row()
+        row.label(text="Hangers")
+        row.prop(self, 'closet_hanger_model', text="")
+        row.operator('hb_closets.randomize_hangers', text="",
+                     icon='FILE_REFRESH')
+        row.operator('hb_closets.install_model_pack', text="",
+                     icon='IMPORT')
 
         box = col.box()
         row = box.row()

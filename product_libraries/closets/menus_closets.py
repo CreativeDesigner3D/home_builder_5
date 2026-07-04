@@ -23,6 +23,15 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
                         text="Delete Starter", icon='X')
 
 
+class HOME_BUILDER_MT_closet_hanger_commands(bpy.types.Menu):
+    """Right-click menu for a display hanger."""
+    bl_label = "Hanger Commands"
+
+    def draw(self, context):
+        self.layout.operator("hb_closets.change_hanger",
+                             text="Change Hanger...", icon='MOD_CLOTH')
+
+
 class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
     """Right-click menu for a closet bay cage."""
     bl_label = "Closet Bay Commands"
@@ -187,6 +196,7 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
 
 classes = (
     HOME_BUILDER_MT_closet_starter_commands,
+    HOME_BUILDER_MT_closet_hanger_commands,
     HOME_BUILDER_MT_closet_bay_commands,
     HOME_BUILDER_MT_closet_opening_commands,
     HOME_BUILDER_MT_closet_change_bay,
