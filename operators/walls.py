@@ -2436,6 +2436,65 @@ def _wall_free_endpoints(wall_obj):
     return tuple(free)
 
 
+# Pill label style — mirrors face_frame/dim_edit_overlay.py so the wall
+# pills read as the same UI language as the bay-width labels.
+PILL_FONT_SIZE = 12
+PILL_PAD_X = 6
+PILL_PAD_Y = 4
+PILL_BG = (0.13, 0.13, 0.14, 0.85)
+PILL_BORDER = (1.0, 1.0, 1.0, 0.25)
+PILL_EDIT_BG = (0.20, 0.43, 0.70, 0.95)   # matches HUD active blue
+PILL_TEXT = (0.95, 0.95, 0.95, 1.0)
+
+
+def _draw_pill_rect(shader, rect, bg):
+    """Filled quad + border for one pill label."""
+    x, y, w, h = rect
+    verts = ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+    shader.uniform_float("color", bg)
+    batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
+    shader.uniform_float("color", PILL_BORDER)
+    batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
+
+
+def _draw_wall_length_pills(op, region, rv3d):
+    """Length pill on every wall while change_room_size idles. The pill
+    being edited renders as a blue input field showing the typed value and
+    a text cursor (an empty buffer shows the current length, i.e. what
+    Enter would keep). Hidden during drags, which paint their own dims."""
+    pills = op._compute_wall_pills(bpy.context)
+    if not pills:
+        return
+    s = 1.0
+    try:
+        s = bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        pass
+    font_sz = PILL_FONT_SIZE * s
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    gpu.state.blend_set('ALPHA')
+    edit_wall = getattr(op, '_pill_edit_wall', None)
+    edit_name = edit_wall.name if edit_wall is not None else None
+    for name, rect, text in pills:
+        if name == edit_name:
+            typed = getattr(op, '_typed_value', '')
+            shown = (typed + "|") if typed else text
+            blf.size(0, font_sz)
+            tw = blf.dimensions(0, shown)[0]
+            w = max(rect[2], tw + 2 * PILL_PAD_X * s)
+            rect = (rect[0], rect[1], w, rect[3])
+            _draw_pill_rect(shader, rect, PILL_EDIT_BG)
+            text = shown
+        else:
+            _draw_pill_rect(shader, rect, PILL_BG)
+        blf.size(0, font_sz)
+        blf.color(0, *PILL_TEXT)
+        blf.position(0, rect[0] + PILL_PAD_X * s, rect[1] + PILL_PAD_Y * s, 0)
+        blf.draw(0, text)
+    gpu.state.blend_set('NONE')
+
+
 def _draw_change_room_size_highlight(op):
     """GPU draw callback: highlights the wall under the cursor (idle) or the
     wall currently being dragged (drag). During drag, also renders live
@@ -2449,6 +2508,8 @@ def _draw_change_room_size_highlight(op):
     drag_active = getattr(op, '_drag_active', False)
     wall_obj = getattr(op, '_drag_wall', None) if drag_active else getattr(op, '_hover_wall', None)
     if wall_obj is None or wall_obj.name not in bpy.data.objects:
+        if not drag_active:
+            _draw_wall_length_pills(op, region, rv3d)
         return
 
     # Highlight color + thickness
@@ -2579,8 +2640,9 @@ def _draw_change_room_size_highlight(op):
             _draw_dim_text((n_mid + n_perp * 30).x, (n_mid + n_perp * 30).y,
                            units.unit_to_string(unit_settings, n_length), dim_color)
 
-    # Idle: mark the free endpoint under the cursor as grabbable
+    # Idle: pills on all walls, plus the grabbable free-end marker
     if not drag_active:
+        _draw_wall_length_pills(op, region, rv3d)
         hover_ep = getattr(op, '_hover_endpoint', None)
         if hover_ep is not None and hover_ep[0].name in bpy.data.objects:
             hs, he = get_wall_endpoints(hover_ep[0])
@@ -2608,7 +2670,15 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     - ENDPOINT: grab a free end of an open chain and slide it along the wall's
       own axis (angle locked, only Length changes). The end snaps to other
       walls' face lines and endpoint alignments, which is how an interior wall
-      gets butted cleanly against an exterior wall."""
+      gets butted cleanly against an exterior wall.
+
+    Idle state also paints a clickable length pill on every wall
+    (face_frame dim_edit_overlay styling): click, type a new length
+    (placement grammar), Enter commits / Esc cancels. Open chains take the
+    length directly (downstream walls translate along the constraint
+    chain); closed loops solve the successor wall's perpendicular offset
+    so the typed wall lands on the target length — same guards and miter
+    recompute as a body drag."""
 
     bl_idname = "home_builder_walls.change_room_size"
     bl_label = "Change Room Size"
@@ -2646,6 +2716,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
     _endpoint_snap_candidates = None  # [(t, kind, Vector2)] precomputed at drag start
     _snap_hit = None               # (Vector2, kind) currently-engaged snap stop, for the indicator
     _hover_endpoint = None         # (wall_obj, 'start'|'end') free end under cursor while idle
+    _pill_edit_wall = None         # wall whose length pill is being typed into (no drag active)
 
     @classmethod
     def poll(cls, context):
@@ -2895,13 +2966,124 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
 
     def _baseline_offset(self):
         """The value _current_offset should return to at the drag baseline:
-        0 for body drags (no offset), the snapshot length for endpoint drags."""
-        if self._drag_mode == 'ENDPOINT' and self._drag_wall is not None \
+        0 for body drags (no offset), the snapshot length for endpoint
+        drags and pill edits."""
+        if (self._drag_mode == 'ENDPOINT' or self._pill_edit_wall is not None) \
+                and self._drag_wall is not None \
                 and self._drag_snapshot is not None:
             state = self._drag_snapshot.get(self._drag_wall.name)
             if state is not None:
                 return state['length']
         return 0.0
+
+    # ---------- Length pills ----------
+
+    def _compute_wall_pills(self, context):
+        """[(wall_name, rect, text)] for every wall's length pill; rect is
+        (x, y, w, h) region-local, centered on the wall midpoint.
+        Recomputed for both draw and click hit-test (the face_frame
+        dim_edit_overlay pattern) so pixels and hits can't drift."""
+        region = self.region
+        if region is None or region.data is None:
+            return []
+        rv3d = region.data
+        unit_settings = context.scene.unit_settings
+        s = 1.0
+        try:
+            s = context.preferences.system.ui_scale
+        except AttributeError:
+            pass
+        blf.size(0, PILL_FONT_SIZE * s)
+        pills = []
+        for obj in context.scene.objects:
+            if 'IS_WALL_BP' not in obj:
+                continue
+            gw = hb_types.GeoNodeWall(obj)
+            if not gw.has_modifier():
+                continue
+            length = gw.get_input('Length')
+            start_2d, end_2d = get_wall_endpoints(obj)
+            mid = (start_2d + end_2d) * 0.5
+            pt = view3d_utils.location_3d_to_region_2d(
+                region, rv3d, Vector((mid.x, mid.y, 0.02)))
+            if pt is None:
+                continue
+            text = units.unit_to_string(unit_settings, length)
+            tw, th = blf.dimensions(0, text)
+            w = tw + 2 * PILL_PAD_X * s
+            h = th + 2 * PILL_PAD_Y * s
+            rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
+            if rect[0] + w < 0 or rect[0] > region.width:
+                continue
+            if rect[1] + h < 0 or rect[1] > region.height:
+                continue
+            pills.append((obj.name, rect, text))
+        return pills
+
+    def _find_pill_under_cursor(self, context, event):
+        """Wall object whose length pill is under the cursor, or None."""
+        mx, my = event.mouse_region_x, event.mouse_region_y
+        for name, rect, _text in self._compute_wall_pills(context):
+            x, y, w, h = rect
+            if x <= mx <= x + w and y <= my <= y + h:
+                obj = bpy.data.objects.get(name)
+                if obj is not None:
+                    return obj
+        return None
+
+    def _start_pill_edit(self, context, wall_obj):
+        """Begin typing a new length for the clicked pill. Reuses the drag
+        typing machinery (snapshot / typed buffer / live apply) with no
+        drag active; Enter or click-away commits, Esc / right-click /
+        empty-backspace cancels."""
+        self._drag_snapshot = self._snapshot_walls()
+        self._drag_wall = wall_obj
+        self._pill_edit_wall = wall_obj
+        self._current_offset = hb_types.GeoNodeWall(wall_obj).get_input('Length')
+        self._last_error = None
+        self._typing = True
+        self._typed_value = ""
+
+    def _apply_pill_length(self, wall_obj, new_len):
+        """Drive wall_obj's length to new_len.
+
+        Open chains: write Length directly — the constraint chain
+        translates everything downstream rigidly, no angles change.
+
+        Closed loops: a wall's length there isn't free; it is set by where
+        its neighbors sit. Solve for the perpendicular offset d of the
+        SUCCESSOR wall that makes this wall's length land on the target
+        (|v + d*n| = target; for rectilinear rooms that is exactly 'slide
+        the next wall over by the difference'), then apply it through
+        offset_wall_perpendicular so the collapse/reversal guards, anchor
+        translation and miter recompute all match a body drag.
+
+        Returns (ok, msg)."""
+        gw = hb_types.GeoNodeWall(wall_obj)
+        chain, idx, is_closed = get_wall_chain_info(wall_obj)
+        if chain is None or not is_closed:
+            gw.set_input('Length', new_len)
+            return True, ""
+        succ_obj = chain[(idx + 1) % len(chain)]
+        outward, _closed = self._compute_outward_normal(succ_obj)
+        if outward is None:
+            return False, "Next wall is not part of a detected chain"
+        rot = wall_obj.rotation_euler.z
+        cur_len = gw.get_input('Length')
+        v = Vector((math.cos(rot) * cur_len, math.sin(rot) * cur_len, 0))
+        vn = v.dot(outward)
+        disc = vn * vn - v.length_squared + new_len * new_len
+        if disc < 0.0:
+            return False, "Length not reachable by moving the next wall"
+        root = math.sqrt(disc)
+        d1 = -vn + root
+        d2 = -vn - root
+        # Two geometric solutions; the smaller move is always the one the
+        # user means (the other reverses this wall through its start).
+        d = d1 if abs(d1) <= abs(d2) else d2
+        if abs(d) < 1e-9:
+            return True, ""
+        return offset_wall_perpendicular(succ_obj, d)
 
     # ---------- Drag lifecycle ----------
 
@@ -2995,6 +3177,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._drag_t_grab_offset = 0.0
         self._endpoint_snap_candidates = None
         self._snap_hit = None
+        self._pill_edit_wall = None
         self._current_offset = 0.0
         self._last_error = None
 
@@ -3033,7 +3216,11 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 self._current_offset = self._baseline_offset()
                 self._last_error = None
         else:
-            # Already empty: exit typing mode
+            # Already empty: exit typing mode (pill edits cancel outright —
+            # there is no drag to fall back into)
+            if self._pill_edit_wall is not None:
+                self._cancel_drag()
+                return
             self._stop_typing()
             self._restore_walls(self._drag_snapshot)
             self._current_offset = self._baseline_offset()
@@ -3048,6 +3235,20 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         if val is None:
             # Unparseable partial input (e.g. just "-" or ".") — leave at baseline
             self._current_offset = self._baseline_offset()
+            self._last_error = None
+            return
+        if self._pill_edit_wall is not None:
+            if val < ENDPOINT_MIN_LENGTH:
+                self._current_offset = self._baseline_offset()
+                self._last_error = "Length must be positive"
+                return
+            ok, msg = self._apply_pill_length(self._drag_wall, val)
+            if not ok:
+                self._restore_walls(self._drag_snapshot)
+                self._current_offset = self._baseline_offset()
+                self._last_error = msg
+                return
+            self._current_offset = val
             self._last_error = None
             return
         if self._drag_mode == 'ENDPOINT':
@@ -3074,7 +3275,8 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         if area is None:
             return
         if self._typing:
-            label = "length" if self._drag_mode == 'ENDPOINT' else "offset"
+            label = ("length" if (self._drag_mode == 'ENDPOINT'
+                                  or self._pill_edit_wall is not None) else "offset")
             text = (f"Change Room Size — Typing {label}: {self._typed_value}_   |   "
                     "Enter: commit   |   Backspace: erase   |   Esc: stop typing")
         elif self._drag_active and self._drag_mode == 'ENDPOINT':
@@ -3091,7 +3293,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                     "Release: commit drag   |   Type digits for exact value   |   Esc: cancel drag")
         else:
             text = ("Change Room Size — click+drag a wall body or a free wall end   |   "
-                    "Enter: confirm   |   Esc: cancel all")
+                    "Click a length pill to type   |   Enter: confirm   |   Esc: cancel all")
         area.header_text_set(text)
 
     def _cleanup(self, context):
@@ -3127,6 +3329,7 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         self._last_error = None
         self._hover_wall = None
         self._hover_endpoint = None
+        self._pill_edit_wall = None
         self.region = context.region
         context.window.cursor_modal_set('SCROLL_XY')
         self._update_header(context)
@@ -3172,8 +3375,12 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
                 self._update_header(context)
                 return {'RUNNING_MODAL'}
             if event.type == 'ESC':
-                # Exit typing only, stay in drag
-                self._stop_typing()
+                if self._pill_edit_wall is not None:
+                    # Pill edit: Esc cancels the whole edit
+                    self._cancel_drag()
+                else:
+                    # Exit typing only, stay in drag
+                    self._stop_typing()
                 self._update_header(context)
                 return {'RUNNING_MODAL'}
             # Other keys fall through so the user can still pan/zoom etc.
@@ -3204,7 +3411,17 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         # --- LEFTMOUSE ---
         if event.type == 'LEFTMOUSE':
             if event.value == 'PRESS' and not self._drag_active:
-                # Free wall ends win over the wall body so they stay grabbable
+                if self._typing and self._pill_edit_wall is not None:
+                    # Click-away commits the pill edit at its applied value
+                    self._commit_drag()
+                    self._update_header(context)
+                    return {'RUNNING_MODAL'}
+                # Screen-space pill hits win, then free wall ends, then body
+                pill_wall = self._find_pill_under_cursor(context, event)
+                if pill_wall is not None:
+                    self._start_pill_edit(context, pill_wall)
+                    self._update_header(context)
+                    return {'RUNNING_MODAL'}
                 endpoint = self._find_free_endpoint_under_cursor(context, event)
                 if endpoint is not None:
                     ok, msg = self._start_endpoint_drag(
@@ -3227,6 +3444,11 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
 
         # --- ESC / RIGHTMOUSE (not typing — typing ESC handled above) ---
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if self._pill_edit_wall is not None:
+                # Right-click during a pill edit cancels just that edit
+                self._cancel_drag()
+                self._update_header(context)
+                return {'RUNNING_MODAL'}
             if self._drag_active:
                 self._cancel_drag()
                 self._update_header(context)
