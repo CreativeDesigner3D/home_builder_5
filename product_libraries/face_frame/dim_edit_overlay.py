@@ -1,8 +1,10 @@
-"""Editable dimension overlay for Bay / Opening / Face Frame selection modes.
+"""Editable dimension overlay for Cabinet / Bay / Opening / Face Frame
+selection modes.
 
-While the face-frame selection mode is 'Bays', 'Openings' or 'Face
-Frame', a POST_PIXEL draw handler paints a value label on every bay
-(its width), every leaf opening (its height), or every face-frame
+While the face-frame selection mode is 'Cabinets', 'Bays', 'Openings'
+or 'Face Frame', a POST_PIXEL draw handler paints a value label on
+every cabinet root (W / H / D, like the closet starter overlay), every
+bay (its width), every leaf opening (its height), or every face-frame
 member (its width -- stiles, rails, bay splitters) of every face-frame
 cabinet in the viewport. Clicking a label starts a short-lived modal that captures
 typed input (same distance grammar as placement typing: inches,
@@ -10,8 +12,13 @@ fractions, feet'inches"); Enter commits the value through the same
 properties the sidebar edits, so redistribution and auto-hold behave
 identically to a sidebar edit:
 
+- Cabinet W/H/D -> Face_Frame_Cabinet_Props.width / height / depth --
+  the same props the Cabinet Properties dialog edits, so the update
+  callbacks recalc and bay redistribution behaves identically.
 - Bay width   -> Face_Frame_Bay_Props.width (auto-locks + recalcs via
-  _update_bay_width).
+  _update_bay_width). Bay height / depth -> Face_Frame_Bay_Props.height
+  / depth with the matching unlock flag flipped first (they're
+  cabinet-driven until unlocked - mirrors the sidebar's lock icons).
 - Opening height -> Face_Frame_Opening_Props.size with unlock_size
   flipped on first, so the typed height holds during redistribution
   (mirrors the Split Opening dialog's typed sizes). Only openings whose
@@ -103,9 +110,9 @@ def parse_distance(text):
 # ---- Gating -------------------------------------------------------------
 
 def _active_mode(context):
-    """'Bays' / 'Openings' / 'Face Frame' when the overlay should draw,
-    else None. Mirrors the HUD's gating: real room scene, FACE FRAME tab,
-    selection mode enabled and set to one of the overlay modes."""
+    """'Cabinets' / 'Bays' / 'Openings' / 'Face Frame' when the overlay
+    should draw, else None. Mirrors the HUD's gating: real room scene,
+    FACE FRAME tab, selection mode enabled and set to an overlay mode."""
     scene = context.scene
     if scene is None or scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return None
@@ -116,7 +123,8 @@ def _active_mode(context):
     if ff is None or not getattr(ff, 'face_frame_selection_mode_enabled', False):
         return None
     mode = getattr(ff, 'face_frame_selection_mode', '')
-    return mode if mode in ('Bays', 'Openings', 'Face Frame') else None
+    return (mode if mode in ('Cabinets', 'Bays', 'Openings', 'Face Frame')
+            else None)
 
 
 def _sizes_shown(context):
@@ -139,9 +147,11 @@ _TOGGLE_LABEL = "Sizes"
 
 
 def _toggle_rect(context, area):
-    """Region-local rect for the Sizes pill: centered, one HUD row below
-    the selection-mode picker (two below in Face Frame mode, where the
-    grab toggle owns row two)."""
+    """Region-local rect for the Sizes pill: centered, one HUD row
+    below the selection-mode picker (two below in the modes where a
+    grab toggle owns row two - all of them, now that Bays and Openings
+    have grab commands; kept mode-driven so a future toggle-less mode
+    reclaims the row)."""
     s = 1.0
     try:
         s = bpy.context.preferences.system.ui_scale
@@ -152,7 +162,8 @@ def _toggle_rect(context, area):
     w = blf.dimensions(0, _TOGGLE_LABEL)[0] + 24 * s
     h = _HUD_BTN_H * s
     row1_y = y_max - _HUD_MARGIN_Y * s - h
-    rows_down = 2 if _active_mode(bpy.context) == 'Face Frame' else 1
+    rows_down = (2 if _active_mode(bpy.context)
+                 in ('Cabinets', 'Bays', 'Openings', 'Face Frame') else 1)
     y = row1_y - rows_down * (h + _HUD_ROW_GAP * s)
     x = x_min + ((x_max - x_min) - w) / 2.0
     return (x, y, w, h)
@@ -224,6 +235,31 @@ def _label_anchor_world(cage):
     return mw @ Vector((dim_x / 2.0, -0.003, dim_z / 2.0))
 
 
+def _anchor_world(cage, fx, fz):
+    """World point on a cage's front face at fractional X / Z. Same
+    stale-matrix-safe readers as _label_anchor_world."""
+    dim_x, dim_z = split_preview._cage_dims(cage)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return None
+    mw = split_preview._world_matrix(cage)
+    return mw @ Vector((dim_x * fx, -0.003, dim_z * fz))
+
+
+def _cabinet_label_targets(cabinet):
+    """(kind, anchor, value, prefix) for a cabinet root's three dims.
+    Mirrors the closet starter overlay: each label sits where its edit
+    ACTS - H at the top edge (the edge that moves), W dead-center of
+    the front face, D at the bottom-front edge. Values come from the
+    SAME props a commit writes (face_frame_cabinet.width / height /
+    depth) so typing back the shown value is a no-op."""
+    props = cabinet.face_frame_cabinet
+    return [
+        ('CAB_H', _anchor_world(cabinet, 0.5, 1.0), props.height, "H "),
+        ('CAB_W', _anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
+        ('CAB_D', _anchor_world(cabinet, 0.5, 0.0), props.depth, "D "),
+    ]
+
+
 def compute_labels(context, region, rv3d):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
     currently on screen. rect is (x, y, w, h) region-local. ``locked``
@@ -256,10 +292,40 @@ def compute_labels(context, region, rv3d):
         # number you can see must be a no-op. Non-editable openings have
         # a meaningless size prop (root/V-child), so those read-only
         # labels show the built cage height instead.
-        if mode == 'Bays':
-            targets = [(bay, 'BAY', True, bay.face_frame_bay.unlock_width,
-                        bay.face_frame_bay.width)
-                       for bay in _iter_bay_cages(cabinet)]
+        if mode == 'Cabinets':
+            # Corner cabinets size through their own corner-section
+            # props; skip them rather than show W/H/D labels that
+            # wouldn't commit sensibly.
+            if getattr(cabinet.face_frame_cabinet,
+                       'corner_type', 'NONE') != 'NONE':
+                continue
+            targets = [
+                (cabinet, kind, True, False, value, prefix, anchor)
+                for kind, anchor, value, prefix
+                in _cabinet_label_targets(cabinet)
+            ]
+        elif mode == 'Bays':
+            targets = []
+            for bay in _iter_bay_cages(cabinet):
+                bp = bay.face_frame_bay
+                targets.append((bay, 'BAY', True, bp.unlock_width,
+                                bp.width, "W ", None))
+                # Height / depth always display bp.height / bp.depth --
+                # the exact values the solver reads and a commit writes
+                # (the sidebar shows the same numbers behind its lock
+                # icons), so typing back the shown value is a no-op.
+                # While locked the system keeps them in sync; the
+                # bullet marks user-pinned (unlocked) values. Anchors:
+                # a face-frame bay cage's origin already sits at its
+                # front plane (unlike closet bay cages, origin at the
+                # BACK), so _anchor_world's -0.003 is the whole front
+                # offset.
+                targets.append((bay, 'BAY_H', True, bp.unlock_height,
+                                bp.height, "H ",
+                                _anchor_world(bay, 0.5, 1.0)))
+                targets.append((bay, 'BAY_D', True, bp.unlock_depth,
+                                bp.depth, "D ",
+                                _anchor_world(bay, 0.5, 0.0)))
         elif mode == 'Openings':
             targets = []
             for bay in _iter_bay_cages(cabinet):
@@ -269,7 +335,8 @@ def compute_labels(context, region, rv3d):
                     value = (props.size if editable
                              else split_preview._cage_dims(op)[1])
                     targets.append((op, 'OPENING', editable,
-                                    editable and props.unlock_size, value))
+                                    editable and props.unlock_size,
+                                    value, "", None))
         else:
             # Face Frame: member widths. Editable labels read
             # _get_current_width -- the same per-role props the Set Width
@@ -290,16 +357,18 @@ def compute_labels(context, region, rv3d):
                         locked = False
                 except Exception:
                     continue
-                targets.append((part, 'PART', editable, locked, value))
-        for cage, kind, editable, locked, value in targets:
-            anchor = (_part_anchor_world(cage) if kind == 'PART'
-                      else _label_anchor_world(cage))
+                targets.append((part, 'PART', editable, locked,
+                                value, "", None))
+        for cage, kind, editable, locked, value, prefix, anchor in targets:
+            if anchor is None:
+                anchor = (_part_anchor_world(cage) if kind == 'PART'
+                          else _label_anchor_world(cage))
             if anchor is None:
                 continue
             pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
             if pt is None:
                 continue
-            text = units.unit_to_string(unit_settings, value)
+            text = prefix + units.unit_to_string(unit_settings, value)
             if locked:
                 # Pinned (user-typed, held during redistribution). The
                 # marker doubles as the affordance for "this one can be
@@ -400,10 +469,30 @@ def _draw():
 
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
+    if kind in ('CAB_W', 'CAB_H', 'CAB_D'):
+        # Same props the Cabinet Properties dialog edits; the update
+        # callbacks run the recalc and bay redistribution.
+        attr = {'CAB_W': 'width', 'CAB_H': 'height', 'CAB_D': 'depth'}[kind]
+        setattr(obj.face_frame_cabinet, attr, value)
+        return True
     if kind == 'BAY':
         # Fires _update_bay_width: auto-locks the bay + recalcs so the
         # cabinet's other unlocked bays redistribute around it.
         obj.face_frame_bay.width = value
+        return True
+    if kind == 'BAY_H':
+        # Unlock-first: bay height is cabinet-driven until the flag is
+        # set (the sidebar greys the field behind a lock icon).
+        bp = obj.face_frame_bay
+        if not bp.unlock_height:
+            bp.unlock_height = True
+        bp.height = value
+        return True
+    if kind == 'BAY_D':
+        bp = obj.face_frame_bay
+        if not bp.unlock_depth:
+            bp.unlock_depth = True
+        bp.depth = value
         return True
     if kind == 'OPENING':
         props = obj.face_frame_opening
@@ -443,6 +532,16 @@ def _reset_to_auto(obj, kind):
             obj.face_frame_bay.unlock_width = False
             return True
         return False
+    if kind == 'BAY_H':
+        if obj.face_frame_bay.unlock_height:
+            obj.face_frame_bay.unlock_height = False
+            return True
+        return False
+    if kind == 'BAY_D':
+        if obj.face_frame_bay.unlock_depth:
+            obj.face_frame_bay.unlock_depth = False
+            return True
+        return False
     if kind == 'OPENING':
         props = obj.face_frame_opening
         if props.unlock_size:
@@ -476,7 +575,12 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
     target_name: bpy.props.StringProperty(options={'HIDDEN'})  # type: ignore
     kind: bpy.props.EnumProperty(
         items=[('BAY', "Bay Width", ""), ('OPENING', "Opening Height", ""),
-               ('PART', "Part Width", "")],
+               ('PART', "Part Width", ""),
+               ('CAB_W', "Cabinet Width", ""),
+               ('CAB_H', "Cabinet Height", ""),
+               ('CAB_D', "Cabinet Depth", ""),
+               ('BAY_H', "Bay Height", ""),
+               ('BAY_D', "Bay Depth", "")],
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):

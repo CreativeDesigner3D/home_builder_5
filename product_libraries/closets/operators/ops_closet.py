@@ -1531,6 +1531,16 @@ class hb_closets_OT_delete_bay(bpy.types.Operator):
         root = types_closets.find_starter_root(bay)
         if bay is None or root is None:
             return {'CANCELLED'}
+        n_bays = sum(1 for c in root.children
+                     if c.get(types_closets.TAG_BAY_CAGE))
+        if n_bays <= 1:
+            # Deleting the only bay would leave an empty shell, so the
+            # command degrades to deleting the starter (same path as
+            # the right-click Delete Starter command).
+            name = root.name
+            types_closets.delete_starter(root)
+            self.report({'INFO'}, f"Deleted starter {name}")
+            return {'FINISHED'}
         starter = types_closets._wrap_starter(root)
         if not starter.delete_bay(bay.get('hb_bay_index', 0)):
             self.report({'WARNING'}, "A starter needs at least one bay")

@@ -163,8 +163,15 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
                              text="Insert Bay After", icon='TRIA_RIGHT')
         op.bay_index = bay_index
         op.direction = 'AFTER'
-        op = layout.operator("hb_face_frame.delete_bay",
-                             text="Delete Bay", icon='X')
+        # Honest labeling: on a single-bay cabinet the operator
+        # degrades to deleting the whole cabinet, so say so up front.
+        _n_bays = (sum(1 for c in cab_root.children
+                       if c.get(types_face_frame.TAG_BAY_CAGE))
+                   if cab_root is not None else 0)
+        op = layout.operator(
+            "hb_face_frame.delete_bay",
+            text=("Delete Cabinet" if _n_bays <= 1 else "Delete Bay"),
+            icon='X')
         op.bay_index = bay_index
 
         layout.separator()

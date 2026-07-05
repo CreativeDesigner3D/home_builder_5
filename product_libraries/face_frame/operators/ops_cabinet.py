@@ -3100,12 +3100,15 @@ class hb_face_frame_OT_insert_bay(bpy.types.Operator):
 
 
 class hb_face_frame_OT_delete_bay(bpy.types.Operator):
-    """Delete the bay at bay_index. Refuses if the cabinet would be
-    left with zero bays. Removes the bay's full subtree (openings,
-    fronts, pulls, interior items) and one mid-stile + mid-div pair."""
+    """Delete the bay at bay_index. Removes the bay's full subtree
+    (openings, fronts, pulls, interior items) and one mid-stile +
+    mid-div pair. Deleting a cabinet's ONLY bay deletes the whole
+    cabinet - an empty shell has no use, so the command degrades to
+    Delete Cabinet (the bay menu relabels itself to say so)."""
     bl_idname = "hb_face_frame.delete_bay"
     bl_label = "Delete Bay"
-    bl_description = "Delete a bay and its mid stile / mid division"
+    bl_description = ("Delete a bay and its mid stile / mid division. "
+                      "Deleting the only bay deletes the cabinet")
     bl_options = {'REGISTER', 'UNDO'}
 
     bay_index: bpy.props.IntProperty(
@@ -3124,6 +3127,23 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
             self.report({'ERROR'}, "No face frame cabinet selected")
             return {'CANCELLED'}
         cab = types_face_frame._wrap_cabinet(root)
+        n_bays = sum(1 for c in root.children
+                     if c.get(types_face_frame.TAG_BAY_CAGE))
+        if n_bays <= 1:
+            # Deleting the only bay would leave an empty shell, so the
+            # command degrades to deleting the cabinet - same cleanup
+            # as Delete Cabinet, scoped to THIS root so other selected
+            # cabinets are untouched. Applied panels are the exception:
+            # they're owned by the host cabinet's finished-end config,
+            # which would be orphaned by a direct delete.
+            if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+                self.report({'ERROR'},
+                            "Cannot delete an applied panel's only bay")
+                return {'CANCELLED'}
+            name = root.name
+            hb_utils.delete_obj_and_children(root)
+            self.report({'INFO'}, f"Deleted cabinet {name}")
+            return {'FINISHED'}
         ok = cab.delete_bay(self.bay_index)
         if not ok:
             self.report({'ERROR'}, "Cannot delete the only remaining bay")

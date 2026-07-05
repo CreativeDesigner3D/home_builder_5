@@ -1897,6 +1897,54 @@ class _GrabBaseMixin:
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
+def _bay_only_boundaries(cabinet_obj, layout):
+    """Bay-scoped subset of the face-frame boundary set: bay edges
+    (widths) and bay top/bottom handles (heights, kick, top offset).
+    Mid stiles and mid rails - opening-level boundaries - are left to
+    Grab Face Frame."""
+    for b in solver.editable_boundaries_v1(cabinet_obj, layout):
+        if b['kind'] in ('BAY_EDGE', 'BAY_HANDLE'):
+            yield b
+
+
+def _opening_height_boundaries(cabinet_obj, layout):
+    """Opening-height subset of the face-frame boundary set: mid rails
+    only (the horizontal H-split boundaries whose drag resizes the two
+    adjacent openings' heights). Bay edges / handles live in Grab Bays;
+    mid stiles (opening widths) stay in Grab Face Frame."""
+    for b in solver.editable_boundaries_v1(cabinet_obj, layout):
+        if b['kind'] == 'MID_RAIL':
+            yield b
+
+
+class hb_face_frame_OT_grab_opening(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab mid rails only - drag vertically to shift height
+    between the two adjacent openings."""
+    bl_idname = "hb_face_frame.grab_opening"
+    bl_label = "Grab Openings"
+    bl_description = (
+        "Click and drag mid rails to shift height between the two "
+        "adjacent openings. Click a lock icon to unlock. Enter to "
+        "confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+    BOUNDARY_COLLECTOR = staticmethod(_opening_height_boundaries)
+
+
+class hb_face_frame_OT_grab_bay(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab bay boundaries only - bay edges to redistribute
+    width, bay top/bottom handles to change bay heights."""
+    bl_idname = "hb_face_frame.grab_bay"
+    bl_label = "Grab Bays"
+    bl_description = (
+        "Click and drag bay edges to redistribute width between bays, "
+        "or a bay's top / bottom edge to change its height. Click a "
+        "lock icon to unlock. Enter to confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+    BOUNDARY_COLLECTOR = staticmethod(_bay_only_boundaries)
+
+
 class hb_face_frame_OT_grab_face_frame(_GrabBaseMixin, bpy.types.Operator):
     """Modal: grab face frame internals — bay edges, mid stiles, and
     mid rails — to resize bays and openings."""
@@ -1967,6 +2015,8 @@ class hb_face_frame_OT_grab_cabinet_group(_GrabBaseMixin, bpy.types.Operator):
 
 
 classes = (
+    hb_face_frame_OT_grab_opening,
+    hb_face_frame_OT_grab_bay,
     hb_face_frame_OT_grab_face_frame,
     hb_face_frame_OT_grab_cabinet,
     hb_face_frame_OT_grab_cabinet_group,

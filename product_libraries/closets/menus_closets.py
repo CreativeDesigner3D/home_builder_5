@@ -85,8 +85,16 @@ class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
         layout.operator("hb_closets.clear_bay",
                         text="Clear Bay", icon='TRASH')
         layout.separator()
-        layout.operator("hb_closets.delete_bay",
-                        text="Delete Bay", icon='X')
+        # Honest labeling: on a single-bay starter the operator
+        # degrades to deleting the whole starter, so say so up front.
+        _root = types_closets.find_starter_root(context.active_object)
+        _n_bays = (sum(1 for c in _root.children
+                       if c.get(types_closets.TAG_BAY_CAGE))
+                   if _root is not None else 0)
+        layout.operator(
+            "hb_closets.delete_bay",
+            text=("Delete Starter" if _n_bays <= 1 else "Delete Bay"),
+            icon='X')
 
 
 def _draw_add_part_entries(layout):

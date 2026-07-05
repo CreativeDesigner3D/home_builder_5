@@ -380,13 +380,24 @@ _GRAB_FACE_FRAME_BUTTON = _ModalToggleButton(
     enable_label="Enable Grab Face Frame",
     disable_label="Disable Grab Face Frame",
 )
+_GRAB_BAY_BUTTON = _ModalToggleButton(
+    'hb_face_frame.grab_bay', 'Bays',
+    enable_label="Enable Grab Bays",
+    disable_label="Disable Grab Bays",
+)
+_GRAB_OPENING_BUTTON = _ModalToggleButton(
+    'hb_face_frame.grab_opening', 'Openings',
+    enable_label="Enable Grab Openings",
+    disable_label="Disable Grab Openings",
+)
 _OPEN_DOOR_BUTTON = _ModalToggleButton(
     'hb_face_frame.open_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
 )
 _MODAL_TOGGLE_BUTTONS = [
-    _GRAB_CABINET_BUTTON, _GRAB_FACE_FRAME_BUTTON, _OPEN_DOOR_BUTTON,
+    _GRAB_CABINET_BUTTON, _GRAB_FACE_FRAME_BUTTON, _GRAB_BAY_BUTTON,
+    _GRAB_OPENING_BUTTON, _OPEN_DOOR_BUTTON,
 ]
 
 
