@@ -366,8 +366,10 @@ class Closets_Scene_Props(PropertyGroup):
     # ----- Library UI state -----
     show_closet_sizes: BoolProperty(name="Show Closet Sizes", default=False)  # type: ignore
     show_starter_library: BoolProperty(name="Show Closet Starters", default=True)  # type: ignore
-    show_material_options: BoolProperty(name="Show Materials", default=False)  # type: ignore
-    show_pull_options: BoolProperty(name="Show Pulls", default=False)  # type: ignore
+    show_closet_options: BoolProperty(name="Show Closet Options", default=False)  # type: ignore
+    # Sub-toggles inside Closet Options for the two dense categories.
+    show_material_options: BoolProperty(name="More Material Options", default=False)  # type: ignore
+    show_pull_options: BoolProperty(name="More Pull Options", default=False)  # type: ignore
 
     def draw_library_ui(self, layout, context):
         col = layout.column(align=True)
@@ -410,92 +412,90 @@ class Closets_Scene_Props(PropertyGroup):
                                       text=label)
                     op.starter_name = name
 
-        # ----- Options: one collapsible box per category, right below
-        # the starter library. Dropdown changes re-apply room-wide.
+        # ----- Options: one collapsible "Closet Options" section.
+        # One aligned label / value row per category; the two dense
+        # categories (Materials, Pulls) tuck their extra fields behind
+        # "More ..." sub-toggles. Dropdown changes re-apply room-wide.
         box = col.box()
         row = box.row()
         row.alignment = 'LEFT'
-        row.prop(self, 'show_material_options', text="Materials",
-                 icon='TRIA_DOWN' if self.show_material_options
+        row.prop(self, 'show_closet_options', text="Closet Options",
+                 icon='TRIA_DOWN' if self.show_closet_options
                  else 'TRIA_RIGHT',
                  emboss=False)
-        if self.show_material_options:
-            row = box.row()
-            row.label(text="Closet")
-            row.prop(self, 'closet_material', text="")
-            row = box.row()
-            row.label(text="Fronts")
-            row.prop(self, 'closet_front_material', text="")
-            row = box.row()
-            row.label(text="Closet Edge")
-            row.prop(self, 'closet_edge_material', text="")
-            row = box.row()
-            row.label(text="Front Edge")
-            row.prop(self, 'closet_front_edge_material', text="")
-            row = box.row()
-            row.label(text="Door Grain")
-            row.prop(self, 'closet_door_grain', text="")
-            row = box.row()
-            row.label(text="Drawer Grain")
-            row.prop(self, 'closet_drawer_grain', text="")
+        if self.show_closet_options:
+            def option_row(parent, label):
+                """Aligned label / value row: label in a fixed-width
+                left column so the dropdowns line up in one column."""
+                split = parent.split(factor=0.35)
+                split.label(text=label)
+                return split.row(align=True)
 
-        box = col.box()
-        row = box.row()
-        row.alignment = 'LEFT'
-        row.prop(self, 'show_pull_options', text="Pulls",
-                 icon='TRIA_DOWN' if self.show_pull_options
-                 else 'TRIA_RIGHT',
-                 emboss=False)
-        if self.show_pull_options:
-            row = box.row()
-            row.label(text="Pull")
-            row.prop(self, 'closet_pull', text="")
-            row = box.row()
-            row.label(text="Finish")
-            row.prop(self, 'closet_pull_finish', text="")
-            row = box.row()
-            row.label(text="Vertical:")
-            row = box.row(align=True)
-            row.prop(self, 'pull_vertical_location_base')
-            row.prop(self, 'pull_vertical_location_upper')
-            row.prop(self, 'pull_vertical_location_tall')
-            row = box.row()
-            row.prop(self, 'pull_horizontal_offset')
-            box.prop(self, 'center_pulls_on_drawer_front')
+            def sub_toggle(parent, prop_name, label):
+                row = parent.row()
+                row.alignment = 'LEFT'
+                row.prop(self, prop_name, text=label,
+                         icon='TRIA_DOWN' if getattr(self, prop_name)
+                         else 'TRIA_RIGHT',
+                         emboss=False)
+                return getattr(self, prop_name)
 
-        box = col.box()
-        row = box.row()
-        row.label(text="Rods")
-        row.prop(self, 'closet_rod_type', text="")
-        row.prop(self, 'closet_rod_finish', text="")
-        row = box.row()
-        row.label(text="Hangers")
-        row.prop(self, 'closet_hanger_model', text="")
-        row.operator('hb_closets.randomize_hangers', text="",
-                     icon='FILE_REFRESH')
-        row.operator('hb_closets.install_model_pack', text="",
-                     icon='IMPORT')
+            # align=False keeps Blender's normal row spacing so the
+            # option rows read as separate items rather than a block.
+            opts = box.column(align=False)
 
-        box = col.box()
-        row = box.row()
-        row.label(text="Front Style")
-        row.prop(self, 'closet_front_style', text="")
-        row = box.row()
-        row.label(text="Door Panel")
-        row.prop(self, 'closet_panel_type', text="")
+            option_row(opts, "Materials").prop(
+                self, 'closet_material', text="")
+            if sub_toggle(opts, 'show_material_options',
+                          "More Material Options"):
+                sub = opts.box().column(align=True)
+                option_row(sub, "Fronts").prop(
+                    self, 'closet_front_material', text="")
+                option_row(sub, "Closet Edge").prop(
+                    self, 'closet_edge_material', text="")
+                option_row(sub, "Front Edge").prop(
+                    self, 'closet_front_edge_material', text="")
+                option_row(sub, "Door Grain").prop(
+                    self, 'closet_door_grain', text="")
+                option_row(sub, "Drawer Grain").prop(
+                    self, 'closet_drawer_grain', text="")
 
-        box = col.box()
-        row = box.row()
-        row.label(text="Drawer Box")
-        row.prop(self, 'closet_drawer_box', text="")
+            option_row(opts, "Pulls").prop(self, 'closet_pull', text="")
+            if sub_toggle(opts, 'show_pull_options', "More Pull Options"):
+                sub = opts.box().column(align=True)
+                option_row(sub, "Finish").prop(
+                    self, 'closet_pull_finish', text="")
+                sub.label(text="Vertical Location:")
+                vrow = sub.row(align=True)
+                vrow.prop(self, 'pull_vertical_location_base')
+                vrow.prop(self, 'pull_vertical_location_upper')
+                vrow.prop(self, 'pull_vertical_location_tall')
+                option_row(sub, "From Edge").prop(
+                    self, 'pull_horizontal_offset', text="")
+                sub.prop(self, 'center_pulls_on_drawer_front')
 
-        box = col.box()
-        row = box.row()
-        row.label(text="Molding")
-        row.prop(self, 'closet_crown_profile', text="")
-        row = box.row(align=True)
-        row.operator('hb_closets.add_molding', text="Add", icon='ADD')
-        row.operator('hb_closets.delete_molding', text="Clear", icon='X')
+            rrow = option_row(opts, "Rods")
+            rrow.prop(self, 'closet_rod_type', text="")
+            rrow.prop(self, 'closet_rod_finish', text="")
+
+            hrow = option_row(opts, "Hangers")
+            hrow.prop(self, 'closet_hanger_model', text="")
+            hrow.operator('hb_closets.randomize_hangers', text="",
+                          icon='FILE_REFRESH')
+            hrow.operator('hb_closets.install_model_pack', text="",
+                          icon='IMPORT')
+
+            option_row(opts, "Front Style").prop(
+                self, 'closet_front_style', text="")
+            option_row(opts, "Door Panel").prop(
+                self, 'closet_panel_type', text="")
+            option_row(opts, "Drawer Box").prop(
+                self, 'closet_drawer_box', text="")
+
+            mrow = option_row(opts, "Molding")
+            mrow.prop(self, 'closet_crown_profile', text="")
+            mrow.operator('hb_closets.add_molding', text="", icon='ADD')
+            mrow.operator('hb_closets.delete_molding', text="", icon='X')
 
 
 classes = (

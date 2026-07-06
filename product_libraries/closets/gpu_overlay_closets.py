@@ -83,6 +83,55 @@ def _kind_visible(scene, kind):
             return _filter_on(scene, key)
     return True
 
+
+# The Dims pill is a 3-state cycle stored in its idprop: 1 = All
+# (default, and what an old saved True reads as), 2 = Selected (labels
+# only for cages in the current selection), 0 = Off. _filter_on treats
+# 2 as truthy so the family stays on; the per-target filter in
+# compute_labels narrows it. Mirrors face_frame's Sizes pill.
+_DIMS_KEY = 'hb_ov_show_dims'
+
+
+def _dims_scope(scene):
+    try:
+        value = int(scene.get(_DIMS_KEY, 1))
+    except (TypeError, ValueError):
+        value = 1
+    return {0: 'OFF', 2: 'SELECTED'}.get(value, 'ALL')
+
+
+def _selection_name_sets(context):
+    """(raw, expanded): names of the selected objects (+ active), and
+    that set expanded with every ancestor. A label is in-selection when
+    its object is in the expanded set (labels that target an ENCLOSING
+    cage - e.g. starter W/H/D while a bay is selected) or when one of
+    ITS ancestors is directly selected (labels that target a child
+    part - rods, drawer fronts - of a selected opening or bay)."""
+    raw = set()
+    expanded = set()
+    objs = list(getattr(context, 'selected_objects', ()) or ())
+    act = getattr(context, 'active_object', None)
+    if act is not None and act not in objs:
+        objs.append(act)
+    for obj in objs:
+        raw.add(obj.name)
+        node = obj
+        while node is not None:
+            expanded.add(node.name)
+            node = node.parent
+    return raw, expanded
+
+
+def _obj_in_selection(obj, raw, expanded):
+    if obj.name in expanded:
+        return True
+    node = obj.parent
+    while node is not None:
+        if node.name in raw:
+            return True
+        node = node.parent
+    return False
+
 # Label kinds. STARTER_* commit hb_closet_starter props; BAY_W commits
 # the bay width (auto-lock); OPEN_H inverse-writes the bay height.
 KIND_ITEMS = [
@@ -160,8 +209,15 @@ def _filter_pill_rects(context, area, mode):
         pass
     x_min, x_max, _y_min, y_max = get_visible_window_bounds(area)
     blf.size(0, FONT_SIZE * s)
-    pills = [(label, key) for label, key, _p, modes in _FILTERS
-             if mode in modes]
+    pills = []
+    for label, key, _p, modes in _FILTERS:
+        if mode not in modes:
+            continue
+        if key == _DIMS_KEY:
+            scope = _dims_scope(context.scene)
+            label = ("Dims: All" if scope == 'ALL' else
+                     "Dims: Sel" if scope == 'SELECTED' else "Dims")
+        pills.append((label, key))
     if mode == 'Parts':
         # Parts mode: only the Open Door action pill.
         pills.append(("Open Door", '__open_door__'))
@@ -366,6 +422,17 @@ def compute_labels(context, region, rv3d):
                              child.location.z + dh / 2.0))
                         targets.append((child, 'DRAWER_H', True, locked,
                                         anchor, dh, ""))
+
+    # SELECTED scope on the Dims pill: keep only labels whose object
+    # belongs to the current selection (itself, an enclosing cage, or a
+    # part hanging under a selected cage). Toggle widgets (the Bottoms
+    # family) are gated by their own pill, not the Dims scope; a
+    # filtered bay's lock glyph disappears with its BAY_W label because
+    # the glyph keys off the visible label rect.
+    if _dims_scope(scene) == 'SELECTED':
+        raw, expanded = _selection_name_sets(context)
+        targets = [t for t in targets
+                   if _obj_in_selection(t[0], raw, expanded)]
 
     labels = []
     for obj, kind, editable, locked, anchor, value, prefix in targets:
@@ -817,6 +884,13 @@ class hb_closets_OT_dim_label_click(bpy.types.Operator):
                         op_open_door_closet.request_open_door_exit()
                     else:
                         bpy.ops.hb_closets.open_door_mode('INVOKE_DEFAULT')
+                elif key == _DIMS_KEY:
+                    # Dims cycles All (1) -> Selected (2) -> Off (0).
+                    try:
+                        cur = int(context.scene.get(key, 1))
+                    except (TypeError, ValueError):
+                        cur = 1
+                    context.scene[key] = {1: 2, 2: 0}.get(cur, 1)
                 else:
                     context.scene[key] = (0 if _filter_on(context.scene, key)
                                           else 1)
