@@ -1693,11 +1693,33 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
             return
         cab = root.face_frame_cabinet
         key = self.side.lower()
+        fin_type = getattr(cab, f'{key}_finished_end_condition')
         layout.prop(cab, f'{key}_finished_end_condition',
                     text=f"{self.side.title()} Finished End")
         # FLUSH_X needs its strip width to be meaningful.
-        if getattr(cab, f'{key}_finished_end_condition') == 'FLUSH_X':
+        if fin_type == 'FLUSH_X':
             layout.prop(cab, f'{key}_flush_x_amount', text="Flush Amount")
+        # Mirror the Finished Ends prompt (draw_finished_ends): a side
+        # that carries a finished part can extend back, and once it is
+        # extended past a FINISHED / PANELED back, a nonzero return
+        # width caps the exposed corner with a return panel + rear
+        # stile (per-member construction types appear once a return
+        # exists). The dialog redraws live, so the fields follow the
+        # enum as the user edits.
+        if fin_type not in ('UNFINISHED', 'FLUSH_X'):
+            layout.prop(cab, f'{key}_side_finished_extend_back',
+                        text="Extend Back")
+        if (fin_type in ('FINISHED', 'PANELED')
+                and getattr(cab, f'{key}_side_finished_extend_back') != 0.0
+                and cab.back_finished_end_condition
+                in ('FINISHED', 'PANELED')):
+            layout.prop(cab, f'{key}_side_return_width',
+                        text="Return Width")
+            if getattr(cab, f'{key}_side_return_width') != 0.0:
+                layout.prop(cab, f'{key}_side_return_panel_type',
+                            text="Side Return")
+                layout.prop(cab, f'{key}_side_return_stile_type',
+                            text="Return Stile")
 
     def execute(self, context):
         return {'FINISHED'}

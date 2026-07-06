@@ -127,9 +127,34 @@ def _active_mode(context):
             else None)
 
 
-def _sizes_shown(context):
+def _sizes_scope(context):
+    """Size-label scope from the scene prop: 'ALL', 'SELECTED' (labels
+    only for cages in the current selection), or 'OFF'."""
     ff = getattr(context.scene, 'hb_face_frame', None)
-    return bool(getattr(ff, 'selection_mode_show_sizes', True))
+    return getattr(ff, 'selection_mode_sizes_scope', 'ALL')
+
+
+def _sizes_shown(context):
+    return _sizes_scope(context) != 'OFF'
+
+
+def _selected_label_names(context):
+    """Object names eligible for labels in SELECTED scope: every
+    selected object (plus the active one) and its ancestor chain.
+    Ancestors are included so clicking any part of a cabinet keeps the
+    labels that target an ENCLOSING cage - the Cabinets-mode W/H/D
+    target the root cage, which is never the clicked object itself."""
+    names = set()
+    objs = list(getattr(context, 'selected_objects', ()) or ())
+    act = getattr(context, 'active_object', None)
+    if act is not None and act not in objs:
+        objs.append(act)
+    for obj in objs:
+        node = obj
+        while node is not None:
+            names.add(node.name)
+            node = node.parent
+    return names
 
 
 # ---- Sizes toggle pill ----------------------------------------------------
@@ -143,7 +168,14 @@ def _sizes_shown(context):
 _HUD_MARGIN_Y = 12
 _HUD_BTN_H = 24
 _HUD_ROW_GAP = 6
-_TOGGLE_LABEL = "Sizes"
+def _toggle_label(context):
+    """Pill text reflects the scope cycle (All -> Selected -> Off)."""
+    scope = _sizes_scope(context)
+    if scope == 'ALL':
+        return "Sizes: All"
+    if scope == 'SELECTED':
+        return "Sizes: Sel"
+    return "Sizes"
 
 
 def _toggle_rect(context, area):
@@ -159,7 +191,7 @@ def _toggle_rect(context, area):
         pass
     x_min, x_max, _y_min, y_max = get_visible_window_bounds(area)
     blf.size(0, FONT_SIZE * s)
-    w = blf.dimensions(0, _TOGGLE_LABEL)[0] + 24 * s
+    w = blf.dimensions(0, _toggle_label(context))[0] + 24 * s
     h = _HUD_BTN_H * s
     row1_y = y_max - _HUD_MARGIN_Y * s - h
     rows_down = (2 if _active_mode(bpy.context)
@@ -277,18 +309,35 @@ def _anchor_world(cage, fx, fz):
     return mw @ Vector((dim_x * fx, -0.003, dim_z * fz))
 
 
+def _root_anchor_world(cabinet, fx, fz):
+    """World point on the cabinet's FRONT plane at fractional X / Z.
+    A cabinet ROOT's local Y = 0 plane is its BACK (against the wall),
+    so the front sits at -depth; bay cages need no such offset because
+    their origin already sits on the front plane (see the BAY_H/BAY_D
+    anchors in compute_labels). Keeps cabinet-mode labels on the same
+    plane as bay-mode labels."""
+    dim_x, dim_z = split_preview._cage_dims(cabinet)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return None
+    mw = split_preview._world_matrix(cabinet)
+    depth = cabinet.face_frame_cabinet.depth
+    return mw @ Vector((dim_x * fx, -depth - 0.003, dim_z * fz))
+
+
 def _cabinet_label_targets(cabinet):
     """(kind, anchor, value, prefix) for a cabinet root's three dims.
     Mirrors the closet starter overlay: each label sits where its edit
     ACTS - H at the top edge (the edge that moves), W dead-center of
-    the front face, D at the bottom-front edge. Values come from the
-    SAME props a commit writes (face_frame_cabinet.width / height /
-    depth) so typing back the shown value is a no-op."""
+    the front face, D at the bottom-front edge. All three anchor on the
+    cabinet's FRONT plane (via _root_anchor_world) to match bay-mode
+    labels. Values come from the SAME props a commit writes
+    (face_frame_cabinet.width / height / depth) so typing back the
+    shown value is a no-op."""
     props = cabinet.face_frame_cabinet
     return [
-        ('CAB_H', _anchor_world(cabinet, 0.5, 1.0), props.height, "H "),
-        ('CAB_W', _anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
-        ('CAB_D', _anchor_world(cabinet, 0.5, 0.0), props.depth, "D "),
+        ('CAB_H', _root_anchor_world(cabinet, 0.5, 1.0), props.height, "H "),
+        ('CAB_W', _root_anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
+        ('CAB_D', _root_anchor_world(cabinet, 0.5, 0.0), props.depth, "D "),
     ]
 
 
@@ -306,6 +355,9 @@ def compute_labels(context, region, rv3d):
         # Sizes toggled off: no labels drawn or clickable; the Sizes
         # pill itself is handled separately by the draw / click paths.
         return []
+    scope = _sizes_scope(context)
+    sel_names = (_selected_label_names(context)
+                 if scope == 'SELECTED' else None)
     scene = context.scene
     unit_settings = scene.unit_settings
     s = 1.0
@@ -394,6 +446,11 @@ def compute_labels(context, region, rv3d):
                     continue
                 targets.append((part, 'PART', editable, locked,
                                 value, "", None))
+        # SELECTED scope: keep only labels whose cage is part of the
+        # current selection. The click handlers hit-test against this
+        # same list, so filtered labels are not clickable either.
+        if sel_names is not None:
+            targets = [t for t in targets if t[0].name in sel_names]
         for cage, kind, editable, locked, value, prefix, anchor in targets:
             if anchor is None:
                 anchor = (_part_anchor_world(cage) if kind == 'PART'
@@ -440,13 +497,14 @@ def _draw_toggle_pill(shader, context, area, font_sz, s):
     are shown."""
     rect = _toggle_rect(context, area)
     on = _sizes_shown(context)
+    label = _toggle_label(context)
     _draw_label_rect(shader, rect, EDIT_BG if on else LABEL_BG)
     blf.size(0, font_sz)
     blf.color(0, *(EDIT_TEXT_COLOR if on else TEXT_COLOR))
-    tw, th = blf.dimensions(0, _TOGGLE_LABEL)
+    tw, th = blf.dimensions(0, label)
     blf.position(0, rect[0] + (rect[2] - tw) / 2.0,
                  rect[1] + (rect[3] - th) / 2.0, 0)
-    blf.draw(0, _TOGGLE_LABEL)
+    blf.draw(0, label)
 
 
 def _draw():
@@ -752,7 +810,9 @@ class hb_face_frame_OT_dim_label_click(bpy.types.Operator):
         tx, ty, tw, th = _toggle_rect(context, context.area)
         if tx <= mx <= tx + tw and ty <= my <= ty + th:
             ff = context.scene.hb_face_frame
-            ff.selection_mode_show_sizes = not ff.selection_mode_show_sizes
+            ff.selection_mode_sizes_scope = {
+                'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
+                    ff.selection_mode_sizes_scope, 'ALL')
             context.area.tag_redraw()
             return {'FINISHED'}
         for name, kind, editable, _locked, rect, _text in compute_labels(

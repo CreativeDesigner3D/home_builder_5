@@ -5792,14 +5792,22 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=True,
         update=update_face_frame_selection_mode,
     )  # type: ignore
-    # Editable size labels drawn by dim_edit_overlay in Bays / Openings /
-    # Face Frame modes. Per scene so a room can hide them without a preference trip;
-    # toggled from the overlay's own Sizes pill in the viewport. No
-    # update callback -- the overlay's click handler tags the redraw.
-    selection_mode_show_sizes: BoolProperty(
-        name="Show Sizes",
-        description="Show clickable size labels in Bay, Opening, and Face Frame selection modes",
-        default=True,
+    # Editable size labels drawn by dim_edit_overlay in Cabinets / Bays /
+    # Openings / Face Frame modes. Per scene so a room can hide them without
+    # a preference trip; cycled from the overlay's own Sizes pill in the
+    # viewport (All -> Selected -> Off). SELECTED keeps only the labels
+    # whose cage belongs to the current selection. No update callback --
+    # the overlay's click handler tags the redraw. (Replaces the old
+    # selection_mode_show_sizes bool.)
+    selection_mode_sizes_scope: EnumProperty(
+        name="Size Labels",
+        items=[
+            ('ALL', "All", "Show size labels on every cabinet"),
+            ('SELECTED', "Selected",
+             "Show size labels only for the selected objects"),
+            ('OFF', "Off", "Hide size labels"),
+        ],
+        default='ALL',
     )  # type: ignore
 
     # ---- Top-level tabs ----
