@@ -782,7 +782,14 @@ class ElevationView(LayoutView):
             if child.get('obj_x') or 'Overlay Prompt Obj' in child.name:
                 continue
             
-            if child.get('IS_FRAMELESS_CABINET_CAGE') or child.get('IS_FACE_FRAME_CABINET_CAGE'):
+            # Product root cages that get their own per-product content
+            # collections. Closet starters join the cabinet branch here --
+            # their root is a cage, so without this they fall to the else
+            # branch, which links only the (invisible) cage object and
+            # never walks the subtree: no geometry in elevation views.
+            if (child.get('IS_FRAMELESS_CABINET_CAGE')
+                    or child.get('IS_FACE_FRAME_CABINET_CAGE')
+                    or child.get('IS_CLOSET_STARTER_CAGE')):
                 # Cabinet: create solid and dashed collections
                 cabinet_name = child.name
                 cab_solid = bpy.data.collections.new(f"{view_name}_{cabinet_name}_Solid")
