@@ -1586,7 +1586,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'mid_rail':    (2.0, 2.0, 2.0),
             'wall_stile':  (2.5, 2.5, 2.5),
             'mid_stile':   (2.25, 2.25, 2.25),
-            'end_stile':   (1.25, 1.25, 1.5),
+            'end_stile':   (1.25, 1.25, 1.25),
             'blind_stile': (3.75, 3.75, 2.75),
             'butt_stile':      (1.125, 1.125, 1.125),
             'inside_90_stile': (3.5, 3.5, 3.5),

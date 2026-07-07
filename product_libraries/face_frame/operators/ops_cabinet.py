@@ -3497,7 +3497,20 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                                    len(cp.mid_stile_widths))):
                     stile_total += cp.mid_stile_widths[i].width
                 bay_total = sum(b.face_frame_bay.width for b in bays)
-                cp.width = stile_total + bay_total
+                # A blind-corner end shrinks the FF plane by its void
+                # offset, so the stiles + bays occupy only
+                # width - blind_offset(s). Add the offset(s) back or this
+                # resync collapses the cabinet by the blind amount and the
+                # blind corner disappears. Mirrors the solver's blind_offset
+                # gate (stile_type BLIND + blind flag + amount > 0).
+                blind_offset = 0.0
+                if (cp.left_stile_type == 'BLIND'
+                        and cp.blind_left and cp.blind_amount_left > 0):
+                    blind_offset += cp.blind_amount_left
+                if (cp.right_stile_type == 'BLIND'
+                        and cp.blind_right and cp.blind_amount_right > 0):
+                    blind_offset += cp.blind_amount_right
+                cp.width = stile_total + bay_total + blind_offset
 
         return {'FINISHED'}
 
