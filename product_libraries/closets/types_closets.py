@@ -44,6 +44,7 @@ PART_ROLE_BOTTOM_SHELF = 'CLOSET_BOTTOM_SHELF'
 PART_ROLE_TOP_SHELF = 'CLOSET_TOP_SHELF'
 PART_ROLE_TOE_KICK = 'CLOSET_TOE_KICK'
 PART_ROLE_CLEAT = 'CLOSET_CLEAT'
+PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 
@@ -221,6 +222,9 @@ class ClosetStarter(GeoNodeCage):
     # Double-sided (island) construction: center back per bay, front and
     # back opening cages, rear toe kick, countertop overhang all around.
     is_double = False
+    # Wall-mounted starters carry a hang rail behind each bay top;
+    # islands have no wall side, so their classes clear this.
+    has_hang_rail = True
     ctop_overhang_all = False
     # None = use the scene default panel depth at create time.
     default_depth = None
@@ -577,6 +581,34 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Thickness', st)
                 _set_part_hidden(cleat, bp.remove_cleat
                                  or bool(cleat.get('hb_always_hidden')))
+
+            # Hang rail: the wall strip each bay hangs from / anchors
+            # to. Lazily created (like the countertop) so starters
+            # built before rails existed gain one on their next
+            # recalculate. Bay-local: against the back plane (y=0,
+            # thickness into the room), rail bottom HANG_RAIL_DROP
+            # below the bay top, spanning the bay interior. Root
+            # idprop 'hb_remove_hang_rail' hides the whole starter's
+            # rails.
+            rail = self._bay_part(bay_obj, PART_ROLE_HANG_RAIL)
+            if rail is None and self.has_hang_rail:
+                rail_part = CabinetPart()
+                rail_part.create('Hang Rail')
+                rail_part.obj.parent = bay_obj
+                rail_part.obj['hb_part_role'] = PART_ROLE_HANG_RAIL
+                rail_part.obj.rotation_euler.x = math.radians(90)
+                rail = rail_part.obj
+            if rail is not None:
+                rail.location = (
+                    0.0, 0.0,
+                    bay['height'] - const.HANG_RAIL_DROP)
+                part = GeoNodeCutpart(rail)
+                part.set_input('Length', bay['width'])
+                part.set_input('Width', const.HANG_RAIL_WIDTH)
+                part.set_input('Thickness', const.HANG_RAIL_THICKNESS)
+                _set_part_hidden(
+                    rail, (not self.has_hang_rail)
+                    or bool(self.obj.get('hb_remove_hang_rail')))
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
@@ -1436,6 +1468,7 @@ class HangingClosetStarter(ClosetStarter):
 
 
 class IslandClosetStarter(ClosetStarter):
+    has_hang_rail = False
     """Single-sided island: Base geometry plus an applied back closing
     the rear face."""
     default_closet_type = 'ISLAND'

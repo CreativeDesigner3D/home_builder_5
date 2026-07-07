@@ -15,6 +15,12 @@ SHELF_THICKNESS = inch(0.75)
 COUNTERTOP_THICKNESS = inch(1.125)
 APPLIED_BACK_THICKNESS = inch(0.75)
 CLEAT_WIDTH = inch(4.0)
+# Wall hang rail (the strip the closet hangs from / anchors to). Legacy
+# profile: 1.125 in tall x 0.25 in thick, rail bottom 3.3125 in below
+# the section top.
+HANG_RAIL_WIDTH = inch(1.125)
+HANG_RAIL_THICKNESS = inch(0.25)
+HANG_RAIL_DROP = inch(3.3125)
 
 # ---------------------------------------------------------------------------
 # Starter defaults
