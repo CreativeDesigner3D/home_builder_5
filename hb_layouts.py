@@ -153,6 +153,21 @@ def _ensure_lineart_camera(scene):
     return jitter
 
 
+def set_line_art_visible(scene, visible):
+    """Show or hide a view's line art by toggling its modifiers' viewport
+    flag. Hiding skips the whole line art evaluation -- the lever when
+    tracing large views makes sheet annotating feel sluggish. Render
+    visibility (show_render) is left on, and the export path re-enables
+    the viewport flag around its OpenGL render, so hidden lines still
+    print. No-op for Freestyle views.
+    """
+    gp_obj = get_line_art_object(scene)
+    if gp_obj is None:
+        return
+    for mod in gp_obj.modifiers:
+        mod.show_viewport = visible
+
+
 def refresh_line_art(scene):
     """Force the scene's Line Art strokes to recompute on next evaluation.
 
@@ -210,6 +225,10 @@ def setup_line_art_for_scene(scene, solid_collection, dashed_collection,
     # object in front so they aren't depth-culled in the viewport or the
     # OpenGL export render.
     gp_obj.show_in_front = True
+    # Generated output, not user content: keep it out of click/box selection
+    # so annotating a sheet can't grab it by accident. The layout sidebar
+    # exposes the toggle for the rare case where selecting it is useful.
+    gp_obj.hide_select = True
 
     mat_solid = _get_lineart_material("HB_LineArt_Solid")
     mat_dashed = _get_lineart_material("HB_LineArt_Dashed")
@@ -279,11 +298,16 @@ def update_line_art_sizes(scene):
     GP stroke radius is in world units (unlike Freestyle's pixel
     thickness), so the paper-space constants are converted through
     paper_to_world to keep printed line weight scale- and DPI-independent.
+    The per-scene hb_lineart_*_scale factors multiply the base sizes so
+    user tweaks survive drawing-scale changes.
     """
     gp_obj = get_line_art_object(scene)
     if gp_obj is None:
         return
     scale_str = getattr(scene, 'hb_layout_scale', '') or '1/4"=1\''
+    solid_factor = getattr(scene, 'hb_lineart_solid_scale', 1.0)
+    dashed_factor = getattr(scene, 'hb_lineart_dashed_scale', 1.0)
+    dash_factor = getattr(scene, 'hb_lineart_dash_scale', 1.0)
     # Deferred import: operators.layouts imports this module at load time.
     from .operators.layouts import paper_to_world
     try:
@@ -292,9 +316,9 @@ def update_line_art_sizes(scene):
         # constants convert 1:1 -- do NOT halve them here. Under-width
         # strokes fall below a pixel at the 150dpi base and whole lines
         # wash out wherever they land across a pixel boundary.
-        solid_radius = paper_to_world(LINEART_SOLID_WIDTH_PAPER, scale_str)
-        dashed_radius = paper_to_world(LINEART_DASHED_WIDTH_PAPER, scale_str)
-        sample_length = paper_to_world(LINEART_SAMPLE_PAPER, scale_str)
+        solid_radius = paper_to_world(LINEART_SOLID_WIDTH_PAPER, scale_str) * solid_factor
+        dashed_radius = paper_to_world(LINEART_DASHED_WIDTH_PAPER, scale_str) * dashed_factor
+        sample_length = paper_to_world(LINEART_SAMPLE_PAPER, scale_str) * dash_factor
     except Exception:
         return
     jitter = _ensure_lineart_camera(scene)

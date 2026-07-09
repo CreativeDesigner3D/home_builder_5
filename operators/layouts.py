@@ -4573,16 +4573,61 @@ def get_layout_scale_items(self, context):
     return IMPERIAL_SCALE_ITEMS
 
 
+def update_lineart_sizes_prop(self, context):
+    """Update callback for the per-scene line art appearance factors."""
+    hb_layouts.update_line_art_sizes(self)
+
+
+def update_lineart_show_prop(self, context):
+    """Update callback for the per-scene line art visibility toggle."""
+    hb_layouts.set_line_art_visible(self, self.hb_lineart_show)
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    
+
     # Layout view scene properties with update callbacks
     bpy.types.Scene.hb_layout_scale = bpy.props.EnumProperty(
         name="Scale",
         description="Drawing scale",
         items=get_layout_scale_items,
         update=update_layout_scale
+    )
+
+    # Line art viewport visibility. Hiding disables the line art
+    # modifiers' viewport evaluation (a per-edit cost while annotating
+    # large views); renders and exports still include the lines.
+    bpy.types.Scene.hb_lineart_show = bpy.props.BoolProperty(
+        name="Show Lines",
+        description="Draw the generated line art in the viewport. "
+                    "Turn off to speed up annotating; exports still "
+                    "include the lines",
+        default=True,
+        update=update_lineart_show_prop
+    )
+
+    # Line art appearance factors -- multipliers on the paper-space base
+    # sizes in hb_layouts, so tweaks survive drawing-scale changes.
+    bpy.types.Scene.hb_lineart_solid_scale = bpy.props.FloatProperty(
+        name="Line Thickness",
+        description="Thickness multiplier for visible line art strokes",
+        default=1.0, min=0.1, max=5.0, soft_min=0.25, soft_max=3.0,
+        update=update_lineart_sizes_prop
+    )
+
+    bpy.types.Scene.hb_lineart_dashed_scale = bpy.props.FloatProperty(
+        name="Hidden Line Thickness",
+        description="Thickness multiplier for dashed hidden line art strokes",
+        default=1.0, min=0.1, max=5.0, soft_min=0.25, soft_max=3.0,
+        update=update_lineart_sizes_prop
+    )
+
+    bpy.types.Scene.hb_lineart_dash_scale = bpy.props.FloatProperty(
+        name="Dash Spacing",
+        description="Scale of the hidden-line dash pattern (larger = longer dashes and gaps)",
+        default=1.0, min=0.25, max=4.0,
+        update=update_lineart_sizes_prop
     )
     
     bpy.types.Scene.hb_paper_size = bpy.props.EnumProperty(
@@ -4616,3 +4661,11 @@ def unregister():
         del bpy.types.Scene.hb_paper_size
     if hasattr(bpy.types.Scene, 'hb_paper_landscape'):
         del bpy.types.Scene.hb_paper_landscape
+    if hasattr(bpy.types.Scene, 'hb_lineart_show'):
+        del bpy.types.Scene.hb_lineart_show
+    if hasattr(bpy.types.Scene, 'hb_lineart_solid_scale'):
+        del bpy.types.Scene.hb_lineart_solid_scale
+    if hasattr(bpy.types.Scene, 'hb_lineart_dashed_scale'):
+        del bpy.types.Scene.hb_lineart_dashed_scale
+    if hasattr(bpy.types.Scene, 'hb_lineart_dash_scale'):
+        del bpy.types.Scene.hb_lineart_dash_scale
