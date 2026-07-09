@@ -1,4 +1,5 @@
 import bpy
+import bmesh
 import math
 from mathutils import Vector, Matrix, Euler
 from . import hb_types
@@ -115,6 +116,11 @@ LINEART_MARKED_SKIP_PREFIXES = ('Isometric',)
 # lines by exactly zero pixels in an orthographic view.
 LINEART_MARKED_LIFT = 0.001
 
+# Set on the GP object when its generated strokes have been baked into
+# editable strokes (bake_line_art_editable). Baked views keep their
+# modifiers disabled; regenerating the view returns to automatic tracing.
+LINEART_BAKED_PROP = 'HB_LINEART_BAKED'
+
 
 def get_default_line_engine():
     """Line engine used for NEW layout views, from addon preferences."""
@@ -188,13 +194,17 @@ def set_line_art_visible(scene, visible):
     tracing large views makes sheet annotating feel sluggish. Render
     visibility (show_render) is left on, and the export path re-enables
     the viewport flag around its OpenGL render, so hidden lines still
-    print. No-op for Freestyle views.
+    print. Baked (editable) views toggle their layers instead -- their
+    generating modifiers must stay off. No-op for Freestyle views.
     """
     gp_obj = get_line_art_object(scene)
     if gp_obj is None:
         return
+    baked = bool(gp_obj.get(LINEART_BAKED_PROP))
     for mod in gp_obj.modifiers:
-        mod.show_viewport = visible
+        mod.show_viewport = visible and not baked
+    for layer in gp_obj.data.layers:
+        layer.hide = not visible
 
 
 def refresh_line_art(scene):
@@ -202,13 +212,148 @@ def refresh_line_art(scene):
 
     Line Art computes once and caches; a view scene that was built or
     heavily edited programmatically can be left displaying strokes from a
-    mid-build state (missing edges, stub segments). Tagging the GP object
-    makes the next depsgraph pass regenerate from the final geometry.
-    Cheap no-op when the scene has no line art object.
+    mid-build state (missing edges, stub segments). A plain update tag is
+    not always enough to invalidate the cached result, so bounce the line
+    art modifiers' viewport flag -- a real property change that reliably
+    rebuilds both the strokes and their draw batches. Cheap no-op when
+    the scene has no line art object.
     """
     gp_obj = get_line_art_object(scene)
-    if gp_obj is not None:
-        gp_obj.update_tag()
+    if gp_obj is None:
+        return
+    for mod in gp_obj.modifiers:
+        if mod.type == 'LINEART' and mod.show_viewport:
+            mod.show_viewport = False
+            mod.show_viewport = True
+    gp_obj.update_tag()
+
+
+def is_line_art_baked(scene):
+    """True when the view's line art was baked into editable strokes."""
+    gp_obj = get_line_art_object(scene)
+    return bool(gp_obj is not None and gp_obj.get(LINEART_BAKED_PROP))
+
+
+def _reset_layer_frame(layer, scene):
+    """Replace a layer's frames with one empty keyframe; return its drawing."""
+    for f in list(layer.frames):
+        try:
+            layer.frames.remove(f.frame_number)
+        except TypeError:
+            layer.frames.remove(f)
+    frame = layer.frames.new(scene.frame_current)
+    return frame.drawing
+
+
+def bake_line_art_editable(scene):
+    """Convert the view's generated line art into editable strokes.
+
+    Copies the fully evaluated strokes (occlusion, dash pattern --
+    everything) into the layers as real strokes and disables the
+    generating modifiers, so the lines can be edited, deleted, or added
+    to with the standard Grease Pencil edit tools. The trade: baked
+    lines no longer follow cabinet changes -- unbake_line_art (or
+    regenerating the view) returns to automatic tracing. Returns True
+    when strokes were baked.
+    """
+    gp_obj = get_line_art_object(scene)
+    if gp_obj is None:
+        return False
+
+    # The evaluated depsgraph belongs to the active window scene; make
+    # sure we snapshot THIS scene's evaluation even when called for a
+    # background scene.
+    window = getattr(bpy.context, "window", None)
+    original_scene = window.scene if window else None
+    if window and window.scene is not scene:
+        window.scene = scene
+    try:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        depsgraph.update()
+        ob_eval = gp_obj.evaluated_get(depsgraph)
+
+        # Snapshot the evaluated strokes before touching the modifiers.
+        snapshot = {}
+        for layer in ob_eval.data.layers:
+            frame = layer.current_frame()
+            if frame is None:
+                continue
+            rows = []
+            for s in frame.drawing.strokes:
+                rows.append((
+                    [tuple(p.position) for p in s.points],
+                    [p.radius for p in s.points],
+                    [p.opacity for p in s.points],
+                    s.material_index,
+                    s.cyclic,
+                ))
+            snapshot[layer.name] = rows
+    finally:
+        if window and original_scene is not None and window.scene is not original_scene:
+            window.scene = original_scene
+    if not any(snapshot.values()):
+        return False
+
+    # Disable the whole generating stack. The resample + dash modifiers
+    # must go too: their effect is already in the snapshot, and leaving
+    # them live would re-dash the baked dashes.
+    for mod in gp_obj.modifiers:
+        mod.show_viewport = False
+        mod.show_render = False
+
+    for layer_name, rows in snapshot.items():
+        layer = gp_obj.data.layers.get(layer_name)
+        if layer is None:
+            continue
+        drawing = _reset_layer_frame(layer, scene)
+        if not rows:
+            continue
+        drawing.add_strokes([len(r[0]) for r in rows])
+        for si, (positions, radii, opacities, mat_idx, cyclic) in enumerate(rows):
+            stroke = drawing.strokes[si]
+            stroke.material_index = mat_idx
+            stroke.cyclic = cyclic
+            for pi, point in enumerate(stroke.points):
+                point.position = positions[pi]
+                point.radius = radii[pi]
+                point.opacity = opacities[pi]
+
+    gp_obj[LINEART_BAKED_PROP] = True
+    gp_obj.data.update_tag()
+    return True
+
+
+def unbake_line_art(scene):
+    """Discard baked/edited strokes and return to automatic tracing."""
+    gp_obj = get_line_art_object(scene)
+    if gp_obj is None:
+        return
+    for layer in gp_obj.data.layers:
+        _reset_layer_frame(layer, scene)
+        layer.hide = False
+    if LINEART_BAKED_PROP in gp_obj:
+        del gp_obj[LINEART_BAKED_PROP]
+    for mod in gp_obj.modifiers:
+        mod.show_viewport = True
+        mod.show_render = True
+    refresh_line_art(scene)
+
+
+def _ensure_lineart_layer(gp_data, scene, name):
+    """Get or create a keyframed GP layer for one line art pass.
+
+    Every pass gets its OWN target layer: multiple Line Art modifiers
+    writing into a shared layer can draw mis-batched strokes in the
+    viewport (lines appearing far from where the evaluated data puts
+    them) even though the underlying stroke data is correct.
+    """
+    layer = gp_data.layers.get(name)
+    if layer is None:
+        layer = gp_data.layers.new(name)
+        layer.use_lights = False
+    if not layer.frames:
+        layer.frames.new(scene.frame_current)
+    return layer
 
 
 def _get_lineart_material(name):
@@ -352,7 +497,8 @@ def update_line_art_sizes(scene):
         return
     jitter = _ensure_lineart_camera(scene)
     for mod in gp_obj.modifiers:
-        if mod.name in ("Lineart Solid", "Lineart Marked"):
+        if mod.name in ("Lineart Solid", "Lineart Marked",
+                        "Lineart Iso", "Lineart Iso Fronts"):
             mod.radius = solid_radius
         elif mod.name == "Lineart Dashed":
             mod.radius = dashed_radius
@@ -361,6 +507,39 @@ def update_line_art_sizes(scene):
         if mod.type == 'LINEART' and jitter is not None:
             mod.use_custom_camera = True
             mod.source_camera = jitter
+
+
+_EMISSION_COPY_SUFFIX = " LAEmit"
+
+
+def _emission_copy(obj):
+    """Object-level copy of a part for a line art emission subset.
+
+    Line Art's collection filter matches by OBJECT: linking the original
+    part into a subset would make every instance of that part anywhere
+    in the scene emit for the subset's pass (e.g. marked-channel strokes
+    appearing in the iso cells). A copy has its own identity, so only
+    the subset's own instances emit. Mesh data and modifiers are shared.
+    """
+    copy = obj.copy()
+    copy.name = obj.name + _EMISSION_COPY_SUFFIX
+    copy.hide_select = True
+    return copy
+
+
+def _clear_emission_subset(subset):
+    """Empty an emission subset collection.
+
+    Our copies (marked by _EMISSION_COPY_SUFFIX) are owned by the subset
+    and get deleted; anything else (originals linked by older builds) is
+    only unlinked -- deleting those would destroy the view content.
+    """
+    for obj in list(subset.objects):
+        if obj.name.split('.')[0].endswith(_EMISSION_COPY_SUFFIX) or \
+                _EMISSION_COPY_SUFFIX in obj.name:
+            bpy.data.objects.remove(obj)
+        else:
+            subset.objects.unlink(obj)
 
 
 def build_line_art_marked_channel(scene):
@@ -414,12 +593,11 @@ def build_line_art_marked_channel(scene):
         subset = bpy.data.collections.get(subset_name)
         if subset is None:
             subset = bpy.data.collections.new(subset_name)
-        for obj in list(subset.objects):
-            subset.objects.unlink(obj)
-        for obj in src.all_objects:
+        _clear_emission_subset(subset)
+        for obj in list(src.all_objects):
             if (obj.type == 'MESH'
                     and any(k in obj.name for k in LINEART_MARKED_PART_KEYWORDS)):
-                subset.objects.link(obj)
+                subset.objects.link(_emission_copy(obj))
         if len(subset.objects) == 0:
             continue
 
@@ -453,10 +631,207 @@ def build_line_art_marked_channel(scene):
     mod.use_multiple_levels = True
     mod.level_start = 0
     mod.level_end = LINEART_MARKED_LEVEL_END
-    mod.target_layer = "Solid"
+    _ensure_lineart_layer(gp_obj.data, scene, "Marked")
+    mod.target_layer = "Marked"
     mod.target_material = _get_lineart_material("HB_LineArt_Solid")
 
     # Radius + jitter camera for the (possibly new) modifier.
+    update_line_art_sizes(scene)
+
+
+def _extract_front_plate(content_coll, depsgraph):
+    """Bake the camera-facing faces of a content collection's front parts
+    (LINEART_MARKED_PART_KEYWORDS) into one welded, zero-thickness mesh in
+    content-local space. Returns the Mesh, or None when nothing matched.
+
+    A plate has no side or back faces, so it cannot produce thickness
+    edges or grazing-tie lines -- it is the tie-free emission stand-in
+    for the iso cells. Welding is essential: unwelded per-face islands
+    would draw every internal facet seam as a boundary line.
+    """
+    verts, faces = [], []
+    for obj in list(content_coll.all_objects):
+        if obj.type != 'MESH':
+            continue
+        if not any(k in obj.name for k in LINEART_MARKED_PART_KEYWORDS):
+            continue
+        ev = obj.evaluated_get(depsgraph)
+        me = ev.data
+        M = obj.matrix_world      # placement within the content collection
+        R = M.to_quaternion()
+        for poly in me.polygons:
+            # Content faces the -Y axis by HB5 convention.
+            if (R @ poly.normal).dot(Vector((0.0, -1.0, 0.0))) < 0.7:
+                continue
+            base = len(verts)
+            for vid in poly.vertices:
+                verts.append(tuple(M @ me.vertices[vid].co))
+            faces.append(tuple(range(base, base + len(poly.vertices))))
+    if not faces:
+        return None
+    mesh = bpy.data.meshes.new(content_coll.name + " LA-IsoPlate")
+    mesh.from_pydata(verts, [], faces)
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+def build_line_art_iso_channel(scene):
+    """Create or rebuild the isometric cells' Line Art channels.
+
+    The flat-cell channels read badly at the 3/4 angle: protruding fronts
+    show their thickness edges and every flush joint contributes
+    grazing-tie lines, so the iso gets its own two-pass treatment:
+
+    - Fronts: welded zero-thickness plates of the front parts, lifted
+      LINEART_MARKED_LIFT toward the camera so they win every occlusion
+      tie. Clean outlines and panel profiles, no thickness edges.
+    - Carcass: the remaining parts, sunk the same distance away from the
+      camera so they LOSE every tie against the real fronts -- only
+      unambiguous outline edges survive.
+
+    The original iso cell instances are relocated out of the Freestyle
+    solid collection into a render-only collection: they keep rendering
+    and occluding but no longer emit (their emission is what made the
+    iso busy). Idempotent; call after view generation, before
+    refresh_line_art. No-op for Freestyle views and views without iso
+    cells.
+    """
+    gp_obj = get_line_art_object(scene)
+    if gp_obj is None:
+        return
+    solid_coll = bpy.data.collections.get(f"{scene.name}_Freestyle_Solid")
+    if solid_coll is None:
+        return
+
+    def scene_child(name):
+        c = bpy.data.collections.get(name)
+        if c is None:
+            c = bpy.data.collections.new(name)
+        if c.name not in scene.collection.children:
+            scene.collection.children.link(c)
+        return c
+
+    # Relocate iso cell instances out of the emitting collections. They
+    # stay in the scene (render + occlusion) via the render-only home.
+    render_only = scene_child(f"{scene.name}_LineArt_Iso")
+    dashed_coll = bpy.data.collections.get(f"{scene.name}_Freestyle_Dashed")
+    for coll in (solid_coll, dashed_coll):
+        if coll is None:
+            continue
+        for o in list(coll.objects):
+            if (o.type == 'EMPTY' and o.instance_type == 'COLLECTION'
+                    and any(o.name.startswith(p)
+                            for p in LINEART_MARKED_SKIP_PREFIXES)):
+                if o.name not in render_only.objects:
+                    render_only.objects.link(o)
+                coll.objects.unlink(o)
+
+    iso_instances = [o for o in render_only.objects
+                     if o.type == 'EMPTY' and o.instance_collection]
+    plates_coll = scene_child(f"{scene.name}_LineArt_IsoPlates")
+    carcass_coll = scene_child(f"{scene.name}_LineArt_IsoCarcass")
+    for obj in list(plates_coll.objects) + list(carcass_coll.objects):
+        bpy.data.objects.remove(obj)
+    if not iso_instances:
+        return
+
+    lift = Vector((0.0, 0.0, 0.0))
+    if scene.camera is not None:
+        toward_cam = scene.camera.matrix_world.to_quaternion() @ Vector((0.0, 0.0, 1.0))
+        lift = toward_cam.normalized() * LINEART_MARKED_LIFT
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    plate_cache = {}
+    for inst in iso_instances:
+        src = inst.instance_collection
+
+        # Front plates (built once per content collection).
+        if src.name not in plate_cache:
+            old = bpy.data.objects.get(src.name + " LA-IsoPlate")
+            if old is not None:
+                old_mesh = old.data
+                bpy.data.objects.remove(old)
+                if old_mesh and old_mesh.users == 0:
+                    bpy.data.meshes.remove(old_mesh)
+            pc = bpy.data.collections.get(src.name + " LA-IsoPlates")
+            if pc is None:
+                pc = bpy.data.collections.new(src.name + " LA-IsoPlates")
+            for o in list(pc.objects):
+                pc.objects.unlink(o)
+            mesh = _extract_front_plate(src, depsgraph)
+            if mesh is not None:
+                plate_obj = bpy.data.objects.new(mesh.name, mesh)
+                pc.objects.link(plate_obj)
+                plate_cache[src.name] = pc
+            else:
+                plate_cache[src.name] = None
+            # Carcass subset: everything that is not a front part. Copies,
+            # not links -- see _emission_copy.
+            cc = bpy.data.collections.get(src.name + " LA-IsoCarcass")
+            if cc is None:
+                cc = bpy.data.collections.new(src.name + " LA-IsoCarcass")
+            _clear_emission_subset(cc)
+            for obj in list(src.all_objects):
+                if (obj.type == 'MESH'
+                        and not any(k in obj.name
+                                    for k in LINEART_MARKED_PART_KEYWORDS)):
+                    cc.objects.link(_emission_copy(obj))
+
+        pc = plate_cache[src.name]
+        cc = bpy.data.collections.get(src.name + " LA-IsoCarcass")
+        if pc is not None and len(pc.objects):
+            e = bpy.data.objects.new(inst.name + " Plates", None)
+            e[LINEART_MARKED_TAG] = True
+            e.instance_type = 'COLLECTION'
+            e.instance_collection = pc
+            e.matrix_world = inst.matrix_world.copy()
+            e.location = e.location + lift
+            e.hide_select = True
+            plates_coll.objects.link(e)
+        if cc is not None and len(cc.objects):
+            e = bpy.data.objects.new(inst.name + " Carcass", None)
+            e[LINEART_MARKED_TAG] = True
+            e.instance_type = 'COLLECTION'
+            e.instance_collection = cc
+            e.matrix_world = inst.matrix_world.copy()
+            e.location = e.location - lift
+            e.hide_select = True
+            carcass_coll.objects.link(e)
+
+    def iso_modifier(name, source, layer_name):
+        mod = gp_obj.modifiers.get(name)
+        if mod is None:
+            mod = gp_obj.modifiers.new(name, 'LINEART')
+            names = [m.name for m in gp_obj.modifiers]
+            if "Resample Dashed" in names:
+                gp_obj.modifiers.move(names.index(name),
+                                      names.index("Resample Dashed"))
+        mod.source_type = 'COLLECTION'
+        mod.source_collection = source
+        mod.use_contour = True
+        mod.use_crease = True
+        mod.use_edge_mark = True
+        mod.use_intersection = False
+        mod.use_loose = False
+        mod.use_material = False
+        mod.use_object_instances = True
+        mod.use_multiple_levels = False
+        mod.level_start = 0
+        _ensure_lineart_layer(gp_obj.data, scene, layer_name)
+        mod.target_layer = layer_name
+        mod.target_material = _get_lineart_material("HB_LineArt_Solid")
+        return mod
+
+    iso_modifier("Lineart Iso", carcass_coll, "Iso")
+    iso_modifier("Lineart Iso Fronts", plates_coll, "IsoFronts")
+
+    # Radius + jitter camera for the (possibly new) modifiers.
     update_line_art_sizes(scene)
 
 

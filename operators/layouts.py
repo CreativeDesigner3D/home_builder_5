@@ -4510,7 +4510,60 @@ class home_builder_layouts_OT_link_objects_to_layout(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_layouts_OT_lineart_make_editable(bpy.types.Operator):
+    """Convert this view's generated line art into real, editable strokes"""
+    bl_idname = "home_builder_layouts.lineart_make_editable"
+    bl_label = "Make Lines Editable"
+    bl_description = ("Convert the generated line art into editable Grease "
+                      "Pencil strokes (select the line art object and enter "
+                      "Edit Mode to move or delete lines). Edited lines no "
+                      "longer update automatically; use Restore Auto Lines "
+                      "or regenerate the view to go back")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return hb_layouts.get_line_art_object(context.scene) is not None
+
+    def execute(self, context):
+        if hb_layouts.is_line_art_baked(context.scene):
+            self.report({'INFO'}, "Line art is already editable.")
+            return {'CANCELLED'}
+        if not hb_layouts.bake_line_art_editable(context.scene):
+            self.report({'WARNING'}, "No line art strokes to convert.")
+            return {'CANCELLED'}
+        gp_obj = hb_layouts.get_line_art_object(context.scene)
+        gp_obj.hide_select = False
+        self.report({'INFO'},
+                    "Line art converted. Select the line art object and "
+                    "enter Edit Mode to modify lines.")
+        return {'FINISHED'}
+
+
+class home_builder_layouts_OT_lineart_restore_auto(bpy.types.Operator):
+    """Discard edited line art and return to automatic tracing"""
+    bl_idname = "home_builder_layouts.lineart_restore_auto"
+    bl_label = "Restore Auto Lines"
+    bl_description = ("Discard the editable (and any edited) line art "
+                      "strokes and return to automatically traced lines")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return hb_layouts.is_line_art_baked(context.scene)
+
+    def execute(self, context):
+        hb_layouts.unbake_line_art(context.scene)
+        gp_obj = hb_layouts.get_line_art_object(context.scene)
+        if gp_obj is not None:
+            gp_obj.hide_select = True
+        self.report({'INFO'}, "Automatic line tracing restored.")
+        return {'FINISHED'}
+
+
 classes = (
+    home_builder_layouts_OT_lineart_make_editable,
+    home_builder_layouts_OT_lineart_restore_auto,
     home_builder_layouts_OT_create_elevation_view,
     home_builder_layouts_OT_draw_rectangle,
     home_builder_layouts_OT_draw_circle,
@@ -4578,9 +4631,31 @@ def update_lineart_sizes_prop(self, context):
     hb_layouts.update_line_art_sizes(self)
 
 
+_lineart_show_updating = False
+
+
 def update_lineart_show_prop(self, context):
-    """Update callback for the per-scene line art visibility toggle."""
-    hb_layouts.set_line_art_visible(self, self.hb_lineart_show)
+    """Update callback for the line art visibility toggle.
+
+    Applies globally: toggling it on any layout view sets every layout
+    view, so hiding lines once stays hidden while switching between
+    scenes. The value still lives per-scene (it saves with the file);
+    the propagation keeps all the checkboxes and modifiers in sync.
+    """
+    global _lineart_show_updating
+    if _lineart_show_updating:
+        return
+    _lineart_show_updating = True
+    try:
+        value = self.hb_lineart_show
+        for scene in bpy.data.scenes:
+            if not scene.get('IS_LAYOUT_VIEW'):
+                continue
+            if scene.hb_lineart_show != value:
+                scene.hb_lineart_show = value
+            hb_layouts.set_line_art_visible(scene, value)
+    finally:
+        _lineart_show_updating = False
 
 
 def register():
@@ -4600,9 +4675,9 @@ def register():
     # large views); renders and exports still include the lines.
     bpy.types.Scene.hb_lineart_show = bpy.props.BoolProperty(
         name="Show Lines",
-        description="Draw the generated line art in the viewport. "
-                    "Turn off to speed up annotating; exports still "
-                    "include the lines",
+        description="Draw the generated line art in the viewport, in "
+                    "every layout view. Turn off to speed up "
+                    "annotating; exports still include the lines",
         default=True,
         update=update_lineart_show_prop
     )
