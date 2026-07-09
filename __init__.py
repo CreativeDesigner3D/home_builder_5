@@ -146,6 +146,19 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
 	)# type: ignore
 
     # Layout view defaults
+    line_engine: bpy.props.EnumProperty(
+        name="2D Line Engine",
+        description="How newly generated 2D layout views draw their line work",
+        items=[
+            ('FREESTYLE', 'Freestyle',
+             'Classic Freestyle lines. Only visible in the final render'),
+            ('LINEART', 'Grease Pencil Line Art',
+             'Grease Pencil Line Art strokes. Visible live in the viewport '
+             'and much faster to render'),
+        ],
+        default='FREESTYLE'
+    )# type: ignore
+
     default_paper_size: bpy.props.EnumProperty(
         name="Default Paper Size",
         description="Default paper size for new layout views",
@@ -210,6 +223,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="Layout View Defaults", icon='RENDERLAYERS')
         col = box.column(align=True)
+        col.prop(self, "line_engine")
         col.prop(self, "default_paper_size")
         col.prop(self, "default_layout_scale")
         col.prop(self, "default_paper_landscape")

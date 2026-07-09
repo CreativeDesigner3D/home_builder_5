@@ -230,9 +230,17 @@ def recalculate_annotation_sizes_for_scene(scene):
         return
     
     hb_scene = scene.home_builder
+
+    # Line-art layout views: stroke widths are world-space, so they track
+    # the drawing scale the same way the annotation sizes below do. Runs
+    # regardless of annotation_auto_scale -- line weights aren't user-sized
+    # annotations, and this pass also attaches the line art jitter camera
+    # once the view camera exists.
+    hb_layouts.update_line_art_sizes(scene)
+
     if not hb_scene.annotation_auto_scale:
         return
-    
+
     scale_str = scene.hb_layout_scale
     
     # Recalculate text size
