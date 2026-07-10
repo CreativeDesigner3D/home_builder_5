@@ -2689,14 +2689,10 @@ class MultiView(LayoutView):
         d.instance_type = 'COLLECTION'
         d.instance_collection = self.content_collection_dashed
         self.scene.collection.objects.link(d)
-        # Copy the solid cell's transform component-wise -- reliable
-        # whether the cell set matrix_world directly (iso-left) or
-        # location + rotation_euler (cross-layout); both are parentless
-        # empties, so location/rotation/scale fully define the transform.
-        d.rotation_mode = solid_instance.rotation_mode
-        d.location = solid_instance.location.copy()
-        d.rotation_euler = solid_instance.rotation_euler.copy()
-        d.scale = solid_instance.scale.copy()
+        # Parent at identity local transform: the dashed sibling shares
+        # the solid cell's transform exactly (the cell is a parentless
+        # empty) and follows when the cell is repositioned or scaled.
+        d.parent = solid_instance
         self.dashed_instances.append(d)
         return d
 
