@@ -1,5 +1,4 @@
 import bpy
-import bmesh
 import math
 from mathutils import Vector, Matrix, Euler
 from . import hb_types
@@ -105,10 +104,15 @@ LINEART_MARKED_PART_KEYWORDS = (
 # coincident planes (level 2) while leaving anything behind a closed front
 # (level 4+ once the front is doubled) hidden.
 LINEART_MARKED_LEVEL_END = 2
-# The isometric cells read badly with the marked pass (protruding door
-# back edges draw); it applies to flat cells only until the iso gets its
-# own treatment.
-LINEART_MARKED_SKIP_PREFIXES = ('Isometric',)
+# Cell instance names that mark isometric views: 'Isometric*' (multi-view
+# corners) and 'Iso *' (island nine-view corners). The trailing space in
+# 'Iso ' keeps 'Island*' instances out.
+ISO_CELL_PREFIXES = ('Isometric', 'Iso ')
+# The isometric cells read badly with every GP pass (protruding door back
+# edges draw, flush joints produce grazing ties); they are drawn by the
+# Freestyle iso pass instead (setup_iso_freestyle), so the marked channel
+# applies to flat cells only.
+LINEART_MARKED_SKIP_PREFIXES = ISO_CELL_PREFIXES
 # The marked duplicates are lifted this far toward the camera. Coplanar
 # duplicates create occlusion ties that can stack past the marked range
 # (drawer front + door + frame + their copies share one plane at the
@@ -497,8 +501,7 @@ def update_line_art_sizes(scene):
         return
     jitter = _ensure_lineart_camera(scene)
     for mod in gp_obj.modifiers:
-        if mod.name in ("Lineart Solid", "Lineart Marked",
-                        "Lineart Iso", "Lineart Iso Fronts"):
+        if mod.name in ("Lineart Solid", "Lineart Marked"):
             mod.radius = solid_radius
         elif mod.name == "Lineart Dashed":
             mod.radius = dashed_radius
@@ -643,68 +646,106 @@ def build_line_art_marked_channel(scene):
     update_line_art_sizes(scene)
 
 
-def _extract_front_plate(content_coll, depsgraph):
-    """Bake the camera-facing faces of a content collection's front parts
-    (LINEART_MARKED_PART_KEYWORDS) into one welded, zero-thickness mesh in
-    content-local space. Returns the Mesh, or None when nothing matched.
+def get_iso_freestyle_collections(scene):
+    """The iso-only routing collections the Freestyle iso pass selects by.
 
-    A plate has no side or back faces, so it cannot produce thickness
-    edges or grazing-tie lines -- it is the tie-free emission stand-in
-    for the iso cells. Welding is essential: unwelded per-face islands
-    would draw every internal facet seam as a boundary line.
+    Returns (solid, dashed); entries are None until setup_iso_freestyle
+    has run on the scene.
     """
-    verts, faces = [], []
-    for obj in list(content_coll.all_objects):
-        if obj.type != 'MESH':
+    return (bpy.data.collections.get(f"{scene.name}_Iso_Solid"),
+            bpy.data.collections.get(f"{scene.name}_Iso_Dashed"))
+
+
+def scene_uses_iso_freestyle(scene):
+    """True when this view draws its iso cells with a Freestyle pass.
+
+    The exporter's cue that the view is hybrid: the OpenGL render only
+    covers the GP flat-cell lines, so an F12 Freestyle render of the iso
+    cells has to be merged in.
+    """
+    if not scene.view_layers or not scene.view_layers[0].use_freestyle:
+        return False
+    solid, dashed = get_iso_freestyle_collections(scene)
+    return bool((solid is not None and len(solid.objects))
+                or (dashed is not None and len(dashed.objects)))
+
+
+def _remove_gp_iso_channel(scene, gp_obj):
+    """Strip the retired GP iso channel (plate / carcass emission passes)
+    from a view built before iso cells moved to the Freestyle pass.
+
+    Removes the two iso Line Art modifiers and their target layers, this
+    scene's plate / carcass instance collections, and any per-content
+    emission subsets no other view still instances. No-op on views that
+    never had the channel.
+    """
+    for name in ("Lineart Iso", "Lineart Iso Fronts"):
+        mod = gp_obj.modifiers.get(name)
+        if mod is not None:
+            gp_obj.modifiers.remove(mod)
+    for layer_name in ("Iso", "IsoFronts"):
+        layer = gp_obj.data.layers.get(layer_name)
+        if layer is not None:
+            gp_obj.data.layers.remove(layer)
+
+    subsets = set()
+    for suffix in ("_LineArt_IsoPlates", "_LineArt_IsoCarcass"):
+        coll = bpy.data.collections.get(scene.name + suffix)
+        if coll is None:
             continue
-        if not any(k in obj.name for k in LINEART_MARKED_PART_KEYWORDS):
+        for obj in list(coll.objects):
+            if obj.instance_collection is not None:
+                subsets.add(obj.instance_collection)
+            bpy.data.objects.remove(obj)
+        bpy.data.collections.remove(coll)
+
+    # Per-content subsets are shared between views of the same room;
+    # only dismantle the ones nothing else instances anymore.
+    for subset in subsets:
+        if any(o.instance_collection is subset for o in bpy.data.objects):
             continue
-        ev = obj.evaluated_get(depsgraph)
-        me = ev.data
-        M = obj.matrix_world      # placement within the content collection
-        R = M.to_quaternion()
-        for poly in me.polygons:
-            # Content faces the -Y axis by HB5 convention.
-            if (R @ poly.normal).dot(Vector((0.0, -1.0, 0.0))) < 0.7:
-                continue
-            base = len(verts)
-            for vid in poly.vertices:
-                verts.append(tuple(M @ me.vertices[vid].co))
-            faces.append(tuple(range(base, base + len(poly.vertices))))
-    if not faces:
-        return None
-    mesh = bpy.data.meshes.new(content_coll.name + " LA-IsoPlate")
-    mesh.from_pydata(verts, [], faces)
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    mesh.update()
-    return mesh
+        for obj in list(subset.objects):
+            # Plates and emission copies are generated artifacts owned by
+            # the subset; anything else linked here is real view content.
+            if (" LA-IsoPlate" in obj.name
+                    or _EMISSION_COPY_SUFFIX in obj.name):
+                data = obj.data
+                bpy.data.objects.remove(obj)
+                if data is not None and data.users == 0:
+                    bpy.data.meshes.remove(data)
+            else:
+                subset.objects.unlink(obj)
+        bpy.data.collections.remove(subset)
 
 
-def build_line_art_iso_channel(scene):
-    """Create or rebuild the isometric cells' Line Art channels.
+def setup_iso_freestyle(scene):
+    """Route a Line Art view's isometric cells through a Freestyle pass.
 
-    The flat-cell channels read badly at the 3/4 angle: protruding fronts
-    show their thickness edges and every flush joint contributes
-    grazing-tie lines, so the iso gets its own two-pass treatment:
+    The GP channels read badly at the 3/4 angle: protruding fronts draw
+    their thickness edges and every flush joint contributes grazing-tie
+    lines that no modifier setting culls -- exactly the cases Freestyle's
+    view map resolves correctly. Views with iso cells therefore render
+    hybrid: Grease Pencil keeps drawing the flat cells (live in the
+    viewport), and the exporter merges in an F12 Freestyle render
+    restricted to the iso cells.
 
-    - Fronts: welded zero-thickness plates of the front parts, lifted
-      LINEART_MARKED_LIFT toward the camera so they win every occlusion
-      tie. Clean outlines and panel profiles, no thickness edges.
-    - Carcass: the remaining parts, sunk the same distance away from the
-      camera so they LOSE every tie against the real fronts -- only
-      unambiguous outline edges survive.
+    Scene-side setup, idempotent, call after view generation:
 
-    The original iso cell instances are relocated out of the Freestyle
-    solid collection into a render-only collection: they keep rendering
-    and occluding but no longer emit (their emission is what made the
-    iso busy). Idempotent; call after view generation, before
-    refresh_line_art. No-op for Freestyle views and views without iso
-    cells.
+    - Iso cell instances (ISO_CELL_PREFIXES) move from the SOLID /
+      DASHED routing collections into iso-only twins ({scene}_Iso_Solid
+      / {scene}_Iso_Dashed). The GP modifiers stop tracing them; they
+      keep rendering and occluding (Line Art occludes against the whole
+      scene regardless of its source collection).
+    - The view layer gets Freestyle linesets selecting by the iso
+      collections, styled like _setup_freestyle_linesets. The scene
+      master toggle (render.use_freestyle) stays off so a stray F12
+      costs nothing; the exporter flips it on around its iso pass.
+    - Replaces the retired GP iso channel; its leftovers are removed
+      when an older view is rebuilt.
+
+    No-op for pure Freestyle views (their linesets already cover the
+    whole page). Views without iso cells get their view-layer Freestyle
+    switched off, which is what marks them single-pass for the exporter.
     """
     gp_obj = get_line_art_object(scene)
     if gp_obj is None:
@@ -712,6 +753,8 @@ def build_line_art_iso_channel(scene):
     solid_coll = bpy.data.collections.get(f"{scene.name}_Freestyle_Solid")
     if solid_coll is None:
         return
+
+    _remove_gp_iso_channel(scene, gp_obj)
 
     def scene_child(name):
         c = bpy.data.collections.get(name)
@@ -721,122 +764,73 @@ def build_line_art_iso_channel(scene):
             scene.collection.children.link(c)
         return c
 
-    # Relocate iso cell instances out of the emitting collections. They
-    # stay in the scene (render + occlusion) via the render-only home.
-    render_only = scene_child(f"{scene.name}_LineArt_Iso")
+    iso_solid = scene_child(f"{scene.name}_Iso_Solid")
+    iso_dashed = scene_child(f"{scene.name}_Iso_Dashed")
+
     dashed_coll = bpy.data.collections.get(f"{scene.name}_Freestyle_Dashed")
-    for coll in (solid_coll, dashed_coll):
+    for coll, iso_coll in ((solid_coll, iso_solid),
+                           (dashed_coll, iso_dashed)):
         if coll is None:
             continue
         for o in list(coll.objects):
             if (o.type == 'EMPTY' and o.instance_type == 'COLLECTION'
                     and any(o.name.startswith(p)
-                            for p in LINEART_MARKED_SKIP_PREFIXES)):
-                if o.name not in render_only.objects:
-                    render_only.objects.link(o)
+                            for p in ISO_CELL_PREFIXES)):
+                if o.name not in iso_coll.objects:
+                    iso_coll.objects.link(o)
                 coll.objects.unlink(o)
 
-    iso_instances = [o for o in render_only.objects
-                     if o.type == 'EMPTY' and o.instance_collection]
-    plates_coll = scene_child(f"{scene.name}_LineArt_IsoPlates")
-    carcass_coll = scene_child(f"{scene.name}_LineArt_IsoCarcass")
-    for obj in list(plates_coll.objects) + list(carcass_coll.objects):
-        bpy.data.objects.remove(obj)
-    if not iso_instances:
+    # Views built with the retired GP iso channel parked their iso
+    # instances in a render-only collection; adopt those into the solid
+    # routing (the old channel had already merged solid and dashed).
+    old_home = bpy.data.collections.get(f"{scene.name}_LineArt_Iso")
+    if old_home is not None:
+        for o in list(old_home.objects):
+            if o.name not in iso_solid.objects:
+                iso_solid.objects.link(o)
+            old_home.objects.unlink(o)
+        bpy.data.collections.remove(old_home)
+
+    if not len(iso_solid.objects) and not len(iso_dashed.objects):
+        # No iso cells: single-pass view, no Freestyle needed.
+        for view_layer in scene.view_layers:
+            view_layer.use_freestyle = False
         return
 
-    lift = Vector((0.0, 0.0, 0.0))
-    if scene.camera is not None:
-        toward_cam = scene.camera.matrix_world.to_quaternion() @ Vector((0.0, 0.0, 1.0))
-        lift = toward_cam.normalized() * LINEART_MARKED_LIFT
+    view_layer = scene.view_layers[0]
+    view_layer.use_freestyle = True
+    freestyle = view_layer.freestyle_settings
+    while len(freestyle.linesets) > 0:
+        freestyle.linesets.remove(freestyle.linesets[0])
 
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    plate_cache = {}
-    for inst in iso_instances:
-        src = inst.instance_collection
+    solid_lineset = freestyle.linesets.new('Iso Solid')
+    solid_lineset.select_silhouette = True
+    solid_lineset.select_border = True
+    solid_lineset.select_crease = True
+    solid_lineset.select_edge_mark = True
+    solid_lineset.select_by_collection = True
+    solid_lineset.collection = iso_solid
+    solid_lineset.collection_negation = 'INCLUSIVE'
+    if solid_lineset.linestyle:
+        solid_lineset.linestyle.color = (0, 0, 0)
+        solid_lineset.linestyle.thickness = 1.5
 
-        # Front plates (built once per content collection).
-        if src.name not in plate_cache:
-            old = bpy.data.objects.get(src.name + " LA-IsoPlate")
-            if old is not None:
-                old_mesh = old.data
-                bpy.data.objects.remove(old)
-                if old_mesh and old_mesh.users == 0:
-                    bpy.data.meshes.remove(old_mesh)
-            pc = bpy.data.collections.get(src.name + " LA-IsoPlates")
-            if pc is None:
-                pc = bpy.data.collections.new(src.name + " LA-IsoPlates")
-            for o in list(pc.objects):
-                pc.objects.unlink(o)
-            mesh = _extract_front_plate(src, depsgraph)
-            if mesh is not None:
-                plate_obj = bpy.data.objects.new(mesh.name, mesh)
-                pc.objects.link(plate_obj)
-                plate_cache[src.name] = pc
-            else:
-                plate_cache[src.name] = None
-            # Carcass subset: everything that is not a front part. Copies,
-            # not links -- see _emission_copy.
-            cc = bpy.data.collections.get(src.name + " LA-IsoCarcass")
-            if cc is None:
-                cc = bpy.data.collections.new(src.name + " LA-IsoCarcass")
-            _clear_emission_subset(cc)
-            for obj in list(src.all_objects):
-                if (obj.type == 'MESH'
-                        and not any(k in obj.name
-                                    for k in LINEART_MARKED_PART_KEYWORDS)):
-                    cc.objects.link(_emission_copy(obj))
-
-        pc = plate_cache[src.name]
-        cc = bpy.data.collections.get(src.name + " LA-IsoCarcass")
-        if pc is not None and len(pc.objects):
-            e = bpy.data.objects.new(inst.name + " Plates", None)
-            e[LINEART_MARKED_TAG] = True
-            e.instance_type = 'COLLECTION'
-            e.instance_collection = pc
-            e.matrix_world = inst.matrix_world.copy()
-            e.location = e.location + lift
-            e.hide_select = True
-            plates_coll.objects.link(e)
-        if cc is not None and len(cc.objects):
-            e = bpy.data.objects.new(inst.name + " Carcass", None)
-            e[LINEART_MARKED_TAG] = True
-            e.instance_type = 'COLLECTION'
-            e.instance_collection = cc
-            e.matrix_world = inst.matrix_world.copy()
-            e.location = e.location - lift
-            e.hide_select = True
-            carcass_coll.objects.link(e)
-
-    def iso_modifier(name, source, layer_name):
-        mod = gp_obj.modifiers.get(name)
-        if mod is None:
-            mod = gp_obj.modifiers.new(name, 'LINEART')
-            names = [m.name for m in gp_obj.modifiers]
-            if "Resample Dashed" in names:
-                gp_obj.modifiers.move(names.index(name),
-                                      names.index("Resample Dashed"))
-        mod.source_type = 'COLLECTION'
-        mod.source_collection = source
-        mod.use_contour = True
-        mod.use_crease = True
-        mod.use_edge_mark = True
-        mod.use_intersection = False
-        mod.use_loose = False
-        mod.use_material = False
-        mod.use_object_instances = True
-        mod.use_multiple_levels = False
-        mod.level_start = 0
-        _ensure_lineart_layer(gp_obj.data, scene, layer_name)
-        mod.target_layer = layer_name
-        mod.target_material = _get_lineart_material("HB_LineArt_Solid")
-        return mod
-
-    iso_modifier("Lineart Iso", carcass_coll, "Iso")
-    iso_modifier("Lineart Iso Fronts", plates_coll, "IsoFronts")
-
-    # Radius + jitter camera for the (possibly new) modifiers.
-    update_line_art_sizes(scene)
+    dashed_lineset = freestyle.linesets.new('Iso Dashed')
+    dashed_lineset.select_silhouette = True
+    dashed_lineset.select_border = True
+    dashed_lineset.select_crease = True
+    dashed_lineset.select_edge_mark = True
+    dashed_lineset.select_by_collection = True
+    dashed_lineset.collection = iso_dashed
+    dashed_lineset.collection_negation = 'INCLUSIVE'
+    dashed_lineset.select_by_visibility = True
+    dashed_lineset.visibility = 'HIDDEN'
+    if dashed_lineset.linestyle:
+        dashed_lineset.linestyle.color = (0, 0, 0)
+        dashed_lineset.linestyle.thickness = 1.0
+        dashed_lineset.linestyle.use_dashed_line = True
+        dashed_lineset.linestyle.dash1 = 10
+        dashed_lineset.linestyle.gap1 = 5
 
 
 # =============================================================================
@@ -1117,8 +1111,10 @@ class LayoutView:
         self._create_freestyle_collections()
 
         if get_default_line_engine() == LINE_ENGINE_LINEART:
-            # Grease Pencil Line Art: strokes are real objects, so
-            # Freestyle must stay off or every line would render twice.
+            # Grease Pencil Line Art draws the lines. Freestyle starts
+            # fully off; setup_iso_freestyle re-enables the view layer
+            # (never the scene master) for views with iso cells, whose
+            # lines come from an export-time Freestyle pass instead.
             self.scene.render.use_freestyle = False
             for view_layer in self.scene.view_layers:
                 view_layer.use_freestyle = False
@@ -1901,6 +1897,16 @@ class View3D(LayoutView):
         """
         self.create_scene(name)
         self.scene['IS_3D_VIEW'] = True
+        # 3D views always draw with Freestyle, whatever the line-engine
+        # preference says: the 3/4 framing is GP Line Art's worst case
+        # (grazing ties, dropped edge-on edges), and a 3D page has no
+        # flat cells that would profit from live GP lines. Whole-scene
+        # switch, so the exporter's per-scene Freestyle path applies.
+        if get_scene_line_engine(self.scene) == LINE_ENGINE_LINEART:
+            remove_line_art_from_scene(self.scene)
+            self.scene.render.use_freestyle = True
+            self._setup_freestyle_linesets()
+            self.scene[LINE_ENGINE_PROP] = LINE_ENGINE_FREESTYLE
         # Set paper size so the render resolution matches the sheet
         self.set_paper_size(paper_size, landscape)
         
