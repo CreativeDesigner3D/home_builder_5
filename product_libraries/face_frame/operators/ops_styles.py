@@ -205,6 +205,10 @@ class hb_face_frame_OT_add_door_style(Operator):
         new_style.name = _next_unique_name(base, existing)
         if src is not None:
             _copy_door_style(src, new_style)
+        else:
+            # No style to copy: match the door-style seed default --
+            # rail callouts are a drawer-rail concern.
+            new_style.show_rail_annotation = False
         ff.active_door_style_index = len(ff.door_styles) - 1
         self.report({'INFO'}, f"Added door style: {new_style.name}")
         return {'FINISHED'}

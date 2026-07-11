@@ -681,6 +681,11 @@ def ensure_default_styles(context):
         ds = ff.door_styles.add()
         ds.name = "Craftsman Square Recessed Panel"
         _apply_default_front_style(ds)
+        # Rail callouts are a drawer-rail concern: door styles start
+        # with the callout off (the drawer seed below keeps the
+        # enabled default). Copy-based Add duplicates the active
+        # style, so this seed value carries into new door styles.
+        ds.show_rail_annotation = False
         ff.active_door_style_index = 0
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
