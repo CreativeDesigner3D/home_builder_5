@@ -8,7 +8,7 @@ from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
-from .. import hb_types, hb_snap, hb_placement, units
+from .. import hb_types, hb_snap, hb_placement, hb_utils, units
 
 # Wall Miter Angle Calculation
 def calculate_wall_miter_angles(wall_obj):
@@ -4539,6 +4539,179 @@ class home_builder_walls_OT_apply_wall_material(bpy.types.Operator):
 
 
 
+class home_builder_walls_OT_add_soffit(bpy.types.Operator):
+    """Add a soffit to the selected walls"""
+    bl_idname = "home_builder_walls.add_soffit"
+    bl_label = "Add Soffit"
+    bl_description = "Add a soffit to the selected wall(s)"
+    bl_options = {'UNDO'}
+
+    height: bpy.props.FloatProperty(
+        name="Height",
+        description="Soffit height (drop below the ceiling)",
+        default=units.inch(12), min=units.inch(1), max=units.inch(48),
+        unit='LENGTH', precision=4)  # type: ignore
+    depth: bpy.props.FloatProperty(
+        name="Depth",
+        description="Soffit depth from the wall face",
+        default=units.inch(13), min=units.inch(1), max=units.inch(60),
+        unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        for obj in context.selected_objects:
+            if obj.get('IS_WALL_BP'):
+                return True
+        obj = context.active_object
+        return bool(obj and obj.get('IS_WALL_BP'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(self, "height")
+        col.prop(self, "depth")
+
+    def collect_selected_walls(self, context):
+        walls = []
+        seen = set()
+        sources = list(context.selected_objects)
+        if context.active_object and context.active_object not in sources:
+            sources.append(context.active_object)
+        for obj in sources:
+            if obj.get('IS_WALL_BP') and obj.name not in seen:
+                seen.add(obj.name)
+                walls.append(obj)
+        return walls
+
+    def create_soffit(self, context, wall_obj):
+        mesh = bpy.data.meshes.new("Soffit")
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        # Shift the unit cube so object scale maps directly to the
+        # soffit dims in wall-local space: X 0..1 (scale = length along
+        # the wall), Y -1..0 (scale = depth into the room; the room is
+        # on the wall's -Y side), Z -1..0 (scale = height hanging below
+        # the origin, which a driver pins to the wall's top).
+        for v in bm.verts:
+            v.co.x += 0.5
+            v.co.y -= 0.5
+            v.co.z -= 0.5
+        bm.to_mesh(mesh)
+        bm.free()
+
+        obj = bpy.data.objects.new("Soffit", mesh)
+        obj['IS_SOFFIT_BP'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_soffit_commands'
+        obj.parent = wall_obj
+        obj.location = (0.0, 0.0, 0.0)
+        obj.scale = (1.0, self.depth, self.height)
+        obj.color = wall_obj.color
+        context.scene.collection.objects.link(obj)
+
+        # Follow the wall parametrically: span its full length and hang
+        # from its top, so wall Length / Height edits carry the soffit.
+        wall = hb_types.GeoNodeWall(wall_obj)
+        driver = obj.driver_add('scale', 0)
+        hb_utils.add_driver_variables(
+            driver, [wall.var_input('Length', 'length')])
+        driver.driver.expression = 'length'
+        driver = obj.driver_add('location', 2)
+        hb_utils.add_driver_variables(
+            driver, [wall.var_input('Height', 'height')])
+        driver.driver.expression = 'height'
+        return obj
+
+    def execute(self, context):
+        walls = self.collect_selected_walls(context)
+        if not walls:
+            self.report({'WARNING'}, "No walls selected")
+            return {'CANCELLED'}
+        added = 0
+        skipped = 0
+        for wall_obj in walls:
+            if any(c.get('IS_SOFFIT_BP') for c in wall_obj.children):
+                skipped += 1
+                continue
+            self.create_soffit(context, wall_obj)
+            added += 1
+        msg = f"Added {added} soffit{'s' if added != 1 else ''}"
+        if skipped:
+            msg += f" ({skipped} wall{'s' if skipped != 1 else ''} already had one)"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class home_builder_walls_OT_soffit_prompts(bpy.types.Operator):
+    """Edit the selected soffit's dimensions"""
+    bl_idname = "home_builder_walls.soffit_prompts"
+    bl_label = "Soffit Prompts"
+    bl_description = "Edit the soffit's height and depth"
+    bl_options = {'UNDO'}
+
+    height: bpy.props.FloatProperty(
+        name="Height",
+        description="Soffit height (drop below the ceiling)",
+        default=units.inch(12), min=units.inch(1), max=units.inch(48),
+        unit='LENGTH', precision=4)  # type: ignore
+    depth: bpy.props.FloatProperty(
+        name="Depth",
+        description="Soffit depth from the wall face",
+        default=units.inch(13), min=units.inch(1), max=units.inch(60),
+        unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return bool(obj and obj.get('IS_SOFFIT_BP'))
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        # Dims live in the object scale (X is driven by the wall length).
+        self.depth = obj.scale.y
+        self.height = obj.scale.z
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(self, "height")
+        col.prop(self, "depth")
+
+    def execute(self, context):
+        obj = context.active_object
+        obj.scale.y = self.depth
+        obj.scale.z = self.height
+        return {'FINISHED'}
+
+
+class home_builder_walls_OT_delete_soffit(bpy.types.Operator):
+    """Delete the selected soffit"""
+    bl_idname = "home_builder_walls.delete_soffit"
+    bl_label = "Delete Soffit"
+    bl_description = "Delete the selected soffit"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return bool(obj and obj.get('IS_SOFFIT_BP'))
+
+    def execute(self, context):
+        obj = context.active_object
+        mesh = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+        return {'FINISHED'}
+
+
 class home_builder_walls_OT_delete_wall(bpy.types.Operator):
     """Delete selected walls and properly disconnect from adjacent walls"""
     bl_idname = "home_builder_walls.delete_wall"
@@ -5532,6 +5705,9 @@ classes = (
     home_builder_walls_OT_update_wall_thickness,
     home_builder_walls_OT_update_wall_miters,
     home_builder_walls_OT_apply_wall_material,
+    home_builder_walls_OT_add_soffit,
+    home_builder_walls_OT_soffit_prompts,
+    home_builder_walls_OT_delete_soffit,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

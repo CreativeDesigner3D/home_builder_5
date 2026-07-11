@@ -74,11 +74,22 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout.operator("home_builder_walls.show_all_walls", text="Show All Walls", icon='HIDE_OFF')
         layout.separator()
         layout.operator("home_builder_walls.draw_wall_cutter", text="Draw Wall Cutter", icon='MOD_BOOLEAN')
+        layout.operator("home_builder_walls.add_soffit", text="Add Soffit", icon='MESH_CUBE')
         layout.separator()
         layout.operator("hb_frameless.place_snap_line", text="Place Snap Line", icon='SNAP_MIDPOINT')
         layout.operator("hb_frameless.delete_all_snap_lines", text="Delete All Snap Lines", icon='TRASH')
         layout.separator()
         layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
+
+
+class HOME_BUILDER_MT_soffit_commands(bpy.types.Menu):
+    bl_label = "Soffit Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("home_builder_walls.soffit_prompts", text="Soffit Prompts")
+        layout.separator()
+        layout.operator("home_builder_walls.delete_soffit", text="Delete Soffit", icon='X')
 
 
 class HOME_BUILDER_MT_door_commands(bpy.types.Menu):
@@ -662,6 +673,7 @@ classes = (
     HOME_BUILDER_MT_change_units,
     HOME_BUILDER_MT_main_menu,
     HOME_BUILDER_MT_wall_commands,
+    HOME_BUILDER_MT_soffit_commands,
     HOME_BUILDER_MT_door_commands,
     HOME_BUILDER_MT_window_commands,
     HOME_BUILDER_OT_flip_dimensions,
