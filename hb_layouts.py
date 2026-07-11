@@ -710,12 +710,14 @@ def build_line_art_text_holdouts(scene, rects):
 
     rects: iterable of (center, x_dir, half_width, half_height) in world
     space -- one per text label, x_dir a unit vector along the text's
-    reading direction. Each rect becomes a fat 2-point stroke (round caps
-    cover the rect's corners) on a zero-opacity holdout layer, and every
-    other layer masks against it INVERTED, clipping strokes wherever text
-    sits. The layer must be zero-opacity, NOT hidden: a hidden layer
-    stops masking. Idempotent -- rebuilds the holdout strokes each call;
-    an empty rects list clears them.
+    reading direction. Each rect becomes a fat 2-point stroke on a
+    zero-opacity holdout layer, and every other layer masks against it
+    INVERTED, clipping strokes wherever text sits. The stroke endpoints
+    are inset by the radius so the round caps END at the rect's edges
+    rather than overshooting them -- coverage matches the rect along the
+    centerline, with rounded corners. The layer must be zero-opacity,
+    NOT hidden: a hidden layer stops masking. Idempotent -- rebuilds the
+    holdout strokes each call; an empty rects list clears them.
     """
     gp_obj = get_line_art_object(scene)
     if gp_obj is None:
@@ -732,8 +734,9 @@ def build_line_art_text_holdouts(scene, rects):
     for center, x_dir, half_w, half_h in rects:
         if half_w <= 0.0 or half_h <= 0.0:
             continue
-        specs.append((center - x_dir * half_w,
-                      center + x_dir * half_w, half_h))
+        reach = max(half_w - half_h, 0.0)
+        specs.append((center - x_dir * reach,
+                      center + x_dir * reach, half_h))
     if specs:
         drawing.add_strokes([2] * len(specs))
         for i, (p1, p2, radius) in enumerate(specs):
