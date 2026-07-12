@@ -45,6 +45,8 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.join_cabinets",
                         text="Join Cabinets", icon='AUTOMERGE_ON')
+        layout.operator("hb_face_frame.equalize_bays",
+                        text="Equalize Bays", icon='ALIGN_JUSTIFY')
 
         # Show "Create Cabinet Group" whenever at least one cabinet is in
         # the selection. A single-cabinet group is allowed on purpose: the
@@ -187,6 +189,8 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
                         text="Break Right", icon='TRIA_RIGHT_BAR')
         layout.operator("hb_face_frame.break_cabinet_both",
                         text="Break Both", icon='UNLINKED')
+        layout.operator("hb_face_frame.equalize_bays",
+                        text="Equalize Bays", icon='ALIGN_JUSTIFY')
 
         # Equalize-door-width is bay-scope by selection but cabinet-
         # scope in its effect (every bay in the picked cabinets is

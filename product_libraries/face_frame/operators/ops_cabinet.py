@@ -367,6 +367,104 @@ class hb_face_frame_OT_break_cabinet_both(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: equalize bay widths across selected cabinets
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_equalize_bays(bpy.types.Operator):
+    """Make every bay the same width across the selected cabinets.
+
+    One shared bay width is computed from the combined span minus all
+    frame wood (end stiles + mid stiles); each cabinet is resized to
+    frame + bays and the run re-abutted left to right. Works on a
+    single cabinet too (its bays equalize within its current width).
+    Intended cleanup after breaking a run apart: any bay widths the
+    break sequence locked or skewed come back out equal.
+    """
+    bl_idname = "hb_face_frame.equalize_bays"
+    bl_label = "Equalize Bays"
+    bl_description = (
+        "Resize the selected cabinets so every bay across them is the "
+        "same width (cabinets stay abutted; the total run is unchanged)"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return types_face_frame.find_cabinet_root(context.active_object) is not None
+
+    def execute(self, context):
+        roots = []
+        seen = set()
+        for obj in context.selected_objects:
+            root = types_face_frame.find_cabinet_root(obj)
+            if root is None or root.name in seen:
+                continue
+            seen.add(root.name)
+            roots.append(root)
+        if not roots:
+            self.report({'WARNING'}, "No face frame cabinet selected")
+            return {'CANCELLED'}
+
+        # Same run guards as Join: one parent, same Z row, no corner
+        # units, abutting along the wall.
+        if len({r.parent for r in roots}) > 1:
+            self.report({'ERROR'}, "Cabinets must share the same parent")
+            return {'CANCELLED'}
+        for r in roots:
+            if r.face_frame_cabinet.corner_type != 'NONE':
+                self.report({'ERROR'}, "Corner cabinets cannot be equalized")
+                return {'CANCELLED'}
+        roots.sort(key=lambda r: r.location.x)
+        eps = 1e-4
+        tol = inch(1.0)
+        for a, b in zip(roots, roots[1:]):
+            if abs(a.matrix_world.translation.z - b.matrix_world.translation.z) > eps:
+                self.report({'ERROR'}, "Cabinets must sit at the same Z")
+                return {'CANCELLED'}
+            if abs(b.location.x - (a.location.x + a.face_frame_cabinet.width)) > tol:
+                self.report({'ERROR'},
+                            "Cabinets must abut along the wall (no gaps)")
+                return {'CANCELLED'}
+
+        total_span = sum(r.face_frame_cabinet.width for r in roots)
+        frames = []
+        bay_counts = []
+        for r in roots:
+            p = r.face_frame_cabinet
+            n = _bay_count(r)
+            if n == 0:
+                self.report({'ERROR'}, f"{r.name} has no bays")
+                return {'CANCELLED'}
+            frames.append(p.left_stile_width + p.right_stile_width
+                          + sum(e.width for e in p.mid_stile_widths))
+            bay_counts.append(n)
+        total_bays = sum(bay_counts)
+        bay_width = (total_span - sum(frames)) / total_bays
+        if bay_width <= 0:
+            self.report({'ERROR'}, "Not enough width for the bays")
+            return {'CANCELLED'}
+
+        with types_face_frame.suspend_recalc():
+            x = roots[0].location.x
+            for r, frame, n in zip(roots, frames, bay_counts):
+                # unlock_width=False returns a bay to the recalc
+                # redistributor, which hands unlocked bays equal shares
+                # of the cabinet width - exactly the shared bay width
+                # once the cabinet width is set below.
+                for c in r.children:
+                    if c.get(types_face_frame.TAG_BAY_CAGE):
+                        c.face_frame_bay.unlock_width = False
+                r.face_frame_cabinet.width = frame + n * bay_width
+                r.location.x = x
+                x += r.face_frame_cabinet.width
+
+        self.report(
+            {'INFO'},
+            f"Equalized {total_bays} bay(s) at "
+            f"{meter_to_inch(bay_width):.2f}\" across {len(roots)} cabinet(s)")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: selection mode toggle (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
@@ -4426,6 +4524,7 @@ classes = (
     hb_face_frame_OT_break_cabinet_left,
     hb_face_frame_OT_break_cabinet_right,
     hb_face_frame_OT_break_cabinet_both,
+    hb_face_frame_OT_equalize_bays,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,
