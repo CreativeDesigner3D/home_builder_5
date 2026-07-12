@@ -3551,6 +3551,10 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         z_override = _appliance_z_location(scene_props, self.appliance_name)
         if z_override is not None:
             cage_obj.location.z = z_override
+        # Floor reference for free placement (see place_cabinet): floor
+        # appliances always land at Z=0, not the raycast hit Z, which in a
+        # non-plan view (front elevation) is the cursor's on-screen height.
+        self._floor_z = 0.0
 
         self.init_placement(context)
         if self.region is None:
@@ -3898,6 +3902,16 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             cage_obj.parent = wall
             cage_obj.matrix_parent_inverse.identity()
 
+        # Re-assert the mounting Z on every wall reposition: floor
+        # appliances at wall-local 0, fixed-height ones (range hood) at
+        # their configured Z. Without this, a Z picked up during free
+        # placement (the cursor's screen height in a front elevation)
+        # stuck to the cage when it came back onto the wall. Set before
+        # gap detection so collision checks run at the mounted height.
+        z_override = _appliance_z_location(
+            context.scene.hb_face_frame, self.appliance_name)
+        cage_obj.location.z = 0.0 if z_override is None else z_override
+
         local_hit = wall.matrix_world.inverted() @ self.hit_location
         cursor_x = local_hit.x
 
@@ -4066,6 +4080,12 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             cage_obj.location = self.hit_location.copy()
             if z_override is not None:
                 cage_obj.location.z = z_override
+            else:
+                # Floor appliances sit on the floor. Use the floor
+                # reference, not the raycast hit Z: in a non-plan view the
+                # hit is at the cursor's screen height, which floated the
+                # appliance up off the floor (see place_cabinet).
+                cage_obj.location.z = getattr(self, '_floor_z', 0.0)
             cage_obj.rotation_euler = (0, 0, 0)
 
         self._placement_dim_specs = self._build_dim_specs_free(context)
