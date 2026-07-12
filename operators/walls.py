@@ -4236,8 +4236,14 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
                 wall.set_input('Height', props.half_wall_height)
             elif wall_type == 'Fake':
                 wall.set_input('Height', props.fake_wall_height)
+            # set_input writes the modifier input directly (mod[ident]),
+            # which doesn't notify the depsgraph -- tag the wall so the
+            # viewport re-evaluates now instead of on the next view move.
+            obj.update_tag()
             count += 1
 
+        if count and context.area is not None:
+            context.area.tag_redraw()
         self.report({'INFO'}, f"Updated height on {count} {wall_type} wall(s)")
         return {'FINISHED'}
 
@@ -4269,8 +4275,13 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
                 wall.set_input('Thickness', props.interior_wall_thickness)
             elif wall_type == 'Fake':
                 wall.set_input('Thickness', units.inch(0.75))
+            # See update_wall_height: direct modifier writes need an
+            # explicit depsgraph tag to show up without a view move.
+            obj.update_tag()
             count += 1
 
+        if count and context.area is not None:
+            context.area.tag_redraw()
         self.report({'INFO'}, f"Updated thickness on {count} {wall_type} wall(s)")
         return {'FINISHED'}
 
