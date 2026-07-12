@@ -5,7 +5,8 @@ material wiring.
 import bpy
 from bpy.types import Operator
 
-from ..props_hb_face_frame import get_style_props
+from ..props_hb_face_frame import (get_style_props,
+                                   _reapply_materials_for_door_style)
 from .. import style_options
 
 
@@ -587,6 +588,12 @@ class hb_face_frame_OT_assign_door_style_to_selected_fronts(Operator):
         if applied == 0 and not errors:
             self.report({'WARNING'}, "No face frame fronts in selection")
             return {'CANCELLED'}
+        # assign_style_to_front only builds the modifier + tags; surfaces
+        # (grain rotation, Prep-for-Glass panel) come from the cabinet
+        # material walk -- re-run it so an already-configured glass style
+        # renders glass on assignment, not on the next unrelated recalc.
+        if applied:
+            _reapply_materials_for_door_style(ds, context)
         for err in errors:
             self.report({'WARNING'}, err)
         self.report({'INFO'}, f"Applied '{ds.name}' to {applied} front(s)")
@@ -625,6 +632,9 @@ class hb_face_frame_OT_update_fronts_from_door_style(Operator):
             elif isinstance(result, str):
                 errors.append(f"{obj.name}: {result}")
 
+        # Surfaces come from the cabinet material walk (see assign op).
+        if applied:
+            _reapply_materials_for_door_style(ds, context)
         for err in errors:
             self.report({'WARNING'}, err)
         self.report({'INFO'}, f"Updated {applied} front(s) tagged '{target}'")
@@ -714,6 +724,9 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         result = style.assign_style_to_front(front, record_override=True)
         if result is True:
             self._count += 1
+            # Surfaces come from the cabinet material walk (see assign
+            # op) -- run it per click so a glass panel shows immediately.
+            _reapply_materials_for_door_style(style, context)
             context.workspace.status_text_set(
                 f"Applied '{style.name}' to {self._count} front(s)  |  Esc / RMB to finish")
         elif isinstance(result, str):
@@ -848,6 +861,9 @@ class hb_face_frame_OT_update_fronts_from_style(bpy.types.Operator):
                 continue
             if ds.assign_style_to_front(obj) is True:
                 applied += 1
+        # Surfaces come from the cabinet material walk (see assign op).
+        if applied:
+            _reapply_materials_for_door_style(ds, context)
         self.report({'INFO'}, f"Updated {applied} front(s) tagged '{target}'")
         return {'FINISHED'}
 
