@@ -91,10 +91,11 @@ CROWN_PACKAGES = [
     ('STACKED', "Stacked w/ Spacer",
      "Flat-stock spacer with a crown profile on top",
      [('Spacer/Square Edge Spacer', 'flat_stock', 0.0, 0.0),
-      # The crown's height on the spacer is room-adjustable: the
-      # STACK_OFFSET sentinel resolves to the scene's
-      # molding_crown_stack_offset at apply time.
-      ('Crown Molding/51 Crown', 'crown_simple', 0.0, 'STACK_OFFSET')]),
+      # The crown mounts ON the spacer: STACK_FRONT pushes its path
+      # forward by the spacer's measured thickness, and STACK_OFFSET
+      # resolves to the room's adjustable height on the spacer.
+      ('Crown Molding/51 Crown', 'crown_simple', 'STACK_FRONT',
+       'STACK_OFFSET')]),
     ('SPACER', "Spacer Only",
      "Flat-stock spacer at the reveal line with no crown profile",
      [('Spacer/Square Edge Spacer', 'flat_stock', 0.0, 0.0)]),
@@ -269,7 +270,9 @@ def _curve_metrics(obj):
             ys.append(p.co.y)
     if not ys:
         return (0.0, 0.0)
-    return (max(ys), max(-min(xs), 0.0))
+    # Thickness is the full X extent of the outline - sign-agnostic,
+    # since packs may author the section on either side of the origin.
+    return (max(ys), max(xs) - min(xs))
 
 
 def _profile_metrics(profile_ref, fallback_key):
@@ -301,8 +304,9 @@ def _profile_metrics(profile_ref, fallback_key):
             break
     if metrics is None:
         outline = _PROFILE_OUTLINES.get(fallback_key) or []
+        xs = [x for x, _y in outline]
         metrics = (max((y for _x, y in outline), default=0.0),
-                   max((-x for x, _y in outline), default=0.0))
+                   (max(xs) - min(xs)) if xs else 0.0)
     _profile_height_cache[profile_ref] = metrics
     return metrics
 

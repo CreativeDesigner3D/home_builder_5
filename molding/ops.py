@@ -43,18 +43,33 @@ def clear_scene_molding(scene, molding_type=None):
             bpy.data.curves.remove(data)
 
 
-def _resolve_entry(entry, opts):
-    """Resolve a stack entry against the room settings: the
-    STACK_OFFSET sentinel becomes the scene's stack offset, and the
-    per-category profile overrides swap the preset's profile."""
-    profile_ref, fallback_key, dx, dy = entry
-    if dy == 'STACK_OFFSET':
-        dy = opts['stack_offset']
-    category = profile_ref.replace("\\", "/").split("/")[0]
-    override = opts['overrides'].get(category)
-    if override:
-        profile_ref = f"{category}/{override}"
-    return profile_ref, fallback_key, dx, dy
+def _resolve_stack(stack, opts):
+    """Resolve a stack against the room settings, in order:
+
+    - per-category profile overrides swap each preset's profile
+    - the STACK_OFFSET dy sentinel becomes the room's stack offset
+    - the STACK_FRONT dx sentinel becomes the running front of the
+      PRECEDING entries (max of their dx + measured profile
+      thickness), so an entry mounts on the face of what's below it -
+      the crown on its spacer, the shoe on its base molding.
+
+    Returns a list of concrete (ref, fallback, dx, dy) tuples.
+    """
+    resolved = []
+    front = 0.0
+    for profile_ref, fallback_key, dx, dy in stack:
+        if dy == 'STACK_OFFSET':
+            dy = opts['stack_offset']
+        category = profile_ref.replace("\\", "/").split("/")[0]
+        override = opts['overrides'].get(category)
+        if override:
+            profile_ref = f"{category}/{override}"
+        if dx == 'STACK_FRONT':
+            dx = front
+        resolved.append((profile_ref, fallback_key, dx, dy))
+        front = max(front, dx + packages.profile_front_depth(
+            profile_ref, fallback_key))
+    return resolved
 
 
 def _crown_datum(first, facts, opts):
@@ -80,8 +95,7 @@ def _crown_stack_top(first, facts, opts):
         return None
     base = _crown_datum(first, facts, opts)
     top = None
-    for entry in stack:
-        profile_ref, fallback_key, _dx, dy = _resolve_entry(entry, opts)
+    for profile_ref, fallback_key, _dx, dy in _resolve_stack(stack, opts):
         t = base + dy + packages.profile_top_height(profile_ref,
                                                     fallback_key)
         if top is None or t > top:
@@ -173,14 +187,14 @@ def _apply_type(scene, molding_type, align, stack, opts):
         members += [b for b in adapters.collect_bridges(scene)
                     if b not in members]
     facts = adapters.build_facts(scene, members)
+    resolved_stack = _resolve_stack(stack, opts)
 
     made = 0
     for component in engine.connected_components(members, align=align):
         if not any(m in targets for m in component):
             continue
         chain = engine.order_chain(component, align=align)
-        for entry in stack:
-            profile_ref, fallback_key, dx, dy = _resolve_entry(entry, opts)
+        for profile_ref, fallback_key, dx, dy in resolved_stack:
             if molding_type == 'BASE':
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, opts['include_recessed'])
@@ -204,22 +218,19 @@ def _base_stack(hb, stack):
     """Base stack from the room settings: the package's base molding
     (empty when the package is None) with the room's base-profile
     choice swapped in, plus the base shoe when toggled on. The shoe's
-    sweep path shifts forward by the MOLDING's measured thickness so
-    the shoe applies to the front of the base molding; with no base
-    molding it sits directly at the toe kick face."""
+    STACK_FRONT dx resolves to the molding's measured thickness so it
+    applies to the front of the base molding; with no base molding it
+    sits directly at the toe kick face (running front 0)."""
     profile = getattr(hb, 'molding_base_profile', 'DEFAULT')
     out = []
-    molding_depth = 0.0
     for ref, fallback, dx, dy in stack:
         if (profile not in ('DEFAULT', '')
                 and ref.replace("\\", "/").split("/")[0] == 'Base Molding'):
             ref = f"Base Molding/{profile}"
         out.append((ref, fallback, dx, dy))
-        depth = packages.profile_front_depth(ref, fallback)
-        molding_depth = max(molding_depth, dx + depth)
     if getattr(hb, 'molding_base_shoe', False):
         out.append((packages.BASE_SHOE_REF, packages.BASE_SHOE_FALLBACK,
-                    molding_depth, 0.0))
+                    'STACK_FRONT', 0.0))
     return out
 
 
