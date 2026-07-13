@@ -362,30 +362,6 @@ class HOME_BUILDER_PT_room_layout(bpy.types.Panel):
         hb_scene = context.scene.home_builder
 
 
-# SUBPANEL: Molding packages
-class HOME_BUILDER_PT_room_layout_molding(bpy.types.Panel):
-    bl_label = "Molding"
-    bl_idname = "HOME_BUILDER_PT_room_layout_molding"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = CATEGORY_NAME
-    bl_parent_id = "HOME_BUILDER_PT_room_layout"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
-        layout = self.layout
-        hb_scene = context.scene.home_builder
-        col = layout.column(align=True)
-        col.prop(hb_scene, "molding_crown_package", text="Crown")
-        col.prop(hb_scene, "molding_base_package", text="Base")
-        sub = col.row()
-        sub.enabled = hb_scene.molding_base_package != 'NONE'
-        sub.prop(hb_scene, "molding_base_include_recessed")
-        col.prop(hb_scene, "molding_light_rail_package", text="Light Rail")
-        layout.operator("home_builder.refresh_room_molding",
-                        text="Refresh Molding", icon='FILE_REFRESH')
-
-
 # SUBPANEL: Walls
 class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
     bl_label = "Walls"
@@ -1414,7 +1390,6 @@ classes = (
     HOME_BUILDER_PT_project_info,
     HOME_BUILDER_PT_project_rooms,
     HOME_BUILDER_PT_room_layout,
-    HOME_BUILDER_PT_room_layout_molding,
     HOME_BUILDER_PT_room_layout_walls,
     HOME_BUILDER_PT_room_layout_doors_windows,
     HOME_BUILDER_PT_room_layout_floor,

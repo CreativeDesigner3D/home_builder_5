@@ -5963,6 +5963,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_front_options: BoolProperty(name="Show Front Options", default=False)  # type: ignore
     show_drawer_options: BoolProperty(name="Show Drawer Options", default=False)  # type: ignore
     show_countertop_options: BoolProperty(name="Show Countertop Options", default=False)  # type: ignore
+    show_molding_options: BoolProperty(name="Show Molding Options", default=False)  # type: ignore
 
     # ---- Cabinet styles collection ----
     cabinet_styles: CollectionProperty(type=Face_Frame_Cabinet_Style)  # type: ignore
@@ -6977,6 +6978,33 @@ class Face_Frame_Scene_Props(PropertyGroup):
                      icon='TRIA_DOWN' if self.show_countertop_options else 'TRIA_RIGHT', emboss=False)
             if self.show_countertop_options:
                 self.draw_countertop_ui(box, context)
+
+            box = col.box()
+            row = box.row()
+            row.alignment = 'LEFT'
+            row.prop(self, 'show_molding_options', text="Molding",
+                     icon='TRIA_DOWN' if self.show_molding_options else 'TRIA_RIGHT', emboss=False)
+            if self.show_molding_options:
+                self.draw_molding_ui(box, context)
+
+    # =====================================================================
+    # UI: molding packages
+    # =====================================================================
+    def draw_molding_ui(self, layout, context):
+        """Room molding packages: three per-room dropdowns (the props
+        live on the room's home_builder scene group; picking a package
+        applies it to the whole room immediately) plus the recessed-
+        kick toggle and a refresh for after cabinet changes."""
+        hb_scene = context.scene.home_builder
+        col = layout.column(align=True)
+        col.prop(hb_scene, "molding_crown_package", text="Crown")
+        col.prop(hb_scene, "molding_base_package", text="Base")
+        sub = col.row()
+        sub.enabled = hb_scene.molding_base_package != 'NONE'
+        sub.prop(hb_scene, "molding_base_include_recessed")
+        col.prop(hb_scene, "molding_light_rail_package", text="Light Rail")
+        layout.operator("home_builder.refresh_room_molding",
+                        text="Refresh Molding", icon='FILE_REFRESH')
 
     # =====================================================================
     # UI: drawer boxes
