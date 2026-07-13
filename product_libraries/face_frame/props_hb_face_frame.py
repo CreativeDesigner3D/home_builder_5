@@ -7038,9 +7038,17 @@ class Face_Frame_Scene_Props(PropertyGroup):
         box = layout.box()
         box.label(text="Base", icon='NLA_PUSHDOWN')
         col = box.column(align=True)
+        base_on = hb_scene.molding_base_package != 'NONE'
         col.prop(hb_scene, "molding_base_package", text="Package")
+        if has_pack:
+            sub = col.row()
+            sub.enabled = base_on
+            sub.prop(hb_scene, "molding_base_profile", text="Profile")
         sub = col.row()
-        sub.enabled = hb_scene.molding_base_package != 'NONE'
+        sub.enabled = base_on
+        sub.prop(hb_scene, "molding_base_shoe")
+        sub = col.row()
+        sub.enabled = base_on
         sub.prop(hb_scene, "molding_base_include_recessed")
 
         # --- Light Rail ---

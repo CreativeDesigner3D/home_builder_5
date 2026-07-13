@@ -204,6 +204,11 @@ def _molding_cap_profile_items(self, context):
     return packages.profile_enum_items('Furniture Caps')
 
 
+def _molding_base_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Base Molding')
+
+
 def update_wall_material(self, context):
     """Update all wall material inputs when wall material changes."""
     mat = self.wall_material
@@ -557,6 +562,18 @@ class Home_Builder_Scene_Props(PropertyGroup):
         name="Furniture Cap Profile",
         description="Furniture cap profile from the installed molding pack (Default uses the package's standard profile)",
         items=_molding_cap_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_profile: EnumProperty(
+        name="Base Molding Profile",
+        description="Base molding profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_base_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_shoe: BoolProperty(
+        name="Base Shoe",
+        description="Apply a base shoe against the front of the base molding",
+        default=False,
         update=update_molding_package,
     )  # type: ignore
 

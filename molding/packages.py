@@ -110,8 +110,14 @@ FURNITURE_CAP_STACK = [
 BASE_PACKAGES = [
     ('SIMPLE', "Simple Base",
      "One base profile along the toe kicks",
-     [('Base Molding/Base Shoe', 'base_simple', 0.0, 0.0)]),
+     [('Base Molding/Standard Base', 'base_simple', 0.0, 0.0)]),
 ]
+
+# Optional base shoe, toggled per room and applied against the FRONT
+# of the base molding (its sweep path shifts forward by the shoe's own
+# measured depth so its back face lands on the base molding's face).
+BASE_SHOE_REF = 'Base Molding/Base Shoe'
+BASE_SHOE_FALLBACK = 'base_shoe'
 
 LIGHT_RAIL_PACKAGES = [
     ('SIMPLE', "Simple Light Rail",
@@ -196,6 +202,11 @@ _PROFILE_OUTLINES = {
         (0.0, 0.0), (0.0, _in(2.5)), (-_in(0.25), _in(3.0)),
         (-_in(0.625), _in(3.0)), (-_in(0.625), 0.0),
     ],
+    # Base shoe: small quarter-round-ish trim at the floor line.
+    'base_shoe': [
+        (0.0, 0.0), (0.0, _in(0.375)), (-_in(0.1875), _in(0.75)),
+        (-_in(0.4375), _in(0.75)), (-_in(0.4375), 0.0),
+    ],
     # Light rail hanging below the upper's bottom line.
     'light_rail_simple': [
         (0.0, 0.0), (0.0, -_in(1.25)), (-_in(0.25), -_in(1.5)),
@@ -240,30 +251,31 @@ def _load_library_profile(profile_ref, collection):
     return None
 
 
-# Profile cross-section top heights, cached per ref: measuring a
-# library profile means loading its .blend once.
+# Profile cross-section metrics, cached per ref: measuring a library
+# profile means loading its .blend once. Each entry is (top, depth) -
+# how far the outline rises above its mount line and how far it
+# projects back from its face line.
 _profile_height_cache = {}
 
 
-def _curve_top(obj):
+def _curve_metrics(obj):
+    xs = []
     ys = []
     for spline in obj.data.splines:
         points = (spline.bezier_points if spline.type == 'BEZIER'
                   else spline.points)
         for p in points:
+            xs.append(p.co.x)
             ys.append(p.co.y)
-    return max(ys) if ys else 0.0
+    if not ys:
+        return (0.0, 0.0)
+    return (max(ys), max(-min(xs), 0.0))
 
 
-def profile_top_height(profile_ref, fallback_key):
-    """Top of the profile's cross-section above its mount line (max Y
-    of the outline) - how far the molding rises above the sweep path.
-    Used to sit the furniture cap on top of the tallest crown-stack
-    element. Library profiles are loaded once and measured; results
-    are cached per ref."""
+def _profile_metrics(profile_ref, fallback_key):
     if profile_ref in _profile_height_cache:
         return _profile_height_cache[profile_ref]
-    height = None
+    metrics = None
     parts = profile_ref.replace("\\", "/").split("/")
     stem = parts[-1]
     for base in _PROFILE_PATHS:
@@ -280,18 +292,32 @@ def profile_top_height(profile_ref, fallback_key):
             continue
         obj = data_to.objects[0]
         if obj.type == 'CURVE':
-            height = _curve_top(obj)
+            metrics = _curve_metrics(obj)
         data = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
         if data is not None and data.users == 0:
             bpy.data.curves.remove(data)
-        if height is not None:
+        if metrics is not None:
             break
-    if height is None:
+    if metrics is None:
         outline = _PROFILE_OUTLINES.get(fallback_key) or []
-        height = max((y for _x, y in outline), default=0.0)
-    _profile_height_cache[profile_ref] = height
-    return height
+        metrics = (max((y for _x, y in outline), default=0.0),
+                   max((-x for x, _y in outline), default=0.0))
+    _profile_height_cache[profile_ref] = metrics
+    return metrics
+
+
+def profile_top_height(profile_ref, fallback_key):
+    """How far the profile rises above the sweep path (max Y). Used to
+    sit the furniture cap on top of the tallest crown-stack element."""
+    return _profile_metrics(profile_ref, fallback_key)[0]
+
+
+def profile_front_depth(profile_ref, fallback_key):
+    """How far the profile projects back from its face line (max -X).
+    Used to push the base shoe's path forward so its back lands on the
+    base molding's face."""
+    return _profile_metrics(profile_ref, fallback_key)[1]
 
 
 def make_profile_object(profile_ref, fallback_key, name, collection):
