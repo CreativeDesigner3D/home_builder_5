@@ -533,6 +533,14 @@ class Home_Builder_Scene_Props(PropertyGroup):
         default=False,
         update=update_molding_package,
     )  # type: ignore
+    molding_cap_offset: FloatProperty(
+        name="Cap Offset",
+        description="Adjust the furniture cap from its default position sitting on top of the tallest molding (negative lowers it)",
+        default=0.0,
+        soft_min=-inch(6.0), soft_max=inch(6.0),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
     molding_crown_profile: EnumProperty(
         name="Crown Profile",
         description="Crown profile from the installed molding pack (Default uses the package's standard profile)",

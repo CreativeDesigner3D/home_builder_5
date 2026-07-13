@@ -38,12 +38,14 @@ def register_profile_path(path):
     if path and os.path.isdir(path) and path not in _PROFILE_PATHS:
         _PROFILE_PATHS.append(path)
         _category_enum_cache.clear()
+        _profile_height_cache.clear()
 
 
 def unregister_profile_path(path):
     if path in _PROFILE_PATHS:
         _PROFILE_PATHS.remove(path)
         _category_enum_cache.clear()
+        _profile_height_cache.clear()
 
 
 def profile_paths():
@@ -93,6 +95,9 @@ CROWN_PACKAGES = [
       # STACK_OFFSET sentinel resolves to the scene's
       # molding_crown_stack_offset at apply time.
       ('Crown Molding/51 Crown', 'crown_simple', 0.0, 'STACK_OFFSET')]),
+    ('SPACER', "Spacer Only",
+     "Flat-stock spacer at the reveal line with no crown profile",
+     [('Spacer/Square Edge Spacer', 'flat_stock', 0.0, 0.0)]),
 ]
 
 # The furniture cap is an independent room TOGGLE, not a crown package:
@@ -233,6 +238,60 @@ def _load_library_profile(profile_ref, collection):
             continue
         return _finish_profile(data_to.objects[0], collection)
     return None
+
+
+# Profile cross-section top heights, cached per ref: measuring a
+# library profile means loading its .blend once.
+_profile_height_cache = {}
+
+
+def _curve_top(obj):
+    ys = []
+    for spline in obj.data.splines:
+        points = (spline.bezier_points if spline.type == 'BEZIER'
+                  else spline.points)
+        for p in points:
+            ys.append(p.co.y)
+    return max(ys) if ys else 0.0
+
+
+def profile_top_height(profile_ref, fallback_key):
+    """Top of the profile's cross-section above its mount line (max Y
+    of the outline) - how far the molding rises above the sweep path.
+    Used to sit the furniture cap on top of the tallest crown-stack
+    element. Library profiles are loaded once and measured; results
+    are cached per ref."""
+    if profile_ref in _profile_height_cache:
+        return _profile_height_cache[profile_ref]
+    height = None
+    parts = profile_ref.replace("\\", "/").split("/")
+    stem = parts[-1]
+    for base in _PROFILE_PATHS:
+        path = os.path.join(base, *parts) + ".blend"
+        if not os.path.isfile(path):
+            continue
+        try:
+            with bpy.data.libraries.load(path) as (data_from, data_to):
+                data_to.objects = ([stem] if stem in data_from.objects
+                                   else [])
+        except Exception:
+            continue
+        if not data_to.objects or data_to.objects[0] is None:
+            continue
+        obj = data_to.objects[0]
+        if obj.type == 'CURVE':
+            height = _curve_top(obj)
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is not None and data.users == 0:
+            bpy.data.curves.remove(data)
+        if height is not None:
+            break
+    if height is None:
+        outline = _PROFILE_OUTLINES.get(fallback_key) or []
+        height = max((y for _x, y in outline), default=0.0)
+    _profile_height_cache[profile_ref] = height
+    return height
 
 
 def make_profile_object(profile_ref, fallback_key, name, collection):

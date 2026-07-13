@@ -7003,8 +7003,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         # to their placeholder profiles and there is nothing to pick.
         has_pack = bool(molding_packages.profile_paths())
 
-        col = layout.column(align=True)
-        col.prop(hb_scene, "molding_crown_package", text="Crown")
+        # --- Crown (package + furniture cap) ---
+        box = layout.box()
+        box.label(text="Crown", icon='NLA_PUSHDOWN')
+        col = box.column(align=True)
+        col.prop(hb_scene, "molding_crown_package", text="Package")
         sub = col.row()
         sub.enabled = crown_pkg != 'NONE'
         sub.prop(hb_scene, "molding_crown_reveal", text="Reveal")
@@ -7014,7 +7017,8 @@ class Face_Frame_Scene_Props(PropertyGroup):
         sub.prop(hb_scene, "molding_crown_stack_offset", text="Stack Offset")
         if has_pack:
             sub = col.row()
-            sub.enabled = crown_pkg != 'NONE'
+            sub.enabled = molding_packages.stack_uses_category(
+                'CROWN', crown_pkg, 'Crown Molding')
             sub.prop(hb_scene, "molding_crown_profile", text="Profile")
             sub = col.row()
             sub.enabled = molding_packages.stack_uses_category(
@@ -7022,16 +7026,29 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sub.prop(hb_scene, "molding_spacer_profile", text="Spacer")
         col.separator()
         col.prop(hb_scene, "molding_crown_furniture_cap")
+        sub = col.row()
+        sub.enabled = hb_scene.molding_crown_furniture_cap
+        sub.prop(hb_scene, "molding_cap_offset", text="Cap Offset")
         if has_pack:
             sub = col.row()
             sub.enabled = hb_scene.molding_crown_furniture_cap
             sub.prop(hb_scene, "molding_cap_profile", text="Cap Profile")
-        col.separator()
-        col.prop(hb_scene, "molding_base_package", text="Base")
+
+        # --- Base ---
+        box = layout.box()
+        box.label(text="Base", icon='NLA_PUSHDOWN')
+        col = box.column(align=True)
+        col.prop(hb_scene, "molding_base_package", text="Package")
         sub = col.row()
         sub.enabled = hb_scene.molding_base_package != 'NONE'
         sub.prop(hb_scene, "molding_base_include_recessed")
-        col.prop(hb_scene, "molding_light_rail_package", text="Light Rail")
+
+        # --- Light Rail ---
+        box = layout.box()
+        box.label(text="Light Rail", icon='NLA_PUSHDOWN')
+        col = box.column(align=True)
+        col.prop(hb_scene, "molding_light_rail_package", text="Package")
+
         layout.operator("home_builder.refresh_room_molding",
                         text="Refresh Molding", icon='FILE_REFRESH')
 
