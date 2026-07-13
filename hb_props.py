@@ -409,9 +409,9 @@ class Home_Builder_Scene_Props(PropertyGroup):
     product_tab: EnumProperty(name="Product Tab",
                           items=[('FRAMELESS',"Frameless","Show the Frameless Library"),
                                  ('FACE FRAME',"Custom Wood Products - Face Frame","Show the Custom Wood Products - Face Frame Library"),
-                                 ('CLOSET',"Closet","Show the Closet Library")],
+                                 ('CLOSET',"Pulito - Closet","Show the Pulito - Closet Library")],
                           default='FRAMELESS',
-                          update=update_product_tab)# type: ignore 
+                          update=update_product_tab)# type: ignore
 
     room_name: StringProperty(name="Room Name", default="")
     room_type: StringProperty(name="Room Type", default="")
