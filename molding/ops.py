@@ -53,12 +53,14 @@ def _sweep_z(molding_type, first, dy):
     return dy
 
 
-def _spawn_sweep(scene, molding_type, chain, segments, profile_key, dy):
+def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
+                 fallback_key, dy):
     """Create one sweep object: hidden profile + curve through the
     world-space segments, localized to (and parented on) chain[0]."""
     first = chain[0]
     profile = packages.make_profile_object(
-        profile_key, f"Molding_Profile_{profile_key}", scene.collection)
+        profile_ref, fallback_key,
+        f"Molding_Profile_{fallback_key}", scene.collection)
     if profile is None:
         return None
     curve = bpy.data.curves.new("MoldingSweep", type='CURVE')
@@ -121,7 +123,7 @@ def _apply_type(scene, molding_type, align, stack, include_recessed):
         if not any(m in targets for m in component):
             continue
         chain = engine.order_chain(component, align=align)
-        for profile_key, dx, dy in stack:
+        for profile_ref, fallback_key, dx, dy in stack:
             if molding_type == 'BASE':
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, include_recessed)
@@ -135,7 +137,7 @@ def _apply_type(scene, molding_type, align, stack, include_recessed):
             if not segments:
                 continue
             if _spawn_sweep(scene, molding_type, sweep_chain, segments,
-                            profile_key, dy) is not None:
+                            profile_ref, fallback_key, dy) is not None:
                 made += 1
     return made
 

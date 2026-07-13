@@ -1,15 +1,20 @@
-"""Shipped molding package presets and built-in placeholder profiles.
+"""Shipped molding package presets and profile resolution.
 
 A package is a named STACK of moldings: each entry is
-(profile_key, forward_offset, vertical_offset). Stacks let one package
-build layered setups - a flat-stock spacer with a crown on top, or a
-furniture cap - without any per-cabinet configuration.
+(profile_ref, fallback_key, forward_offset, vertical_offset). Stacks
+let one package build layered setups - a spacer with a crown on top,
+or a furniture cap - without any per-cabinet configuration.
 
-Profiles here are code-generated placeholder cross-sections so the
-system works end to end; they are meant to be superseded by curated
-profile assets in the molding library (a stack entry can then name a
-library profile instead of a built-in key).
+Profile GEOMETRY does not ship with this addon. Separately installed
+molding asset packs call register_profile_path() with a folder of
+category subfolders holding profile .blends (each containing a curve
+object named like the file stem); profile_ref is the
+"Category/Profile Name" path into whichever pack provides it. When no
+installed pack provides a profile, a code-generated placeholder
+cross-section (fallback_key) keeps the package functional.
 """
+
+import os
 
 import bpy
 
@@ -20,30 +25,53 @@ def _in(v):
     return units.inch(v)
 
 
+# ---------------------------------------------------------------------------
+# Profile providers (installed separately)
+# ---------------------------------------------------------------------------
+
+_PROFILE_PATHS = []
+
+
+def register_profile_path(path):
+    """Register a molding asset pack's root folder. Called by the
+    pack's own register(); safe to call repeatedly."""
+    if path and os.path.isdir(path) and path not in _PROFILE_PATHS:
+        _PROFILE_PATHS.append(path)
+
+
+def unregister_profile_path(path):
+    if path in _PROFILE_PATHS:
+        _PROFILE_PATHS.remove(path)
+
+
+def profile_paths():
+    return tuple(_PROFILE_PATHS)
+
+
 # (identifier, label, description, stack)
 CROWN_PACKAGES = [
     ('SIMPLE', "Simple Crown",
      "One crown profile along the cabinet tops",
-     [('crown_simple', 0.0, 0.0)]),
+     [('Crown Molding/51 Crown', 'crown_simple', 0.0, 0.0)]),
     ('STACKED', "Stacked w/ Spacer",
      "Flat-stock spacer with a crown profile on top",
-     [('flat_stock', 0.0, 0.0),
-      ('crown_simple', 0.0, _in(3.5))]),
+     [('Spacer/Square Edge Spacer', 'flat_stock', 0.0, 0.0),
+      ('Crown Molding/51 Crown', 'crown_simple', 0.0, _in(3.5))]),
     ('FURNITURE', "Furniture Cap",
      "A flat furniture cap overhanging the cabinet tops",
-     [('furniture_cap', 0.0, 0.0)]),
+     [('Furniture Caps/Furniture 3 Inch', 'furniture_cap', 0.0, 0.0)]),
 ]
 
 BASE_PACKAGES = [
     ('SIMPLE', "Simple Base",
      "One base profile along the toe kicks",
-     [('base_simple', 0.0, 0.0)]),
+     [('Base Molding/Base Shoe', 'base_simple', 0.0, 0.0)]),
 ]
 
 LIGHT_RAIL_PACKAGES = [
     ('SIMPLE', "Simple Light Rail",
      "One light-rail profile under the upper cabinet fronts",
-     [('light_rail_simple', 0.0, 0.0)]),
+     [('Light Rail/Cove Cut LR', 'light_rail_simple', 0.0, 0.0)]),
 ]
 
 PACKAGES = {
@@ -113,10 +141,51 @@ _PROFILE_OUTLINES = {
 }
 
 
-def make_profile_object(profile_key, name, collection):
-    """Create a hidden closed-poly curve object for `profile_key` to be
-    used as a sweep's bevel_object. Returns None for unknown keys."""
-    outline = _PROFILE_OUTLINES.get(profile_key)
+def _finish_profile(obj, collection):
+    collection.objects.link(obj)
+    if obj.type == 'CURVE':
+        # Order matters: fill_mode='NONE' is rejected on 3D curves.
+        obj.data.dimensions = '2D'
+        obj.data.bevel_depth = 0.0
+        obj.data.fill_mode = 'NONE'
+    obj.scale = (1.0, 1.0, 1.0)
+    obj.hide_viewport = True
+    obj.hide_render = True
+    obj['IS_HB_MOLDING_PROFILE'] = True
+    return obj
+
+
+def _load_library_profile(profile_ref, collection):
+    """Append `Category/Profile Name` from the first registered asset
+    pack that provides it. The .blend contains an object named like the
+    file stem (the molding-library convention)."""
+    parts = profile_ref.replace("\\", "/").split("/")
+    stem = parts[-1]
+    for base in _PROFILE_PATHS:
+        path = os.path.join(base, *parts) + ".blend"
+        if not os.path.isfile(path):
+            continue
+        try:
+            with bpy.data.libraries.load(path) as (data_from, data_to):
+                data_to.objects = ([stem] if stem in data_from.objects
+                                   else [])
+        except Exception:
+            continue
+        if not data_to.objects or data_to.objects[0] is None:
+            continue
+        return _finish_profile(data_to.objects[0], collection)
+    return None
+
+
+def make_profile_object(profile_ref, fallback_key, name, collection):
+    """Profile curve for a sweep's bevel_object: the library profile
+    from an installed asset pack when available, else the built-in
+    placeholder outline for `fallback_key`. Returns None when neither
+    resolves."""
+    obj = _load_library_profile(profile_ref, collection)
+    if obj is not None:
+        return obj
+    outline = _PROFILE_OUTLINES.get(fallback_key)
     if outline is None:
         return None
     curve = bpy.data.curves.new(name, type='CURVE')
@@ -128,8 +197,4 @@ def make_profile_object(profile_key, name, collection):
         pt.co = (x, y, 0.0, 1.0)
     spline.use_cyclic_u = True
     obj = bpy.data.objects.new(name, curve)
-    collection.objects.link(obj)
-    obj.hide_viewport = True
-    obj.hide_render = True
-    obj['IS_HB_MOLDING_PROFILE'] = True
-    return obj
+    return _finish_profile(obj, collection)
