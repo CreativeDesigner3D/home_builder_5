@@ -1208,6 +1208,85 @@ def _neighbor_blind_side(neighbor_obj, corner_world_pos):
     return 'LEFT' if d_left <= d_right else 'RIGHT'
 
 
+def _detect_peninsula_blind_neighbor(cab_obj, wall):
+    """Peninsula variant of the blind-corner match: a free-standing run
+    anchored to THIS wall, perpendicular to it, whose FRONT faces the
+    placed cabinet - the placed cabinet's end dies into the peninsula's
+    front, covering it near the wall, exactly like a blind corner at a
+    wall junction. The peninsula plays the blind-cabinet role. Butting
+    the peninsula's solid BACK creates no blind face and returns None.
+
+    Only the placed-on-front, unrotated case is handled (rotation 0 -
+    the standard wall fill); back-side placement mirrors the placed
+    cabinet's local ends and is skipped rather than mis-configured.
+
+    Returns the same tuple as _detect_blind_corner_neighbor, or None.
+    """
+    EDGE_TOL = units.inch(1.0)
+
+    if abs(cab_obj.rotation_euler.z) > 0.1:
+        return None
+
+    cab_props = cab_obj.face_frame_cabinet
+    cab_left = cab_obj.location.x
+    cab_right = cab_left + cab_props.width
+    cab_range = _cabinet_world_z_range(cab_obj)
+    # Wall-local Y band the placed cabinet occupies (front side).
+    band_y0, band_y1 = -cab_props.depth, 0.0
+
+    wall_inv = wall.matrix_world.inverted()
+    for obj in bpy.context.scene.objects:
+        if obj.parent is not None or obj is cab_obj:
+            continue
+        if not obj.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        props = obj.face_frame_cabinet
+        if props.cabinet_type == 'PANEL' or _is_corner_cabinet(obj):
+            continue
+        if not _z_ranges_overlap(cab_range, _cabinet_world_z_range(obj),
+                                 units.inch(1.0)):
+            continue
+
+        m = wall_inv @ obj.matrix_world
+        front = m.to_3x3() @ Vector((0.0, -1.0, 0.0))
+        # A peninsula's front runs ALONG the wall axis; anything else
+        # (parallel island, angled run) isn't this corner condition.
+        if abs(front.x) < 0.9:
+            continue
+
+        corners = [
+            m @ Vector((0.0, 0.0, 0.0)),
+            m @ Vector((props.width, 0.0, 0.0)),
+            m @ Vector((0.0, -props.depth, 0.0)),
+            m @ Vector((props.width, -props.depth, 0.0)),
+        ]
+        ys = [c.y for c in corners]
+        # Must reach into the placed cabinet's side band - a run on the
+        # far side of the wall or an island off the wall doesn't meet.
+        if min(ys) >= band_y1 - 1e-5 or max(ys) <= band_y0 + 1e-5:
+            continue
+
+        xs = [c.x for c in corners]
+        if front.x > 0.0:
+            # Front faces +X: our LEFT end must die into it.
+            front_x = max(xs)
+            if abs(cab_left - front_x) > EDGE_TOL:
+                continue
+            placed_corner_end = 'LEFT'
+        else:
+            front_x = min(xs)
+            if abs(cab_right - front_x) > EDGE_TOL:
+                continue
+            placed_corner_end = 'RIGHT'
+
+        # The blind end is the peninsula's wall-anchored end - the end
+        # nearest the meeting point on the wall face.
+        corner_world = wall.matrix_world @ Vector((front_x, 0.0, 0.0))
+        blind_side = _neighbor_blind_side(obj, corner_world)
+        return (obj, blind_side, 'BLIND', 90.0, placed_corner_end)
+    return None
+
+
 def _detect_blind_corner_neighbor(cab_obj):
     """If cab_obj sits at a wall corner with a face-frame cabinet on the
     adjacent wall, return how they meet:
@@ -1300,7 +1379,10 @@ def _detect_blind_corner_neighbor(cab_obj):
         placed_corner_end = 'LEFT' if direction == 'left' else 'RIGHT'
         return (neighbor, blind_side, corner_kind, interior_deg,
                 placed_corner_end)
-    return None
+
+    # No wall-corner match: a free-standing peninsula run anchored to
+    # this wall can create the same blind condition mid-wall.
+    return _detect_peninsula_blind_neighbor(cab_obj, wall)
 
 
 def _align_base_tall_toe_kick(cab_obj):
@@ -5479,11 +5561,15 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
 
         with types_face_frame.suspend_recalc():
             if self.blind_side == 'LEFT':
-                # Shift the cabinet's wall-local X by the reduction so
-                # the right edge stays anchored while the left edge
-                # moves away from the wall corner. Cabinet origin sits
-                # at the left edge, so location.x tracks that edge.
-                blind_obj.location.x += actual_reduction
+                # Shift the origin along the cabinet's own width axis so
+                # the right edge stays anchored while the left edge moves
+                # away from the corner. For a wall-parented neighbor
+                # (rotation 0) this is the plain wall-local X bump; a
+                # free-standing peninsula is rotated, so the shift must
+                # follow its local +X.
+                blind_obj.location += (
+                    blind_obj.matrix_basis.to_3x3()
+                    @ Vector((actual_reduction, 0.0, 0.0)))
                 blind_props.width = new_blind_width
                 blind_props.left_stile_type = 'BLIND'
                 blind_props.blind_left = new_blind_flag
