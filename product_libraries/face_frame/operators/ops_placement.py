@@ -3268,7 +3268,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return None
         dir_w.normalize()
 
-        length = max(w, d) * 0.6
+        # Depth-driven, not width-driven: from the plan centre the tip
+        # then always lands just past the front face, and a gap-filling
+        # cabinet (10' wide) doesn't grow a room-sized arrow. Clamped so
+        # shallow uppers stay readable.
+        length = min(max(d * 0.75, units.inch(6.0)), units.inch(18.0))
         tip = base + dir_w * length
         perp = Vector((-dir_w.y, dir_w.x, 0.0))
         back = tip - dir_w * (length * 0.28)
