@@ -2211,6 +2211,9 @@ class Frameless_Scene_Props(PropertyGroup):
                 row = layout.row()
                 row.scale_y = 1.3
                 row.operator("hb_frameless.assign_crown_to_cabinets", text="Assign to Selected Cabinets", icon='BRUSH_DATA')
+                row = layout.row()
+                row.scale_y = 1.3
+                row.operator("hb_frameless.assign_crown_to_room", text="Assign to Room", icon='HOME')
         else:
             box = layout.box()
             box.label(text="No crown details defined", icon='INFO')

@@ -341,27 +341,6 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         return False
     
     def execute(self, context):
-        
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
-        crown = props.crown_details[props.active_crown_detail_index]
-        detail_scene = crown.get_detail_scene()
-        
-        if not detail_scene:
-            self.report({'ERROR'}, "Crown detail scene not found")
-            return {'CANCELLED'}
-        
-        # Get all molding profiles and solid lumber from the detail scene
-        profiles = []
-        for obj in detail_scene.objects:
-            if obj.get('IS_MOLDING_PROFILE') or obj.get('IS_SOLID_LUMBER'):
-                profiles.append(obj)
-        
-        if not profiles:
-            self.report({'WARNING'}, "No molding profiles or solid lumber found in crown detail")
-            return {'CANCELLED'}
-        
         # Collect unique cabinets from selection (only UPPER and TALL get crown)
         cabinets = []
         for obj in context.selected_objects:
@@ -371,41 +350,74 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             elif obj.parent:
                 if obj.parent.get('IS_CABINET_BP') or obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
                     cabinet_bp = obj.parent
-            
+
             if cabinet_bp and cabinet_bp not in cabinets:
                 cab_type = cabinet_bp.get('CABINET_TYPE', '')
                 if cab_type in ('UPPER', 'TALL'):
                     cabinets.append(cabinet_bp)
-        
+
         if not cabinets:
             self.report({'WARNING'}, "No valid upper or tall cabinets selected")
             return {'CANCELLED'}
-        
-        # Remove any existing crown molding on selected cabinets
+
+        return self._assign_crown(context, cabinets)
+
+    def _assign_crown(self, context, cabinets):
+        """Assign the active crown detail to the given cabinet roots.
+
+        Shared by the selection-based and whole-room operators: removes
+        any existing crown from the cabinets, partitions them into
+        touch-connected components, and builds one crown per component
+        - through the corner-aware chain builder when the component
+        contains a corner cabinet, otherwise through the original
+        single-axis group builder (run per component so each run picks
+        its own wall axis; a mixed-axis room would otherwise sort every
+        run by the first cabinet's axis).
+        """
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+
+        crown = props.crown_details[props.active_crown_detail_index]
+        detail_scene = crown.get_detail_scene()
+
+        if not detail_scene:
+            self.report({'ERROR'}, "Crown detail scene not found")
+            return {'CANCELLED'}
+
+        # Get all molding profiles and solid lumber from the detail scene
+        profiles = []
+        for obj in detail_scene.objects:
+            if obj.get('IS_MOLDING_PROFILE') or obj.get('IS_SOLID_LUMBER'):
+                profiles.append(obj)
+
+        if not profiles:
+            self.report({'WARNING'}, "No molding profiles or solid lumber found in crown detail")
+            return {'CANCELLED'}
+
+        # Remove any existing crown molding on the target cabinets
         for cabinet in cabinets:
             self._remove_existing_crown(cabinet)
             cabinet['CROWN_DETAIL_NAME'] = crown.name
             cabinet['CROWN_DETAIL_SCENE'] = crown.detail_scene_name
-        
+
         # Get all walls and all cabinets in current scene for adjacency detection
         current_scene = context.scene
         all_walls = [o for o in current_scene.objects if o.get('IS_WALL_BP') or o.get('IS_WALL')]
         all_cabinets = [o for o in current_scene.objects if o.get('IS_FRAMELESS_CABINET_CAGE')]
-        
+
         # Analyze cabinet adjacency and group connected cabinets.
         # Components that contain a corner cabinet route through the
         # corner-aware chain builder so the crown wraps the corner's
         # pie-cut / diagonal front; straight-only components keep the
         # original single-axis path builder.
         corner_chains = []
-        straight_cabinets = []
+        cabinet_groups = []
         for component in self._connected_components(cabinets):
             if any(c.get('IS_CORNER_CABINET') for c in component):
                 corner_chains.append(self._order_chain(component))
             else:
-                straight_cabinets.extend(component)
-
-        cabinet_groups = self._group_adjacent_cabinets(straight_cabinets, all_cabinets, all_walls)
+                cabinet_groups.extend(self._group_adjacent_cabinets(
+                    component, all_cabinets, all_walls))
 
         # Create crown molding for each group
         for group in cabinet_groups:
@@ -1277,6 +1289,38 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             context, world_points, first_cab, profile, target_scene)
 
 
+class hb_frameless_OT_assign_crown_to_room(hb_frameless_OT_assign_crown_to_cabinets):
+    """Assign the active crown detail to every upper and tall cabinet
+    in the room. Subclasses the selection operator for its grouping /
+    path-building machinery; only the cabinet collection differs.
+    """
+    bl_idname = "hb_frameless.assign_crown_to_room"
+    bl_label = "Assign Crown to Room"
+    bl_description = (
+        "Create crown molding on every upper and tall cabinet in this "
+        "room using the active crown detail, wrapping runs and corners "
+        "automatically"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        return len(props.crown_details) > 0
+
+    def execute(self, context):
+        cabinets = [
+            obj for obj in context.scene.objects
+            if obj.get('IS_FRAMELESS_CABINET_CAGE')
+            and obj.get('CABINET_TYPE', '') in ('UPPER', 'TALL')
+        ]
+        if not cabinets:
+            self.report({'WARNING'}, "No upper or tall cabinets in this room")
+            return {'CANCELLED'}
+        return self._assign_crown(context, cabinets)
+
+
 class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
     """Add a molding profile from the library to the current detail scene"""
     bl_idname = "hb_frameless.add_molding_profile"
@@ -1511,6 +1555,7 @@ classes = (
     hb_frameless_OT_delete_crown_detail,
     hb_frameless_OT_edit_crown_detail,
     hb_frameless_OT_assign_crown_to_cabinets,
+    hb_frameless_OT_assign_crown_to_room,
     hb_frameless_OT_add_molding_profile,
     hb_frameless_OT_add_solid_lumber,
     hb_frameless_OT_browse_molding_library,
