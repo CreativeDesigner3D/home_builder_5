@@ -4532,26 +4532,12 @@ class home_builder_layouts_OT_lineart_make_editable(bpy.types.Operator):
                       "Pencil strokes (select the line art object and enter "
                       "Edit Mode to move or delete lines). Edited lines no "
                       "longer update automatically; use Restore Auto Lines "
-                      "or regenerate the view to go back. "
-                      "Experimental: this feature is in beta")
+                      "or regenerate the view to go back")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         return hb_layouts.get_line_art_object(context.scene) is not None
-
-    def invoke(self, context, event):
-        # Editable line art is new -- flag it before the user commits
-        # (a baked view also stops following cabinet changes).
-        return context.window_manager.invoke_confirm(
-            self, event,
-            title="Editable Line Art (Beta)",
-            message=("This feature is experimental and in beta. "
-                     "Edited lines stop updating automatically; use "
-                     "Restore Auto Lines to return to automatic tracing."),
-            confirm_text="Make Editable",
-            icon='WARNING',
-        )
 
     def execute(self, context):
         if hb_layouts.is_line_art_baked(context.scene):
