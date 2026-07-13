@@ -9,8 +9,9 @@ that still have the auto flag enabled.
 
 Wall-edge handling is intentionally simple: a cabinet sitting at the
 parent wall's start or end is treated as UNEXPOSED on that side
-(perpendicular wall / corner case). Free-end peninsulas will need a
-manual override; the user can clear the auto flag and pick a type.
+(perpendicular wall / corner case). A free-standing cabinet whose end
+face sits flush against a wall face (peninsula) is likewise UNEXPOSED
+on that side, with the wall scribe.
 
 Back exposure is reduced to UNEXPOSED-when-wall-parented; partial
 backs don't show up in practice.
@@ -130,6 +131,90 @@ def _wall_length(parent_obj):
         return None
 
 
+# End-against-wall abutment tolerances (peninsula anchor). Placement
+# lands the end exactly flush; the gap tolerance absorbs manual nudges.
+# Lateral overlap keeps a cabinet merely passing near a wall's end
+# from reading as anchored to it.
+_WALL_GAP_TOL = units.inch(0.125)
+_WALL_LATERAL_TOL = units.inch(0.5)
+
+
+def _end_abuts_wall(cab_obj, side):
+    """True when a free-standing cabinet's left/right end face sits
+    flush against a wall face - the peninsula anchor. That end is
+    covered by the wall, so it reads UNEXPOSED with the wall scribe.
+    """
+    if cab_obj.parent is not None:
+        return False
+    if not _is_face_frame_carcass(cab_obj):
+        return False
+    cp = cab_obj.face_frame_cabinet
+    mw = cab_obj.matrix_world
+    # End face in plan: local x = 0 (left) or width (right), running
+    # from the back plane (y=0) to the front (y=-depth).
+    end_x = 0.0 if side == 'left' else cp.width
+    p0w = mw @ Vector((end_x, 0.0, 0.0))
+    p1w = mw @ Vector((end_x, -cp.depth, 0.0))
+    p0 = Vector((p0w.x, p0w.y))
+    p1 = Vector((p1w.x, p1w.y))
+    n_local = Vector((-1.0, 0.0, 0.0)) if side == 'left' else Vector((1.0, 0.0, 0.0))
+    n3 = mw.to_3x3() @ n_local
+    end_normal = Vector((n3.x, n3.y))
+    if end_normal.length < 1e-6:
+        return False
+    end_normal.normalize()
+
+    cab_z0 = mw.translation.z
+    cab_z1 = cab_z0 + cp.height
+
+    for wall_obj in bpy.context.scene.objects:
+        if 'IS_WALL_BP' not in wall_obj:
+            continue
+        try:
+            wall = hb_types.GeoNodeWall(wall_obj)
+            if not wall.has_modifier():
+                continue
+            length = wall.get_input('Length')
+            thickness = wall.get_input('Thickness')
+            height = wall.get_input('Height')
+        except Exception:
+            continue
+        wm = wall_obj.matrix_world
+        wall_z0 = wm.translation.z
+        # Z overlap so a pony wall doesn't anchor an upper above it.
+        if cab_z0 >= wall_z0 + height - EPS or cab_z1 <= wall_z0 + EPS:
+            continue
+        # Front face (local y=0, outward -Y) and back face (+Y).
+        for face_y, ny in ((0.0, -1.0), (thickness, 1.0)):
+            f0 = wm @ Vector((0.0, face_y, 0.0))
+            f1 = wm @ Vector((length, face_y, 0.0))
+            a0 = Vector((f0.x, f0.y))
+            a1 = Vector((f1.x, f1.y))
+            axis = a1 - a0
+            if axis.length < 1e-6:
+                continue
+            axis_n = axis.normalized()
+            w3 = wm.to_3x3() @ Vector((0.0, ny, 0.0))
+            face_normal = Vector((w3.x, w3.y))
+            if face_normal.length < 1e-6:
+                continue
+            face_normal.normalize()
+            # The end must face INTO the wall face.
+            if end_normal.dot(face_normal) > -0.7:
+                continue
+            # Both end-face corners on the wall-face plane...
+            if (abs((p0 - a0).dot(face_normal)) > _WALL_GAP_TOL
+                    or abs((p1 - a0).dot(face_normal)) > _WALL_GAP_TOL):
+                continue
+            # ...with real lateral overlap of the wall segment.
+            t0 = (p0 - a0).dot(axis_n)
+            t1 = (p1 - a0).dot(axis_n)
+            lo, hi = min(t0, t1), max(t0, t1)
+            if min(hi, axis.length) - max(lo, 0.0) >= _WALL_LATERAL_TOL:
+                return True
+    return False
+
+
 def _side_exposure(cab_obj, side):
     """Returns (exposure_state, dishwasher_adjacent, wall_edge).
 
@@ -141,6 +226,10 @@ def _side_exposure(cab_obj, side):
     """
     parent = cab_obj.parent
     if parent is None:
+        # Free-standing (island / peninsula): an end flush against a
+        # wall face is the peninsula anchor - covered, wall scribe.
+        if _end_abuts_wall(cab_obj, side):
+            return ('UNEXPOSED', False, True)
         return ('EXPOSED', False, False)
 
     cab = cab_obj.face_frame_cabinet

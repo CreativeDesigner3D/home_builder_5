@@ -414,6 +414,15 @@ def _facing_axes(obj):
     return front_dir, width_dir
 
 
+def _quarter_turn_rotation(angle_z):
+    """True when the R-key rotation is a quarter turn (90 / 270 deg) -
+    the intent signal that wall placement should go peninsula (side
+    against the wall) instead of the default back-against-wall fill.
+    0 / 180 stay on the normal wall path, where the wall owns facing.
+    """
+    return abs((angle_z % math.pi) - math.pi / 2.0) < 0.01
+
+
 def _detect_wall(op, context):
     """Find a wall via raycast or floor-projection fallback.
 
@@ -1805,6 +1814,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Fresh free-placement rotation each session.
         self._free_rotation_z = 0.0
 
+        # True while the cage is in peninsula position (side flush
+        # against a wall, run projecting into the room). Recomputed by
+        # every _position_from_hit pass; read by the header.
+        self._peninsula = False
+
         self.init_placement(context)
         if self.region is None:
             self._delete_preview()
@@ -1853,11 +1867,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._update_header(context)
             return {'RUNNING_MODAL'}
 
-        # 'R' rotates the cage 90 deg about Z for free (floor) placement.
-        # We bump the stored angle and re-run positioning from the last
-        # hit so the preview updates immediately; _position_free applies
-        # _free_rotation_z (on-wall / snap positioning ignores it - the
-        # wall/snap owns facing there). Re-positioning rather than
+        # 'R' rotates the cage 90 deg about Z. Free (floor) placement
+        # applies the angle directly; over a wall a quarter turn flips
+        # placement to peninsula (side against the wall) while 0 / 180
+        # keep the normal fill, where the wall owns facing. We bump the
+        # stored angle and re-run positioning from the last hit so the
+        # preview updates immediately. Re-positioning rather than
         # mutating the cage directly keeps the angle from being clobbered
         # on the next mousemove.
         if (event.type == 'R' and event.value == 'PRESS'
@@ -2135,7 +2150,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                  + self._source_obj.name)
         bay_label = f"{self.bay_qty} bay" + ("" if self.bay_qty == 1 else "s")
         mode = "auto" if self._auto_bay_qty else "manual"
-        side = "front" if self._place_on_front else "back"
+        side = ("peninsula" if self._peninsula
+                else "front" if self._place_on_front else "back")
         width_in = self._cabinet_width * 39.37008
 
         # When the user is typing, show the live buffer prominently so
@@ -2232,6 +2248,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             # cage where it is (don't jump to a stale or zero location).
             return
 
+        # Every positioning pass recomputes peninsula state; only
+        # _position_on_wall_side turns it back on.
+        self._peninsula = False
+
         # Sink + cursor on a Range -> island layout (sink facing the
         # range across a 48" aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
@@ -2300,7 +2320,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         wall = _detect_wall(self, context)
         if wall is not None:
-            self._position_on_wall(context, wall)
+            # Quarter-turn R rotation + wall -> peninsula: the cabinet's
+            # side goes against the wall and the run projects into the
+            # room. 0 / 180 keep the default back-against-wall fill.
+            if _quarter_turn_rotation(self._free_rotation_z):
+                self._position_on_wall_side(context, wall)
+            else:
+                self._position_on_wall(context, wall)
             return
 
         # Back-of-island snap: if the cursor is over the back face of a
@@ -2571,6 +2597,186 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         )
         if context.area is not None:
             context.area.tag_redraw()
+
+    def _position_on_wall_side(self, context, wall):
+        """Peninsula placement: the cabinet's end sits flush against the
+        wall and the run projects perpendicular into the room.
+
+        Reached from _position_from_hit when the cage carries a
+        quarter-turn R rotation and the cursor is on (or near) a wall.
+        The cage stays UNPARENTED: wall children are assumed to run
+        along the wall everywhere downstream (gap fill, exposure,
+        elevations, auto-merge), so a peninsula is modeled like an
+        island run that happens to touch the wall.
+
+        Of the two perpendicular orientations, the one closest to the
+        R-key angle wins - the facing the user dialed in survives the
+        snap. The cabinet's along-wall footprint (its depth) follows
+        the cursor and snaps flush to the ends of existing runs on the
+        wall via the same side-aware gap lookup ordinary placement
+        uses.
+        """
+        cage_obj = self._preview_cage.obj
+
+        # A peninsula has no wall gap to offset against - release any
+        # gap / offset state exactly like going off-wall does.
+        if self._gap_wall is not None or self._position_locked:
+            self._gap_wall = None
+            self._left_offset = None
+            self._right_offset = None
+            self._position_locked = False
+        self._center_snap_state = None
+        self._cabinet_snap_side = None
+        self._peninsula = True
+
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+            wall_length = wall_geo.get_input('Length')
+        except Exception:
+            wall_thickness = 0.0
+            wall_length = None
+
+        local_hit = wall.matrix_world.inverted() @ self.hit_location
+        cursor_x = local_hit.x
+        self._update_place_on_front(context, wall, local_hit.y, wall_thickness)
+        # Wall-local Y direction pointing into the room, and the wall
+        # face the cabinet end sits flush against.
+        room_dir = -1.0 if self._place_on_front else 1.0
+        flush_y = 0.0 if self._place_on_front else wall_thickness
+
+        # No gap to fill perpendicular to the wall - fill mode returns
+        # to the default width, matching free placement.
+        if self._fill_mode:
+            scene_props = context.scene.hb_face_frame
+            default_w = (self._source_obj.face_frame_cabinet.width
+                         if self._source_obj is not None
+                         else scene_props.default_cabinet_width)
+            self._apply_width(default_w, fill_mode=True)
+            self._update_header(context)
+
+        cabinet_width = self._cabinet_width
+        cabinet_depth = self._preview_cage.get_input('Dim Y')
+        cabinet_height = self._preview_cage.get_input('Dim Z')
+
+        # Pick the perpendicular orientation closest to the R-key angle.
+        # theta is the cage rotation relative to the wall; its sign also
+        # decides which cabinet end meets the wall below.
+        wall_rot_z = wall.matrix_world.to_euler().z
+        half_pi = math.pi / 2.0
+
+        def _ang_dist(a, b):
+            d = (a - b) % (2.0 * math.pi)
+            return min(d, 2.0 * math.pi - d)
+
+        if (_ang_dist(wall_rot_z + half_pi, self._free_rotation_z)
+                <= _ang_dist(wall_rot_z - half_pi, self._free_rotation_z)):
+            theta = half_pi
+        else:
+            theta = -half_pi
+        # Wall-local Y component of the cabinet's width axis.
+        width_dir = 1.0 if theta > 0 else -1.0
+
+        # Mounting height, mirroring free placement (plus the floating-
+        # shelf cursor-Z behavior the on-wall path has).
+        cabinet_class = types_face_frame.get_cabinet_class(self.cabinet_name)
+        cabinet_type = _cabinet_type_for_name(self.cabinet_name)
+        if cabinet_type == 'UPPER' or _mounts_as_upper(cabinet_class):
+            scene_props = context.scene.hb_face_frame
+            cage_z = _upper_mount_z(cabinet_class, scene_props)
+        elif self._follow_cursor_z:
+            z_in = round(units.meter_to_inch(local_hit.z))
+            cage_z = max(0.0, units.inch(z_in))
+        else:
+            cage_z = self._floor_z
+
+        # Along-wall footprint = the cabinet's DEPTH. The side-aware gap
+        # lookup gives run-end snapping and door/window avoidance for
+        # free; object_depth is how far we project into the room.
+        try:
+            result = self.find_placement_gap_by_side(
+                wall, cursor_x, cabinet_depth,
+                self._place_on_front, wall_thickness,
+                object_z_start=cage_z,
+                object_height=cabinet_height,
+                object_depth=cabinet_width,
+                exclude_obj=cage_obj,
+            )
+        except Exception:
+            result = (None, None, None)
+        gap_start, gap_end, span_start = result
+        if gap_start is None:
+            gap_start = 0.0
+            gap_end = (wall_length if wall_length is not None
+                       else cursor_x + cabinet_depth)
+            span_start = cursor_x - cabinet_depth / 2.0
+        max_start = gap_end - cabinet_depth
+        if max_start < gap_start:
+            # Gap narrower than the footprint - pin to its left edge.
+            span_start = gap_start
+        else:
+            span_start = min(max(span_start, gap_start), max_start)
+        span_end = span_start + cabinet_depth
+
+        # Cabinet origin (back-left corner) from the footprint span and
+        # orientation. Width runs along wall-local Y: when it points
+        # into the room the origin end is the wall end; otherwise the
+        # far (room) end holds the origin and x=width meets the wall.
+        origin_x = span_start if theta > 0 else span_end
+        if width_dir == room_dir:
+            origin_y = flush_y
+        else:
+            origin_y = flush_y + room_dir * cabinet_width
+
+        # The peninsula finalizes unparented (island-like).
+        if cage_obj.parent is not None:
+            cage_obj.parent = None
+
+        world_origin = wall.matrix_world @ Vector((origin_x, origin_y, 0.0))
+        cage_obj.location = (world_origin.x, world_origin.y, cage_z)
+        cage_obj.rotation_euler = (0.0, 0.0, wall_rot_z + theta)
+
+        self._placement_dim_specs = self._build_dim_specs_peninsula(
+            context, wall, span_start, span_end, gap_start, gap_end,
+            flush_y, room_dir, cabinet_height, cage_z)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _build_dim_specs_peninsula(self, context, wall, span_start,
+                                   span_end, gap_start, gap_end,
+                                   flush_y, room_dir, cabinet_height,
+                                   cage_z):
+        """Placement dims for the peninsula case: run width along the
+        cabinet (the free-placement dim) plus the along-wall distances
+        from the footprint to each end of the wall gap, so the anchor
+        point can be judged against the rest of the wall.
+        """
+        specs = self._build_dim_specs_free(context)
+        wm = wall.matrix_world
+        unit_settings = context.scene.unit_settings
+        # Inset toward the room so the dim clears the wall surface.
+        y_dim = flush_y + room_dir * units.inch(2.0)
+        z_offset = cage_z + cabinet_height + units.inch(8.0)
+
+        left_offset = span_start - gap_start
+        if left_offset > units.inch(0.5):
+            s = wm @ Vector((gap_start, y_dim, z_offset))
+            e = wm @ Vector((span_start, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, left_offset),
+                None,
+            ))
+
+        right_offset = gap_end - span_end
+        if right_offset > units.inch(0.5):
+            s = wm @ Vector((span_end, y_dim, z_offset))
+            e = wm @ Vector((gap_end, y_dim, z_offset))
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(unit_settings, right_offset),
+                None,
+            ))
+
+        return specs
 
     def _position_on_island_back(self, context, hit_cab):
         """Place on the back side of a free-standing island run.
