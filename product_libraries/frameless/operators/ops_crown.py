@@ -392,16 +392,34 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         all_walls = [o for o in current_scene.objects if o.get('IS_WALL_BP') or o.get('IS_WALL')]
         all_cabinets = [o for o in current_scene.objects if o.get('IS_FRAMELESS_CABINET_CAGE')]
         
-        # Analyze cabinet adjacency and group connected cabinets
-        cabinet_groups = self._group_adjacent_cabinets(cabinets, all_cabinets, all_walls)
-        
+        # Analyze cabinet adjacency and group connected cabinets.
+        # Components that contain a corner cabinet route through the
+        # corner-aware chain builder so the crown wraps the corner's
+        # pie-cut / diagonal front; straight-only components keep the
+        # original single-axis path builder.
+        corner_chains = []
+        straight_cabinets = []
+        for component in self._connected_components(cabinets):
+            if any(c.get('IS_CORNER_CABINET') for c in component):
+                corner_chains.append(self._order_chain(component))
+            else:
+                straight_cabinets.extend(component)
+
+        cabinet_groups = self._group_adjacent_cabinets(straight_cabinets, all_cabinets, all_walls)
+
         # Create crown molding for each group
         for group in cabinet_groups:
             for profile in profiles:
                 self._create_crown_for_group(context, group, profile, all_walls, all_cabinets, current_scene)
-        
-        total_cabs = sum(len(g['cabinets']) for g in cabinet_groups)
-        self.report({'INFO'}, f"Created crown molding on {total_cabs} cabinet(s) in {len(cabinet_groups)} group(s)")
+
+        for chain in corner_chains:
+            for profile in profiles:
+                self._create_crown_for_chain(context, chain, profile, all_walls, all_cabinets, current_scene)
+
+        total_cabs = (sum(len(g['cabinets']) for g in cabinet_groups)
+                      + sum(len(c) for c in corner_chains))
+        group_count = len(cabinet_groups) + len(corner_chains)
+        self.report({'INFO'}, f"Created crown molding on {total_cabs} cabinet(s) in {group_count} group(s)")
         return {'FINISHED'}
     
     def _remove_existing_crown(self, cabinet):
@@ -657,7 +675,7 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
     
     def _make_world_point(self, along, depth, axis):
         """Convert wall-aligned (along, depth) coordinates to world XY point.
-        
+
         For X-axis: along=X, depth=Y → (along, depth, 0)
         For Y-axis: along=Y, depth=X → (depth, along, 0)
         """
@@ -665,23 +683,425 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             return Vector((along, depth, 0))
         else:
             return Vector((depth, along, 0))
+
+    # ---------------- corner-aware chaining ----------------
+    # A selection that includes a corner cabinet can't be described by
+    # the single-axis group model above: the run changes direction at
+    # the corner and the crown must wrap the corner's pie-cut or
+    # diagonal front. These helpers order such a selection into a
+    # chain, build the raw front polyline through it, offset the
+    # polyline outward with mitered joins, and extrude.
+
+    def _cabs_touch(self, a, b, tolerance=0.02):
+        """True when two cabinets' world AABBs touch (overlap once each
+        is expanded by the tolerance) and their tops line up. Same
+        criteria as the along-axis adjacency test, minus the shared-
+        wall-axis assumption, so a corner cabinet joins both its runs.
+        """
+        ba = self._get_cabinet_bounds(a)
+        bb = self._get_cabinet_bounds(b)
+        if abs(ba['top_z'] - bb['top_z']) > tolerance:
+            return False
+        if (ba['left_x'] - tolerance > bb['right_x']
+                or bb['left_x'] - tolerance > ba['right_x']):
+            return False
+        if (ba['front_y'] - tolerance > bb['back_y']
+                or bb['front_y'] - tolerance > ba['back_y']):
+            return False
+        return True
+
+    def _connected_components(self, cabinets):
+        """Partition the selection into touch-connected components."""
+        remaining = list(cabinets)
+        components = []
+        while remaining:
+            comp = [remaining.pop()]
+            queue = list(comp)
+            while queue:
+                current = queue.pop()
+                for other in list(remaining):
+                    if self._cabs_touch(current, other):
+                        remaining.remove(other)
+                        comp.append(other)
+                        queue.append(other)
+            components.append(comp)
+        return components
+
+    def _order_chain(self, component):
+        """Order a connected component into a linear chain by walking
+        touch adjacency from an end (a member with a single touching
+        neighbor). Members a strict walk can't reach (branching
+        selections) are appended so they still receive a crown segment
+        rather than being dropped silently.
+        """
+        if len(component) <= 2:
+            return list(component)
+        neighbors = {
+            id(c): [o for o in component
+                    if o is not c and self._cabs_touch(c, o)]
+            for c in component
+        }
+        start = next(
+            (c for c in component if len(neighbors[id(c)]) == 1),
+            component[0])
+        chain = [start]
+        used = {id(start)}
+        current = start
+        while True:
+            nxt = next(
+                (o for o in neighbors[id(current)] if id(o) not in used),
+                None)
+            if nxt is None:
+                break
+            chain.append(nxt)
+            used.add(id(nxt))
+            current = nxt
+        for c in component:
+            if id(c) not in used:
+                chain.append(c)
+        return chain
+
+    def _corner_plan_data(self, corner):
+        """Plan-space data for a corner cabinet in its LOCAL frame.
+
+        Local convention (types_frameless.CornerCabinet): origin at the
+        inside corner where the walls meet, left wing extending -Y with
+        its front on the x=Left Depth plane, right wing extending +X
+        with its front on the y=-Right Depth plane; the notch / chamfer
+        spans between (ld, -dim_y) and (dim_x, -rd).
+
+        Returns dict:
+            front: canonical raw front polyline, left wing end to
+                right wing end (local XY Vectors)
+            left_end / right_end: (front_corner, back_corner) of each
+                wing's end face
+        """
+        try:
+            geo = hb_types.GeoNodeObject(corner)
+            dim_x = geo.get_input('Dim X')
+            dim_y = geo.get_input('Dim Y')
+        except Exception:
+            # Local-frame bound_box fallback.
+            local = [Vector(c) for c in corner.bound_box]
+            dim_x = max(c.x for c in local)
+            dim_y = -min(c.y for c in local)
+        ld = corner.get('Left Depth') or units.inch(24.0)
+        rd = corner.get('Right Depth') or units.inch(24.0)
+
+        left_front = Vector((ld, -dim_y))
+        right_front = Vector((dim_x, -rd))
+        if corner.get('CORNER_TYPE') == 'DIAGONAL':
+            front = [left_front, right_front]
+        else:  # PIECUT - two faces meeting at the notch corner
+            front = [left_front, Vector((ld, -rd)), right_front]
+        return {
+            'front': front,
+            'left_end': (left_front, Vector((0.0, -dim_y))),
+            'right_end': (right_front, Vector((dim_x, 0.0))),
+        }
+
+    def _corner_world_xy(self, corner, local_pt):
+        """Transform a local plan point of a corner cabinet to world XY."""
+        w = corner.matrix_world @ Vector((local_pt.x, local_pt.y, 0.0))
+        return Vector((w.x, w.y))
+
+    def _straight_front_corners(self, cab):
+        """(corner_a, corner_b, front_normal) for a straight cabinet:
+        the two front corners of its world AABB (unordered) and the
+        world front direction (local -Y, snapped to the dominant world
+        axis - straight cabinets sit on axis-aligned walls).
+        """
+        b = self._get_cabinet_bounds(cab)
+        fn3 = cab.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
+        if abs(fn3.x) >= abs(fn3.y):
+            fn = Vector((1.0 if fn3.x > 0 else -1.0, 0.0))
+            x = b['right_x'] if fn.x > 0 else b['left_x']
+            return (Vector((x, b['front_y'])), Vector((x, b['back_y'])), fn)
+        fn = Vector((0.0, 1.0 if fn3.y > 0 else -1.0))
+        y = b['back_y'] if fn.y > 0 else b['front_y']
+        return (Vector((b['left_x'], y)), Vector((b['right_x'], y)), fn)
+
+    def _offset_polyline_right(self, points, offset):
+        """Offset an open XY polyline to the RIGHT of its direction of
+        travel by `offset`, with mitered joins (consecutive offset
+        lines intersected). Terminal points shift perpendicular only;
+        the callers apply the end treatments. Consecutive duplicate
+        points are dropped first.
+        """
+        pts = []
+        for p in points:
+            if not pts or (p - pts[-1]).length > 1e-6:
+                pts.append(p)
+        if len(pts) < 2 or abs(offset) < 1e-9:
+            return pts
+        lines = []  # (offset segment start, direction, length)
+        for a, b in zip(pts, pts[1:]):
+            d = (b - a).normalized()
+            n = Vector((d.y, -d.x))
+            lines.append((a + n * offset, d, (b - a).length))
+        out = [lines[0][0]]
+        for (p1, d1, len1), (p2, d2, _len2) in zip(lines, lines[1:]):
+            cross = d1.x * d2.y - d1.y * d2.x
+            if abs(cross) < 1e-6:
+                # Parallel continuation (collinear fronts or a square
+                # depth jog already present as its own raw segment).
+                out.append(p1 + d1 * len1)
+                out.append(p2)
+            else:
+                t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / cross
+                out.append(p1 + d1 * t)
+        p_last, d_last, len_last = lines[-1]
+        out.append(p_last + d_last * len_last)
+        # Drop duplicates the parallel branch may have produced.
+        deduped = []
+        for p in out:
+            if not deduped or (p - deduped[-1]).length > 1e-6:
+                deduped.append(p)
+        return deduped
+
+    def _face_near_wall(self, probe_xy, walls, tolerance=0.05):
+        """True when a world XY probe point (just beyond an end face)
+        lands inside a wall's world AABB expanded by the tolerance."""
+        for wall in walls:
+            corners = [wall.matrix_world @ Vector(c) for c in wall.bound_box]
+            xs = [c.x for c in corners]
+            ys = [c.y for c in corners]
+            if (min(xs) - tolerance <= probe_xy.x <= max(xs) + tolerance
+                    and min(ys) - tolerance <= probe_xy.y <= max(ys) + tolerance):
+                return True
+        return False
+
+    def _end_neighbor(self, probe_xy, top_z, all_cabinets, chain,
+                      tolerance=0.05):
+        """Crown-eligible cabinet outside the chain whose bounds contain
+        the probe point - the unselected return the crown dies into."""
+        for other in all_cabinets:
+            if other in chain:
+                continue
+            if other.get('CABINET_TYPE', '') not in ('UPPER', 'TALL'):
+                continue
+            b = self._get_cabinet_bounds(other)
+            if abs(b['top_z'] - top_z) > tolerance:
+                continue
+            if (b['left_x'] - tolerance <= probe_xy.x <= b['right_x'] + tolerance
+                    and b['front_y'] - tolerance <= probe_xy.y <= b['back_y'] + tolerance):
+                return other
+        return None
+
+    def _assemble_raw_polyline(self, chain):
+        """Raw (unoffset) front polyline through the chain, in chain
+        order, plus per-terminal end-face data.
+
+        Returns (points, ends) where ends is a 2-list for the start and
+        end terminals: dict(cab, back_corner, fn) - back_corner is the
+        far corner of the terminal end face (for exposed return caps)
+        and fn the terminal cabinet's front normal (None for corner
+        wings, which only take butt or cap treatments).
+        """
+        points = []
+        ends = [None, None]
+
+        def corner_points(cab, prev_ref, next_ref):
+            data = self._corner_plan_data(cab)
+            pts = [self._corner_world_xy(cab, p) for p in data['front']]
+            left_end = tuple(self._corner_world_xy(cab, p)
+                             for p in data['left_end'])
+            right_end = tuple(self._corner_world_xy(cab, p)
+                              for p in data['right_end'])
+            # Enter from whichever wing is nearer the incoming path;
+            # with no incoming path, exit toward the next cabinet.
+            reverse = False
+            if prev_ref is not None:
+                reverse = ((prev_ref - pts[0]).length
+                           > (prev_ref - pts[-1]).length)
+            elif next_ref is not None:
+                reverse = ((next_ref - pts[-1]).length
+                           > (next_ref - pts[0]).length)
+            if reverse:
+                pts = list(reversed(pts))
+                left_end, right_end = right_end, left_end
+            # entry face, exit face (front corner first in each pair)
+            return pts, left_end, right_end
+
+        def cab_center(cab):
+            b = self._get_cabinet_bounds(cab)
+            return Vector(((b['left_x'] + b['right_x']) / 2.0,
+                           (b['front_y'] + b['back_y']) / 2.0))
+
+        for i, cab in enumerate(chain):
+            prev_ref = points[-1] if points else None
+            next_ref = cab_center(chain[i + 1]) if i + 1 < len(chain) else None
+            if cab.get('IS_CORNER_CABINET'):
+                pts, entry_face, exit_face = corner_points(
+                    cab, prev_ref, next_ref)
+                points.extend(pts)
+                if i == 0:
+                    ends[0] = {'cab': cab, 'back': entry_face[1], 'fn': None}
+                if i == len(chain) - 1:
+                    ends[1] = {'cab': cab, 'back': exit_face[1], 'fn': None}
+            else:
+                ca, cb, fn = self._straight_front_corners(cab)
+                # First point continues the incoming path; with no
+                # incoming path yet, the SECOND point must lead toward
+                # the next cabinet.
+                if prev_ref is not None:
+                    first_is_ca = ((prev_ref - ca).length
+                                   <= (prev_ref - cb).length)
+                elif next_ref is not None:
+                    first_is_ca = ((next_ref - ca).length
+                                   >= (next_ref - cb).length)
+                else:
+                    first_is_ca = True
+                near, far = (ca, cb) if first_is_ca else (cb, ca)
+                points.extend([near, far])
+                b = self._get_cabinet_bounds(cab)
+                depth_amt = (b['back_y'] - b['front_y']
+                             if fn.x == 0 else b['right_x'] - b['left_x'])
+                if i == 0:
+                    ends[0] = {'cab': cab,
+                               'back': near - fn * depth_amt, 'fn': fn}
+                if i == len(chain) - 1:
+                    ends[1] = {'cab': cab,
+                               'back': far - fn * depth_amt, 'fn': fn}
+        return points, ends
+
+    def _create_crown_for_chain(self, context, chain, profile, walls,
+                                all_cabinets, target_scene):
+        """Crown for a run that includes corner cabinets.
+
+        Builds the raw front polyline through the chain - straight
+        cabinets contribute their front edge, corner cabinets their
+        pie-cut or diagonal front - offsets it outward by the profile's
+        depth offset with mitered joins (so the crown turns the corner
+        with proper miters instead of cutting straight across the
+        corner box), applies the wall / return / exposed end
+        treatments, and extrudes the profile along the result.
+        """
+        if profile.location.x < 0:
+            inset = abs(profile.location.x)
+            extend = 0.0
+        else:
+            inset = 0.0
+            extend = profile.location.x
+        o = extend - inset
+
+        raw, ends = self._assemble_raw_polyline(chain)
+
+        # Winding: offsets go to the RIGHT of travel, so travel must
+        # keep the cabinet fronts on the right. Check the first
+        # straight cabinet; a lone corner cabinet is canonical (left
+        # wing end -> right wing end) by construction.
+        for i, cab in enumerate(chain):
+            if not cab.get('IS_CORNER_CABINET'):
+                _ca, _cb, fn = self._straight_front_corners(cab)
+                # This cabinet contributed two consecutive raw points;
+                # find them by locating its front line direction.
+                idx = 0
+                for j, c2 in enumerate(chain[:i]):
+                    idx += (3 if (c2.get('IS_CORNER_CABINET')
+                                  and c2.get('CORNER_TYPE') != 'DIAGONAL')
+                            else 2)
+                travel = (raw[idx + 1] - raw[idx])
+                if travel.length > 1e-6:
+                    travel.normalize()
+                    right = Vector((travel.y, -travel.x))
+                    if right.dot(fn) < 0:
+                        chain = list(reversed(chain))
+                        raw, ends = self._assemble_raw_polyline(chain)
+                break
+
+        if len(raw) < 2:
+            return None
+
+        off = self._offset_polyline_right(raw, o)
+
+        # ---- end treatments ----
+        top_z = self._get_cabinet_bounds(chain[0])['top_z']
+        probe_dist = units.inch(1.0)
+
+        for side in (0, 1):
+            end = ends[side]
+            if end is None:
+                continue
+            if side == 0:
+                outward = raw[0] - raw[1]
+                terminal = off[0]
+            else:
+                outward = raw[-1] - raw[-2]
+                terminal = off[-1]
+            if outward.length < 1e-6:
+                continue
+            outward.normalize()
+            face_mid = (raw[0 if side == 0 else -1] + end['back']) / 2.0
+            probe = face_mid + outward * probe_dist
+
+            if self._face_near_wall(probe, walls):
+                # Butt into the wall, held back by the profile inset.
+                corrected = terminal - outward * inset
+                if side == 0:
+                    off[0] = corrected
+                else:
+                    off[-1] = corrected
+                continue
+
+            adjacent = self._end_neighbor(probe, top_z, all_cabinets, chain)
+            if adjacent is not None:
+                corrected = terminal - outward * inset
+                jog = None
+                fn = end['fn']
+                if (fn is not None
+                        and adjacent.get('CABINET_TYPE') == 'TALL'
+                        and end['cab'].get('CABINET_TYPE') == 'UPPER'):
+                    # Die into the deeper tall return at ITS front line.
+                    adj_b = self._get_cabinet_bounds(adjacent)
+                    adj_corners = [
+                        Vector((adj_b['left_x'], adj_b['front_y'])),
+                        Vector((adj_b['right_x'], adj_b['front_y'])),
+                        Vector((adj_b['left_x'], adj_b['back_y'])),
+                        Vector((adj_b['right_x'], adj_b['back_y'])),
+                    ]
+                    adj_front = max(c.dot(fn) for c in adj_corners)
+                    cur_front = raw[0 if side == 0 else -1].dot(fn)
+                    jog = corrected + fn * (adj_front - cur_front)
+                if side == 0:
+                    off[0] = corrected
+                    if jog is not None:
+                        off.insert(0, jog)
+                else:
+                    off[-1] = corrected
+                    if jog is not None:
+                        off.append(jog)
+                continue
+
+            # Exposed end: miter around the end and return to the back.
+            mitered = terminal + outward * o
+            back_pt = end['back'] + outward * o
+            if side == 0:
+                off[0] = mitered
+                off.insert(0, back_pt)
+            else:
+                off[-1] = mitered
+                off.append(back_pt)
+
+        world_points = [Vector((p.x, p.y, 0.0)) for p in off]
+        return self._extrude_profile_along_path(
+            context, world_points, chain[0], profile, target_scene)
     
-    def _create_crown_for_group(self, context, group, profile, walls, all_cabinets, target_scene):
-        """Create crown molding extrusion for a group of cabinets."""
-        
-        cabinets = group['cabinets']
-        first_cab = cabinets[0]
-        last_cab = cabinets[-1]
-        axis = group.get('axis', 'X')
-        
-        profile_offset_x = profile.location.x  # Depth offset (positive = forward)
+    def _extrude_profile_along_path(self, context, world_points, first_cab,
+                                    profile, target_scene):
+        """Copy the profile, build a 2D poly curve through world_points
+        (converted local to first_cab, at its top plus the profile's
+        height offset), bevel-extrude, parent, smooth and assign the
+        cabinet style material. Shared tail of the straight-run and
+        corner-aware crown builders. Returns the crown object.
+        """
         profile_offset_y = profile.location.y  # Height offset
-        
+
         # Copy the profile curve
         profile_copy = profile.copy()
         profile_copy.data = profile.data.copy()
         target_scene.collection.objects.link(profile_copy)
-        
+
         profile_copy.location = (0, 0, 0)
         profile_copy.rotation_euler = (0, 0, 0)
         profile_copy.scale = (1, 1, 1)
@@ -692,7 +1112,80 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
         profile_copy.hide_render = True
         profile_copy.name = f"Crown_Profile_{profile.name}"
         profile_copy['IS_CROWN_PROFILE_COPY'] = True
-        
+
+        first_bounds = self._get_cabinet_bounds(first_cab)
+
+        # Convert world points to local coordinates relative to first cabinet
+        first_inv = first_cab.matrix_world.inverted()
+        local_points = []
+        for pt in world_points:
+            local_pt = first_inv @ pt
+            local_points.append(Vector((local_pt.x, local_pt.y, 0)))
+
+        # Create the curve
+        curve_data = bpy.data.curves.new(name=f"Crown_Path_{profile.name}", type='CURVE')
+        curve_data.dimensions = '2D'
+        curve_data.bevel_mode = 'OBJECT'
+        curve_data.bevel_object = profile_copy
+        curve_data.use_fill_caps = True
+
+        spline = curve_data.splines.new('POLY')
+        spline.points.add(len(local_points) - 1)
+
+        for i, pt in enumerate(local_points):
+            spline.points[i].co = (pt.x, pt.y, pt.z, 1)
+
+        crown_obj = bpy.data.objects.new(f"Crown_{profile.name}", curve_data)
+        target_scene.collection.objects.link(crown_obj)
+
+        # Parent to first cabinet
+        crown_obj.parent = first_cab
+        crown_obj.location = (0, 0, first_bounds['height'] + profile_offset_y)
+        crown_obj['IS_CROWN_MOLDING'] = True
+        crown_obj['CROWN_PROFILE_NAME'] = profile.name
+
+        # Add Smooth by Angle modifier
+        smooth_mod = crown_obj.modifiers.new(name="Smooth by Angle", type='NODES')
+        if "Smooth by Angle" not in bpy.data.node_groups:
+            essentials_path = os.path.join(
+                bpy.utils.resource_path('LOCAL'),
+                "datafiles", "assets", "nodes", "geometry_nodes_essentials.blend"
+            )
+            if os.path.exists(essentials_path):
+                with bpy.data.libraries.load(essentials_path) as (data_from, data_to):
+                    if "Smooth by Angle" in data_from.node_groups:
+                        data_to.node_groups = ["Smooth by Angle"]
+        if "Smooth by Angle" in bpy.data.node_groups:
+            smooth_mod.node_group = bpy.data.node_groups["Smooth by Angle"]
+
+        profile_copy.parent = crown_obj
+        profile_copy['IS_CROWN_PROFILE_COPY'] = True
+
+        # Assign cabinet style material to crown
+        style_index = first_cab.get('CABINET_STYLE_INDEX', 0)
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if props.cabinet_styles and style_index < len(props.cabinet_styles):
+            style = props.cabinet_styles[style_index]
+            material, _ = style.get_finish_material()
+            if material:
+                if len(crown_obj.data.materials) == 0:
+                    crown_obj.data.materials.append(material)
+                else:
+                    crown_obj.data.materials[0] = material
+
+        return crown_obj
+
+    def _create_crown_for_group(self, context, group, profile, walls, all_cabinets, target_scene):
+        """Create crown molding extrusion for a group of cabinets."""
+
+        cabinets = group['cabinets']
+        first_cab = cabinets[0]
+        last_cab = cabinets[-1]
+        axis = group.get('axis', 'X')
+
+        profile_offset_x = profile.location.x  # Depth offset (positive = forward)
+
         # Build path points in WORLD coordinates
         world_points = []
         
@@ -779,67 +1272,9 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             back_along = last_wb['along_end'] - a_sign * inset + a_sign * extend
             world_points.append(self._make_world_point(back_along, last_wb['front'] - extend + inset, axis))
             world_points.append(self._make_world_point(back_along, last_wb['back'], axis))
-        
-        # Convert world points to local coordinates relative to first cabinet
-        first_inv = first_cab.matrix_world.inverted()
-        local_points = []
-        for pt in world_points:
-            local_pt = first_inv @ pt
-            local_points.append(Vector((local_pt.x, local_pt.y, 0)))
-        
-        # Create the curve
-        curve_data = bpy.data.curves.new(name=f"Crown_Path_{profile.name}", type='CURVE')
-        curve_data.dimensions = '2D'
-        curve_data.bevel_mode = 'OBJECT'
-        curve_data.bevel_object = profile_copy
-        curve_data.use_fill_caps = True
-        
-        spline = curve_data.splines.new('POLY')
-        spline.points.add(len(local_points) - 1)
-        
-        for i, pt in enumerate(local_points):
-            spline.points[i].co = (pt.x, pt.y, pt.z, 1)
-        
-        crown_obj = bpy.data.objects.new(f"Crown_{profile.name}", curve_data)
-        target_scene.collection.objects.link(crown_obj)
-        
-        # Parent to first cabinet
-        crown_obj.parent = first_cab
-        crown_obj.location = (0, 0, first_bounds['height'] + profile_offset_y)
-        crown_obj['IS_CROWN_MOLDING'] = True
-        crown_obj['CROWN_PROFILE_NAME'] = profile.name
-        
-        # Add Smooth by Angle modifier
-        smooth_mod = crown_obj.modifiers.new(name="Smooth by Angle", type='NODES')
-        if "Smooth by Angle" not in bpy.data.node_groups:
-            essentials_path = os.path.join(
-                bpy.utils.resource_path('LOCAL'),
-                "datafiles", "assets", "nodes", "geometry_nodes_essentials.blend"
-            )
-            if os.path.exists(essentials_path):
-                with bpy.data.libraries.load(essentials_path) as (data_from, data_to):
-                    if "Smooth by Angle" in data_from.node_groups:
-                        data_to.node_groups = ["Smooth by Angle"]
-        if "Smooth by Angle" in bpy.data.node_groups:
-            smooth_mod.node_group = bpy.data.node_groups["Smooth by Angle"]
-        
-        profile_copy.parent = crown_obj
-        profile_copy['IS_CROWN_PROFILE_COPY'] = True
-        
-        # Assign cabinet style material to crown
-        style_index = first_cab.get('CABINET_STYLE_INDEX', 0)
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        if props.cabinet_styles and style_index < len(props.cabinet_styles):
-            style = props.cabinet_styles[style_index]
-            material, _ = style.get_finish_material()
-            if material:
-                if len(crown_obj.data.materials) == 0:
-                    crown_obj.data.materials.append(material)
-                else:
-                    crown_obj.data.materials[0] = material
-        
-        return crown_obj
+
+        return self._extrude_profile_along_path(
+            context, world_points, first_cab, profile, target_scene)
 
 
 class hb_frameless_OT_add_molding_profile(bpy.types.Operator):
