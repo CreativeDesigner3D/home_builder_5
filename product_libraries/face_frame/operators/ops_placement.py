@@ -1819,6 +1819,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # every _position_from_hit pass; read by the header.
         self._peninsula = False
 
+        # Facing arrow: world-space GPU segments pointing out the cage's
+        # front, drawn by the shared placement-dim handler and refreshed
+        # after every positioning pass.
+        self._facing_arrow_segments = None
+
         self.init_placement(context)
         if self.region is None:
             self._delete_preview()
@@ -2243,6 +2248,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     # ---------------- positioning ----------------
 
     def _position_from_hit(self, context):
+        """Route the last hit to a positioning strategy, then refresh
+        the facing arrow to match wherever the cage landed."""
+        self._route_position_from_hit(context)
+        self._facing_arrow_segments = self._build_facing_arrow()
+
+    def _route_position_from_hit(self, context):
         if self.hit_location is None:
             # No raycast hit and no fallback could even start - keep
             # cage where it is (don't jump to a stale or zero location).
@@ -3207,8 +3218,66 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._gap_left_boundary, self._gap_right_boundary,
             placement_x, cabinet_width,
         )
+        # Offset typing repositions without passing through
+        # _position_from_hit, so the arrow refreshes here too.
+        self._facing_arrow_segments = self._build_facing_arrow()
         if context.area is not None:
             context.area.tag_redraw()
+
+    # ---------------- facing arrow ----------------
+
+    def _build_facing_arrow(self):
+        """World-space line segments for the GPU arrow that points out
+        the cage's front (local -Y) during placement, so the facing is
+        readable in every positioning state - most usefully rotated free
+        placement, peninsula, island-back and facing-bay, where the
+        front isn't implied by a wall. Drawn by the shared placement-dim
+        handler; same shaft + head construction as the corner operator's
+        arrow.
+
+        Composed from matrix_basis rather than matrix_world: we're
+        called right after positioning set location / rotation, and
+        matrix_world is depsgraph-stale within the same call (the
+        corner operator hit this as an arrow lagging one mousemove).
+
+        Returns [(start, end), ...] Vectors, or None to draw nothing.
+        """
+        if self._preview_cage is None:
+            return None
+        cage_obj = self._preview_cage.obj
+        w = self._cabinet_width
+        try:
+            d = self._preview_cage.get_input('Dim Y')
+            h = self._preview_cage.get_input('Dim Z')
+        except Exception:
+            return None
+        if w <= 0 or d <= 0:
+            return None
+
+        local_base = Vector((w / 2.0, -d / 2.0, h / 2.0))
+        if cage_obj.parent is not None:
+            m = (cage_obj.parent.matrix_world
+                 @ cage_obj.matrix_parent_inverse
+                 @ cage_obj.matrix_basis)
+        else:
+            m = cage_obj.matrix_basis
+        base = m @ local_base
+        dir_w = m.to_3x3() @ Vector((0.0, -1.0, 0.0))
+        dir_w.z = 0.0
+        if dir_w.length < 1e-6:
+            return None
+        dir_w.normalize()
+
+        length = max(w, d) * 0.6
+        tip = base + dir_w * length
+        perp = Vector((-dir_w.y, dir_w.x, 0.0))
+        back = tip - dir_w * (length * 0.28)
+        head_w = length * 0.16
+        return [
+            (base, tip),
+            (tip, back + perp * head_w),
+            (tip, back - perp * head_w),
+        ]
 
     # ---------------- placement dimensions ----------------
 
