@@ -4126,6 +4126,12 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     the recalc annotation pass draws the square + SINK/COOKTOP word on
     top of the bay. (3D appliance models are deferred. The apron config
     builds full-height doors with a top apron on the door opening.)
+
+    Live preview: invoked via invoke_props_popup, so execute re-runs on
+    every field edit and the bay updates in the viewport as options
+    change (same pattern as the Appliance Panels dialog). The heavy
+    preset rebuild is guarded by last_preset so a width / drop / filler
+    tweak only re-runs the cheap prop writes + recalc.
     """
     bl_idname = "hb_face_frame.add_appliance_to_bay"
     bl_label = "Add Appliance to Bay"
@@ -4133,7 +4139,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         "Turn the selected base bay into a sink or cooktop bay. Sets "
         "the bay width and front layout and labels the bay on 2D drawings"
     )
-    bl_options = {'UNDO'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     appliance_kind: bpy.props.EnumProperty(
         name="Appliance",
@@ -4146,6 +4152,11 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         options={'SKIP_SAVE'},
     )  # type: ignore
     bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+    # The bay preset applied by the last execute run. invoke_props_popup
+    # re-runs execute on every edit with state persisting between runs, so
+    # this keeps the destructive front-layout rebuild to actual
+    # configuration / door-count changes.
+    last_preset: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
     width: bpy.props.FloatProperty(
         name="Width", unit='LENGTH', precision=4, default=inch(36.0),
     )  # type: ignore
@@ -4231,25 +4242,42 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             self.report({'WARNING'}, "Select a bay first")
             return {'CANCELLED'}
         self.bay_name = bay.name
-        # Default width by kind: a vanity sink base is narrow (20");
-        # kitchen sink / cooktop default to a 36" sink base.
-        self.width = (inch(20.0) if self.appliance_kind == 'VANITY_SINK'
-                      else inch(36.0))
+        self.last_preset = ""
+        bp = bay.face_frame_bay
+        # Re-editing an existing sink / cooktop bay: seed everything from
+        # the bay and default the configuration to Keep Existing, so the
+        # immediate live-preview execute below doesn't rebuild a front
+        # layout the user may have customized.
+        already_appliance = bay.get('APPLIANCE_BAY') in ('SINK', 'COOKTOP')
+        if already_appliance:
+            self.config = 'KEEP_EXISTING'
+            self.width = bp.width
+        else:
+            # Fresh bay: explicit defaults (REGISTER remembers last-used
+            # values across invocations; the defaults should win here).
+            # A vanity sink base is narrow (20"); kitchen sink / cooktop
+            # default to a 36" sink base.
+            self.config = 'FALSE_FRONT_DOORS'
+            self.width = (inch(20.0) if self.appliance_kind == 'VANITY_SINK'
+                          else inch(36.0))
         # Sinks default to an open interior (plumbing under the basin);
         # cooktop bays keep the shelf default. Still user-selectable in
         # the dialog.
-        if self.appliance_kind != 'COOKTOP':
-            self.interior = 'OPEN'
+        self.interior = 'SHELF' if self.appliance_kind == 'COOKTOP' else 'OPEN'
         # Seed the drop + filler fields from the bay's current state so
         # re-running the dialog edits in place instead of resetting.
-        bp = bay.face_frame_bay
         self.drop_bay_amount = bp.front_drop
         self.include_fillers = bp.front_drop_include_fillers
         self.set_appliance_width = bp.front_drop_set_appliance_width
         self.appliance_width = bp.front_drop_appliance_width
         self.left_filler_amount = bp.front_drop_left_filler
         self.right_filler_amount = bp.front_drop_right_filler
-        return context.window_manager.invoke_props_dialog(self, width=320)
+        # Apply once with the seeded values, then keep the popup open --
+        # invoke_props_popup re-runs execute on every subsequent edit so
+        # the viewport tracks the dialog live.
+        if self.execute(context) == {'CANCELLED'}:
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_popup(self, event)
 
     def draw(self, context):
         layout = self.layout
@@ -4304,10 +4332,18 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             preset = 'DOUBLE_DOOR' if wide else 'LEFT_SWING_DOOR'
 
         with types_face_frame.suspend_recalc():
-            if preset is not None and not apply_bay_preset(bay, preset):
+            # Only rebuild the front layout when the resolved preset
+            # actually changed (config switch, or the width crossing the
+            # double-door threshold). Live-preview edits to width / drop /
+            # fillers / interior re-run execute constantly; rebuilding the
+            # opening tree each time would flicker and discard door styles.
+            if (preset is not None and preset != self.last_preset
+                    and not apply_bay_preset(bay, preset)):
                 self.report({'WARNING'},
                             f"Bay does not accept preset {preset!r}")
                 return {'CANCELLED'}
+            if preset is not None:
+                self.last_preset = preset
             # Durable annotation signal: the bay cage persists across
             # recalcs, so _apply_appliance_annotations can rebuild the
             # square + word from this stamp every pass.
