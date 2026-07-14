@@ -130,7 +130,7 @@ def _set_mod_input(obj, mod_name, input_name, value):
     ni = mod.node_group.interface.items_tree.get(input_name)
     if ni is not None:
         mod.node_group.interface_update(bpy.context)
-        mod[ni.identifier] = value
+        getattr(mod.properties.inputs, ni.identifier).value = value
 
 
 def _set_mod_inputs(obj, mod_name, pairs):
@@ -184,8 +184,11 @@ def _front_gn_dims(front_obj):
              for it in mod.node_group.interface.items_tree
              if getattr(it, 'in_out', '') == 'INPUT'}
     try:
-        return (mod[names['Length']], mod[names['Width']], mod[names['Thickness']])
-    except KeyError:
+        mod_inputs = mod.properties.inputs
+        return (getattr(mod_inputs, names['Length']).value,
+                getattr(mod_inputs, names['Width']).value,
+                getattr(mod_inputs, names['Thickness']).value)
+    except (KeyError, AttributeError):
         return None
 
 

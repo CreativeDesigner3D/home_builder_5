@@ -4236,8 +4236,8 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
                 wall.set_input('Height', props.half_wall_height)
             elif wall_type == 'Fake':
                 wall.set_input('Height', props.fake_wall_height)
-            # set_input writes the modifier input directly (mod[ident]),
-            # which doesn't notify the depsgraph -- tag the wall so the
+            # set_input writes the modifier input value directly, which
+            # doesn't notify the depsgraph -- tag the wall so the
             # viewport re-evaluates now instead of on the next view move.
             obj.update_tag()
             count += 1

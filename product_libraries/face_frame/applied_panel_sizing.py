@@ -377,7 +377,7 @@ def _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips):
     ):
         node_input = ng.interface.items_tree.get(input_name)
         if node_input is not None:
-            mod[node_input.identifier] = value
+            getattr(mod.properties.inputs, node_input.identifier).value = value
     mod.show_viewport = active
     mod.show_render = active
 

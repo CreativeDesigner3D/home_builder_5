@@ -4590,7 +4590,7 @@ class FaceFrameCabinet(GeoNodeCage):
         ):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
-                mod[node_input.identifier] = value
+                getattr(mod.properties.inputs, node_input.identifier).value = value
         mod.show_viewport = active
         mod.show_render = active
 
@@ -5261,7 +5261,7 @@ class FaceFrameCabinet(GeoNodeCage):
                                   ('Route Depth', route)):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
-                mod[node_input.identifier] = value
+                getattr(mod.properties.inputs, node_input.identifier).value = value
         mod.show_viewport = active
         mod.show_render = active
 
@@ -5585,7 +5585,7 @@ class FaceFrameCabinet(GeoNodeCage):
         ):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
-                mod[node_input.identifier] = value
+                getattr(mod.properties.inputs, node_input.identifier).value = value
         mod.show_viewport = active
         mod.show_render = active
 
@@ -5621,7 +5621,7 @@ class FaceFrameCabinet(GeoNodeCage):
             ):
                 node_input = ng.interface.items_tree.get(input_name)
                 if node_input is not None:
-                    mod[node_input.identifier] = value
+                    getattr(mod.properties.inputs, node_input.identifier).value = value
             mod.show_viewport = active
             mod.show_render = active
 
@@ -7639,7 +7639,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         for input_name, value in (('X', x), ('Y', y), ('Route Depth', route_depth)):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
-                mod[node_input.identifier] = value
+                getattr(mod.properties.inputs, node_input.identifier).value = value
         mod.show_viewport = active
         mod.show_render = active
 
@@ -7917,10 +7917,10 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                           ('End Y', y1), ('Route Depth', depth)):
             ni = ng.interface.items_tree.get(name)
             if ni is not None:
-                mod[ni.identifier] = val
+                getattr(mod.properties.inputs, ni.identifier).value = val
         fz = ng.interface.items_tree.get('Flip Z')
         if fz is not None:
-            mod[fz.identifier] = flip_z
+            getattr(mod.properties.inputs, fz.identifier).value = flip_z
         mod.show_viewport = active
         mod.show_render = active
 

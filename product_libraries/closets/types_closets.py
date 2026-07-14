@@ -968,7 +968,8 @@ class ClosetStarter(GeoNodeCage):
                     if (item.item_type == 'SOCKET'
                             and item.in_out == 'INPUT'
                             and item.name == 'Left Stile Width'):
-                        stile_w = mod.get(item.identifier)
+                        prop = getattr(mod.properties.inputs, item.identifier, None)
+                        stile_w = prop.value if prop is not None else None
                         break
             offset = (stile_w / 2.0) if stile_w else h_edge
             if hinge == 'LEFT':

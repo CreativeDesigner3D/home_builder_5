@@ -152,7 +152,7 @@ def _set_modifier_material(mod, socket_name, mat):
     for item in ng.interface.items_tree:
         if (item.item_type == 'SOCKET' and item.in_out == 'INPUT'
                 and item.name == socket_name):
-            mod[item.identifier] = mat
+            getattr(mod.properties.inputs, item.identifier).value = mat
             return
 
 

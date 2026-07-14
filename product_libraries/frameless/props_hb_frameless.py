@@ -739,16 +739,17 @@ class Frameless_Cabinet_Style(PropertyGroup):
             for mod in child.modifiers:
                 if mod.type == 'NODES' and mod.node_group:
                     tree_items = mod.node_group.interface.items_tree
+                    mod_inputs = mod.properties.inputs
                     if 'Material' in tree_items:
                         node_input = tree_items['Material']
-                        mod[node_input.identifier] = finish_mat
+                        getattr(mod_inputs, node_input.identifier).value = finish_mat
                     # Update 5-piece door materials (Stile, Rail, Panel)
                     if 'Stile Material' in tree_items:
-                        mod[tree_items['Stile Material'].identifier] = finish_mat
+                        getattr(mod_inputs, tree_items['Stile Material'].identifier).value = finish_mat
                     if 'Rail Material' in tree_items:
-                        mod[tree_items['Rail Material'].identifier] = finish_mat_rotated
+                        getattr(mod_inputs, tree_items['Rail Material'].identifier).value = finish_mat_rotated
                     if 'Panel Material' in tree_items:
-                        mod[tree_items['Panel Material'].identifier] = finish_mat
+                        getattr(mod_inputs, tree_items['Panel Material'].identifier).value = finish_mat
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:

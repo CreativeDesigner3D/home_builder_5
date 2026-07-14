@@ -173,16 +173,16 @@ class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
                 for mod in obj.modifiers:
                     if mod.type == 'NODES' and mod.node_group:
                         try:
-                            mod["Socket_3"] = hb_scene.annotation_dimension_text_size
-                        except:
+                            mod.properties.inputs.Socket_3.value = hb_scene.annotation_dimension_text_size
+                        except AttributeError:
                             pass
                         try:
-                            mod["Socket_4"] = hb_scene.annotation_dimension_tick_length
-                        except:
+                            mod.properties.inputs.Socket_4.value = hb_scene.annotation_dimension_tick_length
+                        except AttributeError:
                             pass
                         try:
-                            mod["Socket_5"] = hb_scene.annotation_dimension_line_thickness
-                        except:
+                            mod.properties.inputs.Socket_5.value = hb_scene.annotation_dimension_line_thickness
+                        except AttributeError:
                             pass
                 
                 dimensions_updated += 1

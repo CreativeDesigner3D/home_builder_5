@@ -870,16 +870,17 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
                 for mod in child.modifiers:
                     if mod.type == 'NODES' and mod.node_group:
                         tree_items = mod.node_group.interface.items_tree
+                        mod_inputs = mod.properties.inputs
                         if 'Material' in tree_items:
                             node_input = tree_items['Material']
-                            mod[node_input.identifier] = finish_mat
+                            getattr(mod_inputs, node_input.identifier).value = finish_mat
                         # Update 5-piece door materials (Stile, Rail, Panel)
                         if 'Stile Material' in tree_items:
-                            mod[tree_items['Stile Material'].identifier] = finish_mat
+                            getattr(mod_inputs, tree_items['Stile Material'].identifier).value = finish_mat
                         if 'Rail Material' in tree_items:
-                            mod[tree_items['Rail Material'].identifier] = finish_mat_rotated
+                            getattr(mod_inputs, tree_items['Rail Material'].identifier).value = finish_mat_rotated
                         if 'Panel Material' in tree_items:
-                            mod[tree_items['Panel Material'].identifier] = finish_mat
+                            getattr(mod_inputs, tree_items['Panel Material'].identifier).value = finish_mat
 
         self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style '{style.name}'")
         return {'FINISHED'}
@@ -1115,8 +1116,12 @@ class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
                         for mod in child.modifiers:
                             if mod.type == 'NODES' and mod.node_group:
                                 # Get the source object from the modifier
-                                for key in mod.keys():
-                                    val = mod[key]
+                                for item in mod.node_group.interface.items_tree:
+                                    if (getattr(item, 'item_type', '') != 'SOCKET'
+                                            or getattr(item, 'in_out', '') != 'INPUT'):
+                                        continue
+                                    prop = getattr(mod.properties.inputs, item.identifier, None)
+                                    val = getattr(prop, 'value', None)
                                     if hasattr(val, 'material_slots'):
                                         # This is the source pull object
                                         source_obj = val

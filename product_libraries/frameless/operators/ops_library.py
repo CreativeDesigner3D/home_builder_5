@@ -361,10 +361,10 @@ class hb_frameless_OT_load_cabinet_group_from_library(bpy.types.Operator, hb_pla
                     for item in mod.node_group.interface.items_tree:
                         if item.item_type == 'SOCKET' and item.in_out == 'INPUT' and item.socket_type == 'NodeSocketObject':
                             try:
-                                ref_obj = mod[item.identifier]
+                                ref_obj = getattr(mod.properties.inputs, item.identifier).value
                                 if ref_obj:
                                     geo_node_refs.add(ref_obj)
-                            except (KeyError, TypeError):
+                            except (AttributeError, TypeError):
                                 pass
 
         # Hide geometry node reference objects (they must stay for modifiers)

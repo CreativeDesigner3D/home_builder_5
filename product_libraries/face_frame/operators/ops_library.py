@@ -351,10 +351,10 @@ class hb_face_frame_OT_load_cabinet_group_from_library(bpy.types.Operator, hb_pl
                                 and item.in_out == 'INPUT'
                                 and item.socket_type == 'NodeSocketObject'):
                             try:
-                                ref_obj = mod[item.identifier]
+                                ref_obj = getattr(mod.properties.inputs, item.identifier).value
                                 if ref_obj:
                                     geo_node_refs.add(ref_obj)
-                            except (KeyError, TypeError):
+                            except (AttributeError, TypeError):
                                 pass
 
         self.geo_node_refs = geo_node_refs

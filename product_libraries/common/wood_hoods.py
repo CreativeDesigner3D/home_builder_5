@@ -15,6 +15,7 @@ geometry.
 
 import json
 import math
+import re
 import bpy
 from bpy.props import EnumProperty, FloatProperty
 
@@ -29,6 +30,16 @@ HOOD_STYLE_PROP = "WOOD_HOOD_STYLE"
 # it can be reverted to parametric one part at a time. See snapshot_hood_part.
 HOOD_SNAPSHOT_PROP = "HOOD_PARAMETRIC_SNAPSHOT"
 HOOD_MATERIAL = inch(0.75)
+
+# Pre-5.2 driver paths address modifier inputs as ID properties
+# (modifiers["X"]["Socket_2"]); 5.2 moved them to RNA
+# (modifiers["X"].properties.inputs.Socket_2.value). Snapshots persist in
+# saved files, so restore must migrate old-style paths.
+_OLD_MOD_INPUT_PATH_RE = re.compile(r'(modifiers\["[^"]+"\])\["([A-Za-z0-9_]+)"\]')
+
+
+def _migrate_mod_input_path(data_path):
+    return _OLD_MOD_INPUT_PATH_RE.sub(r'\1.properties.inputs.\2.value', data_path)
 
 WOOD_HOOD_STYLE_ITEMS = [
     ('BOX', "Box", "Box wood hood"),
@@ -473,8 +484,8 @@ def snapshot_hood_part(hood_part):
             continue
         ident = item.identifier
         try:
-            sval = _ser_value(mod[ident])
-        except (KeyError, TypeError):
+            sval = _ser_value(getattr(mod.properties.inputs, ident).value)
+        except (AttributeError, TypeError):
             continue
         if sval is not None:
             data['inputs'][ident] = sval
@@ -531,8 +542,8 @@ def restore_hood_part(hood_part):
     hood_part.home_builder.mod_name = mod.name
     for ident, sval in data.get('inputs', {}).items():
         try:
-            mod[ident] = _deser_value(sval)
-        except (KeyError, TypeError):
+            getattr(mod.properties.inputs, ident).value = _deser_value(sval)
+        except (AttributeError, TypeError):
             pass
     hood_part.location = data.get('location', list(hood_part.location))
     hood_part.rotation_euler = data.get('rotation_euler',
@@ -540,7 +551,7 @@ def restore_hood_part(hood_part):
     hood_part.scale = data.get('scale', list(hood_part.scale))
     old_mn = data.get('mod_name')
     for drv in data.get('drivers', []):
-        dp = drv['data_path']
+        dp = _migrate_mod_input_path(drv['data_path'])
         on_modifier = dp.startswith('modifiers[')
         # The part's own modifier may come back under a new name; re-point its
         # driver paths. Cage-targeted variable paths are left as captured.
@@ -548,7 +559,7 @@ def restore_hood_part(hood_part):
             dp = dp.replace('modifiers["%s"]' % old_mn,
                             'modifiers["%s"]' % mod.name, 1)
         try:
-            # Modifier inputs are scalar custom props (no array index); object
+            # Modifier input values are scalar (no array index); object
             # transform channels (location / rotation) are indexed.
             if on_modifier:
                 fc = hood_part.driver_add(dp)
@@ -562,7 +573,7 @@ def restore_hood_part(hood_part):
             nv.type = 'SINGLE_PROP'
             nv.name = var['name']
             nv.targets[0].id = hood_root
-            nv.targets[0].data_path = var['data_path']
+            nv.targets[0].data_path = _migrate_mod_input_path(var['data_path'])
     for key in ('IS_MANUAL_PART', HOOD_SNAPSHOT_PROP):
         if key in hood_part.keys():
             del hood_part[key]

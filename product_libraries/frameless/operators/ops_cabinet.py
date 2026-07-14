@@ -300,7 +300,7 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
                     if mod.type == 'NODES' and mod.node_group:
                         if 'Material' in mod.node_group.interface.items_tree:
                             node_input = mod.node_group.interface.items_tree['Material']
-                            mod[node_input.identifier] = material
+                            getattr(mod.properties.inputs, node_input.identifier).value = material
         
         return panel.obj
 
@@ -1038,7 +1038,7 @@ class hb_frameless_OT_finish_interior(bpy.types.Operator):
                         if mod.type == 'NODES' and mod.node_group:
                             if 'Material' in mod.node_group.interface.items_tree:
                                 node_input = mod.node_group.interface.items_tree['Material']
-                                mod[node_input.identifier] = finish_mat
+                                getattr(mod.properties.inputs, node_input.identifier).value = finish_mat
 
             self.report({'INFO'}, "Cabinet interior finished")
         else:

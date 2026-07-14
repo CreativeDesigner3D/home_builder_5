@@ -948,7 +948,7 @@ def _mod_input_get(mod, name, default=None):
     try:
         for item in mod.node_group.interface.items_tree:
             if getattr(item, 'item_type', '') == 'SOCKET' and item.name == name:
-                return mod[item.identifier]
+                return getattr(mod.properties.inputs, item.identifier).value
     except Exception:
         pass
     return default

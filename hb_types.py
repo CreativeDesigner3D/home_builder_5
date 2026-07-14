@@ -50,6 +50,15 @@ def _invalidate_input_cache(node_group):
     _INPUT_IDENT_CACHE.pop(id(node_group), None)
 
 
+def _gn_input_data_path(mod, identifier):
+    """Animatable data path for a geometry node modifier input value.
+
+    Blender 5.2 moved modifier inputs from ID properties
+    (modifiers["X"]["Socket_2"]) to RNA (modifiers["X"].properties.inputs.Socket_2.value).
+    """
+    return 'modifiers["' + mod.name + '"].properties.inputs.' + identifier + '.value'
+
+
 class Variable():
 
     obj = None
@@ -186,8 +195,8 @@ class GeoNodeObject:
         if input_name not in mod.node_group.interface.items_tree:
             raise ValueError(f"Input '{input_name}' not found in geometry node")
         
-        node_input = mod.node_group.interface.items_tree[input_name] 
-        data_path = 'modifiers["' + mod.name + '"]["' + node_input.identifier + '"]'    
+        node_input = mod.node_group.interface.items_tree[input_name]
+        data_path = _gn_input_data_path(mod, node_input.identifier)
         return Variable(self.obj.id_data,data_path,name)
 
     def var_location(self,name,axis):
@@ -261,7 +270,7 @@ class GeoNodeObject:
             raise ValueError(f"Input '{input_name}' not found in geometry node")
         
         node_input = mod.node_group.interface.items_tree[input_name]
-        driver = self.obj.driver_add('modifiers["' + mod.name + '"]["' + node_input.identifier + '"]')
+        driver = self.obj.driver_add(_gn_input_data_path(mod, node_input.identifier))
         hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
 
@@ -308,10 +317,11 @@ class GeoNodeObject:
             raise ValueError(f"Input '{input_name}' not found in geometry node")
         
         node_input = mod.node_group.interface.items_tree[input_name]
+        input_props = getattr(mod.properties.inputs, node_input.identifier)
         if icon == '':
-            layout.prop(mod,'["' + node_input.identifier + '"]',text=text)
+            layout.prop(input_props,'value',text=text)
         else:
-            layout.prop(mod,'["' + node_input.identifier + '"]',text=text,icon=icon)
+            layout.prop(input_props,'value',text=text,icon=icon)
 
     def set_input(self, input_name, value):
         """Safely set geometry node input value
@@ -337,14 +347,14 @@ class GeoNodeObject:
 
         ident = _get_input_identifier(mod.node_group, input_name)
         try:
-            mod[ident] = value
-        except KeyError:
+            getattr(mod.properties.inputs, ident).value = value
+        except AttributeError:
             # Cached identifier no longer present on the modifier - schema
             # changed since we cached. Force a fresh interface_update and retry.
             _invalidate_input_cache(mod.node_group)
             ident = _get_input_identifier(mod.node_group, input_name)
-            mod[ident] = value
-        # Writing a modifier ID-property via Python doesn't auto-tag the owning
+            getattr(mod.properties.inputs, ident).value = value
+        # Writing a modifier input via Python doesn't reliably tag the owning
         # object for depsgraph re-evaluation - interface_update used to do that
         # as a side effect. update_tag() is ~40x cheaper and restores live
         # geometry updates after a value change.
@@ -374,11 +384,11 @@ class GeoNodeObject:
 
         ident = _get_input_identifier(mod.node_group, input_name)
         try:
-            return mod[ident]
-        except KeyError:
+            return getattr(mod.properties.inputs, ident).value
+        except AttributeError:
             _invalidate_input_cache(mod.node_group)
             ident = _get_input_identifier(mod.node_group, input_name)
-            return mod[ident]
+            return getattr(mod.properties.inputs, ident).value
 
     def has_input(self, input_name):
         """Check if a geometry node input exists.
@@ -881,9 +891,9 @@ class CabinetPartModifier(GeoNodeObject):
             raise ValueError(f"Input '{input_name}' not found in geometry node")
         
         node_input = self.mod.node_group.interface.items_tree[input_name]
-        driver = self.obj.driver_add('modifiers["' + self.mod.name + '"]["' + node_input.identifier + '"]')
+        driver = self.obj.driver_add(_gn_input_data_path(self.mod, node_input.identifier))
         hb_utils.add_driver_variables(driver,variables)
-        driver.driver.expression = expression         
+        driver.driver.expression = expression
 
     def driver_hide(self, expression, variables=[]):
         """Drive modifier visibility (show_viewport/show_render).
@@ -920,11 +930,11 @@ class CabinetPartModifier(GeoNodeObject):
 
         ident = _get_input_identifier(self.mod.node_group, input_name)
         try:
-            self.mod[ident] = value
-        except KeyError:
+            getattr(self.mod.properties.inputs, ident).value = value
+        except AttributeError:
             _invalidate_input_cache(self.mod.node_group)
             ident = _get_input_identifier(self.mod.node_group, input_name)
-            self.mod[ident] = value
+            getattr(self.mod.properties.inputs, ident).value = value
         # See note in GeoNodeObject.set_input - the explicit tag replaces the
         # implicit dirty-flag that interface_update used to provide.
         self.obj.update_tag()
@@ -946,8 +956,8 @@ class CabinetPartModifier(GeoNodeObject):
 
         ident = _get_input_identifier(self.mod.node_group, input_name)
         try:
-            return self.mod[ident]
-        except KeyError:
+            return getattr(self.mod.properties.inputs, ident).value
+        except AttributeError:
             _invalidate_input_cache(self.mod.node_group)
             ident = _get_input_identifier(self.mod.node_group, input_name)
-            return self.mod[ident]
+            return getattr(self.mod.properties.inputs, ident).value

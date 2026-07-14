@@ -1985,14 +1985,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             if 'Door Style' not in mod.name:
                 continue
             tree = mod.node_group.interface.items_tree
+            mod_inputs = mod.properties.inputs
             if 'Stile Material' in tree and finish_mat is not None:
-                mod[tree['Stile Material'].identifier] = finish_mat
+                getattr(mod_inputs, tree['Stile Material'].identifier).value = finish_mat
             if 'Rail Material' in tree and finish_mat_rotated is not None:
-                mod[tree['Rail Material'].identifier] = finish_mat_rotated
+                getattr(mod_inputs, tree['Rail Material'].identifier).value = finish_mat_rotated
             if 'Panel Material' in tree and panel_mat is not None:
                 # panel_mat is the glass material for prep-for-glass fronts,
                 # else the finish (rotated for HORIZONTAL grain -- see above).
-                mod[tree['Panel Material'].identifier] = panel_mat
+                getattr(mod_inputs, tree['Panel Material'].identifier).value = panel_mat
             break
 
     def _apply_materials_to_cabinet(self, cabinet_obj):

@@ -143,8 +143,8 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         for mod in wall.modifiers:
             if mod.type == 'NODES' and mod.node_group:
                 try:
-                    return mod["Input_2"]
-                except:
+                    return mod.properties.inputs.Input_2.value
+                except AttributeError:
                     pass
         return 3.0
     
@@ -153,8 +153,8 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         for mod in wall.modifiers:
             if mod.type == 'NODES' and mod.node_group:
                 try:
-                    return mod["Input_3"]
-                except:
+                    return mod.properties.inputs.Input_3.value
+                except AttributeError:
                     pass
         return units.inch(4.5)
     
