@@ -4124,6 +4124,18 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Add Appliance to Bay dialog session counter. invoke_props_popup popups
+# can LINGER: Esc doesn't dismiss them (it only cancels an in-progress
+# field edit) and opening the dialog again stacks a second popup over the
+# first. Every live popup keeps its own operator instance alive, and an
+# edit on a STALE popup re-executes that instance with its frozen
+# properties -- observed as the bay's configuration snapping back to the
+# fresh-bay default (False Front with Doors) mid-edit. Each invoke bumps
+# this counter and stamps the instance; execute no-ops for any instance
+# that is not the newest dialog. List so the closure mutates in place.
+_appliance_dialog_session = [0]
+
+
 def _set_opening_interior(op_props, interior):
     """Set a door opening's interior to OPEN / SHELF / VANITY_SHELVES by
     rewriting only its shelf-type interior items (ADJUSTABLE_SHELF /
@@ -4179,6 +4191,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     # this keeps the destructive front-layout rebuild to actual
     # configuration / door-count changes.
     last_preset: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+    # Which dialog session this instance belongs to (see
+    # _appliance_dialog_session). 0 = not invoked through the popup
+    # (direct EXEC / scripting), which is always allowed to run.
+    session_id: bpy.props.IntProperty(default=0, options={'SKIP_SAVE', 'HIDDEN'})  # type: ignore
     width: bpy.props.FloatProperty(
         name="Width", unit='LENGTH', precision=4, default=inch(36.0),
     )  # type: ignore
@@ -4265,6 +4281,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             return {'CANCELLED'}
         self.bay_name = bay.name
         self.last_preset = ""
+        # Newest dialog wins: stamp this instance and invalidate every
+        # older popup still lingering on screen (their execute no-ops).
+        _appliance_dialog_session[0] += 1
+        self.session_id = _appliance_dialog_session[0]
         bp = bay.face_frame_bay
         # Re-editing an existing sink / cooktop bay: seed everything from
         # the bay and default the configuration to Keep Existing, so the
@@ -4328,6 +4348,12 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         box.prop(self, 'interior', expand=True)
 
     def execute(self, context):
+        # Stale-popup guard: only the NEWEST dialog may touch the bay.
+        # A lingering popup from an earlier invocation re-executing with
+        # its frozen properties is what reverted configurations mid-edit.
+        # session_id 0 (direct EXEC / scripting, never invoked) is allowed.
+        if self.session_id and self.session_id != _appliance_dialog_session[0]:
+            return {'CANCELLED'}
         bay = self._resolve_bay(context)
         if bay is None:
             self.report({'WARNING'}, "Select a bay first")
