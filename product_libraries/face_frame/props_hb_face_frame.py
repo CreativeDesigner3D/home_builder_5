@@ -1786,13 +1786,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEG_BACK', 'LEG_NAILER_LEFT', 'LEG_NAILER_RIGHT',
         # Internal dividers / shelves
         'BAY_DIVISION', 'BAY_SHELF', 'MID_DIVISION',
-        # Drawer box
-        'DRAWER_BOX',
         # Sink apron - face-frame-depth panel behind the FF band
         'APRON',
-        # Interior items
+        # Interior items (DRAWER_BOX / ROLLOUT_BOX are GeoNodeDrawerBox
+        # assets with a single Material input, handled by their own
+        # branch in _apply_materials_to_cabinet)
         'ADJUSTABLE_SHELF', 'PULLOUT_SHELF', 'PULLOUT_SPACER',
-        'ROLLOUT_BOX', 'ROLLOUT_SPACER',
+        'ROLLOUT_SPACER',
         'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
         'VANITY_SHELF', 'VANITY_SUPPORT',
         'INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION',
@@ -2107,6 +2107,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                     self._set_part_surfaces(child, finish_mat, finish_mat_rotated)
                 else:
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+
+            # Drawer / rollout boxes are a single GeoNodeDrawerBox asset
+            # with one Material input, not a cutpart with per-surface
+            # slots. They take the interior material.
+            if role in ('DRAWER_BOX', 'ROLLOUT_BOX'):
+                if interior_mat is not None:
+                    from ... import hb_types
+                    try:
+                        hb_types.GeoNodeObject(child).set_input(
+                            'Material', interior_mat)
+                    except Exception:
+                        pass
                 continue
 
             # Glass shelves render as glass, not wood - same material the

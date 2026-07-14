@@ -6497,6 +6497,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.set_input('Dim Y', box_dy)
         box.set_input('Dim Z', box_dz)
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
+        box.obj['CABINET_PART'] = True
         return box
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
@@ -6905,6 +6906,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.create(desc['name'])
         box.obj.parent = opening_obj
         box.obj['hb_part_role'] = desc['role']
+        box.obj['CABINET_PART'] = True
         box.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         box.obj.location = desc['position']
