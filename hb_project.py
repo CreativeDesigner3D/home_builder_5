@@ -236,6 +236,32 @@ def set_main_scene(scene):
     scene['IS_MAIN_SCENE'] = True
 
 
+def migrate_project_data(old_scene, new_scene):
+    """
+    Copy project-level data from one scene to another.
+    Call this BEFORE deleting a main scene so project data (project
+    properties, integration IDs, revision counters) survives on the
+    scene taking over as main.
+
+    Copies the scene's custom properties, skipping per-scene view state
+    and scene-type flags, and never overwriting values already set on
+    the target scene.
+    """
+    if old_scene is None or new_scene is None or old_scene == new_scene:
+        return
+    skip_keys = {'IS_MAIN_SCENE', 'IS_LAYOUT_VIEW', 'IS_DETAIL_VIEW',
+                 'IS_CROWN_DETAIL', 'home_builder', 'cycles'}
+    for key in old_scene.keys():
+        if key in skip_keys or key.startswith('VIEW_'):
+            continue
+        if key in new_scene:
+            continue
+        try:
+            new_scene[key] = old_scene[key]
+        except (TypeError, AttributeError) as e:
+            print(f"HB5: could not migrate scene key '{key}': {e}")
+
+
 def is_room_scene(scene):
     """Check if a scene is a regular room scene (not layout or detail)."""
     if scene.get('IS_LAYOUT_VIEW'):

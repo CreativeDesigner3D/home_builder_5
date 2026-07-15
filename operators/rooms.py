@@ -145,8 +145,21 @@ class home_builder_OT_delete_room(bpy.types.Operator):
         
         was_main = scene_to_delete.get('IS_MAIN_SCENE', False)
         scene_name = scene_to_delete.name
+
+        # Project-level data lives on the main scene. Hand it off to the
+        # scene taking over as main BEFORE deleting, or it is lost with
+        # the scene.
+        if was_main:
+            candidates = [s for s in hb_project.get_room_scenes()
+                          if s != scene_to_delete]
+            if not candidates:
+                candidates = [s for s in bpy.data.scenes if s != scene_to_delete]
+            if candidates:
+                hb_project.migrate_project_data(scene_to_delete, candidates[0])
+                hb_project.set_main_scene(candidates[0])
+
         bpy.data.scenes.remove(scene_to_delete)
-        
+
         # Re-tag a main scene if we just deleted it
         if was_main:
             hb_project.ensure_main_scene(context)
