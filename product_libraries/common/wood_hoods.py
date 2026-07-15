@@ -148,14 +148,15 @@ def _mantle_parts(hood_obj, band, depth):
 
 
 def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
-                    include_front=True):
+                    include_front=True, include_left_side=True,
+                    include_right_side=True):
     """Core box carcass: full left/right sides, a top cap inset between
     them, and an applied front -- full width, in front of the sides and
     top, which stop 3/4" short of the face. Optional projecting bands at
     the bottom (mantle / shelf base) and top (crown). All driven off the
-    cage Dim X/Y/Z and butted on 3/4" material. ``include_front=False``
-    skips the applied front when something else fills its layer (the
-    CUSTOM paneled face frame)."""
+    cage Dim X/Y/Z and butted on 3/4" material. The include_* flags skip
+    a plain part when something else fills its layer (the CUSTOM paneled
+    face frame / paneled ends)."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -164,7 +165,10 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
     two_mt = 2.0 * mt
 
     # Left + right sides (full height, stopping behind the applied front).
-    for name, at_right in (("Hood Left Side", False), ("Hood Right Side", True)):
+    for name, at_right, wanted in (("Hood Left Side", False, include_left_side),
+                                   ("Hood Right Side", True, include_right_side)):
+        if not wanted:
+            continue
         s = _panel(hood_obj, name)
         s.obj.rotation_euler.y = math.radians(-90)
         if at_right:
@@ -376,9 +380,86 @@ _CUSTOM_DEFAULTS = {
     'panel_stile_width': inch(2.5),
     'panel_top_rail_width': inch(2.5),
     'panel_bottom_rail_width': inch(2.5),
-    'panel_count': 2,               # panels across; mid stiles = count - 1
+    'panel_count': 2,               # bays across; mid stiles = count - 1
+    'bay_fronts': (),               # per-bay front kind (see _BAY_FRONT_KINDS)
+    'left_end_panel': False,        # paneled end replacing the left side
+    'right_end_panel': False,       # paneled end replacing the right side
     'include_shiplap': False,       # shiplap boards on the front
 }
+
+# Front kinds a face-frame bay can carry: an overlay door, an inset door
+# (flush with the frame, 1/8" reveal), or no door -- just the 1/4" inset
+# panel closing the opening (back flush with the frame back, like a
+# cabinet's INSET_PANEL bay).
+_BAY_FRONT_KINDS = ('PANEL', 'OVERLAY_DOOR', 'INSET_DOOR')
+
+BAY_FRONT_ITEMS = [
+    ('PANEL', "Inset Panel", "No door; a 1/4\" inset panel closes the opening"),
+    ('OVERLAY_DOOR', "Overlay Door", "Door overlaying the face frame opening"),
+    ('INSET_DOOR', "Inset Door", "Door inset in the opening, flush with the frame"),
+]
+
+
+def _bay_front_list(opts, n):
+    """The per-bay front kinds normalized to ``n`` entries (unknown /
+    missing entries fall back to the inset panel so the hood stays
+    closed)."""
+    fronts = [f if f in _BAY_FRONT_KINDS else 'PANEL'
+              for f in list(opts.get('bay_fronts') or [])]
+    return (fronts + ['PANEL'] * n)[:n]
+
+
+def _hood_style(hood_obj):
+    """The face-frame cabinet style assigned to the hood (STYLE_NAME),
+    falling back to the project's active style; None when the face-frame
+    library / style props can't be resolved."""
+    try:
+        from ..face_frame.props_hb_face_frame import get_style_props
+        ff = get_style_props()
+        if ff is None:
+            return None
+        name = hood_obj.get('STYLE_NAME')
+        style = next((s for s in ff.cabinet_styles if s.name == name), None) \
+            if name else None
+        if style is None and 0 <= ff.active_cabinet_style_index < len(ff.cabinet_styles):
+            style = ff.cabinet_styles[ff.active_cabinet_style_index]
+        return style
+    except Exception:
+        return None
+
+
+def _hood_door_overlays(hood_obj):
+    """(left, right, top, bottom) overlay amounts for the hood's overlay
+    doors, read from the assigned / active cabinet style's overlay table
+    (the same table assign_style_to_cabinet writes onto cabinets). An
+    inset-flavored style or no style falls back to the classic 1/2"."""
+    style = _hood_style(hood_obj)
+    try:
+        if style is not None:
+            l, r, t, b = style._OVERLAY_TABLE.get(
+                style.door_overlay_type, style._OVERLAY_TABLE['CLASSIC'])
+            if min(l, r, t, b) > 0.0:
+                return inch(l), inch(r), inch(t), inch(b)
+    except Exception:
+        pass
+    return inch(0.5), inch(0.5), inch(0.5), inch(0.5)
+
+
+def _apply_hood_door_style(hood_obj, door_obj):
+    """Apply the hood's cabinet style's door style (slab / 5-piece) to a
+    hood door front, the same way cabinet fronts get theirs. No-op when
+    nothing resolves -- the door stays a plain slab."""
+    style = _hood_style(hood_obj)
+    if style is None:
+        return
+    try:
+        from ..face_frame.props_hb_face_frame import get_style_props
+        ff = get_style_props()
+        ds = next((d for d in ff.door_styles if d.name == style.door_style), None)
+        if ds is not None:
+            ds.assign_style_to_front(door_obj)
+    except Exception:
+        pass
 
 
 def _get_custom_opts(hood_obj):
@@ -475,12 +556,13 @@ def _mantle_molding(hood_obj, W, y_face, band, m_w, m_th):
 
 
 def _front_face_frame(hood_obj, opts, band):
-    """Paneled face frame forming the straight hood front: full-height
-    stiles, rails between them, and mid stiles splitting the field into
-    ``panel_count`` openings. The frame REPLACES the plain applied front
-    -- its members occupy the same 3/4" front layer -- and a recessed
-    panel board directly behind the openings closes the hood, so the
-    openings read as recessed panels. Driven so it tracks the cage."""
+    """Face frame forming the straight hood front, treated like a
+    cabinet face frame: full-height stiles, top / bottom rails, and mid
+    stiles splitting the front into ``panel_count`` bays. The frame
+    REPLACES the plain applied front -- its members occupy the same
+    3/4" front layer. Each bay then carries its assigned front (see
+    _BAY_FRONT_KINDS): an overlay door, an inset door, or just a 1/4"
+    inset panel closing the opening. Driven so it tracks the cage."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -534,17 +616,125 @@ def _front_face_frame(hood_obj, opts, band):
         ms.set_input("Length", sw)
         ms.driver_input("Width", 'dim_z - %f' % (band + brw + trw), [dim_z])
 
-    # Recessed panel closing the frame openings: one board directly
-    # behind the frame, inset between the sides and butting the top cap.
-    fld = _panel(hood_obj, "Hood Front Panel")
-    fld.obj.rotation_euler.x = math.radians(90)
-    fld.obj.location.x = mt
-    fld.obj.location.z = band
-    fld.driver_location('y', '-dim_y + %f' % mt, [dim_y])
-    fld.driver_input("Length", 'dim_x - %f' % (2.0 * mt), [dim_x])
-    fld.driver_input("Width", 'dim_z - %f' % (band + mt), [dim_z])
-    fld.set_input("Thickness", mt)
-    fld.set_input("Mirror Z", True)
+    # Bay fronts. Opening j runs x [x0_j, x0_j + ow] with
+    # ow = (dim_x - stock) / n and x0_j = (j+1)*sw + j*ow, and
+    # z [band + brw, dim_z - trw]. Fronts follow the cabinet
+    # conventions: cutpart Length = front HEIGHT, Width = front WIDTH,
+    # Mirror Y (assign_style_to_front's door convention), thickness
+    # extending forward from the part origin's y plane.
+    gap = inch(0.125)     # inset door reveal (solver DOOR_TO_FRAME_GAP)
+    pt = inch(0.25)       # inset panel thickness (cabinet INSET_PANEL)
+    ov_l, ov_r, ov_t, ov_b = _hood_door_overlays(hood_obj)
+    frame_h = band + brw + trw    # z eaten by band + rails
+    for j, kind in enumerate(_bay_front_list(opts, n)):
+        if kind == 'OVERLAY_DOOR':
+            name, role, th = "Hood Door %d" % (j + 1), 'DOOR', mt
+            x_off, z0 = (j + 1) * sw - ov_l, band + brw - ov_b
+            y_expr = '-dim_y'
+            len_expr = 'dim_z - %f' % (frame_h - ov_t - ov_b)
+            wid_expr = '(dim_x - %f) * %f + %f' % (stock, 1.0 / n, ov_l + ov_r)
+        elif kind == 'INSET_DOOR':
+            name, role, th = "Hood Door %d" % (j + 1), 'DOOR', mt
+            x_off, z0 = (j + 1) * sw + gap, band + brw + gap
+            y_expr = '-dim_y + %f' % mt      # front face flush with frame
+            len_expr = 'dim_z - %f' % (frame_h + 2.0 * gap)
+            wid_expr = '(dim_x - %f) * %f - %f' % (stock, 1.0 / n, 2.0 * gap)
+        else:
+            name, role, th = "Hood Inset Panel %d" % (j + 1), 'INSET_PANEL', pt
+            x_off, z0 = (j + 1) * sw, band + brw
+            y_expr = '-dim_y + %f' % mt      # back flush with frame back
+            len_expr = 'dim_z - %f' % frame_h
+            wid_expr = '(dim_x - %f) * %f' % (stock, 1.0 / n)
+        pnl = _panel(hood_obj, name)
+        # Stand the cutpart up facing the front: local X (Length) up,
+        # local -Y (Width) across to the right, thickness extending
+        # forward (-Y world) from the origin's y plane.
+        pnl.obj.rotation_euler = (0.0, math.radians(-90.0), math.radians(90.0))
+        pnl.obj['hb_part_role'] = role
+        pnl.obj.location.z = z0
+        pnl.driver_location('x', '(dim_x - %f) * %f + %f'
+                            % (stock, j / n, x_off), [dim_x])
+        pnl.driver_location('y', y_expr, [dim_y])
+        pnl.driver_input("Length", len_expr, [dim_z])
+        pnl.driver_input("Width", wid_expr, [dim_x])
+        pnl.set_input("Thickness", th)
+        pnl.set_input("Mirror Y", True)
+        if role == 'DOOR':
+            _apply_hood_door_style(hood_obj, pnl.obj)
+
+
+def _paneled_end(hood_obj, opts, at_right):
+    """Paneled end REPLACING the plain hood side: a frame in the side's
+    3/4" layer -- front + back stiles running full height, top / bottom
+    rails between them -- with a 1/4" inset panel closing the opening,
+    its back face flush with the frame's inner face (the cabinet
+    paneled-end read). Uses the front frame's stile / rail widths.
+    Driven so it tracks the cage. Returns False without building when
+    the side is too small for the frame (caller keeps the plain side)."""
+    w = _HoodWrap(hood_obj)
+    dim_x = w.var_input('Dim X', 'dim_x')
+    dim_y = w.var_input('Dim Y', 'dim_y')
+    dim_z = w.var_input('Dim Z', 'dim_z')
+    sw = max(opts['panel_stile_width'], inch(0.5))
+    trw = max(opts['panel_top_rail_width'], inch(0.5))
+    brw = max(opts['panel_bottom_rail_width'], inch(0.5))
+    mt = HOOD_MATERIAL
+    pt = inch(0.25)
+    if (w.get_input('Dim Y') - mt - 2.0 * sw <= 0.0
+            or w.get_input('Dim Z') - brw - trw <= 0.0):
+        return False
+    tag = "R" if at_right else "L"
+
+    def member(name):
+        p = _panel(hood_obj, "Hood End %s %s" % (tag, name))
+        p.obj.rotation_euler.y = math.radians(-90)
+        if at_right:
+            p.driver_location('x', 'dim_x', [dim_x])
+        p.set_input("Thickness", mt)
+        p.set_input("Mirror Y", True)
+        p.set_input("Mirror Z", not at_right)
+        return p
+
+    # Stiles run full height at the side's front edge (behind the front
+    # layer) and at the wall.
+    fs = member("Front Stile")
+    fs.driver_location('y', '-dim_y + %f' % (mt + sw), [dim_y])
+    fs.driver_input("Length", 'dim_z', [dim_z])
+    fs.set_input("Width", sw)
+    bs = member("Back Stile")
+    bs.driver_input("Length", 'dim_z', [dim_z])
+    bs.set_input("Width", sw)
+
+    # Rails between the stiles at the top and bottom.
+    for name, width, z_static, z_expr in (
+            ("Bottom Rail", brw, 0.0, None),
+            ("Top Rail", trw, None, 'dim_z - %f' % trw)):
+        rl = member(name)
+        rl.obj.location.y = -sw
+        if z_expr is None:
+            rl.obj.location.z = z_static
+        else:
+            rl.driver_location('z', z_expr, [dim_z])
+        rl.set_input("Length", width)
+        rl.driver_input("Width", 'dim_y - %f' % (mt + 2.0 * sw), [dim_y])
+
+    # 1/4" inset panel closing the opening, back face flush with the
+    # frame's inner face.
+    pnl = _panel(hood_obj, "Hood End %s Panel" % tag)
+    pnl.obj.rotation_euler.y = math.radians(-90)
+    if at_right:
+        pnl.driver_location('x', 'dim_x - %f' % (mt - pt), [dim_x])
+    else:
+        pnl.obj.location.x = mt - pt
+    pnl.obj.location.y = -sw
+    pnl.obj.location.z = brw
+    pnl.obj['hb_part_role'] = 'INSET_PANEL'
+    pnl.driver_input("Length", 'dim_z - %f' % (brw + trw), [dim_z])
+    pnl.driver_input("Width", 'dim_y - %f' % (mt + 2.0 * sw), [dim_y])
+    pnl.set_input("Thickness", pt)
+    pnl.set_input("Mirror Y", True)
+    pnl.set_input("Mirror Z", not at_right)
+    return True
 
 
 def _custom_sloped_frame(hood_obj, opts, prof, fz):
@@ -867,13 +1057,19 @@ def _build_custom(hood_obj):
         _build_custom_angled(hood_obj, opts)
         return
     band = opts['mantle_height'] if opts['include_mantle'] else 0.0
+    # Paneled ends replace the plain sides; build them first so an
+    # end too small for its frame can fall back to the plain side.
+    left_pe = bool(opts['left_end_panel']) and _paneled_end(hood_obj, opts, False)
+    right_pe = bool(opts['right_end_panel']) and _paneled_end(hood_obj, opts, True)
     # band thickness builds as mt + band_proj, so proj = depth - mt gives the
     # mantle its full front-to-back depth off the sides' front edges.
     # A paneled face frame replaces the plain front outright.
     _build_hood_box(hood_obj, bottom_band=band,
                     band_proj=max(opts['mantle_depth'] - HOOD_MATERIAL, 0.0)
                     if band > 0.0 else 0.0,
-                    include_front=not opts['include_front_panel'])
+                    include_front=not opts['include_front_panel'],
+                    include_left_side=not left_pe,
+                    include_right_side=not right_pe)
     if band > 0.0 and opts['include_mantle_molding']:
         w2 = _HoodWrap(hood_obj)
         W = w2.get_input('Dim X')
@@ -1284,9 +1480,24 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         default=_CUSTOM_DEFAULTS['panel_bottom_rail_width'],
         description="Width of the bottom frame rail")  # type: ignore
     panel_count: IntProperty(
-        name="Panels", min=1, max=10,
+        name="Bays", min=1, max=10,
         default=_CUSTOM_DEFAULTS['panel_count'],
-        description="Number of panels across; mid stiles = panels - 1")  # type: ignore
+        description="Number of face frame bays across; mid stiles = bays - 1")  # type: ignore
+    # Per-bay front pickers (bay_front_1..bay_front_10; the first
+    # panel_count are shown / used).
+    for _j in range(1, 11):
+        __annotations__['bay_front_%d' % _j] = EnumProperty(
+            name="Bay %d" % _j, items=BAY_FRONT_ITEMS, default='PANEL',
+            description="Front for bay %d of the face frame" % _j)
+    del _j
+    include_left_end_panel: BoolProperty(
+        name="Left Paneled End",
+        description="Paneled end (frame + inset panel) replacing the "
+                    "left side")  # type: ignore
+    include_right_end_panel: BoolProperty(
+        name="Right Paneled End",
+        description="Paneled end (frame + inset panel) replacing the "
+                    "right side")  # type: ignore
     include_shiplap: BoolProperty(
         name="Include Shiplap",
         description="Shiplap boards on the front face")  # type: ignore
@@ -1326,6 +1537,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.panel_top_rail_width = opts['panel_top_rail_width']
         self.panel_bottom_rail_width = opts['panel_bottom_rail_width']
         self.panel_count = int(opts['panel_count'])
+        fronts = _bay_front_list(opts, 10)
+        for j in range(10):
+            setattr(self, 'bay_front_%d' % (j + 1), fronts[j])
+        self.include_left_end_panel = bool(opts['left_end_panel'])
+        self.include_right_end_panel = bool(opts['right_end_panel'])
         self.include_shiplap = bool(opts['include_shiplap'])
         if self.hood.get(HOOD_CUSTOM_PROP) is None:
             # First time on this hood: seed the taper from the current size.
@@ -1359,6 +1575,12 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'panel_top_rail_width': self.panel_top_rail_width,
                 'panel_bottom_rail_width': self.panel_bottom_rail_width,
                 'panel_count': self.panel_count,
+                # All 10 slots persist so shrinking / regrowing the bay
+                # count doesn't forget per-bay picks.
+                'bay_fronts': [getattr(self, 'bay_front_%d' % (j + 1))
+                               for j in range(10)],
+                'left_end_panel': self.include_left_end_panel,
+                'right_end_panel': self.include_right_end_panel,
                 'include_shiplap': self.include_shiplap,
             }
         build_wood_hood(self.hood, self.style)
@@ -1435,8 +1657,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row.prop(self, 'fan_cutout_depth', text="D")
 
         col.prop(self, 'include_front_panel')
+        # Stile / rail widths feed the front face frame AND the paneled
+        # ends, so they light up when either is on.
         sub = col.column(align=True)
-        sub.active = self.include_front_panel
+        sub.active = (self.include_front_panel or self.include_left_end_panel
+                      or self.include_right_end_panel)
         row = sub.row(align=True)
         row.label(text="Stile:")
         row.prop(self, 'panel_stile_width', text="")
@@ -1444,7 +1669,22 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row.label(text="Rails:")
         row.prop(self, 'panel_top_rail_width', text="T")
         row.prop(self, 'panel_bottom_rail_width', text="B")
-        sub.prop(self, 'panel_count')
+        # Bay layout + per-bay fronts apply to the straight face frame
+        # only (an angled front keeps its fixed recessed-panel frame).
+        bays = col.column(align=True)
+        bays.active = (self.include_front_panel
+                       and not (self.angle_front or self.angle_sides))
+        bays.prop(self, 'panel_count')
+        for j in range(self.panel_count):
+            row = bays.row(align=True)
+            row.label(text="Bay %d:" % (j + 1))
+            row.prop(self, 'bay_front_%d' % (j + 1), text="")
+
+        row = col.row(align=True)
+        row.active = not (self.angle_front or self.angle_sides)
+        row.label(text="Paneled Ends:")
+        row.prop(self, 'include_left_end_panel', text="Left", toggle=True)
+        row.prop(self, 'include_right_end_panel', text="Right", toggle=True)
 
         col.prop(self, 'include_shiplap')
 
