@@ -32,6 +32,7 @@ PROFILE_DIRS = {
     'INNER': 'Inner Profiles',
     'PANEL': 'Panel Profiles',
     'APPLIED': 'Applied Profiles',
+    'MITERED': 'Mitered Profiles',
 }
 
 _cache = {}
@@ -203,18 +204,23 @@ def _closed_cut_chain(pts):
                   + abs(pts[j1][0] - pts[i][0]) + abs(pts[j1][1] - pts[i][1]))
         return j0, j1, length
 
-    # A cut shoulder lying on the bbox can fake a second corner; the
-    # real closing corner (front face meets edge plane) carries the
-    # longest combined runs -- the edge run spans the whole chip depth.
+    # Chip drawings anchor the member's front-face / edge corner at the
+    # ORIGIN (face on y=0, edge on x=0), so the closing corner is the
+    # candidate whose runs lie on lines through the origin; combined
+    # run length breaks any remaining tie (a cut shoulder on the bbox
+    # can fake a second corner, and a quirk as deep as the edge run
+    # makes the lengths alone ambiguous).
     corner = None
-    best = -1.0
+    best = None
     for i in range(n):
         ep = seg[(i - 1) % n]
         en = seg[i]
         if ep and en and ep[0] != en[0]:
             j0, j1, length = runs_from(i)
-            if length > best:
-                best = length
+            off = abs(ep[1]) + abs(en[1])
+            score = (off, -length)
+            if best is None or score < best:
+                best = score
                 corner = i
                 i0, i1 = j0, j1
     if corner is None:
@@ -362,6 +368,121 @@ def panel_profile_section(profile, max_depth):
         k = max_depth / v_max
         sec = [(u, v * k) for (u, v) in sec]
     return dict(points=sec, field_u=sec[0][0])
+
+
+def sticking_strip(profile, thickness, panel_front=None):
+    """INNER profile -> applied sticking strip cross-section.
+
+    Frames stay rectangular parts; the sticking is a separate molding
+    loop swept around each opening perimeter. The strip's FRONT surface
+    is the profile curve flipped into the opening -- u >= 0 from the
+    member's edge toward the opening, v from the front face -- closed
+    down the opening-side wall, along the bottom, and up the member
+    contact face. The bottom sits at ``panel_front`` when given (a
+    recessed panel's plane) else at the curve's own deepest point.
+    Returns a CLOSED counter-clockwise loop [(u, v), ...]."""
+    sec = sticking_section(profile, thickness)
+    if not sec:
+        return None
+    w = max(u for u, v in sec)
+    if w <= 1e-9:
+        return None
+    curve = [(w - u, v) for (u, v) in sec]
+    # Trim the straight run to the door back that sticking_section
+    # appends / the drawing carries at the opening edge: the strip ends
+    # at the curve's own depth (or the panel plane), not the door back.
+    while len(curve) > 1 and curve[-1][0] >= w - 1e-9 \
+            and curve[-2][0] >= w - 1e-9:
+        curve.pop()
+    vb = panel_front if panel_front is not None \
+        else max(v for u, v in curve)
+    vb = min(vb, thickness)
+    curve = [(u, min(v, vb)) for (u, v) in curve]
+    loop = []
+    for p in curve:
+        if not loop or abs(p[0] - loop[-1][0]) > 1e-9 \
+                or abs(p[1] - loop[-1][1]) > 1e-9:
+            loop.append(p)
+    if len(loop) < 2:
+        return None
+    if loop[-1][1] < vb - 1e-9:
+        loop.append((loop[-1][0], vb))
+    if loop[-1][0] > 1e-9:
+        loop.append((0.0, vb))
+    if abs(loop[0][0]) > 1e-9 or abs(loop[0][1]) > 1e-9:
+        loop.insert(0, (0.0, 0.0))
+    # counter-clockwise in (u, v)
+    area = 0.0
+    n = len(loop)
+    for i in range(n):
+        a = loop[i]
+        b = loop[(i + 1) % n]
+        area += a[0] * b[1] - b[0] * a[1]
+    if area < 0.0:
+        loop.reverse()
+    return loop
+
+
+def applied_strip(profile, side='OUT', panel_front=None):
+    """APPLIED profile -> decorative applied molding loop, swept around
+    an opening like the sticking strip. Drawings are closed molding
+    cross-sections positioned by their own coordinates, x measured
+    from the opening edge, and read per ``side``:
+
+    OUT -- seats proud ON the door face: +x runs outward onto the
+    frame, y is the height proud of the face (u = -x, v = -y).
+    IN  -- seats on the recessed panel INSIDE the opening: +x runs
+    into the opening, y is the height up from the panel plane
+    (u = +x, v = panel_front - y).
+
+    The drawing owns its placement -- moving the curve in its .blend
+    moves the molding on the door. Returns a CLOSED counter-clockwise
+    loop."""
+    pts = profile['points']
+    if len(pts) < 3:
+        return None
+    if side == 'IN':
+        base = panel_front if panel_front is not None else 0.0
+        loop = [(p[0], base - p[1]) for p in pts]
+    else:
+        loop = [(-p[0], -p[1]) for p in pts]
+    area = 0.0
+    n = len(loop)
+    for i in range(n):
+        a = loop[i]
+        b = loop[(i + 1) % n]
+        area += a[0] * b[1] - b[0] * a[1]
+    if area < 0.0:
+        loop.reverse()
+    return loop
+
+
+def member_section(profile, thickness):
+    """MITERED profile -> full-member sweep section.
+
+    Mitered doors have no flat face: the entire member cross-section is
+    one molding profile, mitred at the door corners. Drawings are OPEN
+    polylines in (x, y) = (across the member from the OUTER edge, depth
+    from the front-most surface), covering the outer edge line, the
+    shaped face, and the drop down the opening edge -- the sweep uses
+    them as-is. Returns [(u, v), ...] ordered outer-edge end first,
+    both ends closed to the door back so the sweep seals the outer
+    edge and the opening wall. The member width (max u) becomes the
+    frame width for layout."""
+    pts = list(profile['points'])
+    if len(pts) < 2:
+        return None
+    u0 = min(p[0] for p in pts)
+    v0 = min(p[1] for p in pts)
+    pts = [(p[0] - u0, p[1] - v0) for p in pts]
+    if pts[0][0] > pts[-1][0]:
+        pts.reverse()
+    pts = [(u, min(v, thickness)) for (u, v) in pts]
+    if pts[0][1] < thickness - 1e-9:
+        pts.insert(0, (pts[0][0], thickness))
+    if pts[-1][1] < thickness - 1e-9:
+        pts.append((pts[-1][0], thickness))
+    return pts
 
 
 def profile_from_object(ob, res=16):

@@ -245,36 +245,27 @@ def _panel_grid(info, width, height):
     return [sorted(rows[k]) for k in sorted(rows)]
 
 
-def build_frame_geometry(info, width, height, thickness,
-                         outer_section=None, inner_section=None):
-    """The 5-piece FRAME with profiled edges, as (verts, faces, slots)
-    in front-cutpart local space (same space as build_door_mesh; slots
-    index the stile / rail / panel materials). Panels are the caller's
-    job.
+def build_mitered_frame(info, width, height, thickness, member_section):
+    """A MITERED door's frame as (verts, faces, slots) in front-cutpart
+    local space (same space as build_door_mesh; slots index the stile /
+    rail / panel materials). Panels are the caller's job.
 
-    The frame is built as swept bands plus flat lattices instead of
-    per-member boxes: the outer section sweeps the door perimeter and
-    the inner (sticking) section sweeps each panel opening, mitred at
-    the corners -- which is also how cope-and-stick reads from the
-    front. Flat front / back faces fill between the bands: four quads
-    from the outer band to the openings' hull, strips between the
-    openings across mid rails / mid stiles. A None section is a square
-    edge (a plain wall), so any mix of outer / inner / no profile
-    builds through the same path.
-
-    Sections are [(u, v), ...] from door_profiles.edge_profile_section:
-    u across the face from the member edge, v from the front face,
-    ordered front end first.
+    The whole member cross-section is one molding profile: a single
+    sweep around the door, mitred at the corners, covers the outer
+    edge, the shaped face, and the opening walls (the section carries
+    all three -- door_profiles.member_section: u across the member from
+    the OUTER edge, v from the front face, both ends closed to the door
+    back). Only the flat BACK face is filled separately: four quads
+    from the door rect to the openings' hull plus strips across any
+    mid members.
     """
-    sq = [(0.0, 0.0), (0.0, thickness)]
-    osec = outer_section or sq
-    isec = inner_section or sq
     W, H, T = width, height, thickness
     rows = _panel_grid(info, W, H)
     if not rows:
         return [], [], []
 
     verts, faces, slots = [], [], []
+    side_slots = (1, 0, 1, 0)   # bottom, right, top, left
 
     def emit(x, z, v):
         # Door-local (x across from left, z up, v deep from the front
@@ -282,82 +273,163 @@ def build_frame_geometry(info, width, height, thickness,
         verts.append((z, -x, T - v))
         return len(verts) - 1
 
-    def quad(a, b, c, d, slot):
-        faces.append((a, b, c, d))
-        slots.append(slot)
+    corners = ((0.0, 0.0), (W, 0.0), (W, H), (0.0, H))
+    dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
+    n = len(member_section)
+    base = len(verts)
+    for (cx, cz), (dx, dz) in zip(corners, dirs):
+        for (u, v) in member_section:
+            emit(cx + dx * u, cz + dz * u, v)
+    for c in range(4):
+        a = base + c * n
+        b = base + ((c + 1) % 4) * n
+        for k in range(n - 1):
+            faces.append((a + k, a + k + 1, b + k + 1, b + k))
+            slots.append(side_slots[c])
 
-    _SIDE_SLOTS = (1, 0, 1, 0)   # bottom, right, top, left
-
-    def ring(x0, z0, x1, z1, section, outward, flip):
-        """Mitred sweep of ``section`` around a rect; u offsets run
-        into the rect (outward=False, door perimeter) or away from it
-        (outward=True, panel openings)."""
-        corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
-        dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
-        s = -1.0 if outward else 1.0
-        n = len(section)
-        base = len(verts)
-        for (cx, cz), (dx, dz) in zip(corners, dirs):
-            for (u, v) in section:
-                emit(cx + s * dx * u, cz + s * dz * u, v)
-        for c in range(4):
-            a = base + c * n
-            b = base + ((c + 1) % 4) * n
-            for k in range(n - 1):
-                q = (a + k, a + k + 1, b + k + 1, b + k)
-                if flip:
-                    q = q[::-1]
-                quad(*q, _SIDE_SLOTS[c])
-
-    def rect_quad(x0, z0, x1, z1, v, slot, flip):
+    # Flat back face: door rect down to the openings' hull, strips
+    # across the mid members.
+    def back_quad(x0, z0, x1, z1, slot):
         if x1 - x0 <= 1e-9 or z1 - z0 <= 1e-9:
             return
-        a = emit(x0, z0, v)
-        b = emit(x1, z0, v)
-        c = emit(x1, z1, v)
-        d = emit(x0, z1, v)
-        q = (a, b, c, d) if not flip else (d, c, b, a)
-        quad(*q, slot)
+        a = emit(x0, z0, T)
+        b = emit(x1, z0, T)
+        c = emit(x1, z1, T)
+        d = emit(x0, z1, T)
+        faces.append((d, c, b, a))
+        slots.append(slot)
 
-    def lattice(o_off, s_off, v, flip):
-        """Flat lattice at depth v: four quads between the outer band's
-        inner rect and the openings' offset hull, then strips across
-        the mid members."""
-        ox0, oz0 = o_off, o_off
-        ox1, oz1 = W - o_off, H - o_off
-        fx0 = min(c[0] for r in rows for c in r) - s_off
-        fx1 = max(c[2] for r in rows for c in r) + s_off
-        fz0 = rows[0][0][1] - s_off
-        fz1 = rows[-1][0][3] + s_off
-        # Clamp the hull inside the outer rect (huge profiles on tiny
-        # members would otherwise cross).
-        fx0 = max(fx0, ox0); fz0 = max(fz0, oz0)
-        fx1 = min(fx1, ox1); fz1 = min(fz1, oz1)
-        Ac = ((ox0, oz0), (ox1, oz0), (ox1, oz1), (ox0, oz1))
-        Bc = ((fx0, fz0), (fx1, fz0), (fx1, fz1), (fx0, fz1))
-        for c in range(4):
-            a0 = emit(*Ac[c], v)
-            a1 = emit(*Ac[(c + 1) % 4], v)
-            b1 = emit(*Bc[(c + 1) % 4], v)
-            b0 = emit(*Bc[c], v)
-            q = (a0, a1, b1, b0) if not flip else (b0, b1, a1, a0)
-            quad(*q, _SIDE_SLOTS[c])
-        for r in range(len(rows) - 1):
-            rect_quad(fx0, rows[r][0][3] + s_off,
-                      fx1, rows[r + 1][0][1] - s_off, v, 1, flip)
-        for row in rows:
-            for c in range(len(row) - 1):
-                rect_quad(row[c][2] + s_off, row[c][1] - s_off,
-                          row[c + 1][0] - s_off, row[c][3] + s_off,
-                          v, 0, flip)
-
-    ring(0.0, 0.0, W, H, osec, outward=False, flip=False)
+    fx0 = min(c[0] for r in rows for c in r)
+    fx1 = max(c[2] for r in rows for c in r)
+    fz0 = rows[0][0][1]
+    fz1 = rows[-1][0][3]
+    Bc = ((fx0, fz0), (fx1, fz0), (fx1, fz1), (fx0, fz1))
+    for c in range(4):
+        a0 = emit(*corners[c], T)
+        a1 = emit(*corners[(c + 1) % 4], T)
+        b1 = emit(*Bc[(c + 1) % 4], T)
+        b0 = emit(*Bc[c], T)
+        faces.append((b0, b1, a1, a0))
+        slots.append(side_slots[c])
+    for r in range(len(rows) - 1):
+        back_quad(fx0, rows[r][0][3], fx1, rows[r + 1][0][1], 1)
     for row in rows:
-        for (cx0, cz0, cx1, cz1) in row:
-            ring(cx0, cz0, cx1, cz1, isec, outward=True, flip=True)
-    lattice(osec[0][0], isec[0][0], 0.0, flip=False)
-    lattice(osec[-1][0], isec[-1][0], T, flip=True)
+        for c in range(len(row) - 1):
+            back_quad(row[c][2], row[c][1], row[c + 1][0], row[c][3], 0)
     return verts, faces, slots
+
+
+def _resample_loop(loop, n):
+    """Resample a CLOSED loop to n points by cumulative length."""
+    if len(loop) == n:
+        return list(loop)
+    m = len(loop)
+    d = [0.0]
+    for i in range(m):
+        a = loop[i]
+        b = loop[(i + 1) % m]
+        d.append(d[-1] + ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5)
+    total = d[-1] or 1.0
+    out = []
+    j = 0
+    for k in range(n):
+        t = total * k / n
+        while j < m - 1 and d[j + 1] < t:
+            j += 1
+        a = loop[j]
+        b = loop[(j + 1) % m]
+        seg = (d[j + 1] - d[j]) or 1.0
+        f = (t - d[j]) / seg
+        out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+    return out
+
+
+def _emit_strip_rings(verts, faces, slots, part, thickness,
+                      loop_rail, loop_stile, scope='ALL'):
+    """Applied sticking strip around one opening cell: a closed
+    cross-section swept along the opening perimeter, mitred at the
+    corners like a real applied molding, seated against the
+    rectangular members. u runs from the member edge INTO the opening,
+    v from the front face. With different rail / stile loops the
+    corner mitre planes are closed with transition strips. Skipped
+    (returns False) when the cell is too small for the strips."""
+    x0, x1 = part['x0'], part['x1']
+    z0, z1 = part['z0'], part['z1']
+    wr = max(u for u, v in loop_rail)
+    ws = max(u for u, v in loop_stile)
+    if x1 - x0 <= 2.0 * ws + 1e-6 or z1 - z0 <= 2.0 * wr + 1e-6:
+        return False
+
+    def emit(x, z, v):
+        verts.append((z, -x, thickness - v))
+        return len(verts) - 1
+
+    if scope == 'RAILS':
+        # Straight strips along the opening's top and bottom edges
+        # only, flat ends at the vertical opening edges closed with
+        # the loop cross-section as an ngon cap.
+        n = len(loop_rail)
+        for edge_z, dz, flip in ((z1, -1.0, False), (z0, 1.0, True)):
+            b0 = len(verts)
+            for (u, v) in loop_rail:
+                emit(x0, edge_z + dz * u, v)
+            b1 = len(verts)
+            for (u, v) in loop_rail:
+                emit(x1, edge_z + dz * u, v)
+            for k in range(n):
+                k2 = (k + 1) % n
+                q = (b0 + k, b0 + k2, b1 + k2, b1 + k)
+                if flip:
+                    q = q[::-1]
+                faces.append(q)
+                slots.append(_PART_MAT_SLOT['mid_rail'])
+            caps = ((b0, not flip), (b1, flip))
+            for base, rev in caps:
+                idx = list(range(base, base + n))
+                if rev:
+                    idx.reverse()
+                faces.append(tuple(idx))
+                slots.append(_PART_MAT_SLOT['mid_rail'])
+        return True
+
+    mixed = loop_rail is not loop_stile
+    if mixed:
+        n = max(len(loop_rail), len(loop_stile))
+        lr = _resample_loop(loop_rail, n)
+        ls = _resample_loop(loop_stile, n)
+    else:
+        lr = ls = loop_rail
+        n = len(lr)
+    corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+    dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
+    secs = (lr, ls, lr, ls)   # bottom, right, top, left
+    rings = []
+    for c in range(4):
+        sec = secs[c]
+        bases = []
+        for cc in (c, (c + 1) % 4):
+            base = len(verts)
+            cx, cz = corners[cc]
+            dx, dz = dirs[cc]
+            for (u, v) in sec:
+                emit(cx + dx * u, cz + dz * u, v)
+            bases.append(base)
+        b0, b1 = bases
+        for k in range(n):
+            k2 = (k + 1) % n
+            faces.append((b0 + k, b0 + k2, b1 + k2, b1 + k))
+            slots.append(_PART_MAT_SLOT['mid_rail' if c % 2 == 0
+                                        else 'mid_stile'])
+        rings.append((b0, b1))
+    if mixed:
+        for c in range(4):
+            a = rings[c][1]
+            b = rings[(c + 1) % 4][0]
+            for k in range(n):
+                k2 = (k + 1) % n
+                faces.append((a + k, a + k2, b + k2, b + k))
+                slots.append(_PART_MAT_SLOT['mid_rail'])
+    return True
 
 
 def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section):
@@ -410,7 +482,9 @@ def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section):
 
 def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     outer_section=None, inner_section=None,
-                    panel_section=None):
+                    panel_section=None, inner_rail_section=None,
+                    inner_stile_section=None, member_section=None,
+                    applied_section=None, applied_scope='ALL'):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -420,37 +494,41 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     sides from their names. The front face is at z=thickness; panels
     sit back from it by their y_inset and use their own thickness.
 
-    With an outer / inner edge section (door_profiles.
-    edge_profile_section) the FRAME comes from build_frame_geometry --
-    profiled bands swept around the perimeter / openings -- and only
-    the panels stay boxes. With ``panel_section`` (door_profiles.
-    panel_profile_section) panels build as raised panels instead,
-    falling back to the flat box per cell when the cell is too small
-    for the raise; the panel section combines freely with or without
-    frame sections.
+    FRAMED doors keep every member a rectangular box part (stiles full
+    height, rails between) and render the inside profile as an APPLIED
+    STICKING STRIP: a closed cross-section (door_profiles.
+    sticking_strip) swept around each opening perimeter, mitred at the
+    corners like a real applied molding, via inner_section (or
+    inner_rail_section / inner_stile_section for series that run
+    different strips on rails and stiles). MITERED doors pass
+    member_section instead and build through build_frame_geometry.
+    With ``panel_section`` (door_profiles.panel_profile_section) panels
+    build as raised panels instead, falling back to the flat box per
+    cell when the cell is too small for the raise. outer_section is
+    currently inert for framed doors (box edges stay square).
 
     ``materials`` is an optional (stile, rail, panel) triple assigned
     as the mesh's material slots; face material indices are set either
     way (mid stiles index as stiles, mid rails as rails). Zero-size
     members (e.g. a per-side stile width of 0.0) are skipped.
     """
-    profiled = ((outer_section is not None or inner_section is not None)
-                and info.get('door_type') != 'SLAB')
-    if profiled:
-        verts, faces, face_slots = build_frame_geometry(
-            info, width, height, thickness, outer_section, inner_section)
-        verts = list(verts)
-        faces = list(faces)
-        face_slots = list(face_slots)
+    mitered = (member_section is not None
+               and info.get('door_type') != 'SLAB')
+    if mitered:
+        verts, faces, face_slots = build_mitered_frame(
+            info, width, height, thickness, member_section)
     else:
         verts = []
         faces = []
         face_slots = []
+    cells = []
     for part in evaluate_layout(info, width, height):
-        if profiled and part['key'] != 'panel':
+        if mitered and part['key'] != 'panel':
             continue
         if part['x1'] - part['x0'] <= 0.0 or part['z1'] - part['z0'] <= 0.0:
             continue
+        if part['key'] == 'panel':
+            cells.append(part)
         if (part['key'] == 'panel' and panel_section is not None
                 and _emit_raised_panel(verts, faces, face_slots, part,
                                        thickness, panel_section)):
@@ -467,6 +545,26 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                       (b, b + 1, b + 5, b + 4), (b + 1, b + 2, b + 6, b + 5),
                       (b + 2, b + 3, b + 7, b + 6), (b + 3, b, b + 4, b + 7)])
         face_slots.extend([_PART_MAT_SLOT[part['key']]] * 6)
+    # Applied sticking strips: members stay rectangular parts; the
+    # inside profile sweeps each opening perimeter as its own molding
+    # loop seated against them.
+    if (not mitered and info.get('door_type') != 'SLAB'
+            and (inner_section is not None
+                 or inner_rail_section is not None
+                 or inner_stile_section is not None)):
+        lr = inner_rail_section or inner_section or inner_stile_section
+        ls = inner_stile_section or inner_section or inner_rail_section
+        for part in cells:
+            _emit_strip_rings(verts, faces, face_slots, part, thickness,
+                              lr, ls)
+    # Applied decorative molding: another loop around each opening,
+    # seated proud on the door face (door_profiles.applied_strip).
+    if (not mitered and info.get('door_type') != 'SLAB'
+            and applied_section is not None):
+        for part in cells:
+            _emit_strip_rings(verts, faces, face_slots, part, thickness,
+                              applied_section, applied_section,
+                              scope=applied_scope)
     mesh.clear_geometry()
     mesh.from_pydata(verts, [], faces)
     # Slots first: clearing materials drops the material_index layer.

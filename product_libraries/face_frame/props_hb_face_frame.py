@@ -3208,6 +3208,10 @@ class Face_Frame_Door_Style(PropertyGroup):
             front_width = part.get_input("Width")
         except Exception:
             return "Could not read front dimensions"
+        try:
+            front_thickness = part.get_input("Thickness")
+        except Exception:
+            front_thickness = units.inch(0.75)
 
         # Auto-add a centered mid rail above 45.5" so tall doors are
         # split. Matches the frameless convention.
@@ -3235,6 +3239,27 @@ class Face_Frame_Door_Style(PropertyGroup):
             eff_right_stile = front_obj.get('HB_FRAME_OVR_RIGHT_STILE', self.stile_width)
             eff_top_rail    = front_obj.get('HB_FRAME_OVR_TOP_RAIL',    self.rail_width)
             eff_bottom_rail = front_obj.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
+
+        # Mitered series: the member cross-section IS the profile; its
+        # width becomes the frame width on all four sides (mitred
+        # corners need equal members) and per-side overrides don't
+        # apply.
+        member_sec = None
+        if not getattr(self, 'unlock_profiles', False):
+            from ..common import door_profiles as _dprof
+            _mname = style_options.profiles_for_series(
+                self.front_series).get('member')
+            if _mname:
+                try:
+                    member_sec = _dprof.member_section(
+                        _dprof.load_profile('MITERED', _mname),
+                        front_thickness)
+                except Exception:
+                    member_sec = None
+        if member_sec is not None:
+            mw = max(u for u, v in member_sec)
+            eff_left_stile = eff_right_stile = mw
+            eff_top_rail = eff_bottom_rail = mw
 
         # Locked NONE mode removes the mid rail entirely, overriding both the
         # style's add_mid_rail and the tall-door auto rail.
@@ -3280,6 +3305,20 @@ class Face_Frame_Door_Style(PropertyGroup):
         # override also forces a mid rail on. Resolved here to plain values
         # (on / centered / absolute centerline from the bottom) so both
         # geometry paths consume the same decision.
+        # Center panel construction by panel choice: Raised choices use
+        # the series' raised spec (the style's panel fields, typically
+        # thick and front-flush); every other choice is a RECESSED
+        # panel referenced off the BACK of the door (1/4" held 1/8"
+        # forward by default -- style_options.recessed_panel_spec).
+        eff_panel_th = self.panel_thickness
+        eff_panel_inset = self.panel_inset
+        if 'Raised' not in (self.front_panel or ''):
+            rp = style_options.recessed_panel_spec(self.front_series)
+            eff_panel_th = units.inch(rp['thickness'])
+            eff_panel_inset = max(
+                front_thickness - units.inch(rp['thickness'] + rp['back_inset']),
+                0.0)
+
         mid_on = False
         mid_center = True
         mid_loc = 0.0
@@ -3326,6 +3365,10 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_center = self.center_mid_rail
                 if not mid_center:
                     mid_loc = self.mid_rail_location
+        if member_sec is not None:
+            # A mitered door is one continuous molding loop -- no mid
+            # rail geometry exists for it.
+            mid_on = False
 
         if door_builder.USE_PYTHON_DOORS:
             # Python-built door: static boxes in the front's own mesh. The
@@ -3335,10 +3378,6 @@ class Face_Frame_Door_Style(PropertyGroup):
             for mod in list(front_obj.modifiers):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
-            try:
-                front_thickness = part.get_input("Thickness")
-            except Exception:
-                front_thickness = units.inch(0.75)
             info = door_builder.door_style_info(self)
             info.update(
                 door_type='5_PIECE',
@@ -3346,6 +3385,8 @@ class Face_Frame_Door_Style(PropertyGroup):
                 right_stile_width=eff_right_stile,
                 top_rail_width=eff_top_rail,
                 bottom_rail_width=eff_bottom_rail,
+                panel_thickness=eff_panel_th,
+                panel_inset=eff_panel_inset,
                 add_mid_rail=False,
                 mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
                             if mid_on else None),
@@ -3374,30 +3415,84 @@ class Face_Frame_Door_Style(PropertyGroup):
                         pr, front_thickness)
             except Exception:
                 outer_sec = None
+            # Recessed panels seat the sticking strip on the panel
+            # plane; raised panels let it run to its natural depth.
+            _strip_floor = (eff_panel_inset
+                            if 'Raised' not in (self.front_panel or '')
+                            else None)
             try:
                 pr = _resolve_profile(self.inside_profile,
                                       getattr(self, 'inside_profile_name', ''),
                                       'INNER')
                 if pr is not None:
-                    inner_sec = door_profiles.sticking_section(
-                        pr, front_thickness)
+                    inner_sec = door_profiles.sticking_strip(
+                        pr, front_thickness, _strip_floor)
             except Exception:
                 inner_sec = None
+            # Split rail / stile sticking (series-driven only): some
+            # series carve the opening's horizontal and vertical edges
+            # with different cutters (SERIES_PROFILES inside_rail /
+            # inside_stile). Hand-picked profiles apply to all sides.
+            rail_sec = stile_sec = None
+            if member_sec is not None:
+                # The member profile carries the whole face; the other
+                # sweeps don't apply.
+                outer_sec = inner_sec = None
+            if not _unlocked and member_sec is None:
+                sprof = style_options.profiles_for_series(self.front_series)
+                for key, cur in (('inside_rail', 'rail'),
+                                 ('inside_stile', 'stile')):
+                    name = sprof.get(key)
+                    if not name:
+                        continue
+                    try:
+                        s = door_profiles.sticking_strip(
+                            door_profiles.load_profile('INNER', name),
+                            front_thickness, _strip_floor)
+                    except Exception:
+                        s = None
+                    if cur == 'rail':
+                        rail_sec = s
+                    else:
+                        stile_sec = s
             try:
                 pr = _resolve_profile(getattr(self, 'panel_profile', None),
                                       getattr(self, 'panel_profile_name', ''),
                                       'PANEL')
                 if pr is not None:
                     panel_sec = door_profiles.panel_profile_section(
-                        pr, front_thickness - max(self.panel_inset, 0.0))
+                        pr, front_thickness - max(eff_panel_inset, 0.0))
             except Exception:
                 panel_sec = None
+            # Applied decorative molding (series-driven): OUT moldings
+            # seat proud on the door face, IN moldings on the recessed
+            # panel inside the opening; scope RAILS runs top / bottom
+            # only (Brunswick).
+            applied_sec = None
+            applied_scope = 'ALL'
+            if not _unlocked and member_sec is None:
+                _aprof = style_options.profiles_for_series(self.front_series)
+                _aname = _aprof.get('applied')
+                if _aname:
+                    applied_scope = _aprof.get('applied_scope', 'ALL')
+                    try:
+                        applied_sec = door_profiles.applied_strip(
+                            door_profiles.load_profile('APPLIED', _aname),
+                            side=_aprof.get('applied_side', 'OUT'),
+                            panel_front=eff_panel_inset)
+                    except Exception:
+                        applied_sec = None
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
                                          outer_section=outer_sec,
                                          inner_section=inner_sec,
-                                         panel_section=panel_sec)
+                                         panel_section=panel_sec,
+                                         inner_rail_section=rail_sec,
+                                         inner_stile_section=stile_sec,
+                                         member_section=member_sec,
+                                         applied_section=applied_sec,
+                                         applied_scope=applied_scope)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
                 cut.show_viewport = False
@@ -3440,8 +3535,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             door_style_mod.set_input("Right Stile Width", eff_left_stile)
             door_style_mod.set_input("Top Rail Width", eff_top_rail)
             door_style_mod.set_input("Bottom Rail Width", eff_bottom_rail)
-            door_style_mod.set_input("Panel Thickness", self.panel_thickness)
-            door_style_mod.set_input("Panel Inset", self.panel_inset)
+            door_style_mod.set_input("Panel Thickness", eff_panel_th)
+            door_style_mod.set_input("Panel Inset", eff_panel_inset)
 
             try:
                 door_style_mod.set_input("Add Mid Rail", mid_on)

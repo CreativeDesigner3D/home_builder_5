@@ -5097,22 +5097,54 @@ def series_is_slab(series):
 # names that match a series; series without a match render square
 # until their profiles are filled in here.
 SERIES_PROFILES = {
-    'Brunswick':   {'inside': 'InsideBrunswickDoorProfile'},
+    'Beckony':     {'inside': 'DIP_Deco2',
+                    'applied': 'AppliedProfileBECKONY'},
+    'Benton':      {'inside': 'DIP_Deco2'},
+    # Brunswick / Kelli: the ogee is an APPLIED molding seated on the
+    # recessed panel inside the opening -- top and bottom only for
+    # Brunswick (square stiles), all the way around for Kelli. No
+    # sticking on either.
+    'Brunswick':   {'applied': 'AppliedProfileBRUNSWICK',
+                    'applied_side': 'IN', 'applied_scope': 'RAILS'},
+    'Kelli':       {'applied': 'AppliedProfileBRUNSWICK',
+                    'applied_side': 'IN'},
     'Century':     {'inside': 'InsideCentryDoorProfile',
                     'panel': 'PanelProfileCurved'},
-    'Classic':     {'panel': 'PanelProfileClassic'},
-    'Colonial':    {'panel': 'PanelProfileColonial'},
+    'Classic':     {'inside': 'DIP_Deco2',
+                    'panel': 'PanelProfileClassic'},
+    'Clover':      {'inside': 'DIP_Deco2',
+                    'applied': 'AppliedProfileClover'},
+    'Colonial':    {'inside': 'DIP_Deco2',
+                    'panel': 'PanelProfileColonial'},
     'Craftsman':   {'inside': 'InsideCraftsmanDoorProfile'},
+    'Fairway':     {'inside': 'DIP_Deco2'},
     'Hampton':     {'inside': 'InsideHamptonDoorProfile'},
     'Havana':      {'inside': 'InsideHavanaDoorProfile',
                     'panel': 'PanelProfileHavana'},
     'Highlander':  {'panel': 'PanelProfileHighlander'},
     'Joviso':      {'panel': 'PanelProfileJoviso'},
+    # Mitered series: one full-member molding profile swept around the
+    # door ('member' names into Mitered Profiles; frame widths derive
+    # from the profile width).
+    'Harmony':     {'member': 'MiteredHarmony'},
     'Marketplace': {'inside': 'InsideMarketplaceDoorProfile'},
-    'Melville':    {'inside': 'DIP_Chamfer2'},
+    'Melville':    {'member': 'MiteredMelville'},
+    'Nantucket':   {'member': 'MiteredNantucket'},
+    'Providence':  {'member': 'MiteredProvidence'},
+    # Montana carves rails and stiles differently: the shared cove on
+    # the rails, a plain chamfer on the stiles (stile cutter pick is
+    # provisional -- confirm which DIP_Chamfer).
+    'Montana':     {'inside_rail': 'DIP_Deco2',
+                    'inside_stile': 'DIP_Chamfer2',
+                    'panel': 'PanelProfileColonial'},
     'Metro':       {'inside': 'InsideMetroDoorProfile'},
     'Traditional': {'inside': 'InsideTraditionalDoorProfile',
                     'panel': 'PanelProfileCurved'},
+    # Victorian: bolection-style applied molding seated on the panel,
+    # lip riding up over the frame face (the drawing encodes its own
+    # overhang). No sticking.
+    'Victorian':   {'applied': 'AppliedProfileVICTORIAN',
+                    'applied_side': 'IN'},
 }
 
 
@@ -5121,6 +5153,20 @@ def profiles_for_series(series):
     names into the shipped door_profiles library. Empty when the series
     has no mapped profiles (square edges, flat panel)."""
     return SERIES_PROFILES.get(series, {})
+
+
+# Recessed (flat) center panel construction, applied to every
+# non-Raised panel choice regardless of the series' raised spec: a
+# 1/4" panel held 1/8" off the BACK of the door (CWP standard).
+# SERIES_RECESSED overrides per series when one deviates. Inches.
+RECESSED_PANEL = {'thickness': 0.25, 'back_inset': 0.125}
+SERIES_RECESSED = {}
+
+
+def recessed_panel_spec(series):
+    spec = dict(RECESSED_PANEL)
+    spec.update(SERIES_RECESSED.get(series, {}))
+    return spec
 
 
 # === Special effects (baked from the upcharge compatibility matrix) ===
