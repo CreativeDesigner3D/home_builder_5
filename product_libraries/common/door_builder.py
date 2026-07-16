@@ -19,6 +19,8 @@ mesh in cutpart-local space); a driven builder (the wood hood) composes
 them into driver expressions so the parts track their cage.
 """
 
+import math
+
 from ...units import inch
 
 
@@ -480,6 +482,83 @@ def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section):
     return True
 
 
+def _groove_section(style):
+    """Cross-section of one panel groove: [(du, dv), ...] walked left
+    to right across the groove (du in [-half, +half] off the groove
+    centerline, dv depth into the panel face, 0 at the face). KERF is
+    a plain square kerf slot; BEAD is the classic quirk-bead-quirk
+    beadboard cut with the bead crest just below the face."""
+    if style == 'KERF':
+        hw = inch(0.0625)                 # 1/8 wide slot
+        d = inch(0.09375)                 # 3/32 deep
+        return [(-hw, 0.0), (-hw, d), (hw, d), (hw, 0.0)]
+    q = inch(0.0625)                      # quirk width each side
+    r = inch(0.09)                        # bead radius
+    d = inch(0.11)                        # quirk depth (crest d - r below face)
+    pts = [(-(r + q), 0.0), (-(r + q), d)]
+    for i in range(13):
+        a = math.pi * i / 12.0
+        pts.append((-r * math.cos(a), d - r * math.sin(a)))
+    pts += [(r + q, d), (r + q, 0.0)]
+    return pts
+
+
+def _emit_grooved_panel(verts, faces, slots, part, thickness, grooves):
+    """Flat recessed panel as a full-height prism with groove
+    cross-sections cut into its front face (beadboard / kerf-grooved
+    panel choices). Grooves run vertically at ``grooves['spacing']``,
+    the pattern centered so the middle plank straddles the panel
+    centerline; grooves that would land within a margin of the panel
+    edge are dropped. Returns False -- the caller keeps the plain
+    box -- when no groove fits."""
+    x0, x1 = part['x0'], part['x1']
+    z0, z1 = part['z0'], part['z1']
+    th = thickness if part['thickness'] is None else part['thickness']
+    zf = thickness - part['y_inset']
+    zb = zf - th
+    width = x1 - x0
+    spacing = grooves.get('spacing', 0.0)
+    if spacing <= 0.0 or zb < 0.0:
+        return False
+    sec = _groove_section(grooves.get('style', 'BEAD'))
+    hw = max(du for du, dv in sec)
+    if max(dv for du, dv in sec) >= th:
+        return False
+    margin = max(2.0 * hw, 0.004)
+    k = 1 + int(width / spacing)
+    centers = []
+    for i in range(-k, k + 1):
+        c = width / 2.0 + (i + 0.5) * spacing
+        if c - hw >= margin and c + hw <= width - margin:
+            centers.append(c)
+    if not centers:
+        return False
+    centers.sort()
+    # Closed cross-section loop in (layout x, depth): back face, up the
+    # right edge, then the front face right to left with the grooves
+    # dropped in, closing down the left edge.
+    loop = [(x0, zb), (x1, zb), (x1, zf)]
+    for c in reversed(centers):
+        for du, dv in reversed(sec):
+            loop.append((x0 + c + du, zf - dv))
+    loop.append((x0, zf))
+    n = len(loop)
+    base = len(verts)
+    for xm in (z0, z1):
+        for (lx, dz) in loop:
+            verts.append((xm, -lx, dz))
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((base + i, base + n + i, base + n + j, base + j))
+        slots.append(2)
+    # End caps (planar concave ngons; buried against the rails).
+    faces.append(tuple(base + i for i in range(n)))
+    slots.append(2)
+    faces.append(tuple(base + 2 * n - 1 - i for i in range(n)))
+    slots.append(2)
+    return True
+
+
 # Part keys whose boxes may carry the door's outer edge profile. Panels
 # and mid members never do: a zero-width outer member exposing them to
 # the outline is the butted-mirror-pair case, where the shared edge is
@@ -552,7 +631,8 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     outer_section=None, inner_section=None,
                     panel_section=None, inner_rail_section=None,
                     inner_stile_section=None, member_section=None,
-                    applied_section=None, applied_scope='ALL'):
+                    applied_section=None, applied_scope='ALL',
+                    panel_grooves=None):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -572,7 +652,10 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     member_section instead and build through build_frame_geometry.
     With ``panel_section`` (door_profiles.panel_profile_section) panels
     build as raised panels instead, falling back to the flat box per
-    cell when the cell is too small for the raise. outer_section (an
+    cell when the cell is too small for the raise; ``panel_grooves``
+    (dict(style='BEAD'|'KERF', spacing=<m>), ignored when a raise is
+    active) cuts vertical beadboard / kerf grooves into flat panels
+    via _emit_grooved_panel. outer_section (an
     edge_profile_section / named_edge_section sweep section) cuts the
     door's outer edge profile into the members and slabs whose sides
     lie on the door outline (_emit_edge_profiled_box), falling back to
@@ -603,6 +686,11 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
         if (part['key'] == 'panel' and panel_section is not None
                 and _emit_raised_panel(verts, faces, face_slots, part,
                                        thickness, panel_section)):
+            continue
+        if (part['key'] == 'panel' and panel_section is None
+                and panel_grooves is not None
+                and _emit_grooved_panel(verts, faces, face_slots, part,
+                                        thickness, panel_grooves)):
             continue
         if (outer_section is not None and not mitered
                 and part['key'] in _OUTLINE_EDGE_KEYS

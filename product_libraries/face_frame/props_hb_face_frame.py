@@ -442,7 +442,7 @@ def _apply_series_frame_to_door_style(self):
     if 'panel_thickness' in spec:
         self.panel_thickness = units.inch(spec['panel_thickness'])
     # Profile picks follow the series unless the dealer unlocked them.
-    # The raised-panel profile only applies to a Raised panel choice;
+    # The raised-panel profile only applies to a RAISED panel kind;
     # everything else keeps the flat panel.
     if not getattr(self, 'unlock_profiles', False):
         prof = style_options.profiles_for_series(self.front_series)
@@ -452,7 +452,9 @@ def _apply_series_frame_to_door_style(self):
                        prof.get('inside', 'NONE'))
         _set_enum_safe(self, 'panel_profile_name',
                        prof.get('panel', 'NONE')
-                       if 'Raised' in (self.front_panel or '') else 'NONE')
+                       if style_options.panel_kind(
+                           self.front_panel)['kind'] == 'RAISED'
+                       else 'NONE')
 
 
 def update_front_shape(self, context):
@@ -1931,7 +1933,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 else ff.door_styles)
         for ds in pool:
             if ds.name == ds_name:
-                return getattr(ds, 'front_panel', '') == 'Prep for Glass'
+                return style_options.panel_kind(
+                    getattr(ds, 'front_panel', ''))['kind'] == 'GLASS'
         return False
 
     @staticmethod
@@ -3266,10 +3269,13 @@ class Face_Frame_Door_Style(PropertyGroup):
         if not front_obj.get('MENU_ID'):
             front_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
 
-        # Tag prep-for-glass fronts so the 2D drawing layer can hatch the glass
+        # Tag glass-panel fronts so the 2D drawing layer can hatch the glass
         # panel (Spaces reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
         # Set on every style assignment so it tracks the current panel choice.
-        front_obj['IS_PREP_FOR_GLASS'] = (self.front_panel == 'Prep for Glass')
+        # Covers every GLASS panel kind (Prep for Glass + the mullion
+        # choices, which render as plain glass until the bars land).
+        front_obj['IS_PREP_FOR_GLASS'] = (
+            style_options.panel_kind(self.front_panel)['kind'] == 'GLASS')
 
         from ... import hb_types
         from ..common import door_builder
@@ -3396,18 +3402,22 @@ class Face_Frame_Door_Style(PropertyGroup):
         # override also forces a mid rail on. Resolved here to plain values
         # (on / centered / absolute centerline from the bottom) so both
         # geometry paths consume the same decision.
-        # Center panel construction by panel choice: Raised choices use
-        # the series' raised spec (the style's panel fields, typically
-        # thick and front-flush); every other choice is a RECESSED
-        # panel referenced off the BACK of the door (1/4" held 1/8"
-        # forward by default -- style_options.recessed_panel_spec).
+        # Center panel construction by panel KIND (style_options.
+        # panel_kind): RAISED uses the series' raised spec (the style's
+        # panel fields, typically thick and front-flush); every other
+        # kind is a RECESSED panel referenced off the BACK of the door
+        # (1/4" held 1/8" forward by default -- recessed_panel_spec --
+        # with a per-name thickness override for choices like the 3/8"
+        # MDF Reverse Panel).
+        _pkind = style_options.panel_kind(self.front_panel)
         eff_panel_th = self.panel_thickness
         eff_panel_inset = self.panel_inset
-        if 'Raised' not in (self.front_panel or ''):
+        if _pkind['kind'] != 'RAISED':
             rp = style_options.recessed_panel_spec(self.front_series)
-            eff_panel_th = units.inch(rp['thickness'])
+            _p_th_in = _pkind.get('thickness', rp['thickness'])
+            eff_panel_th = units.inch(_p_th_in)
             eff_panel_inset = max(
-                front_thickness - units.inch(rp['thickness'] + rp['back_inset']),
+                front_thickness - units.inch(_p_th_in + rp['back_inset']),
                 0.0)
 
         mid_on = False
@@ -3518,7 +3528,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             # Recessed panels seat the sticking strip on the panel
             # plane; raised panels let it run to its natural depth.
             _strip_floor = (eff_panel_inset
-                            if 'Raised' not in (self.front_panel or '')
+                            if _pkind['kind'] != 'RAISED'
                             else None)
             try:
                 pr = _resolve_profile(self.inside_profile,
@@ -3582,6 +3592,13 @@ class Face_Frame_Door_Style(PropertyGroup):
                             panel_front=eff_panel_inset)
                     except Exception:
                         applied_sec = None
+            # Grooved panel kinds (beadboard / kerf) cut their vertical
+            # grooves into the flat recessed panel.
+            panel_grv = None
+            if _pkind['kind'] == 'GROOVED':
+                panel_grv = dict(
+                    style=_pkind.get('style', 'BEAD'),
+                    spacing=units.inch(_pkind.get('spacing', 2.0)))
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
@@ -3592,7 +3609,8 @@ class Face_Frame_Door_Style(PropertyGroup):
                                          inner_stile_section=stile_sec,
                                          member_section=member_sec,
                                          applied_section=applied_sec,
-                                         applied_scope=applied_scope)
+                                         applied_scope=applied_scope,
+                                         panel_grooves=panel_grv)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
                 cut.show_viewport = False
