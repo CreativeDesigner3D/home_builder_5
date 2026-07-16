@@ -233,7 +233,184 @@ _PART_MAT_SLOT = {
 }
 
 
-def build_door_mesh(mesh, info, width, height, thickness, materials=None):
+def _panel_grid(info, width, height):
+    """Opening (panel-cell) rects from the layout, grouped into rows:
+    [[(x0, z0, x1, z1), ...], ...] bottom row first, left to right."""
+    rows = {}
+    for p in evaluate_layout(info, width, height):
+        if p['key'] != 'panel':
+            continue
+        rows.setdefault(round(p['z0'], 6), []).append(
+            (p['x0'], p['z0'], p['x1'], p['z1']))
+    return [sorted(rows[k]) for k in sorted(rows)]
+
+
+def build_frame_geometry(info, width, height, thickness,
+                         outer_section=None, inner_section=None):
+    """The 5-piece FRAME with profiled edges, as (verts, faces, slots)
+    in front-cutpart local space (same space as build_door_mesh; slots
+    index the stile / rail / panel materials). Panels are the caller's
+    job.
+
+    The frame is built as swept bands plus flat lattices instead of
+    per-member boxes: the outer section sweeps the door perimeter and
+    the inner (sticking) section sweeps each panel opening, mitred at
+    the corners -- which is also how cope-and-stick reads from the
+    front. Flat front / back faces fill between the bands: four quads
+    from the outer band to the openings' hull, strips between the
+    openings across mid rails / mid stiles. A None section is a square
+    edge (a plain wall), so any mix of outer / inner / no profile
+    builds through the same path.
+
+    Sections are [(u, v), ...] from door_profiles.edge_profile_section:
+    u across the face from the member edge, v from the front face,
+    ordered front end first.
+    """
+    sq = [(0.0, 0.0), (0.0, thickness)]
+    osec = outer_section or sq
+    isec = inner_section or sq
+    W, H, T = width, height, thickness
+    rows = _panel_grid(info, W, H)
+    if not rows:
+        return [], [], []
+
+    verts, faces, slots = [], [], []
+
+    def emit(x, z, v):
+        # Door-local (x across from left, z up, v deep from the front
+        # face) into cutpart-local, matching build_door_mesh's mapping.
+        verts.append((z, -x, T - v))
+        return len(verts) - 1
+
+    def quad(a, b, c, d, slot):
+        faces.append((a, b, c, d))
+        slots.append(slot)
+
+    _SIDE_SLOTS = (1, 0, 1, 0)   # bottom, right, top, left
+
+    def ring(x0, z0, x1, z1, section, outward, flip):
+        """Mitred sweep of ``section`` around a rect; u offsets run
+        into the rect (outward=False, door perimeter) or away from it
+        (outward=True, panel openings)."""
+        corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+        dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
+        s = -1.0 if outward else 1.0
+        n = len(section)
+        base = len(verts)
+        for (cx, cz), (dx, dz) in zip(corners, dirs):
+            for (u, v) in section:
+                emit(cx + s * dx * u, cz + s * dz * u, v)
+        for c in range(4):
+            a = base + c * n
+            b = base + ((c + 1) % 4) * n
+            for k in range(n - 1):
+                q = (a + k, a + k + 1, b + k + 1, b + k)
+                if flip:
+                    q = q[::-1]
+                quad(*q, _SIDE_SLOTS[c])
+
+    def rect_quad(x0, z0, x1, z1, v, slot, flip):
+        if x1 - x0 <= 1e-9 or z1 - z0 <= 1e-9:
+            return
+        a = emit(x0, z0, v)
+        b = emit(x1, z0, v)
+        c = emit(x1, z1, v)
+        d = emit(x0, z1, v)
+        q = (a, b, c, d) if not flip else (d, c, b, a)
+        quad(*q, slot)
+
+    def lattice(o_off, s_off, v, flip):
+        """Flat lattice at depth v: four quads between the outer band's
+        inner rect and the openings' offset hull, then strips across
+        the mid members."""
+        ox0, oz0 = o_off, o_off
+        ox1, oz1 = W - o_off, H - o_off
+        fx0 = min(c[0] for r in rows for c in r) - s_off
+        fx1 = max(c[2] for r in rows for c in r) + s_off
+        fz0 = rows[0][0][1] - s_off
+        fz1 = rows[-1][0][3] + s_off
+        # Clamp the hull inside the outer rect (huge profiles on tiny
+        # members would otherwise cross).
+        fx0 = max(fx0, ox0); fz0 = max(fz0, oz0)
+        fx1 = min(fx1, ox1); fz1 = min(fz1, oz1)
+        Ac = ((ox0, oz0), (ox1, oz0), (ox1, oz1), (ox0, oz1))
+        Bc = ((fx0, fz0), (fx1, fz0), (fx1, fz1), (fx0, fz1))
+        for c in range(4):
+            a0 = emit(*Ac[c], v)
+            a1 = emit(*Ac[(c + 1) % 4], v)
+            b1 = emit(*Bc[(c + 1) % 4], v)
+            b0 = emit(*Bc[c], v)
+            q = (a0, a1, b1, b0) if not flip else (b0, b1, a1, a0)
+            quad(*q, _SIDE_SLOTS[c])
+        for r in range(len(rows) - 1):
+            rect_quad(fx0, rows[r][0][3] + s_off,
+                      fx1, rows[r + 1][0][1] - s_off, v, 1, flip)
+        for row in rows:
+            for c in range(len(row) - 1):
+                rect_quad(row[c][2] + s_off, row[c][1] - s_off,
+                          row[c + 1][0] - s_off, row[c][3] + s_off,
+                          v, 0, flip)
+
+    ring(0.0, 0.0, W, H, osec, outward=False, flip=False)
+    for row in rows:
+        for (cx0, cz0, cx1, cz1) in row:
+            ring(cx0, cz0, cx1, cz1, isec, outward=True, flip=True)
+    lattice(osec[0][0], isec[0][0], 0.0, flip=False)
+    lattice(osec[-1][0], isec[-1][0], T, flip=True)
+    return verts, faces, slots
+
+
+def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section):
+    """Raised panel for one opening cell, appended to the caller's
+    lists in cutpart-local space: a mitred sweep of the panel section
+    around the cell (field end first, u inward from the cell edge, v
+    behind the field plane), a flat field plate, and a back plate
+    flush with the door back like a flat panel. The field plane sits
+    at the part's y_inset. Returns False -- caller keeps the flat box
+    -- when the cell is too small for the raise."""
+    x0, x1 = part['x0'], part['x1']
+    z0, z1 = part['z0'], part['z1']
+    fu = panel_section['field_u']
+    if min(x1 - x0, z1 - z0) <= 2.0 * fu + 1e-6:
+        return False
+    pf = part['y_inset']
+    back_v = thickness - pf
+    if back_v <= 1e-9:
+        return False
+    sec = [(u, min(v, back_v)) for (u, v) in panel_section['points']]
+    if sec[-1][1] < back_v - 1e-9:
+        sec.append((sec[-1][0], back_v))
+
+    def emit(x, z, v):
+        verts.append((z, -x, thickness - (pf + v)))
+        return len(verts) - 1
+
+    corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+    dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
+    n = len(sec)
+    base = len(verts)
+    for (cx, cz), (dx, dz) in zip(corners, dirs):
+        for (u, v) in sec:
+            emit(cx + dx * u, cz + dz * u, v)
+    for c in range(4):
+        a = base + c * n
+        b = base + ((c + 1) % 4) * n
+        for k in range(n - 1):
+            faces.append((a + k, a + k + 1, b + k + 1, b + k))
+            slots.append(2)
+    # Field plate between the four rings' field points.
+    faces.append((base + 0 * n, base + 1 * n, base + 2 * n, base + 3 * n))
+    slots.append(2)
+    # Back plate between the rings' back points.
+    faces.append((base + 3 * n + n - 1, base + 2 * n + n - 1,
+                  base + 1 * n + n - 1, base + 0 * n + n - 1))
+    slots.append(2)
+    return True
+
+
+def build_door_mesh(mesh, info, width, height, thickness, materials=None,
+                    outer_section=None, inner_section=None,
+                    panel_section=None):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -243,16 +420,40 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None):
     sides from their names. The front face is at z=thickness; panels
     sit back from it by their y_inset and use their own thickness.
 
+    With an outer / inner edge section (door_profiles.
+    edge_profile_section) the FRAME comes from build_frame_geometry --
+    profiled bands swept around the perimeter / openings -- and only
+    the panels stay boxes. With ``panel_section`` (door_profiles.
+    panel_profile_section) panels build as raised panels instead,
+    falling back to the flat box per cell when the cell is too small
+    for the raise; the panel section combines freely with or without
+    frame sections.
+
     ``materials`` is an optional (stile, rail, panel) triple assigned
     as the mesh's material slots; face material indices are set either
     way (mid stiles index as stiles, mid rails as rails). Zero-size
     members (e.g. a per-side stile width of 0.0) are skipped.
     """
-    verts = []
-    faces = []
-    face_slots = []
+    profiled = ((outer_section is not None or inner_section is not None)
+                and info.get('door_type') != 'SLAB')
+    if profiled:
+        verts, faces, face_slots = build_frame_geometry(
+            info, width, height, thickness, outer_section, inner_section)
+        verts = list(verts)
+        faces = list(faces)
+        face_slots = list(face_slots)
+    else:
+        verts = []
+        faces = []
+        face_slots = []
     for part in evaluate_layout(info, width, height):
+        if profiled and part['key'] != 'panel':
+            continue
         if part['x1'] - part['x0'] <= 0.0 or part['z1'] - part['z0'] <= 0.0:
+            continue
+        if (part['key'] == 'panel' and panel_section is not None
+                and _emit_raised_panel(verts, faces, face_slots, part,
+                                       thickness, panel_section)):
             continue
         th = thickness if part['thickness'] is None else part['thickness']
         zf = thickness - part['y_inset']

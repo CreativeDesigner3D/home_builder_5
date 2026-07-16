@@ -2686,6 +2686,38 @@ class HB_UL_face_frame_cabinet_styles(UIList):
 RAIL_SIZE_ANNOTATION_TAG = 'DOOR_ANNOTATION'
 
 
+# Dynamic enum items must stay referenced on the python side or
+# Blender's enum strings go stale; one cached list per category.
+_PROFILE_ENUM_CACHE = {}
+
+
+def _profile_enum_items(category, none_label):
+    """Items for a profile picker: 'NONE' plus the .blend stems in the
+    shipped door_profiles category folder, refreshed per redraw so
+    newly dropped-in files appear without a restart."""
+    from ..common import door_profiles
+    try:
+        names = door_profiles.list_profiles(category)
+    except Exception:
+        names = []
+    items = [('NONE', none_label, "")]
+    items += [(n, n, "") for n in names]
+    _PROFILE_ENUM_CACHE[category] = items
+    return items
+
+
+def get_outer_profile_items(self, context):
+    return _profile_enum_items('OUTER', "Square")
+
+
+def get_inner_profile_items(self, context):
+    return _profile_enum_items('INNER', "Square")
+
+
+def get_panel_profile_items(self, context):
+    return _profile_enum_items('PANEL', "Flat")
+
+
 def _sync_rail_size_annotation(front_obj, part, top_rail_width,
                                right_stile_width, active):
     """Maintain the '<N>R' rail-size FONT callout on a 5-piece front.
@@ -2894,7 +2926,31 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=update_grain_direction,
     )  # type: ignore
 
-    # ---- Profile object references ----
+    # ---- Profile references ----
+    # Named picks from the shipped face_frame_assets/door_profiles
+    # library (see _profile_enum_items); the Object pointers below are
+    # custom-curve overrides that win when set.
+    outside_profile_name: EnumProperty(
+        name="Outside Profile",
+        description="Outside edge profile from the shipped library",
+        items=get_outer_profile_items,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    inside_profile_name: EnumProperty(
+        name="Inside Profile",
+        description="Inside (sticking) profile from the shipped library",
+        items=get_inner_profile_items,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    panel_profile_name: EnumProperty(
+        name="Panel Profile",
+        description="Raised panel profile from the shipped library",
+        items=get_panel_profile_items,
+        update=_propagate_door_style,
+    )  # type: ignore
+
     outside_profile: PointerProperty(
         name="Outside Profile",
         type=bpy.types.Object,
@@ -2903,6 +2959,12 @@ class Face_Frame_Door_Style(PropertyGroup):
 
     inside_profile: PointerProperty(
         name="Inside Profile",
+        type=bpy.types.Object,
+        update=_propagate_door_style,
+    )  # type: ignore
+
+    panel_profile: PointerProperty(
+        name="Panel Profile",
         type=bpy.types.Object,
         update=_propagate_door_style,
     )  # type: ignore
@@ -3269,9 +3331,51 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
                             if mid_on else None),
             )
+            # Profile sweeps: a custom curve pointer wins; else the
+            # named pick from the shipped library. Anything broken or
+            # missing falls back to a square edge / flat panel.
+            from ..common import door_profiles
+
+            def _resolve_profile(pointer, name, category):
+                pr = door_profiles.profile_from_object(pointer)
+                if pr is None and name and name != 'NONE':
+                    pr = door_profiles.load_profile(category, name)
+                return pr
+
+            outer_sec = inner_sec = panel_sec = None
+            try:
+                pr = _resolve_profile(self.outside_profile,
+                                      getattr(self, 'outside_profile_name', ''),
+                                      'OUTER')
+                if pr is not None:
+                    outer_sec = door_profiles.edge_profile_section(
+                        pr, front_thickness)
+            except Exception:
+                outer_sec = None
+            try:
+                pr = _resolve_profile(self.inside_profile,
+                                      getattr(self, 'inside_profile_name', ''),
+                                      'INNER')
+                if pr is not None:
+                    inner_sec = door_profiles.sticking_section(
+                        pr, front_thickness)
+            except Exception:
+                inner_sec = None
+            try:
+                pr = _resolve_profile(getattr(self, 'panel_profile', None),
+                                      getattr(self, 'panel_profile_name', ''),
+                                      'PANEL')
+                if pr is not None:
+                    panel_sec = door_profiles.panel_profile_section(
+                        pr, front_thickness - max(self.panel_inset, 0.0))
+            except Exception:
+                panel_sec = None
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
-                                         front_thickness)
+                                         front_thickness,
+                                         outer_section=outer_sec,
+                                         inner_section=inner_sec,
+                                         panel_section=panel_sec)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
                 cut.show_viewport = False
@@ -3388,6 +3492,18 @@ class Face_Frame_Door_Style(PropertyGroup):
             if _front_is_drawer(self):
                 box.prop(self, "match_door_rail_width",
                          text="Match Door Rail Width When Possible")
+            # Profile picks from the shipped library; a custom curve
+            # object set below overrides the corresponding pick.
+            box.label(text="Profiles:")
+            pcol = box.column(align=True)
+            pcol.prop(self, "outside_profile_name", text="Outside")
+            pcol.prop(self, "inside_profile_name", text="Inside")
+            pcol.prop(self, "panel_profile_name", text="Panel")
+            ccol = box.column(align=True)
+            ccol.label(text="Custom Curves (override):")
+            ccol.prop(self, "outside_profile", text="Outside")
+            ccol.prop(self, "inside_profile", text="Inside")
+            ccol.prop(self, "panel_profile", text="Panel")
 
         # Assign by Painting starts a modal brush: click fronts in the
         # viewport to apply THIS style. Door styles paint door fronts,
