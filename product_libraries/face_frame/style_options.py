@@ -5021,7 +5021,7 @@ _WOOD_HIDE = _WOOD_HIDE_BASE | {w for w in WOOD_SPECIES if not colors_for_wood_u
 # Widths are in INCHES; convert with units.inch() at apply time.
 # ===========================================================================
 
-SERIES_FRAME = {'Beckony': {'stile': 3.25, 'rail': 3.25, 'drw_rail': 2.75},
+SERIES_FRAME = {'Beckony': {'stile': 3.5, 'rail': 3.5, 'drw_rail': 3.0},
  'Bristol': {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0, 'panel_inset': 0.375},
  'Brunswick': {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0},
  'Century': {'stile': 2.5,
@@ -5035,14 +5035,14 @@ SERIES_FRAME = {'Beckony': {'stile': 3.25, 'rail': 3.25, 'drw_rail': 2.75},
             'drw_rail': 2.5,
             'panel_inset': 0.0,
             'panel_thickness': 0.75},
- 'Colonial': {'stile': 2.5,
+ 'Colonial': {'stile': 3.0,
               'rail': 3.0,
               'drw_rail': 2.0,
               'panel_inset': 0.0,
               'panel_thickness': 0.75},
  'Craftsman': {'stile': 3.0, 'rail': 3.0, 'drw_rail': 2.0, 'panel_inset': 0.125},
  'Hampton': {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0, 'panel_inset': 0.125},
- 'Havana': {'stile': 3.0,
+ 'Havana': {'stile': 2.5,
             'rail': 3.0,
             'drw_rail': 2.0,
             'panel_inset': 0.0,
@@ -5066,6 +5066,7 @@ SERIES_FRAME = {'Beckony': {'stile': 3.25, 'rail': 3.25, 'drw_rail': 2.75},
                  'drw_rail': 2.0,
                  'panel_inset': 0.0,
                  'panel_thickness': 0.75},
+ 'Victorian': {'stile': 2.5, 'rail': 2.5, 'drw_rail': 1.5},
  'Brink': {'stile': 0.5,
            'rail': 0.5,
            'drw_rail': 0.5,
@@ -5097,7 +5098,8 @@ def series_is_slab(series):
 # until their profiles are filled in here.
 SERIES_PROFILES = {
     'Brunswick':   {'inside': 'InsideBrunswickDoorProfile'},
-    'Century':     {'inside': 'InsideCentryDoorProfile'},
+    'Century':     {'inside': 'InsideCentryDoorProfile',
+                    'panel': 'PanelProfileCurved'},
     'Classic':     {'panel': 'PanelProfileClassic'},
     'Colonial':    {'panel': 'PanelProfileColonial'},
     'Craftsman':   {'inside': 'InsideCraftsmanDoorProfile'},
@@ -5107,8 +5109,10 @@ SERIES_PROFILES = {
     'Highlander':  {'panel': 'PanelProfileHighlander'},
     'Joviso':      {'panel': 'PanelProfileJoviso'},
     'Marketplace': {'inside': 'InsideMarketplaceDoorProfile'},
+    'Melville':    {'inside': 'DIP_Chamfer2'},
     'Metro':       {'inside': 'InsideMetroDoorProfile'},
-    'Traditional': {'inside': 'InsideTraditionalDoorProfile'},
+    'Traditional': {'inside': 'InsideTraditionalDoorProfile',
+                    'panel': 'PanelProfileCurved'},
 }
 
 
