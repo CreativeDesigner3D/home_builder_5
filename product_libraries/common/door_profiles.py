@@ -17,6 +17,7 @@ run behind the cutter shape, so the cutter geometry is preserved no
 matter what stock the profile was drawn against.
 """
 
+import math
 import os
 
 import bpy
@@ -606,6 +607,73 @@ def edge_profile_section(profile, thickness):
     k = (thickness - shaped_v) / (span_v - shaped_v) if span_v > shaped_v else 1.0
     return [(p[0], p[1] if p[1] <= shaped_v
              else shaped_v + (p[1] - shaped_v) * k) for p in pts]
+
+
+# ---- Catalog edge profiles -----------------------------------------
+# The CWP catalog's "Door and Drawer Edge Profiles" chart is a set of
+# exact geometric specs (roundover radii, chamfer legs, a bevel, a
+# cove), so these sections are generated in code instead of drawn as
+# .blend assets. Output matches edge_profile_section's sweep space.
+
+_INCH = 0.0254
+
+
+def _edge_arc(r, concave, segs=10):
+    """Quarter-arc shaped run of radius r from the face landing (r, 0)
+    to the edge (0, r): convex = roundover (arc centered inside the
+    material), concave = cove scooped out of the arris (arc centered
+    on the original corner)."""
+    pts = []
+    for i in range(segs + 1):
+        t = math.radians(90.0 * i / segs)
+        if concave:
+            pts.append((r * math.cos(t), r * math.sin(t)))
+        else:
+            pts.append((r - r * math.sin(t), r - r * math.cos(t)))
+    return pts
+
+
+# Lowercased catalog name -> zero-arg builder for the shaped run
+# [(u, v), ...]; named_edge_section appends the straight edge run to
+# the door back. Names follow the catalog chart / the cabinet style's
+# ss_edge_profile items; profiles not listed here (Estate, Eclipse,
+# New Cut, ...) read as Square until a builder is added.
+_EDGE_SECTION_BUILDERS = {
+    '1/8" radius': lambda: _edge_arc(0.125 * _INCH, False),
+    '1/4" radius': lambda: _edge_arc(0.25 * _INCH, False),
+    '3/8" radius': lambda: _edge_arc(0.375 * _INCH, False),
+    # 3/16 x 3/16 45-degree chamfer.
+    'chamfer': lambda: [(0.1875 * _INCH, 0.0), (0.0, 0.1875 * _INCH)],
+    '3/16" chamfer': lambda: [(0.1875 * _INCH, 0.0), (0.0, 0.1875 * _INCH)],
+    # Long shallow bevel: ~3/4 across the face dropping ~1/4 into the
+    # edge, square edge below (proportions read off the catalog
+    # drawing, pdf page 147).
+    'beveled': lambda: [(0.75 * _INCH, 0.0), (0.0, 0.25 * _INCH)],
+    # Concave 3/8 cove scooped out of the front arris.
+    'bay': lambda: _edge_arc(0.375 * _INCH, True),
+}
+
+
+def named_edge_section(name, thickness):
+    """Catalog edge profile name -> sweep section fitted to the door
+    thickness, same output space as edge_profile_section (u >= 0 inward
+    from the member edge, v in [0, thickness] from the front face,
+    ordered front end first, ending at the back edge corner). Returns
+    None -- a square edge -- for Square / empty / unknown names so
+    callers can fall through cleanly."""
+    key = (name or '').strip().lower()
+    build = _EDGE_SECTION_BUILDERS.get(key)
+    if build is None:
+        return None
+    pts = build()
+    vmax = max(v for u, v in pts)
+    if vmax >= thickness > 0.0:
+        # Front thinner than the shaped region: scale the whole shape.
+        k = thickness / vmax
+        pts = [(u * k, v * k) for (u, v) in pts]
+    if pts[-1][1] < thickness - 1e-9:
+        pts.append((0.0, thickness))
+    return pts
 
 
 def sweep_edge_frame(section, width, height, inner=False):

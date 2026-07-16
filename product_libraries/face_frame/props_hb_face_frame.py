@@ -1367,7 +1367,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     )  # type: ignore
     ss_edge_profile: EnumProperty(
         name="Edge Profile",
-        description="Edge profile for the style section page (None = use the door style's edge profile)",
+        description="Door and drawer edge profile: cut into every front's outer edge and shown on the style section page (None = use the door style's outer profile)",
         items=[
             ('None', 'None', ''),
             ('Bay', 'Bay', ''),
@@ -1387,6 +1387,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             ('3/8" Inset square', '3/8" Inset square', ''),
         ],
         default='None',
+        update=_propagate_cabinet_style,
     )  # type: ignore
 
     # Custom-text companions for the toggleable dropdown fields. When
@@ -1401,8 +1402,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     ss_drawer_slides_custom: StringProperty(name="Drawer Slides", default="")  # type: ignore
     ss_drawer_box_construction_is_custom: BoolProperty(name="Custom Box Construction", default=False)  # type: ignore
     ss_drawer_box_construction_custom: StringProperty(name="Box Construction", default="")  # type: ignore
-    ss_edge_profile_is_custom: BoolProperty(name="Custom Edge Profile", default=False)  # type: ignore
-    ss_edge_profile_custom: StringProperty(name="Edge Profile", default="")  # type: ignore
+    # Edge profile drives front geometry (unlike the other ss_* doc
+    # fields), so its custom companions propagate too.
+    ss_edge_profile_is_custom: BoolProperty(name="Custom Edge Profile", default=False, update=_propagate_cabinet_style)  # type: ignore
+    ss_edge_profile_custom: StringProperty(name="Edge Profile", default="", update=_propagate_cabinet_style)  # type: ignore
     ss_wood_is_custom: BoolProperty(name="Custom Wood", default=False)  # type: ignore
     ss_wood_custom: StringProperty(name="Wood", default="")  # type: ignore
     ss_interior_is_custom: BoolProperty(name="Custom Interior", default=False)  # type: ignore
@@ -1993,6 +1996,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Prep-for-glass fronts render the centre panel as glass, not wood.
         if self._door_style_is_glass(front_obj):
             panel_mat = self._get_glass_panel_material()
+        if 'HB_STATIC_SLAB' in front_obj:
+            # Python-built slab (profiled edge): single-slot mesh; the
+            # whole front follows the style's grain like the panel.
+            slab_mat = finish_mat
+            if (self._door_style_grain(front_obj) == 'HORIZONTAL'
+                    and finish_mat_rotated is not None):
+                slab_mat = finish_mat_rotated
+            if slab_mat is not None:
+                me = front_obj.data
+                while len(me.materials) < 1:
+                    me.materials.append(None)
+                me.materials[0] = slab_mat
+            return
         if 'HB_DOOR_FRAME' in front_obj:
             # Python-built door: build_door_mesh indexes faces against
             # fixed slots (0 stile, 1 rail, 2 panel). Assign by index --
@@ -2818,12 +2834,16 @@ def _front_cutpart_mod(front_obj):
 
 
 def _clear_static_door(front_obj):
-    """Undo a python-built door on a front: drop the HB_DOOR_FRAME stamp
-    and the static mesh, and re-enable the cutpart box so the front
-    renders as a plain slab again. No-op on a front that never had one."""
-    if 'HB_DOOR_FRAME' not in front_obj:
+    """Undo a python-built door on a front: drop the HB_DOOR_FRAME /
+    HB_STATIC_SLAB stamp and the static mesh, and re-enable the cutpart
+    box so the front renders as a plain slab again. No-op on a front
+    that never had one."""
+    if 'HB_DOOR_FRAME' not in front_obj and 'HB_STATIC_SLAB' not in front_obj:
         return
-    del front_obj['HB_DOOR_FRAME']
+    if 'HB_DOOR_FRAME' in front_obj:
+        del front_obj['HB_DOOR_FRAME']
+    if 'HB_STATIC_SLAB' in front_obj:
+        del front_obj['HB_STATIC_SLAB']
     front_obj.data.clear_geometry()
     cut = _front_cutpart_mod(front_obj)
     if cut is not None:
@@ -3132,6 +3152,19 @@ class Face_Frame_Door_Style(PropertyGroup):
                 return cs
         return None
 
+    def _cabinet_edge_profile(self, front_obj):
+        """The parent cabinet style's Door and Drawer Edge Profile pick
+        (ss_edge_profile, or its custom free text), or None when unset.
+        A per-order catalog styling option, so it lives on the CABINET
+        style -- not the door style -- and applies to every front."""
+        cs = self.get_parent_cabinet_style(front_obj)
+        if cs is None:
+            return None
+        if getattr(cs, 'ss_edge_profile_is_custom', False):
+            return cs.ss_edge_profile_custom.strip() or None
+        name = cs.ss_edge_profile
+        return None if name == 'None' else name
+
     def assign_style_to_front(self, front_obj, record_override=False):
         """Apply this door style to a face frame front object.
 
@@ -3188,11 +3221,48 @@ class Face_Frame_Door_Style(PropertyGroup):
         from ..common import door_builder
 
         # Slab: strip any existing door style modifier / static door and tag.
+        # With a cabinet-level edge profile the slab builds as a python
+        # static mesh (the profile is real cut geometry), the same
+        # cutpart-modifier-as-input-carrier mechanics as the 5-piece
+        # path below; a square slab keeps the plain GN cutpart box.
         if self.door_type == 'SLAB':
             for mod in list(front_obj.modifiers):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
-            _clear_static_door(front_obj)
+            edge_sec = None
+            slab_w = slab_h = None
+            if door_builder.USE_PYTHON_DOORS:
+                _edge_name = self._cabinet_edge_profile(front_obj)
+                if _edge_name is not None:
+                    slab_part = hb_types.GeoNodeCutpart(front_obj)
+                    try:
+                        slab_h = slab_part.get_input("Length")
+                        slab_w = slab_part.get_input("Width")
+                    except Exception:
+                        slab_w = slab_h = None
+                    try:
+                        slab_th = slab_part.get_input("Thickness")
+                    except Exception:
+                        slab_th = units.inch(0.75)
+                    if slab_w is not None:
+                        from ..common import door_profiles
+                        edge_sec = door_profiles.named_edge_section(
+                            _edge_name, slab_th)
+            if edge_sec is not None:
+                info = door_builder.door_style_info(self)
+                info['door_type'] = 'SLAB'
+                door_builder.build_door_mesh(front_obj.data, info,
+                                             slab_w, slab_h, slab_th,
+                                             outer_section=edge_sec)
+                cut = _front_cutpart_mod(front_obj)
+                if cut is not None:
+                    cut.show_viewport = False
+                    cut.show_render = False
+                if 'HB_DOOR_FRAME' in front_obj:
+                    del front_obj['HB_DOOR_FRAME']
+                front_obj['HB_STATIC_SLAB'] = True
+            else:
+                _clear_static_door(front_obj)
             # Slabs carry no rails; drop a stale rail-size callout left
             # over from a live 5-piece -> slab style edit.
             _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
@@ -3415,6 +3485,15 @@ class Face_Frame_Door_Style(PropertyGroup):
                         pr, front_thickness)
             except Exception:
                 outer_sec = None
+            # Cabinet-level "Door and Drawer Edge Profile" (a per-order
+            # catalog styling option, not a series trait): a pick on
+            # the cabinet style overrides the door style's outer
+            # profile. Square -- and catalog names without a section
+            # builder yet -- read as a square edge.
+            _edge_name = self._cabinet_edge_profile(front_obj)
+            if _edge_name is not None:
+                outer_sec = door_profiles.named_edge_section(
+                    _edge_name, front_thickness)
             # Recessed panels seat the sticking strip on the panel
             # plane; raised panels let it run to its natural depth.
             _strip_floor = (eff_panel_inset
@@ -3497,6 +3576,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             if cut is not None:
                 cut.show_viewport = False
                 cut.show_render = False
+            if 'HB_STATIC_SLAB' in front_obj:
+                del front_obj['HB_STATIC_SLAB']
             # Effective frame record for readers that used to consult the
             # modifier inputs (Set Door Frame dialog, panel-opening readout,
             # the Spaces glass-hatch pass).

@@ -480,6 +480,74 @@ def _emit_raised_panel(verts, faces, slots, part, thickness, panel_section):
     return True
 
 
+# Part keys whose boxes may carry the door's outer edge profile. Panels
+# and mid members never do: a zero-width outer member exposing them to
+# the outline is the butted-mirror-pair case, where the shared edge is
+# not an outer edge and correctly stays square.
+_OUTLINE_EDGE_KEYS = {'slab', 'left_stile', 'right_stile',
+                      'top_rail', 'bottom_rail'}
+
+
+def _emit_edge_profiled_box(verts, faces, slots, part, thickness, section,
+                            width, height):
+    """Frame member / slab box with the door's outer edge profile cut
+    along the sides that lie on the door outline. One section ring per
+    box corner, raised-panel style: a side on the outline offsets its
+    rings inward by the section's u (a door corner where two outline
+    sides meet mitres on the diagonal); an interior side keeps u = 0,
+    so the cut ends in a flat silhouette that butts the neighbouring
+    member's identical cut at part joints. Returns False -- the caller
+    keeps the plain box -- when no side is on the outline, the section
+    is too wide for the part, or the part is not a full-thickness
+    front-face member."""
+    if part['thickness'] is not None or part['y_inset']:
+        return False
+    x0, x1 = part['x0'], part['x1']
+    z0, z1 = part['z0'], part['z1']
+    tol = 1e-6
+    on_l = x0 <= tol
+    on_r = x1 >= width - tol
+    on_b = z0 <= tol
+    on_t = z1 >= height - tol
+    if not (on_l or on_r or on_b or on_t):
+        return False
+    sec = [(u, min(v, thickness)) for (u, v) in section]
+    if sec[-1][1] < thickness - 1e-9:
+        sec.append((sec[-1][0], thickness))
+    u_max = max(u for u, v in sec)
+    if u_max <= 0.0:
+        return False
+    if ((int(on_l) + int(on_r)) * u_max >= (x1 - x0) - tol
+            or (int(on_b) + int(on_t)) * u_max >= (z1 - z0) - tol):
+        return False
+    corners = ((x0, z0), (x1, z0), (x1, z1), (x0, z1))
+    dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
+    gate_x = (on_l, on_r, on_r, on_l)
+    gate_z = (on_b, on_b, on_t, on_t)
+    n = len(sec)
+    base = len(verts)
+    slot = _PART_MAT_SLOT[part['key']]
+    for (cx, cz), (dx, dz), sx, sz in zip(corners, dirs, gate_x, gate_z):
+        for (u, v) in sec:
+            verts.append((cz + (dz * u if sz else 0.0),
+                          -(cx + (dx * u if sx else 0.0)),
+                          thickness - v))
+    for c in range(4):
+        a = base + c * n
+        b = base + ((c + 1) % 4) * n
+        for k in range(n - 1):
+            faces.append((a + k, a + k + 1, b + k + 1, b + k))
+            slots.append(slot)
+    # Front plate between the rings' face points, back plate between
+    # their back corners.
+    faces.append((base + 0 * n, base + 1 * n, base + 2 * n, base + 3 * n))
+    slots.append(slot)
+    faces.append((base + 3 * n + n - 1, base + 2 * n + n - 1,
+                  base + 1 * n + n - 1, base + 0 * n + n - 1))
+    slots.append(slot)
+    return True
+
+
 def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     outer_section=None, inner_section=None,
                     panel_section=None, inner_rail_section=None,
@@ -504,8 +572,11 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     member_section instead and build through build_frame_geometry.
     With ``panel_section`` (door_profiles.panel_profile_section) panels
     build as raised panels instead, falling back to the flat box per
-    cell when the cell is too small for the raise. outer_section is
-    currently inert for framed doors (box edges stay square).
+    cell when the cell is too small for the raise. outer_section (an
+    edge_profile_section / named_edge_section sweep section) cuts the
+    door's outer edge profile into the members and slabs whose sides
+    lie on the door outline (_emit_edge_profiled_box), falling back to
+    square edges per part when the section doesn't fit.
 
     ``materials`` is an optional (stile, rail, panel) triple assigned
     as the mesh's material slots; face material indices are set either
@@ -532,6 +603,12 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
         if (part['key'] == 'panel' and panel_section is not None
                 and _emit_raised_panel(verts, faces, face_slots, part,
                                        thickness, panel_section)):
+            continue
+        if (outer_section is not None and not mitered
+                and part['key'] in _OUTLINE_EDGE_KEYS
+                and _emit_edge_profiled_box(verts, faces, face_slots, part,
+                                            thickness, outer_section,
+                                            width, height)):
             continue
         th = thickness if part['thickness'] is None else part['thickness']
         zf = thickness - part['y_inset']
