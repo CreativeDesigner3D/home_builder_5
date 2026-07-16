@@ -3165,6 +3165,59 @@ class Face_Frame_Door_Style(PropertyGroup):
         name = cs.ss_edge_profile
         return None if name == 'None' else name
 
+    def _apply_slab_front(self, front_obj, front_length=None,
+                          front_width=None, front_thickness=None):
+        """Render front_obj as a slab: a python-built static mesh with
+        the cabinet-level edge profile cut in when one is active, else
+        the plain GN cutpart box. Shared by SLAB door styles and the
+        5-piece too-small fallback (which passes the dims it already
+        read; otherwise they come off the cutpart modifier). Strips any
+        Door Style modifier either way."""
+        from ... import hb_types
+        from ..common import door_builder
+        for mod in list(front_obj.modifiers):
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                front_obj.modifiers.remove(mod)
+        edge_sec = None
+        if door_builder.USE_PYTHON_DOORS:
+            _edge_name = self._cabinet_edge_profile(front_obj)
+            if _edge_name is not None:
+                if front_width is None:
+                    slab_part = hb_types.GeoNodeCutpart(front_obj)
+                    try:
+                        front_length = slab_part.get_input("Length")
+                        front_width = slab_part.get_input("Width")
+                    except Exception:
+                        front_width = front_length = None
+                    try:
+                        front_thickness = slab_part.get_input("Thickness")
+                    except Exception:
+                        front_thickness = units.inch(0.75)
+                if front_width is not None:
+                    from ..common import door_profiles
+                    edge_sec = door_profiles.named_edge_section(
+                        _edge_name, front_thickness)
+        if edge_sec is not None:
+            info = door_builder.door_style_info(self)
+            info['door_type'] = 'SLAB'
+            door_builder.build_door_mesh(front_obj.data, info,
+                                         front_width, front_length,
+                                         front_thickness,
+                                         outer_section=edge_sec)
+            cut = _front_cutpart_mod(front_obj)
+            if cut is not None:
+                cut.show_viewport = False
+                cut.show_render = False
+            if 'HB_DOOR_FRAME' in front_obj:
+                del front_obj['HB_DOOR_FRAME']
+            front_obj['HB_STATIC_SLAB'] = True
+        else:
+            _clear_static_door(front_obj)
+        # Slabs carry no rails; drop a stale rail-size callout left
+        # over from a live 5-piece -> slab edit.
+        _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
+        front_obj['DOOR_STYLE_NAME'] = self.name
+
     def assign_style_to_front(self, front_obj, record_override=False):
         """Apply this door style to a face frame front object.
 
@@ -3182,7 +3235,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             False if front_obj is not a styleable face frame front.
             A string with an error message on a 5-piece dimension check
             failure (front too narrow / too short for the configured
-            stiles + rails).
+            stiles + rails); the front is built as a slab -- edge
+            profile still applied -- so the message is informational.
         """
         role = front_obj.get('hb_part_role')
         if role not in self._STYLEABLE_ROLES:
@@ -3226,47 +3280,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         # cutpart-modifier-as-input-carrier mechanics as the 5-piece
         # path below; a square slab keeps the plain GN cutpart box.
         if self.door_type == 'SLAB':
-            for mod in list(front_obj.modifiers):
-                if mod.type == 'NODES' and 'Door Style' in mod.name:
-                    front_obj.modifiers.remove(mod)
-            edge_sec = None
-            slab_w = slab_h = None
-            if door_builder.USE_PYTHON_DOORS:
-                _edge_name = self._cabinet_edge_profile(front_obj)
-                if _edge_name is not None:
-                    slab_part = hb_types.GeoNodeCutpart(front_obj)
-                    try:
-                        slab_h = slab_part.get_input("Length")
-                        slab_w = slab_part.get_input("Width")
-                    except Exception:
-                        slab_w = slab_h = None
-                    try:
-                        slab_th = slab_part.get_input("Thickness")
-                    except Exception:
-                        slab_th = units.inch(0.75)
-                    if slab_w is not None:
-                        from ..common import door_profiles
-                        edge_sec = door_profiles.named_edge_section(
-                            _edge_name, slab_th)
-            if edge_sec is not None:
-                info = door_builder.door_style_info(self)
-                info['door_type'] = 'SLAB'
-                door_builder.build_door_mesh(front_obj.data, info,
-                                             slab_w, slab_h, slab_th,
-                                             outer_section=edge_sec)
-                cut = _front_cutpart_mod(front_obj)
-                if cut is not None:
-                    cut.show_viewport = False
-                    cut.show_render = False
-                if 'HB_DOOR_FRAME' in front_obj:
-                    del front_obj['HB_DOOR_FRAME']
-                front_obj['HB_STATIC_SLAB'] = True
-            else:
-                _clear_static_door(front_obj)
-            # Slabs carry no rails; drop a stale rail-size callout left
-            # over from a live 5-piece -> slab style edit.
-            _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
-            front_obj['DOOR_STYLE_NAME'] = self.name
+            self._apply_slab_front(front_obj)
             return True
 
         # 5-piece: dimension check, then add / update the modifier.
@@ -3360,10 +3374,17 @@ class Face_Frame_Door_Style(PropertyGroup):
         if ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
             min_height += self.mid_rail_width
 
+        # Too small for the frame -> the front renders as a slab, which
+        # still carries the cabinet-level edge profile. The message
+        # return is kept for callers that report the fallback.
         if front_width < min_width:
+            self._apply_slab_front(front_obj, front_length, front_width,
+                                   front_thickness)
             return (f"Front too narrow ({front_width:.3f}m) for stile "
                     f"widths (need {min_width:.3f}m)")
         if front_length < min_height:
+            self._apply_slab_front(front_obj, front_length, front_width,
+                                   front_thickness)
             return (f"Front too short ({front_length:.3f}m) for rail "
                     f"widths (need {min_height:.3f}m)")
 
