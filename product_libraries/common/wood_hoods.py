@@ -392,6 +392,7 @@ _CUSTOM_DEFAULTS = {
     'door_mid_rails': 0,            # mid rails on every hood door
     'door_mid_stiles': 0,           # mid stiles on every hood door
     'include_shiplap': False,       # shiplap boards on the front
+    'shiplap_board_width': inch(6.0),  # course width; last course trims
 }
 
 # Front kinds a face-frame bay can carry: an overlay door, an inset door
@@ -1156,14 +1157,16 @@ class _FrontProfile:
         return spans
 
 
-def _wrap_shiplap(hood_obj, prof, fz=0.0):
-    """Shiplap wrapping the hood box: ~6" courses standing 1/2" proud of
-    the front and side faces, mitred at the front corners (45 degrees in
-    plan), with a 1/8" reveal between courses. Static meshes -- rebuilt by
-    the command / prompts. Courses are laid out along the face (arc
-    length), following ``prof``'s slope / taper and its straight top
-    section; a course crossing the break is built as two boards."""
-    board = inch(6.0)
+def _wrap_shiplap(hood_obj, prof, fz=0.0, board=None):
+    """Shiplap wrapping the hood box: full ``board``-width courses (6"
+    when not given) standing 1/2" proud of the front and side faces,
+    mitred at the front corners (45 degrees in plan), with a 1/8" reveal
+    between courses. Courses lay bottom-up along the face (arc length),
+    following ``prof``'s slope / taper and its straight top section; a
+    course crossing the break is built as two boards, and the last
+    course trims down to whatever remains at the top. Static meshes --
+    rebuilt by the command / prompts."""
+    board = inch(6.0) if board is None else max(board, inch(1.0))
     reveal = inch(0.125)
     proud = inch(0.5)
     W = prof.W
@@ -1194,12 +1197,19 @@ def _wrap_shiplap(hood_obj, prof, fz=0.0):
     span_s = prof.S - s0
     if span_s <= 0.0:
         return
-    n = max(2, int(round(span_s / board)))
-    step = span_s / n
-    for i in range(n):
-        sa = s0 + i * step
-        sb = min(sa + step - reveal, prof.S)
-        z0, z1 = prof.z_at(sa), prof.z_at(sb)
+    # Full-width courses from the bottom up (board + reveal pitch); the
+    # last course is whatever remains at the top, trimmed down.
+    pitch = board + reveal
+    n_full = int(span_s // pitch)
+    courses = [(s0 + i * pitch, s0 + i * pitch + board)
+               for i in range(n_full)]
+    rem_a = s0 + n_full * pitch
+    if prof.S - rem_a > inch(0.25):
+        courses.append((rem_a, prof.S))
+    elif not courses:
+        courses.append((s0, prof.S))
+    for i, (sa, sb) in enumerate(courses):
+        z0, z1 = prof.z_at(sa), prof.z_at(min(sb, prof.S))
         if z1 <= z0:
             continue
         # One course = front + left + right boards sharing the 45-degree
@@ -1439,7 +1449,8 @@ def _build_custom_angled(hood_obj, opts):
                  front_ext=(mantle_dep if floor_z <= 0.0 else 0.0) - shrink,
                  cutout_offset=opts['fan_cutout_offset'], floor_z=floor_z)
     if opts['include_shiplap']:
-        _wrap_shiplap(hood_obj, prof, fz=fz)
+        _wrap_shiplap(hood_obj, prof, fz=fz,
+                      board=opts['shiplap_board_width'])
 
 
 def _build_custom(hood_obj):
@@ -1475,7 +1486,8 @@ def _build_custom(hood_obj):
                         opts['mantle_molding_width'],
                         opts['mantle_molding_thickness'])
     if opts['include_shiplap']:
-        _add_wrap_shiplap(hood_obj, fz=band)
+        _add_wrap_shiplap(hood_obj, fz=band,
+                          board=opts['shiplap_board_width'])
     if opts['include_front_panel']:
         _front_face_frame(hood_obj, opts, band)
     # Shelf extends forward under a projecting mantle to close its
@@ -1487,13 +1499,13 @@ def _build_custom(hood_obj):
                  floor_z=opts['floor_height'])
 
 
-def _add_wrap_shiplap(hood_obj, fz=0.0):
+def _add_wrap_shiplap(hood_obj, fz=0.0, board=None):
     """Mitred wrap shiplap on a straight box hood, sized from the cage's
     current dims (static -- rebuilt by the command / prompts)."""
     w = _HoodWrap(hood_obj)
     prof = _FrontProfile(w.get_input('Dim X'), w.get_input('Dim Y'),
                          max(w.get_input('Dim Z'), inch(1.0)))
-    _wrap_shiplap(hood_obj, prof, fz=fz)
+    _wrap_shiplap(hood_obj, prof, fz=fz, board=board)
 
 
 def _build_shiplap_mantle(hood_obj):
@@ -1923,6 +1935,14 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
     include_shiplap: BoolProperty(
         name="Include Shiplap",
         description="Shiplap boards on the front face")  # type: ignore
+    shiplap_board_width: EnumProperty(
+        name="Shiplap Board Width",
+        items=[('4', "4\"", "4 inch shiplap boards"),
+               ('5', "5\"", "5 inch shiplap boards"),
+               ('6', "6\"", "6 inch shiplap boards")],
+        default='6',
+        description="Shiplap course width; the last course trims down "
+                    "to whatever remains at the top")  # type: ignore
 
     hood = None
 
@@ -1971,6 +1991,9 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.door_mid_rails = max(int(opts.get('door_mid_rails', 0)), 0)
         self.door_mid_stiles = max(int(opts.get('door_mid_stiles', 0)), 0)
         self.include_shiplap = bool(opts['include_shiplap'])
+        bw = opts['shiplap_board_width']
+        self.shiplap_board_width = str(min((4, 5, 6),
+                                           key=lambda v: abs(inch(v) - bw)))
         if self.hood.get(HOOD_CUSTOM_PROP) is None:
             # First time on this hood: seed the taper from the current size.
             self.top_width = self.width / 2.0
@@ -2016,6 +2039,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'door_mid_rails': self.door_mid_rails,
                 'door_mid_stiles': self.door_mid_stiles,
                 'include_shiplap': self.include_shiplap,
+                'shiplap_board_width': inch(float(self.shiplap_board_width)),
             }
         build_wood_hood(self.hood, self.style)
 
@@ -2137,7 +2161,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row.prop(self, 'door_mid_rails', text="Rails")
         row.prop(self, 'door_mid_stiles', text="Stiles")
 
-        col.prop(self, 'include_shiplap')
+        row = col.row(align=True)
+        row.prop(self, 'include_shiplap')
+        sub = row.row(align=True)
+        sub.active = self.include_shiplap
+        sub.prop(self, 'shiplap_board_width', text="")
 
 
 class HOME_BUILDER_OT_revert_hood_part(bpy.types.Operator):
