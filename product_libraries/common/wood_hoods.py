@@ -783,68 +783,57 @@ def _paneled_end(hood_obj, opts, at_right):
     return True
 
 
-def _angled_paneled_end(hood_obj, opts, prof, at_right, setback, fz_pe):
-    """Paneled end for an angled / tapered custom hood: the same frame +
-    1/4" inset panel as _paneled_end, built as static mesh prisms that
-    follow the side plane (the x taper) and the side's front edge --
-    vertical below the slope, sloped through it, vertical above,
-    stepping where the side's front edge steps between the straight
-    boxes (one thickness behind the face) and the angled section (the
-    slope's horizontal ``setback``). ``fz_pe`` lifts the frame to sit on
-    a projecting mantle assembly's sides. The panel's back face is flush
-    with the side's inner face. Returns False without building when the
-    side is too small for the frame (caller keeps the plain side)."""
+def _angled_paneled_end(hood_obj, opts, prof, at_right, setback):
+    """Paneled end for the ANGLED section of a custom hood side: the
+    same frame + 1/4" inset panel as _paneled_end, as static meshes
+    following the side plane's taper, with the front stile parallel to
+    the sloped front edge. It spans the slope only -- the straight
+    mantle zone below and the top_height box above keep their plain box
+    sides (separate boxes, like the mantle) -- so no member breaks
+    across a profile kink. The panel's back face is flush with the
+    side's inner face. Returns False without building when the sloped
+    section is too small for the frame (caller keeps the plain angled
+    side)."""
     sw = max(opts['panel_stile_width'], inch(0.5))
     trw = max(opts['panel_top_rail_width'], inch(0.5))
     brw = max(opts['panel_bottom_rail_width'], inch(0.5))
     mt = HOOD_MATERIAL
     pt = inch(0.25)
-    W, D, H, td = prof.W, prof.D, prof.H, prof.td
-    if (min(D, td) - mt - 2.0 * sw <= 0.0
-            or (H - fz_pe) - brw - trw <= inch(1.0)):
+    W, D, td = prof.W, prof.D, prof.td
+    z0, z1 = prof.z0b, prof.zb
+    if (min(D, td) - setback - 2.0 * sw <= 0.0
+            or (z1 - z0) - brw - trw <= inch(1.0)):
         return False
 
-    def front_edge(z, zm):
-        # The side's front edge at height z (zone picked by the span
-        # midpoint zm so rings sitting exactly on a break stay planar
-        # with their span).
-        if prof.z0b < zm < prof.zb:
-            return prof.y_at(z) + setback
-        return prof.y_at(z) + mt
+    def front_edge(z):
+        # The angled side's front edge, one slope-setback behind the face.
+        return prof.y_at(z) + setback
 
-    def strip(name, y0f, y1f, z0, z1, panel=False):
-        for za, zc in prof.split(z0, z1):
-            zm = (za + zc) / 2.0
+    def strip(name, y0f, y1f, za, zc, panel=False):
+        def ring(z):
+            xin = prof.x_in_at(z)
+            xa, xb = (xin + mt - pt, xin + mt) if panel else (xin, xin + mt)
+            if at_right:
+                xa, xb = W - xb, W - xa
+            y0, y1 = y0f(z), y1f(z)
+            return [(xa, y0, z), (xb, y0, z), (xb, y1, z), (xa, y1, z)]
 
-            def ring(z):
-                xin = prof.x_in_at(z)
-                if panel:
-                    xa, xb = xin + mt - pt, xin + mt
-                else:
-                    xa, xb = xin, xin + mt
-                if at_right:
-                    xa, xb = W - xb, W - xa
-                y0, y1 = y0f(z, zm), y1f(z, zm)
-                return [(xa, y0, z), (xb, y0, z), (xb, y1, z), (xa, y1, z)]
-
-            r0, r1 = ring(za), ring(zc)
-            v = [r0[0], r0[1], r1[1], r1[0], r0[3], r0[2], r1[2], r1[3]]
-            f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
-                 (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-            _mesh_part(hood_obj, name, v, f)
+        r0, r1 = ring(za), ring(zc)
+        v = [r0[0], r0[1], r1[1], r1[0], r0[3], r0[2], r1[2], r1[3]]
+        f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+             (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+        _mesh_part(hood_obj, name, v, f)
 
     base = "Hood End %s " % ("R" if at_right else "L")
-    z0, z1 = fz_pe, H
 
-    def inner0(z, zm):
-        return front_edge(z, zm) + sw
+    def inner0(z):
+        return front_edge(z) + sw
 
-    def inner1(z, zm):
+    def inner1(z):
         return -sw
 
-    strip(base + "Back Stile", lambda z, zm: -sw, lambda z, zm: 0.0, z0, z1)
-    strip(base + "Front Stile", front_edge,
-          lambda z, zm: front_edge(z, zm) + sw, z0, z1)
+    strip(base + "Back Stile", lambda z: -sw, lambda z: 0.0, z0, z1)
+    strip(base + "Front Stile", front_edge, inner0, z0, z1)
     strip(base + "Bottom Rail", inner0, inner1, z0, z0 + brw)
     strip(base + "Top Rail", inner0, inner1, z1 - trw, z1)
     strip(base + "Panel", inner0, inner1, z0 + brw, z1 - trw, panel=True)
@@ -867,15 +856,19 @@ def _custom_sloped_frame(hood_obj, opts, prof, fz):
     n = max(int(opts['panel_count']), 1)
     mt = HOOD_MATERIAL
     W = prof.W
+    # The frame lives on the sloped face only (fz..zb), so members use
+    # the slope normal throughout -- square ends, no mitred kinks (the
+    # straight top_height section is a separate plain box above it).
+    n_y = -(prof.span or 1.0) / prof.ln
+    n_z = prof.dy / prof.ln
 
     def prism(name, x0f, x1f, z0, z1):
         for za, zc in prof.split(z0, z1):
             def ring(z):
-                oy, oz = prof.off_at(z)
                 y = prof.y_at(z)
                 return [(x0f(z), y, z), (x1f(z), y, z),
-                        (x1f(z), y - oy * mt, z - oz * mt),
-                        (x0f(z), y - oy * mt, z - oz * mt)]
+                        (x1f(z), y - n_y * mt, z - n_z * mt),
+                        (x0f(z), y - n_y * mt, z - n_z * mt)]
             r0, r1 = ring(za), ring(zc)
             v = [r0[0], r0[1], r1[1], r1[0], r0[3], r0[2], r1[2], r1[3]]
             f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
@@ -1083,38 +1076,35 @@ def _build_custom_angled(hood_obj, opts):
     framed_front = (opts['include_front_panel']
                     and _custom_sloped_frame(hood_obj, opts, prof, fz))
 
-    def side(x_bot, x_top):
+    def side(x_bot, x_top, angled=True):
         if zb0 > 0.0 and not has_mantle_assy:
             # Straight lower side through the mantle zone (a projecting
             # mantle's full-depth sides replace it).
             _mesh_box(hood_obj, "Hood Side Lower",
                       x_bot, x_bot + mt, -D + mt, 0.0, 0.0, zb0)
-        # Angled section of the side (bottom break to top break).
-        v = [(x_bot, 0.0, zb0), (x_bot, -D + setback, zb0),
-             (x_top, -td + setback, zb), (x_top, 0.0, zb),
-             (x_bot + mt, 0.0, zb0), (x_bot + mt, -D + setback, zb0),
-             (x_top + mt, -td + setback, zb), (x_top + mt, 0.0, zb)]
-        f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
-             (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-        _mesh_part(hood_obj, "Hood Side", v, f)
+        if angled:
+            # Angled section of the side (bottom break to top break).
+            v = [(x_bot, 0.0, zb0), (x_bot, -D + setback, zb0),
+                 (x_top, -td + setback, zb), (x_top, 0.0, zb),
+                 (x_bot + mt, 0.0, zb0), (x_bot + mt, -D + setback, zb0),
+                 (x_top + mt, -td + setback, zb), (x_top + mt, 0.0, zb)]
+            f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+                 (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+            _mesh_part(hood_obj, "Hood Side", v, f)
         if zb < H:
             # Straight upper side continuing to the top.
             _mesh_box(hood_obj, "Hood Side Upper",
                       x_top, x_top + mt, -td + mt, 0.0, zb, H)
 
-    # Paneled ends replace the plain angled sides; a side too small for
-    # its frame falls back to the plain side.
-    pe_fz = zb0 if has_mantle_assy else 0.0
+    # Paneled ends replace the sides' ANGLED section only; the straight
+    # mantle-zone / top boxes stay plain (side() still builds them). A
+    # slope too small for its frame falls back to the plain side.
     left_pe = (bool(opts['left_end_panel'])
-               and _angled_paneled_end(hood_obj, opts, prof, False,
-                                       setback, pe_fz))
+               and _angled_paneled_end(hood_obj, opts, prof, False, setback))
     right_pe = (bool(opts['right_end_panel'])
-                and _angled_paneled_end(hood_obj, opts, prof, True,
-                                        setback, pe_fz))
-    if not left_pe:
-        side(0.0, side_in)
-    if not right_pe:
-        side(W - mt, W - side_in - mt)
+                and _angled_paneled_end(hood_obj, opts, prof, True, setback))
+    side(0.0, side_in, angled=not left_pe)
+    side(W - mt, W - side_in - mt, angled=not right_pe)
     # Applied front, 3/4" thick, full width, covering the sides' front
     # edges. A straight lower front spans the mantle zone, the angled
     # front runs between the breaks, and a straight upper front continues
