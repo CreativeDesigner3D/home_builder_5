@@ -292,10 +292,14 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
     def ensure_sort_orders_initialized(self, room_scenes):
         """Make sure all scenes have unique sort_order values."""
         orders = [s.home_builder.sort_order for s in room_scenes]
-        if len(set(orders)) <= 1:
-            # Initialize based on name order
-            sorted_by_name = sorted(room_scenes, key=lambda s: s.name)
-            for i, scene in enumerate(sorted_by_name):
+        if len(set(orders)) != len(orders):
+            # Any duplicate makes a neighbor swap invisible (two equal
+            # values swap to the same list). Re-sequence in the currently
+            # displayed order (sort_order, then name -- matching the UI's
+            # stable sort) so normalizing never reshuffles the list.
+            displayed = sorted(room_scenes,
+                               key=lambda s: (s.home_builder.sort_order, s.name))
+            for i, scene in enumerate(displayed):
                 scene.home_builder.sort_order = i
 
     def execute(self, context):
