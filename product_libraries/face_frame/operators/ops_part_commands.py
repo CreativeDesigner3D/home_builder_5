@@ -753,11 +753,40 @@ def _door_part_for_dialog(op):
     return bpy.data.objects.get(op.source_obj_name)
 
 
+def _rebuild_door_part(obj):
+    """Rebuild a Python-built Door Part after its cutpart inputs changed.
+
+    A GN front resizes live off the modifier inputs, but a door_builder
+    front is a static mesh (HB_DOOR_FRAME 5-piece or HB_STATIC_SLAB) with
+    the cutpart modifier kept only as the Length/Width/Thickness store --
+    writing the inputs alone leaves the visible mesh at the old size.
+    Re-run the part's assigned style (DOOR_STYLE_NAME in the role's pool,
+    falling back to the active style), which re-reads the inputs and
+    rebuilds the mesh. No-op for live GN fronts."""
+    if not (obj.get('HB_DOOR_FRAME') or obj.get('HB_STATIC_SLAB')):
+        return
+    from .. import props_hb_face_frame as props
+    ds = None
+    ff = props.get_style_props()
+    if ff is not None:
+        name = obj.get('DOOR_STYLE_NAME')
+        role = obj.get('hb_part_role')
+        pool = (ff.drawer_front_styles
+                if role in ('DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT')
+                else ff.door_styles)
+        ds = next((d for d in pool if d.name == name), None)
+    if ds is None:
+        ds = types_face_frame._active_door_style()
+    if ds is not None:
+        ds.assign_style_to_front(obj)
+
+
 def _on_door_width_update(self, context):
     """Live-apply Width -> the door's 'Width' input, then re-track the pull."""
     obj = _door_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Width', self.part_width)
+        _rebuild_door_part(obj)
         types_face_frame.position_door_part_pull(obj)
 
 
@@ -766,6 +795,7 @@ def _on_door_height_update(self, context):
     obj = _door_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Length', self.part_height)
+        _rebuild_door_part(obj)
         types_face_frame.position_door_part_pull(obj)
 
 
@@ -775,6 +805,7 @@ def _on_door_thickness_update(self, context):
     obj = _door_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Thickness', self.part_thickness)
+        _rebuild_door_part(obj)
         types_face_frame.position_door_part_pull(obj)
 
 
