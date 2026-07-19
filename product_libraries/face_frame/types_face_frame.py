@@ -7888,14 +7888,20 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self.recalculate()
 
     def _ensure_shelf_part(self, role, name, add_groove=False):
+        # MENU_ID is (re)stamped on existing parts too so shelves built
+        # before the parts had their own right-click menu pick it up on
+        # their next recalc. The shared part menu carries Add Cutout and
+        # Make Editable.
         for child in self.obj.children:
             if child.get('hb_part_role') == role:
+                child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
                 return child
         part = CabinetPart()
         part.create(name)
         part.obj.parent = self.obj
         part.obj['hb_part_role'] = role
         part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         if add_groove:
             # Light groove (LED channel) for Heavy Duty shelves; driven
             # + toggled in recalculate().
@@ -7955,6 +7961,12 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         RP = parts[PART_ROLE_SHELF_PANEL_RIGHT]
 
         def place(obj, length, w, th, loc, rot, mirror):
+            # A Make Editable part owns its mesh and transform (its GN
+            # was applied, so set_input would fail anyway) - leave it
+            # alone; Revert to Parametric re-adds the GN and the next
+            # recalc re-drives it here.
+            if obj.get('IS_MANUAL_PART'):
+                return
             gn = GeoNodeCutpart(obj)
             gn.set_input('Length', length)
             gn.set_input('Width', w)
@@ -7987,15 +7999,17 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         place(LP, inner_depth, thickness, mt, (0.0, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
-        LP.hide_viewport = not fl
-        LP.hide_render = not fl
+        if not LP.get('IS_MANUAL_PART'):
+            LP.hide_viewport = not fl
+            LP.hide_render = not fl
         LP['IS_FINISHED'] = True
 
         place(RP, inner_depth, thickness, mt, (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True})
-        RP.hide_viewport = not fr
-        RP.hide_render = not fr
+        if not RP.get('IS_MANUAL_PART'):
+            RP.hide_viewport = not fr
+            RP.hide_render = not fr
         RP['IS_FINISHED'] = True
 
         # --- Light groove (Heavy Duty shelves only) ---
@@ -8010,10 +8024,14 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
         # Flip Z picks the cut face; top cuts its top face, bottom its
         # bottom. Verify against the render and flip if reversed.
-        self._set_groove(TOP, hd and shelf.include_groove_top,
-                         gx0, y_near, gx1, y_far, g_depth, True)
-        self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
-                         gx0, y_near, gx1, y_far, g_depth, False)
+        # A manual part's Groove modifier stays live on the applied mesh
+        # (Make Editable only applies the cutpart) - leave it alone too.
+        if not TOP.get('IS_MANUAL_PART'):
+            self._set_groove(TOP, hd and shelf.include_groove_top,
+                             gx0, y_near, gx1, y_far, g_depth, True)
+        if not BOTTOM.get('IS_MANUAL_PART'):
+            self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
+                             gx0, y_near, gx1, y_far, g_depth, False)
 
 
 class ValanceFaceFrameProduct(FaceFrameCabinet):
