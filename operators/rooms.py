@@ -53,6 +53,17 @@ class home_builder_OT_create_room(bpy.types.Operator):
         new_scene = bpy.data.scenes.new(self.room_name)
         new_scene['IS_ROOM_SCENE'] = True
         new_scene.home_builder.product_tab = product_tab
+
+        # Carry the project-wide drawer standard into the new room: the
+        # face-frame Top Drawer Opening Height is kept uniform across
+        # rooms (its update callback syncs edits between existing
+        # scenes), so a room created AFTER the dealer changed it must
+        # seed from the live value rather than the property default.
+        try:
+            new_scene.hb_face_frame.top_drawer_opening_height = (
+                original_scene.hb_face_frame.top_drawer_opening_height)
+        except Exception:
+            pass
         
         # Save view state of original scene if it's a room
         if hb_utils.is_room_scene(original_scene):

@@ -6619,6 +6619,42 @@ class Face_Frame_Interior_Region_Props(PropertyGroup):
 # ---------------------------------------------------------------------------
 # Main scene props
 # ---------------------------------------------------------------------------
+# Reentrance guard for the cross-room top-drawer-height sync: writing
+# the other scenes' props fires this same callback on each of them.
+_SYNCING_TOP_DRAWER_HEIGHT = False
+
+
+def _sync_top_drawer_opening_height(self, context):
+    """Keep the Top Drawer Opening Height uniform across every ROOM
+    scene in the file. Rooms are separate scenes, so without this a
+    value set in room 1 left fresh rooms (and any untouched room)
+    silently on the 4.5" default. The value seeds per-drawer opening
+    heights at build time, so already-built cabinets in other rooms do
+    NOT re-flow (use Refresh Top Drawer Openings for that), and
+    per-drawer unlocked heights still override per cabinet. Layout /
+    detail scenes are skipped; room creation seeds the new scene from
+    the creating scene (operators/rooms.py)."""
+    global _SYNCING_TOP_DRAWER_HEIGHT
+    if _SYNCING_TOP_DRAWER_HEIGHT:
+        return
+    _SYNCING_TOP_DRAWER_HEIGHT = True
+    try:
+        val = self.top_drawer_opening_height
+        own = self.id_data
+        for scene in bpy.data.scenes:
+            if scene is own:
+                continue
+            if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_SPACES_DETAIL'):
+                continue
+            ff = getattr(scene, 'hb_face_frame', None)
+            if ff is None:
+                continue
+            if abs(ff.top_drawer_opening_height - val) > 1e-9:
+                ff.top_drawer_opening_height = val
+    finally:
+        _SYNCING_TOP_DRAWER_HEIGHT = False
+
+
 def _pull_category_enum_items(self, context):
     # Deferred import to avoid a circular dependency: pulls.py imports
     # this module for the thumbnail preview collection.
@@ -6985,10 +7021,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
     top_drawer_opening_height: FloatProperty(
         name="Top Drawer Opening Height",
-        description="Height of the top drawer opening in base cabinet drawer presets (1 Drawer x Door, 3 Drawers, 4 Drawers, etc.)",
+        description="Height of the top drawer opening in base cabinet "
+                    "drawer presets (1 Drawer x Door, 3 Drawers, 4 "
+                    "Drawers, etc.). Kept uniform across every room in "
+                    "the project; per-drawer unlocked heights still "
+                    "override on individual cabinets",
         default=units.inch(4.5),
         unit='LENGTH',
         precision=4,
+        update=_sync_top_drawer_opening_height,
     )  # type: ignore
 
     upper_cabinet_depth: FloatProperty(
