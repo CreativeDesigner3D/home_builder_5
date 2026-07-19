@@ -5497,10 +5497,21 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         scene = context.scene
         ff_scene = getattr(scene, 'hb_face_frame', None)
         if ff_scene is not None:
-            self.blind_stile_width = ff_scene.ff_blind_stile_width
-            # Seed the placed stile to match, so default behaviour (a
-            # symmetric corner) is unchanged unless the user edits it.
-            self.placed_stile_width = ff_scene.ff_blind_stile_width
+            # Seed each stile from its own cabinet's style row for the
+            # BLIND type and that cabinet's column (per the catalog,
+            # upper inside corners take a narrower stile -- 2" -- than
+            # base / tall at 3"). The scene-level single value remains
+            # the fallback for an unstyled cabinet.
+            def _blind_seed(obj_name):
+                obj = bpy.data.objects.get(obj_name)
+                if obj is not None:
+                    w = props_hb_face_frame._style_stile_width_for(
+                        obj.face_frame_cabinet, 'BLIND')
+                    if w is not None:
+                        return w
+                return ff_scene.ff_blind_stile_width
+            self.blind_stile_width = _blind_seed(self.blind_cabinet_name)
+            self.placed_stile_width = _blind_seed(self.current_cabinet_name)
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
