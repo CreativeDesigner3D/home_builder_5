@@ -5612,21 +5612,12 @@ def _blind_corner_pair_for(root):
     return None
 
 
-class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
-    """Modal popup invoked after a placement that lands at a 90-degree
-    wall corner with a perpendicular cabinet neighbor. Lets the user
-    pick how the two cabinets meet (depth-match vs. fixed void) and
-    what stile widths apply, then applies the blind state to the
-    neighbor and the matching adjacent-side state to the placed
-    cabinet.
-    """
-    bl_idname = "hb_face_frame.set_blind_corner_void_amount"
-    bl_label = "Set Blind Corner Void Amount"
-    bl_description = (
-        "Configure how the placed cabinet meets a perpendicular "
-        "cabinet at this wall corner"
-    )
-    bl_options = {'UNDO'}
+class _BlindCornerDialogMixin:
+    """Shared props + dialog body + apply for the placement-time blind
+    dialog and the post-placement editor. A PLAIN mixin on purpose:
+    Blender cannot register an Operator whose parent is an already-
+    registered Operator, so the two concrete operators each inherit
+    (this, bpy.types.Operator) instead of one another."""
 
     blind_cabinet_name: bpy.props.StringProperty(
         name="Blind Cabinet Name", default="",
@@ -5675,27 +5666,6 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         default=units.inch(3.0),
         min=0.0, unit='LENGTH', precision=4,
     )  # type: ignore
-
-    def invoke(self, context, event):
-        scene = context.scene
-        ff_scene = getattr(scene, 'hb_face_frame', None)
-        if ff_scene is not None:
-            # Seed each stile from its own cabinet's style row for the
-            # BLIND type and that cabinet's column (per the catalog,
-            # upper inside corners take a narrower stile -- 2" -- than
-            # base / tall at 3"). The scene-level single value remains
-            # the fallback for an unstyled cabinet.
-            def _blind_seed(obj_name):
-                obj = bpy.data.objects.get(obj_name)
-                if obj is not None:
-                    w = props_hb_face_frame._style_stile_width_for(
-                        obj.face_frame_cabinet, 'BLIND')
-                    if w is not None:
-                        return w
-                return ff_scene.ff_blind_stile_width
-            self.blind_stile_width = _blind_seed(self.blind_cabinet_name)
-            self.placed_stile_width = _blind_seed(self.current_cabinet_name)
-        return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
         layout = self.layout
@@ -5749,14 +5719,53 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_edit_blind_corner(
-        hb_face_frame_OT_set_blind_corner_void_amount):
+class hb_face_frame_OT_set_blind_corner_void_amount(_BlindCornerDialogMixin,
+                                                    bpy.types.Operator):
+    """Modal popup invoked after a placement that lands at a 90-degree
+    wall corner with a perpendicular cabinet neighbor. Lets the user
+    pick how the two cabinets meet (depth-match vs. fixed void) and
+    what stile widths apply, then applies the blind state to the
+    neighbor and the matching adjacent-side state to the placed
+    cabinet.
+    """
+    bl_idname = "hb_face_frame.set_blind_corner_void_amount"
+    bl_label = "Set Blind Corner Void Amount"
+    bl_description = (
+        "Configure how the placed cabinet meets a perpendicular "
+        "cabinet at this wall corner"
+    )
+    bl_options = {'UNDO'}
+
+    def invoke(self, context, event):
+        scene = context.scene
+        ff_scene = getattr(scene, 'hb_face_frame', None)
+        if ff_scene is not None:
+            # Seed each stile from its own cabinet's style row for the
+            # BLIND type and that cabinet's column (per the catalog,
+            # upper inside corners take a narrower stile -- 2" -- than
+            # base / tall at 3"). The scene-level single value remains
+            # the fallback for an unstyled cabinet.
+            def _blind_seed(obj_name):
+                obj = bpy.data.objects.get(obj_name)
+                if obj is not None:
+                    w = props_hb_face_frame._style_stile_width_for(
+                        obj.face_frame_cabinet, 'BLIND')
+                    if w is not None:
+                        return w
+                return ff_scene.ff_blind_stile_width
+            self.blind_stile_width = _blind_seed(self.blind_cabinet_name)
+            self.placed_stile_width = _blind_seed(self.current_cabinet_name)
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+
+class hb_face_frame_OT_edit_blind_corner(_BlindCornerDialogMixin,
+                                         bpy.types.Operator):
     """Re-open the blind corner settings for an already-configured
-    corner from either cabinet's right-click menu. Inherits the props,
-    dialog draw, and (delta-based) execute from the placement dialog;
-    only the entry differs: the pair is resolved from the clicked
-    cabinet and the fields are seeded from the corner's CURRENT state,
-    so OK applies just the difference."""
+    corner from either cabinet's right-click menu. Shares the props,
+    dialog draw, and (delta-based) execute with the placement dialog
+    via _BlindCornerDialogMixin; only the entry differs: the pair is
+    resolved from the clicked cabinet and the fields are seeded from
+    the corner's CURRENT state, so OK applies just the difference."""
     bl_idname = "hb_face_frame.edit_blind_corner"
     bl_label = "Blind Corner Properties"
     bl_description = ("Adjust the void amount and stile widths of the "
