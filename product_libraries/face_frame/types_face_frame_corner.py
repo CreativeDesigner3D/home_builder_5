@@ -1711,8 +1711,19 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             right_door_x = width - rsw - r
             door_standoff = -dt
         else:
-            left_door_width = left_opening - dt + left_ov
-            right_door_width = right_opening - dt + right_ov
+            # Corner-side allowance: how much of the arm opening each
+            # leaf must leave for the OTHER arm's leaf. A proud
+            # (overlay) leaf blocks a full door thickness; an inset
+            # leaf recedes into its own opening, freeing the corner
+            # inch-for-inch, until at full inset the leaves kiss the
+            # corner planes exactly like the revolving pair (clamp at
+            # 0 -- the extra DOOR_TO_FRAME_GAP in the inset amount must
+            # not push a leaf past the corner). Subtracting the full
+            # thickness regardless left a door-thickness gap at the
+            # corner on full-inset cabinets.
+            corner_sub = max(dt - cab_props.default_door_inset_amount, 0.0)
+            left_door_width = left_opening - corner_sub + left_ov
+            right_door_width = right_opening - corner_sub + right_ov
             left_door_y = -depth + lsw - left_ov
             right_door_x = width - rsw + right_ov
             door_standoff = (solver.DOOR_TO_FRAME_GAP
