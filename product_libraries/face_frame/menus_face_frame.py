@@ -540,6 +540,9 @@ class HOME_BUILDER_MT_face_frame_door_part_commands(bpy.types.Menu):
         is_drawer = (obj.get('DOOR_PART_FRONT_KIND', 'DOOR') == 'DRAWER') if obj else False
         layout.operator("hb_face_frame.set_door_part_dimensions",
                         text="Set Dimensions...", icon='ARROW_LEFTRIGHT')
+        if ops_part_commands.has_door_style_modifier(obj):
+            layout.operator("hb_face_frame.set_door_frame",
+                            text="Set Door Frame...", icon='MOD_BEVEL')
         layout.operator("hb_face_frame.assign_active_door_style",
                         text="Assign Active Style", icon='MOD_BEVEL')
         layout.separator()

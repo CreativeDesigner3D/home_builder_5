@@ -3971,6 +3971,45 @@ def _update_remove_bottom(self, context):
                         op.bottom_overlay = 0.0
                     else:
                         op.unlock_bottom_overlay = False
+            # A user-sized mid rail about to be promoted to the bay's
+            # bottom rail (see _walk_tree's remove_bottom
+            # reclassification) keeps its width: migrate the per-member
+            # override into bottom_rail_width so the promoted rail and
+            # its role-based width UI agree. The prior bottom-rail
+            # values are stashed on the bay object and restored when
+            # the rail comes back.
+            tree = (layout.bays[bi].get('tree')
+                    if bi < len(layout.bays) else None)
+            if removing:
+                if (tree and tree.get('kind') == 'split'
+                        and tree.get('axis') == 'H'):
+                    children = tree.get('children') or []
+                    n_split = len(children) - 1
+                    removes = tree.get('splitter_removes') or []
+                    frontless = solver_face_frame._FRONTLESS_FRONT_TYPES
+                    if (n_split >= 1
+                            and children[-1].get('kind') == 'leaf'
+                            and children[-1].get('front_type') in frontless
+                            and not (len(removes) == n_split
+                                     and removes[n_split - 1])):
+                        split_obj = bpy.data.objects.get(
+                            tree.get('obj_name') or '')
+                        coll = (split_obj.face_frame_split.splitter_widths
+                                if split_obj is not None else [])
+                        idx = n_split - 1
+                        if idx < len(coll) and coll[idx].active:
+                            bay_obj['hb_pre_remove_bottom_rail'] = [
+                                self.bottom_rail_width,
+                                1.0 if self.unlock_bottom_rail else 0.0,
+                            ]
+                            self.unlock_bottom_rail = True
+                            self.bottom_rail_width = coll[idx].width
+            else:
+                stash = bay_obj.get('hb_pre_remove_bottom_rail')
+                if stash is not None and len(stash) == 2:
+                    self.bottom_rail_width = stash[0]
+                    self.unlock_bottom_rail = bool(stash[1])
+                    del bay_obj['hb_pre_remove_bottom_rail']
         # Always recalc - even when there were no openings to adjust the
         # rail removal still changes the carcass / face frame.
         types_face_frame.recalculate_face_frame_cabinet(bay_obj)

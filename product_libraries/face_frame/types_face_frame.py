@@ -6788,16 +6788,23 @@ class FaceFrameCabinet(GeoNodeCage):
             })
 
     def _walk_interior_regions(self, opening_obj, opening_rect):
-        """Yield (region_props, region_cage_dim_z) pairs covering every
+        """Yield (region_props, region_height) pairs covering every
         leaf in the opening's interior tree. When the opening has no
-        tree, yields exactly one pair: the opening's own props +
-        cage_dim_z. Used by the auto-shelf-qty pass so each leaf seeds
-        its shelf count from its own height, not the whole opening's.
+        tree, yields exactly one pair: the opening's own props + the
+        face frame opening height. Used by the auto-shelf-qty pass so
+        each leaf seeds its shelf count from its own height, not the
+        whole opening's. The catalog shelf table is keyed on the FACE
+        FRAME opening height, not the carcass cage height -- the cage
+        runs top rail to top panel and can sit a bracket above the
+        opening the dealer measures (e.g. a 13 7/8" opening in an 18"
+        upper has a ~15 3/4" cage, which wrongly earned 1 shelf).
         """
+        ff_opening_h = (opening_rect['cage_dim_z']
+                        - opening_rect['reveal_top']
+                        - opening_rect['reveal_bottom'])
         root = solver._interior_tree_root(opening_obj)
         if root is None:
-            yield (opening_obj.face_frame_opening,
-                   opening_rect['cage_dim_z'])
+            yield (opening_obj.face_frame_opening, ff_opening_h)
             return
 
         def _recurse(node, dim_z):
@@ -6825,7 +6832,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 yield from _recurse(children[0], dim_z)
                 yield from _recurse(children[1], dim_z)
 
-        yield from _recurse(root, opening_rect['cage_dim_z'])
+        yield from _recurse(root, ff_opening_h)
 
     def _create_interior_mesh_part(self, opening_obj, desc):
         """Generic interior mesh-part factory. Reads desc['orientation']
@@ -8053,14 +8060,20 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         self.recalculate()
 
     def _ensure_valance_part(self, role, name):
+        # MENU_ID is (re)stamped on existing parts too so valances built
+        # before the parts had their own right-click menu pick it up on
+        # their next recalc. The shared part menu carries Add Cutout and
+        # Make Editable (an arched valance board is cut that way).
         for child in self.obj.children:
             if child.get('hb_part_role') == role:
+                child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
                 return child
         part = CabinetPart()
         part.create(name)
         part.obj.parent = self.obj
         part.obj['hb_part_role'] = role
         part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         return part.obj
 
     def recalculate(self):
@@ -8085,6 +8098,12 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         RP = self._ensure_valance_part(PART_ROLE_VALANCE_PANEL_RIGHT, 'Valance Panel Right')
 
         def place(obj, length, w, th, loc, rot, mirror):
+            # A Make Editable part owns its mesh and transform (its GN
+            # was applied, so set_input would fail anyway) - leave it
+            # alone; Revert to Parametric re-adds the GN and the next
+            # recalc re-drives it here.
+            if obj.get('IS_MANUAL_PART'):
+                return
             gn = GeoNodeCutpart(obj)
             gn.set_input('Length', length)
             gn.set_input('Width', w)
@@ -8108,15 +8127,17 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         place(LP, inner_depth, height, ft, (0.0, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
-        LP.hide_viewport = not fl
-        LP.hide_render = not fl
+        if not LP.get('IS_MANUAL_PART'):
+            LP.hide_viewport = not fl
+            LP.hide_render = not fl
         LP['IS_FINISHED'] = True
 
         place(RP, inner_depth, height, ft, (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True})
-        RP.hide_viewport = not fr
-        RP.hide_render = not fr
+        if not RP.get('IS_MANUAL_PART'):
+            RP.hide_viewport = not fr
+            RP.hide_render = not fr
         RP['IS_FINISHED'] = True
 
         # Top cover: Mirror Z makes the given Z the panel's TOP face -
@@ -8126,8 +8147,9 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         place(COVER, inner_len, inner_depth, ct,
               (inset_l, -depth + ft, cover_z), (0.0, 0.0, 0.0),
               {'Mirror Z': True})
-        COVER.hide_viewport = not val.include_cover
-        COVER.hide_render = not val.include_cover
+        if not COVER.get('IS_MANUAL_PART'):
+            COVER.hide_viewport = not val.include_cover
+            COVER.hide_render = not val.include_cover
         COVER['IS_FINISHED'] = True
 
 

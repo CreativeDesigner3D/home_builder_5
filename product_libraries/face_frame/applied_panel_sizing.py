@@ -483,11 +483,14 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
     with types_face_frame.suspend_recalc():
         # The bay divider renders at the panel's own mid_stile_widths;
         # match it to the door-style stile so a real-bay stile prints
-        # at the same width the in-bay V-split used.
+        # at the same width the in-bay V-split used. A user-unlocked
+        # entry (Set Width on the stile) holds its value, mirroring
+        # apply_panel_sizing's unlock_* gating.
         stile_w = _mid_stile_width_for_panel(
             cab_obj, cab_obj.face_frame_cabinet, side)
         for entry in panel_props.mid_stile_widths:
-            entry.width = stile_w
+            if not entry.unlock:
+                entry.width = stile_w
 
         for bay_obj in bays:
             _wipe_bay_tree(bay_obj)

@@ -541,10 +541,12 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
 
     # Interior depth available to the opening (a front-inset board has
     # less; a mantle-extended board still keeps the opening over the
-    # hood interior proper).
+    # hood interior proper). The opening may use the full interior --
+    # rim widths are the dealer's call (liners can need a 3/8" front
+    # rim), so no extra reserve beyond the hood sides/front material.
     interior = (D - mt) + min(ext, 0.0)
-    cw = max(0.0, min(cutout_w, (W - 2.0 * mt) - inch(2.0)))
-    cd = max(0.0, min(cutout_d, interior - inch(2.0)))
+    cw = max(0.0, min(cutout_w, W - 2.0 * mt))
+    cd = max(0.0, min(cutout_d, interior))
     if cw <= 0.0 or cd <= 0.0:
         return
     slack = max((interior - cd) / 2.0, 0.0)
@@ -1888,8 +1890,10 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
     fan_cutout_offset: FloatProperty(
         name="Cutout Offset", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['fan_cutout_offset'],
-        description="Shift the fan opening toward the front (+) or the "
-                    "wall (-)")  # type: ignore
+        description="The fan opening centers between the front and the "
+                    "wall; shift it toward the front (+) or the wall (-). "
+                    "Rim behind the opening = (interior depth - cutout "
+                    "depth) / 2 + this value")  # type: ignore
     floor_height: FloatProperty(
         name="Floor Height", unit='LENGTH', precision=5, min=0.0,
         default=_CUSTOM_DEFAULTS['floor_height'],
