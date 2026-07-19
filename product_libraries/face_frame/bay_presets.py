@@ -421,9 +421,13 @@ def default_bay_config(cabinet_name, bay_width):
         # (width-based so it still doubles up if widened).
         return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Tri-View Medicine Cabinet':
-        # Single full-width DOOR opening; the three mirror doors come from
-        # the HB_TRIVIEW_DOORS flag in solver.front_leaves, not the preset.
-        return 'LEFT_SWING_DOOR'
+        # No post-placement preset: the product class builds three bays
+        # and configures each opening itself (one mirror door per bay,
+        # R / R / L hinges, 5/8" overlays, locked 1-1/4" trim overrides
+        # per the production spec) -- a preset pass here would rebuild
+        # the openings and wipe that. Legacy single-opening builds ride
+        # the HB_TRIVIEW_DOORS flag in solver.front_leaves.
+        return None
     if cabinet_name == 'Medicine Cabinet':
         # Surface-mounted medicine cabinet: standard upper front
         # (width-based door).

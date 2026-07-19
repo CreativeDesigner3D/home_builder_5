@@ -7247,27 +7247,80 @@ class OverstoolCabinetFaceFrameCabinet(MedicineCabinetFaceFrameCabinet):
 
 
 class TriViewMedicineCabinetFaceFrameCabinet(MedicineCabinetFaceFrameCabinet):
-    """Tri-view medicine cabinet: a surface-mount upper (6" deep, 36-60"
-    wide) whose SINGLE opening carries three mirror doors butting across the
-    front, hinged R / R / L, with the two interior stiles removed so the
-    mirrors meet edge-to-edge.
+    """Tri-view medicine cabinet, built per the production spec: a
+    surface-mount upper (6" deep) with THREE REAL BAYS.
 
-    The three-door layout is driven by the HB_TRIVIEW_DOORS custom prop (read
-    by solver.front_leaves) rather than the hinge_side enum - this is the only
-    product with this door layout, so it stays a per-product flag instead of a
-    general hinge option. The interior-stile removal rides on the per-leaf
-    frame-width override the leaf builder stamps onto each door."""
+    - Face frame: 1-5/16" stiles -- ends AND both mid stiles -- pinned
+      via the unlock flags so a style re-apply keeps them.
+    - One mirror door per bay, hinged R / R / L. Every door edge takes a
+      5/8" overlay (CLIPtop Blumotion 5/8"-overlay hinges), so two
+      adjacent doors overlay 5/8 + 5/8 = 1-1/4" of each 1-5/16" mid
+      stile and read a 1/16" reveal between the mirrors.
+    - Door trim: 1-1/4" wood frame with the MEETING edges left open (no
+      trim member) so the mirrors run visually edge-to-edge; only the
+      two outer doors keep their outer stile. Stamped as LOCKED
+      Set-Door-Frame overrides on each opening cage (the durable store),
+      so cabinet edits and style re-applies keep the per-side widths.
 
-    def create(self, name="Tri-View Medicine Cabinet", bay_qty=1):
-        super().create(name, bay_qty=bay_qty)
-        # Flag the tri-view door layout BEFORE giving the opening a door, so
-        # the recalc that the front_type write triggers builds three leaves.
-        self.obj['HB_TRIVIEW_DOORS'] = True
-        for op in self.obj.children_recursive:
-            fop = getattr(op, 'face_frame_opening', None)
-            if fop is not None and 'Opening' in op.name:
+    Earlier builds were a SINGLE opening carrying three butting leaves
+    driven by the HB_TRIVIEW_DOORS flag (see solver.front_leaves); that
+    solver path remains for files placed before this construction, but
+    new placements use the standard three-bay machinery -- which is also
+    what gives the product its mid stiles, per production."""
+
+    TRIVIEW_STILE_W = inch(1.3125)   # 1-5/16" end + mid stiles
+    TRIVIEW_OVERLAY = inch(0.625)    # 5/8" overlay hinges
+    TRIVIEW_TRIM_W = inch(1.25)      # 1-1/4" wood door trim
+
+    def create(self, name="Tri-View Medicine Cabinet", bay_qty=3):
+        super().create(name, bay_qty=3)
+        cab = self.obj.face_frame_cabinet
+
+        with suspend_recalc():
+            # 1-5/16" stiles on the ends and both gaps. Unlock BEFORE
+            # width so the write isn't treated as a style-cascade value.
+            cab.unlock_left_stile = True
+            cab.unlock_right_stile = True
+            cab.left_stile_width = self.TRIVIEW_STILE_W
+            cab.right_stile_width = self.TRIVIEW_STILE_W
+            for entry in cab.mid_stile_widths:
+                entry.unlock = True
+                entry.width = self.TRIVIEW_STILE_W
+
+            # Openings in bay order: one per bay (default upper config).
+            bays = sorted(
+                [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+                key=lambda b: b.face_frame_bay.bay_index)
+            openings = []
+            for bay in bays:
+                for c in bay.children:
+                    if c.get(TAG_OPENING_CAGE):
+                        openings.append(c)
+                        break
+
+            hinges = ('RIGHT', 'RIGHT', 'LEFT')
+            trims = (
+                (self.TRIVIEW_TRIM_W, 0.0),   # left door: outer stile only
+                (0.0, 0.0),                   # center door: no stiles
+                (0.0, self.TRIVIEW_TRIM_W),   # right door: outer stile only
+            )
+            for op_obj, hinge, (left_trim, right_trim) in zip(
+                    openings, hinges, trims):
+                fop = op_obj.face_frame_opening
+                for side in ('left', 'right', 'top', 'bottom'):
+                    setattr(fop, f'unlock_{side}_overlay', True)
+                    setattr(fop, f'{side}_overlay', self.TRIVIEW_OVERLAY)
+                fop.hinge_side = hinge
                 fop.front_type = 'DOOR'
-                break
+                # Locked door-frame override on the opening cage: the
+                # same durable store the Set Door Frame dialog writes.
+                op_obj['HB_FRAME_OVR_LEFT_STILE'] = left_trim
+                op_obj['HB_FRAME_OVR_RIGHT_STILE'] = right_trim
+                op_obj['HB_FRAME_OVR_TOP_RAIL'] = self.TRIVIEW_TRIM_W
+                op_obj['HB_FRAME_OVR_BOTTOM_RAIL'] = self.TRIVIEW_TRIM_W
+                op_obj['HB_FRAME_OVR_MID_RAIL_MODE'] = 'NONE'
+                op_obj['HB_FRAME_OVR_MID_RAIL_LOCATION'] = 0.0
+                op_obj['HB_FRAME_FRAME_LOCKED'] = True
 
 
 class TallFaceFrameCabinet(FaceFrameCabinet):
