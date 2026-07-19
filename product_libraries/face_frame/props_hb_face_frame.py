@@ -4501,7 +4501,16 @@ def _recompute_blind_stile_width(cab_props, side):
         width = _style_stile_width_for(cab_props, 'BLIND')
         if width is None:
             width = ff_scene.ff_blind_stile_width
-        if is_blind:
+        # +0.75" for the portion tucked behind the adjacent cabinet's
+        # face, keeping the EXPOSED amount at the entered width. True
+        # for a void blind side (blind flag on) AND a match-depth corner
+        # (flag off, but the HB_BLIND_VOID_* marker names this side as
+        # the corner's void owner). The PLACED cabinet's corner stile is
+        # also typed BLIND but tucks behind nothing -- no marker, no
+        # flag, no add.
+        marker = ('HB_BLIND_VOID_LEFT' if side == 'LEFT'
+                  else 'HB_BLIND_VOID_RIGHT')
+        if is_blind or marker in cab_props.id_data:
             width += units.inch(0.75)
     elif stile_type in ('WALL', 'BUTT', 'INSIDE_90', 'ANGLE'):
         # Width-only types (incl. WALL): take the style's per-row/column value.

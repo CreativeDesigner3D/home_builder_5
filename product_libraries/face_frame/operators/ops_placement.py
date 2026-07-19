@@ -5588,13 +5588,15 @@ class hb_face_frame_OT_set_blind_corner_void_amount(bpy.types.Operator):
         )
         actual_reduction = blind_props.width - new_blind_width
 
-        # Stile width: the recompute callback would write
-        # ff_blind_stile_width (+0.75 when blind flag is True). Override
-        # with the user's value, applying the 0.75" accept-adjacent add
-        # only when the blind flag remains on.
-        final_stile_w = self.blind_stile_width + (
-            units.inch(0.75) if new_blind_flag else 0.0
-        )
+        # Stile width: the user enters the EXPOSED amount. The blind end
+        # stile tucks its first 0.75" behind the placed cabinet's face
+        # frame in BOTH modes -- a void blind and a match-depth corner
+        # alike (match-depth parks the blind end exactly at the back of
+        # the placed face frame, so the placed corner stile's 0.75" of
+        # depth covers the start of the blind stile) -- so the actual
+        # width always carries the 0.75" add to keep the exposed amount
+        # consistent.
+        final_stile_w = self.blind_stile_width + units.inch(0.75)
 
         with types_face_frame.suspend_recalc():
             if self.blind_side == 'LEFT':
