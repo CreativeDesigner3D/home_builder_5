@@ -2858,6 +2858,27 @@ def _clear_static_door(front_obj):
         cut.show_render = True
 
 
+def _mirror_front_mesh_y_if_unmirrored(front_obj):
+    """Python-built door / slab meshes are authored for the standard
+    front convention (cutpart Mirror Y on: width spans part-local -Y).
+    A front built with Mirror Y False -- the corner cabinets' RIGHT
+    door and RIGHT drawer front -- was mirrored by the old
+    CPM_5PIECEDOOR GN tree, which read the flag; the python builder
+    does not, leaving the mesh a full width off along local Y. Mirror
+    the static mesh to match: flip local Y and the normals. No-op when
+    the cutpart modifier is missing or Mirror Y is on."""
+    from ... import hb_types
+    try:
+        if hb_types.GeoNodeCutpart(front_obj).get_input('Mirror Y'):
+            return
+    except Exception:
+        return
+    me = front_obj.data
+    for v in me.vertices:
+        v.co.y = -v.co.y
+    me.flip_normals()
+
+
 def _door_rail_for_front(style, front_obj):
     """Rail width of the door style paired with ``front_obj``'s cabinet
     (front -> cabinet cage -> cabinet style -> door style), or None when
@@ -3211,6 +3232,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                                          front_width, front_length,
                                          front_thickness,
                                          outer_section=edge_sec)
+            _mirror_front_mesh_y_if_unmirrored(front_obj)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
                 cut.show_viewport = False
@@ -3655,6 +3677,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                                          shape=(dict(shape_k,
                                                      rise=shape_rise_cap)
                                                 if shape_k else None))
+            _mirror_front_mesh_y_if_unmirrored(front_obj)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
                 cut.show_viewport = False
