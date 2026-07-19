@@ -3247,6 +3247,85 @@ class Face_Frame_Door_Style(PropertyGroup):
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
         front_obj['DOOR_STYLE_NAME'] = self.name
 
+    def _apply_mirror_door_front(self, front_obj):
+        """Fixed tri-view mirror-door build: a plain SQUARE wood frame at
+        the opening cage's locked frame-override widths (the product
+        stamps the meeting edges 0 so only the outer perimeter carries
+        trim), a flat recessed panel (the mirror), and NO profiles, mid
+        members, shape, or pull styling from the assigned door style --
+        a slab or heavily profiled style can't change the mirror look.
+        Marked IS_PREP_FOR_GLASS so the 2D layer hatches the mirror
+        like glass."""
+        from ... import hb_types
+        from ..common import door_builder
+        part = hb_types.GeoNodeCutpart(front_obj)
+        try:
+            front_length = part.get_input("Length")
+            front_width = part.get_input("Width")
+        except Exception:
+            return "Could not read front dimensions"
+        try:
+            front_thickness = part.get_input("Thickness")
+        except Exception:
+            front_thickness = units.inch(0.75)
+
+        store = _front_frame_store(front_obj)
+        eff_left = store.get('HB_FRAME_OVR_LEFT_STILE', self.stile_width)
+        eff_right = store.get('HB_FRAME_OVR_RIGHT_STILE', self.stile_width)
+        eff_top = store.get('HB_FRAME_OVR_TOP_RAIL', self.rail_width)
+        eff_bottom = store.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
+
+        # Recessed flat panel per the global recessed rule (1/4" held
+        # 1/8" off the door back) -- same math as the styled path.
+        rp = style_options.recessed_panel_spec(self.front_series)
+        panel_th = units.inch(rp['thickness'])
+        panel_inset = max(
+            front_thickness - units.inch(rp['thickness'] + rp['back_inset']),
+            0.0)
+
+        for mod in list(front_obj.modifiers):
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                front_obj.modifiers.remove(mod)
+        info = door_builder.door_style_info(self)
+        info.update(
+            door_type='5_PIECE',
+            left_stile_width=eff_left,
+            right_stile_width=eff_right,
+            top_rail_width=eff_top,
+            bottom_rail_width=eff_bottom,
+            panel_thickness=panel_th,
+            panel_inset=panel_inset,
+            add_mid_rail=False,
+            mid_rail_z=None,
+            mid_rail_count=0,
+            mid_stile_count=0,
+        )
+        door_builder.build_door_mesh(front_obj.data, info,
+                                     front_width, front_length,
+                                     front_thickness)
+        _mirror_front_mesh_y_if_unmirrored(front_obj)
+        cut = _front_cutpart_mod(front_obj)
+        if cut is not None:
+            cut.show_viewport = False
+            cut.show_render = False
+        if 'HB_STATIC_SLAB' in front_obj:
+            del front_obj['HB_STATIC_SLAB']
+        front_obj['IS_PREP_FOR_GLASS'] = True
+        front_obj['HB_MIRROR_DOOR'] = True
+        front_obj['HB_DOOR_FRAME'] = {
+            'left_stile': eff_left,
+            'right_stile': eff_right,
+            'top_rail': eff_top,
+            'bottom_rail': eff_bottom,
+            'add_mid_rail': False,
+            'mid_center': True,
+            'mid_loc': 0.0,
+            'mid_rail_width': self.mid_rail_width,
+        }
+        _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
+        front_obj['DOOR_STYLE_NAME'] = self.name
+        return True
+
     def assign_style_to_front(self, front_obj, record_override=False):
         """Apply this door style to a face frame front object.
 
@@ -3302,6 +3381,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         # choices, which render as plain glass until the bars land).
         front_obj['IS_PREP_FOR_GLASS'] = (
             style_options.panel_kind(self.front_panel)['kind'] == 'GLASS')
+
+        # Tri-view mirror doors carry a fixed look -- plain square wood
+        # frame + flat mirror panel -- independent of this style's
+        # door_type / series (no CWP door style models a wood-trimmed
+        # mirror door; the tri-view product stamps HB_MIRROR_DOOR on its
+        # opening cages).
+        if _front_frame_store(front_obj).get('HB_MIRROR_DOOR'):
+            return self._apply_mirror_door_front(front_obj)
 
         from ... import hb_types
         from ..common import door_builder

@@ -6017,7 +6017,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 and getattr(op_props, 'drawer_look_divisions', 'NONE') != 'NONE'
                 and op_props.hinge_side in ('LEFT', 'RIGHT')
             )
-            if not drawer_look:
+            # Tri-view mirror doors carry no pulls (touch-open per the
+            # production spec) -- both the three-bay build and legacy
+            # single-opening builds.
+            no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
+                        or self.obj.get('HB_TRIVIEW_DOORS'))
+            if not drawer_look and not no_pulls:
                 self._create_pull_for_front(front, leaf['role'], leaf)
             self._create_drawer_box_for_front(pivot, leaf, rect)
             if drawer_look:
@@ -7275,6 +7280,8 @@ class TriViewMedicineCabinetFaceFrameCabinet(MedicineCabinetFaceFrameCabinet):
     def create(self, name="Tri-View Medicine Cabinet", bay_qty=3):
         super().create(name, bay_qty=3)
         cab = self.obj.face_frame_cabinet
+        # Mirror doors are touch-open: no pulls on any front.
+        self.obj['HB_NO_DOOR_PULLS'] = True
 
         with suspend_recalc():
             # 1-5/16" stiles on the ends and both gaps. Unlock BEFORE
@@ -7321,6 +7328,10 @@ class TriViewMedicineCabinetFaceFrameCabinet(MedicineCabinetFaceFrameCabinet):
                 op_obj['HB_FRAME_OVR_MID_RAIL_MODE'] = 'NONE'
                 op_obj['HB_FRAME_OVR_MID_RAIL_LOCATION'] = 0.0
                 op_obj['HB_FRAME_FRAME_LOCKED'] = True
+                # Fixed door look: plain square wood frame + flat mirror
+                # panel, regardless of the assigned door style (see
+                # _apply_mirror_door_front in props_hb_face_frame).
+                op_obj['HB_MIRROR_DOOR'] = True
 
 
 class TallFaceFrameCabinet(FaceFrameCabinet):
