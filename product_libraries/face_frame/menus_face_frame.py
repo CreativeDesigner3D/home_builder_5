@@ -287,6 +287,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.menu("HOME_BUILDER_MT_face_frame_bottom_rail_profile",
                         text="Bottom Rail Profile", icon='MOD_BEVEL')
 
+        # The valance front board carries the same decorative profile
+        # option as a cabinet bottom rail (arch etc.).
+        if role == types_face_frame.PART_ROLE_VALANCE_BOARD:
+            layout.menu("HOME_BUILDER_MT_face_frame_bottom_rail_profile",
+                        text="Bottom Profile", icon='MOD_BEVEL')
+
         # A mid rail can be removed (mainly between drawers). The split
         # stays; the FF member + its backing drop and the solver closes
         # the two fronts to a 3/32" reveal. No restore here - rebuild the
@@ -574,6 +580,8 @@ class HOME_BUILDER_MT_face_frame_valance_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.valance_prompts",
                         text="Valance Properties...", icon='WINDOW')
+        layout.menu("HOME_BUILDER_MT_face_frame_bottom_rail_profile",
+                    text="Bottom Profile", icon='MOD_BEVEL')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Valance", icon='X')

@@ -8137,8 +8137,16 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         inner_depth = depth - ft   # behind the board, back to the wall
 
         # Valance board: full width across the front, `height` tall.
+        # Same transform convention as a cabinet bottom rail (+90 X,
+        # Mirror Z) - identical world geometry to the old -90/Mirror Y
+        # placement, but it lets _position_bottom_rail_profile_cutter
+        # cut the decorative bottom profile in the board's local space
+        # exactly as it does on a bottom rail. Mirror Y is written
+        # False explicitly so valances placed before this change
+        # migrate on their next recalc.
         place(BOARD, width, height, ft, (0.0, -depth, 0.0),
-              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
+              (math.radians(90), 0.0, 0.0),
+              {'Mirror Y': False, 'Mirror Z': True})
         BOARD['IS_FINISHED'] = True
 
         # Return panels: close each end back to the wall when finished.
@@ -8169,6 +8177,41 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
             COVER.hide_viewport = not val.include_cover
             COVER.hide_render = not val.include_cover
         COVER['IS_FINISHED'] = True
+
+        # Decorative bottom profile on the front board - the cabinet
+        # bottom_rail_profile option applied to the valance. Reuses the
+        # bottom-rail cutter machinery verbatim (the board shares the
+        # rail transform convention above). A manual board is left
+        # entirely alone: its cut, if any, is baked or riding the
+        # existing boolean, and the cutter can't be rebuilt from an
+        # applied GN anyway.
+        if not BOARD.get('IS_MANUAL_PART'):
+            profile_id = getattr(cab, 'bottom_rail_profile', 'NONE')
+            is_arch = profile_id == _BOTTOM_RAIL_PROFILE_ARCH
+            poly = (None if (is_arch or profile_id in ('NONE', ''))
+                    else _bottom_rail_profile_poly(profile_id))
+            if profile_id in ('NONE', '') or (not is_arch and not poly):
+                mod = BOARD.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
+                if mod is not None:
+                    BOARD.modifiers.remove(mod)
+                self._cleanup_bottom_rail_profile_cutters()
+            else:
+                cutter = self._ensure_bottom_rail_profile_cutter('VALANCE_BOARD')
+                ok = self._position_bottom_rail_profile_cutter(
+                    cutter, BOARD, profile_id, poly)
+                mod = BOARD.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
+                if not ok:
+                    if mod is not None:
+                        BOARD.modifiers.remove(mod)
+                else:
+                    if mod is None:
+                        mod = BOARD.modifiers.new(
+                            name=BOTTOM_RAIL_PROFILE_CUT_MOD_NAME,
+                            type='BOOLEAN')
+                        mod.operation = 'DIFFERENCE'
+                        mod.solver = 'EXACT'
+                    if mod.object is not cutter:
+                        mod.object = cutter
 
 
 class MiscPart(CabinetPart):
