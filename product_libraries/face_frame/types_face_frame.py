@@ -7588,6 +7588,11 @@ class MirrorFrameFaceFrameCabinet(PanelFaceFrameCabinet):
         cab = self.obj.face_frame_cabinet
         cab.width = inch(38.0)
         cab.height = inch(28.0)
+        # The inset panel filling the frame is the mirror: the material
+        # walk paints INSET_PANEL parts of a cabinet carrying this flag
+        # with the shared 'Door Panel Mirror' material (see
+        # _apply_materials_to_cabinet).
+        self.obj['HB_MIRROR_PANEL_FRONTS'] = True
 
 
 class TubSkirtFaceFrameCabinet(PanelFaceFrameCabinet):

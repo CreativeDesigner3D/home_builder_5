@@ -1985,6 +1985,42 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             mat.use_backface_culling = False
         return mat
 
+    @staticmethod
+    def _get_mirror_panel_material():
+        """Get/create the 'Door Panel Mirror' material for mirror panels
+        (tri-view doors, the Mirror Frame's inset panel). A fully
+        metallic, near-zero-roughness Principled surface with a slight
+        cool tint -- reads as mirror glass in EEVEE / Cycles and as a
+        bright cool sheen in the solid viewport. Cached by name; socket
+        writes guarded like the glass material."""
+        name = "Door Panel Mirror"
+        mat = bpy.data.materials.get(name)
+        if mat is not None:
+            return mat
+        mat = bpy.data.materials.new(name=name)
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+        output = nodes.new('ShaderNodeOutputMaterial')
+        output.location = (300, 0)
+        bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+        bsdf.location = (0, 0)
+        if 'Base Color' in bsdf.inputs:
+            bsdf.inputs['Base Color'].default_value = (0.9, 0.92, 0.95, 1.0)
+        if 'Metallic' in bsdf.inputs:
+            bsdf.inputs['Metallic'].default_value = 1.0
+        if 'Roughness' in bsdf.inputs:
+            bsdf.inputs['Roughness'].default_value = 0.02
+        links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+        # Solid-viewport approximation: bright cool tint + full metallic.
+        mat.diffuse_color = (0.85, 0.88, 0.92, 1.0)
+        if hasattr(mat, 'metallic'):
+            mat.metallic = 1.0
+        if hasattr(mat, 'roughness'):
+            mat.roughness = 0.05
+        return mat
+
     def _set_door_modifier_materials(self, front_obj, finish_mat, finish_mat_rotated):
         """Set Stile / Rail / Panel material on a 5-piece front: the mesh's
         material slots for a python-built door (HB_DOOR_FRAME), else the
@@ -2003,6 +2039,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Prep-for-glass fronts render the centre panel as glass, not wood.
         if self._door_style_is_glass(front_obj):
             panel_mat = self._get_glass_panel_material()
+        # Tri-view mirror doors render the centre panel as mirror
+        # (stamped by _apply_mirror_door_front, which runs in the door
+        # style pass -- before this material walk).
+        if front_obj.get('HB_MIRROR_DOOR'):
+            panel_mat = self._get_mirror_panel_material()
         if 'HB_STATIC_SLAB' in front_obj:
             # Python-built slab (profiled edge): single-slot mesh; the
             # whole front follows the style's grain like the panel.
@@ -2237,6 +2278,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             if role == 'GLASS_SHELF':
                 glass = self._get_glass_panel_material()
                 self._set_part_surfaces(child, glass, glass)
+                continue
+
+            # Mirror Frame (and any cabinet stamped HB_MIRROR_PANEL_FRONTS):
+            # the inset panel filling the face frame IS the mirror. Also
+            # tagged prep-for-glass so the 2D layer hatches it.
+            if (role == 'INSET_PANEL'
+                    and cabinet_obj.get('HB_MIRROR_PANEL_FRONTS')):
+                m = self._get_mirror_panel_material()
+                self._set_part_surfaces(child, m, m)
+                child['IS_PREP_FOR_GLASS'] = True
                 continue
 
             if role in self._FRONT_ROLES:
