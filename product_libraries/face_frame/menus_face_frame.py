@@ -26,6 +26,21 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.cabinet_prompts",
                         text="Cabinet Properties...", icon='WINDOW')
+        # Blind corner: shown when this cabinet participates in a
+        # configured square blind corner (pair stamp, void-owner marker,
+        # or a legacy BLIND-typed stile). The operator re-resolves and
+        # seeds from the corner's current state.
+        _bc_root = types_face_frame.find_cabinet_root(context.active_object)
+        if _bc_root is not None:
+            _bc_props = _bc_root.face_frame_cabinet
+            if ('HB_BLIND_VOID_LEFT' in _bc_root
+                    or 'HB_BLIND_VOID_RIGHT' in _bc_root
+                    or 'HB_BLIND_PAIR' in _bc_root
+                    or _bc_props.left_stile_type == 'BLIND'
+                    or _bc_props.right_stile_type == 'BLIND'):
+                layout.operator("hb_face_frame.edit_blind_corner",
+                                text="Blind Corner Properties...",
+                                icon='SNAP_EDGE')
         # Duplicate: copy-and-place. Seeds the placement modal from
         # this cabinet; the drop deep-copies the whole hierarchy so
         # bay configs, fronts, and the style come along. F in the
