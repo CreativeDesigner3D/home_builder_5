@@ -7566,8 +7566,23 @@ class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
     each opening is first built. Panel-derived, so it MUST be registered in
     WRAP_CLASS_REGISTRY or recalc re-wraps it as the base carcass cabinet
     (it would gain a carcass) - see Panel / Mirror Frame.
+
+    Openings are pinned to the placed bay count (panel_split_auto off):
+    the applied-panel width ladder re-splits a standalone panel to ~18"
+    openings on every recalc, which turned a 1-bay placement preview
+    into a 2-bay product for anything over 20" wide. Doors follow door
+    conventions, not panel aesthetics - the user splits bays manually
+    (or re-enables Auto Openings) when they want more.
     """
     default_opening_front_type = 'DOOR'
+
+    def create(self, name="Face Frame and Doors", bay_qty=1):
+        self.create_cabinet_root(name)
+        # Raw ID-prop write: set BEFORE the carcass builds so no
+        # create-time recalc can apply the ladder, and without firing
+        # the prop's update callback (which would recalc mid-create).
+        self.obj.face_frame_cabinet["panel_split_auto"] = False
+        self.create_carcass(has_toe_kick=False, bay_qty=bay_qty)
 
 
 class MirrorFrameFaceFrameCabinet(PanelFaceFrameCabinet):
