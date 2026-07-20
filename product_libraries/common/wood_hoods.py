@@ -486,6 +486,116 @@ def _hood_door_info(hood_obj, opts):
     return info
 
 
+def _hood_door_mesh_spec(hood_obj, opts, width, height, thickness):
+    """(info, build_door_mesh kwargs) for one hood door at a concrete
+    size: _hood_door_info plus the door style's full construction the
+    way cabinet fronts resolve it -- panel construction kinds, profile
+    sweeps, mitered members, applied moldings, mullions, and arched
+    shapes (via the style helpers resolve_member_section /
+    effective_panel_fields / resolve_mesh_sections). The cabinet-level
+    Door and Drawer Edge Profile rides in from the hood's assigned
+    cabinet style. No resolvable style keeps the plain fallback fields
+    with square sections. A door too small for the frame falls back to
+    a slab (which still carries any edge profile)."""
+    style = _hood_door_style(hood_obj)
+    info = _hood_door_info(hood_obj, opts)
+    kwargs = dict(shape=None)
+    if style is not None:
+        member_sec = style.resolve_member_section(thickness)
+        pkind, p_th, p_inset = style.effective_panel_fields(thickness)
+        info['panel_thickness'] = p_th
+        info['panel_inset'] = p_inset
+        if member_sec is not None:
+            # Mitered: one continuous molding loop -- equal members at
+            # the profile width, no mid grid.
+            mw = max(u for u, v in member_sec)
+            info.update(stile_width=mw, rail_width=mw,
+                        left_stile_width=mw, right_stile_width=mw,
+                        top_rail_width=mw, bottom_rail_width=mw,
+                        mid_rail_count=0, mid_stile_count=0)
+        else:
+            # Arched shapes: widen the shaped rail(s) by the curve's
+            # peak rise so the catalog rail width survives at the
+            # crest; Twin forces one mid stile (one arch per lite).
+            shape_k = None
+            try:
+                from ..face_frame import style_options
+                shape_k = style_options.shape_kind(style.front_shape)
+            except Exception:
+                shape_k = None
+            if shape_k is not None:
+                msw = info.get('mid_stile_width') or info['stile_width']
+                n_ms = max(int(info.get('mid_stile_count', 0) or 0), 0)
+                if shape_k.get('twin') and n_ms == 0:
+                    n_ms = 1
+                    info['mid_stile_count'] = 1
+                    info['mid_stile_width'] = msw
+                lsw = (info.get('left_stile_width')
+                       if info.get('left_stile_width') is not None
+                       else info['stile_width'])
+                rsw = (info.get('right_stile_width')
+                       if info.get('right_stile_width') is not None
+                       else info['stile_width'])
+                cell_w = (width - lsw - rsw - n_ms * msw) / (n_ms + 1)
+                if cell_w > inch(2):
+                    rise = door_builder.shape_rise(shape_k['curve'], cell_w)
+                    info['top_rail_width'] = (
+                        info['top_rail_width']
+                        if info.get('top_rail_width') is not None
+                        else info['rail_width']) + rise
+                    if shape_k.get('double'):
+                        info['bottom_rail_width'] = (
+                            info['bottom_rail_width']
+                            if info.get('bottom_rail_width') is not None
+                            else info['rail_width']) + rise
+                    kwargs['shape'] = dict(shape_k, rise=rise)
+        edge_name = None
+        cs = _hood_style(hood_obj)
+        if cs is not None:
+            if getattr(cs, 'ss_edge_profile_is_custom', False):
+                edge_name = cs.ss_edge_profile_custom.strip() or None
+            else:
+                _en = getattr(cs, 'ss_edge_profile', 'None')
+                edge_name = None if _en == 'None' else _en
+        kwargs.update(style.resolve_mesh_sections(
+            thickness, info['panel_inset'], pkind, member_sec,
+            edge_name=edge_name))
+    min_w, min_h = door_builder.layout_min_size(info)
+    if width <= min_w or height <= min_h:
+        info = dict(info, door_type='SLAB')
+    return info, kwargs
+
+
+def _static_hood_door(hood_obj, name, width, height, location, opts):
+    """One hood door as a python-built static mesh part, carrying the
+    door style's full construction like a cabinet front. The cutpart
+    stays as the dimension carrier (Length / Width / Thickness inputs
+    for readers) with its box hidden; the mesh replaces it 1:1 (it is
+    authored in Mirror-Y front-cutpart local space, the same convention
+    front_part uses). Sized at build time -- the hood prompts rebuild
+    on any size change, so it tracks the cage the same way the static
+    angled / shiplap parts do."""
+    mt = HOOD_MATERIAL
+    info, kwargs = _hood_door_mesh_spec(hood_obj, opts, width, height, mt)
+    p = _panel(hood_obj, name)
+    p.obj.rotation_euler = (0.0, math.radians(-90.0), math.radians(90.0))
+    p.obj.location = location
+    p.set_input("Length", height)
+    p.set_input("Width", width)
+    p.set_input("Thickness", mt)
+    p.set_input("Mirror Y", True)
+    if p.obj.data.users > 1:
+        p.obj.data = p.obj.data.copy()
+    door_builder.build_door_mesh(p.obj.data, info, width, height, mt,
+                                 **kwargs)
+    p.obj['HB_HOOD_STATIC_DOOR'] = True
+    for mod in p.obj.modifiers:
+        if mod.type == 'NODES':
+            mod.show_viewport = False
+            mod.show_render = False
+    return p
+
+
 def _get_custom_opts(hood_obj):
     """The hood's CUSTOM-style options: stored values merged over defaults."""
     opts = dict(_CUSTOM_DEFAULTS)
@@ -604,7 +714,10 @@ def _front_face_frame(hood_obj, opts, band):
     REPLACES the plain applied front -- its members occupy the same
     3/4" front layer. Each bay then carries its assigned front (see
     _BAY_FRONT_KINDS): an overlay door, an inset door, or just a 1/4"
-    inset panel closing the opening. Driven so it tracks the cage."""
+    inset panel closing the opening. Frame members and inset panels are
+    driven so they track the cage; bay DOORS are static python-built
+    meshes (_static_hood_door) rebuilt with the hood so they carry the
+    door style's full construction."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -669,9 +782,9 @@ def _front_face_frame(hood_obj, opts, band):
     pt = inch(0.25)       # inset panel thickness (cabinet INSET_PANEL)
     ov_l, ov_r, ov_t, ov_b = _hood_door_overlays(hood_obj)
     frame_h = band + brw + trw    # z eaten by band + rails
-    ds_info = _hood_door_info(hood_obj, opts)
     cage_w = w.get_input('Dim X')
     cage_h = w.get_input('Dim Z')
+    cage_d = w.get_input('Dim Y')
 
     def front_part(name, xa, xb, za, zb, wa, wb, ha, hb, th, y_off,
                    role=None):
@@ -726,29 +839,18 @@ def _front_face_frame(hood_obj, opts, band):
             dxb, dwb = oxb + gap, owb - 2.0 * gap
             dz0, dhb = oz0 + gap, ohb - 2.0 * gap
             y_off = mt
-        # Too small for the style's frame at the current size -> slab.
-        info = ds_info
-        min_w, min_h = door_builder.layout_min_size(info)
-        if owa * cage_w + dwb <= min_w or cage_h + dhb <= min_h:
-            info = dict(info, door_type='SLAB')
-        for part in door_builder.door_layout(info):
-            cx, ox = part['x']
-            cw, ow_ = part['w']
-            cz, oz = part['z']
-            ch, oh = part['h']
-            name = ("Hood Door %d" % (j + 1) if part['key'] == 'slab'
-                    else "Hood Door %d %s" % (j + 1, part['name']))
-            th = mt if part['thickness'] is None else part['thickness']
-            # Panels set back from the door face; the door's back plane
-            # sits at y_off, its front at y_off - mt.
-            part_y = y_off if part['thickness'] is None \
-                else y_off - mt + part['y_inset'] + th
-            front_part(name,
-                       oxa + cx * owa, dxb + cx * dwb + ox,
-                       cz, dz0 + cz * dhb + oz,
-                       cw * owa, cw * dwb + ow_,
-                       ch, ch * dhb + oh,
-                       th, part_y)
+        # One static python-built door per bay, carrying the door
+        # style's full construction (profile sweeps, panel kinds,
+        # mullions, arched shapes) exactly like a cabinet front. Sized
+        # at the current cage dims; the prompts dialog rebuilds the
+        # hood on any size change so the door tracks the cage the same
+        # way the static angled / shiplap parts do. Too-small doors
+        # fall back to a slab inside _hood_door_mesh_spec.
+        _static_hood_door(
+            hood_obj, "Hood Door %d" % (j + 1),
+            owa * cage_w + dwb, cage_h + dhb,
+            (oxa * cage_w + dxb, -cage_d + y_off, dz0),
+            opts)
 
 
 def _paneled_end(hood_obj, opts, at_right):
@@ -1567,6 +1669,17 @@ def apply_finish_to_hood(hood_obj, finish_mat, finish_mat_rotated=None):
     edge_mat = finish_mat_rotated or finish_mat
     for child in hood_obj.children_recursive:
         if not child.get(HOOD_PART_TAG) or child.type != 'MESH':
+            continue
+        if child.get('HB_HOOD_STATIC_DOOR'):
+            # Python-built static door: the finish goes into the mesh's
+            # material slots (its cutpart box is hidden, so the input
+            # branch below would do nothing visible). build_door_mesh
+            # indexes faces against 3 slots (stile / rail / panel).
+            mats = child.data.materials
+            while len(mats) < 3:
+                mats.append(finish_mat)
+            for i in range(3):
+                mats[i] = finish_mat
             continue
         if any(m.type == 'NODES' and m.node_group for m in child.modifiers):
             part = GeoNodeCutpart(child)

@@ -3244,6 +3244,175 @@ class Face_Frame_Door_Style(PropertyGroup):
         name = cs.ss_edge_profile
         return None if name == 'None' else name
 
+    def resolve_member_section(self, front_thickness):
+        """Mitered-series member cross-section for this style at a door
+        thickness, or None (not a mitered series / profiles unlocked /
+        profile missing). The member profile IS the whole face profile;
+        callers set every frame width to its width."""
+        if getattr(self, 'unlock_profiles', False):
+            return None
+        from ..common import door_profiles
+        _mname = style_options.profiles_for_series(
+            self.front_series).get('member')
+        if not _mname:
+            return None
+        try:
+            return door_profiles.member_section(
+                door_profiles.load_profile('MITERED', _mname),
+                front_thickness)
+        except Exception:
+            return None
+
+    def effective_panel_fields(self, front_thickness):
+        """(panel_kind, panel_thickness, panel_inset) for this style at
+        a door thickness. Center panel construction by panel KIND
+        (style_options.panel_kind): RAISED uses the series' raised spec
+        (the style's panel fields, typically thick and front-flush);
+        every other kind is a RECESSED panel referenced off the BACK of
+        the door (1/4" held 1/8" forward by default --
+        recessed_panel_spec -- with a per-name thickness override for
+        choices like the 3/8" MDF Reverse Panel)."""
+        pkind = style_options.panel_kind(self.front_panel)
+        eff_panel_th = self.panel_thickness
+        eff_panel_inset = self.panel_inset
+        if pkind['kind'] != 'RAISED':
+            rp = style_options.recessed_panel_spec(self.front_series)
+            _p_th_in = pkind.get('thickness', rp['thickness'])
+            eff_panel_th = units.inch(_p_th_in)
+            eff_panel_inset = max(
+                front_thickness - units.inch(_p_th_in + rp['back_inset']),
+                0.0)
+        return pkind, eff_panel_th, eff_panel_inset
+
+    def resolve_mesh_sections(self, front_thickness, eff_panel_inset,
+                              pkind, member_sec, edge_name=None):
+        """build_door_mesh keyword set for this style at a door
+        thickness: profile sweep sections (outer / inner / split
+        rail-stile / panel / member / applied), grooved-panel and
+        mullion specs. Shared by the cabinet front path
+        (assign_style_to_front) and the wood hood door builder.
+
+        Profile sweeps: with profiles unlocked a custom curve pointer
+        wins; else the named pick (series-derived when locked) from the
+        shipped library. Anything broken or missing falls back to a
+        square edge / flat panel. ``edge_name`` is a cabinet-level Door
+        and Drawer Edge Profile override when the caller has one; it
+        wins over the style's outer profile (Square -- and catalog
+        names without a section builder yet -- read as a square edge).
+        """
+        from ..common import door_profiles
+        _unlocked = getattr(self, 'unlock_profiles', False)
+
+        def _resolve_profile(pointer, name, category):
+            pr = door_profiles.profile_from_object(
+                pointer if _unlocked else None)
+            if pr is None and name and name != 'NONE':
+                pr = door_profiles.load_profile(category, name)
+            return pr
+
+        outer_sec = inner_sec = panel_sec = None
+        try:
+            pr = _resolve_profile(self.outside_profile,
+                                  getattr(self, 'outside_profile_name', ''),
+                                  'OUTER')
+            if pr is not None:
+                outer_sec = door_profiles.edge_profile_section(
+                    pr, front_thickness)
+        except Exception:
+            outer_sec = None
+        if edge_name is not None:
+            outer_sec = door_profiles.named_edge_section(
+                edge_name, front_thickness)
+        # Recessed panels seat the sticking strip on the panel
+        # plane; raised panels let it run to its natural depth.
+        _strip_floor = (eff_panel_inset
+                        if pkind['kind'] != 'RAISED'
+                        else None)
+        try:
+            pr = _resolve_profile(self.inside_profile,
+                                  getattr(self, 'inside_profile_name', ''),
+                                  'INNER')
+            if pr is not None:
+                inner_sec = door_profiles.sticking_strip(
+                    pr, front_thickness, _strip_floor)
+        except Exception:
+            inner_sec = None
+        # Split rail / stile sticking (series-driven only): some
+        # series carve the opening's horizontal and vertical edges
+        # with different cutters (SERIES_PROFILES inside_rail /
+        # inside_stile). Hand-picked profiles apply to all sides.
+        rail_sec = stile_sec = None
+        if member_sec is not None:
+            # The member profile carries the whole face; the other
+            # sweeps don't apply.
+            outer_sec = inner_sec = None
+        if not _unlocked and member_sec is None:
+            sprof = style_options.profiles_for_series(self.front_series)
+            for key, cur in (('inside_rail', 'rail'),
+                             ('inside_stile', 'stile')):
+                name = sprof.get(key)
+                if not name:
+                    continue
+                try:
+                    s = door_profiles.sticking_strip(
+                        door_profiles.load_profile('INNER', name),
+                        front_thickness, _strip_floor)
+                except Exception:
+                    s = None
+                if cur == 'rail':
+                    rail_sec = s
+                else:
+                    stile_sec = s
+        try:
+            pr = _resolve_profile(getattr(self, 'panel_profile', None),
+                                  getattr(self, 'panel_profile_name', ''),
+                                  'PANEL')
+            if pr is not None:
+                panel_sec = door_profiles.panel_profile_section(
+                    pr, front_thickness - max(eff_panel_inset, 0.0))
+        except Exception:
+            panel_sec = None
+        # Applied decorative molding (series-driven): OUT moldings
+        # seat proud on the door face, IN moldings on the recessed
+        # panel inside the opening; scope RAILS runs top / bottom
+        # only (Brunswick).
+        applied_sec = None
+        applied_scope = 'ALL'
+        if not _unlocked and member_sec is None:
+            _aprof = style_options.profiles_for_series(self.front_series)
+            _aname = _aprof.get('applied')
+            if _aname:
+                applied_scope = _aprof.get('applied_scope', 'ALL')
+                try:
+                    applied_sec = door_profiles.applied_strip(
+                        door_profiles.load_profile('APPLIED', _aname),
+                        side=_aprof.get('applied_side', 'OUT'),
+                        panel_front=eff_panel_inset)
+                except Exception:
+                    applied_sec = None
+        # Grooved panel kinds (beadboard / kerf) cut their vertical
+        # grooves into the flat recessed panel.
+        panel_grv = None
+        if pkind['kind'] == 'GROOVED':
+            panel_grv = dict(
+                style=pkind.get('style', 'BEAD'),
+                spacing=units.inch(pkind.get('spacing', 2.0)))
+        # Straight-bar mullion choices: bars over the glass, front
+        # flush with the door face, back at the glass plane.
+        mull = None
+        if pkind['kind'] == 'GLASS' and pkind.get('mullion'):
+            mull = dict(
+                pattern=pkind['mullion'],
+                bar_width=units.inch(pkind.get('bar_width', 0.875)),
+                depth=eff_panel_inset)
+        return dict(outer_section=outer_sec, inner_section=inner_sec,
+                    panel_section=panel_sec, inner_rail_section=rail_sec,
+                    inner_stile_section=stile_sec,
+                    member_section=member_sec,
+                    applied_section=applied_sec,
+                    applied_scope=applied_scope,
+                    panel_grooves=panel_grv, mullion=mull)
+
     def _apply_slab_front(self, front_obj, front_length=None,
                           front_width=None, front_thickness=None):
         """Render front_obj as a slab: a python-built static mesh with
@@ -3498,18 +3667,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         # width becomes the frame width on all four sides (mitred
         # corners need equal members) and per-side overrides don't
         # apply.
-        member_sec = None
-        if not getattr(self, 'unlock_profiles', False):
-            from ..common import door_profiles as _dprof
-            _mname = style_options.profiles_for_series(
-                self.front_series).get('member')
-            if _mname:
-                try:
-                    member_sec = _dprof.member_section(
-                        _dprof.load_profile('MITERED', _mname),
-                        front_thickness)
-                except Exception:
-                    member_sec = None
+        member_sec = self.resolve_member_section(front_thickness)
         if member_sec is not None:
             mw = max(u for u, v in member_sec)
             eff_left_stile = eff_right_stile = mw
@@ -3590,23 +3748,10 @@ class Face_Frame_Door_Style(PropertyGroup):
         # override also forces a mid rail on. Resolved here to plain values
         # (on / centered / absolute centerline from the bottom) so both
         # geometry paths consume the same decision.
-        # Center panel construction by panel KIND (style_options.
-        # panel_kind): RAISED uses the series' raised spec (the style's
-        # panel fields, typically thick and front-flush); every other
-        # kind is a RECESSED panel referenced off the BACK of the door
-        # (1/4" held 1/8" forward by default -- recessed_panel_spec --
-        # with a per-name thickness override for choices like the 3/8"
-        # MDF Reverse Panel).
-        _pkind = style_options.panel_kind(self.front_panel)
-        eff_panel_th = self.panel_thickness
-        eff_panel_inset = self.panel_inset
-        if _pkind['kind'] != 'RAISED':
-            rp = style_options.recessed_panel_spec(self.front_series)
-            _p_th_in = _pkind.get('thickness', rp['thickness'])
-            eff_panel_th = units.inch(_p_th_in)
-            eff_panel_inset = max(
-                front_thickness - units.inch(_p_th_in + rp['back_inset']),
-                0.0)
+        # Center panel construction by panel KIND -- see
+        # effective_panel_fields (shared with the wood hood doors).
+        _pkind, eff_panel_th, eff_panel_inset = (
+            self.effective_panel_fields(front_thickness))
 
         mid_on = False
         mid_center = True
@@ -3684,137 +3829,21 @@ class Face_Frame_Door_Style(PropertyGroup):
                     and not info.get('mid_stile_count'):
                 info['mid_stile_count'] = 1
                 info['mid_stile_width'] = _msw
-            # Profile sweeps: with profiles unlocked a custom curve
-            # pointer wins; else the named pick (series-derived when
-            # locked) from the shipped library. Anything broken or
-            # missing falls back to a square edge / flat panel.
-            from ..common import door_profiles
-            _unlocked = getattr(self, 'unlock_profiles', False)
-
-            def _resolve_profile(pointer, name, category):
-                pr = door_profiles.profile_from_object(
-                    pointer if _unlocked else None)
-                if pr is None and name and name != 'NONE':
-                    pr = door_profiles.load_profile(category, name)
-                return pr
-
-            outer_sec = inner_sec = panel_sec = None
-            try:
-                pr = _resolve_profile(self.outside_profile,
-                                      getattr(self, 'outside_profile_name', ''),
-                                      'OUTER')
-                if pr is not None:
-                    outer_sec = door_profiles.edge_profile_section(
-                        pr, front_thickness)
-            except Exception:
-                outer_sec = None
-            # Cabinet-level "Door and Drawer Edge Profile" (a per-order
-            # catalog styling option, not a series trait): a pick on
-            # the cabinet style overrides the door style's outer
-            # profile. Square -- and catalog names without a section
-            # builder yet -- read as a square edge.
-            _edge_name = self._cabinet_edge_profile(front_obj)
-            if _edge_name is not None:
-                outer_sec = door_profiles.named_edge_section(
-                    _edge_name, front_thickness)
-            # Recessed panels seat the sticking strip on the panel
-            # plane; raised panels let it run to its natural depth.
-            _strip_floor = (eff_panel_inset
-                            if _pkind['kind'] != 'RAISED'
-                            else None)
-            try:
-                pr = _resolve_profile(self.inside_profile,
-                                      getattr(self, 'inside_profile_name', ''),
-                                      'INNER')
-                if pr is not None:
-                    inner_sec = door_profiles.sticking_strip(
-                        pr, front_thickness, _strip_floor)
-            except Exception:
-                inner_sec = None
-            # Split rail / stile sticking (series-driven only): some
-            # series carve the opening's horizontal and vertical edges
-            # with different cutters (SERIES_PROFILES inside_rail /
-            # inside_stile). Hand-picked profiles apply to all sides.
-            rail_sec = stile_sec = None
-            if member_sec is not None:
-                # The member profile carries the whole face; the other
-                # sweeps don't apply.
-                outer_sec = inner_sec = None
-            if not _unlocked and member_sec is None:
-                sprof = style_options.profiles_for_series(self.front_series)
-                for key, cur in (('inside_rail', 'rail'),
-                                 ('inside_stile', 'stile')):
-                    name = sprof.get(key)
-                    if not name:
-                        continue
-                    try:
-                        s = door_profiles.sticking_strip(
-                            door_profiles.load_profile('INNER', name),
-                            front_thickness, _strip_floor)
-                    except Exception:
-                        s = None
-                    if cur == 'rail':
-                        rail_sec = s
-                    else:
-                        stile_sec = s
-            try:
-                pr = _resolve_profile(getattr(self, 'panel_profile', None),
-                                      getattr(self, 'panel_profile_name', ''),
-                                      'PANEL')
-                if pr is not None:
-                    panel_sec = door_profiles.panel_profile_section(
-                        pr, front_thickness - max(eff_panel_inset, 0.0))
-            except Exception:
-                panel_sec = None
-            # Applied decorative molding (series-driven): OUT moldings
-            # seat proud on the door face, IN moldings on the recessed
-            # panel inside the opening; scope RAILS runs top / bottom
-            # only (Brunswick).
-            applied_sec = None
-            applied_scope = 'ALL'
-            if not _unlocked and member_sec is None:
-                _aprof = style_options.profiles_for_series(self.front_series)
-                _aname = _aprof.get('applied')
-                if _aname:
-                    applied_scope = _aprof.get('applied_scope', 'ALL')
-                    try:
-                        applied_sec = door_profiles.applied_strip(
-                            door_profiles.load_profile('APPLIED', _aname),
-                            side=_aprof.get('applied_side', 'OUT'),
-                            panel_front=eff_panel_inset)
-                    except Exception:
-                        applied_sec = None
-            # Grooved panel kinds (beadboard / kerf) cut their vertical
-            # grooves into the flat recessed panel.
-            panel_grv = None
-            if _pkind['kind'] == 'GROOVED':
-                panel_grv = dict(
-                    style=_pkind.get('style', 'BEAD'),
-                    spacing=units.inch(_pkind.get('spacing', 2.0)))
-            # Straight-bar mullion choices: bars over the glass, front
-            # flush with the door face, back at the glass plane.
-            mull = None
-            if _pkind['kind'] == 'GLASS' and _pkind.get('mullion'):
-                mull = dict(
-                    pattern=_pkind['mullion'],
-                    bar_width=units.inch(_pkind.get('bar_width', 0.875)),
-                    depth=eff_panel_inset)
+            # Profile sweeps / panel construction / mullions resolved
+            # from the style via resolve_mesh_sections (shared with the
+            # wood hood door builder). The cabinet-level "Door and
+            # Drawer Edge Profile" (a per-order catalog styling option,
+            # not a series trait) rides in as the edge override.
+            secs = self.resolve_mesh_sections(
+                front_thickness, eff_panel_inset, _pkind, member_sec,
+                edge_name=self._cabinet_edge_profile(front_obj))
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
-                                         outer_section=outer_sec,
-                                         inner_section=inner_sec,
-                                         panel_section=panel_sec,
-                                         inner_rail_section=rail_sec,
-                                         inner_stile_section=stile_sec,
-                                         member_section=member_sec,
-                                         applied_section=applied_sec,
-                                         applied_scope=applied_scope,
-                                         panel_grooves=panel_grv,
-                                         mullion=mull,
                                          shape=(dict(shape_k,
                                                      rise=shape_rise_cap)
-                                                if shape_k else None))
+                                                if shape_k else None),
+                                         **secs)
             _mirror_front_mesh_y_if_unmirrored(front_obj)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:
