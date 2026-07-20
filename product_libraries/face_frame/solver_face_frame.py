@@ -3849,19 +3849,27 @@ def _accessory_label_descriptor(rect, cage_dim_y, label):
 # boxes for ROLLOUT) plus 4 vertical side spacers (front-left, back-left,
 # front-right, back-right). The spacers are the surface slide hardware mounts
 # to; they bridge any face frame inset that would otherwise leave the slide
-# unsupported. Spacer thickness uses the standard side panel stock; depth-axis
-# extent (the user-facing 'spacer_height' prop) is the slide mounting pad
-# width and defaults to 2".
+# unsupported. Pullout-shelf spacers use the standard side panel stock;
+# rollout spacers are computed per side from the bay's reveal + slide gap
+# (see _rollout_descriptors). Depth-axis extent (the user-facing
+# 'spacer_height' prop) is the slide mounting pad width and defaults to 2".
 PULLOUT_SPACER_THICKNESS = inch(0.5)
 PULLOUT_SPACER_Y_OFFSET = inch(2.5)
+# Side gap between a rollout box and the face frame opening edge; the box
+# is 2x this narrower than the FF clear opening so it can pass the frame.
+ROLLOUT_SLIDE_GAP = inch(0.375)
 
 
-def _assembly_spacers(rect, spacer_height, kind, role, name_prefix):
+def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
+                      left_thickness=PULLOUT_SPACER_THICKNESS,
+                      right_thickness=PULLOUT_SPACER_THICKNESS):
     """Four vertical spacer parts for a pullout/rollout assembly. Origin
     convention for VERTICAL parts: position.y is the back face of the
     spacer's Y extent (mirror_y at materialize time fans the width
     forward in -Y), position.z is the bottom (mirror_z fans length up
-    in +Z).
+    in +Z). Per-side thicknesses let a rollout's spacers fill from the
+    carcass side to the box edge (reveal + slide gap, which differs per
+    side); pullout shelves keep the uniform stock thickness.
     """
     cage_dim_x = rect['cage_dim_x']
     cage_dim_y = rect['cage_dim_y']
@@ -3872,22 +3880,27 @@ def _assembly_spacers(rect, spacer_height, kind, role, name_prefix):
     # Back face of back spacer = cage_dim_y - PULLOUT_SPACER_Y_OFFSET.
     back_back_y = cage_dim_y - PULLOUT_SPACER_Y_OFFSET
 
-    spacer_dims = (cage_dim_z, spacer_height, PULLOUT_SPACER_THICKNESS)
     out = []
     sides = [
-        ('Front Left',  0.0,                                   front_back_y),
-        ('Back Left',   0.0,                                   back_back_y),
-        ('Front Right', cage_dim_x - PULLOUT_SPACER_THICKNESS, front_back_y),
-        ('Back Right',  cage_dim_x - PULLOUT_SPACER_THICKNESS, back_back_y),
+        ('Front Left',  0.0,                            front_back_y,
+         left_thickness),
+        ('Back Left',   0.0,                            back_back_y,
+         left_thickness),
+        ('Front Right', cage_dim_x - right_thickness,   front_back_y,
+         right_thickness),
+        ('Back Right',  cage_dim_x - right_thickness,   back_back_y,
+         right_thickness),
     ]
-    for side_name, x, y in sides:
+    for side_name, x, y, thickness in sides:
+        if thickness <= 0.0:
+            continue
         out.append({
             'kind':         kind,
             'role':         role,
             'name':         f'{name_prefix} {side_name}',
             'orientation':  'VERTICAL',
             'position':     (x, y, 0.0),
-            'dims':         spacer_dims,
+            'dims':         (cage_dim_z, spacer_height, thickness),
         })
     return out
 
@@ -3943,7 +3956,19 @@ def _rollout_descriptors(rect, cage_dim_y, item):
     setback = item.item_setback
     spacer_height = item.spacer_height
 
-    box_dx = max(0.0, cage_dim_x - 2 * PULLOUT_SPACER_THICKNESS)
+    # The box must pull through the FACE FRAME opening, not just the
+    # carcass opening: the stiles overhang the cage by the side reveals,
+    # which differ per bay with the overlay. Box width = FF clear width
+    # minus a slide gap per side; each spacer fills carcass side -> box
+    # side (reveal + gap) so the slide hardware mounts flush with the
+    # box. Negative reveals (FF opening wider than the cage) clamp to 0
+    # -- the carcass side is the limit there.
+    rev_l = max(0.0, rect.get('reveal_left', 0.0))
+    rev_r = max(0.0, rect.get('reveal_right', 0.0))
+    spacer_l = rev_l + ROLLOUT_SLIDE_GAP
+    spacer_r = rev_r + ROLLOUT_SLIDE_GAP
+
+    box_dx = max(0.0, cage_dim_x - spacer_l - spacer_r)
     box_dy = max(0.0, cage_dim_y - setback)
 
     out = []
@@ -3954,13 +3979,14 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'role':         'ROLLOUT_BOX',
             'name':         f'Rollout Box {k + 1}',
             'orientation':  'BOX',
-            'position':     (PULLOUT_SPACER_THICKNESS, setback, z),
+            'position':     (spacer_l, setback, z),
             'dims':         (box_dx, box_dy, item_height),
         })
         z += item_height + distance_between
     out.extend(_assembly_spacers(
         rect, spacer_height, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
         'Rollout Spacer',
+        left_thickness=spacer_l, right_thickness=spacer_r,
     ))
     return out
 
