@@ -6010,7 +6010,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # Side spacer width: vertical filler the assembly mounts to. The
     # spacers run the full opening height on both sides, front + back,
     # giving slide hardware a flush surface that bridges any face frame
-    # inset. Width is the X-dimension of each spacer.
+    # inset. PULLOUT_SHELF only -- rollout spacer dimensions are fixed /
+    # computed in the solver (ROLLOUT_SPACER_WIDTH + per-side reveals).
     spacer_height: FloatProperty(
         name="Spacer Width",
         description="Width of the side spacer parts the slides mount to (front and back, both sides)",

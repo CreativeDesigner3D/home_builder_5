@@ -997,7 +997,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
-            sub.prop(item, 'spacer_height', text="Spacer Width")
+            # Spacer width is fixed (ROLLOUT_SPACER_WIDTH in the solver),
+            # so no spacer_height row here -- pullout shelves keep theirs.
         elif item.kind == 'TRAY_DIVIDERS':
             sub.prop(item, 'tray_qty', text="Qty")
             sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")

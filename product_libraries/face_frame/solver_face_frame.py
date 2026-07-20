@@ -3855,9 +3855,16 @@ def _accessory_label_descriptor(rect, cage_dim_y, label):
 # 'spacer_height' prop) is the slide mounting pad width and defaults to 2".
 PULLOUT_SPACER_THICKNESS = inch(0.5)
 PULLOUT_SPACER_Y_OFFSET = inch(2.5)
-# Side gap between a rollout box and the face frame opening edge; the box
-# is 2x this narrower than the FF clear opening so it can pass the frame.
+# Rollout clearances: the box is inset ROLLOUT_BOX_SIDE_GAP from each FF
+# opening edge (so it runs 1 1/2" narrower than the FF clear opening),
+# and each spacer's inner face stops ROLLOUT_SLIDE_GAP short of the box
+# side -- that gap is where the slide lives. Spacer thickness therefore
+# = reveal + (ROLLOUT_BOX_SIDE_GAP - ROLLOUT_SLIDE_GAP).
+ROLLOUT_BOX_SIDE_GAP = inch(0.75)
 ROLLOUT_SLIDE_GAP = inch(0.375)
+# Rollout spacer front-to-back width (the slide mounting pad). Fixed --
+# not user-adjustable; only pullout shelves keep the spacer_height prop.
+ROLLOUT_SPACER_WIDTH = inch(0.815)
 
 
 def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
@@ -3954,22 +3961,22 @@ def _rollout_descriptors(rect, cage_dim_y, item):
     bottom_gap = item.bottom_gap
     distance_between = item.distance_between
     setback = item.item_setback
-    spacer_height = item.spacer_height
 
     # The box must pull through the FACE FRAME opening, not just the
     # carcass opening: the stiles overhang the cage by the side reveals,
-    # which differ per bay with the overlay. Box width = FF clear width
-    # minus a slide gap per side; each spacer fills carcass side -> box
-    # side (reveal + gap) so the slide hardware mounts flush with the
-    # box. Negative reveals (FF opening wider than the cage) clamp to 0
-    # -- the carcass side is the limit there.
+    # which differ per bay with the overlay. The box sits
+    # ROLLOUT_BOX_SIDE_GAP inside each FF opening edge; each spacer runs
+    # from the carcass side to ROLLOUT_SLIDE_GAP short of the box side,
+    # so the slide drops into that gap against the spacer face. Negative
+    # reveals (FF opening wider than the cage) clamp to 0 -- the carcass
+    # side is the limit there.
     rev_l = max(0.0, rect.get('reveal_left', 0.0))
     rev_r = max(0.0, rect.get('reveal_right', 0.0))
-    spacer_l = rev_l + ROLLOUT_SLIDE_GAP
-    spacer_r = rev_r + ROLLOUT_SLIDE_GAP
-
-    box_dx = max(0.0, cage_dim_x - spacer_l - spacer_r)
+    box_x = rev_l + ROLLOUT_BOX_SIDE_GAP
+    box_dx = max(0.0, cage_dim_x - rev_l - rev_r - 2 * ROLLOUT_BOX_SIDE_GAP)
     box_dy = max(0.0, cage_dim_y - setback)
+    spacer_l = rev_l + ROLLOUT_BOX_SIDE_GAP - ROLLOUT_SLIDE_GAP
+    spacer_r = rev_r + ROLLOUT_BOX_SIDE_GAP - ROLLOUT_SLIDE_GAP
 
     out = []
     z = bottom_gap
@@ -3979,12 +3986,12 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'role':         'ROLLOUT_BOX',
             'name':         f'Rollout Box {k + 1}',
             'orientation':  'BOX',
-            'position':     (spacer_l, setback, z),
+            'position':     (box_x, setback, z),
             'dims':         (box_dx, box_dy, item_height),
         })
         z += item_height + distance_between
     out.extend(_assembly_spacers(
-        rect, spacer_height, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
+        rect, ROLLOUT_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
         'Rollout Spacer',
         left_thickness=spacer_l, right_thickness=spacer_r,
     ))
