@@ -20,6 +20,7 @@ them into driver expressions so the parts track their cage.
 """
 
 import math
+import re
 
 from ...units import inch
 
@@ -49,6 +50,13 @@ DOOR_STYLE_FALLBACK = {
     # overrides the legacy single add_mid_rail when > 0.
     'mid_rail_count': 0,
     'mid_stile_count': 0,
+    # Relative panel-cell sizes for the grid, consumer-set: a list of
+    # positive weights per row (rail fractions, bottom-up) / per column
+    # (stile fractions, left-to-right), normalized over the panel field.
+    # None / empty -> equal cells; short lists pad at 1.0, extras are
+    # ignored. E.g. [1, 2, 1] with 2 mid stiles = 1/4 - 1/2 - 1/4.
+    'mid_rail_fractions': None,
+    'mid_stile_fractions': None,
     # Per-side frame widths, also consumer-set: None falls back to the
     # uniform stile_width / rail_width (mid_stile_width to stile_width).
     # A per-side 0.0 is honored -- it drops that member so adjacent
@@ -82,6 +90,55 @@ def _frame_widths(info):
     return (eff('left_stile_width', sw), eff('right_stile_width', sw),
             eff('mid_stile_width', sw), eff('top_rail_width', rw),
             eff('bottom_rail_width', rw), mrw)
+
+
+def parse_grid_ratios(text):
+    """Parse a user ratio string into a list of positive weights, or
+    None when empty / unparseable (callers treat None as equal cells).
+
+    Accepts plain numbers or a/b fractions, separated by spaces,
+    commas, colons, semicolons, pipes or dashes: "1 2 1", "1:2:1",
+    "1/4 1/2 1/4" and "25-50-25" all mean quarter / half / quarter.
+    Values are relative weights -- they need not sum to anything.
+    """
+    if text is None or not str(text).strip():
+        return None
+    vals = []
+    for tok in re.split(r'[,\s;:|-]+', str(text).strip()):
+        if not tok:
+            continue
+        try:
+            if '/' in tok:
+                num, den = tok.split('/', 1)
+                val = float(num) / float(den)
+            else:
+                val = float(tok)
+        except (ValueError, ZeroDivisionError):
+            return None
+        if val <= 0.0:
+            return None
+        vals.append(val)
+    return vals or None
+
+
+def _grid_fractions(info, key, n):
+    """Normalized share of the panel field for each of ``n`` grid cells
+    from the ``key`` weight list (see DOOR_STYLE_FALLBACK): short lists
+    pad at 1.0, extras are ignored, non-positive entries count as 1.0.
+    None / empty -> equal shares."""
+    raw = list(info.get(key) or [])[:n]
+    if not raw:
+        return [1.0 / n] * n
+    weights = []
+    for val in raw:
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            val = 1.0
+        weights.append(val if val > 0.0 else 1.0)
+    weights += [1.0] * (n - len(weights))
+    total = sum(weights)
+    return [w / total for w in weights]
 
 
 def door_style_info(style=None):
@@ -127,7 +184,9 @@ def door_layout(info):
     Mid rails / mid stiles divide the field into a grid of panel
     cells: mid rails run the full field width, mid stiles run between
     the rails segmented per panel row (six-panel-door construction).
-    ``mid_rail_count`` (equally spaced) overrides the legacy single
+    Cells are equal unless ``mid_rail_fractions`` / ``mid_stile_
+    fractions`` weight them (see DOOR_STYLE_FALLBACK).
+    ``mid_rail_count`` overrides the legacy single
     add_mid_rail when > 0; an explicit ``mid_rail_z`` centerline pair
     wins over add_mid_rail. Per-side frame widths come from the
     left/right stile and top/bottom rail overrides when set (a 0.0
@@ -158,19 +217,24 @@ def door_layout(info):
              thickness=None, y_inset=0.0),
     ]
     # Panel rows as (z, h) linear pairs, with the mid rails between them.
+    # Row i's bottom sits at brw + i mid rails + the field share of the
+    # rows below it (cum); equal fractions reduce to the classic i/(k+1).
     if k > 0:
         fh = (1.0, -(trw + brw + k * mrw))    # field height, linear in H
-        rows = [((fh[0] * i / (k + 1), fh[1] * i / (k + 1) + brw + i * mrw),
-                 (fh[0] / (k + 1), fh[1] / (k + 1)))
-                for i in range(k + 1)]
-        for i in range(1, k + 1):
-            parts.append(dict(
-                key='mid_rail',
-                name="Mid Rail %d" % i if k > 1 else "Mid Rail",
-                x=(0.0, lsw), w=(1.0, -(lsw + rsw)),
-                z=(fh[0] * i / (k + 1),
-                   fh[1] * i / (k + 1) + brw + (i - 1) * mrw),
-                h=(0.0, mrw), thickness=None, y_inset=0.0))
+        fracs = _grid_fractions(info, 'mid_rail_fractions', k + 1)
+        rows = []
+        cum = 0.0
+        for i, frac in enumerate(fracs):
+            if i >= 1:
+                parts.append(dict(
+                    key='mid_rail',
+                    name="Mid Rail %d" % i if k > 1 else "Mid Rail",
+                    x=(0.0, lsw), w=(1.0, -(lsw + rsw)),
+                    z=(fh[0] * cum, fh[1] * cum + brw + (i - 1) * mrw),
+                    h=(0.0, mrw), thickness=None, y_inset=0.0))
+            rows.append(((fh[0] * cum, fh[1] * cum + brw + i * mrw),
+                         (fh[0] * frac, fh[1] * frac)))
+            cum += frac
     elif mid_z is not None or info.get('add_mid_rail'):
         # Single mid rail: the explicit centerline pair when given,
         # else the legacy centered / fixed-location fields. mz is the
@@ -189,21 +253,30 @@ def door_layout(info):
     else:
         rows = [((0.0, brw), (1.0, -(trw + brw)))]
     # Panel columns as (x, w) linear pairs; mid stiles between them,
-    # one set per row (they butt the rails).
+    # one set per row (they butt the rails). Column c starts at lsw + c
+    # mid stiles + the field share of the columns to its left (cum).
     if m > 0:
-        cw = (1.0 / (m + 1), -(lsw + rsw + m * msw) / (m + 1))
-        cols = [((c * cw[0], c * (cw[1] + msw) + lsw), cw)
-                for c in range(m + 1)]
+        fw = (1.0, -(lsw + rsw + m * msw))    # field width, linear in W
+        fracs = _grid_fractions(info, 'mid_stile_fractions', m + 1)
+        cols = []
+        cum = 0.0
+        for c, frac in enumerate(fracs):
+            cols.append(((fw[0] * cum, fw[1] * cum + lsw + c * msw),
+                         (fw[0] * frac, fw[1] * frac)))
+            cum += frac
+        # Mid stile j sits against the left edge of column j.
+        stile_xs = [(cols[j][0][0], cols[j][0][1] - msw)
+                    for j in range(1, m + 1)]
     else:
         cols = [((0.0, lsw), (1.0, -(lsw + rsw)))]
+        stile_xs = []
     grid = len(rows) > 1 or len(cols) > 1
     for r, (rz, rh) in enumerate(rows):
-        for j in range(1, m + 1):
+        for j, sx in enumerate(stile_xs, start=1):
             name = ("Mid Stile %d-%d" % (r + 1, j) if len(rows) > 1
                     else ("Mid Stile %d" % j if m > 1 else "Mid Stile"))
             parts.append(dict(key='mid_stile', name=name,
-                              x=(j * cw[0], j * (cw[1] + msw) + lsw - msw),
-                              w=(0.0, msw), z=rz, h=rh,
+                              x=sx, w=(0.0, msw), z=rz, h=rh,
                               thickness=None, y_inset=0.0))
         for c, (cx, cwid) in enumerate(cols):
             name = "Panel %d-%d" % (r + 1, c + 1) if grid else "Panel"

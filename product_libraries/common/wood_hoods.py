@@ -18,7 +18,8 @@ import json
 import math
 import re
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty,
+                       StringProperty)
 from mathutils import Euler, Matrix
 
 from ... import hb_utils
@@ -395,6 +396,11 @@ _CUSTOM_DEFAULTS = {
     'right_end_front': 'PANEL',     # what fills the right end frame
     'door_mid_rails': 0,            # mid rails on every hood door
     'door_mid_stiles': 0,           # mid stiles on every hood door
+    # Relative panel sizes for the door grid, as ratio strings parsed by
+    # door_builder.parse_grid_ratios ("1 2 1" / "1/4 1/2 1/4" = quarter,
+    # half, quarter). Blank = equal cells.
+    'door_grid_col_ratios': "",     # column widths, left to right
+    'door_grid_row_ratios': "",     # row heights, bottom to top
     'include_shiplap': False,       # shiplap boards on the front
     'shiplap_board_width': inch(6.0),  # course width; last course trims
 }
@@ -487,6 +493,10 @@ def _hood_door_info(hood_obj, opts):
     info = door_builder.door_style_info(_hood_door_style(hood_obj))
     info['mid_rail_count'] = max(int(opts.get('door_mid_rails', 0)), 0)
     info['mid_stile_count'] = max(int(opts.get('door_mid_stiles', 0)), 0)
+    info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
+        opts.get('door_grid_row_ratios'))
+    info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
+        opts.get('door_grid_col_ratios'))
     return info
 
 
@@ -2134,6 +2144,17 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         name="Door Mid Stiles", min=0, max=6, default=0,
         description="Mid stiles on every hood door, splitting each "
                     "panel row into columns")  # type: ignore
+    door_grid_col_ratios: StringProperty(
+        name="Column Widths",
+        description="Relative widths of the door's panel columns, left "
+                    "to right -- e.g. \"1 2 1\" or \"1/4 1/2 1/4\" for "
+                    "quarter / half / quarter. Any positive numbers "
+                    "work; blank = equal columns")  # type: ignore
+    door_grid_row_ratios: StringProperty(
+        name="Row Heights",
+        description="Relative heights of the door's panel rows, bottom "
+                    "to top -- e.g. \"1 2 1\" or \"1/4 1/2 1/4\". Any "
+                    "positive numbers work; blank = equal rows")  # type: ignore
     include_shiplap: BoolProperty(
         name="Include Shiplap",
         description="Shiplap boards on the front face")  # type: ignore
@@ -2195,6 +2216,8 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.right_end_front = _end_front_kind(opts, True)
         self.door_mid_rails = max(int(opts.get('door_mid_rails', 0)), 0)
         self.door_mid_stiles = max(int(opts.get('door_mid_stiles', 0)), 0)
+        self.door_grid_col_ratios = str(opts.get('door_grid_col_ratios', ""))
+        self.door_grid_row_ratios = str(opts.get('door_grid_row_ratios', ""))
         self.include_shiplap = bool(opts['include_shiplap'])
         bw = opts['shiplap_board_width']
         self.shiplap_board_width = str(min((4, 5, 6),
@@ -2246,6 +2269,8 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'right_end_front': self.right_end_front,
                 'door_mid_rails': self.door_mid_rails,
                 'door_mid_stiles': self.door_mid_stiles,
+                'door_grid_col_ratios': self.door_grid_col_ratios,
+                'door_grid_row_ratios': self.door_grid_row_ratios,
                 'include_shiplap': self.include_shiplap,
                 'shiplap_board_width': inch(float(self.shiplap_board_width)),
             }
@@ -2359,6 +2384,16 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row.label(text="Door Grid:")
         row.prop(self, 'door_mid_rails', text="Rails")
         row.prop(self, 'door_mid_stiles', text="Stiles")
+        # Panel-size ratios: each field lights up once its grid
+        # direction exists (a blank field keeps equal cells).
+        row = col.row(align=True)
+        row.active = self.door_mid_stiles > 0
+        row.label(text="Col Widths:")
+        row.prop(self, 'door_grid_col_ratios', text="")
+        row = col.row(align=True)
+        row.active = self.door_mid_rails > 0
+        row.label(text="Row Heights:")
+        row.prop(self, 'door_grid_row_ratios', text="")
 
     def _draw_ends(self, box):
         col = box.column(align=True)
