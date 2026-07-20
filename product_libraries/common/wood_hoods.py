@@ -376,6 +376,9 @@ _CUSTOM_DEFAULTS = {
     'include_mantle_molding': False,  # strips wrapping the mantle top + bottom
     'mantle_molding_width': inch(1.5),
     'mantle_molding_thickness': inch(0.75),
+    'include_bottom_molding': False,  # strip wrapping the hood bottom front + sides
+    'bottom_molding_width': inch(1.5),
+    'bottom_molding_thickness': inch(0.75),
     'fan_cutout_width': inch(30.0),  # opening in the bottom liner shelf
     'fan_cutout_depth': inch(12.0),
     'fan_cutout_offset': 0.0,        # shift the opening front (+) / back (-)
@@ -685,6 +688,32 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     cpm.set_input('Route Depth', mt)
 
 
+def _molding_wrap(hood_obj, prefix, tag, W, y_face, z0, z1, m_th):
+    """One mitred molding band wrapping the hood between ``z0`` and
+    ``z1``: a strip across the front face (``y_face``) and strips back
+    along both hood sides to the wall, mitred at the front corners (45
+    degrees in plan), standing ``m_th`` proud of the faces. Parts are
+    named ``<prefix> F<tag>`` / ``L<tag>`` / ``R<tag>``. Static meshes
+    sized at build time."""
+    corners = {
+        'fl_i': (0.0, y_face), 'fr_i': (W, y_face),
+        'fl_o': (-m_th, y_face - m_th), 'fr_o': (W + m_th, y_face - m_th),
+        'bl_i': (0.0, 0.0), 'br_i': (W, 0.0),
+        'bl_o': (-m_th, 0.0), 'br_o': (W + m_th, 0.0),
+    }
+
+    def prism(name, keys):
+        v = ([(corners[k][0], corners[k][1], z0) for k in keys]
+             + [(corners[k][0], corners[k][1], z1) for k in keys])
+        f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+             (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+        _mesh_part(hood_obj, name, v, f)
+
+    prism(prefix + " F" + tag, ('fl_i', 'fr_i', 'fr_o', 'fl_o'))
+    prism(prefix + " L" + tag, ('bl_i', 'fl_i', 'fl_o', 'bl_o'))
+    prism(prefix + " R" + tag, ('br_i', 'fr_i', 'fr_o', 'br_o'))
+
+
 def _mantle_molding(hood_obj, W, y_face, band, m_w, m_th):
     """Mantle molding: strips of material wrapping the top and bottom of
     the mantle -- across the mantle front (``y_face``) and back along both
@@ -693,27 +722,21 @@ def _mantle_molding(hood_obj, W, y_face, band, m_w, m_th):
     height. Static meshes sized at build time."""
     m_w = min(max(m_w, inch(0.25)), band)
     m_th = max(m_th, inch(0.125))
-    corners = {
-        'fl_i': (0.0, y_face), 'fr_i': (W, y_face),
-        'fl_o': (-m_th, y_face - m_th), 'fr_o': (W + m_th, y_face - m_th),
-        'bl_i': (0.0, 0.0), 'br_i': (W, 0.0),
-        'bl_o': (-m_th, 0.0), 'br_o': (W + m_th, 0.0),
-    }
-
-    def prism(name, keys, z0, z1):
-        v = ([(corners[k][0], corners[k][1], z0) for k in keys]
-             + [(corners[k][0], corners[k][1], z1) for k in keys])
-        f = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
-             (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-        _mesh_part(hood_obj, name, v, f)
-
     for tag, z0, z1 in (("B", 0.0, m_w), ("T", band - m_w, band)):
-        prism("Hood Mantle Molding F" + tag,
-              ('fl_i', 'fr_i', 'fr_o', 'fl_o'), z0, z1)
-        prism("Hood Mantle Molding L" + tag,
-              ('bl_i', 'fl_i', 'fl_o', 'bl_o'), z0, z1)
-        prism("Hood Mantle Molding R" + tag,
-              ('br_i', 'fr_i', 'fr_o', 'br_o'), z0, z1)
+        _molding_wrap(hood_obj, "Hood Mantle Molding", tag,
+                      W, y_face, z0, z1, m_th)
+
+
+def _bottom_molding(hood_obj, opts, W, y_face):
+    """Bottom molding: one strip of material wrapping the bottom of the
+    hood -- across the front and back along both sides to the wall,
+    mitred at the front corners. The standalone counterpart of the
+    mantle molding's bottom band, for hoods without a mantle (e.g. a
+    face-frame front whose bottom rail wants a wrapped trim strip)."""
+    m_w = max(opts['bottom_molding_width'], inch(0.25))
+    m_th = max(opts['bottom_molding_thickness'], inch(0.125))
+    _molding_wrap(hood_obj, "Hood Bottom Molding", "",
+                  W, y_face, 0.0, m_w, m_th)
 
 
 def _front_face_frame(hood_obj, opts, band):
@@ -1544,6 +1567,11 @@ def _build_custom_angled(hood_obj, opts):
         _mantle_molding(hood_obj, W, -D - mantle_dep, band,
                         opts['mantle_molding_width'],
                         opts['mantle_molding_thickness'])
+    if opts['include_bottom_molding']:
+        # The base of an angled hood is full W x D, so the wrap uses the
+        # same corner geometry as the straight hood (the mantle front
+        # when one projects, else the hood front plane).
+        _bottom_molding(hood_obj, opts, W, -D - mantle_dep)
     # Shelf extends forward under a projecting mantle to close its
     # bottom (only while it sits at the bottom); a floor raised into the
     # slope insets its front edge to the interior depth at that height.
@@ -1592,6 +1620,15 @@ def _build_custom(hood_obj):
         _mantle_molding(hood_obj, W, y_face, band,
                         opts['mantle_molding_width'],
                         opts['mantle_molding_thickness'])
+    if opts['include_bottom_molding']:
+        w2 = _HoodWrap(hood_obj)
+        W = w2.get_input('Dim X')
+        D = w2.get_input('Dim Y')
+        # Wraps the mantle face when a mantle is built, else the applied
+        # front / face-frame plane.
+        y_face = (-D + HOOD_MATERIAL - max(opts['mantle_depth'], HOOD_MATERIAL)
+                  if band > 0.0 else -D)
+        _bottom_molding(hood_obj, opts, W, y_face)
     if opts['include_shiplap']:
         _add_wrap_shiplap(hood_obj, fz=band,
                           board=opts['shiplap_board_width'])
@@ -1942,7 +1979,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         name="Section",
         items=[
             ('SHAPE', "Shape", "Angles, top section, and shiplap"),
-            ('MANTLE', "Mantle", "Mantle band and molding"),
+            ('MANTLE', "Mantle", "Mantle band, mantle molding, and bottom molding"),
             ('FRONT', "Front", "Face frame, bays, and door grid"),
             ('ENDS', "Ends", "Paneled ends and their fronts"),
             ('LINER', "Liner", "Fan cutout and floor"),
@@ -1995,6 +2032,21 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         name="Molding Thickness", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['mantle_molding_thickness'],
         description="How far the molding stands proud of the mantle faces")  # type: ignore
+    include_bottom_molding: BoolProperty(
+        name="Bottom Molding",
+        description="Strip of material wrapping the bottom of the hood -- "
+                    "across the front and back along both sides to the "
+                    "wall, mitred at the front corners. Works with or "
+                    "without a mantle")  # type: ignore
+    bottom_molding_width: FloatProperty(
+        name="Bottom Molding Width", unit='LENGTH', precision=5,
+        default=_CUSTOM_DEFAULTS['bottom_molding_width'],
+        description="Height of the bottom molding strip")  # type: ignore
+    bottom_molding_thickness: FloatProperty(
+        name="Bottom Molding Thickness", unit='LENGTH', precision=5,
+        default=_CUSTOM_DEFAULTS['bottom_molding_thickness'],
+        description="How far the bottom molding stands proud of the hood "
+                    "faces")  # type: ignore
     fan_cutout_width: FloatProperty(
         name="Fan Cutout Width", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['fan_cutout_width'],
@@ -2105,6 +2157,9 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.include_mantle_molding = bool(opts['include_mantle_molding'])
         self.mantle_molding_width = opts['mantle_molding_width']
         self.mantle_molding_thickness = opts['mantle_molding_thickness']
+        self.include_bottom_molding = bool(opts['include_bottom_molding'])
+        self.bottom_molding_width = opts['bottom_molding_width']
+        self.bottom_molding_thickness = opts['bottom_molding_thickness']
         self.fan_cutout_width = opts['fan_cutout_width']
         self.fan_cutout_depth = opts['fan_cutout_depth']
         self.fan_cutout_offset = opts['fan_cutout_offset']
@@ -2152,6 +2207,9 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'include_mantle_molding': self.include_mantle_molding,
                 'mantle_molding_width': self.mantle_molding_width,
                 'mantle_molding_thickness': self.mantle_molding_thickness,
+                'include_bottom_molding': self.include_bottom_molding,
+                'bottom_molding_width': self.bottom_molding_width,
+                'bottom_molding_thickness': self.bottom_molding_thickness,
                 'fan_cutout_width': self.fan_cutout_width,
                 'fan_cutout_depth': self.fan_cutout_depth,
                 'fan_cutout_offset': self.fan_cutout_offset,
@@ -2246,6 +2304,14 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         sub.active = self.include_mantle and self.include_mantle_molding
         sub.prop(self, 'mantle_molding_width', text="W")
         sub.prop(self, 'mantle_molding_thickness', text="T")
+
+        col.separator()
+        row = col.row(align=True)
+        row.prop(self, 'include_bottom_molding')
+        sub = row.row(align=True)
+        sub.active = self.include_bottom_molding
+        sub.prop(self, 'bottom_molding_width', text="W")
+        sub.prop(self, 'bottom_molding_thickness', text="T")
 
     def _draw_front(self, box):
         col = box.column(align=True)
