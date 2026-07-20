@@ -1337,7 +1337,7 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
             item.kind = self.kind
             # Seed a couple of default boxes for a new rollout; the box
             # count is the list length and each box defaults to the
-            # smallest standard height (4 5/8").
+            # standard 3 5/8" height.
             if self.kind == 'ROLLOUT':
                 for _ in range(2):
                     item.rollout_boxes.add()
@@ -1410,7 +1410,7 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
 class hb_face_frame_OT_add_rollout_box(bpy.types.Operator):
     """Append a drawer box to a rollout stack. Targets the interior item
     at item_index on the resolved opening / region. New boxes default to
-    the smallest standard height (4 5/8")."""
+    the standard 3 5/8" height."""
     bl_idname = "hb_face_frame.add_rollout_box"
     bl_label = "Add Rollout Box"
     bl_description = "Add another drawer box to this rollout stack"

@@ -4031,18 +4031,36 @@ def _update_panel_split_auto(self, context):
 # matching enum items. CUSTOM is intentionally absent from the map: it leaves
 # a box's height untouched so a typed value stands.
 _ROLLOUT_HEIGHT_PRESETS_IN = {
-    'IN_4_625': 4.625,
-    'IN_6_5': 6.5,
-    'IN_8_375': 8.375,
-    'IN_11_625': 11.625,
+    'IN_3_125': 3.125,
+    'IN_3_625': 3.625,
+    'IN_4_125': 4.125,
+    'IN_5_125': 5.125,
+    'IN_6_125': 6.125,
+    'IN_7_125': 7.125,
+    'IN_8_125': 8.125,
+    'IN_9_125': 9.125,
+    'IN_10_125': 10.125,
+    'IN_11_125': 11.125,
 }
 
+# Explicit enum numbers: files save the item NUMBER, not the identifier,
+# and under the old 4-preset list CUSTOM saved as 4 (every box migrated
+# from the uniform-height era carries it). Keeping CUSTOM pinned at 4 and
+# numbering the size presets from 5 up means those boxes still read as
+# Custom; boxes saved on a removed old size preset fall back to the
+# default label while keeping their real height in `height`.
 ROLLOUT_HEIGHT_PRESET_ITEMS = [
-    ('IN_4_625',  '4 5/8"',  'Standard 4 5/8" rollout box height'),
-    ('IN_6_5',    '6 1/2"',  'Standard 6 1/2" rollout box height'),
-    ('IN_8_375',  '8 3/8"',  'Standard 8 3/8" rollout box height'),
-    ('IN_11_625', '11 5/8"', 'Standard 11 5/8" rollout box height'),
-    ('CUSTOM',    'Custom',  'Type an exact box height in the field beside it'),
+    ('IN_3_125',  '3 1/8"',  'Standard 3 1/8" rollout box height', 5),
+    ('IN_3_625',  '3 5/8"',  'Standard 3 5/8" rollout box height', 6),
+    ('IN_4_125',  '4 1/8"',  'Standard 4 1/8" rollout box height', 7),
+    ('IN_5_125',  '5 1/8"',  'Standard 5 1/8" rollout box height', 8),
+    ('IN_6_125',  '6 1/8"',  'Standard 6 1/8" rollout box height', 9),
+    ('IN_7_125',  '7 1/8"',  'Standard 7 1/8" rollout box height', 10),
+    ('IN_8_125',  '8 1/8"',  'Standard 8 1/8" rollout box height', 11),
+    ('IN_9_125',  '9 1/8"',  'Standard 9 1/8" rollout box height', 12),
+    ('IN_10_125', '10 1/8"', 'Standard 10 1/8" rollout box height', 13),
+    ('IN_11_125', '11 1/8"', 'Standard 11 1/8" rollout box height', 14),
+    ('CUSTOM',    'Custom',  'Type an exact box height in the field beside it', 4),
 ]
 
 
@@ -5915,13 +5933,13 @@ class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
     height_preset: EnumProperty(
         name="Height",
         description="Standard rollout box height, or Custom to type an exact value",
-        items=ROLLOUT_HEIGHT_PRESET_ITEMS, default='IN_4_625',
+        items=ROLLOUT_HEIGHT_PRESET_ITEMS, default='IN_3_625',
         update=_update_rollout_box_preset,
     )  # type: ignore
     height: FloatProperty(
         name="Box Height",
         description="Height of this rollout drawer box",
-        default=units.inch(4.625), unit='LENGTH', precision=4,
+        default=units.inch(3.625), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 
