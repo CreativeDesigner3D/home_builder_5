@@ -340,7 +340,10 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         for root in cab_roots:
             style.assign_style_to_cabinet(root)
         for hood in hood_roots:
+            # Stamp the style first, then rebuild a built wood hood so its
+            # static doors pick up the new style's door construction.
             style.assign_style_to_hood(hood)
+            wood_hoods.rebuild_built_hood(hood)
         n = len(cab_roots) + len(hood_roots)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
@@ -386,7 +389,11 @@ class hb_face_frame_OT_update_cabinets_from_style(Operator):
         for root in cab_roots:
             style.assign_style_to_cabinet(root)
         for hood in hood_roots:
-            style.assign_style_to_hood(hood)
+            # Built wood hoods rebuild so their static doors pick up the
+            # style's door construction (the rebuild re-pushes the
+            # finish); unbuilt hoods just take the finish.
+            if not wood_hoods.rebuild_built_hood(hood):
+                style.assign_style_to_hood(hood)
         n = len(cab_roots) + len(hood_roots)
         self.report({'INFO'}, f"Updated {n} item(s) tagged '{target_name}'")
         return {'FINISHED'}
@@ -459,7 +466,11 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
         if root.get('IS_FACE_FRAME_CABINET_CAGE'):
             style.assign_style_to_cabinet(root)
         elif root.get('APPLIANCE_TYPE') == 'HOOD':
+            # Stamp the style, then rebuild a built wood hood so its
+            # static doors pick up the new style's door construction.
             style.assign_style_to_hood(root)
+            from ...common import wood_hoods
+            wood_hoods.rebuild_built_hood(root)
         else:
             return
         if root.name not in self._painted:

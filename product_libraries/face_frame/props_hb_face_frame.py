@@ -593,7 +593,13 @@ def _propagate_cabinet_style(self, context):
             if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
                 self.assign_style_to_cabinet(obj)
             elif obj.get('APPLIANCE_TYPE') == 'HOOD':
-                self.assign_style_to_hood(obj)
+                # Hood doors are static python-built meshes: a door-style
+                # / overlay edit must rebuild the built hood (the rebuild
+                # re-pushes the finish). Unbuilt hoods just take the
+                # finish as before.
+                from ..common import wood_hoods
+                if not wood_hoods.rebuild_built_hood(obj):
+                    self.assign_style_to_hood(obj)
 
 
 def _propagate_door_style(self, context):
@@ -614,6 +620,26 @@ def _propagate_door_style(self, context):
         if (obj.get('DOOR_STYLE_NAME') == target_name
                 and obj.get('hb_part_role') in roles):
             self.assign_style_to_front(obj)
+    # Wood-hood doors are static python-built meshes, not restyleable
+    # fronts -- rebuild any built hood whose resolved cabinet style uses
+    # this door style (STYLE_NAME's style, else the active style, the
+    # same fallback wood_hoods._hood_style builds doors with).
+    if not _front_is_drawer(self):
+        from ..common import wood_hoods
+        ff = get_style_props()
+        active = (ff.cabinet_styles[ff.active_cabinet_style_index]
+                  if 0 <= ff.active_cabinet_style_index < len(ff.cabinet_styles)
+                  else None)
+        for obj in context.scene.objects:
+            if obj.get('APPLIANCE_TYPE') != 'HOOD':
+                continue
+            name = obj.get('STYLE_NAME')
+            style = next((s for s in ff.cabinet_styles if s.name == name),
+                         None) if name else None
+            if style is None:
+                style = active
+            if style is not None and style.door_style == target_name:
+                wood_hoods.rebuild_built_hood(obj)
     # A door-style change can move the rail width that match-door-rail
     # drawer styles mirror, so re-push those styles' fronts too. Drawer
     # styles are terminal here (_front_is_drawer) - no recursion.

@@ -1925,6 +1925,23 @@ def build_wood_hood(hood_obj, style):
     _reapply_cabinet_style_finish(hood_obj)
 
 
+def rebuild_built_hood(hood_obj):
+    """Rebuild the hood's parts at its current style if a wood hood has
+    been built on it (HOOD_STYLE_PROP set); returns True when it rebuilt.
+
+    Used by the style propagation callbacks: hood doors are static
+    python-built meshes, so a door-style or overlay edit must rebuild
+    them -- unlike cabinet fronts, which restyle in place via
+    assign_style_to_front. build_wood_hood ends by re-pushing the
+    cabinet style's finish, so callers need no separate finish pass.
+    """
+    style = hood_obj.get(HOOD_STYLE_PROP)
+    if style not in _STYLE_BUILDERS:
+        return False
+    build_wood_hood(hood_obj, style)
+    return True
+
+
 class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
     """Build the 3D wood-hood parts for the selected range hood. Parts are
     driven so they resize with the hood."""
