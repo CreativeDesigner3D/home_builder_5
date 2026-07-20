@@ -6007,11 +6007,10 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         description="When on, hold the count at the value above instead of auto-computing it from the opening's height",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
-    # Side spacer width: vertical filler the assembly mounts to. The
-    # spacers run the full opening height on both sides, front + back,
-    # giving slide hardware a flush surface that bridges any face frame
-    # inset. PULLOUT_SHELF only -- rollout spacer dimensions are fixed /
-    # computed in the solver (ROLLOUT_SPACER_WIDTH + per-side reveals).
+    # LEGACY -- no longer read. Rollout and pullout-shelf spacer
+    # dimensions are fixed / computed in the solver
+    # (ASSEMBLY_SPACER_WIDTH + per-side reveals). Kept so saved files
+    # with the old value still load cleanly.
     spacer_height: FloatProperty(
         name="Spacer Width",
         description="Width of the side spacer parts the slides mount to (front and back, both sides)",

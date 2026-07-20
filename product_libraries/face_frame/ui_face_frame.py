@@ -973,7 +973,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
-            sub.prop(item, 'spacer_height', text="Spacer Width")
+            # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
+            # solver), so no spacer_height row -- same as rollouts.
         elif item.kind == 'ROLLOUT':
             # One row per box: each box picks its own standard height (or
             # Custom to type one). The box count is the number of rows.
@@ -997,8 +998,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
-            # Spacer width is fixed (ROLLOUT_SPACER_WIDTH in the solver),
-            # so no spacer_height row here -- pullout shelves keep theirs.
+            # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
+            # solver), so no spacer_height row -- same as pullouts.
         elif item.kind == 'TRAY_DIVIDERS':
             sub.prop(item, 'tray_qty', text="Qty")
             sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")
