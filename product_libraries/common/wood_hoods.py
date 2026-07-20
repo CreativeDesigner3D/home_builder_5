@@ -19,6 +19,7 @@ import math
 import re
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
+from mathutils import Euler, Matrix
 
 from ... import hb_utils
 from ...hb_types import GeoNodeObject, GeoNodeCutpart
@@ -566,24 +567,32 @@ def _hood_door_mesh_spec(hood_obj, opts, width, height, thickness):
     return info, kwargs
 
 
-def _static_hood_door(hood_obj, name, width, height, location, opts):
+def _static_hood_door(hood_obj, name, width, height, location, opts,
+                      rotation=None, mirror_z=None):
     """One hood door as a python-built static mesh part, carrying the
     door style's full construction like a cabinet front. The cutpart
     stays as the dimension carrier (Length / Width / Thickness inputs
     for readers) with its box hidden; the mesh replaces it 1:1 (it is
     authored in Mirror-Y front-cutpart local space, the same convention
-    front_part uses). Sized at build time -- the hood prompts rebuild
-    on any size change, so it tracks the cage the same way the static
-    angled / shiplap parts do."""
+    front_part uses). ``rotation`` reorients the door onto another
+    plane (default: the front convention -- mesh height up, width to
+    +X, front face toward the viewer); ``mirror_z`` sets the carrier's
+    Mirror Z input for readers, matching the driven parts around it.
+    Sized at build time -- the hood prompts rebuild on any size change,
+    so it tracks the cage the same way the static angled / shiplap
+    parts do."""
     mt = HOOD_MATERIAL
     info, kwargs = _hood_door_mesh_spec(hood_obj, opts, width, height, mt)
     p = _panel(hood_obj, name)
-    p.obj.rotation_euler = (0.0, math.radians(-90.0), math.radians(90.0))
+    p.obj.rotation_euler = ((0.0, math.radians(-90.0), math.radians(90.0))
+                            if rotation is None else rotation)
     p.obj.location = location
     p.set_input("Length", height)
     p.set_input("Width", width)
     p.set_input("Thickness", mt)
     p.set_input("Mirror Y", True)
+    if mirror_z is not None:
+        p.set_input("Mirror Z", mirror_z)
     if p.obj.data.users > 1:
         p.obj.data = p.obj.data.copy()
     door_builder.build_door_mesh(p.obj.data, info, width, height, mt,
@@ -930,80 +939,44 @@ def _paneled_end(hood_obj, opts, at_right):
         pnl.set_input("Mirror Z", not at_right)
         return True
 
-    # Door filling the end frame's opening -- a 5-piece assembly from
-    # door_builder laid on the side plane, width running front-to-back
-    # (linear in dim_y), height up (linear in dim_z). Overlay sits proud
-    # of the side face; inset sits in the frame layer flush with it. The
-    # opening is y [-dim_y + mt + sw, -sw], z [brw, dim_z - trw]; the
-    # door's local x=0 edge is at the wall side.
+    # Door filling the end frame's opening -- ONE static python-built
+    # mesh (_static_hood_door) laid on the side plane, carrying the
+    # door style's full construction like the front bay doors. Width
+    # runs front-to-back, height up; each side is a proper rotation of
+    # the door (its left edge at that side's viewer's left -- the wall
+    # on the left end, the front on the right end), not a mirrored
+    # mesh. Overlay sits proud of the side face; inset sits in the
+    # frame layer flush with it. The opening is y [-dim_y + mt + sw,
+    # -sw], z [brw, dim_z - trw]. Sized at the current cage dims; the
+    # prompts rebuild the hood on any size change. Too-small doors
+    # fall back to a slab inside _hood_door_mesh_spec.
     gap = inch(0.125)
     ov_l, ov_r, ov_t, ov_b = _hood_door_overlays(hood_obj)
     if kind == 'OVERLAY_DOOR':
-        oy = -sw + ov_r                       # wall-side edge
-        wb = -(mt + 2.0 * sw) + ov_l + ov_r   # width = dim_y + wb
+        # The wall side is the door's left edge on the left end and
+        # its right edge on the right end.
+        oy = -sw + (ov_r if at_right else ov_l)   # wall-side edge
+        wb = -(mt + 2.0 * sw) + ov_l + ov_r       # width = dim_y + wb
         z0 = brw - ov_b
-        hb = -(brw + trw) + ov_t + ov_b       # height = dim_z + hb
-        d0_door = -mt                         # proud of the side face
+        hb = -(brw + trw) + ov_t + ov_b           # height = dim_z + hb
+        d0_door = -mt                             # proud of the side face
     else:
         oy = -sw - gap
         wb = -(mt + 2.0 * sw) - 2.0 * gap
         z0 = brw + gap
         hb = -(brw + trw) - 2.0 * gap
-        d0_door = 0.0                         # in the side layer
+        d0_door = 0.0                             # in the side layer
 
-    def end_part(name, cy, oy_, cz, oz, cl, ol, cw, ow, th, d0):
-        """One end-front cutpart: origin y = cy*dim_y + oy_, z =
-        cz*dim_z + oz, Length = cl*dim_z + ol (height), Width =
-        cw*dim_y + ow, depth band starting d0 out from the side's
-        outer face (negative = proud)."""
-        p = _panel(hood_obj, name)
-        p.obj.rotation_euler.y = math.radians(-90)
-        if at_right:
-            p.driver_location('x', 'dim_x + %f' % -d0, [dim_x])
-        else:
-            p.obj.location.x = d0
-        if cy:
-            p.driver_location('y', 'dim_y * %f + %f' % (cy, oy_), [dim_y])
-        else:
-            p.obj.location.y = oy_
-        if cz:
-            p.driver_location('z', 'dim_z * %f + %f' % (cz, oz), [dim_z])
-        else:
-            p.obj.location.z = oz
-        if cl:
-            p.driver_input("Length", 'dim_z * %f + %f' % (cl, ol), [dim_z])
-        else:
-            p.set_input("Length", ol)
-        if cw:
-            p.driver_input("Width", 'dim_y * %f + %f' % (cw, ow), [dim_y])
-        else:
-            p.set_input("Width", ow)
-        p.set_input("Thickness", th)
-        p.set_input("Mirror Y", True)
-        p.set_input("Mirror Z", not at_right)
-        return p
-
-    info = _hood_door_info(hood_obj, opts)
-    min_w, min_h = door_builder.layout_min_size(info)
-    if (w.get_input('Dim Y') + wb <= min_w
-            or w.get_input('Dim Z') + hb <= min_h):
-        info = dict(info, door_type='SLAB')
-    for part in door_builder.door_layout(info):
-        cx, ox = part['x']
-        cw, ow = part['w']
-        cz, oz = part['z']
-        ch, oh = part['h']
-        name = ("Hood End %s Door" % tag if part['key'] == 'slab'
-                else "Hood End %s Door %s" % (tag, part['name']))
-        th = mt if part['thickness'] is None else part['thickness']
-        d0 = d0_door if part['thickness'] is None \
-            else d0_door + part['y_inset']
-        end_part(name,
-                 -cx, oy - cx * wb - ox,
-                 cz, z0 + cz * hb + oz,
-                 ch, ch * hb + oh,
-                 cw, cw * wb + ow,
-                 th, d0)
+    w_d = w.get_input('Dim Y') + wb
+    h_d = w.get_input('Dim Z') + hb
+    if at_right:
+        rot = (0.0, math.radians(-90.0), math.radians(180.0))
+        loc = (w.get_input('Dim X') - d0_door - mt, oy - w_d, z0)
+    else:
+        rot = (0.0, math.radians(-90.0), 0.0)
+        loc = (d0_door + mt, oy, z0)
+    _static_hood_door(hood_obj, "Hood End %s Door" % tag, w_d, h_d, loc,
+                      opts, rotation=rot, mirror_z=not at_right)
     return True
 
 
@@ -1076,6 +1049,9 @@ def _angled_paneled_end(hood_obj, opts, prof, at_right, setback):
     # door_builder laid on the (possibly tilted) side plane: width runs
     # front-to-back following the sloped front edge, height straight up.
     # Overlay sits proud of the side face; inset sits in the frame layer.
+    # Stays plain prisms (unlike _paneled_end / the untapered sloped bay
+    # doors): the front edge follows the slope so the door width varies
+    # with z -- a trapezoid build_door_mesh has no mapping for.
     gap = inch(0.125)
     ov_l, ov_r, ov_t, ov_b = _hood_door_overlays(hood_obj)
     if kind == 'OVERLAY_DOOR':
@@ -1326,12 +1302,17 @@ def _wrap_shiplap(hood_obj, prof, fz=0.0, board=None):
 def _sloped_bay_fronts(hood_obj, opts, prof, fz):
     """Bay fronts filling the sloped face frame's openings: the same
     per-bay choices as the straight hood (overlay door / inset door /
-    1/4" inset panel), built as static prisms lying in (inset) or on
-    (overlay) the sloped front plane. Doors are 5-piece assemblies from
-    door_builder laid out along the face -- height runs up the slope in
-    face arc length, width follows the side taper, so parts on a tapered
-    hood are trapezoids like the frame members. Uses the same stile /
-    rail layout math as _custom_sloped_frame (which must have built)."""
+    1/4" inset panel), lying in (inset) or on (overlay) the sloped
+    front plane. On an UNTAPERED slope (no angled sides) each door is
+    a flat rectangle in the face plane, so it builds as one static
+    python-built mesh (_static_hood_door) tilted onto the slope,
+    carrying the door style's full construction like the straight
+    hood's bay doors. On a TAPERED hood the door width varies up the
+    slope -- a trapezoid build_door_mesh has no mapping for -- so
+    doors stay 5-piece assemblies of static prisms from door_layout:
+    height runs up the slope in face arc length, width follows the
+    side taper like the frame members. Uses the same stile / rail
+    layout math as _custom_sloped_frame (which must have built)."""
     sw = max(opts['panel_stile_width'], inch(0.5))
     trw = max(opts['panel_top_rail_width'], inch(0.5))
     brw = max(opts['panel_bottom_rail_width'], inch(0.5))
@@ -1396,6 +1377,28 @@ def _sloped_bay_fronts(hood_obj, opts, prof, fz):
             ds0, ds1 = s0 + gap, s1 - gap
             d_front = 0.0              # in the frame layer, flush face
         h_s = ds1 - ds0
+
+        if prof.side_in <= 1e-9:
+            # Untapered slope: one static styled door mesh, rotated
+            # from the front-door convention onto the face plane
+            # (tilted about X by the slope angle). Its origin sits one
+            # door thickness behind the door's front face, measured
+            # along the slope normal from the face-plane bottom-left
+            # corner of the opening rect.
+            z_a = prof.z_at(ds0)
+            w_d = opening_w(z_a) + dw
+            d_back = d_front + mt
+            tilt = math.atan2(prof.dy, prof.span or 1.0)
+            rot = (Matrix.Rotation(-tilt, 3, 'X')
+                   @ Euler((0.0, math.radians(-90.0),
+                            math.radians(90.0))).to_matrix())
+            _static_hood_door(
+                hood_obj, "Hood Door %d" % (j + 1), w_d, h_s,
+                (opening_left(z_a, j) + dl,
+                 prof.y_at(z_a) - n_y * d_back,
+                 z_a - n_z * d_back),
+                opts, rotation=rot.to_euler())
+            continue
 
         def door_left(z, j=j, dl=dl):
             return opening_left(z, j) + dl
