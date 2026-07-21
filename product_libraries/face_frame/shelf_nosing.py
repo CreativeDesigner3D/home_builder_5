@@ -50,6 +50,30 @@ EXTRA_HEIGHT_STYLES = frozenset({
 })
 
 
+# Optional outline provider. An asset pack (e.g. a commercial catalog
+# addon) can register a callable that supplies the exact profile
+# outline for a style; the code-generated outlines below stay as the
+# fallback so this library works standalone.
+#
+# Provider contract: fn(style, shelf_thickness, height) returns a list
+# of (d, z) points in meters - d forward from the nosing back face,
+# z down from the shelf top (z <= 0) - ordered from the top-back
+# corner around the free boundary to the bottom-back corner, WITHOUT
+# the closing back-face edge. Return None to fall back.
+_outline_provider = None
+
+
+def register_outline_provider(fn):
+    global _outline_provider
+    _outline_provider = fn
+
+
+def unregister_outline_provider(fn=None):
+    global _outline_provider
+    if fn is None or _outline_provider is fn:
+        _outline_provider = None
+
+
 def _arc(cx, cz, r, a0, a1, segments=8):
     """Sample an arc around (cx, cz) from angle a0 to a1 (degrees,
     CCW positive), excluding the start point."""
@@ -130,7 +154,14 @@ def build_nosing_object(name, length, style, shelf_thickness, height):
     object. Object origin is the back-top-left corner of the nosing:
     the back face sits on the shelf front edge (section d maps to -Y)
     and the top is flush with the shelf top (section z maps to +Z)."""
-    outline = nosing_outline(style, shelf_thickness, height)
+    outline = None
+    if _outline_provider is not None:
+        try:
+            outline = _outline_provider(style, shelf_thickness, height)
+        except Exception:
+            outline = None
+    if not outline:
+        outline = nosing_outline(style, shelf_thickness, height)
     clean = [outline[0]]
     for p in outline[1:]:
         if (abs(p[0] - clean[-1][0]) > 1e-7
