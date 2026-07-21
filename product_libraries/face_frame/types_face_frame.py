@@ -2891,6 +2891,19 @@ class FaceFrameCabinet(GeoNodeCage):
         for part, kind in self._miter_covered_members(side, panel_obj):
             self._miter_boolean(part, panel_cut, kind == target_kind)
 
+    def _back_ext_canonical_depth(self, layout, side):
+        """Front-plane depth defining THE canonical splay line for one
+        side: from the FF front-outer corner to the extended back
+        corner. Every splayed member on the side (carcass side, applied
+        panel, textured skin, loose-kick end board) derives its
+        rotation from this ONE line and scales its own span by
+        1/cos(phi), so all the planes stay parallel. Per-side effective
+        depth on angled-front cabinets."""
+        if layout.is_angled:
+            return (solver.effective_left_depth(layout) if side == 'LEFT'
+                    else solver.effective_right_depth(layout))
+        return layout.dim_y
+
     def _back_ext_effective(self):
         """(ext_left, ext_right) the CARCASS actually splays by. A side
         whose extension is carried by an attached wing keeps a square
@@ -2906,27 +2919,27 @@ class FaceFrameCabinet(GeoNodeCage):
         return ext_l, ext_r
 
     def _splay_covering(self, side, extend, location, rotation_z, width,
-                        front_anchored=False):
+                        depth_line, front_anchored=False):
         """Apply the back-extension splay to a side COVERING (applied
-        panel root or textured skin): rotate it onto the splayed outer
-        line and stretch its width to the hypotenuse, keeping its
-        inboard offset.
+        panel root or textured skin): rotate it onto the CANONICAL
+        splay line (see _back_ext_canonical_depth) and scale its span
+        by 1/cos(phi), keeping its inboard offset. Every member on the
+        side shares the canonical angle so the planes stay parallel.
 
         A covering whose width spans AWAY from its origin toward the
         front (LEFT applied panel, LEFT / RIGHT skins) is back-anchored:
         its origin rides the back-outer corner, which MOVES to the splay
         target. The RIGHT applied panel spans from the front toward the
         back, so it is front-anchored: its origin keeps its offset from
-        the FIXED front-outer corner and only rotates. Either way the
-        stretched width lands the far edge on the splayed line's far
-        corner.
+        the FIXED front-outer corner and only rotates.
 
         Returns (location, rotation_z, width). No-op for extend == 0.
         """
         if extend == 0.0:
             return location, rotation_z, width
-        ft, bt, phi, w_new = self._back_ext_line(side, extend, width)
+        ft, bt, phi, _hyp = self._back_ext_line(side, extend, depth_line)
         c, s = math.cos(phi), math.sin(phi)
+        w_new = width / c if c > 1e-6 else width
         if front_anchored:
             px, py = ft.x, ft.y          # fixed front-outer corner
         else:
@@ -2941,7 +2954,7 @@ class FaceFrameCabinet(GeoNodeCage):
                  location[2]),
                 rotation_z + phi, w_new)
 
-    def _angle_side_panel(self, child, side, extend):
+    def _angle_side_panel(self, child, side, extend, depth_line):
         """Splay one carcass side panel outward at the back by `extend`
         (meters), pivoting about its FRONT-OUTER corner so the front edge
         stays put. Analytic transform (no bound-box sampling):
@@ -2963,34 +2976,41 @@ class FaceFrameCabinet(GeoNodeCage):
         # The analytic transform below handles either sign -- back_target moves
         # the corner the signed amount and w_new / phi follow. Only exactly 0
         # is a no-op (the caller resets rotation in that case).
-        depth = self._part_input(child, 'Width')
-        if depth is None or extend == 0.0:
+        width = self._part_input(child, 'Width')
+        if width is None or extend == 0.0:
             return None
-        front_target, back_target, phi, w_new = self._back_ext_line(
-            side, extend, depth)
+        # CANONICAL splay line for the side (front-plane depth): the
+        # side's rotation comes from this line so it stays PARALLEL to
+        # the applied panel / skin / miter geometry, which all use the
+        # same line. Its own span just scales by 1/cos(phi).
+        front_target, back_target, phi, _hyp = self._back_ext_line(
+            side, extend, depth_line)
+        cphi = math.cos(phi)
+        if cphi <= 1e-6:
+            return None
         # Scribe-aware: a PANELED / UNFINISHED-scribed side sits INBOARD
-        # of the cabinet's outer plane. Keep the side parallel to the
-        # covering line, offset by its scribe distance along the splayed
-        # outward normal, instead of snapping it to the outer plane (which
-        # overlapped the applied panel). The dispatch reset location this
-        # recalc, so location.x still holds the square scribe position.
+        # of the cabinet's outer plane. The side's own outer line is the
+        # canonical line shifted HORIZONTALLY by s / cos(phi) (parallel
+        # offset s measured perpendicular), which keeps its back corner
+        # ON the back plane (y = 0) instead of poking behind it. The
+        # dispatch reset location this recalc, so location.x still holds
+        # the square scribe position.
         from mathutils import Vector
         dim_x = self.obj.face_frame_cabinet.width
         if side == 'RIGHT':
             s = dim_x - child.location.x
-            n_out = Vector((math.cos(phi), math.sin(phi)))
+            shift = Vector((-s / cphi, 0.0))
         else:
             s = child.location.x
-            n_out = Vector((-math.cos(phi), -math.sin(phi)))
-        offset = n_out * s
+            shift = Vector((s / cphi, 0.0))
         child.rotation_euler.z = phi
-        child.location.x = back_target.x - offset.x
-        child.location.y = back_target.y - offset.y
-        self._set_part_input(child, 'Width', w_new)
+        child.location.x = back_target.x + shift.x
+        child.location.y = 0.0
+        self._set_part_input(child, 'Width', width / cphi)
         # Return the side's OWN outer line (scribe-offset from the
-        # covering line) so the trapezoid trim cutter's side-thickness
+        # canonical line) so the trapezoid trim cutter's side-thickness
         # inset lands on the side's true INNER face.
-        return (front_target - offset, back_target - offset)
+        return (front_target + shift, back_target + shift)
 
     # =====================================================================
     # Furniture / veneer wood top (dresser products)
@@ -3400,13 +3420,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if role == PART_ROLE_LEFT_SIDE:
                 side_thickness = self._part_input(child, 'Thickness') or 0.0
                 if ext_l != 0.0:
-                    line_l = self._angle_side_panel(child, 'LEFT', ext_l)
+                    line_l = self._angle_side_panel(
+                        child, 'LEFT', ext_l,
+                        self._back_ext_canonical_depth(layout, 'LEFT'))
                 else:
                     child.rotation_euler.z = 0.0
             elif role == PART_ROLE_RIGHT_SIDE:
                 side_thickness = self._part_input(child, 'Thickness') or 0.0
                 if ext_r != 0.0:
-                    line_r = self._angle_side_panel(child, 'RIGHT', ext_r)
+                    line_r = self._angle_side_panel(
+                        child, 'RIGHT', ext_r,
+                        self._back_ext_canonical_depth(layout, 'RIGHT'))
                 else:
                     child.rotation_euler.z = 0.0
             elif role in (PART_ROLE_BACK, PART_ROLE_FINISHED_BACK):
@@ -3448,9 +3472,13 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
                                        allow_shrink=False, layout=layout)
             elif role == PART_ROLE_LOOSE_KICK_END_LEFT:
-                self._splay_loose_kick_end(child, 'LEFT', ext_l)
+                self._splay_loose_kick_end(
+                    child, 'LEFT', ext_l,
+                    self._back_ext_canonical_depth(layout, 'LEFT'))
             elif role == PART_ROLE_LOOSE_KICK_END_RIGHT:
-                self._splay_loose_kick_end(child, 'RIGHT', ext_r)
+                self._splay_loose_kick_end(
+                    child, 'RIGHT', ext_r,
+                    self._back_ext_canonical_depth(layout, 'RIGHT'))
 
         # Trapezoid trim for the full-depth panels (top / bottom / shelves):
         # boolean-difference the front overhang along the angled side
@@ -3469,27 +3497,30 @@ class FaceFrameCabinet(GeoNodeCage):
         self._apply_wing(layout, 'LEFT', raw_l if wing_l else 0.0)
         self._apply_wing(layout, 'RIGHT', raw_r if wing_r else 0.0)
 
-    def _splay_loose_kick_end(self, child, side, extend):
-        """Splay a loose-ladder end board along the same line as the
-        carcass side. Back-anchored like the side (origin at the
-        back-outer corner, board spans -Y by its Length input) but
-        with a -pi/2 base Z rotation (kick-return orientation), so
-        the splay adds phi on top of the base. Reset to square on
-        extend == 0 (the main dispatch already restored location +
-        Length from the solver this recalc)."""
+    def _splay_loose_kick_end(self, child, side, extend, depth_line):
+        """Splay a loose-ladder end board along the CANONICAL side
+        line. Back-anchored like the side (origin at the back-outer
+        corner, board spans -Y by its Length input) but with a -pi/2
+        base Z rotation (kick-return orientation), so the splay adds
+        phi on top of the base and the span scales by 1/cos(phi).
+        Reset to square on extend == 0 (the main dispatch already
+        restored location + Length from the solver this recalc)."""
         base_z = -math.pi / 2.0
         if extend == 0.0:
             child.rotation_euler.z = base_z
             return
-        depth = self._part_input(child, 'Length')
-        if depth is None:
+        length = self._part_input(child, 'Length')
+        if length is None:
             return
-        front_target, back_target, phi, w_new = self._back_ext_line(
-            side, extend, depth)
+        front_target, back_target, phi, _hyp = self._back_ext_line(
+            side, extend, depth_line)
+        cphi = math.cos(phi)
+        if cphi <= 1e-6:
+            return
         child.rotation_euler.z = base_z + phi
         child.location.x = back_target.x
         child.location.y = back_target.y
-        self._set_part_input(child, 'Length', w_new)
+        self._set_part_input(child, 'Length', length / cphi)
 
     def _apply_wing(self, layout, side, extend):
         """Build / remove the attached wing on one end. `extend` is the raw
@@ -4349,7 +4380,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 if self._panel_miter_angles(layout, 'LEFT')[0]:
                     width += layout.fft
                 location, rotation_z, width = self._splay_covering(
-                    'LEFT', ext_bl, location, rotation_z, width)
+                    'LEFT', ext_bl, location, rotation_z, width,
+                    self._back_ext_canonical_depth(layout, 'LEFT'))
             else:  # RIGHT
                 width = width + cab.right_side_finished_extend_back
                 if self._panel_miter_angles(layout, 'RIGHT')[0]:
@@ -4360,6 +4392,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     width += layout.fft
                 location, rotation_z, width = self._splay_covering(
                     'RIGHT', ext_br, location, rotation_z, width,
+                    self._back_ext_canonical_depth(layout, 'RIGHT'),
                     front_anchored=True)
             panel_obj.location = location
             panel_obj.rotation_euler = (0.0, 0.0, rotation_z)
@@ -5366,7 +5399,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 width = width + eb
                 ext = ext_bl if side == 'LEFT' else ext_br
                 location, rot_z, width = self._splay_covering(
-                    side, ext, location, rot_z, width)
+                    side, ext, location, rot_z, width,
+                    self._back_ext_canonical_depth(layout, side))
 
             if part_obj is None:
                 part = CabinetPart()
