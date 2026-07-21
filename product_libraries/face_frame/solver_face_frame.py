@@ -374,13 +374,14 @@ def carcass_inner_depth(layout):
 # panels can sit inboard of the face frame outer face by left/right
 # scribe offsets. The offset comes from finish end condition first, then
 # the user's typed scribe:
-#   - THREE_QUARTER: side IS the outer face -> offset = 0
-#   - PANELED: reserve 3/4" outboard for an applied panel
+#   - FINISHED: side IS the outer face -> offset = 0
+#   - PANELED / FALSE_FF / WORKING_FF: reserve 3/4" outboard for the
+#     applied face-frame panel (all three spawn one)
 #   - everything else: use the typed scribe value (default 0)
 def left_scribe_offset(layout):
     if layout.l_fin_end == 'FINISHED':
         return 0.0
-    if layout.l_fin_end == 'PANELED':
+    if layout.l_fin_end in ('PANELED', 'FALSE_FF', 'WORKING_FF'):
         return inch(0.75)
     # 1/4 applied panels (FLUSH_X strip + textured beadboard / shiplap)
     # all sit in a 1/4 scribe gap so they tuck flush against the side.
@@ -403,7 +404,7 @@ def left_side_thickness(layout):
 def right_scribe_offset(layout):
     if layout.r_fin_end == 'FINISHED':
         return 0.0
-    if layout.r_fin_end == 'PANELED':
+    if layout.r_fin_end in ('PANELED', 'FALSE_FF', 'WORKING_FF'):
         return inch(0.75)
     if layout.r_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP'):
         return inch(0.25)

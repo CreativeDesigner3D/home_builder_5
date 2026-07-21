@@ -402,7 +402,20 @@ def _strip_panel_carcass_parts(panel_obj):
                 bpy.data.meshes.remove(mesh)
 
 
-def apply_panel_split_structure(cab_obj, panel_obj, side):
+# Default opening front per finished-end condition. PANELED reads as a
+# quiet panel; FALSE_FF carries fixed decorative fronts ("non-working
+# fronts"); WORKING_FF carries real doors. Per-opening overrides made
+# through the standard opening UI are preserved across recalcs while
+# the condition is unchanged (see the preserve/reapply pass below).
+_CONDITION_FRONT_TYPE = {
+    'PANELED':    'INSET_PANEL',
+    'FALSE_FF':   'FALSE_FRONT',
+    'WORKING_FF': 'DOOR',
+}
+
+
+def apply_panel_split_structure(cab_obj, panel_obj, side,
+                                condition='PANELED'):
     """Build the panel's internal opening tree.
 
     Decisions:
@@ -426,8 +439,10 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
     Bay quantity is reconciled in place (insert_bay / delete_bay), so
     a panel flips structure cleanly when a rail appears or disappears
     on the source cabinet. Trees are wipe-and-rebuild on every call;
-    panels have no user state on their openings (all default
-    front_type) so rebuilding is safe and idempotent.
+    openings default their front to the condition's entry in
+    _CONDITION_FRONT_TYPE, and per-opening front overrides are
+    captured before the wipe and reapplied after (same condition
+    only), so rebuilding stays idempotent.
 
     Gated by cab.panel_frame_auto.
     """
@@ -458,6 +473,22 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
     # Openings scale with width when the panel splits into real bays
     # (no rail-matched H-split in play); see the width ladder above.
     n_open = _panel_opening_qty(panel_props.width)
+
+    # Default front per condition; per-opening overrides survive a
+    # same-condition rebuild (captured before the wipe, reapplied
+    # after). Keyed by (bay_index, opening_index) - opening_index is
+    # only unique within one bay's tree. A condition flip re-defaults
+    # everything.
+    default_front = _CONDITION_FRONT_TYPE.get(condition, 'INSET_PANEL')
+    prev_condition = panel_obj.get(
+        types_face_frame.TAG_APPLIED_PANEL_CONDITION)
+    preserved_fronts = {}
+    if prev_condition == condition:
+        for c in panel_obj.children_recursive:
+            if c.get(types_face_frame.TAG_OPENING_CAGE):
+                preserved_fronts[_opening_key(c)] = (
+                    c.face_frame_opening.front_type)
+    panel_obj[types_face_frame.TAG_APPLIED_PANEL_CONDITION] = condition
 
     # Bay quantity: real-bay mid stile only when no rails are in play.
     # insert_bay / delete_bay manage their own recalc guards and were
@@ -496,11 +527,38 @@ def apply_panel_split_structure(cab_obj, panel_obj, side):
             _wipe_bay_tree(bay_obj)
             if not rails and not add_mid_stile:
                 _create_opening_under(bay_obj, child_index=0,
-                                      opening_index=0)
+                                      opening_index=0,
+                                      front_type=default_front)
                 continue
             _build_panel_tree(
                 bay_obj, rails, add_mid_stile, cab_obj, side,
+                front_type=default_front,
             )
+
+        # Reapply per-opening front overrides (same-condition rebuild
+        # only; keys are stable while the structure is unchanged).
+        if preserved_fronts:
+            for c in panel_obj.children_recursive:
+                if not c.get(types_face_frame.TAG_OPENING_CAGE):
+                    continue
+                op = c.face_frame_opening
+                ft = preserved_fronts.get(_opening_key(c))
+                if ft and ft != op.front_type:
+                    op.front_type = ft
+
+
+def _opening_key(opening_obj):
+    """Stable identity for an opening across a same-structure rebuild:
+    (owning bay index, opening_index). opening_index alone collides -
+    each bay's tree numbers its openings from 0."""
+    bay_index = -1
+    node = opening_obj.parent
+    while node is not None:
+        if node.get(types_face_frame.TAG_BAY_CAGE):
+            bay_index = node.face_frame_bay.bay_index
+            break
+        node = node.parent
+    return (bay_index, opening_obj.face_frame_opening.opening_index)
 
 
 def _sorted_panel_bays(panel_obj):
@@ -802,7 +860,8 @@ def _create_split_node_under(parent_obj, child_index, axis, splitter_width):
     return node
 
 
-def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side):
+def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
+                      front_type='INSET_PANEL'):
     """Construct the panel's opening tree.
 
     `rails` is a list of {'z_bottom', 'splitter_width'} dicts in
@@ -834,11 +893,13 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side):
             _build_v_split_region(parent, child_index=child_index,
                                   mid_stile_w=mid_stile_w,
                                   size=size, unlock_size=unlock,
-                                  next_op_idx=next_op_idx)
+                                  next_op_idx=next_op_idx,
+                                  front_type=front_type)
         else:
             _create_opening_under(parent, child_index=child_index,
                                   opening_index=next_op_idx(),
-                                  size=size, unlock_size=unlock)
+                                  size=size, unlock_size=unlock,
+                                  front_type=front_type)
 
     if not rails:
         make_leaf_region(panel_bay_obj, child_index=0,
@@ -880,7 +941,8 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side):
 
 
 def _build_v_split_region(parent_obj, child_index, mid_stile_w,
-                          size, unlock_size, next_op_idx):
+                          size, unlock_size, next_op_idx,
+                          front_type='INSET_PANEL'):
     """Build a V-split + 2 equal opening children, attached to
     parent_obj at child_index. size + unlock_size are applied to the
     SPLIT NODE (so the parent containing the V-split is sized correctly
@@ -897,8 +959,10 @@ def _build_v_split_region(parent_obj, child_index, mid_stile_w,
     # with share-of-remainder.
     sp.unlock_size = unlock_size
     sp.size = size
-    _create_opening_under(v, child_index=0, opening_index=next_op_idx())
-    _create_opening_under(v, child_index=1, opening_index=next_op_idx())
+    _create_opening_under(v, child_index=0, opening_index=next_op_idx(),
+                          front_type=front_type)
+    _create_opening_under(v, child_index=1, opening_index=next_op_idx(),
+                          front_type=front_type)
 
 
 def _mid_stile_width_for_panel(cab_obj, cab, side):

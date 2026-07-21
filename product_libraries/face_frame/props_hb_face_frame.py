@@ -2162,6 +2162,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 continue
             role = child.get('hb_part_role')
 
+            # Static textured panels (beadboard / shiplap ends): the
+            # carved python mesh is the visible geometry (GN cutpart
+            # display hidden), so the finish goes on the mesh slot
+            # directly - cutpart surface inputs are inert here.
+            if (role in ('BEADBOARD', 'SHIPLAP')
+                    and child.get('HB_STATIC_TEXTURED')):
+                if finish_mat is not None:
+                    me = child.data
+                    while len(me.materials) < 1:
+                        me.materials.append(None)
+                    me.materials[0] = finish_mat
+                continue
+
             # Per-part paint override (set by the Paint Part tool) wins
             # over the role-based default and survives recalc since it
             # lives on the part. Unset / 'AUTO' falls through to the role

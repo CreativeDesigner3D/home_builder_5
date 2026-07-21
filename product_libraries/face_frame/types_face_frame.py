@@ -355,18 +355,28 @@ TAG_BAY_FINISH_FACE = 'hb_bay_finish_face'
 # leaf index for a per-opening finish, or -1 for a whole-bay finish.
 TAG_BAY_FINISH_OPENING = 'hb_bay_finish_opening'
 
-# Textured-finish applied panels: 1/4 flat parts representing beadboard
-# or shiplap finishes on a side (LEFT / RIGHT / BACK). Distinct roles
-# so a future material pass can shade them differently; geometry is
-# identical between the two for now (later: a modifier could carve
-# bead profiles / plank reveals into the part).
+# Textured-finish applied panels: 1/4 parts representing beadboard or
+# shiplap finishes on a side (LEFT / RIGHT / BACK). The part keeps its
+# driven GN cutpart (the L/W/T carrier downstream passes read) but the
+# visible geometry is a static python mesh with the texture carved in -
+# real quirk-bead grooves for BEADBOARD, nickel-gap plank reveals for
+# SHIPLAP - written into the object's mesh data with the GN modifier
+# display disabled (same pattern as HB_STATIC_SLAB fronts).
 PART_ROLE_BEADBOARD = 'BEADBOARD'
 PART_ROLE_SHIPLAP = 'SHIPLAP'
 TAG_TEXTURED_PANEL_SIDE = 'hb_textured_panel_side'
+# Stamped on a textured panel whose mesh data carries the static carved
+# geometry; the material walk assigns the finish to the mesh slot
+# directly (cutpart surface inputs are inert while the GN is hidden).
+TAG_STATIC_TEXTURED = 'HB_STATIC_TEXTURED'
 TEXTURED_PANEL_ROLES = {
     'BEADBOARD': PART_ROLE_BEADBOARD,
     'SHIPLAP':   PART_ROLE_SHIPLAP,
 }
+# Beadboard plank spacing (matches the 'MDF Beadboard' door-panel kind);
+# shiplap course pitch (matches the wood-hood default board width).
+TEXTURED_BEADBOARD_SPACING = 1.6 * 0.0254
+TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
 
 # Applied panel side tag - written on a panel root that's been spawned
 # by a cabinet to serve as its left/right/back finished end. Drives
@@ -374,10 +384,15 @@ TEXTURED_PANEL_ROLES = {
 TAG_APPLIED_PANEL_SIDE = 'hb_applied_to_cabinet_side'
 
 # Cabinet-side finished_end_condition values that spawn an applied panel
-# child. PANELED is the simplest case (just an inset-panel face frame);
-# FALSE_FF and WORKING_FF will eventually drive the panel's openings to
-# carry false / working drawer fronts (deferred to a later pass).
+# child. All three spawn the same face-frame panel; they differ in the
+# default front each opening carries (see applied_panel_sizing
+# _CONDITION_FRONT_TYPE): PANELED -> inset panels, FALSE_FF ->
+# fixed false fronts, WORKING_FF -> working doors. Per-opening
+# overrides via the standard opening UI survive recalcs.
 APPLIED_PANEL_END_TYPES = frozenset({'PANELED', 'FALSE_FF', 'WORKING_FF'})
+# Stamped on the panel root so a condition flip re-defaults the
+# openings' fronts while a same-condition recalc preserves overrides.
+TAG_APPLIED_PANEL_CONDITION = 'hb_applied_panel_condition'
 
 # Pivot empty parent of every front part. Holds the swing rotation
 # (door / pullout) or the slide translation (drawer front) so the front
@@ -4044,7 +4059,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 self.obj, panel_obj, side, condition,
             )
             applied_panel_sizing.apply_panel_split_structure(
-                self.obj, panel_obj, side,
+                self.obj, panel_obj, side, condition,
             )
             # Toe-kick corner notch on bottom rail + facing stile.
             # No-op for BACK panels and non-NOTCH toe kicks.
@@ -4816,18 +4831,103 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Thickness', thickness)
 
     # =====================================================================
-    # Applied textured panels (BEADBOARD / SHIPLAP, 1/4 flat parts)
+    # Applied textured panels (BEADBOARD / SHIPLAP, 1/4 carved parts)
     # =====================================================================
+
+    @staticmethod
+    def _textured_panel_mesh(part_obj, length, width, thickness,
+                             condition, mirror_z):
+        """Write the carved static mesh for a textured panel into
+        ``part_obj``'s mesh data and hide its GN cutpart display.
+
+        Cutpart-local space (verified against the GN output): local X
+        runs 0..length (bottom -> top), local Y runs 0..-width, and the
+        EXTERIOR face sits on the z=0 plane with the material extending
+        -z when Mirror Z is set (LEFT panels) else +z (RIGHT / BACK).
+
+        BEADBOARD: vertical quirk-bead grooves (door_builder's BEAD
+        section) along local X, repeated across the width, pattern
+        centered like a grooved door panel. SHIPLAP: nickel-gap plank
+        reveals (KERF section) along local Y, repeated up the length at
+        TEXTURED_SHIPLAP_PITCH from the bottom. Grooves that don't fit
+        leave a plain slab.
+        """
+        import bmesh
+        from ..common import door_builder
+
+        s = -1.0 if mirror_z else 1.0
+        sec = door_builder._groove_section(
+            'BEAD' if condition == 'BEADBOARD' else 'KERF')
+        hw = max(du for du, dv in sec)
+        deep = max(dv for du, dv in sec)
+        if deep >= thickness:
+            sec = None
+
+        # Groove centers along the repeat axis (u), and the span the
+        # cross-section is drawn across.
+        if condition == 'BEADBOARD':
+            span_u, run = width, length      # profile across Y, extrude X
+            spacing = TEXTURED_BEADBOARD_SPACING
+            margin = max(2.0 * hw, 0.004)
+            k = 1 + int(span_u / spacing) if spacing > 0 else 0
+            centers = [span_u / 2.0 + (i + 0.5) * spacing
+                       for i in range(-k, k + 1)]
+        else:
+            span_u, run = length, width      # profile across X, extrude Y
+            pitch = TEXTURED_SHIPLAP_PITCH
+            margin = 0.5 * 0.0254
+            n = int(span_u / pitch) if pitch > 0 else 0
+            centers = [i * pitch for i in range(1, n + 1)]
+        if sec is not None:
+            centers = sorted(c for c in centers
+                             if c - hw >= margin and c + hw <= span_u - margin)
+        else:
+            centers = []
+
+        # Closed profile loop in (u, z): back face, up the far edge,
+        # then the exterior face (z=0) walked back with grooves cut
+        # toward the material side (z = s * dv).
+        z_in = s * thickness
+        loop = [(0.0, z_in), (span_u, z_in), (span_u, 0.0)]
+        for c in reversed(centers):
+            for du, dv in reversed(sec):
+                loop.append((c + du, s * dv))
+        loop.append((0.0, 0.0))
+
+        bm = bmesh.new()
+        if condition == 'BEADBOARD':
+            ring0 = [bm.verts.new((0.0, -u, z)) for u, z in loop]
+            ring1 = [bm.verts.new((run, -u, z)) for u, z in loop]
+        else:
+            ring0 = [bm.verts.new((u, 0.0, z)) for u, z in loop]
+            ring1 = [bm.verts.new((u, -run, z)) for u, z in loop]
+        bm.faces.new(ring0)
+        bm.faces.new(list(reversed(ring1)))
+        n = len(loop)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(part_obj.data)
+        bm.free()
+
+        # Hide the driven cutpart display; it stays as the L/W/T
+        # carrier for pricing / machining reads.
+        mod_name = getattr(part_obj.home_builder, 'mod_name', '')
+        mod = part_obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        part_obj[TAG_STATIC_TEXTURED] = True
+
     def _reconcile_textured_panels(self, layout):
         """Spawn / resize / remove BEADBOARD or SHIPLAP applied panels.
 
-        One reconciler covers all three sides. Geometry is a single
-        1/4 flat part per side - same overall position as a PANELED
-        applied panel (LEFT / RIGHT) or FINISHED back (BACK), without
-        the face frame structure. Distinct roles per condition so a
-        future material pass can shade beadboard and shiplap
-        differently; a future modifier pass can carve bead profiles /
-        plank reveals into the geometry.
+        One reconciler covers all three sides. One 1/4 part per side -
+        same overall position as a PANELED applied panel (LEFT / RIGHT)
+        or FINISHED back (BACK), without the face frame structure. The
+        part's driven cutpart carries L/W/T; the visible geometry is a
+        static carved mesh (see _textured_panel_mesh).
 
         Resize-in-place when the role is unchanged. Condition flips
         between BEADBOARD <-> SHIPLAP rebuild the part since the role
@@ -4925,6 +5025,8 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Length',    length)
             part.set_input('Width',     width)
             part.set_input('Thickness', thickness)
+            self._textured_panel_mesh(part_obj, length, width, thickness,
+                                      condition, mirror_z)
 
     # =====================================================================
     # Helpers - rail reconciliation + bay cage update
