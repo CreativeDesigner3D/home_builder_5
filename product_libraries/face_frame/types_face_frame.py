@@ -8558,8 +8558,14 @@ class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
     into a 2-bay product for anything over 20" wide. Doors follow door
     conventions, not panel aesthetics - the user splits bays manually
     (or re-enables Auto Openings) when they want more.
+
+    fill_no_bays: the placement modal drags / gap-fills like a cabinet
+    but always creates ONE bay - the default-cabinet branch derived a
+    bay count from the drag width (>36" placed 2+ bays), pre-splitting
+    the frame the user meant to lay out themselves.
     """
     default_opening_front_type = 'DOOR'
+    fill_no_bays = True
 
     def create(self, name="Face Frame and Doors", bay_qty=1):
         self.create_cabinet_root(name)
@@ -9598,6 +9604,14 @@ class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
     """
     single_placement = True          # one fixed-size piece, like the Half Wall
     placement_stand_rotation = None  # built in real orientation; no reorient
+    # The frame band spans local Z 0..4" with the corner legs hanging 34.5"
+    # DOWN from the band top -- the product is built to hang under a
+    # countertop. Placed at floor Z the legs punched 30.5" through the
+    # floor and the band sat at ankle height, so mount it like an upper at
+    # leg-height minus band-height: legs land on the floor and the band
+    # top meets the 34.5" counter underside.
+    mounts_as_upper = True
+    default_z_location = inch(34.5) - inch(4.0)
 
     def __init__(self):
         super().__init__()

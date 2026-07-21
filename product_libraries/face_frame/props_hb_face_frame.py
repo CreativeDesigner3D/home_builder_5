@@ -2463,7 +2463,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             props.panel_top_rail_width = self._ff_size_for('top_rail', 'base')
             props.panel_bottom_rail_width = self._ff_size_for('bottom_rail', 'base')
             props.panel_stile_width = self._ff_size_for('end_stile', 'base')
-            return
+            # Face Frame and Doors is PANEL-typed (carcass-less) but
+            # builds a REAL face frame with bays / doors, so it keeps
+            # going: its stiles / rails / mid members follow the
+            # cabinet face frame sizes like any cabinet.
+            if cabinet_obj.get('CLASS_NAME') != 'FaceFrameAndDoorsCabinet':
+                return
 
         # Regular carcass cabinets - top/bottom rail at cabinet level.
         # Respect the per-cabinet unlock flags: a style change re-applies the

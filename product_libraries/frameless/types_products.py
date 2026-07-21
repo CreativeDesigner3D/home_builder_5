@@ -267,6 +267,13 @@ class SupportFrame(Product):
 
     def add_properties(self):
         self.add_property('Support Spacing', 'DISTANCE', inch(16))
+        # Per-side band toggles: turning a side off makes an L / U shaped
+        # frame (e.g. wrap the back + one side of an island to carry an
+        # overhang, leaving the cabinet faces clear).
+        self.add_property('Front Rail', 'CHECKBOX', True)
+        self.add_property('Back Rail', 'CHECKBOX', True)
+        self.add_property('Left Rail', 'CHECKBOX', True)
+        self.add_property('Right Rail', 'CHECKBOX', True)
         self.add_property('Front Left Leg', 'CHECKBOX', True)
         self.add_property('Front Right Leg', 'CHECKBOX', True)
         self.add_property('Back Left Leg', 'CHECKBOX', True)
@@ -303,6 +310,10 @@ class SupportFrame(Product):
         frlt = self.var_prop('Front Right Leg Type', 'frlt')
         bllt = self.var_prop('Back Left Leg Type', 'bllt')
         brlt = self.var_prop('Back Right Leg Type', 'brlt')
+        f_rail = self.var_prop('Front Rail', 'f_rail')
+        b_rail = self.var_prop('Back Rail', 'b_rail')
+        l_rail = self.var_prop('Left Rail', 'l_rail')
+        r_rail = self.var_prop('Right Rail', 'r_rail')
 
         l_panel = CabinetPart()
         l_panel.create('Left Panel')
@@ -316,6 +327,7 @@ class SupportFrame(Product):
         l_panel.set_input("Mirror X", True)
         l_panel.set_input("Mirror Y", True)
         l_panel.set_input("Mirror Z", True)
+        l_panel.driver_hide('IF(l_rail,False,True)', [l_rail])
 
         r_panel = CabinetPart()
         r_panel.create('Right Panel')
@@ -329,6 +341,7 @@ class SupportFrame(Product):
         r_panel.driver_input("Thickness", 'mt', [mt])
         r_panel.set_input("Mirror X", True)
         r_panel.set_input("Mirror Y", True)
+        r_panel.driver_hide('IF(r_rail,False,True)', [r_rail])
 
         front = CabinetPart()
         front.create('Front Panel')
@@ -340,6 +353,7 @@ class SupportFrame(Product):
         front.driver_input("Width", 'dim_z', [dim_z])
         front.driver_input("Thickness", 'mt', [mt])
         front.set_input("Mirror Z", True)
+        front.driver_hide('IF(f_rail,False,True)', [f_rail])
 
         back = CabinetPart()
         back.create('Back Panel')
@@ -349,6 +363,7 @@ class SupportFrame(Product):
         back.driver_input("Length", 'dim_x-IF(AND(bll,bllt==1),lw,0)-IF(AND(brl,brlt==1),lw,0)', [dim_x, bll, bllt, lw, brl, brlt])
         back.driver_input("Width", 'dim_z', [dim_z])
         back.driver_input("Thickness", 'mt', [mt])
+        back.driver_hide('IF(b_rail,False,True)', [b_rail])
 
         # Support with array modifier
         support = CabinetPart()
