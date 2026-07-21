@@ -151,6 +151,7 @@ class GroupLayout:
         self.dim_y = geo.get_input('Dim Y')
         self.dim_z = geo.get_input('Dim Z')
         self.is_angled = False
+        self.angled_multi = False
         self.blind_offset_left = 0.0
         self.blind_offset_right = 0.0
         # Cabinets only (no appliances) for CABINET_BOUNDARY records -

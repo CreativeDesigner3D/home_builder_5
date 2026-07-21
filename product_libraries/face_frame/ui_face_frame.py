@@ -136,11 +136,13 @@ def draw_dimensions(layout, root):
             # by content ("Doors") until a dedicated drawer-front content type
             # lands; the height + lock controls are what matter here.
             draw_corner_sections(layout, cab_props)
-    # Angled standard cabinet: per-side depth unlocks, single-bay only.
-    # When either is on, the face frame becomes the hypotenuse spanning
-    # the two front edges; the back stays at cab_props.depth between
-    # the sides. Hidden entirely on multi-bay carcasses.
-    elif bay_count == 1:
+    # Angled standard cabinet: per-side depth unlocks. Single-bay: the
+    # face frame becomes the hypotenuse spanning the two front edges;
+    # the back stays at cab_props.depth between the sides. Multi-bay:
+    # only the FIRST bay angles for the left depth and only the LAST
+    # for the right; middle bays stay square, with the bend points at
+    # the mid stiles.
+    else:
         col.separator()
         left_row = col.row(align=True)
         field = left_row.row(align=True)

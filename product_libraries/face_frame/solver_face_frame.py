@@ -192,17 +192,8 @@ class FaceFrameLayout:
         # bays stay square. Bend points land on the mid stiles at full
         # cabinet depth (see bay_front_angle + the piecewise ff_*
         # mapping helpers).
-        # NOTE: multi-bay angling (angled_multi) is scaffolded - the
-        # piecewise helpers below (multi_bend_points, bay_front_angle,
-        # _multi_front_at + the angled_multi branches in the ff_*
-        # mapping functions) are ready, but the per-bay CONSUMERS
-        # (rail/kick segment splitting at the bends, per-part rotation
-        # from hb_segment_start_bay, per-bay cage theta, per-end wedge
-        # cutters, UI gate) are not wired yet. Until they are, the
-        # single-bay gate stays so multi-bay cabinets remain square.
         self.is_angled = (
             self.corner_type == 'NONE'
-            and self.bay_count == 1
             and (self.unlock_left_depth or self.unlock_right_depth)
         )
         self.angled_multi = self.is_angled and self.bay_count > 1
@@ -867,6 +858,28 @@ def kick_subfront_segments(layout):
             if layout.kick_inset_right > 0:
                 right_x = (layout.dim_x - layout.kick_inset_right
                            - layout.tkt)
+        if layout.angled_multi:
+            # Split where the kick planes themselves intersect (bend
+            # shifted by the perpendicular offset); each piece anchors
+            # on its own region of the piecewise kick plane and
+            # stretches by 1/cos.
+            for s, e, a, b, theta in _split_ff_x_spans(
+                    layout, start, end, left_x, right_x,
+                    perp=layout.tks + layout.tkt):
+                wx, wy, wz = ff_perpendicular_offset_at_world_x(
+                    layout, a, layout.tks + layout.tkt, 0.0
+                )
+                segments.append({
+                    'start_bay':  s,
+                    'end_bay':    e,
+                    'x':          wx,
+                    'y':          wy,
+                    'z':          wz,
+                    'length':     (b - a) / math.cos(theta),
+                    'width':      first_bay['kick_height'],
+                    'thickness':  layout.tkt,
+                })
+            continue
         wx, wy, wz = ff_perpendicular_offset_at_world_x(
             layout, left_x, layout.tks + layout.tkt, 0.0
         )
@@ -948,6 +961,28 @@ def finish_kick_segments(layout):
         # offset from the FF outer plane is (tks + tkt - finish_t).
         # Like the subfront, it spans world-X between the side panels,
         # so we use the world-X helper and convert to FF-aligned length.
+        if layout.angled_multi:
+            # Same plane-intersection splitting as the subfront behind
+            # it, at the finish kick's own perpendicular offset.
+            for s, e, a, b, theta in _split_ff_x_spans(
+                    layout, start, end, left_x, right_x,
+                    perp=layout.tks + layout.tkt - finish_t):
+                wx, wy, wz = ff_perpendicular_offset_at_world_x(
+                    layout, a,
+                    layout.tks + layout.tkt - finish_t,
+                    0.0,
+                )
+                segments.append({
+                    'start_bay':  s,
+                    'end_bay':    e,
+                    'x':          wx,
+                    'y':          wy,
+                    'z':          wz,
+                    'length':     (b - a) / math.cos(theta),
+                    'width':      first_bay['kick_height'],
+                    'thickness':  finish_t,
+                })
+            continue
         wx, wy, wz = ff_perpendicular_offset_at_world_x(
             layout, left_x,
             layout.tks + layout.tkt - finish_t,
@@ -1422,9 +1457,25 @@ def top_rail_segments(layout):
         # A front-dropped bay (sink / cooktop) lowers its rail below the
         # bay top; passthrough breaks at any drop change so `start` speaks
         # for the whole segment.
-        wx, wy, wz = ff_outer_world_pos(
-            layout, ff_x, bay_top_z(layout, start) - front_drop(layout, start)
-        )
+        z = bay_top_z(layout, start) - front_drop(layout, start)
+        if layout.angled_multi:
+            # Split at the bend points so no rail crosses a bend; each
+            # angled piece is longer than its world span by 1/cos.
+            for s, e, a, b, theta in _split_ff_x_spans(
+                    layout, start, end, ff_x, ff_x + length):
+                wx, wy, wz = ff_outer_world_pos(layout, a, z)
+                segments.append({
+                    'start_bay':  s,
+                    'end_bay':    e,
+                    'x':          wx,
+                    'y':          wy,
+                    'z':          wz,
+                    'length':     (b - a) / math.cos(theta),
+                    'width':      first_bay['top_rail_width'],
+                    'thickness':  layout.fft,
+                })
+            continue
+        wx, wy, wz = ff_outer_world_pos(layout, ff_x, z)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
@@ -1463,6 +1514,22 @@ def bottom_rail_segments(layout):
         else:
             z = bay_bottom_z(layout, start)
             width = first_bay['bottom_rail_width']
+        if layout.angled_multi:
+            # Same bend-point splitting as top_rail_segments.
+            for s, e, a, b, theta in _split_ff_x_spans(
+                    layout, start, end, ff_x, ff_x + length):
+                wx, wy, wz = ff_outer_world_pos(layout, a, z)
+                segments.append({
+                    'start_bay':  s,
+                    'end_bay':    e,
+                    'x':          wx,
+                    'y':          wy,
+                    'z':          wz,
+                    'length':     (b - a) / math.cos(theta),
+                    'width':      width,
+                    'thickness':  layout.fft,
+                })
+            continue
         wx, wy, wz = ff_outer_world_pos(layout, ff_x, z)
         segments.append({
             'start_bay':  start,
@@ -1639,6 +1706,74 @@ def _multi_front_at(layout, x):
     return -layout.dim_y, 0.0
 
 
+def _angled_multi_cuts(layout, start, end, perp=0.0):
+    """(cut_x, gap_index) breaks an angled_multi FF member spanning bays
+    start..end must take so no piece crosses a bend point. A left cut
+    only exists when the segment includes bay 0 AND extends past it (the
+    bend sits mid-stile-0); mirror for the right. On a 2-bay cabinet
+    both bends share gap 0, so the right cut is skipped once the left
+    one is taken.
+
+    `perp` is the member's perpendicular offset from the FF outer plane
+    (0 for rails, tks + tkt for the kick subfront). Offset planes
+    meeting at an angle intersect NOT at the outer-plane bend X, so
+    each cut is computed as the intersection of the two ADJACENT
+    regions' offset lines (y = m*x + b): angled-left vs square, square
+    vs angled-right - or angled-left vs angled-right directly on a
+    2-bay cabinet where both bends share the one mid stile and no
+    square region exists between them. perp = 0 collapses every cut to
+    the bend points."""
+    cuts = []
+    if not layout.angled_multi:
+        return cuts
+    last = layout.bay_count - 1
+    bend_l, bend_r = multi_bend_points(layout)
+    theta_l = bay_front_angle(layout, 0)
+    theta_r = bay_front_angle(layout, last)
+    has_l = (start == 0 and end > 0 and layout.unlock_left_depth
+             and abs(theta_l) > 1e-9)
+    has_r = (end == last and start < last and layout.unlock_right_depth
+             and abs(theta_r) > 1e-9)
+    m_l = math.tan(theta_l)
+    b_l = -effective_left_depth(layout) + perp / math.cos(theta_l)
+    m_r = math.tan(theta_r)
+    b_r = (-effective_right_depth(layout) - m_r * layout.dim_x
+           + perp / math.cos(theta_r))
+    b_sq = -layout.dim_y + perp
+    if has_l and has_r and bend_r - bend_l < 1e-9:
+        if abs(m_l - m_r) > 1e-9:
+            cuts.append(((b_r - b_l) / (m_l - m_r), 0))
+        return cuts
+    if has_l:
+        cuts.append(((b_sq - b_l) / m_l, 0))
+    if has_r:
+        cuts.append(((b_sq - b_r) / m_r, last - 1))
+    return cuts
+
+
+def _split_ff_x_spans(layout, start, end, x0, x1, perp=0.0):
+    """Split a FF member covering bays start..end and world X [x0, x1]
+    at the angled_multi bend points (shifted to the member's own plane
+    intersections via `perp` - see _angled_multi_cuts). Returns a list
+    of (sub_start_bay, sub_end_bay, a, b, theta) pieces where [a, b] is
+    the piece's world X range and theta its front angle (0 on square
+    pieces). A single piece with theta from bay_front_angle(start) when
+    no cut applies - callers only use this on the angled_multi path, so
+    single-bay hypotenuse math stays untouched."""
+    cuts = [(x, g)
+            for (x, g) in _angled_multi_cuts(layout, start, end, perp)
+            if x0 + 1e-9 < x < x1 - 1e-9]
+    cuts.sort()
+    pieces = []
+    a, s = x0, start
+    for (x, g) in cuts:
+        pieces.append((s, g, a, x))
+        a, s = x, g + 1
+    pieces.append((s, end, a, x1))
+    return [(s, e, a, b, bay_front_angle(layout, s))
+            for (s, e, a, b) in pieces]
+
+
 def face_frame_angle(layout):
     """Z rotation (radians) that maps the original square face frame
     direction (+X) to the angled FF plane's direction, going from the
@@ -1798,15 +1933,18 @@ def left_side_position(layout):
       Square (default): side back edge sits at -dim_y + bay 0 depth,
         so a shallower bay shifts BOTH ends forward equally and the
         back panel moves with it.
-      Angled (single-bay, unlock on): side back edge anchors at the
-        cabinet back (Y = 0). Only the front edge moves, producing
-        the asymmetric front geometry that drives the angled face
-        frame plane while the back stays put.
+      Angled (unlock on): side back edge anchors at the cabinet back
+        (Y = 0). Only the front edge moves, producing the asymmetric
+        front geometry that drives the angled face frame plane while
+        the back stays put. Multi-bay cabinets anchor per side: only
+        the side whose end bay actually angles switches modes; the
+        other keeps the square anchoring.
 
     X reflects the scribe offset so the side can sit inboard of the
     stile. Z anchor depends on toe_kick_type via side_bottom_z.
     """
-    if layout.is_angled:
+    if layout.is_angled and (not layout.angled_multi
+                             or layout.unlock_left_depth):
         y = 0.0
     else:
         y = -layout.dim_y + layout.bays[0]['depth']
@@ -1825,7 +1963,8 @@ def left_side_dims(layout):
 def right_side_position(layout):
     """Mirror of left_side_position. See its docstring for the two
     anchoring modes."""
-    if layout.is_angled:
+    if layout.is_angled and (not layout.angled_multi
+                             or layout.unlock_right_depth):
         y = 0.0
     else:
         last = layout.bay_count - 1
@@ -2801,6 +2940,28 @@ def bay_cage_dims(layout, bay_index):
     left_x, right_x = _cage_x_bounds(layout, bay_index)
     cage_dim_x = right_x - left_x
     cage_dim_y = bay['depth'] - layout.fft - back_thickness(layout)
+    if layout.angled_multi:
+        # An angled end bay's cage is rotated by its front angle, so its
+        # X span along the rotated axis must be the PLANE length of the
+        # world-X cavity span (1/cos longer) to still reach the mid
+        # division. Square (middle) bays get theta = 0 -> unchanged.
+        theta = bay_front_angle(layout, bay_index)
+        if abs(theta) > 1e-9:
+            cos_t = math.cos(theta)
+            cage_dim_x /= cos_t
+            # Depth: the rotated cage extends its local +Y from the
+            # angled FF inner plane; keep every back corner at (or in
+            # front of) the bay's carcass back plane so the interior
+            # (drawer boxes, shelves, opening cages) doesn't poke out
+            # of the cabinet. The binding corner is the SHALLOW end of
+            # the angled plane.
+            y_front_l = ff_perpendicular_offset_at_world_x(
+                layout, left_x, layout.fft, 0.0)[1]
+            y_front_r = ff_perpendicular_offset_at_world_x(
+                layout, right_x, layout.fft, 0.0)[1]
+            back_y = -layout.dim_y + bay['depth'] - back_thickness(layout)
+            cage_dim_y = max(
+                0.0, (back_y - max(y_front_l, y_front_r)) / cos_t)
     top_thickness = layout.stretcher_t if layout.uses_stretchers else layout.mt
     cage_top_z = carcass_top_z(layout, bay_index) - top_thickness
     cage_bottom_z = bay_bottom_z(layout, bay_index) + effective_bottom_rail_width(layout, bay_index)
@@ -2904,11 +3065,23 @@ def _bay_root_reveals(layout, bay_index):
         - front_drop(layout, bay_index)
     )
 
+    reveal_left = ff_opening_left_x - cage_left_x
+    reveal_right = cage_right_x - ff_opening_right_x
+    if layout.angled_multi:
+        # The angled end bay's cage X axis runs along the bay's front
+        # plane (see bay_cage_dims), so the X reveals - world-X spans -
+        # convert to plane lengths too. Opening width then comes out to
+        # bay_width / cos(theta): the FF opening measured along the
+        # angled plane. Square bays: theta = 0, no-op.
+        theta = bay_front_angle(layout, bay_index)
+        if abs(theta) > 1e-9:
+            reveal_left /= math.cos(theta)
+            reveal_right /= math.cos(theta)
     return {
         'top':    cage_dim_z - ff_opening_height,
         'bottom': 0.0,
-        'left':   ff_opening_left_x - cage_left_x,
-        'right':  cage_right_x - ff_opening_right_x,
+        'left':   reveal_left,
+        'right':  reveal_right,
     }
 
 

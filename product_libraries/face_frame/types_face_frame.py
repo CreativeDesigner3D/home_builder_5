@@ -1893,9 +1893,6 @@ class FaceFrameCabinet(GeoNodeCage):
 
         layout = solver.FaceFrameLayout(self.obj)
         carcass_depth = solver.carcass_inner_depth(layout)
-        # face_frame_angle is 0 for square cabinets, so the rotation
-        # additions below are idempotent in the non-angled case.
-        ff_theta = solver.face_frame_angle(layout)
 
         # Compute and reconcile rail segments before the dispatch loop
         top_segments = solver.top_rail_segments(layout)
@@ -2046,9 +2043,13 @@ class FaceFrameCabinet(GeoNodeCage):
             # FF plane rotation. Hits stiles, rails, and kick subfronts;
             # leaves other parts (sides, back, panels) at their built-in
             # rotation_euler. Idempotent in square mode (theta = 0).
+            # angled_multi: each part takes ITS bay's front angle (end
+            # stiles from their end bay, segment-keyed members from
+            # their start bay) instead of the one whole-cabinet theta.
             ff_baseline = FF_ROTATION_BASELINE_Z.get(role)
             if ff_baseline is not None:
-                child.rotation_euler.z = ff_baseline + ff_theta
+                child.rotation_euler.z = (
+                    ff_baseline + self._part_ff_theta(layout, role, child))
 
             part = GeoNodeCutpart(child)
 
@@ -2501,10 +2502,18 @@ class FaceFrameCabinet(GeoNodeCage):
         # Angled cabinet cutter: drives the trapezoidal silhouette on
         # the root cage, top, bottom, and any shelves. Lazy: created
         # on transition into angled mode, removed on transition out.
+        # Single-bay keeps the one rotated cage cutter; angled_multi
+        # uses per-end triangular wedge cutters instead (only the end
+        # bays angle - the middle stays square and must not be cut).
         if layout.is_angled and self._has_carcass():
-            cutter_obj = self._ensure_angled_cutter()
-            self._position_angled_cutter(cutter_obj, layout)
-            self._apply_angled_cuts(cutter_obj)
+            if layout.angled_multi:
+                self._cleanup_single_angled_cutter_and_cuts()
+                self._apply_multi_angled_wedges(layout)
+            else:
+                self._cleanup_multi_angled_wedges()
+                cutter_obj = self._ensure_angled_cutter()
+                self._position_angled_cutter(cutter_obj, layout)
+                self._apply_angled_cuts(cutter_obj)
         else:
             self._cleanup_angled_cutter_and_cuts()
 
@@ -2571,15 +2580,36 @@ class FaceFrameCabinet(GeoNodeCage):
                 if _k in self.obj:
                     del self.obj[_k]
 
+    def _part_ff_theta(self, layout, role, child):
+        """Z rotation added to a FF part's baseline. Single-plane cabinets
+        (square or single-bay angled) share one face_frame_angle.
+        angled_multi resolves per part: LEFT-anchored roles take bay 0's
+        front angle, RIGHT-anchored roles the last bay's, and
+        segment-keyed members (rails, kicks, drop fillers - split at the
+        bend points by the solver) their start bay's. Mid stiles aren't
+        in FF_ROTATION_BASELINE_Z and stay square at the bends."""
+        if not layout.angled_multi:
+            return solver.face_frame_angle(layout)
+        if role in (PART_ROLE_LEFT_STILE, PART_ROLE_LEFT_REFRIG_STILE,
+                    PART_ROLE_BLIND_PANEL_LEFT):
+            return solver.bay_front_angle(layout, 0)
+        if role in (PART_ROLE_RIGHT_STILE, PART_ROLE_RIGHT_REFRIG_STILE,
+                    PART_ROLE_BLIND_PANEL_RIGHT):
+            return solver.bay_front_angle(layout, layout.bay_count - 1)
+        return solver.bay_front_angle(
+            layout, child.get('hb_segment_start_bay', 0))
+
     # =====================================================================
-    # Angled cabinet cutter (single-bay, unlock_left/right_depth on)
+    # Angled cabinet cutter (unlock_left/right_depth on)
     # =====================================================================
     def _ensure_angled_cutter(self):
         """Find the cabinet's angled cutter or build it. Lazy: only
         called when entering angled mode, so non-angled cabinets carry
-        no extra child."""
+        no extra child. Skips the per-end wedge cutters of the
+        angled_multi path (tagged hb_angled_side)."""
         for child in self.obj.children:
-            if child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER:
+            if (child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER
+                    and not child.get('hb_angled_side')):
                 return child
         cutter = GeoNodeCage()
         cutter.create('Angled Cutter')
@@ -2658,18 +2688,156 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod.object is not cutter_obj:
                 mod.object = cutter_obj
 
-    def _cleanup_angled_cutter_and_cuts(self):
-        """Reverse of _apply_angled_cuts + _ensure_angled_cutter. Pulls
-        the modifier off every target it might be attached to, then
-        removes the cutter object. No-op when there's nothing to undo.
-        """
+    def _cleanup_single_angled_cutter_and_cuts(self):
+        """Reverse of _apply_angled_cuts + _ensure_angled_cutter for the
+        SINGLE-plane cutter only: pulls the 'Angled Cut' modifier off
+        every target and removes the un-sided cutter child. Leaves the
+        angled_multi wedge cutters alone (single<->multi transitions
+        call the other side's cleanup). No-op when nothing to undo."""
         for part in self._iter_angled_cut_targets():
             mod = part.modifiers.get(ANGLED_CUT_MOD_NAME)
             if mod is not None:
                 part.modifiers.remove(mod)
         for child in list(self.obj.children):
-            if child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER:
+            if (child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER
+                    and not child.get('hb_angled_side')):
                 bpy.data.objects.remove(child, do_unlink=True)
+
+    def _cleanup_angled_cutter_and_cuts(self):
+        """Full reverse of angled mode: single-plane cutter + per-end
+        wedge cutters and all their modifiers. No-op when there's
+        nothing to undo."""
+        self._cleanup_single_angled_cutter_and_cuts()
+        self._cleanup_multi_angled_wedges()
+
+    # ---- angled_multi: per-end triangular wedge cutters ----
+    # Only the first / last bay of a multi-bay cabinet angles; the
+    # middle bays stay square. One vertical prism per unlocked end
+    # covers the plan-view triangle between that end's angled FF inner
+    # plane and the square FF inner plane (y = -dim_y + fft), so the
+    # full-depth tops / bottoms / shelves get their corner carved while
+    # square-region material is untouched. Mesh-prism pattern mirrors
+    # _miter_wedge_mesh / the back-ext cutter.
+    def _multi_wedge_mod_name(self, side):
+        return f'{ANGLED_CUT_MOD_NAME} {side[0]}'
+
+    def _ensure_angled_wedge_cutter(self, side):
+        """Find or build the mesh wedge cutter for one end. Tagged with
+        hb_angled_side so the single-plane cutter lookup skips it."""
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER
+                    and child.get('hb_angled_side') == side):
+                return child
+        name = f'Angled Wedge Cutter {side.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_ANGLED_CUTTER
+        cutter['hb_angled_side'] = side
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _multi_wedge_plan(self, layout, side):
+        """Plan-view quad (4 (x, y) tuples, cabinet-local) of one end's
+        wedge, or None when that end doesn't angle. The quad runs along
+        the end bay's FF INNER plane from just outside the cabinet to
+        the exact X where that plane crosses the square inner plane
+        (y = -dim_y + fft), then squares off toward the front."""
+        margin = inch(2.0)
+        fft = layout.fft
+        last = layout.bay_count - 1
+        bay_index = 0 if side == 'LEFT' else last
+        theta = solver.bay_front_angle(layout, bay_index)
+        if abs(theta) < 1e-9:
+            return None
+        t = math.tan(theta)
+        inner_lift = fft / math.cos(theta)
+        y_square = -layout.dim_y + fft
+        y_front = -(max(layout.dim_y,
+                        solver.effective_left_depth(layout),
+                        solver.effective_right_depth(layout)) + margin)
+        if side == 'LEFT':
+            ld = solver.effective_left_depth(layout)
+            # Inner plane: y = -ld + tan * x + fft / cos
+            def y_in(x):
+                return -ld + t * x + inner_lift
+            x_i = (y_square + ld - inner_lift) / t
+            x_out = -margin
+        else:
+            rd = solver.effective_right_depth(layout)
+            # Inner plane: y = -rd - tan * (dim_x - x) + fft / cos
+            def y_in(x):
+                return -rd - t * (layout.dim_x - x) + inner_lift
+            x_i = layout.dim_x + (y_square + rd - inner_lift) / t
+            x_out = layout.dim_x + margin
+        return (
+            (x_out, y_in(x_out)),
+            (x_i,   y_square),
+            (x_i,   y_front),
+            (x_out, y_front),
+        )
+
+    @staticmethod
+    def _wedge_prism_mesh(cutter, pts, z0, z1):
+        """Rebuild the cutter as a vertical prism over the plan quad
+        `pts` (cabinet-local XY), spanning z0..z1. Same construction as
+        _miter_wedge_mesh but with explicit corner points."""
+        bm = bmesh.new()
+        lo = [bm.verts.new((x, y, z0)) for (x, y) in pts]
+        hi = [bm.verts.new((x, y, z1)) for (x, y) in pts]
+        bm.faces.new(lo)
+        bm.faces.new(list(reversed(hi)))
+        for i in range(len(pts)):
+            j = (i + 1) % len(pts)
+            bm.faces.new((lo[i], lo[j], hi[j], hi[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+
+    def _apply_multi_angled_wedges(self, layout):
+        """Ensure each unlocked end carries its wedge cutter + boolean
+        modifiers on every cuttable target; clean up an end whose angle
+        collapsed to zero (depth typed back to the cabinet depth)."""
+        margin = inch(2.0)
+        for side in ('LEFT', 'RIGHT'):
+            pts = self._multi_wedge_plan(layout, side)
+            if pts is None:
+                self._cleanup_multi_angled_wedge_side(side)
+                continue
+            cutter = self._ensure_angled_wedge_cutter(side)
+            self._wedge_prism_mesh(cutter, pts,
+                                   -margin, layout.dim_z + margin)
+            mod_name = self._multi_wedge_mod_name(side)
+            for part in self._iter_angled_cut_targets():
+                mod = part.modifiers.get(mod_name)
+                if mod is None:
+                    mod = part.modifiers.new(name=mod_name, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                if mod.object is not cutter:
+                    mod.object = cutter
+
+    def _cleanup_multi_angled_wedge_side(self, side):
+        mod_name = self._multi_wedge_mod_name(side)
+        for part in self._iter_angled_cut_targets():
+            mod = part.modifiers.get(mod_name)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == PART_ROLE_ANGLED_CUTTER
+                    and child.get('hb_angled_side') == side):
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    def _cleanup_multi_angled_wedges(self):
+        """Reverse of _apply_multi_angled_wedges for both ends."""
+        for side in ('LEFT', 'RIGHT'):
+            self._cleanup_multi_angled_wedge_side(side)
 
     # =====================================================================
     # Angled back extension (trapezoidal back; extend_back_left / _right)
@@ -2742,7 +2910,16 @@ class FaceFrameCabinet(GeoNodeCage):
         from mathutils import Vector
         ext_l, ext_r = self._back_ext_effective()
         ext = ext_l if side == 'LEFT' else ext_r
-        theta = solver.face_frame_angle(layout) if layout.is_angled else 0.0
+        # Per-side front angle: angled_multi only bends at the ends, so
+        # this side's miter keys off ITS end bay's angle; single-plane
+        # cabinets keep the whole-cabinet theta.
+        if not layout.is_angled:
+            theta = 0.0
+        elif layout.angled_multi:
+            bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+            theta = solver.bay_front_angle(layout, bay_index)
+        else:
+            theta = solver.face_frame_angle(layout)
         if ext == 0.0 and theta == 0.0:
             return False, None, None, None
         depth_l = (solver.effective_left_depth(layout)
@@ -2751,11 +2928,19 @@ class FaceFrameCabinet(GeoNodeCage):
                    if layout.is_angled else layout.dim_y)
         cl = Vector((0.0, -depth_l))
         cr = Vector((layout.dim_x, -depth_r))
+        if layout.angled_multi:
+            # The FF front line leaving each corner runs to that end's
+            # BEND point, not to the far corner (piecewise front).
+            bend_l, bend_r = solver.multi_bend_points(layout)
+            other_l = Vector((bend_l, -layout.dim_y))
+            other_r = Vector((bend_r, -layout.dim_y))
+        else:
+            other_l, other_r = cr, cl
         if side == 'LEFT':
-            corner, other, depth = cl, cr, depth_l
+            corner, other, depth = cl, other_l, depth_l
             back = Vector((0.0 - ext, 0.0))
         else:
-            corner, other, depth = cr, cl, depth_r
+            corner, other, depth = cr, other_r, depth_r
             back = Vector((layout.dim_x + ext, 0.0))
         ff_dir = (other - corner).normalized()
         panel_dir = (back - corner).normalized()
@@ -6313,8 +6498,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # Rotate the bay around Z so its local +X aligns with the FF
         # direction; opening cages, front pivots, fronts, and any
         # interior items inherit the angle automatically through the
-        # parent transform. Zero in square cabinets.
-        bay_obj.rotation_euler.z = solver.face_frame_angle(layout)
+        # parent transform. Zero in square cabinets. bay_front_angle
+        # collapses to face_frame_angle on single-bay cabinets and
+        # resolves per bay on angled_multi (only the end bay whose side
+        # is unlocked rotates; middle bays stay square).
+        bay_obj.rotation_euler.z = solver.bay_front_angle(layout, bay_index)
         bay.set_input('Dim X', dim_x)
         bay.set_input('Dim Y', dim_y)
         bay.set_input('Dim Z', dim_z)
