@@ -2059,7 +2059,11 @@ class FaceFrameCabinet(GeoNodeCage):
             # the gap mid-division. remove_bottom is not enough to
             # warrant suppression - the carcass shell remains.
             if role == PART_ROLE_LEFT_SIDE:
-                visible = not layout.bays[0].get('remove_carcass')
+                # FALSE_FF / WORKING_FF: the applied face frame IS the
+                # side - no carcass side panel behind it.
+                visible = (not layout.bays[0].get('remove_carcass')
+                           and layout.l_fin_end not in ('FALSE_FF',
+                                                        'WORKING_FF'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 if not visible:
@@ -2074,7 +2078,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
             elif role == PART_ROLE_RIGHT_SIDE:
                 last = layout.bay_count - 1
-                visible = not layout.bays[last].get('remove_carcass')
+                visible = (not layout.bays[last].get('remove_carcass')
+                           and layout.r_fin_end not in ('FALSE_FF',
+                                                        'WORKING_FF'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 if not visible:
@@ -4964,8 +4970,12 @@ class FaceFrameCabinet(GeoNodeCage):
 
             thickness = inch(0.25)
 
+            # LEFT / RIGHT skins track the carcass side panel's vertical
+            # extent (side_bottom_z runs to the floor for NOTCH / FLUSH
+            # toe kicks) and get the same front-bottom corner notch a
+            # FLUSH_X strip gets so they clear a NOTCH kick recess.
             if side == 'LEFT':
-                bottom_z = solver.bay_bottom_z(layout, 0)
+                bottom_z = solver.side_bottom_z(layout, 0, 'LEFT')
                 location = (0.0, 0.0, bottom_z)
                 length = solver.left_side_top_z(layout) - bottom_z
                 width = layout.dim_y - layout.fft
@@ -4973,7 +4983,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 mirror_y, mirror_z = True, True
             elif side == 'RIGHT':
                 last = layout.bay_count - 1
-                bottom_z = solver.bay_bottom_z(layout, last)
+                bottom_z = solver.side_bottom_z(layout, last, 'RIGHT')
                 location = (layout.dim_x, 0.0, bottom_z)
                 length = solver.right_side_top_z(layout) - bottom_z
                 width = layout.dim_y - layout.fft
@@ -5027,6 +5037,12 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Thickness', thickness)
             self._textured_panel_mesh(part_obj, length, width, thickness,
                                       condition, mirror_z)
+            # Toe-kick corner notch (the CPM runs on the static mesh
+            # since the cutpart GN is hidden). BACK skins never notch.
+            if side in ('LEFT', 'RIGHT'):
+                bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+                self._drive_flush_x_notch(part_obj, layout, side,
+                                          bay_index, thickness)
 
     # =====================================================================
     # Helpers - rail reconciliation + bay cage update

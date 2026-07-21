@@ -392,12 +392,18 @@ def left_scribe_offset(layout):
 
 def left_side_thickness(layout):
     """Left side panel thickness. FINISHED sides are 3/4 stock (the
-    side IS the visible outer face); other conditions use the cabinet's
-    material_thickness (typically 1/2). Tops, bottoms, and dividers
-    stay at material_thickness in all cases.
+    side IS the visible outer face); FALSE_FF / WORKING_FF have NO
+    carcass side at all - the applied face frame replaces it, so the
+    cavity runs to the panel's back face (thickness 0 keeps
+    carcass_inner_* honest and the recalc hides the side part). Other
+    conditions use the cabinet's material_thickness (typically 1/2).
+    Tops, bottoms, and dividers stay at material_thickness in all
+    cases.
     """
     if layout.l_fin_end == 'FINISHED':
         return inch(0.75)
+    if layout.l_fin_end in ('FALSE_FF', 'WORKING_FF'):
+        return 0.0
     return layout.mt
 
 
@@ -415,6 +421,8 @@ def right_side_thickness(layout):
     """See left_side_thickness."""
     if layout.r_fin_end == 'FINISHED':
         return inch(0.75)
+    if layout.r_fin_end in ('FALSE_FF', 'WORKING_FF'):
+        return 0.0
     return layout.mt
 
 
