@@ -4524,6 +4524,35 @@ class Face_Frame_Corner_Section(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Per-section door overlay overrides. Corner cabinets have no
+    # opening cages, so the standard per-opening overlay unlocks don't
+    # exist here; these mirror that pattern at section level (locked =
+    # cabinet default, unlocked = this value). Lets e.g. a corner
+    # upper's door grow extra bottom overlay to cover a light rail.
+    top_overlay: FloatProperty(
+        name="Top Overlay",
+        description="This section's door top overlay (used when unlocked)",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_top_overlay: BoolProperty(
+        name="Unlock Top Overlay",
+        description="Override the cabinet's top overlay for this section",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bottom_overlay: FloatProperty(
+        name="Bottom Overlay",
+        description="This section's door bottom overlay (used when unlocked)",
+        default=units.inch(0.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    unlock_bottom_overlay: BoolProperty(
+        name="Unlock Bottom Overlay",
+        description="Override the cabinet's bottom overlay for this section",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 # exterior_config items vary by cabinet type. Module-level lists keep the

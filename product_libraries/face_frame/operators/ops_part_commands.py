@@ -135,10 +135,16 @@ def _resolve_width_target(obj, role, root):
             return cab.mid_stile_widths[msi], 'width'
         return None, None
     if role == types_face_frame.PART_ROLE_TOP_RAIL:
+        if cab.corner_type != 'NONE':
+            # Corner cabinets have no bay cages; their recalc reads the
+            # cabinet-level rail widths directly.
+            return cab, 'top_rail_width'
         start = obj.get('hb_segment_start_bay', 0)
         bay = _find_bay_with_index(root, start)
         return (bay.face_frame_bay, 'top_rail_width') if bay else (None, None)
     if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
+        if cab.corner_type != 'NONE':
+            return cab, 'bottom_rail_width'
         start = obj.get('hb_segment_start_bay', 0)
         bay = _find_bay_with_index(root, start)
         return (bay.face_frame_bay, 'bottom_rail_width') if bay else (None, None)
@@ -219,10 +225,14 @@ def _flip_unlock_for_role(obj, role, root):
         return
     if role in (types_face_frame.PART_ROLE_TOP_RAIL,
                 types_face_frame.PART_ROLE_BOTTOM_RAIL):
-        start = obj.get('hb_segment_start_bay', 0)
         unlock_attr = ('unlock_top_rail'
                        if role == types_face_frame.PART_ROLE_TOP_RAIL
                        else 'unlock_bottom_rail')
+        if cab.corner_type != 'NONE':
+            # Corner cabinets carry the rail width at cabinet level.
+            setattr(cab, unlock_attr, True)
+            return
+        start = obj.get('hb_segment_start_bay', 0)
         indices = _rail_segment_bay_indices(root, start, role)
         bays = _bays_by_index(root)
         for idx in indices:
@@ -258,10 +268,15 @@ def _fan_out_value(obj, role, root, value):
         return
     if role in (types_face_frame.PART_ROLE_TOP_RAIL,
                 types_face_frame.PART_ROLE_BOTTOM_RAIL):
-        start = obj.get('hb_segment_start_bay', 0)
         attr = ('top_rail_width'
                 if role == types_face_frame.PART_ROLE_TOP_RAIL
                 else 'bottom_rail_width')
+        if cab.corner_type != 'NONE':
+            # Corner cabinets have no bay cages; their recalc reads the
+            # cabinet-level rail widths directly.
+            setattr(cab, attr, value)
+            return
+        start = obj.get('hb_segment_start_bay', 0)
         indices = _rail_segment_bay_indices(root, start, role)
         bays = _bays_by_index(root)
         for idx in indices:
@@ -328,10 +343,14 @@ def _lock_for_role(obj, role, root):
         return
     if role in (types_face_frame.PART_ROLE_TOP_RAIL,
                 types_face_frame.PART_ROLE_BOTTOM_RAIL):
-        start = obj.get('hb_segment_start_bay', 0)
         unlock_attr = ('unlock_top_rail'
                        if role == types_face_frame.PART_ROLE_TOP_RAIL
                        else 'unlock_bottom_rail')
+        if cab.corner_type != 'NONE':
+            # Corner cabinets carry the rail width at cabinet level.
+            setattr(cab, unlock_attr, False)
+            return
+        start = obj.get('hb_segment_start_bay', 0)
         indices = _rail_segment_bay_indices(root, start, role)
         bays = _bays_by_index(root)
         for idx in indices:

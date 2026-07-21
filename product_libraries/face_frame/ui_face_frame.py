@@ -176,14 +176,18 @@ def draw_corner_sections(layout, cab_props):
     a shelf-count field.
     """
     sections = cab_props.corner_sections
-    # Nothing to adjust for a lone BASE door section (height is the full
-    # span, no shelves) - skip the box entirely. A lone OPEN section
-    # still shows for its shelf count, and a lone UPPER doors section
-    # (e.g. the bi-fold upper) shows for its shelf-qty override.
+    # A lone OPEN section still shows for its shelf count, a lone UPPER
+    # doors section (e.g. the bi-fold upper) for its shelf-qty override,
+    # and any DOORS / FALSE_FRONT section for its per-section overlay
+    # overrides (corners have no opening cages, so the standard
+    # per-opening overlay unlocks live here instead).
     has_open = any(s.content == 'OPEN' for s in sections)
     has_upper_doors = (cab_props.cabinet_type == 'UPPER'
                        and any(s.content == 'DOORS' for s in sections))
-    if len(sections) < 2 and not has_open and not has_upper_doors:
+    has_fronts = any(s.content in ('DOORS', 'FALSE_FRONT')
+                     for s in sections)
+    if (len(sections) < 2 and not has_open and not has_upper_doors
+            and not has_fronts):
         return
     box = layout.box()
     box.label(text="Sections (top to bottom)")
@@ -214,6 +218,21 @@ def draw_corner_sections(layout, cab_props):
                          else 'LOCKED')
             qty_row.prop(section, 'unlock_shelf_qty', text="",
                          icon=lock_icon)
+        if section.content in ('DOORS', 'FALSE_FRONT'):
+            # Per-section overlay overrides (locked = cabinet default,
+            # unlocked = this section's own value) -- e.g. extra bottom
+            # overlay so an upper corner door covers a light rail.
+            for ov_prop, unlock_prop, label in (
+                    ('top_overlay', 'unlock_top_overlay', "Top Overlay"),
+                    ('bottom_overlay', 'unlock_bottom_overlay',
+                     "Bottom Overlay")):
+                ov_row = col.row(align=True)
+                field = ov_row.row(align=True)
+                field.enabled = getattr(section, unlock_prop)
+                field.prop(section, ov_prop, text=label)
+                lock_icon = ('UNLOCKED' if getattr(section, unlock_prop)
+                             else 'LOCKED')
+                ov_row.prop(section, unlock_prop, text="", icon=lock_icon)
 
 
 def draw_construction(layout, cab_props):

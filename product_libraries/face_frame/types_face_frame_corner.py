@@ -1759,13 +1759,26 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             if (not sections[i].unlock_height
                     and abs(sections[i].height - sec_h) > 1e-7):
                 sections[i].height = sec_h
+            # Per-section overlay override (locked = cabinet default,
+            # mirrored into the section prop so the greyed field reads
+            # the live value; unlocked = the section's own value).
+            sec = sections[i]
+            if (not sec.unlock_top_overlay
+                    and abs(sec.top_overlay - top_ov) > 1e-7):
+                sec.top_overlay = top_ov
+            if (not sec.unlock_bottom_overlay
+                    and abs(sec.bottom_overlay - bot_ov) > 1e-7):
+                sec.bottom_overlay = bot_ov
+            sec_top_ov = sec.top_overlay if sec.unlock_top_overlay else top_ov
+            sec_bot_ov = (sec.bottom_overlay
+                          if sec.unlock_bottom_overlay else bot_ov)
             if inset:
                 r = INSET_DOOR_REVEAL
                 door_length = sec_h - 2.0 * r
                 z_door = sec_z0 + r
             else:
-                door_length = sec_h + top_ov + bot_ov
-                z_door = sec_z0 - bot_ov
+                door_length = sec_h + sec_top_ov + sec_bot_ov
+                z_door = sec_z0 - sec_bot_ov
 
             left_door = _find_corner_part(
                 self.obj, ff.PART_ROLE_DOOR, 'LEFT', i)
@@ -1820,8 +1833,13 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 # the Top / Bottom panels. Auto by section height while
                 # the section's qty is locked (synced into shelf_qty so
                 # the UI shows the live count); unlock to override.
+                # Depth bracket from the ARM depth, not the full corner
+                # footprint: auto_shelf_qty's table keys on the usable
+                # shelf depth, and a 24" inside-corner size put uppers
+                # in the deep bracket (fewer shelves than the 12"-deep
+                # uppers beside them).
                 sec = sections[i]
-                auto_qty = solver.auto_shelf_qty(sec_h, depth)
+                auto_qty = solver.auto_shelf_qty(sec_h, min(ld, rd))
                 if not sec.unlock_shelf_qty and sec.shelf_qty != auto_qty:
                     # System write; the _RECALCULATING guard short-
                     # circuits the update callback's re-entrant recalc.
@@ -2412,12 +2430,26 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             if (not sections[i].unlock_height
                     and abs(sections[i].height - sec_h) > 1e-7):
                 sections[i].height = sec_h
+            # Per-section overlay override (locked = cabinet default,
+            # mirrored into the section prop so the greyed field reads
+            # the live value; unlocked = the section's own value).
+            _sec = sections[i]
+            if (not _sec.unlock_top_overlay
+                    and abs(_sec.top_overlay - top_ov) > 1e-7):
+                _sec.top_overlay = top_ov
+            if (not _sec.unlock_bottom_overlay
+                    and abs(_sec.bottom_overlay - bot_ov) > 1e-7):
+                _sec.bottom_overlay = bot_ov
+            sec_top_ov = (_sec.top_overlay
+                          if _sec.unlock_top_overlay else top_ov)
+            sec_bot_ov = (_sec.bottom_overlay
+                          if _sec.unlock_bottom_overlay else bot_ov)
             if sections[i].content == 'DOORS':
                 # Double-door pair filling this section. Same horizontal
                 # layout as a single-opening pair; Length and Z come from
                 # the section.
-                door_length = sec_h + top_ov + bot_ov
-                z_door = sec_z0 - bot_ov
+                door_length = sec_h + sec_top_ov + sec_bot_ov
+                z_door = sec_z0 - sec_bot_ov
                 left_door_x = rail_origin_x - left_ov * ux + standoff * uy
                 left_door_y = rail_origin_y - left_ov * uy - standoff * ux
                 d_left = _find_corner_part(
@@ -2456,8 +2488,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     # shelf_qty so the UI shows the live count); unlock to
                     # override. (FALSE_FRONT = sink apron, no shelves; OPEN
                     # handles its own shelf stack below.)
+                    # Arm depth (not the full corner footprint) picks the
+                    # auto_shelf_qty depth bracket -- see the pie-cut
+                    # shelf pass.
                     sec = sections[i]
-                    auto_qty = solver.auto_shelf_qty(sec_h, depth)
+                    auto_qty = solver.auto_shelf_qty(sec_h, min(ld, rd))
                     if (not sec.unlock_shelf_qty
                             and sec.shelf_qty != auto_qty):
                         # System write; the _RECALCULATING guard short-
@@ -2472,8 +2507,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             elif sections[i].content == 'FALSE_FRONT':
                 # One fixed panel spanning the section opening, proud of
                 # the FF like a door but with no pull and no center gap.
-                panel_length = sec_h + top_ov + bot_ov
-                z_panel = sec_z0 - bot_ov
+                panel_length = sec_h + sec_top_ov + sec_bot_ov
+                z_panel = sec_z0 - sec_bot_ov
                 panel_x = rail_origin_x - left_ov * ux + standoff * uy
                 panel_y = rail_origin_y - left_ov * uy - standoff * ux
                 ff_panel = _find_corner_part(
