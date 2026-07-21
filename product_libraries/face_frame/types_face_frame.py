@@ -2968,13 +2968,29 @@ class FaceFrameCabinet(GeoNodeCage):
             return None
         front_target, back_target, phi, w_new = self._back_ext_line(
             side, extend, depth)
+        # Scribe-aware: a PANELED / UNFINISHED-scribed side sits INBOARD
+        # of the cabinet's outer plane. Keep the side parallel to the
+        # covering line, offset by its scribe distance along the splayed
+        # outward normal, instead of snapping it to the outer plane (which
+        # overlapped the applied panel). The dispatch reset location this
+        # recalc, so location.x still holds the square scribe position.
+        from mathutils import Vector
+        dim_x = self.obj.face_frame_cabinet.width
+        if side == 'RIGHT':
+            s = dim_x - child.location.x
+            n_out = Vector((math.cos(phi), math.sin(phi)))
+        else:
+            s = child.location.x
+            n_out = Vector((-math.cos(phi), -math.sin(phi)))
+        offset = n_out * s
         child.rotation_euler.z = phi
-        child.location.x = back_target.x
-        child.location.y = back_target.y
+        child.location.x = back_target.x - offset.x
+        child.location.y = back_target.y - offset.y
         self._set_part_input(child, 'Width', w_new)
-        # Return the side's OUTER line (front-outer, back-outer) so the
-        # trapezoid trim cutter can align its cut to this exact edge.
-        return (front_target, back_target)
+        # Return the side's OWN outer line (scribe-offset from the
+        # covering line) so the trapezoid trim cutter's side-thickness
+        # inset lands on the side's true INNER face.
+        return (front_target - offset, back_target - offset)
 
     # =====================================================================
     # Furniture / veneer wood top (dresser products)
@@ -3397,7 +3413,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 # Back panel: X-span is the 'Width' input. Not a trim-cutter
                 # target, so it follows the corner directly in BOTH directions
                 # (grows outward / shrinks inward).
-                self._widen_back_panel(child, ext_l, ext_r, 'Width')
+                self._widen_back_panel(child, ext_l, ext_r, 'Width',
+                                       layout=layout)
             elif role in (PART_ROLE_REAR_STRETCHER, PART_ROLE_FRONT_STRETCHER,
                           PART_ROLE_FINISH_TOE_KICK,
                           PART_ROLE_TOE_KICK_SUBFRONT):
@@ -3413,7 +3430,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 # Front-most edges trim back to the square front-outer corner, so
                 # the square front face is unaffected.
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
-                                       allow_shrink=False)
+                                       allow_shrink=False, layout=layout)
             elif role in (PART_ROLE_TOP, PART_ROLE_BOTTOM):
                 # Full-depth panels ARE trim-cutter targets. Outward: extend
                 # rectangularly to the corner, the cutter trims the FRONT
@@ -3422,14 +3439,14 @@ class FaceFrameCabinet(GeoNodeCage):
                 # remove the BACK corner instead. The cutter's cut line is the
                 # angled side either way, so a square panel trims correctly.
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
-                                       allow_shrink=False)
+                                       allow_shrink=False, layout=layout)
             elif role == PART_ROLE_LOOSE_KICK_REAR:
                 # Loose-ladder rear rail spans X at the cabinet back:
                 # widen to the splayed corners, the cutter trims its
                 # ends to the angled side line (buried joint inside the
                 # splayed end boards).
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
-                                       allow_shrink=False)
+                                       allow_shrink=False, layout=layout)
             elif role == PART_ROLE_LOOSE_KICK_END_LEFT:
                 self._splay_loose_kick_end(child, 'LEFT', ext_l)
             elif role == PART_ROLE_LOOSE_KICK_END_RIGHT:
@@ -3560,7 +3577,7 @@ class FaceFrameCabinet(GeoNodeCage):
                                        allow_shrink=True)
 
     def _widen_back_panel(self, child, ext_l, ext_r, span_input,
-                          allow_shrink=True):
+                          allow_shrink=True, layout=None):
         """Move a back-row panel's X-span end(s) to follow the angled back
         corner(s). Signed: a POSITIVE end extends the span outward, a NEGATIVE
         end shrinks it inward. Only the end(s) reaching a cabinet end move; a
@@ -3603,9 +3620,20 @@ class FaceFrameCabinet(GeoNodeCage):
         # the end" uses a 1" tolerance rather than touching 0 / dim_x exactly.
         x_lo = child.location.x
         x_hi = child.location.x + width
-        end_tol = inch(1.0)
-        grow_left = ext_l if x_lo <= end_tol else 0.0
-        grow_right = ext_r if x_hi >= dim_x - end_tol else 0.0
+        # "Reaches the end" is measured against the CARCASS INNER bound,
+        # not the cabinet face: a PANELED / scribed side pushes the
+        # carcass inboard (scribe + side thickness can exceed the old
+        # fixed 1" tolerance), and a part ending at that inner face must
+        # still follow the extension. layout carries the per-side
+        # scribe-aware bounds.
+        end_tol = inch(0.5)
+        if layout is not None:
+            inner_l = solver.carcass_inner_left_x(layout)
+            inner_r = solver.carcass_inner_right_x(layout)
+        else:
+            inner_l, inner_r = inch(1.0), dim_x - inch(1.0)
+        grow_left = ext_l if x_lo <= inner_l + end_tol else 0.0
+        grow_right = ext_r if x_hi >= inner_r - end_tol else 0.0
         if grow_left == 0.0 and grow_right == 0.0:
             return
         # Floor the result so a large inward value can't invert the panel.
