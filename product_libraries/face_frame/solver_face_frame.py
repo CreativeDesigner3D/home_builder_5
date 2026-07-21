@@ -185,13 +185,27 @@ class FaceFrameLayout:
             self.bay_count = 1
             self.bays = [self._make_default_bay()]
 
-        # Angled mode is exclusive with corner cabinets and only valid on
-        # single-bay carcasses (UI hides the unlocks otherwise).
+        # Angled mode is exclusive with corner cabinets. Single-bay:
+        # one FF plane spanning both depths (the original behavior).
+        # Multi-bay (angled_multi): ONLY the first bay angles for the
+        # left depth and ONLY the last bay for the right depth; middle
+        # bays stay square. Bend points land on the mid stiles at full
+        # cabinet depth (see bay_front_angle + the piecewise ff_*
+        # mapping helpers).
+        # NOTE: multi-bay angling (angled_multi) is scaffolded - the
+        # piecewise helpers below (multi_bend_points, bay_front_angle,
+        # _multi_front_at + the angled_multi branches in the ff_*
+        # mapping functions) are ready, but the per-bay CONSUMERS
+        # (rail/kick segment splitting at the bends, per-part rotation
+        # from hb_segment_start_bay, per-bay cage theta, per-end wedge
+        # cutters, UI gate) are not wired yet. Until they are, the
+        # single-bay gate stays so multi-bay cabinets remain square.
         self.is_angled = (
             self.corner_type == 'NONE'
             and self.bay_count == 1
             and (self.unlock_left_depth or self.unlock_right_depth)
         )
+        self.angled_multi = self.is_angled and self.bay_count > 1
 
         # Angled cabinets always use a solid top regardless of cabinet
         # type. The boolean cutter that produces the trapezoidal top /
@@ -1565,6 +1579,66 @@ def effective_right_depth(layout):
     return layout.bays[last]['depth']
 
 
+def multi_bend_points(layout):
+    """(bend_left_x, bend_right_x) world X of the piecewise front's
+    bend points for angled_multi - the centers of the first and last
+    mid stiles. The angled left plane runs (0, -left_depth) ->
+    (bend_left, -dim_y); the right plane (bend_right, -dim_y) ->
+    (dim_x, -right_depth); between them the front is square. On a
+    2-bay cabinet both bends are the same stile center."""
+    last = layout.bay_count - 1
+    # mid stile between bay i and i+1 spans [bay_x_position(i+1) - ms,
+    # bay_x_position(i+1)]; ms recovered from the position arithmetic
+    # so no extra layout fields are needed.
+    x1 = bay_x_position(layout, 1)
+    ms0 = x1 - (bay_x_position(layout, 0) + layout.bays[0]['width'])
+    bend_l = x1 - ms0 / 2.0
+    xl = bay_x_position(layout, last)
+    msl = xl - (bay_x_position(layout, last - 1)
+                + layout.bays[last - 1]['width'])
+    bend_r = xl - msl / 2.0
+    return bend_l, bend_r
+
+
+def bay_front_angle(layout, bay_index):
+    """Per-bay front angle. Single-bay angled -> the whole-cabinet
+    face_frame_angle (original behavior). Multi-bay: only bay 0 angles
+    for the left depth and only the last bay for the right depth;
+    everything else is square. Sign convention matches
+    face_frame_angle (dy = shallower-left => positive slope)."""
+    if not layout.is_angled:
+        return 0.0
+    if not layout.angled_multi:
+        return face_frame_angle(layout)
+    last = layout.bay_count - 1
+    bend_l, bend_r = multi_bend_points(layout)
+    if bay_index == 0 and layout.unlock_left_depth and bend_l > 1e-6:
+        return math.atan2(
+            effective_left_depth(layout) - layout.dim_y, bend_l)
+    if (bay_index == last and layout.unlock_right_depth
+            and layout.dim_x - bend_r > 1e-6):
+        return math.atan2(
+            layout.dim_y - effective_right_depth(layout),
+            layout.dim_x - bend_r)
+    return 0.0
+
+
+def _multi_front_at(layout, x):
+    """(y, theta) of the piecewise FF outer line at world X for
+    angled_multi."""
+    bend_l, bend_r = multi_bend_points(layout)
+    last = layout.bay_count - 1
+    if layout.unlock_left_depth and x < bend_l:
+        theta = bay_front_angle(layout, 0)
+        ld = effective_left_depth(layout)
+        return -ld + x * math.tan(theta), theta
+    if layout.unlock_right_depth and x > bend_r:
+        theta = bay_front_angle(layout, last)
+        rd = effective_right_depth(layout)
+        return (-rd - (layout.dim_x - x) * math.tan(theta)), theta
+    return -layout.dim_y, 0.0
+
+
 def face_frame_angle(layout):
     """Z rotation (radians) that maps the original square face frame
     direction (+X) to the angled FF plane's direction, going from the
@@ -1596,6 +1670,11 @@ def face_frame_length(layout):
         return (layout.dim_x
                 - layout.blind_offset_left
                 - layout.blind_offset_right)
+    if layout.angled_multi:
+        # Multi-bay angled parameterizes the piecewise front by WORLD
+        # X (bay widths stay world-x; members on angled segments scale
+        # their own lengths by 1/cos). Blind+angled unsupported.
+        return layout.dim_x
     dy = effective_right_depth(layout) - effective_left_depth(layout)
     return math.hypot(layout.dim_x, dy)
 
@@ -1620,6 +1699,9 @@ def ff_outer_world_pos(layout, ff_x, world_z):
     """
     if not layout.is_angled:
         return (ff_x + layout.blind_offset_left, -layout.dim_y, world_z)
+    if layout.angled_multi:
+        y, _theta = _multi_front_at(layout, ff_x)
+        return (ff_x, y, world_z)
     theta = face_frame_angle(layout)
     return (
         ff_x * math.cos(theta),
@@ -1648,6 +1730,13 @@ def ff_perpendicular_offset(layout, ff_x, perp_offset, world_z):
     """
     if not layout.is_angled:
         return (ff_x, -layout.dim_y + perp_offset, world_z)
+    if layout.angled_multi:
+        y, theta = _multi_front_at(layout, ff_x)
+        return (
+            ff_x - perp_offset * math.sin(theta),
+            y + perp_offset * math.cos(theta),
+            world_z,
+        )
     theta = face_frame_angle(layout)
     cos_t = math.cos(theta)
     sin_t = math.sin(theta)
@@ -1668,6 +1757,9 @@ def ff_perpendicular_offset_at_world_x(layout, world_x, perp_offset, world_z):
     """
     if not layout.is_angled:
         return (world_x, -layout.dim_y + perp_offset, world_z)
+    if layout.angled_multi:
+        y, theta = _multi_front_at(layout, world_x)
+        return (world_x, y + perp_offset / math.cos(theta), world_z)
     theta = face_frame_angle(layout)
     sin_t = math.sin(theta)
     cos_t = math.cos(theta)
@@ -1691,6 +1783,11 @@ def ff_world_x_span_to_length(layout, world_x_span):
     cabinets this is the same number; for angled it's longer by 1/cos.
     """
     if not layout.is_angled:
+        return world_x_span
+    if layout.angled_multi:
+        # Multi-bay: the caller's span midpoint decides which segment's
+        # angle applies (segments are split at the bends, see
+        # kick/rail segmentation).
         return world_x_span
     return world_x_span / math.cos(face_frame_angle(layout))
 
