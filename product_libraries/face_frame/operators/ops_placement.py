@@ -1450,6 +1450,11 @@ def _align_base_tall_toe_kick(cab_obj):
         return
     if cab_obj.get('IS_VALANCE_PRODUCT'):
         return
+    # A zero-height kick means no kick recess at all (the refrigerator
+    # cabinet keeps toe_kick_type NOTCH but runs open to the floor), so
+    # there is no kick face to bring into line.
+    if cab_props.toe_kick_height <= 1e-4:
+        return
 
     cab_x = cab_obj.location.x
     cab_w = cab_props.width
@@ -1473,6 +1478,8 @@ def _align_base_tall_toe_kick(cab_obj):
         if sib_props.cabinet_type != other_type:
             continue
         if sib_props.toe_kick_type != 'NOTCH':
+            continue
+        if sib_props.toe_kick_height <= eps:
             continue
         sib_x = sib.location.x
         sib_w = sib_props.width
