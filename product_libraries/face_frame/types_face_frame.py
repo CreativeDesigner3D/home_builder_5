@@ -2954,7 +2954,8 @@ class FaceFrameCabinet(GeoNodeCage):
                  location[2]),
                 rotation_z + phi, w_new)
 
-    def _angle_side_panel(self, child, side, extend, depth_line):
+    def _angle_side_panel(self, child, side, extend, depth_line,
+                          front_trim=False):
         """Splay one carcass side panel outward at the back by `extend`
         (meters), pivoting about its FRONT-OUTER corner so the front edge
         stays put. Analytic transform (no bound-box sampling):
@@ -3006,7 +3007,14 @@ class FaceFrameCabinet(GeoNodeCage):
         child.rotation_euler.z = phi
         child.location.x = back_target.x + shift.x
         child.location.y = 0.0
-        self._set_part_input(child, 'Width', width / cphi)
+        w_new = width / cphi
+        if front_trim:
+            # The front end gets beveled flush against the FF back
+            # plane (Side Front End Trim): overshoot the plane so the
+            # boolean has material to cut on both faces.
+            t = self._part_input(child, 'Thickness') or inch(0.75)
+            w_new += t * abs(math.tan(phi)) + inch(0.5)
+        self._set_part_input(child, 'Width', w_new)
         # Return the side's OWN outer line (scribe-offset from the
         # canonical line) so the trapezoid trim cutter's side-thickness
         # inset lands on the side's true INNER face.
@@ -3422,7 +3430,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 if ext_l != 0.0:
                     line_l = self._angle_side_panel(
                         child, 'LEFT', ext_l,
-                        self._back_ext_canonical_depth(layout, 'LEFT'))
+                        self._back_ext_canonical_depth(layout, 'LEFT'),
+                        front_trim=(layout.l_fin_end != 'FINISHED'))
                 else:
                     child.rotation_euler.z = 0.0
             elif role == PART_ROLE_RIGHT_SIDE:
@@ -3430,7 +3439,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 if ext_r != 0.0:
                     line_r = self._angle_side_panel(
                         child, 'RIGHT', ext_r,
-                        self._back_ext_canonical_depth(layout, 'RIGHT'))
+                        self._back_ext_canonical_depth(layout, 'RIGHT'),
+                        front_trim=(layout.r_fin_end != 'FINISHED'))
                 else:
                     child.rotation_euler.z = 0.0
             elif role in (PART_ROLE_BACK, PART_ROLE_FINISHED_BACK):
@@ -3490,12 +3500,94 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             self._cleanup_back_ext_cutter_and_cuts()
 
+        # Splayed side front-end bevel against the FF back (FINISHED
+        # sides run to the front plane and take the corner miter
+        # instead - see _apply_side_front_trim).
+        self._apply_side_front_trim(
+            layout, 'LEFT',
+            ext_l != 0.0 and layout.l_fin_end != 'FINISHED')
+        self._apply_side_front_trim(
+            layout, 'RIGHT',
+            ext_r != 0.0 and layout.r_fin_end != 'FINISHED')
+
         # Wing attached: for an end whose "Attach as Wing" is on (and its
         # extend is non-zero), the carcass above stayed square (wing ends were
         # zeroed out of ext_l / ext_r); add the angled return panel along the
         # line the raw extend defines. Off / 0 -> removed.
         self._apply_wing(layout, 'LEFT', raw_l if wing_l else 0.0)
         self._apply_wing(layout, 'RIGHT', raw_r if wing_r else 0.0)
+
+    SIDE_FRONT_TRIM_MOD_NAME = 'Side Front End Trim'
+
+    def _apply_side_front_trim(self, layout, side, active):
+        """Bevel a splayed side panel's FRONT end flush against the
+        BACK of the face frame: the splayed side meets the flat FF
+        back at the splay angle, so a square end cut leaves a wedge
+        gap. _angle_side_panel overshoots the plane; this boolean cuts
+        the overshoot on the plane y = -(depth - fft), leaving the end
+        face seated against the FF back. Skipped for FINISHED sides
+        (they run to the FRONT plane and take the corner miter
+        instead). Cutter + modifier removed when inactive."""
+        side_role = ('LEFT_SIDE' if side == 'LEFT' else 'RIGHT_SIDE')
+        side_part = next(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == side_role), None)
+        cutter_role = 'SIDE_FRONT_TRIM_CUTTER'
+        cutter = next(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == cutter_role
+             and c.get('hb_trim_side') == side), None)
+        if not active or side_part is None:
+            if side_part is not None:
+                mod = side_part.modifiers.get(self.SIDE_FRONT_TRIM_MOD_NAME)
+                if mod is not None:
+                    side_part.modifiers.remove(mod)
+            if cutter is not None:
+                mesh = cutter.data
+                bpy.data.objects.remove(cutter, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+            return
+        if cutter is None:
+            name = f'Side Front Trim Cutter {side.title()}'
+            mesh = bpy.data.meshes.new(name)
+            cutter = bpy.data.objects.new(name, mesh)
+            cutter['hb_part_role'] = cutter_role
+            cutter['hb_trim_side'] = side
+            cutter.parent = self.obj
+            cutter.display_type = 'WIRE'
+            cutter.hide_render = True
+            cutter.hide_viewport = True
+            for coll in self.obj.users_collection:
+                coll.objects.link(cutter)
+                break
+        # Box removing everything FORWARD of the FF back plane.
+        depth_line = self._back_ext_canonical_depth(layout, side)
+        plane_y = -(depth_line - layout.fft)
+        big = 1.0
+        x0, x1 = -big, self.obj.face_frame_cabinet.width + big
+        y0, y1 = plane_y - big, plane_y
+        z0, z1 = -big, layout.dim_z + big
+        bm = bmesh.new()
+        v = [bm.verts.new(p) for p in (
+            (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+            (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))]
+        for f in ((0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+                  (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)):
+            bm.faces.new([v[i] for i in f])
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+        mod = side_part.modifiers.get(self.SIDE_FRONT_TRIM_MOD_NAME)
+        if mod is None:
+            mod = side_part.modifiers.new(
+                name=self.SIDE_FRONT_TRIM_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod.object is not cutter:
+            mod.object = cutter
 
     def _splay_loose_kick_end(self, child, side, extend, depth_line):
         """Splay a loose-ladder end board along the CANONICAL side
@@ -3743,7 +3835,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 p = f_in + dirn * u + rem * v
                 return (p.x, p.y, z)
             us = (-big, big)
-            vs = (-inch(0.05), big)   # tiny bite into the body to avoid a sliver
+            vs = (-inch(0.005), big)  # tiny bite into the body to avoid a sliver
             verts = {}
             for iu, u in enumerate(us):
                 for iv, v in enumerate(vs):
