@@ -23,7 +23,7 @@ from bpy.props import (
 )
 from ... import units
 from ... import hb_utils
-from . import finish_colors, wood_materials, style_options
+from . import finish_colors, wood_materials, style_options, shelf_nosing
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -2148,6 +2148,17 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
+                # Shelf nosings are plain meshes, deliberately not
+                # CABINET_PART (they are molding stock, not cutparts),
+                # so the material goes on the mesh slot directly.
+                # Always the exterior finish: nosing is finished-
+                # opening trim.
+                if (child.get('hb_part_role') == 'SHELF_NOSING'
+                        and finish_mat is not None):
+                    if child.data.materials:
+                        child.data.materials[0] = finish_mat
+                    else:
+                        child.data.materials.append(finish_mat)
                 continue
             role = child.get('hb_part_role')
 
@@ -6046,6 +6057,22 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Shelf Setback",
         description="Distance the shelf is pulled back from the front of the cavity",
         default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Finished-opening nosing on the shelf front edge (ADJUSTABLE_SHELF
+    # only). Clover / Kelli match the shelf thickness; the extra-height
+    # styles read shelf_nosing_height (catalog: 1-1/4" to 3").
+    shelf_nosing_style: EnumProperty(
+        name="Shelf Nosing",
+        description="Finished-opening nosing profile applied to the front edge of each shelf",
+        items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    shelf_nosing_height: FloatProperty(
+        name="Nosing Height",
+        description="Overall height of an extra-height nosing (1-1/4\" to 3\"). Clover / Kelli ignore this and match the shelf thickness",
+        default=units.inch(1.5), min=units.inch(1.25), max=units.inch(3.0),
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 

@@ -25,6 +25,7 @@ import math
 import bpy
 
 from ...units import inch
+from . import shelf_nosing
 
 
 # ---------------------------------------------------------------------------
@@ -3767,12 +3768,19 @@ def auto_shelf_qty(opening_height, depth):
 
 
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
-                              kind, role, name_prefix):
+                              kind, role, name_prefix,
+                              nosing_style='NONE', nosing_height=0.0):
     """Stacked horizontal shelves filling a region. Geometry is
     identical for adjustable and glass shelves; the kind/role tag
     drives downstream material handling and selection. setback is
     per-item so the half-depth preset (which bumps shelf_setback to
     6") can request a deeper front gap on individual items.
+
+    A nosing style other than NONE (adjustable shelves only) recesses
+    the shelf board by the nosing stock depth and emits one
+    SHELF_NOSING descriptor per shelf; the nosing front face lands
+    where the plain shelf front would have been, so the overall depth
+    is unchanged.
     """
     if qty <= 0:
         return []
@@ -3784,8 +3792,11 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
         return []
     spacing = interior_h / (qty + 1)
 
+    nosing = nosing_style not in (None, '', 'NONE')
+    nose_d = shelf_nosing.NOSE_STOCK_DEPTH if nosing else 0.0
+
     length = max(0.0, cage_dim_x - 2 * SHELF_X_CLEARANCE)
-    width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
+    width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK - nose_d)
 
     items = []
     for k in range(qty):
@@ -3797,16 +3808,32 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
             'role':     role,
             'name':     f'{name_prefix} {k + 1}',
             'orientation': 'HORIZONTAL',
-            'position': (SHELF_X_CLEARANCE, setback, z),
+            'position': (SHELF_X_CLEARANCE, setback + nose_d, z),
             'dims':     (length, width, SHELF_THICKNESS),
         })
+        if nosing and length > 0.0:
+            items.append({
+                'kind':     'SHELF_NOSING',
+                'role':     'SHELF_NOSING',
+                'name':     f'{name_prefix} Nosing {k + 1}',
+                # Origin: back face against the shelf front edge, top
+                # flush with the shelf top.
+                'position': (SHELF_X_CLEARANCE, setback + nose_d,
+                             z + SHELF_THICKNESS),
+                'length':   length,
+                'style':    nosing_style,
+                'shelf_thickness': SHELF_THICKNESS,
+                'height':   nosing_height,
+            })
     return items
 
 
-def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback):
+def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback,
+                                  nosing_style='NONE', nosing_height=0.0):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Adjustable Shelf',
+        nosing_style, nosing_height,
     )
 
 
@@ -4147,8 +4174,13 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
     out = []
     for item in opening_props.interior_items:
         if item.kind == 'ADJUSTABLE_SHELF':
+            # getattr: tolerate item collections created before the
+            # nosing props existed (e.g. a live session spanning an
+            # addon update).
             out.extend(_adjustable_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback
+                rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
+                getattr(item, 'shelf_nosing_style', 'NONE'),
+                getattr(item, 'shelf_nosing_height', 0.0),
             ))
         elif item.kind == 'GLASS_SHELF':
             out.extend(_glass_shelf_descriptors(

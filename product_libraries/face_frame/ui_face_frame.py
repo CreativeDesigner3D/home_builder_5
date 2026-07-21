@@ -18,6 +18,7 @@ sidebar sub-panels and the popups call the same draw_* helper.
 import bpy
 
 from . import types_face_frame
+from . import shelf_nosing
 from ... import units
 
 
@@ -962,6 +963,10 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
             sub.prop(item, 'shelf_setback', text="Setback")
+            if item.kind == 'ADJUSTABLE_SHELF':
+                sub.prop(item, 'shelf_nosing_style', text="Nosing")
+                if item.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
+                    sub.prop(item, 'shelf_nosing_height', text="Nosing Height")
         elif item.kind == 'PULLOUT_SHELF':
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)

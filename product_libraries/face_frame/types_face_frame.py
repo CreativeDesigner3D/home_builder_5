@@ -32,6 +32,7 @@ from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
+from . import shelf_nosing
 from . import pulls
 
 
@@ -426,6 +427,9 @@ FRONT_TYPE_TO_ROLE = {
 # this list.
 # ---------------------------------------------------------------------------
 PART_ROLE_ADJUSTABLE_SHELF = 'ADJUSTABLE_SHELF'
+# Finished-opening nosing profile on an adjustable shelf's front edge.
+# One nosing part per shelf; profile outlines live in shelf_nosing.py.
+PART_ROLE_SHELF_NOSING = 'SHELF_NOSING'
 PART_ROLE_GLASS_SHELF = 'GLASS_SHELF'
 PART_ROLE_PULLOUT_SHELF = 'PULLOUT_SHELF'
 PART_ROLE_PULLOUT_SPACER = 'PULLOUT_SPACER'
@@ -458,6 +462,7 @@ PART_ROLE_INTERIOR_FF_STILE = 'INTERIOR_FF_STILE'
 
 INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_ADJUSTABLE_SHELF,
+    PART_ROLE_SHELF_NOSING,
     PART_ROLE_GLASS_SHELF,
     PART_ROLE_PULLOUT_SHELF,
     PART_ROLE_PULLOUT_SPACER,
@@ -6525,7 +6530,16 @@ class FaceFrameCabinet(GeoNodeCage):
         # quite as cleanly as mesh parts.
         for child in list(opening_obj.children):
             if child.get('hb_part_role') in INTERIOR_PART_ROLES:
+                data = child.data
                 bpy.data.objects.remove(child, do_unlink=True)
+                # Orphaned data (per-part meshes like shelf nosings,
+                # accessory font curves) would otherwise pile up until
+                # the next save. Shared data keeps users and is skipped.
+                if data is not None and data.users == 0:
+                    if isinstance(data, bpy.types.Mesh):
+                        bpy.data.meshes.remove(data)
+                    elif isinstance(data, bpy.types.Curve):
+                        bpy.data.curves.remove(data)
 
         if not self._has_carcass():
             if len(op_props.interior_items) > 0:
@@ -6577,6 +6591,8 @@ class FaceFrameCabinet(GeoNodeCage):
             kind = desc['kind']
             if kind == 'ADJUSTABLE_SHELF':
                 self._create_shelf_part(opening_obj, desc)
+            elif kind == 'SHELF_NOSING':
+                self._create_shelf_nosing(opening_obj, desc)
             elif kind == 'ACCESSORY':
                 self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
@@ -6615,6 +6631,25 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
         return part
+
+    def _create_shelf_nosing(self, opening_obj, desc):
+        """Solid-stock nosing profile on the front edge of an
+        adjustable shelf. A plain swept mesh, deliberately NOT tagged
+        CABINET_PART: it is molding stock, not a sheet-stock cutpart,
+        so part-collection passes (pricing, machining) must not pick
+        it up as one. The material walk finds it by role instead.
+        """
+        obj = shelf_nosing.build_nosing_object(
+            desc['name'], desc['length'], desc['style'],
+            desc['shelf_thickness'], desc['height'],
+        )
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
 
     def _create_accessory_label(self, opening_obj, desc):
         """Blender text object centered in the opening, rotated to face
