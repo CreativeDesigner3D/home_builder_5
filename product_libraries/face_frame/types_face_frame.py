@@ -2076,8 +2076,16 @@ class FaceFrameCabinet(GeoNodeCage):
                                                         'WORKING_FF'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
-                if not visible:
-                    continue
+                # Refresh the square baseline even when HIDDEN: the back
+                # extension (_apply_back_extension / _angle_side_panel)
+                # derives the splay line, hypotenuse width, and trim-
+                # cutter placement from this part's live location.x and
+                # Width every recalc. A hidden side left stale (values
+                # still splayed from its last visible recalc) feeds the
+                # splay math garbage - Width compounds by 1/cos each
+                # pass and the cutter line drifts, misshaping the
+                # stretchers / kick fronts / bottom whenever the end is
+                # an applied-FF condition instead of FINISHED.
                 pos = solver.left_side_position(layout)
                 length, width, thickness = solver.left_side_dims(layout)
                 # FINISHED side on an angled corner: run to the FF
@@ -2099,8 +2107,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                                         'WORKING_FF'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
-                if not visible:
-                    continue
+                # Refresh the square baseline even when hidden - see the
+                # LEFT_SIDE branch for why the back extension needs it.
                 pos = solver.right_side_position(layout)
                 length, width, thickness = solver.right_side_dims(layout)
                 if (layout.r_fin_end == 'FINISHED'
@@ -3746,11 +3754,19 @@ class FaceFrameCabinet(GeoNodeCage):
         active = ext_l != 0.0 or ext_r != 0.0
         line_l = None   # (front_outer, back_outer) of the angled left side
         line_r = None   # ... right side; feed the trim cutter
-        side_thickness = 0.0
+        # Per-side thickness for the trim cutter's inner-face inset,
+        # from the solver so it's right even when the side part is
+        # HIDDEN (FALSE_FF / WORKING_FF: thickness 0 - the side's own
+        # line already carries the scribe shift, so line + thickness
+        # lands on the cavity bound for EVERY end condition and the
+        # carve matches the FINISHED case exactly). Previously one
+        # shared variable was overwritten by whichever side was read
+        # last, so the cut plane used the wrong side's thickness.
+        thick_l = solver.left_side_thickness(layout)
+        thick_r = solver.right_side_thickness(layout)
         for child in self.obj.children:
             role = child.get('hb_part_role')
             if role == PART_ROLE_LEFT_SIDE:
-                side_thickness = self._part_input(child, 'Thickness') or 0.0
                 if ext_l != 0.0:
                     line_l = self._angle_side_panel(
                         child, 'LEFT', ext_l,
@@ -3759,7 +3775,6 @@ class FaceFrameCabinet(GeoNodeCage):
                 else:
                     child.rotation_euler.z = 0.0
             elif role == PART_ROLE_RIGHT_SIDE:
-                side_thickness = self._part_input(child, 'Thickness') or 0.0
                 if ext_r != 0.0:
                     line_r = self._angle_side_panel(
                         child, 'RIGHT', ext_r,
@@ -3819,7 +3834,8 @@ class FaceFrameCabinet(GeoNodeCage):
         # line(s). Built only when an end is extended; removed otherwise.
         if active and (line_l is not None or line_r is not None):
             cutter = self._ensure_back_ext_cutter()
-            self._position_back_ext_cutter(cutter, line_l, line_r, side_thickness)
+            self._position_back_ext_cutter(cutter, line_l, line_r,
+                                           thick_l, thick_r)
             self._apply_back_ext_cuts(cutter)
         else:
             self._cleanup_back_ext_cutter_and_cuts()
@@ -4116,16 +4132,20 @@ class FaceFrameCabinet(GeoNodeCage):
         return cutter
 
     def _position_back_ext_cutter(self, cutter_obj, line_l, line_r,
-                                  side_thickness):
+                                  thick_l, thick_r):
         """Rebuild the cutter mesh as one half-space box per angled side,
         each removing the front overhang outside that side's INNER face -
         so the rectangularly-extended top / bottom become trapezoids that
         match the angled sides.
 
         Each `line` is (front_outer, back_outer) Vector2 in cabinet-local
-        X-Y, as used to place the angled side. The inner face is that line
-        offset toward the cabinet body by `side_thickness`; the box keeps
-        the body side and removes the rest.
+        X-Y, as used to place the angled side (scribe shift included).
+        The inner face is that line offset toward the cabinet body by
+        that side's OWN thickness (thick_l / thick_r); the box keeps the
+        body side and removes the rest. line + thickness = the splayed
+        cavity bound, identical across end conditions (FINISHED: 3/4
+        panel on the outer line; WORKING_FF / FALSE_FF: 3/4 scribe-
+        shifted line + zero side).
         """
         import math
         from mathutils import Vector
@@ -4139,7 +4159,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         bm = bmesh.new()
 
-        def add_box(front_outer, back_outer):
+        def add_box(front_outer, back_outer, side_thickness):
             d = (back_outer - front_outer)
             if d.length < 1e-6:
                 return
@@ -4177,9 +4197,9 @@ class FaceFrameCabinet(GeoNodeCage):
             face((0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
 
         if line_l is not None:
-            add_box(line_l[0], line_l[1])
+            add_box(line_l[0], line_l[1], thick_l)
         if line_r is not None:
-            add_box(line_r[0], line_r[1])
+            add_box(line_r[0], line_r[1], thick_r)
         if bm.faces:
             bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         bm.to_mesh(cutter_obj.data)
