@@ -2710,6 +2710,153 @@ class FaceFrameCabinet(GeoNodeCage):
         phi = math.atan2(dn.x, -dn.y)
         return front_target, back_target, phi, w_new
 
+    # =====================================================================
+    # Applied-panel front miter (angled side <-> face frame joint)
+    # =====================================================================
+    # When an applied panel's side is angled - a splayed back extension
+    # or an angled-front cabinet (rotated FF plane) - the panel meets
+    # the face frame at a non-90 corner. The panel is extended to the
+    # FF FRONT plane and both members are cut on the bisector plane
+    # through the front-outer corner: a true outside miter. One hidden
+    # prism cutter per member (stile side / panel side of the plane),
+    # boolean DIFFERENCE, same lazy pattern as the overstool profile.
+    PANEL_MITER_CUT_MOD_NAME = 'Front Miter Cut'
+
+    def _panel_miter_angles(self, layout, side):
+        """(active, corner C, ff_dir_in, panel_dir_in) for the side's
+        front-outer corner, in cabinet-local plan XY. ff_dir_in runs
+        from the corner along the FF front line toward the other side;
+        panel_dir_in runs from the corner along the panel's outer line
+        toward the back. active is False when the corner is square
+        (no splay, no angled front)."""
+        from mathutils import Vector
+        ext_l, ext_r = self._back_ext_effective()
+        ext = ext_l if side == 'LEFT' else ext_r
+        theta = solver.face_frame_angle(layout) if layout.is_angled else 0.0
+        if ext == 0.0 and theta == 0.0:
+            return False, None, None, None
+        depth_l = (solver.effective_left_depth(layout)
+                   if layout.is_angled else layout.dim_y)
+        depth_r = (solver.effective_right_depth(layout)
+                   if layout.is_angled else layout.dim_y)
+        cl = Vector((0.0, -depth_l))
+        cr = Vector((layout.dim_x, -depth_r))
+        if side == 'LEFT':
+            corner, other, depth = cl, cr, depth_l
+            back = Vector((0.0 - ext, 0.0))
+        else:
+            corner, other, depth = cr, cl, depth_r
+            back = Vector((layout.dim_x + ext, 0.0))
+        ff_dir = (other - corner).normalized()
+        panel_dir = (back - corner).normalized()
+        return True, corner, ff_dir, panel_dir
+
+    def _ensure_panel_miter_cutter(self, side, which):
+        role = 'PANEL_MITER_CUTTER'
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get('hb_miter_side') == side
+                    and child.get('hb_miter_which') == which):
+                return child
+        name = f'Panel Miter Cutter {side.title()} {which.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = role
+        cutter['hb_miter_side'] = side
+        cutter['hb_miter_which'] = which
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    @staticmethod
+    def _miter_wedge_mesh(cutter, corner, miter_dir, open_dir, z0, z1):
+        """Rebuild the cutter as a vertical prism over the quadrant
+        bounded by the miter line (corner + t*miter_dir) and opened
+        toward open_dir (a direction on the side of the plane whose
+        material should be removed). Cabinet-local coords."""
+        big = 2.0
+        p0 = corner
+        p1 = corner + miter_dir * big
+        p2 = p1 + open_dir * big
+        p3 = corner + open_dir * big
+        bm = bmesh.new()
+        lo = [bm.verts.new((p.x, p.y, z0)) for p in (p0, p1, p2, p3)]
+        hi = [bm.verts.new((p.x, p.y, z1)) for p in (p0, p1, p2, p3)]
+        bm.faces.new(lo)
+        bm.faces.new(list(reversed(hi)))
+        for i in range(4):
+            j = (i + 1) % 4
+            bm.faces.new((lo[i], lo[j], hi[j], hi[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+
+    def _miter_boolean(self, part_obj, cutter, active):
+        mod = part_obj.modifiers.get(self.PANEL_MITER_CUT_MOD_NAME)
+        if not active:
+            if mod is not None:
+                part_obj.modifiers.remove(mod)
+            return
+        if mod is None:
+            mod = part_obj.modifiers.new(
+                name=self.PANEL_MITER_CUT_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod.object is not cutter:
+            mod.object = cutter
+
+    def _cleanup_panel_miter(self, side, stile_part, panel_obj):
+        if stile_part is not None:
+            self._miter_boolean(stile_part, None, False)
+        if panel_obj is not None:
+            facing_role = ('RIGHT_STILE' if side == 'LEFT' else 'LEFT_STILE')
+            for c in panel_obj.children_recursive:
+                if c.get('hb_part_role') == facing_role:
+                    self._miter_boolean(c, None, False)
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == 'PANEL_MITER_CUTTER'
+                    and child.get('hb_miter_side') == side):
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _apply_panel_front_miter(self, layout, side, panel_obj):
+        """Miter the cabinet end stile and the applied panel's facing
+        stile into each other at an angled side's front corner. No-op
+        (with cleanup) on square corners or when no panel exists."""
+        stile_role = ('LEFT_STILE' if side == 'LEFT' else 'RIGHT_STILE')
+        stile_part = next(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == stile_role), None)
+        active, corner, ff_dir, panel_dir = self._panel_miter_angles(
+            layout, side)
+        if not active or panel_obj is None or stile_part is None:
+            self._cleanup_panel_miter(side, stile_part, panel_obj)
+            return
+        miter_dir = (ff_dir + panel_dir).normalized()
+        z0, z1 = -0.05, layout.dim_z + 0.05
+        # Stile cutter: removes stile material past the miter plane on
+        # the PANEL side; the panel cutter mirrors on the FF side.
+        stile_cut = self._ensure_panel_miter_cutter(side, 'STILE')
+        self._miter_wedge_mesh(stile_cut, corner, miter_dir, panel_dir,
+                               z0, z1)
+        self._miter_boolean(stile_part, stile_cut, True)
+        panel_cut = self._ensure_panel_miter_cutter(side, 'PANEL')
+        self._miter_wedge_mesh(panel_cut, corner, miter_dir, ff_dir,
+                               z0, z1)
+        facing_role = ('RIGHT_STILE' if side == 'LEFT' else 'LEFT_STILE')
+        for c in panel_obj.children_recursive:
+            if c.get('hb_part_role') == facing_role:
+                self._miter_boolean(c, panel_cut, True)
+
     def _back_ext_effective(self):
         """(ext_left, ext_right) the CARCASS actually splays by. A side
         whose extension is carried by an attached wing keeps a square
@@ -4044,6 +4191,8 @@ class FaceFrameCabinet(GeoNodeCage):
             if not wants_panel:
                 if panel_obj is not None:
                     _remove_root_with_children(panel_obj)
+                if side in ('LEFT', 'RIGHT'):
+                    self._apply_panel_front_miter(layout, side, None)
                 continue
 
             if panel_obj is None:
@@ -4099,10 +4248,21 @@ class FaceFrameCabinet(GeoNodeCage):
                 eb = cab.left_side_finished_extend_back
                 location = (location[0], location[1] + eb, location[2])
                 width = width + eb
+                # Mitered angled joint: the panel runs to the FF FRONT
+                # plane (width + fft); the bisector cut trims both
+                # members (see _apply_panel_front_miter below).
+                if self._panel_miter_angles(layout, 'LEFT')[0]:
+                    width += layout.fft
                 location, rotation_z, width = self._splay_covering(
                     'LEFT', ext_bl, location, rotation_z, width)
             else:  # RIGHT
                 width = width + cab.right_side_finished_extend_back
+                if self._panel_miter_angles(layout, 'RIGHT')[0]:
+                    # Front-anchored: the origin moves forward to the
+                    # FF front plane and the width grows to match.
+                    location = (location[0], location[1] - layout.fft,
+                                location[2])
+                    width += layout.fft
                 location, rotation_z, width = self._splay_covering(
                     'RIGHT', ext_br, location, rotation_z, width,
                     front_anchored=True)
@@ -4151,6 +4311,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 if part.get('hb_part_role') and not part.get('MENU_ID'):
                     part['MENU_ID'] = (
                         'HOME_BUILDER_MT_face_frame_part_commands')
+
+            # Miter the panel into the face frame front on angled sides
+            # (splayed back extension or angled-front cabinet).
+            if side in ('LEFT', 'RIGHT'):
+                self._apply_panel_front_miter(layout, side, panel_obj)
 
     # =====================================================================
     # Applied finished back (single 3/4 part layered on the carcass back)
