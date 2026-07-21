@@ -2071,6 +2071,12 @@ class FaceFrameCabinet(GeoNodeCage):
                     continue
                 pos = solver.left_side_position(layout)
                 length, width, thickness = solver.left_side_dims(layout)
+                # FINISHED side on an angled corner: run to the FF
+                # FRONT plane; the bisector miter cut trims it against
+                # the end stile (_apply_panel_front_miter).
+                if (layout.l_fin_end == 'FINISHED'
+                        and self._panel_miter_angles(layout, 'LEFT')[0]):
+                    width += layout.fft
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -2088,6 +2094,9 @@ class FaceFrameCabinet(GeoNodeCage):
                     continue
                 pos = solver.right_side_position(layout)
                 length, width, thickness = solver.right_side_dims(layout)
+                if (layout.r_fin_end == 'FINISHED'
+                        and self._panel_miter_angles(layout, 'RIGHT')[0]):
+                    width += layout.fft
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -2813,14 +2822,33 @@ class FaceFrameCabinet(GeoNodeCage):
         if mod.object is not cutter:
             mod.object = cutter
 
-    def _cleanup_panel_miter(self, side, stile_part, panel_obj):
-        if stile_part is not None:
-            self._miter_boolean(stile_part, None, False)
+    def _miter_covered_members(self, side, panel_obj):
+        """Every part that could carry the covering-side miter cut on
+        this side: the applied panel's facing stile (when a panel
+        exists) and the carcass side panel (the member for a FINISHED
+        end). Both are returned so apply/cleanup can clear stale cuts
+        when the condition flips between FINISHED and an applied type.
+        Each entry is (part, is_active_for) where is_active_for is
+        'PANEL' or 'SIDE'."""
+        members = []
         if panel_obj is not None:
             facing_role = ('RIGHT_STILE' if side == 'LEFT' else 'LEFT_STILE')
             for c in panel_obj.children_recursive:
                 if c.get('hb_part_role') == facing_role:
-                    self._miter_boolean(c, None, False)
+                    members.append((c, 'PANEL'))
+        side_role = ('LEFT_SIDE' if side == 'LEFT' else 'RIGHT_SIDE')
+        side_part = next(
+            (c for c in self.obj.children
+             if c.get('hb_part_role') == side_role), None)
+        if side_part is not None:
+            members.append((side_part, 'SIDE'))
+        return members
+
+    def _cleanup_panel_miter(self, side, stile_part, panel_obj):
+        if stile_part is not None:
+            self._miter_boolean(stile_part, None, False)
+        for part, _kind in self._miter_covered_members(side, panel_obj):
+            self._miter_boolean(part, None, False)
         for child in list(self.obj.children):
             if (child.get('hb_part_role') == 'PANEL_MITER_CUTTER'
                     and child.get('hb_miter_side') == side):
@@ -2830,22 +2858,29 @@ class FaceFrameCabinet(GeoNodeCage):
                     bpy.data.meshes.remove(mesh)
 
     def _apply_panel_front_miter(self, layout, side, panel_obj):
-        """Miter the cabinet end stile and the applied panel's facing
-        stile into each other at an angled side's front corner. No-op
-        (with cleanup) on square corners or when no panel exists."""
+        """Miter the cabinet end stile and the covering member - the
+        applied panel's facing stile, or the FINISHED carcass side -
+        into each other at an angled side's front corner. No-op (with
+        cleanup) on square corners or when the side carries neither an
+        applied panel nor a FINISHED end."""
+        cab = self.obj.face_frame_cabinet
+        condition = (cab.left_finished_end_condition if side == 'LEFT'
+                     else cab.right_finished_end_condition)
+        target_kind = ('PANEL' if panel_obj is not None
+                       else 'SIDE' if condition == 'FINISHED' else None)
         stile_role = ('LEFT_STILE' if side == 'LEFT' else 'RIGHT_STILE')
         stile_part = next(
             (c for c in self.obj.children
              if c.get('hb_part_role') == stile_role), None)
         active, corner, ff_dir, panel_dir = self._panel_miter_angles(
             layout, side)
-        if not active or panel_obj is None or stile_part is None:
+        if not active or target_kind is None or stile_part is None:
             self._cleanup_panel_miter(side, stile_part, panel_obj)
             return
         miter_dir = (ff_dir + panel_dir).normalized()
         z0, z1 = -0.05, layout.dim_z + 0.05
         # Stile cutter: removes stile material past the miter plane on
-        # the PANEL side; the panel cutter mirrors on the FF side.
+        # the covering side; the covering cutter mirrors on the FF side.
         stile_cut = self._ensure_panel_miter_cutter(side, 'STILE')
         self._miter_wedge_mesh(stile_cut, corner, miter_dir, panel_dir,
                                z0, z1)
@@ -2853,10 +2888,8 @@ class FaceFrameCabinet(GeoNodeCage):
         panel_cut = self._ensure_panel_miter_cutter(side, 'PANEL')
         self._miter_wedge_mesh(panel_cut, corner, miter_dir, ff_dir,
                                z0, z1)
-        facing_role = ('RIGHT_STILE' if side == 'LEFT' else 'LEFT_STILE')
-        for c in panel_obj.children_recursive:
-            if c.get('hb_part_role') == facing_role:
-                self._miter_boolean(c, panel_cut, True)
+        for part, kind in self._miter_covered_members(side, panel_obj):
+            self._miter_boolean(part, panel_cut, kind == target_kind)
 
     def _back_ext_effective(self):
         """(ext_left, ext_right) the CARCASS actually splays by. A side
