@@ -2130,6 +2130,15 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Thickness', seg['thickness'])
 
             elif role == PART_ROLE_BACK:
+                # WORKING_FF back: the applied face frame is a real
+                # access side - the 1/4 carcass back comes out (the
+                # frame's working fronts open into the cavity). A
+                # FALSE_FF back is decorative only and keeps the back.
+                visible = layout.b_fin_end != 'WORKING_FF'
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
                 seg = carc_back_by_start.get(child.get('hb_segment_start_bay'))
                 if seg is None:
                     continue
