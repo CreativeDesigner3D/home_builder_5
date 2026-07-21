@@ -235,6 +235,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         cab_props.right_depth = self.default_right_depth
         if self.default_corner_type in ('PIE_CUT', 'PIE_CUT_DRAWER'):
             self._add_root_corner_notch()
+        else:
+            # DIAGONAL: both front stiles are angled joint stiles per the
+            # catalog (1-1/2", full overlay 1-3/4"), so type them ANGLE and
+            # let the style's angle_stile row drive the width.
+            cab_props.left_stile_type = 'ANGLE'
+            cab_props.right_stile_type = 'ANGLE'
         # DIAGONAL: root chamfer (Boolean DIFFERENCE referencing the
         # Diagonal Cutter object) is added in _build_diagonal_parts
         # because the cutter object doesn't exist until carcass build.

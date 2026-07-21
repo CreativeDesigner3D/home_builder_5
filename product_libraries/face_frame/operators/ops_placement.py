@@ -1570,15 +1570,14 @@ def _auto_detect_stile_types(cab_obj):
     left = cab_obj.location.x
     right = left + props.width
     want = {}
-    corner_joins = []  # (corner_obj, corner_side) to mirror the pie-cut joint
+    corner_joins = []  # (corner_obj, corner_side, stile_type) to mirror the joint
     for side, at_wall_end in (('LEFT', left <= tol),
                               ('RIGHT', right >= wall_length - tol)):
         hit = _abutting_corner_stile(cab_obj, side, wall)
         if hit:
             stile_type, corner_obj, corner_side = hit
             want[side] = stile_type
-            if stile_type == 'INSIDE_90':
-                corner_joins.append((corner_obj, corner_side))
+            corner_joins.append((corner_obj, corner_side, stile_type))
         elif at_wall_end:
             want[side] = 'WALL'
         else:
@@ -1588,15 +1587,16 @@ def _auto_detect_stile_types(cab_obj):
             props.left_stile_type = want['LEFT']
         if props.right_stile_type != want['RIGHT']:
             props.right_stile_type = want['RIGHT']
-    # Mirror the pie-cut joint onto the abutting corner cabinet so both
-    # meeting stiles take the Inside-90 stile width. Setting the corner's
-    # meeting-side stile type to INSIDE_90 fires its own width derivation +
-    # recalc; done outside the suspend so that recalc runs.
-    for corner_obj, corner_side in corner_joins:
+    # Mirror the joint onto the abutting corner cabinet so both meeting
+    # stiles take the joint's stile width (pie cut -> INSIDE_90, diagonal
+    # -> ANGLE). Setting the corner's meeting-side stile type fires its
+    # own width derivation + recalc; done outside the suspend so that
+    # recalc runs.
+    for corner_obj, corner_side, stile_type in corner_joins:
         cprops = corner_obj.face_frame_cabinet
         attr = corner_side.lower() + '_stile_type'
-        if getattr(cprops, attr) != 'INSIDE_90':
-            setattr(cprops, attr, 'INSIDE_90')
+        if getattr(cprops, attr) != stile_type:
+            setattr(cprops, attr, stile_type)
 
 
 def _reverse_collection(col):
