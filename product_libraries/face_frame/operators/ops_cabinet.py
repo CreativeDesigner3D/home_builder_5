@@ -3565,32 +3565,47 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
             self.report({'WARNING'}, "Select at least one face frame bay")
             return {'CANCELLED'}
 
-        # Per-bay info: (bay_obj, root, is_double_door_bay).
+        # Per-bay info: (bay_obj, root, is_double_door_bay, edge_scribe).
+        # On a WALL-type end stile with a scribe, the stile covers the
+        # scribe amount of the adjacent (edge) bay's stored width -- the
+        # visible opening is bay.width - scribe. Fold that into the
+        # visible-width math or the hidden inch is treated as door and
+        # the equalized doors come out unequal on scribed cabinets.
         all_bays = []
         for root in roots:
+            cp = root.face_frame_cabinet
             bays = sorted(
                 [c for c in root.children
                  if c.get(types_face_frame.TAG_BAY_CAGE)],
                 key=lambda c: c.get('hb_bay_index', 0),
             )
-            for bay in bays:
+            for i, bay in enumerate(bays):
+                edge_scribe = 0.0
+                if (i == 0 and cp.left_stile_type == 'WALL'
+                        and cp.left_scribe > 0):
+                    edge_scribe += cp.left_scribe
+                if (i == len(bays) - 1 and cp.right_stile_type == 'WALL'
+                        and cp.right_scribe > 0):
+                    edge_scribe += cp.right_scribe
                 all_bays.append((bay, root,
-                                 self._bay_has_full_width_double_door(bay)))
+                                 self._bay_has_full_width_double_door(bay),
+                                 edge_scribe))
 
         # Pool budget. Each bay's overlay comes from its own cabinet
         # so cabinets with different ff_door_overlay still balance.
         DD_GAP = self._DOUBLE_DOOR_REVEAL
-        total_bay_widths = sum(b.face_frame_bay.width for b, _, _ in all_bays)
+        total_bay_widths = sum(b.face_frame_bay.width - sc
+                               for b, _, _, sc in all_bays)
         # Each bay's overlay budget is (left + right) at the cabinet
         # default. Per-opening overlay overrides are not consulted in
         # v1 - same simplification a single-overlay model would make.
         total_overlay_pad = sum(
             (r.face_frame_cabinet.default_left_overlay
              + r.face_frame_cabinet.default_right_overlay)
-            for _, r, _ in all_bays
+            for _, r, _, _ in all_bays
         )
-        num_double_bays = sum(1 for _, _, dd in all_bays if dd)
-        num_doors = sum(2 if dd else 1 for _, _, dd in all_bays)
+        num_double_bays = sum(1 for _, _, dd, _ in all_bays if dd)
+        num_doors = sum(2 if dd else 1 for _, _, dd, _ in all_bays)
         if num_doors == 0:
             self.report({'WARNING'}, "No doors to equalize")
             return {'CANCELLED'}
@@ -3600,11 +3615,25 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                          - num_double_bays * DD_GAP)
         target_door_width = total_visible / num_doors
 
-        # Write new bay widths under one suspended recalc, then resync
-        # each cabinet's overall width to the new bay total + stiles.
-        # Cabinets float so the cross-cabinet target is honored.
+        # Write new bay widths under one suspended recalc, then float
+        # each cabinet's overall width by the CHANGE in its bay total.
+        # Delta-preserving on purpose: recomputing the width as
+        # stiles + bays assumes a composition the solver doesn't always
+        # follow -- a WALL-end scribe tucks part of the edge bay under
+        # the stile, so that resync grew a scribed cabinet by exactly
+        # its scribe (measured live: 48.75" -> 49.75" with a 1" right
+        # scribe). Adding the delta keeps every construction
+        # idiosyncrasy (scribes, blind offsets, wall stiles) intact
+        # while still letting width move between cabinets so the
+        # cross-cabinet target is honored.
+        bay_totals_before = {
+            root.name: sum(
+                c.face_frame_bay.width for c in root.children
+                if c.get(types_face_frame.TAG_BAY_CAGE))
+            for root in roots
+        }
         with types_face_frame.suspend_recalc():
-            for bay, root, is_double in all_bays:
+            for bay, root, is_double, edge_scribe in all_bays:
                 cp = root.face_frame_cabinet
                 lr_pad = cp.default_left_overlay + cp.default_right_overlay
                 if is_double:
@@ -3613,32 +3642,16 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                     new_w = target_door_width - lr_pad
                 bp = bay.face_frame_bay
                 bp.unlock_width = True
-                bp.width = new_w
+                bp.width = new_w + edge_scribe
 
             for root in roots:
                 cp = root.face_frame_cabinet
-                bays = [c for c in root.children
-                        if c.get(types_face_frame.TAG_BAY_CAGE)]
-                stile_total = (cp.left_stile_width
-                               + cp.right_stile_width)
-                for i in range(min(len(bays) - 1,
-                                   len(cp.mid_stile_widths))):
-                    stile_total += cp.mid_stile_widths[i].width
-                bay_total = sum(b.face_frame_bay.width for b in bays)
-                # A blind-corner end shrinks the FF plane by its void
-                # offset, so the stiles + bays occupy only
-                # width - blind_offset(s). Add the offset(s) back or this
-                # resync collapses the cabinet by the blind amount and the
-                # blind corner disappears. Mirrors the solver's blind_offset
-                # gate (stile_type BLIND + blind flag + amount > 0).
-                blind_offset = 0.0
-                if (cp.left_stile_type == 'BLIND'
-                        and cp.blind_left and cp.blind_amount_left > 0):
-                    blind_offset += cp.blind_amount_left
-                if (cp.right_stile_type == 'BLIND'
-                        and cp.blind_right and cp.blind_amount_right > 0):
-                    blind_offset += cp.blind_amount_right
-                cp.width = stile_total + bay_total + blind_offset
+                bay_total = sum(
+                    c.face_frame_bay.width for c in root.children
+                    if c.get(types_face_frame.TAG_BAY_CAGE))
+                delta = bay_total - bay_totals_before[root.name]
+                if abs(delta) > 1e-9:
+                    cp.width = cp.width + delta
 
         return {'FINISHED'}
 
