@@ -575,6 +575,7 @@ BACK_EXT_CUT_PART_ROLES = frozenset({
     PART_ROLE_TOP, PART_ROLE_BOTTOM,
     PART_ROLE_FRONT_STRETCHER, PART_ROLE_REAR_STRETCHER,
     PART_ROLE_FINISH_TOE_KICK, PART_ROLE_TOE_KICK_SUBFRONT,
+    PART_ROLE_LOOSE_KICK_REAR,
     PART_ROLE_BAY_SHELF,
     PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
 })
@@ -3389,6 +3390,17 @@ class FaceFrameCabinet(GeoNodeCage):
                 # angled side either way, so a square panel trims correctly.
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
                                        allow_shrink=False)
+            elif role == PART_ROLE_LOOSE_KICK_REAR:
+                # Loose-ladder rear rail spans X at the cabinet back:
+                # widen to the splayed corners, the cutter trims its
+                # ends to the angled side line (buried joint inside the
+                # splayed end boards).
+                self._widen_back_panel(child, ext_l, ext_r, 'Length',
+                                       allow_shrink=False)
+            elif role == PART_ROLE_LOOSE_KICK_END_LEFT:
+                self._splay_loose_kick_end(child, 'LEFT', ext_l)
+            elif role == PART_ROLE_LOOSE_KICK_END_RIGHT:
+                self._splay_loose_kick_end(child, 'RIGHT', ext_r)
 
         # Trapezoid trim for the full-depth panels (top / bottom / shelves):
         # boolean-difference the front overhang along the angled side
@@ -3406,6 +3418,28 @@ class FaceFrameCabinet(GeoNodeCage):
         # line the raw extend defines. Off / 0 -> removed.
         self._apply_wing(layout, 'LEFT', raw_l if wing_l else 0.0)
         self._apply_wing(layout, 'RIGHT', raw_r if wing_r else 0.0)
+
+    def _splay_loose_kick_end(self, child, side, extend):
+        """Splay a loose-ladder end board along the same line as the
+        carcass side. Back-anchored like the side (origin at the
+        back-outer corner, board spans -Y by its Length input) but
+        with a -pi/2 base Z rotation (kick-return orientation), so
+        the splay adds phi on top of the base. Reset to square on
+        extend == 0 (the main dispatch already restored location +
+        Length from the solver this recalc)."""
+        base_z = -math.pi / 2.0
+        if extend == 0.0:
+            child.rotation_euler.z = base_z
+            return
+        depth = self._part_input(child, 'Length')
+        if depth is None:
+            return
+        front_target, back_target, phi, w_new = self._back_ext_line(
+            side, extend, depth)
+        child.rotation_euler.z = base_z + phi
+        child.location.x = back_target.x
+        child.location.y = back_target.y
+        self._set_part_input(child, 'Length', w_new)
 
     def _apply_wing(self, layout, side, extend):
         """Build / remove the attached wing on one end. `extend` is the raw
