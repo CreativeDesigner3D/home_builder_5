@@ -4851,7 +4851,8 @@ class FaceFrameCabinet(GeoNodeCage):
 
     @staticmethod
     def _textured_panel_mesh(part_obj, length, width, thickness,
-                             condition, mirror_z):
+                             condition, mirror_z,
+                             shiplap_pitch=TEXTURED_SHIPLAP_PITCH):
         """Write the carved static mesh for a textured panel into
         ``part_obj``'s mesh data and hide its GN cutpart display.
 
@@ -4889,7 +4890,7 @@ class FaceFrameCabinet(GeoNodeCage):
                        for i in range(-k, k + 1)]
         else:
             span_u, run = length, width      # profile across X, extrude Y
-            pitch = TEXTURED_SHIPLAP_PITCH
+            pitch = shiplap_pitch
             margin = 0.5 * 0.0254
             n = int(span_u / pitch) if pitch > 0 else 0
             centers = [i * pitch for i in range(1, n + 1)]
@@ -5044,8 +5045,13 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Length',    length)
             part.set_input('Width',     width)
             part.set_input('Thickness', thickness)
+            try:
+                pitch = float(cab.shiplap_board_width) * 0.0254
+            except (ValueError, AttributeError):
+                pitch = TEXTURED_SHIPLAP_PITCH
             self._textured_panel_mesh(part_obj, length, width, thickness,
-                                      condition, mirror_z)
+                                      condition, mirror_z,
+                                      shiplap_pitch=pitch)
             # Toe-kick corner notch (the CPM runs on the static mesh
             # since the cutpart GN is hidden). BACK skins never notch.
             if side in ('LEFT', 'RIGHT'):

@@ -4871,6 +4871,19 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_on_back_finish_end_user_set,
     )  # type: ignore
 
+    # Shiplap course width for SHIPLAP finished ends (all shiplap sides
+    # of this cabinet share it). Same 4 / 5 / 6 ladder as the wood-hood
+    # shiplap board width.
+    shiplap_board_width: EnumProperty(
+        name="Shiplap Width",
+        description="Course width of the shiplap planks on shiplap finished ends",
+        items=[('4', "4\"", "4 inch shiplap planks"),
+               ('5', "5\"", "5 inch shiplap planks"),
+               ('6', "6\"", "6 inch shiplap planks")],
+        default='6',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Scribe = inset from the face frame outer face to the side panel
     # outer face. The solver multiplexes this against the finish end
     # condition (3/4 finished forces 0 since the side IS the outer face;
