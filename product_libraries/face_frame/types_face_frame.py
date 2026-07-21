@@ -182,6 +182,11 @@ PART_ROLE_RIGHT_STILE = 'RIGHT_STILE'
 PART_ROLE_LEFT_REFRIG_STILE = 'LEFT_REFRIG_STILE'
 PART_ROLE_RIGHT_REFRIG_STILE = 'RIGHT_REFRIG_STILE'
 PART_ROLE_MID_STILE = 'MID_STILE'
+# Companion RIGHT half of a mid stile sitting on an angled_multi bend:
+# the stile splits lengthwise, each half lying in its side's front
+# plane, mitered together at the bend (see solver.mid_stile_bend_
+# halves). The original MID_STILE part becomes the LEFT half.
+PART_ROLE_MID_STILE_HALF = 'MID_STILE_BEND_HALF'
 PART_ROLE_MID_RAIL = 'MID_RAIL'
 # Filler stiles in a front-dropped bay's open band (above the dropped
 # top rail), fitting a farm sink / cooktop to the drop. Keyed per bay +
@@ -200,7 +205,7 @@ PART_ROLE_BAY_SHELF = 'BAY_SHELF'
 FACE_FRAME_PART_ROLES = frozenset({
     PART_ROLE_TOP_RAIL, PART_ROLE_BOTTOM_RAIL,
     PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE,
-    PART_ROLE_MID_STILE, PART_ROLE_MID_RAIL,
+    PART_ROLE_MID_STILE, PART_ROLE_MID_STILE_HALF, PART_ROLE_MID_RAIL,
     PART_ROLE_BAY_MID_RAIL, PART_ROLE_BAY_MID_STILE,
     PART_ROLE_FRONT_DROP_FILLER,
 })
@@ -1903,6 +1908,9 @@ class FaceFrameCabinet(GeoNodeCage):
         # band, fitting a farm sink / cooktop (keyed per bay + side).
         drop_filler_segs = solver.front_drop_filler_segments(layout)
         self._reconcile_front_drop_fillers(drop_filler_segs)
+        # Mitered mid stile halves at angled_multi bends (companion
+        # right-half parts + their miter cutters).
+        self._reconcile_mid_stile_bend_halves(layout)
 
         # Carcass branch - skipped for face-frame-only roots (panels).
         # Empty segment lists make the dispatch loop's carcass branches
@@ -2426,12 +2434,50 @@ class FaceFrameCabinet(GeoNodeCage):
                     child.hide_viewport = True
                     continue
                 child.hide_viewport = False
+                halves = solver.mid_stile_bend_halves(layout, msi)
+                if halves is not None:
+                    # This stile sits on a bend: it becomes the LEFT
+                    # half, lying in the left region's front plane and
+                    # mitered against the companion right half at the
+                    # bend line.
+                    h = halves['left']
+                    child.location = h['pos']
+                    child.rotation_euler.z = math.pi / 2 + h['theta']
+                    part.set_input('Length', halves['length'])
+                    part.set_input('Width', h['width'])
+                    part.set_input('Thickness', halves['thickness'])
+                    self._apply_mid_stile_miter(child, layout, msi,
+                                                'LEFT', halves)
+                    continue
+                self._clear_mid_stile_miter(child)
+                child.rotation_euler.z = math.pi / 2
                 pos = solver.mid_stile_position(layout, msi)
                 length, width, thickness = solver.mid_stile_dims(layout, msi)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+
+            elif role == PART_ROLE_MID_STILE_HALF:
+                msi = child.get('hb_mid_stile_index', 0)
+                halves = (solver.mid_stile_bend_halves(layout, msi)
+                          if msi < len(layout.mid_stiles) else None)
+                if halves is None:
+                    # Reconcile pre-pass deletes stale companions; this
+                    # is just a same-recalc safety net.
+                    child.hide_viewport = True
+                    child.hide_render = True
+                    continue
+                child.hide_viewport = False
+                child.hide_render = False
+                h = halves['right']
+                child.location = h['pos']
+                child.rotation_euler.z = math.pi / 2 + h['theta']
+                part.set_input('Length', halves['length'])
+                part.set_input('Width', h['width'])
+                part.set_input('Thickness', halves['thickness'])
+                self._apply_mid_stile_miter(child, layout, msi,
+                                            'RIGHT', halves)
 
             elif role == PART_ROLE_MID_DIVISION:
                 msi = child.get('hb_mid_stile_index', 0)
@@ -2838,6 +2884,99 @@ class FaceFrameCabinet(GeoNodeCage):
         """Reverse of _apply_multi_angled_wedges for both ends."""
         for side in ('LEFT', 'RIGHT'):
             self._cleanup_multi_angled_wedge_side(side)
+
+    # ---- angled_multi: mitered mid stile halves at the bends ----
+    # A mid stile sitting ON a bend splits lengthwise: the original
+    # MID_STILE part becomes the left half (in the left region's front
+    # plane) and a MID_STILE_HALF companion carries the right half; the
+    # two miter together on the bisector plane through the bend line
+    # via per-half prism cutters (same wedge pattern as the panel
+    # miters). Geometry comes from solver.mid_stile_bend_halves.
+    MID_STILE_MITER_MOD_NAME = 'Mid Stile Miter'
+    MID_STILE_MITER_CUTTER_ROLE = 'MID_STILE_MITER_CUTTER'
+
+    def _reconcile_mid_stile_bend_halves(self, layout):
+        """Ensure each bend gap has its right-half companion; drop
+        companions and miter cutters whose gap went flat (or whose
+        cabinet left angled mode entirely)."""
+        wanted = {gi for gi in range(len(layout.mid_stiles))
+                  if solver.mid_stile_bend_thetas(layout, gi) is not None}
+        for child in list(self.obj.children):
+            r = child.get('hb_part_role')
+            if r == PART_ROLE_MID_STILE_HALF:
+                if child.get('hb_mid_stile_index') not in wanted:
+                    bpy.data.objects.remove(child, do_unlink=True)
+            elif r == self.MID_STILE_MITER_CUTTER_ROLE:
+                if child.get('hb_ms_miter_gap') not in wanted:
+                    bpy.data.objects.remove(child, do_unlink=True)
+        existing = {child.get('hb_mid_stile_index')
+                    for child in self.obj.children
+                    if child.get('hb_part_role') == PART_ROLE_MID_STILE_HALF}
+        for gi in sorted(wanted - existing):
+            self._create_mid_stile_half(gi)
+
+    def _create_mid_stile_half(self, gap_index):
+        """Right-half companion board; same part config as the mid
+        stile it splits from (see _create_mid_parts_at)."""
+        half = CabinetPart()
+        half.create(f'Mid Stile {gap_index + 1} R')
+        half.obj.parent = self.obj
+        half.obj['hb_part_role'] = PART_ROLE_MID_STILE_HALF
+        half.obj['CABINET_PART'] = True
+        half.obj['hb_mid_stile_index'] = gap_index
+        half.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        half.obj.rotation_euler.y = math.radians(-90)
+        half.obj.rotation_euler.z = math.radians(90)
+        half.set_input('Mirror Y', True)
+        half.set_input('Mirror Z', True)
+        return half
+
+    def _ensure_mid_stile_miter_cutter(self, gap_index, half):
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == self.MID_STILE_MITER_CUTTER_ROLE
+                    and child.get('hb_ms_miter_gap') == gap_index
+                    and child.get('hb_ms_miter_half') == half):
+                return child
+        name = f'Mid Stile Miter Cutter {gap_index + 1} {half.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = self.MID_STILE_MITER_CUTTER_ROLE
+        cutter['hb_ms_miter_gap'] = gap_index
+        cutter['hb_ms_miter_half'] = half
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_mid_stile_miter(self, part_obj, layout, gap_index, half,
+                               halves):
+        """Rebuild this half's miter cutter prism and ensure the boolean
+        on the half board. `half` is 'LEFT' (the MID_STILE part) or
+        'RIGHT' (the companion)."""
+        from mathutils import Vector
+        cutter = self._ensure_mid_stile_miter_cutter(gap_index, half)
+        corner = Vector(halves['bend'])
+        miter_dir = Vector(halves['miter_dir'])
+        open_dir = Vector(halves[half.lower()]['open_dir'])
+        self._miter_wedge_mesh(cutter, corner, miter_dir, open_dir,
+                               -0.05, layout.dim_z + 0.05)
+        mod = part_obj.modifiers.get(self.MID_STILE_MITER_MOD_NAME)
+        if mod is None:
+            mod = part_obj.modifiers.new(
+                name=self.MID_STILE_MITER_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod.object is not cutter:
+            mod.object = cutter
+
+    def _clear_mid_stile_miter(self, part_obj):
+        mod = part_obj.modifiers.get(self.MID_STILE_MITER_MOD_NAME)
+        if mod is not None:
+            part_obj.modifiers.remove(mod)
 
     # =====================================================================
     # Angled back extension (trapezoidal back; extend_back_left / _right)

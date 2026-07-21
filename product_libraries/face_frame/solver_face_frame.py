@@ -2052,6 +2052,79 @@ def mid_stile_dims(layout, gap_index):
     return (length, ms['width'], layout.fft)
 
 
+def mid_stile_bend_thetas(layout, gap_index):
+    """(theta_left_region, theta_right_region) of the front planes
+    meeting at this gap's mid stile, or None when the gap is flat (no
+    bend here). Only gap 0 can carry the left angle and only the last
+    gap the right; on a 2-bay cabinet the one gap can carry both."""
+    if not layout.angled_multi:
+        return None
+    last = layout.bay_count - 1
+    th_l = (bay_front_angle(layout, 0)
+            if (gap_index == 0 and layout.unlock_left_depth) else 0.0)
+    th_r = (bay_front_angle(layout, last)
+            if (gap_index == last - 1 and layout.unlock_right_depth)
+            else 0.0)
+    if abs(th_l) < 1e-9 and abs(th_r) < 1e-9:
+        return None
+    return th_l, th_r
+
+
+def mid_stile_bend_halves(layout, gap_index):
+    """Split geometry for a mid stile sitting ON a bend: the stile
+    splits lengthwise into two half-width boards, each lying in its
+    side's front plane, mitered together on the vertical plane through
+    the bend line along the planes' angular bisector.
+
+    None on flat gaps. Otherwise a dict:
+      bend       - (x, y) of the bend line on the FF outer plane
+      base_z / length / thickness - shared vertical extent (identical
+                   to the flat stile's, so extend up/down / to-floor
+                   still apply)
+      miter_dir  - (x, y) unit bisector pointing into the cabinet;
+                   the miter plane contains the bend line + this dir
+      left/right - per half: theta, width (half the stile width
+                   measured along that plane, so world-X footprint
+                   stays ms/2), pos (anchor at the half's LEFT edge on
+                   its plane - the right half anchors at the bend),
+                   open_dir (direction on the OTHER side of the miter
+                   plane, toward the material this half must shed)
+    """
+    thetas = mid_stile_bend_thetas(layout, gap_index)
+    if thetas is None:
+        return None
+    th_l, th_r = thetas
+    ms = layout.mid_stiles[gap_index]
+    half_w = ms['width'] / 2.0
+    bend_x = _mid_stile_center_x(layout, gap_index)
+    pos = mid_stile_position(layout, gap_index)
+    length, _w, fft = mid_stile_dims(layout, gap_index)
+    base_z = pos[2]
+    n_l = (-math.sin(th_l), math.cos(th_l))
+    n_r = (-math.sin(th_r), math.cos(th_r))
+    mx, my = n_l[0] + n_r[0], n_l[1] + n_r[1]
+    ln = math.hypot(mx, my)
+    return {
+        'bend':      (bend_x, -layout.dim_y),
+        'base_z':    base_z,
+        'length':    length,
+        'thickness': fft,
+        'miter_dir': (mx / ln, my / ln),
+        'left': {
+            'theta':    th_l,
+            'width':    half_w / math.cos(th_l),
+            'pos':      ff_outer_world_pos(layout, bend_x - half_w, base_z),
+            'open_dir': (math.cos(th_r), math.sin(th_r)),
+        },
+        'right': {
+            'theta':    th_r,
+            'width':    half_w / math.cos(th_r),
+            'pos':      ff_outer_world_pos(layout, bend_x, base_z),
+            'open_dir': (-math.cos(th_l), -math.sin(th_l)),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-segment carcass bottom panels - the bay floors
 # ---------------------------------------------------------------------------

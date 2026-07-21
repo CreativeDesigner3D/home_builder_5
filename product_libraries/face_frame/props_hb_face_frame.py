@@ -1764,6 +1764,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     _FINISH_EXTERIOR_ROLES = {
         # Face frame members
         'TOP_RAIL', 'BOTTOM_RAIL', 'LEFT_STILE', 'RIGHT_STILE', 'MID_STILE',
+        'MID_STILE_BEND_HALF',
         'MID_RAIL', 'BAY_MID_RAIL', 'BAY_MID_STILE',
         'INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE',
         # Fronts
