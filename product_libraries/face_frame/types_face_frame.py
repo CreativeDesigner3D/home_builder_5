@@ -2710,6 +2710,56 @@ class FaceFrameCabinet(GeoNodeCage):
         phi = math.atan2(dn.x, -dn.y)
         return front_target, back_target, phi, w_new
 
+    def _back_ext_effective(self):
+        """(ext_left, ext_right) the CARCASS actually splays by. A side
+        whose extension is carried by an attached wing keeps a square
+        carcass, so it reads 0 here - mirrors _apply_back_extension's
+        wing gating. Used by the finished-end covering reconcilers so
+        applied panels / textured skins follow the same splayed line
+        the carcass side does."""
+        cab = self.obj.face_frame_cabinet
+        raw_l = cab.extend_back_left
+        raw_r = cab.extend_back_right
+        ext_l = 0.0 if (cab.wing_attached_left and raw_l != 0.0) else raw_l
+        ext_r = 0.0 if (cab.wing_attached_right and raw_r != 0.0) else raw_r
+        return ext_l, ext_r
+
+    def _splay_covering(self, side, extend, location, rotation_z, width,
+                        front_anchored=False):
+        """Apply the back-extension splay to a side COVERING (applied
+        panel root or textured skin): rotate it onto the splayed outer
+        line and stretch its width to the hypotenuse, keeping its
+        inboard offset.
+
+        A covering whose width spans AWAY from its origin toward the
+        front (LEFT applied panel, LEFT / RIGHT skins) is back-anchored:
+        its origin rides the back-outer corner, which MOVES to the splay
+        target. The RIGHT applied panel spans from the front toward the
+        back, so it is front-anchored: its origin keeps its offset from
+        the FIXED front-outer corner and only rotates. Either way the
+        stretched width lands the far edge on the splayed line's far
+        corner.
+
+        Returns (location, rotation_z, width). No-op for extend == 0.
+        """
+        if extend == 0.0:
+            return location, rotation_z, width
+        ft, bt, phi, w_new = self._back_ext_line(side, extend, width)
+        c, s = math.cos(phi), math.sin(phi)
+        if front_anchored:
+            px, py = ft.x, ft.y          # fixed front-outer corner
+        else:
+            px = 0.0 if side == 'LEFT' else self.obj.face_frame_cabinet.width
+            py = 0.0                      # old back-outer corner
+        offx = location[0] - px
+        offy = location[1] - py
+        if not front_anchored:
+            px, py = bt.x, bt.y          # back corner moves to target
+        return ((px + offx * c - offy * s,
+                 py + offx * s + offy * c,
+                 location[2]),
+                rotation_z + phi, w_new)
+
     def _angle_side_panel(self, child, side, extend):
         """Splay one carcass side panel outward at the back by `extend`
         (meters), pivoting about its FRONT-OUTER corner so the front edge
@@ -4020,6 +4070,7 @@ class FaceFrameCabinet(GeoNodeCage):
             location, rotation_z, width, height, depth = (
                 applied_panel_geometry(layout, side)
             )
+            ext_bl, ext_br = self._back_ext_effective()
             # Finished-end overhang (applied panel). BACK is rotated 180
             # so panel +X runs cabinet -X from origin x=dim_x: extend_left
             # widens the far end past x=0, extend_right shifts the origin
@@ -4036,16 +4087,25 @@ class FaceFrameCabinet(GeoNodeCage):
                 # grows below.
                 ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
                 ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
-                location = (location[0] + cab.back_finished_extend_right - ret_r,
+                # Splayed back extension widens the back plane the same
+                # way it widens the carcass / finished back.
+                location = (location[0] + cab.back_finished_extend_right
+                            - ret_r + ext_br,
                             location[1], location[2])
                 width = (width + cab.back_finished_extend_left
-                         + cab.back_finished_extend_right - ret_l - ret_r)
+                         + cab.back_finished_extend_right - ret_l - ret_r
+                         + ext_bl + ext_br)
             elif side == 'LEFT':
                 eb = cab.left_side_finished_extend_back
                 location = (location[0], location[1] + eb, location[2])
                 width = width + eb
+                location, rotation_z, width = self._splay_covering(
+                    'LEFT', ext_bl, location, rotation_z, width)
             else:  # RIGHT
                 width = width + cab.right_side_finished_extend_back
+                location, rotation_z, width = self._splay_covering(
+                    'RIGHT', ext_br, location, rotation_z, width,
+                    front_anchored=True)
             panel_obj.location = location
             panel_obj.rotation_euler = (0.0, 0.0, rotation_z)
             panel_props = panel_obj.face_frame_cabinet
@@ -4548,7 +4608,15 @@ class FaceFrameCabinet(GeoNodeCage):
             # `amount`. Origin Y is the strip's back edge:
             #   origin_y - amount = -dim_y + fft   (front edge)
             #   origin_y         = -dim_y + fft + amount (back edge)
-            origin_y = -layout.dim_y + layout.fft + amount
+            # Angled-front cabinets: the strip's front edge follows that
+            # side's own depth (where the angled face frame meets it).
+            if layout.is_angled:
+                depth_side = (solver.effective_left_depth(layout)
+                              if side == 'LEFT'
+                              else solver.effective_right_depth(layout))
+            else:
+                depth_side = layout.dim_y
+            origin_y = -depth_side + layout.fft + amount
             origin_x = 0.0 if side == 'LEFT' else layout.dim_x
 
             if strip is None:
@@ -4984,11 +5052,18 @@ class FaceFrameCabinet(GeoNodeCage):
             # extent (side_bottom_z runs to the floor for NOTCH / FLUSH
             # toe kicks) and get the same front-bottom corner notch a
             # FLUSH_X strip gets so they clear a NOTCH kick recess.
+            # Angled-front cabinets size each skin to that side's own
+            # depth; a splayed back extension rotates the skin onto the
+            # splayed line via _splay_covering (rot_z below).
+            ext_bl, ext_br = self._back_ext_effective()
+            rot_z = 0.0
             if side == 'LEFT':
                 bottom_z = solver.side_bottom_z(layout, 0, 'LEFT')
                 location = (0.0, 0.0, bottom_z)
                 length = solver.left_side_top_z(layout) - bottom_z
-                width = layout.dim_y - layout.fft
+                depth_side = (solver.effective_left_depth(layout)
+                              if layout.is_angled else layout.dim_y)
+                width = depth_side - layout.fft
                 rot_x, rot_y = 0.0, math.radians(-90)
                 mirror_y, mirror_z = True, True
             elif side == 'RIGHT':
@@ -4996,7 +5071,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 bottom_z = solver.side_bottom_z(layout, last, 'RIGHT')
                 location = (layout.dim_x, 0.0, bottom_z)
                 length = solver.right_side_top_z(layout) - bottom_z
-                width = layout.dim_y - layout.fft
+                depth_side = (solver.effective_right_depth(layout)
+                              if layout.is_angled else layout.dim_y)
+                width = depth_side - layout.fft
                 rot_x, rot_y = 0.0, math.radians(-90)
                 mirror_y, mirror_z = True, False
             else:  # BACK
@@ -5017,13 +5094,19 @@ class FaceFrameCabinet(GeoNodeCage):
             if side == 'BACK':
                 el = cab.back_finished_extend_left
                 er = cab.back_finished_extend_right
-                location = (location[0] - el, location[1], location[2])
-                width = width + el + er
+                # A splayed back extension widens the back plane too,
+                # same as the carcass / finished back.
+                location = (location[0] - el - ext_bl, location[1],
+                            location[2])
+                width = width + el + er + ext_bl + ext_br
             else:
                 eb = (cab.left_side_finished_extend_back if side == 'LEFT'
                       else cab.right_side_finished_extend_back)
                 location = (location[0], location[1] + eb, location[2])
                 width = width + eb
+                ext = ext_bl if side == 'LEFT' else ext_br
+                location, rot_z, width = self._splay_covering(
+                    side, ext, location, rot_z, width)
 
             if part_obj is None:
                 part = CabinetPart()
@@ -5042,6 +5125,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part = GeoNodeCutpart(part_obj)
 
             part_obj.location = location
+            part_obj.rotation_euler.z = rot_z
             part.set_input('Length',    length)
             part.set_input('Width',     width)
             part.set_input('Thickness', thickness)
@@ -8941,9 +9025,13 @@ def applied_panel_geometry(layout, side):
         # Origin x = scribe (panel back face touches side outer face);
         # panel front face lands at cabinet x = 0 (flush with FF outer
         # face) when depth = scribe.
+        # Angled-front cabinets carry per-side depths: the panel runs
+        # to that side's own front edge (where the angled FF meets it).
+        depth_l = (solver.effective_left_depth(layout)
+                   if layout.is_angled else layout.dim_y)
         location = (scribe, 0.0, 0.0)
         rotation_z = -math.pi / 2.0
-        width = layout.dim_y - layout.fft
+        width = depth_l - layout.fft
         height = layout.dim_z
         return (location, rotation_z, width, height, scribe)
     if side == 'RIGHT':
@@ -8951,10 +9039,12 @@ def applied_panel_geometry(layout, side):
         # Rz(+pi/2): panel +X -> cabinet +Y, panel +Y -> cabinet -X.
         # Origin x = dim_x - scribe; front face lands at dim_x (flush
         # with FF outer face) when depth = scribe.
+        depth_r = (solver.effective_right_depth(layout)
+                   if layout.is_angled else layout.dim_y)
         location = (layout.dim_x - scribe,
-                    -layout.dim_y + layout.fft, 0.0)
+                    -depth_r + layout.fft, 0.0)
         rotation_z = math.pi / 2.0
-        width = layout.dim_y - layout.fft
+        width = depth_r - layout.fft
         height = layout.dim_z
         return (location, rotation_z, width, height, scribe)
     # BACK: rotate +pi around Z. Front face -> +Y. Origin at
