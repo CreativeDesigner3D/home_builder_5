@@ -2441,7 +2441,9 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         col.prop(sp, 'height')
         col.prop(sp, 'depth')
         col = layout.column(align=True)
-        col.prop(sp, 'toe_kick_height')
+        col.prop(sp, 'toe_kick_height_preset')
+        if sp.toe_kick_height_preset == 'CUSTOM':
+            col.prop(sp, 'toe_kick_height')
         col.prop(sp, 'toe_kick_setback')
         if not is_corner:
             col.prop(sp, 'include_countertop')

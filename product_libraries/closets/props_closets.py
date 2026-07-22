@@ -72,6 +72,16 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _update_kick_preset(self, context):
+    """Toe-kick height dropdown changed: set the distance to the chosen
+    standard height (the key is millimetres), then recalc. 'CUSTOM'
+    leaves the typed distance alone."""
+    if self.toe_kick_height_preset != 'CUSTOM':
+        self.toe_kick_height = const.millimeter(
+            int(self.toe_kick_height_preset))
+    _update_starter_prop(self, context)
+
+
 def _update_bay_prop(self, context):
     """Bay-level prop changed (height/depth/floor/remove flags)."""
     from . import types_closets
@@ -128,6 +138,13 @@ class Closet_Starter_Props(PropertyGroup):
         ],
         default='BASE')  # type: ignore
 
+    toe_kick_height_preset: EnumProperty(
+        name="Toe Kick Height",
+        description="Standard toe-kick height (Custom keeps the typed "
+                    "value)",
+        items=const.KICK_HEIGHT_ITEMS + [('CUSTOM', "Custom",
+                                          "Use the typed height")],
+        default='96', update=_update_kick_preset)  # type: ignore
     toe_kick_height: FloatProperty(
         name="Toe Kick Height",
         default=const.DEFAULT_TOE_KICK_HEIGHT, unit='LENGTH', precision=4,
