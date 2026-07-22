@@ -5219,4 +5219,22 @@ def editable_boundaries_cabinet(cabinet_obj, layout):
         'ff_x_low': 0.0,
         'ff_x_high': ff_len,
     }
-    # OUTER_BOTTOM — horizontal line at the cabinet'
+    # OUTER_BOTTOM — horizontal line at the cabinet's bottom, UPPER
+    # cabinets only. Translates the cabinet location along ff Z so the
+    # TOP edge stays put: dragging the bottom down grows the height and
+    # lowers the mount in one gesture (the wall-cabinet bottom adjust).
+    # Floor-standing types keep their bottom pinned to the floor / toe
+    # kick, so no handle there.
+    if getattr(cabinet_obj.face_frame_cabinet, 'cabinet_type', '') == 'UPPER':
+        yield {
+            'kind': 'OUTER_BOTTOM',
+            'axis': 'Z',
+            'primary_sign': -1.0,
+            'translate': True,
+            'translate_axis': 'Z',
+            'cabinet_obj': cabinet_obj,
+            'dim_attr': 'height',
+            'ff_z': 0.0,
+            'ff_x_low': 0.0,
+            'ff_x_high': ff_len,
+        }
