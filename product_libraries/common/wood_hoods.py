@@ -77,13 +77,27 @@ class _HoodWrap(GeoNodeObject):
         self.obj = obj
 
 
+def _remove_part_object(child):
+    """Remove a hood part object AND its now-orphaned datablock. The
+    prompts dialog rebuilds on every effective option change; without
+    this, each rebuild leaked every part's mesh/curve into the orphan
+    pool for the rest of the session."""
+    data = child.data
+    bpy.data.objects.remove(child, do_unlink=True)
+    if data is not None and data.users == 0:
+        if isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        elif isinstance(data, bpy.types.Curve):
+            bpy.data.curves.remove(data)
+
+
 def _clear_hood_parts(hood_obj):
     """Wipe the hood's generated parts ahead of a rebuild. Parts the user
     made editable (IS_MANUAL_PART) are kept -- their hand edits survive the
     rebuild, alongside the freshly generated parts."""
     for child in list(hood_obj.children):
         if child.get(HOOD_PART_TAG) and not child.get('IS_MANUAL_PART'):
-            bpy.data.objects.remove(child, do_unlink=True)
+            _remove_part_object(child)
 
 
 def _panel(hood_obj, name):
@@ -1926,7 +1940,7 @@ def remove_wood_hood(hood_obj):
     style choice routes here."""
     for child in list(hood_obj.children):
         if child.get(HOOD_PART_TAG):
-            bpy.data.objects.remove(child, do_unlink=True)
+            _remove_part_object(child)
     if HOOD_STYLE_PROP in hood_obj.keys():
         del hood_obj[HOOD_STYLE_PROP]
 
@@ -1991,6 +2005,9 @@ class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
 
     def execute(self, context):
         build_wood_hood(context.active_object, self.style)
+        # Depsgraph current before the next draw (objects were removed /
+        # created) -- see the prompts dialog's _apply.
+        context.view_layer.update()
         if self.style == 'NONE':
             self.report({'INFO'}, "Removed wood hood")
         else:
@@ -2242,17 +2259,17 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         if self.hood.get(HOOD_CUSTOM_PROP) is None:
             # First time on this hood: seed the taper from the current size.
             self.top_width = self.width / 2.0
+        # Baseline for the _apply dedupe: opening the dialog (and OK
+        # with no edits) must not churn a rebuild -- this also means a
+        # legacy-styled hood keeps its geometry until a field actually
+        # changes.
+        self._applied_key = self._state_key()
         return context.window_manager.invoke_props_dialog(self, width=330)
 
-    def _apply(self):
-        # Set the cage size before rebuilding so the static styles, which read
-        # the cage dims at build time, pick up the new dimensions.
-        wrap = _HoodWrap(self.hood)
-        wrap.set_input('Dim X', self.width)
-        wrap.set_input('Dim Y', self.depth)
-        wrap.set_input('Dim Z', self.height)
-        if self.style == 'CUSTOM':
-            self.hood[HOOD_CUSTOM_PROP] = {
+    def _opts_dict(self):
+        """The CUSTOM option set exactly as persisted on the hood cage
+        (HOOD_CUSTOM_PROP)."""
+        return {
                 'angle_front': self.angle_front,
                 'top_depth': self.top_depth,
                 'angle_sides': self.angle_sides,
@@ -2290,8 +2307,37 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'door_grid_row_ratios': self.door_grid_row_ratios,
                 'include_shiplap': self.include_shiplap,
                 'shiplap_board_width': inch(float(self.shiplap_board_width)),
-            }
+        }
+
+    def _state_key(self):
+        """Hashable snapshot of everything _apply would build from."""
+        return (self.style, round(self.width, 6), round(self.height, 6),
+                round(self.depth, 6), repr(self._opts_dict()))
+
+    def _apply(self):
+        # Dedupe: check() fires on EVERY dialog interaction -- section
+        # tab switches included -- and each apply used to wipe + rebuild
+        # every hood part object. Deleting / recreating objects from
+        # inside a dialog check() at that rate destabilizes the draw
+        # cache (crash in DRW_cache_free_old_batches walking a freed
+        # object). Only rebuild when the effective state changed.
+        key = self._state_key()
+        if getattr(self, '_applied_key', None) == key:
+            return
+        self._applied_key = key
+        # Set the cage size before rebuilding so the static styles, which read
+        # the cage dims at build time, pick up the new dimensions.
+        wrap = _HoodWrap(self.hood)
+        wrap.set_input('Dim X', self.width)
+        wrap.set_input('Dim Y', self.depth)
+        wrap.set_input('Dim Z', self.height)
+        if self.style == 'CUSTOM':
+            self.hood[HOOD_CUSTOM_PROP] = self._opts_dict()
         build_wood_hood(self.hood, self.style)
+        # Force the depsgraph current before the next viewport draw:
+        # the rebuild just removed / created objects mid-dialog, and a
+        # draw against stale depsgraph references is a hard crash.
+        bpy.context.view_layer.update()
 
     def check(self, context):
         self._apply()
