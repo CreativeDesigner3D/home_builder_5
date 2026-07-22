@@ -4841,7 +4841,11 @@ class FaceFrameCabinet(GeoNodeCage):
             if role in (PART_ROLE_PIPE_CHASE_CUTTER,
                         PART_ROLE_PIPE_CHASE_PANEL):
                 continue
-            if role in PIPE_CHASE_CUT_PART_ROLES or role == side_role:
+            # side_role is None when no side notch applies; guard it so
+            # roleless objects (split nodes, cages - role None) never
+            # match. A None target crashes modifiers.new on an EMPTY.
+            if role in PIPE_CHASE_CUT_PART_ROLES or (
+                    side_role is not None and role == side_role):
                 yield obj
             stack.extend(obj.children)
 
@@ -4853,6 +4857,8 @@ class FaceFrameCabinet(GeoNodeCage):
         targets = set()
         for part in self._iter_pipe_chase_cut_targets(cab):
             targets.add(part)
+            if part.type != 'MESH':
+                continue
             mod = part.modifiers.get(PIPE_CHASE_CUT_MOD_NAME)
             if mod is None:
                 mod = part.modifiers.new(name=PIPE_CHASE_CUT_MOD_NAME,
