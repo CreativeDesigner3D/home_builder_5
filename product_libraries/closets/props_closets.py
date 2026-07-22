@@ -141,6 +141,40 @@ class Closet_Starter_Props(PropertyGroup):
         name="Include Countertop", default=False,
         update=_update_starter_prop)  # type: ignore
 
+    # End options. Finished end and drill
+    # through are flags a downstream machining pass consumes (blind vs
+    # through machining, edge treatment); turn-off frees the panel
+    # thickness back to the openings for shared-panel runs; battens are
+    # cosmetic scribe strips.
+    left_finished_end: BoolProperty(
+        name="Left Finished End", default=False,
+        update=_update_starter_prop)  # type: ignore
+    right_finished_end: BoolProperty(
+        name="Right Finished End", default=False,
+        update=_update_starter_prop)  # type: ignore
+    turn_off_left_panel: BoolProperty(
+        name="Turn Off Left Panel",
+        description="Hide the left end panel and give its thickness to "
+                    "the first bay (share a panel with the neighbor)",
+        default=False, update=_update_starter_prop)  # type: ignore
+    turn_off_right_panel: BoolProperty(
+        name="Turn Off Right Panel",
+        description="Hide the right end panel and give its thickness to "
+                    "the last bay (share a panel with the neighbor)",
+        default=False, update=_update_starter_prop)  # type: ignore
+    drill_through_left: BoolProperty(
+        name="Drill Through Left Side", default=False,
+        update=_update_starter_prop)  # type: ignore
+    drill_through_right: BoolProperty(
+        name="Drill Through Right Side", default=False,
+        update=_update_starter_prop)  # type: ignore
+    include_batten_left: BoolProperty(
+        name="Include Batten Left", default=False,
+        update=_update_starter_prop)  # type: ignore
+    include_batten_right: BoolProperty(
+        name="Include Batten Right", default=False,
+        update=_update_starter_prop)  # type: ignore
+
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
     # dialog gates on that.
@@ -207,6 +241,12 @@ class Closet_Bay_Props(PropertyGroup):
     remove_cleat: BoolProperty(
         name="Remove Cleat", default=starter_presets.BAY_PROP_DEFAULTS['remove_cleat'],
         update=_update_bay_prop)  # type: ignore
+    double_panel_left: BoolProperty(
+        name="Double Panel",
+        description="Add a second partition at this bay's left junction "
+                    "so this bay and its left neighbor each get their "
+                    "own panel",
+        default=False, update=_update_bay_prop)  # type: ignore
 
 
 # ---------------------------------------------------------------------------

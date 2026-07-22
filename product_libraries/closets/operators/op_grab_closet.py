@@ -154,7 +154,8 @@ def _collect_boundaries(scene, mode=None):
                       key=lambda o: o.get('hb_bay_index', 0))
         panels = sorted([c for c in root.children
                          if c.get('hb_part_role')
-                         == types_closets.PART_ROLE_PANEL],
+                         == types_closets.PART_ROLE_PANEL
+                         and not c.get('hb_double_partition')],
                         key=lambda o: o.get('hb_panel_index', 0))
         n = len(bays)
 

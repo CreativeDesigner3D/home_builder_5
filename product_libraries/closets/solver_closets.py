@@ -23,16 +23,22 @@ panel. Depth is the max of the neighbor depths.
 from . import const_closets as const
 
 
-def distribute_widths(total_width, panel_thickness, bays):
+def distribute_widths(total_width, panel_thickness, bays, panel_total=None):
     """Split the interior width across bays.
 
     bays: list of dicts with 'width' and 'locked'. Locked bays hold their
     width; unlocked bays share the remainder equally (min MIN_BAY_WIDTH,
     so an over-constrained starter degrades visibly instead of going
     negative). Returns a list of widths, one per bay.
+
+    panel_total: combined thickness of all vertical panels. Defaults to
+    the plain (n+1) * pt; turned-off end panels and doubled junctions
+    change it.
     """
     n = len(bays)
-    interior = total_width - (n + 1) * panel_thickness
+    if panel_total is None:
+        panel_total = (n + 1) * panel_thickness
+    interior = total_width - panel_total
     locked_total = sum(b['width'] for b in bays if b['locked'])
     unlocked = [i for i, b in enumerate(bays) if not b['locked']]
     widths = [b['width'] for b in bays]
@@ -75,25 +81,62 @@ def compute_layout(spec):
                (bottom_z, top_z, cleat_z, interior_z, interior_h).
     """
     n = len(spec.bays)
-    widths = distribute_widths(spec.width, spec.pt, spec.bays)
+    left_off = getattr(spec, 'left_panel_off', False)
+    right_off = getattr(spec, 'right_panel_off', False)
 
-    # Panel left edges: panel 0 at x=0, then alternate panel/bay runs.
+    # Per-junction panel thickness: a turned-off
+    # end panel gives its thickness back to the interior; a doubled
+    # junction (bay['double_left']) takes two.
+    t = []
+    for i in range(n + 1):
+        if i == 0:
+            t.append(0.0 if left_off else spec.pt)
+        elif i == n:
+            t.append(0.0 if right_off else spec.pt)
+        else:
+            t.append(spec.pt * 2.0
+                     if spec.bays[i].get('double_left') else spec.pt)
+    widths = distribute_widths(spec.width, spec.pt, spec.bays,
+                               panel_total=sum(t))
+
+    # Junction left edges + bay left edges.
     xs = [0.0]
-    for w in widths:
-        xs.append(xs[-1] + spec.pt + w)
+    bay_x = []
+    for i, w in enumerate(widths):
+        bay_x.append(xs[i] + t[i])
+        xs.append(bay_x[i] + w)
 
     panels = []
+    doubles = []
     for i in range(n + 1):
         left = spec.bays[i - 1] if i > 0 else None
         right = spec.bays[i] if i < n else None
-        sides = [s for s in (left, right) if s is not None]
+        doubled = 0 < i < n and bool(spec.bays[i].get('double_left'))
+        if doubled:
+            # Doubled junction: the second panel
+            # serves the LEFT bay; the primary panel shifts right one
+            # thickness and serves the RIGHT bay only.
+            doubles.append({
+                'junction': i,
+                'x': xs[i],
+                'z': _side_bottom(left, spec.height),
+                'length': (_side_top(left, spec.height)
+                           - _side_bottom(left, spec.height)),
+                'depth': left['depth'],
+            })
+            sides = [right]
+            px = xs[i] + spec.pt
+        else:
+            sides = [s for s in (left, right) if s is not None]
+            px = xs[i]
         top = max(_side_top(s, spec.height) for s in sides)
         bottom = min(_side_bottom(s, spec.height) for s in sides)
         panels.append({
-            'x': xs[i],
+            'x': px,
             'z': bottom,
             'length': top - bottom,
             'depth': max(s['depth'] for s in sides),
+            'hidden': (i == 0 and left_off) or (i == n and right_off),
         })
 
     bays_out = []
@@ -109,7 +152,7 @@ def compute_layout(spec):
         # anchors the panels at the floor / hang line instead).
         cleat_z = 0.0 if b['remove_bottom'] else interior_z
         bays_out.append({
-            'x': xs[i] + spec.pt,
+            'x': bay_x[i],
             'z0': z0,
             'width': widths[i],
             'height': b['height'],
@@ -123,4 +166,5 @@ def compute_layout(spec):
             'interior_h': interior_h,
         })
 
-    return {'widths': widths, 'panels': panels, 'bays': bays_out}
+    return {'widths': widths, 'panels': panels, 'doubles': doubles,
+            'bays': bays_out}

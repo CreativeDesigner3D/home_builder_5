@@ -46,6 +46,7 @@ PART_ROLE_TOP_SHELF = 'CLOSET_TOP_SHELF'
 PART_ROLE_TOE_KICK = 'CLOSET_TOE_KICK'
 PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
+PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 
@@ -412,7 +413,8 @@ class ClosetStarter(GeoNodeCage):
 
     def _sorted_panels(self):
         panels = [c for c in self.obj.children
-                  if c.get('hb_part_role') == PART_ROLE_PANEL]
+                  if c.get('hb_part_role') == PART_ROLE_PANEL
+                  and not c.get('hb_double_partition')]
         panels.sort(key=lambda o: o.get('hb_panel_index', 0))
         return panels
 
@@ -434,7 +436,7 @@ class ClosetStarter(GeoNodeCage):
     def _spec_from_props(self, scene_props):
         sp = self.obj.hb_closet_starter
         bays = []
-        for bay_obj in self._sorted_bays():
+        for idx, bay_obj in enumerate(self._sorted_bays()):
             bp = bay_obj.hb_closet_bay
             bays.append({
                 'width': bp.width,
@@ -444,6 +446,10 @@ class ClosetStarter(GeoNodeCage):
                 'floor': bp.floor_mounted,
                 'remove_bottom': bp.remove_bottom,
                 'remove_cleat': bp.remove_cleat,
+                # Junction option: doubled partition at this bay's LEFT
+                # junction (never on the first bay - that's the end).
+                'double_left': bool(bp.double_panel_left) if idx > 0
+                               else False,
             })
         return SimpleNamespace(
             width=sp.width,
@@ -452,6 +458,8 @@ class ClosetStarter(GeoNodeCage):
             st=scene_props.shelf_thickness,
             kick_height=sp.toe_kick_height,
             kick_setback=sp.toe_kick_setback,
+            left_panel_off=sp.turn_off_left_panel,
+            right_panel_off=sp.turn_off_right_panel,
             bays=bays,
         )
 
@@ -503,6 +511,7 @@ class ClosetStarter(GeoNodeCage):
             self._layout_bays(layout, scene_props, sp)
             self._layout_starter_parts(layout, scene_props, sp)
             self._layout_bridge_parts(layout, scene_props, sp)
+            self._layout_battens(layout, scene_props, sp)
 
             # Hanging starters anchor at their TOP (the wall mount): a
             # height edit grows the unit downward. The last-applied
@@ -522,12 +531,99 @@ class ClosetStarter(GeoNodeCage):
 
     def _layout_panels(self, layout, scene_props):
         pt = scene_props.panel_thickness
-        for child, panel in zip(self._sorted_panels(), layout['panels']):
+        sp = self.obj.hb_closet_starter
+        panels = self._sorted_panels()
+        last = len(panels) - 1
+        for i, (child, panel) in enumerate(zip(panels, layout['panels'])):
             child.location = (panel['x'], 0.0, panel['z'])
             part = GeoNodeCutpart(child)
             part.set_input('Length', panel['length'])
             part.set_input('Width', panel['depth'])
             part.set_input('Thickness', pt)
+            # Turn Off Panel: hidden, thickness reclaimed by the solver.
+            off = bool(panel.get('hidden'))
+            child['hb_panel_off'] = 1 if off else 0
+            _set_part_hidden(child, off)
+            # End flags for downstream machining (blind vs
+            # through system holes, edge treatment). Flags only - no
+            # machining in the library.
+            if i == 0:
+                child['hb_finished_end'] = 1 if sp.left_finished_end else 0
+                child['hb_drill_through'] = 1 if sp.drill_through_left else 0
+            elif i == last:
+                child['hb_finished_end'] = 1 if sp.right_finished_end else 0
+                child['hb_drill_through'] = 1 if sp.drill_through_right else 0
+        self._reconcile_double_panels(layout, scene_props)
+
+    def _reconcile_double_panels(self, layout, scene_props):
+        """A second partition back-to-back at a
+        doubled junction, serving the LEFT bay (the primary partition
+        shifts right and serves only the RIGHT bay - the solver already
+        placed it). Created/removed to match the layout."""
+        pt = scene_props.panel_thickness
+        want = {d['junction']: d for d in layout.get('doubles', [])}
+        have = {}
+        for c in list(self.obj.children):
+            if c.get('hb_double_partition'):
+                j = c.get('hb_double_index', -1)
+                if j in want and j not in have:
+                    have[j] = c
+                else:
+                    bpy.data.objects.remove(c, do_unlink=True)
+        for j, d in want.items():
+            c = have.get(j)
+            if c is None:
+                p = CabinetPart()
+                p.create(f'Double Partition {j + 1}')
+                p.obj.parent = self.obj
+                p.obj['hb_part_role'] = PART_ROLE_PANEL
+                p.obj['hb_double_partition'] = 1
+                p.obj['hb_double_index'] = j
+                p.obj.rotation_euler.y = math.radians(-90)
+                p.set_input('Mirror Y', True)
+                p.set_input('Mirror Z', True)
+                c = p.obj
+            c.location = (d['x'], 0.0, d['z'])
+            part = GeoNodeCutpart(c)
+            part.set_input('Length', d['length'])
+            part.set_input('Width', d['depth'])
+            part.set_input('Thickness', pt)
+
+    def _layout_battens(self, layout, scene_props, sp):
+        """A 0.25 x 1.125 in vertical
+        scribe strip against the inner face of an end panel at the
+        front edge, spanning the end bay's height. Cosmetic part -
+        no machining."""
+        bays = layout['bays']
+        if not bays:
+            return
+        have = {c.get('hb_batten'): c for c in self.obj.children
+                if c.get('hb_batten')}
+        for side in ('LEFT', 'RIGHT'):
+            c = have.get(side)
+            if c is None:
+                p = CabinetPart()
+                p.create(f'{side.title()} Batten')
+                p.obj.parent = self.obj
+                p.obj['hb_part_role'] = PART_ROLE_BATTEN
+                p.obj['hb_batten'] = side
+                p.obj.rotation_euler.y = math.radians(-90)
+                p.set_input('Mirror Y', True)
+                p.set_input('Mirror Z', True)
+                c = p.obj
+            bay = bays[0] if side == 'LEFT' else bays[-1]
+            include = (sp.include_batten_left if side == 'LEFT'
+                       else sp.include_batten_right)
+            if side == 'LEFT':
+                x = bay['x']
+            else:
+                x = bay['x'] + bay['width'] - const.BATTEN_THICKNESS
+            c.location = (x, -bay['depth'] + const.BATTEN_WIDTH, bay['z0'])
+            part = GeoNodeCutpart(c)
+            part.set_input('Length', bay['height'])
+            part.set_input('Width', const.BATTEN_WIDTH)
+            part.set_input('Thickness', const.BATTEN_THICKNESS)
+            _set_part_hidden(c, not include)
 
     def _layout_bays(self, layout, scene_props, sp):
         st = scene_props.shelf_thickness

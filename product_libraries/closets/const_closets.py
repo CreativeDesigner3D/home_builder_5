@@ -15,6 +15,10 @@ SHELF_THICKNESS = inch(0.75)
 COUNTERTOP_THICKNESS = inch(1.125)
 APPLIED_BACK_THICKNESS = inch(0.75)
 CLEAT_WIDTH = inch(4.0)
+# End-panel batten: a cosmetic scribe strip against the
+# inner face of an end panel at the front edge.
+BATTEN_WIDTH = inch(1.125)
+BATTEN_THICKNESS = inch(0.25)
 # Wall hang rail (the strip the closet hangs from / anchors to). Legacy
 # profile: 1.125 in tall x 0.25 in thick, rail bottom 3.3125 in below
 # the section top.

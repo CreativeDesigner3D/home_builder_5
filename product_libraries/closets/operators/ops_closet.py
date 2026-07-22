@@ -2455,6 +2455,22 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(sp, 'l_back_width')
             col.prop(sp, 'l_flip_partition')
+        else:
+            box = layout.box()
+            box.label(text="Ends")
+            row = box.row(align=True)
+            col = row.column(align=True)
+            col.label(text="Left")
+            col.prop(sp, 'left_finished_end', text="Finished End")
+            col.prop(sp, 'turn_off_left_panel', text="Turn Off Panel")
+            col.prop(sp, 'drill_through_left', text="Drill Through")
+            col.prop(sp, 'include_batten_left', text="Batten")
+            col = row.column(align=True)
+            col.label(text="Right")
+            col.prop(sp, 'right_finished_end', text="Finished End")
+            col.prop(sp, 'turn_off_right_panel', text="Turn Off Panel")
+            col.prop(sp, 'drill_through_right', text="Drill Through")
+            col.prop(sp, 'include_batten_right', text="Batten")
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],
@@ -2472,6 +2488,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 row.prop(bp, 'height', text="")
                 row.prop(bp, 'depth', text="")
                 row.prop(bp, 'floor_mounted', text="", icon='TRIA_DOWN_BAR')
+                if bp.bay_index >= 1:
+                    row.prop(bp, 'double_panel_left', text="",
+                             icon='DUPLICATE')
+                else:
+                    row.label(text="", icon='BLANK1')
 
     def execute(self, context):
         return {'FINISHED'}
