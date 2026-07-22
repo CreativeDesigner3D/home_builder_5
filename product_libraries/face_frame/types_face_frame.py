@@ -4802,14 +4802,21 @@ class FaceFrameCabinet(GeoNodeCage):
         spans the chase footprint (back at y=0), pushed past the back /
         floor / top faces by a margin so the boolean cuts cleanly through;
         corner chases also push past the cabinet's outer edge so the
-        optional side notch opens through the side's outside face."""
+        optional side notch opens through the side's outside face. An
+        applied finished back sits OUTSIDE the cage (Y in [0, thickness],
+        optionally extended past the cabinet ends), so the rear face and
+        the corner overshoot grow to punch all the way through it."""
         margin = inch(0.5)
+        rear = 0.0
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_FINISHED_BACK:
+                rear = max(rear, child.location.y)
         x0, x1 = x_lo, x_hi
         if cab.chase_location == 'LEFT_BACK':
-            x0 -= margin
+            x0 -= margin + max(0.0, getattr(cab, 'back_finished_extend_left', 0.0))
         elif cab.chase_location == 'RIGHT_BACK':
-            x1 += margin
-        y0, y1 = -depth, margin
+            x1 += margin + max(0.0, getattr(cab, 'back_finished_extend_right', 0.0))
+        y0, y1 = -depth, rear + margin
         z0, z1 = -margin, cab.height + margin
         bm = bmesh.new()
         bmesh.ops.create_cube(bm, size=1.0)
