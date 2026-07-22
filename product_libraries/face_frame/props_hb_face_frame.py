@@ -512,7 +512,7 @@ def _reapply_materials_for_door_style(door_style, context):
     ff = get_style_props()
     styles_by_name = {cs.name: cs for cs in ff.cabinet_styles}
     seen = set()
-    for obj in context.scene.objects:
+    for obj in list(context.scene.objects):
         if obj.get('DOOR_STYLE_NAME') != target:
             continue
         cur, cab = obj, None
@@ -587,12 +587,22 @@ def _propagate_cabinet_style(self, context):
     from . import types_face_frame
     target_name = self.name
     with types_face_frame.suspend_recalc():
-        for obj in context.scene.objects:
-            if obj.get('STYLE_NAME') != target_name:
-                continue
+        # Snapshot the targets BEFORE acting: rebuild_built_hood deletes
+        # and recreates the hood's part objects immediately (it is not
+        # deferred by suspend_recalc like the cabinet recalcs), and
+        # removing scene members under a live scene.objects iterator
+        # walks freed memory -- hard crash (EXCEPTION_ACCESS_VIOLATION
+        # in Scene_objects_next). The targets themselves are root cages
+        # / hood cages, which no step deletes, so the snapshot stays
+        # valid throughout.
+        targets = [obj for obj in context.scene.objects
+                   if obj.get('STYLE_NAME') == target_name
+                   and (obj.get('IS_FACE_FRAME_CABINET_CAGE')
+                        or obj.get('APPLIANCE_TYPE') == 'HOOD')]
+        for obj in targets:
             if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
                 self.assign_style_to_cabinet(obj)
-            elif obj.get('APPLIANCE_TYPE') == 'HOOD':
+            else:
                 # Hood doors are static python-built meshes: a door-style
                 # / overlay edit must rebuild the built hood (the rebuild
                 # re-pushes the finish). Unbuilt hoods just take the
@@ -616,10 +626,14 @@ def _propagate_door_style(self, context):
     roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES
              if _front_is_drawer(self)
              else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
-    for obj in context.scene.objects:
-        if (obj.get('DOOR_STYLE_NAME') == target_name
-                and obj.get('hb_part_role') in roles):
-            self.assign_style_to_front(obj)
+    # Snapshot before acting: restyling can add / remove scene objects,
+    # and mutating scene membership under a live scene.objects iterator
+    # is a hard crash (see _propagate_cabinet_style).
+    fronts = [obj for obj in context.scene.objects
+              if obj.get('DOOR_STYLE_NAME') == target_name
+              and obj.get('hb_part_role') in roles]
+    for obj in fronts:
+        self.assign_style_to_front(obj)
     # Wood-hood doors are static python-built meshes, not restyleable
     # fronts -- rebuild any built hood whose resolved cabinet style uses
     # this door style (STYLE_NAME's style, else the active style, the
@@ -630,9 +644,11 @@ def _propagate_door_style(self, context):
         active = (ff.cabinet_styles[ff.active_cabinet_style_index]
                   if 0 <= ff.active_cabinet_style_index < len(ff.cabinet_styles)
                   else None)
-        for obj in context.scene.objects:
-            if obj.get('APPLIANCE_TYPE') != 'HOOD':
-                continue
+        # Snapshot: the hood rebuild deletes / recreates the hood's part
+        # objects, which would invalidate a live scene.objects iterator.
+        hoods = [obj for obj in context.scene.objects
+                 if obj.get('APPLIANCE_TYPE') == 'HOOD']
+        for obj in hoods:
             name = obj.get('STYLE_NAME')
             style = next((s for s in ff.cabinet_styles if s.name == name),
                          None) if name else None
@@ -650,10 +666,12 @@ def _propagate_door_style(self, context):
         if matched:
             by_name = {ds.name: ds for ds in ff.drawer_front_styles}
             drw_roles = Face_Frame_Door_Style._DRAWER_FRONT_ROLES
-            for obj in context.scene.objects:
-                tag = obj.get('DOOR_STYLE_NAME')
-                if tag in matched and obj.get('hb_part_role') in drw_roles:
-                    by_name[tag].assign_style_to_front(obj)
+            drawer_fronts = [
+                obj for obj in context.scene.objects
+                if obj.get('DOOR_STYLE_NAME') in matched
+                and obj.get('hb_part_role') in drw_roles]
+            for obj in drawer_fronts:
+                by_name[obj.get('DOOR_STYLE_NAME')].assign_style_to_front(obj)
 
 
 def update_face_frame_sizes(self, context):
@@ -803,9 +821,10 @@ def update_include_drawer_boxes(self, context):
     """
     from . import types_face_frame
     with types_face_frame.suspend_recalc():
-        for obj in context.scene.objects:
-            if obj.get(types_face_frame.TAG_CABINET_CAGE):
-                types_face_frame.recalculate_face_frame_cabinet(obj)
+        cages = [obj for obj in context.scene.objects
+                 if obj.get(types_face_frame.TAG_CABINET_CAGE)]
+        for obj in cages:
+            types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -6851,8 +6870,14 @@ def _update_pulls_on_selection_change(self, context):
     on its next pass.
     """
     from . import types_face_frame
-    for obj in context.scene.objects:
-        if obj.get(types_face_frame.TAG_CABINET_CAGE):
+    # Snapshot + suspend: without the suspend each recalc runs
+    # immediately, deleting / recreating parts (scene objects) while
+    # scene.objects was being iterated live -- hard crash. The suspend
+    # also coalesces to one recalc per cabinet.
+    with types_face_frame.suspend_recalc():
+        cages = [obj for obj in context.scene.objects
+                 if obj.get(types_face_frame.TAG_CABINET_CAGE)]
+        for obj in cages:
             types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
