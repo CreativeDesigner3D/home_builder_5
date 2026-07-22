@@ -542,6 +542,27 @@ WEDGE_CUT_PART_ROLES = frozenset({
     PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
 })
 
+# Pipe chase: full-height notch at a back corner (or the back middle)
+# for plumbing / vent runs. Same lazy box-cutter + boolean pattern as
+# the tip-up wedge, driven by the chase_* cabinet props. Cover panels
+# (real CabinetParts, PART_ROLE_PIPE_CHASE_PANEL) close the opening
+# from the cabinet interior; managed by _apply_pipe_chase.
+PART_ROLE_PIPE_CHASE_CUTTER = 'PIPE_CHASE_CUTTER'
+PART_ROLE_PIPE_CHASE_PANEL = 'PIPE_CHASE_PANEL'
+PIPE_CHASE_CUT_MOD_NAME = 'Pipe Chase'
+PIPE_CHASE_PANEL_THICKNESS = inch(0.75)
+PIPE_CHASE_CUT_PART_ROLES = frozenset({
+    PART_ROLE_BACK, PART_ROLE_FINISHED_BACK,
+    PART_ROLE_BOTTOM, PART_ROLE_TOP,
+    PART_ROLE_REAR_STRETCHER,
+    PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
+    PART_ROLE_MID_DIVISION,
+    PART_ROLE_BAY_SHELF,
+    PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+    PART_ROLE_TRAY_LOCKED_SHELF,
+    PART_ROLE_INTERIOR_FIXED_SHELF,
+})
+
 # Angled back-extension trim cutter. The full-depth TOP / BOTTOM (and
 # shelves) can't be a trapezoid natively (they are rectangular cutparts),
 # so they are first extended rectangularly to reach the extended back
@@ -2634,6 +2655,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 if _k in self.obj:
                     del self.obj[_k]
 
+        # Pipe chase: full-height back-corner / back-middle notch with
+        # cover panels. Re-applied here so it survives part
+        # reconciliation, exactly like the tip-up wedge. No-op + cleanup
+        # when chase_enabled is off.
+        self._apply_pipe_chase(layout)
+
     def _part_ff_theta(self, layout, role, child):
         """Z rotation added to a FF part's baseline. Single-plane cabinets
         (square or single-bay angled) share one face_frame_angle.
@@ -4711,6 +4738,241 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
+
+    # =====================================================================
+    # Pipe chase (back corner / back middle notch + cover panels)
+    # =====================================================================
+    def _chase_extents(self, cab):
+        """(x_lo, x_hi) of the chase cut in cabinet-local X, clamped to
+        the cabinet. None when disabled-degenerate (zero size)."""
+        w = min(cab.chase_width, cab.width)
+        if w <= 0.0 or cab.chase_depth <= 0.0:
+            return None
+        if cab.chase_location == 'LEFT_BACK':
+            return 0.0, w
+        if cab.chase_location == 'RIGHT_BACK':
+            return cab.width - w, cab.width
+        off = max(0.0, min(cab.chase_offset, cab.width - w))
+        return off, off + w
+
+    def _apply_pipe_chase(self, layout):
+        """Notch the chosen back corner (or the back middle) full height
+        for a pipe chase and close the opening with cover panels. Managed
+        like the wedge: ensure / position / cleanup, safe every recalc."""
+        cab = self.obj.face_frame_cabinet
+        span = (self._chase_extents(cab)
+                if getattr(cab, 'chase_enabled', False) and self._has_carcass()
+                else None)
+        if span is None:
+            self._cleanup_pipe_chase()
+            return
+        x_lo, x_hi = span
+        depth = min(cab.chase_depth, cab.depth)
+        cutter = self._ensure_pipe_chase_cutter()
+        self._position_pipe_chase_cutter(cutter, cab, x_lo, x_hi, depth)
+        self._apply_pipe_chase_cuts(cutter, cab)
+        self._build_pipe_chase_panels(layout, cab, x_lo, x_hi, depth)
+        # Publish the applied spec on the root (meters) so downstream
+        # consumers (drawings / pricing) can read it without recomputing.
+        # Cleared when the chase is removed.
+        self.obj['PIPE_CHASE_LOCATION'] = cab.chase_location
+        self.obj['PIPE_CHASE_WIDTH'] = x_hi - x_lo
+        self.obj['PIPE_CHASE_DEPTH'] = depth
+
+    def _ensure_pipe_chase_cutter(self):
+        """Find or lazily create the chase cutter MESH object. Hidden in
+        the viewport; a boolean still reads its mesh regardless."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_PIPE_CHASE_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Pipe Chase Cutter')
+        cutter = bpy.data.objects.new('Pipe Chase Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_PIPE_CHASE_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_pipe_chase_cutter(self, cutter_obj, cab, x_lo, x_hi, depth):
+        """Rebuild the cutter's box mesh from the live chase dims. The box
+        spans the chase footprint (back at y=0), pushed past the back /
+        floor / top faces by a margin so the boolean cuts cleanly through;
+        corner chases also push past the cabinet's outer edge so the
+        optional side notch opens through the side's outside face."""
+        margin = inch(0.5)
+        x0, x1 = x_lo, x_hi
+        if cab.chase_location == 'LEFT_BACK':
+            x0 -= margin
+        elif cab.chase_location == 'RIGHT_BACK':
+            x1 += margin
+        y0, y1 = -depth, margin
+        z0, z1 = -margin, cab.height + margin
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        for v in bm.verts:
+            v.co.x = x0 if v.co.x < 0.0 else x1
+            v.co.y = y0 if v.co.y < 0.0 else y1
+            v.co.z = z0 if v.co.z < 0.0 else z1
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+
+    def _iter_pipe_chase_cut_targets(self, cab):
+        """Root cage + carcass / interior parts the chase notch passes
+        through. The adjacent side panel is included only for a corner
+        chase with the optional side notch on. Parts outside the chase
+        footprint are unaffected by the boolean, so over-targeting is
+        harmless. Mirrors _iter_wedge_cut_targets."""
+        side_role = None
+        if getattr(cab, 'chase_notch_side', False):
+            if cab.chase_location == 'LEFT_BACK':
+                side_role = PART_ROLE_LEFT_SIDE
+            elif cab.chase_location == 'RIGHT_BACK':
+                side_role = PART_ROLE_RIGHT_SIDE
+        yield self.obj
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            role = obj.get('hb_part_role')
+            if role in (PART_ROLE_PIPE_CHASE_CUTTER,
+                        PART_ROLE_PIPE_CHASE_PANEL):
+                continue
+            if role in PIPE_CHASE_CUT_PART_ROLES or role == side_role:
+                yield obj
+            stack.extend(obj.children)
+
+    def _apply_pipe_chase_cuts(self, cutter_obj, cab):
+        """Ensure every target carries a boolean DIFFERENCE modifier named
+        PIPE_CHASE_CUT_MOD_NAME pointing at the cutter, and strip it from
+        anything no longer targeted (side notch toggled off, location
+        flipped). Idempotent; safe every recalc."""
+        targets = set()
+        for part in self._iter_pipe_chase_cut_targets(cab):
+            targets.add(part)
+            mod = part.modifiers.get(PIPE_CHASE_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=PIPE_CHASE_CUT_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            if obj not in targets:
+                mod = obj.modifiers.get(PIPE_CHASE_CUT_MOD_NAME)
+                if mod is not None:
+                    obj.modifiers.remove(mod)
+            stack.extend(obj.children)
+
+    def _ensure_chase_panel(self, slot, name):
+        """Find or create the cover panel for a chase slot ('FACE',
+        'RETURN_L', 'RETURN_R'). Reconciled in place so user material /
+        naming edits survive resizes."""
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_PIPE_CHASE_PANEL
+                    and child.get('hb_chase_slot') == slot):
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = PART_ROLE_PIPE_CHASE_PANEL
+        part.obj['CABINET_PART'] = True
+        part.obj['hb_chase_slot'] = slot
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        return part.obj
+
+    def _build_pipe_chase_panels(self, layout, cab, x_lo, x_hi, depth):
+        """Cover panels closing the chase opening from the cabinet
+        interior, flush with the cut faces: a face panel parallel to the
+        back at the chase depth, plus a return parallel to the side at
+        each open chase edge (one for a corner chase, two for a middle
+        chase). All run the cabinet's full height, passing through the
+        notches the cutter leaves in the bottom / stretchers / top."""
+        t = PIPE_CHASE_PANEL_THICKNESS
+        loc = cab.chase_location
+        # Face panel X span: butt against the intact side panel's inner
+        # face on a corner chase (unless the side itself is notched away).
+        face_lo, face_hi = x_lo, x_hi
+        notch_side = getattr(cab, 'chase_notch_side', False)
+        if loc == 'LEFT_BACK' and not notch_side:
+            face_lo = min(x_hi, x_lo + solver.left_side_thickness(layout))
+        elif loc == 'RIGHT_BACK' and not notch_side:
+            face_hi = max(x_lo, x_hi - solver.right_side_thickness(layout))
+
+        wanted = {}
+        if face_hi - face_lo > 0.0:
+            wanted['FACE'] = ('Chase Face',
+                              (face_lo, -depth + t, 0.0),
+                              face_hi - face_lo)
+        if depth - t > 0.0:
+            if loc in ('RIGHT_BACK', 'BACK_MIDDLE'):
+                wanted['RETURN_L'] = ('Chase Return',
+                                      (x_lo, 0.0, 0.0), depth - t)
+            if loc in ('LEFT_BACK', 'BACK_MIDDLE'):
+                wanted['RETURN_R'] = ('Chase Return',
+                                      (x_hi - t, 0.0, 0.0), depth - t)
+
+        # Drop panels whose slot is no longer wanted (location changed).
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == PART_ROLE_PIPE_CHASE_PANEL
+                    and child.get('hb_chase_slot') not in wanted):
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+        for slot, (name, position, width) in wanted.items():
+            obj = self._ensure_chase_panel(slot, name)
+            if slot == 'FACE':
+                # Back-panel orientation: Length up, Width along +X,
+                # Thickness toward the cabinet front (-Y).
+                obj.rotation_euler = (math.radians(90), math.radians(-90), 0.0)
+                part = GeoNodeCutpart(obj)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', False)
+            else:
+                # Mid-division orientation: Length up, Width toward the
+                # front (-Y), Thickness along +X.
+                obj.rotation_euler = (0.0, math.radians(-90), 0.0)
+                part = GeoNodeCutpart(obj)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', True)
+            obj.location = position
+            part.set_input('Length', cab.height)
+            part.set_input('Width', width)
+            part.set_input('Thickness', t)
+
+    def _cleanup_pipe_chase(self):
+        """Reverse of _apply_pipe_chase: strip the boolean cuts, remove
+        the cutter and cover panels, clear the published spec. No-op when
+        there's nothing to undo."""
+        objs = [self.obj]
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            objs.append(obj)
+            stack.extend(obj.children)
+        for obj in objs:
+            mod = obj.modifiers.get(PIPE_CHASE_CUT_MOD_NAME)
+            if mod is not None:
+                obj.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') in (PART_ROLE_PIPE_CHASE_CUTTER,
+                                             PART_ROLE_PIPE_CHASE_PANEL):
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+        for _k in ('PIPE_CHASE_LOCATION', 'PIPE_CHASE_WIDTH',
+                   'PIPE_CHASE_DEPTH'):
+            if _k in self.obj:
+                del self.obj[_k]
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)

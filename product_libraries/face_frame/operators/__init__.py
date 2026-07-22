@@ -11,6 +11,7 @@ from . import ops_part_commands
 from . import ops_appliance_panels
 from . import ops_thumbnails
 from . import ops_wedge
+from . import ops_pipe_chase
 
 
 def register():
@@ -27,9 +28,11 @@ def register():
     ops_appliance_panels.register()
     ops_thumbnails.register()
     ops_wedge.register()
+    ops_pipe_chase.register()
 
 
 def unregister():
+    ops_pipe_chase.unregister()
     ops_wedge.unregister()
     ops_thumbnails.unregister()
     ops_appliance_panels.unregister()

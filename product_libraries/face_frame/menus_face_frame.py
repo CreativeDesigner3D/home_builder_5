@@ -121,6 +121,20 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                 layout.operator("hb_face_frame.remove_refrigerator_wedge",
                                 text="Remove Wedge", icon='X')
 
+        # Pipe chase - any carcass cabinet. The operator's poll hides it
+        # on panel-only roots (no carcass to notch).
+        from .operators import ops_pipe_chase
+        if ops_pipe_chase.chase_cabinet_root(context.active_object) is not None:
+            layout.separator()
+            has_chase = root.face_frame_cabinet.chase_enabled
+            layout.operator(
+                "hb_face_frame.add_pipe_chase",
+                text="Edit Pipe Chase..." if has_chase else "Add Pipe Chase...",
+                icon='MOD_BOOLEAN')
+            if has_chase:
+                layout.operator("hb_face_frame.remove_pipe_chase",
+                                text="Remove Pipe Chase", icon='X')
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')

@@ -5446,6 +5446,56 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # Pipe chase: full-height notch at a back corner (or the back middle)
+    # so the cabinet clears plumbing / vent runs, with cover panels
+    # closing the opening from the cabinet interior. The typed size is
+    # the size of the CUT; recalc builds the cutter + covers from these
+    # (see types_face_frame._apply_pipe_chase).
+    chase_enabled: BoolProperty(
+        name="Pipe Chase", default=False,
+        description="Notch the cabinet back for a pipe chase and cover "
+                    "the opening with panels",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_location: EnumProperty(
+        name="Chase Location",
+        items=[
+            ('LEFT_BACK', "Left Back Corner",
+             "Notch the back-left corner of the cabinet"),
+            ('BACK_MIDDLE', "Back Middle",
+             "Notch the middle of the cabinet back"),
+            ('RIGHT_BACK', "Right Back Corner",
+             "Notch the back-right corner of the cabinet"),
+        ],
+        default='LEFT_BACK',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_width: FloatProperty(
+        name="Chase Width", default=units.inch(6.0),
+        unit='LENGTH', precision=4, min=0.0,
+        description="Size of the notch along the cabinet back",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_depth: FloatProperty(
+        name="Chase Depth", default=units.inch(4.0),
+        unit='LENGTH', precision=4, min=0.0,
+        description="Size of the notch into the cabinet, measured from "
+                    "the back",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_offset: FloatProperty(
+        name="Chase Offset", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Back Middle only: distance from the cabinet's left "
+                    "edge to the left edge of the notch",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_notch_side: BoolProperty(
+        name="Notch Side Panel", default=False,
+        description="Corner chases only: also notch the adjacent side "
+                    "panel (pipe intrudes past the cabinet side)",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # ---- Construction-tab section visibility (UI only) ----
     show_angled_back_extension: BoolProperty(
         name="Show Angled Back Extension", default=False)  # type: ignore
