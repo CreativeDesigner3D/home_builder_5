@@ -3751,6 +3751,17 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Locked NONE mode removes the mid rail entirely, overriding both the
         # style's add_mid_rail and the tall-door auto rail.
         ovr_mid_mode = frame_store.get('HB_FRAME_OVR_MID_RAIL_MODE') if frame_locked else None
+        # Per-front mid-member GRID (Set Door Frame): N mid rails / mid
+        # stiles with optional row / column weights. Active only while
+        # the frame is locked; a rail count > 0 supersedes the single
+        # mid-rail modes below.
+        ovr_grid_rails = 0
+        ovr_grid_stiles = 0
+        if frame_locked:
+            ovr_grid_rails = max(
+                int(frame_store.get('HB_FRAME_OVR_MID_RAIL_COUNT', 0) or 0), 0)
+            ovr_grid_stiles = max(
+                int(frame_store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0), 0)
 
         # Match-door-rail (drawer-front styles): a drawer front tall
         # enough to carry the door rails takes the paired door style's
@@ -3797,8 +3808,13 @@ class Face_Frame_Door_Style(PropertyGroup):
                 shape_k = None
 
         min_width = eff_left_stile + eff_right_stile + units.inch(1)
+        if ovr_grid_stiles:
+            _grid_msw = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
+            min_width += ovr_grid_stiles * _grid_msw
         min_height = eff_top_rail + eff_bottom_rail + units.inch(1)
-        if ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
+        if ovr_grid_rails:
+            min_height += ovr_grid_rails * self.mid_rail_width
+        elif ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
             min_height += self.mid_rail_width
 
         # Too small for the frame -> the front renders as a slab, which
@@ -3831,7 +3847,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         mid_on = False
         mid_center = True
         mid_loc = 0.0
-        if ovr_mid_mode != 'NONE' and (needs_auto_mid_rail or self.add_mid_rail or ovr_mid_mode):
+        if not ovr_grid_rails and ovr_mid_mode != 'NONE' \
+                and (needs_auto_mid_rail or self.add_mid_rail or ovr_mid_mode):
             mid_on = True
             if ovr_mid_mode == 'CENTERED':
                 pass
@@ -3900,6 +3917,23 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
                             if mid_on else None),
             )
+            # Mid-member grid override: counts + optional row / column
+            # weights (door_layout divides the field; weight strings are
+            # parsed leniently, blank / invalid = equal cells). Mitered
+            # doors have no mid-member geometry, matching the single
+            # mid rail above.
+            if member_sec is None:
+                if ovr_grid_rails:
+                    info['mid_rail_count'] = ovr_grid_rails
+                    info['mid_rail_z'] = None
+                    info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
+                        frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
+                if ovr_grid_stiles:
+                    info['mid_stile_count'] = max(
+                        int(info.get('mid_stile_count', 0) or 0),
+                        ovr_grid_stiles)
+                    info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
+                        frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
             if shape_k is not None and shape_k.get('twin') \
                     and not info.get('mid_stile_count'):
                 info['mid_stile_count'] = 1

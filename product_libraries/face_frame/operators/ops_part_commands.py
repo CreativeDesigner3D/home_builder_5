@@ -1187,6 +1187,19 @@ def _on_df_mid_loc(self, context):
             _reapply_frame_store(store, front)
 
 
+def _on_df_grid(self, context):
+    """Shared update for the mid-member grid fields (rail / stile counts
+    and their row / column weight strings)."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_MID_RAIL_COUNT'] = self.mid_rails
+        store['HB_FRAME_OVR_MID_STILE_COUNT'] = self.mid_stiles
+        store['HB_FRAME_OVR_ROW_RATIOS'] = self.row_ratios
+        store['HB_FRAME_OVR_COL_RATIOS'] = self.col_ratios
+        _reapply_frame_store(store, front)
+
+
 def _on_df_lock(self, context):
     """Lock pins the whole interface: snapshot the shown values onto the
     OPENING-cage store and flag it locked so the solver honors them on every
@@ -1203,6 +1216,10 @@ def _on_df_lock(self, context):
         store['HB_FRAME_OVR_BOTTOM_RAIL'] = self.bottom_rail
         store['HB_FRAME_OVR_MID_RAIL_MODE'] = self.mid_rail_mode
         store['HB_FRAME_OVR_MID_RAIL_LOCATION'] = self.mid_rail_location
+        store['HB_FRAME_OVR_MID_RAIL_COUNT'] = self.mid_rails
+        store['HB_FRAME_OVR_MID_STILE_COUNT'] = self.mid_stiles
+        store['HB_FRAME_OVR_ROW_RATIOS'] = self.row_ratios
+        store['HB_FRAME_OVR_COL_RATIOS'] = self.col_ratios
         store['HB_FRAME_FRAME_LOCKED'] = True
     else:
         store['HB_FRAME_FRAME_LOCKED'] = False
@@ -1254,6 +1271,32 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
     mid_rail_location: FloatProperty(name="Location", unit='LENGTH', precision=4, min=0.0,
                                      update=_on_df_mid_loc)  # type: ignore
 
+    # Mid-member GRID: N mid rails x N mid stiles dividing the field
+    # into panel cells (six-panel-door construction: rails run full
+    # width, stiles run between the rails). A rail count > 0 supersedes
+    # the single Mid Rail mode above; the weight strings size the rows /
+    # columns (blank = equal).
+    mid_rails: bpy.props.IntProperty(
+        name="Mid Rails", min=0, max=10, default=0,
+        description="Number of mid rails splitting the door into panel "
+                    "rows (0 = use the Mid Rail mode above)",
+        update=_on_df_grid)  # type: ignore
+    mid_stiles: bpy.props.IntProperty(
+        name="Mid Stiles", min=0, max=10, default=0,
+        description="Number of mid stiles splitting each panel row into "
+                    "columns",
+        update=_on_df_grid)  # type: ignore
+    row_ratios: StringProperty(
+        name="Row Heights",
+        description="Relative panel-row heights bottom-up, e.g. \"1 2 1\" "
+                    "or \"1/4 1/2 1/4\" (blank = equal rows)",
+        default='', update=_on_df_grid)  # type: ignore
+    col_ratios: StringProperty(
+        name="Column Widths",
+        description="Relative panel-column widths left to right "
+                    "(blank = equal columns)",
+        default='', update=_on_df_grid)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return has_door_style_modifier(context.active_object)
@@ -1285,6 +1328,17 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             self.mid_rail_location = store['HB_FRAME_OVR_MID_RAIL_LOCATION']
         else:
             self.mid_rail_location = vals.get('mid_loc', 0.0)
+        # Grid overrides live only on the store (no style-driven grid).
+        if locked:
+            self.mid_rails = int(store.get('HB_FRAME_OVR_MID_RAIL_COUNT', 0) or 0)
+            self.mid_stiles = int(store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0)
+            self.row_ratios = str(store.get('HB_FRAME_OVR_ROW_RATIOS', '') or '')
+            self.col_ratios = str(store.get('HB_FRAME_OVR_COL_RATIOS', '') or '')
+        else:
+            self.mid_rails = 0
+            self.mid_stiles = 0
+            self.row_ratios = ''
+            self.col_ratios = ''
         self.lock_frame = locked
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
@@ -1299,8 +1353,12 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         body.prop(self, 'top_rail')
         body.prop(self, 'bottom_rail')
         body.separator()
-        body.prop(self, 'mid_rail_mode')
-        row = body.row()
+        # Single-rail mode rows grey out while a rail-count grid is
+        # active -- the grid supersedes them.
+        mode_col = body.column(align=True)
+        mode_col.enabled = self.mid_rails == 0
+        mode_col.prop(self, 'mid_rail_mode')
+        row = mode_col.row()
         row.enabled = self.mid_rail_mode in _MID_RAIL_VALUE_MODES
         # The same field carries a from-bottom location (CUSTOM) or an interior
         # panel height (TOP_PANEL / BOTTOM_PANEL); relabel to match the mode.
@@ -1308,10 +1366,25 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
                      'BOTTOM_PANEL': "Bottom Panel Height"}.get(self.mid_rail_mode, "Location")
         row.prop(self, 'mid_rail_location', text=loc_label)
 
+        body.separator()
+        grid = body.column(align=True)
+        row = grid.row(align=True)
+        row.label(text="Grid:")
+        row.prop(self, 'mid_rails', text="Rails")
+        row.prop(self, 'mid_stiles', text="Stiles")
+        row = grid.row()
+        row.enabled = self.mid_rails > 0
+        row.prop(self, 'row_ratios', text="Row Heights")
+        row = grid.row()
+        row.enabled = self.mid_stiles > 0
+        row.prop(self, 'col_ratios', text="Col Widths")
+
         # Read-only readout of the resulting interior-panel heights. Lives in
         # the always-enabled column (not the lock-greyed body) so it's visible
-        # whether the frame is locked or following its style.
-        openings = _front_panel_openings(_door_frame_for_dialog(self))
+        # whether the frame is locked or following its style. Grid fronts
+        # skip it -- the two-opening readout doesn't describe N rows.
+        openings = (None if self.mid_rails > 0 else
+                    _front_panel_openings(_door_frame_for_dialog(self)))
         if openings is not None:
             bottom_opening, top_opening = openings
             us = context.scene.unit_settings
