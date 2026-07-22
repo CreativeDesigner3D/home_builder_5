@@ -175,6 +175,17 @@ class Closet_Starter_Props(PropertyGroup):
         name="Include Batten Right", default=False,
         update=_update_starter_prop)  # type: ignore
 
+    # Top accent shelf: a decorative shelf on
+    # top of the run projecting forward by the overhang, with a side
+    # overhang past each finished end.
+    add_top_accent_shelf: BoolProperty(
+        name="Add Top Accent Shelf", default=False,
+        update=_update_starter_prop)  # type: ignore
+    top_accent_overhang: FloatProperty(
+        name="Top Accent Shelf Overhang",
+        default=const.TOP_ACCENT_OVERHANG, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
     # dialog gates on that.

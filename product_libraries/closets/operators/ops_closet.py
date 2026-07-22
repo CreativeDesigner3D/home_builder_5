@@ -2471,6 +2471,14 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col.prop(sp, 'turn_off_right_panel', text="Turn Off Panel")
             col.prop(sp, 'drill_through_right', text="Drill Through")
             col.prop(sp, 'include_batten_right', text="Batten")
+
+            box = layout.box()
+            box.label(text="Top")
+            col = box.column(align=True)
+            col.prop(sp, 'add_top_accent_shelf')
+            sub = col.column(align=True)
+            sub.enabled = sp.add_top_accent_shelf
+            sub.prop(sp, 'top_accent_overhang')
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],

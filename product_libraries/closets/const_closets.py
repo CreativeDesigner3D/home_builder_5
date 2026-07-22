@@ -69,6 +69,10 @@ KICK_HEIGHT_ITEMS = [
 # ---------------------------------------------------------------------------
 COUNTERTOP_OVERHANG_FRONT = inch(1.875)
 
+# Top accent shelf: a decorative shelf laid on top of the run, projecting
+# forward (and past finished ends) by the overhang. Default 1".
+TOP_ACCENT_OVERHANG = inch(1.0)
+
 # Minimum bay width the redistributor will assign to an unlocked bay.
 MIN_BAY_WIDTH = inch(1.0)
 

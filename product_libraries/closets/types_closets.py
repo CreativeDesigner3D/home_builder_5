@@ -48,6 +48,7 @@ PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
+PART_ROLE_ACCENT_SHELF = 'CLOSET_TOP_ACCENT_SHELF'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 
 # Interior parts added by the user. These live under an opening
@@ -1363,6 +1364,41 @@ class ClosetStarter(GeoNodeCage):
                                sp.depth + const.COUNTERTOP_OVERHANG_FRONT)
             part.set_input('Thickness', scene_props.countertop_thickness)
             _set_part_hidden(ctop, not sp.include_countertop)
+
+        self._layout_accent_shelf(scene_props, sp)
+
+    def _layout_accent_shelf(self, scene_props, sp):
+        """A decorative shelf laid on top of the
+        run at the panel top, projecting forward by the overhang and
+        past each finished end by the same amount. One spanning piece
+        (uniform run); no machining - a plain shelf part
+        picked up downstream by role."""
+        want = sp.add_top_accent_shelf
+        shelf = None
+        for c in self.obj.children:
+            if c.get('hb_part_role') == PART_ROLE_ACCENT_SHELF:
+                shelf = c
+                break
+        if shelf is None:
+            if not want:
+                return
+            part = CabinetPart()
+            part.create('Top Accent Shelf')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_ACCENT_SHELF
+            part.set_input('Mirror Y', True)
+            shelf = part.obj
+        ovh = sp.top_accent_overhang
+        left = ovh if sp.left_finished_end else 0.0
+        right = ovh if sp.right_finished_end else 0.0
+        # Base at the panel top; projects forward by the overhang and
+        # out past each finished end.
+        shelf.location = (-left, 0.0, sp.height)
+        part = GeoNodeCutpart(shelf)
+        part.set_input('Length', sp.width + left + right)
+        part.set_input('Width', sp.depth + ovh)
+        part.set_input('Thickness', scene_props.shelf_thickness)
+        _set_part_hidden(shelf, not want)
 
     def _bridge_part(self, side, slot):
         for c in self.obj.children:
