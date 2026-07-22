@@ -2493,6 +2493,12 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 row = sub.row(align=True)
                 row.enabled = sp.use_one_hang_rail_height
                 row.prop(sp, 'hang_rail_height_location')
+
+            box = layout.box()
+            box.label(text="Side Wall Fillers")
+            row = box.row(align=True)
+            row.prop(sp, 'left_side_wall_filler', text="Left")
+            row.prop(sp, 'right_side_wall_filler', text="Right")
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],

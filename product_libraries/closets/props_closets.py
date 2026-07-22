@@ -215,6 +215,22 @@ class Closet_Starter_Props(PropertyGroup):
         default=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
 
+    # Side wall fillers: a front scribe
+    # strip standing past the end of the run to close the gap to a side
+    # wall. Width 0 = no filler. The prompt value is the filler width.
+    left_side_wall_filler: FloatProperty(
+        name="Left Side Wall Filler",
+        description="Width of the scribe filler past the left end (0 = "
+                    "none)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    right_side_wall_filler: FloatProperty(
+        name="Right Side Wall Filler",
+        description="Width of the scribe filler past the right end (0 = "
+                    "none)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
     # dialog gates on that.

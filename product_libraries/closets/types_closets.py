@@ -49,6 +49,7 @@ PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
 PART_ROLE_ACCENT_SHELF = 'CLOSET_TOP_ACCENT_SHELF'
+PART_ROLE_FILLER = 'CLOSET_FILLER'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 
 # Interior parts added by the user. These live under an opening
@@ -513,6 +514,7 @@ class ClosetStarter(GeoNodeCage):
             self._layout_starter_parts(layout, scene_props, sp)
             self._layout_bridge_parts(layout, scene_props, sp)
             self._layout_battens(layout, scene_props, sp)
+            self._layout_fillers(layout, scene_props, sp)
 
             # Hanging starters anchor at their TOP (the wall mount): a
             # height edit grows the unit downward. The last-applied
@@ -625,6 +627,54 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Width', const.BATTEN_WIDTH)
             part.set_input('Thickness', const.BATTEN_THICKNESS)
             _set_part_hidden(c, not include)
+
+    def _layout_fillers(self, layout, scene_props, sp):
+        """A front scribe board standing
+        past the end of the run to close the gap to a side wall. Ground
+        truth from a live reference build: Length runs vertical, the filler
+        WIDTH extends outward past the end (left filler -X, right +X),
+        thickness = shelf material at the front face, origin at the end
+        opening's front-bottom. Reconciled by width>0 (like battens);
+        no machining is authored here."""
+        bays = layout['bays']
+        if not bays:
+            return
+        st = scene_props.shelf_thickness
+        have = {c.get('hb_filler'): c for c in self.obj.children
+                if c.get('hb_filler')}
+        for side in ('LEFT', 'RIGHT'):
+            c = have.get(side)
+            width = (sp.left_side_wall_filler if side == 'LEFT'
+                     else sp.right_side_wall_filler)
+            if c is None:
+                if width <= 0.0:
+                    continue
+                p = CabinetPart()
+                p.create(f'{side.title()} Filler')
+                p.obj.parent = self.obj
+                p.obj['hb_part_role'] = PART_ROLE_FILLER
+                p.obj['hb_filler'] = side
+                # Match the reference filler frame: Length -> vertical, Width
+                # -> outward in X, Thickness -> depth at the front.
+                p.obj.rotation_euler.y = math.radians(-90)
+                p.obj.rotation_euler.z = math.radians(90)
+                p.set_input('Mirror Z', True)
+                c = p.obj
+            bay = bays[0] if side == 'LEFT' else bays[-1]
+            # Left filler at the closet's left edge (x=0) extruding -X
+            # (out the left end); right filler at the right edge
+            # (x=width) extruding +X. In HB5 Mirror Y False extrudes -X
+            # and True extrudes +X (opposite of the reference frame), so the
+            # RIGHT filler mirrors. Set each recalculate so pre-existing
+            # fillers self-correct.
+            GeoNodeCutpart(c).set_input('Mirror Y', side == 'RIGHT')
+            x = 0.0 if side == 'LEFT' else sp.width
+            c.location = (x, -bay['depth'], bay['z0'])
+            part = GeoNodeCutpart(c)
+            part.set_input('Length', bay['height'])
+            part.set_input('Width', max(width, 0.001))
+            part.set_input('Thickness', st)
+            _set_part_hidden(c, width <= 0.0)
 
     def _layout_bays(self, layout, scene_props, sp):
         st = scene_props.shelf_thickness
