@@ -55,21 +55,17 @@ def _migrate_mod_input_path(data_path):
         return _OLD_MOD_INPUT_PATH_RE.sub(r'\1.properties.inputs.\2.value', data_path)
     return _NEW_MOD_INPUT_PATH_RE.sub(r'\1["\2"]', data_path)
 
+# Dealer-facing style dropdown: None (bare range hood, no wood parts)
+# or Wood Hood (the full option set -- angles, mantle, shiplap, front
+# panel, ends, liner). The retired named styles (Box, Mantle, Shiplap*,
+# Traditional, ...) keep their ids and builders in _STYLE_BUILDERS so
+# hoods saved with them still rebuild; they will return as option
+# PRESETS of the Wood Hood (custom) path rather than dropdown entries.
 WOOD_HOOD_STYLE_ITEMS = [
-    ('BOX', "Box", "Box wood hood"),
-    ('SHIPLAP_BOX', "Shiplap Box", "Box hood with shiplap face"),
-    ('SHIPLAP_MANTLE', "Shiplap Mantle", "Mantle hood with shiplap face"),
-    ('SHIPLAP_PENINSULA', "Shiplap Peninsula", "Peninsula hood with shiplap, finished all sides"),
-    ('SHELF', "Shelf", "Shelf wood hood"),
-    ('NICHE', "Niche", "Niche wood hood"),
-    ('MANTLE', "Mantle", "Mantle wood hood"),
-    ('PENINSULA', "Peninsula", "Peninsula wood hood"),
-    ('TRADITIONAL', "Traditional", "Traditional wood hood"),
-    ('VILLA', "Villa", "Villa wood hood"),
-    ('CHIMNEY', "Chimney", "Chimney wood hood"),
-    ('PLANTATION', "Plantation", "Plantation wood hood"),
-    ('GRAND_MANTLE', "Grand Mantle", "Grand mantle wood hood"),
-    ('CUSTOM', "Custom", "Custom hood built from user options (angles, mantle, fan cutout, front panel)"),
+    ('NONE', "None", "No wood hood parts on this range hood"),
+    ('CUSTOM', "Wood Hood",
+     "Wood hood built from the options below (angles, mantle, shiplap, "
+     "front panel, ends, fan cutout)"),
 ]
 
 
@@ -1924,10 +1920,25 @@ def restore_hood_part(hood_part):
     return True
 
 
+def remove_wood_hood(hood_obj):
+    """Remove every built wood-hood part (manual ones included) and the
+    style stamp -- back to the bare range hood appliance. The 'None'
+    style choice routes here."""
+    for child in list(hood_obj.children):
+        if child.get(HOOD_PART_TAG):
+            bpy.data.objects.remove(child, do_unlink=True)
+    if HOOD_STYLE_PROP in hood_obj.keys():
+        del hood_obj[HOOD_STYLE_PROP]
+
+
 def build_wood_hood(hood_obj, style):
     """Wipe + rebuild the hood's parts for ``style``. Parts are driven, so
-    they resize with the hood cage afterward. Unknown styles fall back to
-    the Box (3D builders for the other styles are a follow-up)."""
+    they resize with the hood cage afterward. 'NONE' removes the wood
+    hood entirely; unknown styles fall back to the Box (3D builders for
+    the other styles are a follow-up)."""
+    if style == 'NONE':
+        remove_wood_hood(hood_obj)
+        return
     _clear_hood_parts(hood_obj)
     builder = _STYLE_BUILDERS.get(style, _build_box)
     builder(hood_obj)
@@ -1961,7 +1972,7 @@ class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
     bl_description = "Build wood-hood parts on the selected range hood (parts resize with the hood)"
     bl_options = {'REGISTER', 'UNDO'}
 
-    style: EnumProperty(name="Style", items=WOOD_HOOD_STYLE_ITEMS, default='BOX')  # type: ignore
+    style: EnumProperty(name="Style", items=WOOD_HOOD_STYLE_ITEMS, default='CUSTOM')  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1969,9 +1980,10 @@ class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
         return obj is not None and obj.get('APPLIANCE_TYPE') == 'HOOD'
 
     def invoke(self, context, event):
-        existing = context.active_object.get(HOOD_STYLE_PROP)
-        if existing in {i[0] for i in WOOD_HOOD_STYLE_ITEMS}:
-            self.style = existing
+        # This IS the build command, so it always opens on Wood Hood --
+        # a built hood (legacy named styles included) reads the same in
+        # the reduced dropdown; picking None removes the wood hood.
+        self.style = 'CUSTOM'
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def draw(self, context):
@@ -1979,7 +1991,10 @@ class HOME_BUILDER_OT_build_wood_hood(bpy.types.Operator):
 
     def execute(self, context):
         build_wood_hood(context.active_object, self.style)
-        self.report({'INFO'}, "Built %s wood hood" % self.style)
+        if self.style == 'NONE':
+            self.report({'INFO'}, "Removed wood hood")
+        else:
+            self.report({'INFO'}, "Built wood hood")
         return {'FINISHED'}
 
 
@@ -1998,7 +2013,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
     width: FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
     height: FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
     depth: FloatProperty(name="Depth", unit='LENGTH', precision=5)  # type: ignore
-    style: EnumProperty(name="Style", items=WOOD_HOOD_STYLE_ITEMS, default='BOX')  # type: ignore
+    style: EnumProperty(name="Style", items=WOOD_HOOD_STYLE_ITEMS, default='NONE')  # type: ignore
 
     # Dialog-only: which CUSTOM options section is showing. Not stored
     # on the hood; it just keeps the dialog readable.
@@ -2180,9 +2195,11 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.width = wrap.get_input('Dim X')
         self.depth = wrap.get_input('Dim Y')
         self.height = wrap.get_input('Dim Z')
+        # Reduced dropdown: any built hood reads as Wood Hood (legacy
+        # named styles included -- editing here rebuilds them through
+        # the custom path); an unbuilt range hood reads as None.
         existing = self.hood.get(HOOD_STYLE_PROP)
-        if existing in {i[0] for i in WOOD_HOOD_STYLE_ITEMS}:
-            self.style = existing
+        self.style = 'CUSTOM' if existing else 'NONE'
         opts = _get_custom_opts(self.hood)
         self.angle_front = bool(opts['angle_front'])
         self.top_depth = opts['top_depth']
@@ -2282,7 +2299,10 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
 
     def execute(self, context):
         self._apply()
-        self.report({'INFO'}, "Built %s wood hood" % self.style)
+        if self.style == 'NONE':
+            self.report({'INFO'}, "Hood updated (no wood hood)")
+        else:
+            self.report({'INFO'}, "Built wood hood")
         return {'FINISHED'}
 
     def draw(self, context):
