@@ -1805,6 +1805,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     _fill_mode: bool = True         # False after the user types a width
     _single_placement: bool = False # True for cabinets that don't fill or tile (e.g., Sink)
     _fill_no_bays: bool = False     # fill the wall gap but stay one piece (no bay array)
+    _fill_manual_bays: bool = False  # fill the gap, start at 1 bay, arrows adjust
     _recess_into_wall: bool = False # sink into the wall, face frame flush (recessed med cab)
     _follow_cursor_z: bool = False  # Z tracks the cursor's wall height (floating shelf)
     _floor_z: float = 0.0           # floor height for free placement (seeded from 3D cursor)
@@ -1865,6 +1866,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         cls_inst = cls()
         self._single_placement = bool(getattr(cls_inst, 'single_placement', False))
         self._fill_no_bays = bool(getattr(cls_inst, 'fill_no_bays', False))
+        self._fill_manual_bays = bool(getattr(cls_inst, 'fill_manual_bays', False))
         self._follow_cursor_z = bool(getattr(cls_inst, 'follow_cursor_z', False))
         self._recess_into_wall = bool(getattr(cls_inst, 'recess_into_wall', False))
         # Cage depth/height come straight from the cabinet class so the
@@ -1895,6 +1897,14 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         elif self._fill_no_bays:
             # Fill the gap like a normal cabinet, but always a single
             # piece - pin bay_qty=1 and never auto-array (floating shelf).
+            self._cabinet_width = scene_props.default_cabinet_width
+            self._auto_bay_qty = False
+            self._fill_mode = True
+            self.bay_qty = 1
+        elif self._fill_manual_bays:
+            # Fill the gap like a normal cabinet, START at one bay, and
+            # never derive the count from the width - but the Up / Down
+            # arrows still adjust it manually (FF & Doors).
             self._cabinet_width = scene_props.default_cabinet_width
             self._auto_bay_qty = False
             self._fill_mode = True

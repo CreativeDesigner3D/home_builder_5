@@ -8559,13 +8559,14 @@ class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
     conventions, not panel aesthetics - the user splits bays manually
     (or re-enables Auto Openings) when they want more.
 
-    fill_no_bays: the placement modal drags / gap-fills like a cabinet
-    but always creates ONE bay - the default-cabinet branch derived a
-    bay count from the drag width (>36" placed 2+ bays), pre-splitting
-    the frame the user meant to lay out themselves.
+    fill_manual_bays: the placement modal drags / gap-fills like a
+    cabinet and STARTS at one bay - the default-cabinet branch derived
+    a bay count from the drag width (>36" placed 2+ bays), pre-splitting
+    the frame the user meant to lay out themselves. The Up / Down arrow
+    keys still adjust the bay count manually during placement.
     """
     default_opening_front_type = 'DOOR'
-    fill_no_bays = True
+    fill_manual_bays = True
 
     def create(self, name="Face Frame and Doors", bay_qty=1):
         self.create_cabinet_root(name)
