@@ -107,7 +107,12 @@ ISLAND_CTOP_OVERHANG = inch(1.5)    # legacy islands overhang all sides
 # L Shelves (inside-corner units)
 L_SHELF_SIZE = inch(24.0)           # corner footprint each way
 L_SHELF_QTY = 3                     # interior L shelves between top/bottom
-L_BACK_STRIP_WIDTH = inch(6.0)      # wall support strips at the corner
+L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
+# Corner construction: shelves and the back partition are held
+# off the walls by the wall offset; the shelves' partition notch clears
+# the partition by the router tool radius.
+L_WALL_OFFSET = inch(0.5)
+L_NOTCH_TOOL_RADIUS = inch(0.25)
 # Default distance from the opening TOP to a hang rod's center when the
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.5)

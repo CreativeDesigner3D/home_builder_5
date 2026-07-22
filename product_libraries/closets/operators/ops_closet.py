@@ -2433,6 +2433,9 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         if root is None:
             return
         sp = root.hb_closet_starter
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+        is_corner = getattr(cls, 'is_corner', False)
         col = layout.column(align=True)
         col.prop(sp, 'width')
         col.prop(sp, 'height')
@@ -2440,7 +2443,18 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         col = layout.column(align=True)
         col.prop(sp, 'toe_kick_height')
         col.prop(sp, 'toe_kick_setback')
-        col.prop(sp, 'include_countertop')
+        if not is_corner:
+            col.prop(sp, 'include_countertop')
+        if is_corner:
+            box = layout.box()
+            box.label(text="Corner")
+            col = box.column(align=True)
+            col.prop(sp, 'l_left_depth')
+            col.prop(sp, 'l_right_depth')
+            col.prop(sp, 'l_shelf_qty')
+            col = box.column(align=True)
+            col.prop(sp, 'l_back_width')
+            col.prop(sp, 'l_flip_partition')
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],

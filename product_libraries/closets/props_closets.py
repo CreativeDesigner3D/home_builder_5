@@ -141,6 +141,35 @@ class Closet_Starter_Props(PropertyGroup):
         name="Include Countertop", default=False,
         update=_update_starter_prop)  # type: ignore
 
+    # Corner (L-shelf) starter prompts. Only meaningful when the
+    # starter class is an L-shelf variant (is_corner); the prompts
+    # dialog gates on that.
+    l_left_depth: FloatProperty(
+        name="Left Depth", description="Left wing panel depth",
+        default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_right_depth: FloatProperty(
+        name="Right Depth", description="Right wing panel depth",
+        default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_shelf_qty: IntProperty(
+        name="Shelf Quantity",
+        description="Interior L shelves between the bottom and top",
+        default=const.L_SHELF_QTY, min=0, max=12,
+        update=_update_starter_prop)  # type: ignore
+    l_back_width: FloatProperty(
+        name="Back Partition Width",
+        description="Width of the corner back partition the L shelves "
+                    "notch around",
+        default=const.L_BACK_STRIP_WIDTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_flip_partition: BoolProperty(
+        name="Flip Back Partition",
+        description="Move the back partition from the back wall to the "
+                    "side wall",
+        default=False,
+        update=_update_starter_prop)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Object-level: bay

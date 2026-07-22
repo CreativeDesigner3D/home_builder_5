@@ -1533,11 +1533,13 @@ class LShelfClosetStarter(GeoNodeCage):
                                   if self.has_toe_kick else 0.0)
             sp.toe_kick_setback = scene_props.toe_kick_setback
             sp.include_countertop = False
-            self.obj['hb_l_left_depth'] = float(
-                scene_props.default_panel_depth)
-            self.obj['hb_l_right_depth'] = float(
-                scene_props.default_panel_depth)
-            self.obj['hb_l_shelf_qty'] = const.L_SHELF_QTY
+            sp.l_left_depth = float(scene_props.default_panel_depth)
+            sp.l_right_depth = float(scene_props.default_panel_depth)
+            sp.l_shelf_qty = const.L_SHELF_QTY
+            sp.l_back_width = float(const.L_BACK_STRIP_WIDTH)
+            sp.l_flip_partition = False
+            # Construction default with no prompt (wall offset).
+            self.obj['hb_l_wall_offset'] = float(const.L_WALL_OFFSET)
             sp.width = const.L_SHELF_SIZE
             sp.height = self.default_height(scene_props)
             sp.depth = const.L_SHELF_SIZE
@@ -1558,19 +1560,13 @@ class LShelfClosetStarter(GeoNodeCage):
             panel.obj.rotation_euler.y = math.radians(-90)
             panel.set_input('Mirror Y', True)
             panel.set_input('Mirror Z', True)
-        # Wall support strips (one per wall at the corner). Orientations
-        # empirically probed against target volumes (bbox-verified).
-        for pname, rz, my, mz in (('Back Wall Strip', 0.0, False, False),
-                                  ('Side Wall Strip', -90.0, False, True)):
-            strip = CabinetPart()
-            strip.create(pname)
-            strip.obj.parent = self.obj
-            strip.obj['hb_part_role'] = PART_ROLE_CLEAT
-            strip.obj['hb_l_strip'] = pname
-            strip.obj.rotation_euler.x = math.radians(90)
-            strip.obj.rotation_euler.z = math.radians(rz)
-            strip.set_input('Mirror Y', my)
-            strip.set_input('Mirror Z', mz)
+        # Back Partition: one
+        # full-height vertical strip lying parallel to the back wall
+        # (or the side wall when flipped) that the L shelves notch
+        # around. Construction only - all machining/tokens belong to
+        # downstream machining, which reads the geometry,
+        # role, and idprops left here.
+        self._make_back_partition()
         # Toe kicks (one per wing front; hidden for hung units).
         for pname, rz, my, mz in (('Right Wing Kick', 0.0, True, False),
                                   ('Left Wing Kick', -90.0, True, True)):
@@ -1584,9 +1580,37 @@ class LShelfClosetStarter(GeoNodeCage):
             kick.set_input('Mirror Y', my)
             kick.set_input('Mirror Z', mz)
 
+    def _make_back_partition(self):
+        part = CabinetPart()
+        part.create('Back Partition')
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = PART_ROLE_PANEL
+        part.obj['hb_panel_index'] = 2
+        part.obj['hb_l_partition'] = True
+        # Width-lookup key read by downstream machining (the
+        # back-support width the L-shelf rear machining derives from).
+        part.obj['hb_l_strip'] = 'Back Partition'
+        part.obj.rotation_euler.y = math.radians(-90)
+        part.set_input('Mirror Y', True)
+        part.set_input('Mirror Z', True)
+        return part
+
+    def _reconcile_back_partition(self):
+        """Ensure one Back Partition exists; drop the earlier horizontal
+        wall strips (pre-partition construction) from older files."""
+        part = None
+        for c in list(self.obj.children):
+            if c.get('hb_l_partition'):
+                part = c
+            elif c.get('hb_l_strip') in ('Back Wall Strip',
+                                         'Side Wall Strip'):
+                bpy.data.objects.remove(c, do_unlink=True)
+        if part is None:
+            part = self._make_back_partition().obj
+        return part
+
     def _reconcile_l_shelves(self):
-        want = max(0, int(self.obj.get('hb_l_shelf_qty',
-                                       const.L_SHELF_QTY))) + 2
+        want = max(0, int(self.obj.hb_closet_starter.l_shelf_qty)) + 2
         shelves = [c for c in self.obj.children
                    if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF]
         shelves.sort(key=lambda o: o.get('hb_l_index', 0))
@@ -1600,8 +1624,15 @@ class LShelfClosetStarter(GeoNodeCage):
             shelf.obj['hb_l_index'] = len(shelves)
             shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             shelf.set_input('Mirror Y', True)
-            notch = shelf.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+            shelf.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+            shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
             shelves.append(shelf.obj)
+        # Older files: shelves created before the Back Partition landed
+        # have no Back Notch modifier - add it so they reconcile.
+        for shelf in shelves:
+            if shelf.modifiers.get('Back Notch') is None:
+                GeoNodeCutpart(shelf).add_part_modifier(
+                    'CPM_CORNERNOTCH', 'Back Notch')
         return shelves
 
     def recalculate(self):
@@ -1612,17 +1643,29 @@ class LShelfClosetStarter(GeoNodeCage):
         try:
             scene_props = bpy.context.scene.hb_closets
             sp = self.obj.hb_closet_starter
+            # One-time migration: pre-prompt idprops -> product prompts
+            # (updates are no-ops here; we're inside _RECALCULATING).
+            for key, attr, cast in (('hb_l_left_depth', 'l_left_depth', float),
+                                    ('hb_l_right_depth', 'l_right_depth', float),
+                                    ('hb_l_shelf_qty', 'l_shelf_qty', int)):
+                if key in self.obj:
+                    setattr(sp, attr, cast(self.obj[key]))
+                    del self.obj[key]
             st = scene_props.shelf_thickness
             pt = scene_props.panel_thickness
             W, D, H = sp.width, sp.depth, sp.height
-            LD = min(self.obj.get('hb_l_left_depth', W), W - pt)
-            RD = min(self.obj.get('hb_l_right_depth', D), D - pt)
+            LD = min(sp.l_left_depth, W - pt)
+            RD = min(sp.l_right_depth, D - pt)
+            bw = sp.l_back_width
+            flip = sp.l_flip_partition
+            wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
             floor = self.floor_mounted
             kick = sp.toe_kick_height if floor else 0.0
             setback = sp.toe_kick_setback
 
             panels = sorted([c for c in self.obj.children
-                             if c.get('hb_part_role') == PART_ROLE_PANEL],
+                             if c.get('hb_part_role') == PART_ROLE_PANEL
+                             and not c.get('hb_l_partition')],
                             key=lambda o: o.get('hb_panel_index', 0))
             if len(panels) == 2:
                 # Right wing end panel: plane faces X at x = W - pt,
@@ -1645,25 +1688,50 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Thickness', pt)
                 gp.set_input('Mirror Z', False)
 
+            # Back Partition (defaults, verified against a live
+            # corner build): unflipped it lies parallel to the
+            # back wall - x in [0, bw], y in [-wo - pt, -wo], full
+            # height; flipped it moves to the side wall - x in
+            # [wo, wo + pt], y in [0, -bw].
+            partition = self._reconcile_back_partition()
+            gp = GeoNodeCutpart(partition)
+            if flip:
+                partition.rotation_euler.z = 0.0
+                partition.location = (wo, 0.0, 0.0)
+            else:
+                partition.rotation_euler.z = math.radians(90)
+                partition.location = (0.0, -wo, 0.0)
+            gp.set_input('Length', H)
+            gp.set_input('Width', max(bw, 0.001))
+            gp.set_input('Thickness', pt)
+            # Thickness direction follows the wing-panel pattern:
+            # rot_z 90 + Mirror Z False extends -Y (back wall);
+            # rot_z 0 + Mirror Z True extends +X (side wall).
+            gp.set_input('Mirror Z', bool(flip))
+
             for c in self.obj.children:
-                if c.get('hb_l_strip'):
-                    gp = GeoNodeCutpart(c)
-                    if c['hb_l_strip'] == 'Back Wall Strip':
-                        c.location = (0.0, 0.0, kick + st)
-                        gp.set_input('Length', W - pt)
-                    else:
-                        c.location = (0.0, 0.0, kick + st)
-                        gp.set_input('Length', D - pt)
-                    gp.set_input('Width', const.L_BACK_STRIP_WIDTH)
-                    gp.set_input('Thickness', st)
-                elif c.get('hb_l_kick'):
+                if c.get('hb_l_kick'):
+                    # corner kick pair (receiver/mate butt
+                    # joint), not two full-length boards: the side-wall
+                    # kick (receiver) runs the full left wing, stopping a
+                    # panel thickness short of the wing panel and of the
+                    # back wall; the back-wall kick (mate) starts at the
+                    # receiver's face plane and butts square into it.
+                    # the downstream wing-kick machining resolves
+                    # the pair from this geometry (the mate's end must
+                    # land against the receiver's face, never cross it).
                     gp = GeoNodeCutpart(c)
                     if c['hb_l_kick'] == 'Right Wing Kick':
-                        c.location = (0.0, -RD + setback, 0.0)
-                        gp.set_input('Length', W - pt)
+                        # Mate: receiver face -> right wing end panel
+                        # (width - ld - pt + tks).
+                        c.location = (LD - setback, -RD + setback, 0.0)
+                        gp.set_input('Length',
+                                     max(W - pt - (LD - setback), 0.001))
                     else:
-                        c.location = (LD - setback, 0.0, 0.0)
-                        gp.set_input('Length', D - pt)
+                        # Receiver: full side wall span
+                        # (fabs(depth) - pt*2 from -depth + pt).
+                        c.location = (LD - setback, -pt, 0.0)
+                        gp.set_input('Length', max(D - 2.0 * pt, 0.001))
                     gp.set_input('Width', kick)
                     gp.set_input('Thickness', st)
                     _set_part_hidden(c, (not floor) or kick <= 0.0)
@@ -1683,15 +1751,19 @@ class LShelfClosetStarter(GeoNodeCage):
                     z = z_top
                 else:
                     z = z_bottom + (z_top - z_bottom) * i / (len(shelves) - 1)
-                shelf.location = (0.0, 0.0, z)
+                # shelves are held off both walls by the wall
+                # offset (partition and machining formulas assume it).
+                shelf.location = (wo, -wo, z)
                 gp = GeoNodeCutpart(shelf)
-                gp.set_input('Length', W - pt)
-                gp.set_input('Width', D - pt)
+                gp.set_input('Length', max(W - pt - wo, 0.001))
+                gp.set_input('Width', max(D - pt - wo, 0.001))
                 gp.set_input('Thickness', st)
                 notch = shelf.modifiers.get('L Notch')
                 if notch is not None:
                     cpm = CabinetPartModifier(shelf)
                     cpm.mod = notch
+                    # Wing depths measured from the walls, so the wall
+                    # offset cancels out of the notch extents.
                     cpm.set_input('X', max(W - pt - LD, 0.001))
                     cpm.set_input('Y', max(D - pt - RD, 0.001))
                     cpm.set_input('Route Depth', st + 0.001)
@@ -1701,6 +1773,25 @@ class LShelfClosetStarter(GeoNodeCage):
                     cpm.set_input('Flip Y', True)
                     notch.show_viewport = True
                     notch.show_render = True
+                # Back Notch: clears the Back Partition at the rear
+                # corner (the shelf's back-support notch: pt deep,
+                # back-width less the wall offset plus the router tool
+                # radius along the partition's wall; axes swap when the
+                # partition flips to the side wall).
+                bnotch = shelf.modifiers.get('Back Notch')
+                if bnotch is not None:
+                    cpm = CabinetPartModifier(shelf)
+                    cpm.mod = bnotch
+                    reach = max(bw - wo + const.L_NOTCH_TOOL_RADIUS, 0.001)
+                    cpm.set_input('X', pt if flip else reach)
+                    cpm.set_input('Y', reach if flip else pt)
+                    cpm.set_input('Route Depth', st + 0.001)
+                    # False/False lands the cut on the rear corner at
+                    # the shelf origin (the room corner).
+                    cpm.set_input('Flip X', False)
+                    cpm.set_input('Flip Y', False)
+                    bnotch.show_viewport = True
+                    bnotch.show_render = True
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)
