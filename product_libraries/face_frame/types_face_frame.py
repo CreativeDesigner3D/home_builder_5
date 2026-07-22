@@ -4851,8 +4851,12 @@ class FaceFrameCabinet(GeoNodeCage):
             # side_role is None when no side notch applies; guard it so
             # roleless objects (split nodes, cages - role None) never
             # match. A None target crashes modifiers.new on an EMPTY.
-            if role in PIPE_CHASE_CUT_PART_ROLES or (
-                    side_role is not None and role == side_role):
+            # Drawer boxes join only when their opening opted into NOTCH
+            # (stamped by _create_drawer_box_for_front).
+            if (role in PIPE_CHASE_CUT_PART_ROLES
+                    or (side_role is not None and role == side_role)
+                    or (role == PART_ROLE_DRAWER_BOX
+                        and obj.get('HB_CHASE_FIT') == 'NOTCH')):
                 yield obj
             stack.extend(obj.children)
 
@@ -7254,7 +7258,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             if not drawer_look and not no_pulls:
                 self._create_pull_for_front(front, leaf['role'], leaf)
-            self._create_drawer_box_for_front(pivot, leaf, rect)
+            self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
 
@@ -7663,7 +7667,22 @@ class FaceFrameCabinet(GeoNodeCage):
         return instance
 
 
-    def _create_drawer_box_for_front(self, pivot_obj, leaf, rect):
+    def _cabinet_local_offset(self, obj):
+        """Accumulate parent-chain locations from obj up to (excluding)
+        the cabinet root. Valid for unrotated chains (bay / opening
+        cages, slide pivots); avoids matrix_world, which is stale
+        mid-recalc."""
+        x = y = z = 0.0
+        cur = obj
+        while cur is not None and cur is not self.obj:
+            x += cur.location.x
+            y += cur.location.y
+            z += cur.location.z
+            cur = cur.parent
+        return x, y, z
+
+    def _create_drawer_box_for_front(self, pivot_obj, leaf, rect,
+                                     op_props=None):
         """Spawn a drawer box behind a drawer or pullout front.
 
         Skips quietly if the role isn't drawer/pullout, if the scene-level
@@ -7725,6 +7744,42 @@ class FaceFrameCabinet(GeoNodeCage):
         op_y = front_back_y
         op_z = rb + bottom_clr
 
+        # Pipe chase interaction. When the cabinet carries a chase and
+        # this box overlaps it in X, the opening's chase_fit decides:
+        # SHORTEN (default) clamps the box depth so the box and its
+        # slide / rear clip clear the chase covers by the normal rear
+        # clearance; NOTCH keeps full depth and marks the box so
+        # _apply_pipe_chase booleans it around the chase; FULL leaves
+        # it alone. Coordinates: the pivot's parent frame is the
+        # opening cage, whose chain up to the root is unrotated, so
+        # opening-local + accumulated chain offsets = cabinet-local.
+        chase_notch = False
+        cab = self.obj.face_frame_cabinet
+        if getattr(cab, 'chase_enabled', False) and self._has_carcass():
+            span = self._chase_extents(cab)
+        else:
+            span = None
+        if span is not None:
+            px, py, _pz = self._cabinet_local_offset(pivot_obj.parent)
+            bx0 = px + op_x
+            bx1 = bx0 + box_dx
+            x_lo, x_hi = span
+            if bx1 > x_lo and bx0 < x_hi:
+                fit = getattr(op_props, 'chase_fit', 'SHORTEN') \
+                    if op_props is not None else 'SHORTEN'
+                chase_depth = min(cab.chase_depth, cab.depth)
+                # Cabinet-local Y of the box rear; the chase covers'
+                # interior face sits at -chase_depth (back plane = 0).
+                rear_y = py + op_y + box_dy
+                intrusion = rear_y + chase_depth
+                if fit == 'SHORTEN' and intrusion > 0.0:
+                    box_dy -= intrusion + rear_clr
+                    if box_dy <= 0.0:
+                        return None
+                elif fit == 'NOTCH' and intrusion > 0.0:
+                    chase_notch = True
+                    notch_w = min(bx1, x_hi) - max(bx0, x_lo)
+
         box = GeoNodeDrawerBox()
         box.create('Drawer Box')
         box.obj.parent = pivot_obj
@@ -7734,6 +7789,16 @@ class FaceFrameCabinet(GeoNodeCage):
         box.set_input('Dim Z', box_dz)
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
+        if chase_notch:
+            # _iter_pipe_chase_cut_targets picks this up and booleans
+            # the chase cutter into the box. The notch does NOT change
+            # the box's Dim inputs - the box ships full size and the
+            # notch is a custom shop operation, so publish the notch
+            # rect for pricing / drawings to flag.
+            box.obj['HB_CHASE_FIT'] = 'NOTCH'
+            box.obj['CHASE_NOTCHED'] = True
+            box.obj['CHASE_NOTCH_WIDTH'] = notch_w
+            box.obj['CHASE_NOTCH_DEPTH'] = intrusion
         return box
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):

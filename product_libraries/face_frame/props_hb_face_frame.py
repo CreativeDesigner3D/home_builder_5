@@ -6567,6 +6567,27 @@ class Face_Frame_Opening_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Pipe chase fit for the drawer box behind this opening. Consulted
+    # only when the cabinet carries a pipe chase AND the box overlaps it
+    # in X (see _create_drawer_box_for_front). SHORTEN (default) clamps
+    # the box depth so the box and its slide clear the chase covers;
+    # NOTCH keeps full depth and boolean-notches the box around the
+    # chase (a custom shop operation - the box's cutlist dims stay full
+    # size); FULL leaves the box untouched.
+    chase_fit: EnumProperty(
+        name="Chase Fit",
+        items=[
+            ('SHORTEN', "Shorten Box",
+             "Shorten the drawer box to clear the pipe chase"),
+            ('NOTCH', "Notch Box",
+             "Keep full depth and notch the drawer box around the chase"),
+            ('FULL', "Full Depth",
+             "Leave the drawer box full depth (may collide with the chase)"),
+        ],
+        default='SHORTEN',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Visual open state. 0 = closed, 1 = fully open. For DOOR / PULLOUT
     # with a vertical hinge it drives a swing rotation; for DRAWER_FRONT
     # and PULLOUT slide-out it drives a forward translation. The "fully

@@ -819,6 +819,15 @@ def draw_opening_properties(layout, opening_obj):
         if op.front_type in ('DOOR', 'PULLOUT'):
             fcol.prop(op, 'hinge_side', text="Hinge Side")
 
+        # Chase fit (drawer / pullout only): how this opening's drawer
+        # box responds to the cabinet's pipe chase. Hidden unless the
+        # cabinet actually carries a chase.
+        if op.front_type in ('DRAWER_FRONT', 'PULLOUT'):
+            chase_root = types_face_frame.find_cabinet_root(opening_obj)
+            if (chase_root is not None and getattr(
+                    chase_root.face_frame_cabinet, 'chase_enabled', False)):
+                fcol.prop(op, 'chase_fit', text="Chase Fit")
+
         # Sink apron (door openings only): a fixed face-frame panel across
         # the top of the opening for an apron / farmhouse sink. Doors stay
         # full height; the apron sits behind them.
