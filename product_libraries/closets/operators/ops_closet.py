@@ -2479,6 +2479,20 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             sub = col.column(align=True)
             sub.enabled = sp.add_top_accent_shelf
             sub.prop(sp, 'top_accent_overhang')
+
+            if getattr(cls, 'has_hang_rail', False):
+                box = layout.box()
+                box.label(text="Hang Rail")
+                col = box.column(align=True)
+                col.prop(sp, 'remove_hang_rail')
+                sub = col.column(align=True)
+                sub.enabled = not sp.remove_hang_rail
+                sub.prop(sp, 'extend_hang_rail_left')
+                sub.prop(sp, 'extend_hang_rail_right')
+                sub.prop(sp, 'use_one_hang_rail_height')
+                row = sub.row(align=True)
+                row.enabled = sp.use_one_hang_rail_height
+                row.prop(sp, 'hang_rail_height_location')
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],

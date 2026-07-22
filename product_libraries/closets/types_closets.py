@@ -628,7 +628,9 @@ class ClosetStarter(GeoNodeCage):
 
     def _layout_bays(self, layout, scene_props, sp):
         st = scene_props.shelf_thickness
-        for bay_obj, bay in zip(self._sorted_bays(), layout['bays']):
+        n_bays = len(layout['bays'])
+        for bay_i, (bay_obj, bay) in enumerate(
+                zip(self._sorted_bays(), layout['bays'])):
             cage = GeoNodeCage(bay_obj)
             bay_obj.location = (bay['x'], 0.0, bay['z0'])
             cage.set_input('Dim X', bay['width'])
@@ -697,16 +699,30 @@ class ClosetStarter(GeoNodeCage):
                 rail_part.obj.rotation_euler.x = math.radians(90)
                 rail = rail_part.obj
             if rail is not None:
-                rail.location = (
-                    0.0, 0.0,
-                    bay['height'] - const.HANG_RAIL_DROP)
+                # Use One Hang Rail Height forces an absolute rail height
+                # (bay-local z = target - bay origin z0); otherwise each
+                # bay's rail drops from its own top.
+                if sp.use_one_hang_rail_height:
+                    local_z = sp.hang_rail_height_location - bay['z0']
+                else:
+                    local_z = bay['height'] - const.HANG_RAIL_DROP
+                # Extend Hang Rail Left/Right lengthen the end bays' rails
+                # toward the walls (left rail also shifts its start left).
+                rail_x = 0.0
+                rail_len = bay['width']
+                if bay_i == 0 and sp.extend_hang_rail_left > 0.0:
+                    rail_x = -sp.extend_hang_rail_left
+                    rail_len += sp.extend_hang_rail_left
+                if bay_i == n_bays - 1 and sp.extend_hang_rail_right > 0.0:
+                    rail_len += sp.extend_hang_rail_right
+                rail.location = (rail_x, 0.0, local_z)
                 part = GeoNodeCutpart(rail)
-                part.set_input('Length', bay['width'])
+                part.set_input('Length', rail_len)
                 part.set_input('Width', const.HANG_RAIL_WIDTH)
                 part.set_input('Thickness', const.HANG_RAIL_THICKNESS)
                 _set_part_hidden(
                     rail, (not self.has_hang_rail)
-                    or bool(self.obj.get('hb_remove_hang_rail')))
+                    or sp.remove_hang_rail)
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:

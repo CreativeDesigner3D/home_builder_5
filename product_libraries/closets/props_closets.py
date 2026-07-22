@@ -186,6 +186,35 @@ class Closet_Starter_Props(PropertyGroup):
         default=const.TOP_ACCENT_OVERHANG, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
 
+    # Hang rail options.
+    remove_hang_rail: BoolProperty(
+        name="Remove Hang Rail",
+        description="Hide the wall hang rail on every bay",
+        default=False, update=_update_starter_prop)  # type: ignore
+    extend_hang_rail_left: FloatProperty(
+        name="Extend Hang Rail Left",
+        description="Lengthen the leftmost bay's rail toward the left "
+                    "wall by this much",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    extend_hang_rail_right: FloatProperty(
+        name="Extend Hang Rail Right",
+        description="Lengthen the rightmost bay's rail toward the right "
+                    "wall by this much",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    use_one_hang_rail_height: BoolProperty(
+        name="Use One Hang Rail Height",
+        description="Force every bay's rail to a single height instead "
+                    "of each bay's own top",
+        default=False, update=_update_starter_prop)  # type: ignore
+    hang_rail_height_location: FloatProperty(
+        name="Hang Rail Height",
+        description="Rail height above the floor when Use One Hang Rail "
+                    "Height is on",
+        default=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
     # dialog gates on that.
