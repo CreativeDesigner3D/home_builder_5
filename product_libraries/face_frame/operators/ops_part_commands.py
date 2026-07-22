@@ -1229,13 +1229,15 @@ def _on_df_lock(self, context):
 class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
     """Set a 5-piece front's stile / rail widths (per side) and mid rail.
 
-    Lock Frame pins the WHOLE interface: the values are stored as durable
-    HB_FRAME_OVR_* props and the front is flagged HB_FRAME_FRAME_LOCKED, so
-    the solver honors them on every recalc (a cabinet edit can't overwrite
-    them). Unlocked, the fields are greyed and the front follows its door
-    style (recomputed on any cabinet change). Live-bound like the other
-    Set-* dialogs. Mid Rail mode: CENTERED, THIRD (1/3 - 2/3 -> rail near
-    the top), or CUSTOM (uses Location).
+    The Modify Door checkbox (prop name lock_frame, kept for saved-file
+    compatibility) pins the WHOLE interface: the values are stored as
+    durable HB_FRAME_OVR_* props and the front is flagged
+    HB_FRAME_FRAME_LOCKED, so the solver honors them on every recalc (a
+    cabinet edit can't overwrite them). Unchecked, the fields are greyed
+    and the front follows its door style (recomputed on any cabinet
+    change). Live-bound like the other Set-* dialogs. Mid Rail mode:
+    CENTERED, THIRD (1/3 - 2/3 -> rail near the top), or CUSTOM (uses
+    Location); the Grid row supersedes those when its rail count > 0.
     """
     bl_idname = "hb_face_frame.set_door_frame"
     bl_label = "Set Door Frame"
@@ -1245,8 +1247,11 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
     source_obj_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     lock_frame: bpy.props.BoolProperty(
-        name="Lock Frame",
-        description="Pin these stile / rail / mid rail values so cabinet edits don't overwrite them",
+        name="Modify Door",
+        description="Take manual control of this door's frame: the stile / "
+                    "rail / grid values below are pinned so cabinet edits "
+                    "and style changes don't overwrite them. Uncheck to "
+                    "follow the door style again",
         default=False, update=_on_df_lock)  # type: ignore
 
     left_stile: FloatProperty(name="Left Stile", unit='LENGTH', precision=4, min=0.0,
