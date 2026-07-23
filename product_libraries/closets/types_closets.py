@@ -1285,7 +1285,9 @@ class ClosetStarter(GeoNodeCage):
                 1 if bay_obj.get(PROP_BAY_IS_HAMPER) else 0)
             existing.append(front.obj)
         for i, obj in enumerate(existing):
-            if swing == 'DOUBLE':
+            if obj.get('hb_is_hamper'):
+                obj['hb_hinge'] = 'BOTTOM'
+            elif swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
             elif swing == 'LIFT_UP':
                 obj['hb_hinge'] = 'TOP'
@@ -1345,11 +1347,13 @@ class ClosetStarter(GeoNodeCage):
             obj['hb_is_hamper'] = 1 if opening.get(PROP_IS_HAMPER) else 0
             existing.append(obj)
         # Hinge side per leaf (drives pull placement + open swing): a
-        # DOUBLE pair hinges outward so the pulls meet at the center; a
-        # lift-up door hinges at the TOP; singles hinge on their swing
-        # side.
+        # tilt-out hamper hinges at the BOTTOM; a DOUBLE pair hinges
+        # outward so the pulls meet at the center; a lift-up door hinges
+        # at the TOP; singles hinge on their swing side.
         for i, obj in enumerate(existing):
-            if swing == 'DOUBLE':
+            if obj.get('hb_is_hamper'):
+                obj['hb_hinge'] = 'BOTTOM'
+            elif swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
             elif swing == 'LIFT_UP':
                 obj['hb_hinge'] = 'TOP'
@@ -2143,6 +2147,9 @@ def find_bay_cage(obj):
 
 
 DOOR_OPEN_ANGLE = math.radians(110.0)
+# A tilt-out hamper front pivots at its bottom edge and tilts out this
+# far when fully open (legacy value).
+HAMPER_TILT_ANGLE = math.radians(50.0)
 
 
 def apply_door_open(door, frac):
@@ -2183,6 +2190,14 @@ def apply_door_open(door, frac):
                          cy - math.sin(ang) * h,
                          cz + h - math.cos(ang) * h)
         door.rotation_euler = (math.radians(90.0) - ang, 0.0, 0.0)
+        return
+    if hinge == 'BOTTOM':
+        # Tilt-out hamper: pivot at the BOTTOM edge (the door origin),
+        # the top swinging out into the room. The origin stays put; the
+        # front just rotates about world X by the tilt angle.
+        ang = HAMPER_TILT_ANGLE * frac * swing
+        door.location = (cx, cy, cz)
+        door.rotation_euler = (math.radians(90.0) + ang, 0.0, 0.0)
         return
     if hinge == 'LEFT':
         ez = -DOOR_OPEN_ANGLE * frac * swing
