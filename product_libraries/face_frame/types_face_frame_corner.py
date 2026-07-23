@@ -1002,6 +1002,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         elif cab_props.corner_type == 'PIE_CUT_DRAWER':
             self._recalculate_pie_cut_drawer()
 
+        # Applied finished-end panels on the arm ends (Paneled /
+        # False FF / Working FF). Runs after the shape recalc so the
+        # panels pick up the receded side positions.
+        self._reconcile_corner_applied_panels()
+
         # Ensure every corner part carries a right-click menu. Corner parts
         # are built outside the standard rectangular reconciliation, so they
         # miss the part-commands menu it assigns; without a MENU_ID a part
@@ -1012,6 +1017,143 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         for _part_obj in self.obj.children_recursive:
             if _part_obj.get('hb_part_role') and not _part_obj.get('MENU_ID'):
                 _part_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+
+    # -----------------------------------------------------------------
+    # Applied finished-end panels on the arm ends
+    # -----------------------------------------------------------------
+    def _corner_panel_reserve(self, cab_props, side):
+        """Effective scribe for one arm end. An end whose finished-end
+        condition carries an applied panel (Paneled / False FF /
+        Working FF) reserves a 3/4 band outboard of the side for that
+        panel, overriding the typed scribe - the same rule as
+        solver.left_scribe_offset on straight cabinets. Every other
+        condition keeps the typed scribe value.
+        """
+        cond = (cab_props.left_finished_end_condition if side == 'LEFT'
+                else cab_props.right_finished_end_condition)
+        if cond in ff.APPLIED_PANEL_END_TYPES:
+            return inch(0.75)
+        return (cab_props.left_scribe if side == 'LEFT'
+                else cab_props.right_scribe)
+
+    def _corner_applied_panel_geometry(self, cab_props, side):
+        """Transform + dimensions for an applied panel covering one arm
+        end. Returns (location, rotation_z, width, height, thickness).
+
+        Frame: wall corner at (0, 0); the left arm ends at Y=-depth
+        (panel front face aims -Y, rotation 0) and the right arm at
+        X=width (front face aims +X, rotation +90). The panel fills the
+        3/4 band _corner_panel_reserve receded the carcass side by, so
+        its outer face lands on the cabinet's nominal end plane. Full
+        cabinet height, floor to top, covering the toe-kick band (the
+        sizing pass grows the bottom rail to keep that band reading as
+        frame - same as straight cabinets).
+
+        Pie cut: the panel stops at the arm's FF back plane (fft short
+        of the front); the end stile's front band covers the rest.
+        Diagonal: the angled stile's back corner intrudes into the band
+        by fft * (diagonal direction component), so the panel stops
+        there and the stile closes the joint - a butt joint, not a
+        miter, in this first pass.
+        """
+        p = inch(0.75)
+        width = cab_props.width
+        depth = cab_props.depth
+        fft = cab_props.face_frame_thickness
+        ld = cab_props.left_depth
+        rd = cab_props.right_depth
+        if cab_props.corner_type == 'DIAGONAL':
+            dx = width - ld
+            dy = depth - rd
+            diag = math.sqrt(dx * dx + dy * dy)
+            ux = dx / diag if diag > 0.0 else math.sqrt(0.5)
+            uy = dy / diag if diag > 0.0 else math.sqrt(0.5)
+            trim_l = fft * uy
+            trim_r = fft * ux
+        else:
+            trim_l = fft
+            trim_r = fft
+        if side == 'LEFT':
+            return ((0.0, -depth + p, 0.0), 0.0,
+                    ld - trim_l, cab_props.height, p)
+        return ((width - p, -rd + trim_r, 0.0), math.pi / 2.0,
+                rd - trim_r, cab_props.height, p)
+
+    def _reconcile_corner_applied_panels(self):
+        """Sync applied panel children to the two arm-end finished-end
+        conditions. Mirrors FaceFrameCabinet._reconcile_applied_panels
+        (spawn / resize / remove in place so user edits on the panel
+        survive) with corner-specific geometry. Corner backs sit
+        against the walls, so only LEFT / RIGHT are reconciled here.
+        """
+        from . import applied_panel_sizing
+        cab_props = self.obj.face_frame_cabinet
+        side_conditions = {
+            'LEFT':  cab_props.left_finished_end_condition,
+            'RIGHT': cab_props.right_finished_end_condition,
+        }
+
+        # Index existing applied panels by side; keep the first and
+        # remove extras to converge on a clean state.
+        existing = {}
+        extras = []
+        for child in self.obj.children:
+            side = child.get(ff.TAG_APPLIED_PANEL_SIDE)
+            if not side:
+                continue
+            if side in existing:
+                extras.append(child)
+            else:
+                existing[side] = child
+        for child in extras:
+            ff._remove_root_with_children(child)
+
+        for side, condition in side_conditions.items():
+            panel_obj = existing.get(side)
+            if condition not in ff.APPLIED_PANEL_END_TYPES:
+                if panel_obj is not None:
+                    ff._remove_root_with_children(panel_obj)
+                continue
+
+            if panel_obj is None:
+                panel = ff.PanelFaceFrameCabinet()
+                panel.create(f'Applied Panel {side[0]}', bay_qty=1)
+                panel_obj = panel.obj
+                panel_obj.parent = self.obj
+                panel_obj[ff.TAG_APPLIED_PANEL_SIDE] = side
+
+            # Stamp the parent cabinet's style onto the panel root so
+            # the panel's own recalc tail materials its rebuilt parts
+            # (see the straight reconcile for the full rationale).
+            parent_style = self.obj.get('STYLE_NAME')
+            if parent_style:
+                panel_obj['STYLE_NAME'] = parent_style
+
+            location, rotation_z, width, height, thickness = (
+                self._corner_applied_panel_geometry(cab_props, side))
+            panel_obj.location = location
+            panel_obj.rotation_euler = (0.0, 0.0, rotation_z)
+            panel_props = panel_obj.face_frame_cabinet
+            panel_props.width = width
+            panel_props.height = height
+            panel_props.depth = thickness
+
+            # Sizing before split structure - the split rebuild reads
+            # bay.location.z, which is downstream of the panel's
+            # bottom_rail_width written by the sizing pass.
+            applied_panel_sizing.apply_panel_sizing(
+                self.obj, panel_obj, side, condition)
+            applied_panel_sizing.apply_panel_split_structure(
+                self.obj, panel_obj, side, condition)
+            applied_panel_sizing.apply_panel_toe_kick_notch(
+                self.obj, panel_obj, side)
+
+            # Right-click menu on the panel's menu-less parts so any
+            # click surfaces the panel's prompts.
+            for part in panel_obj.children_recursive:
+                if part.get('hb_part_role') and not part.get('MENU_ID'):
+                    part['MENU_ID'] = (
+                        'HOME_BUILDER_MT_face_frame_part_commands')
 
     def _reconcile_pie_cut_sections(self, cab_props):
         """Create / remove the section-dependent pie cut parts - one door
@@ -1316,9 +1458,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # shifts the X=0 wall plane to X=left_scribe; right_scribe
         # shifts the Y=0 wall plane to Y=-right_scribe. Face frames,
         # kicks, doors are anchored to the inside-corner edges (X=ld,
-        # Y=-rd) and are unaffected.
-        l_scribe = cab_props.left_scribe
-        r_scribe = cab_props.right_scribe
+        # Y=-rd) and are unaffected. An arm end whose finished-end
+        # condition carries an applied panel overrides its typed scribe
+        # with a 3/4 reservation for the panel (see
+        # _corner_panel_reserve), mirroring solver.left_scribe_offset.
+        l_scribe = self._corner_panel_reserve(cab_props, 'LEFT')
+        r_scribe = self._corner_panel_reserve(cab_props, 'RIGHT')
 
         z_back_floor = (kick_height + brw) if has_kick else brw
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
@@ -2148,9 +2293,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # the carcass meets the FF stile back face exactly; at scribe>0
         # the carcass falls short by that amount, leaving the FF stile
         # to overhang for jobsite trimming. Same semantic as the
-        # standard cabinet's Left/Right Scribe prop.
-        fflo = cab_props.left_scribe
-        ffro = cab_props.right_scribe
+        # standard cabinet's Left/Right Scribe prop. An arm end whose
+        # finished-end condition carries an applied panel overrides its
+        # typed scribe with a 3/4 reservation for the panel (see
+        # _corner_panel_reserve).
+        fflo = self._corner_panel_reserve(cab_props, 'LEFT')
+        ffro = self._corner_panel_reserve(cab_props, 'RIGHT')
 
         z_back_floor = (kick_height + brw) if has_kick else brw
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
