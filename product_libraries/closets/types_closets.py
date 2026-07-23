@@ -85,6 +85,10 @@ PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
 PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
 PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
+# Per-opening box-system override. Empty / 'DEFAULT' falls back to the
+# scene-wide box selection; any other value forces this opening's boxes
+# to that system (or turns them off with 'NONE').
+PROP_DRAWER_BOX_OVERRIDE = 'hb_drawer_box_override'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills its
 # opening: unlocked fronts share the remaining span equally. Editing a
 # front's height locks it (hb_front_locked=1) so it holds while the others
@@ -998,7 +1002,10 @@ class ClosetStarter(GeoNodeCage):
                 [(f.get(PROP_FRONT_HEIGHT, 0.0),
                   bool(f.get(PROP_FRONT_LOCKED, 0))) for f in fronts])
             from . import drawer_boxes_closets as dbx
-            box_type = dbx.current_type()
+            # Per-opening override wins; otherwise use the scene default.
+            _ovr = opening.get(PROP_DRAWER_BOX_OVERRIDE, '')
+            box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
+                        else dbx.current_type())
             box_mat = dbx.box_material(box_type)
             box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
@@ -2339,7 +2346,8 @@ def clear_opening_contents(opening):
     contents - clear_bay_contents handles those."""
     for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY, PROP_ROLLOUT_QTY,
                 PROP_ROLLOUT_HEIGHT,
-                PROP_DRAWER_FRONT_HEIGHT, PROP_DOOR_SWING, PROP_IS_HAMPER,
+                PROP_DRAWER_FRONT_HEIGHT, PROP_DRAWER_BOX_OVERRIDE,
+                PROP_DOOR_SWING, PROP_IS_HAMPER,
                 PROP_CUBBY_COLS, PROP_CUBBY_ROWS):
         if key in opening:
             del opening[key]
@@ -2378,6 +2386,7 @@ def serialize_opening(opening):
                                        const.ROLLOUT_HEIGHT)),
         'drawer_fh': float(opening.get(PROP_DRAWER_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)),
+        'drawer_box': opening.get(PROP_DRAWER_BOX_OVERRIDE, ''),
         'door_swing': opening.get(PROP_DOOR_SWING, ''),
         'is_hamper': int(opening.get(PROP_IS_HAMPER, 0)),
         'cubby_cols': int(opening.get(PROP_CUBBY_COLS, 1)),
@@ -2397,6 +2406,8 @@ def apply_opening_data(opening, data, recalc=True):
     if data.get('drawer_qty'):
         opening[PROP_DRAWER_QTY] = data['drawer_qty']
         opening[PROP_DRAWER_FRONT_HEIGHT] = data['drawer_fh']
+        if data.get('drawer_box'):
+            opening[PROP_DRAWER_BOX_OVERRIDE] = data['drawer_box']
     if data.get('rollout_qty'):
         opening[PROP_ROLLOUT_QTY] = data['rollout_qty']
         opening[PROP_ROLLOUT_HEIGHT] = data.get('rollout_h',

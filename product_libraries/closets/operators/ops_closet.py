@@ -22,6 +22,14 @@ from ...frameless.operators.ops_placement import toggle_cabinet_color
 from ...face_frame.operators.ops_placement import _detect_wall
 from .. import const_closets as const
 from .. import types_closets
+from .. import drawer_boxes_closets
+
+# Per-opening box-system choices: "Use Default" (defer to the project
+# setting) plus every box system. Held at module scope so the enum
+# item strings stay alive for the property.
+_DRAWER_BOX_OVERRIDE_ITEMS = [
+    ('DEFAULT', "Use Default", "Use the project drawer box setting"),
+] + list(drawer_boxes_closets.BOX_TYPES)
 
 _BAY_QTY_MIN = 1
 _BAY_QTY_MAX = 9
@@ -1925,6 +1933,10 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     front_height: bpy.props.FloatProperty(
         name="Front Height", default=0.1905,  # 7.5"
         unit='LENGTH', precision=4)  # type: ignore
+    drawer_box: bpy.props.EnumProperty(
+        name="Drawer Box",
+        items=_DRAWER_BOX_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
 
     def invoke(self, context, event):
         from .. import const_closets as const
@@ -1934,6 +1946,8 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             self.front_height = float(opening.get(
                 types_closets.PROP_DRAWER_FRONT_HEIGHT,
                 const.DRAWER_FRONT_HEIGHT))
+            self.drawer_box = (opening.get(
+                types_closets.PROP_DRAWER_BOX_OVERRIDE, '') or 'DEFAULT')
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def execute(self, context):
@@ -1943,6 +1957,12 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             return {'CANCELLED'}
         opening[types_closets.PROP_DRAWER_QTY] = self.qty
         opening[types_closets.PROP_DRAWER_FRONT_HEIGHT] = self.front_height
+        # 'Use Default' clears the per-opening override so the box system
+        # follows the project setting again.
+        if self.drawer_box and self.drawer_box != 'DEFAULT':
+            opening[types_closets.PROP_DRAWER_BOX_OVERRIDE] = self.drawer_box
+        elif types_closets.PROP_DRAWER_BOX_OVERRIDE in opening:
+            del opening[types_closets.PROP_DRAWER_BOX_OVERRIDE]
         root = types_closets.find_starter_root(opening)
         bay = types_closets.find_bay_cage(opening)
 
