@@ -72,6 +72,16 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _update_kick_preset(self, context):
+    """Toe-kick height dropdown changed: set the distance to the chosen
+    standard height (the key is millimetres), then recalc. 'CUSTOM'
+    leaves the typed distance alone."""
+    if self.toe_kick_height_preset != 'CUSTOM':
+        self.toe_kick_height = const.millimeter(
+            int(self.toe_kick_height_preset))
+    _update_starter_prop(self, context)
+
+
 def _update_bay_prop(self, context):
     """Bay-level prop changed (height/depth/floor/remove flags)."""
     from . import types_closets
@@ -128,6 +138,13 @@ class Closet_Starter_Props(PropertyGroup):
         ],
         default='BASE')  # type: ignore
 
+    toe_kick_height_preset: EnumProperty(
+        name="Toe Kick Height",
+        description="Standard toe-kick height (Custom keeps the typed "
+                    "value)",
+        items=const.KICK_HEIGHT_ITEMS + [('CUSTOM', "Custom",
+                                          "Use the typed height")],
+        default='96', update=_update_kick_preset)  # type: ignore
     toe_kick_height: FloatProperty(
         name="Toe Kick Height",
         default=const.DEFAULT_TOE_KICK_HEIGHT, unit='LENGTH', precision=4,
@@ -139,6 +156,125 @@ class Closet_Starter_Props(PropertyGroup):
 
     include_countertop: BoolProperty(
         name="Include Countertop", default=False,
+        update=_update_starter_prop)  # type: ignore
+
+    # End options. Finished end and drill
+    # through are flags a downstream machining pass consumes (blind vs
+    # through machining, edge treatment); turn-off frees the panel
+    # thickness back to the openings for shared-panel runs; battens are
+    # cosmetic scribe strips.
+    left_finished_end: BoolProperty(
+        name="Left Finished End", default=False,
+        update=_update_starter_prop)  # type: ignore
+    right_finished_end: BoolProperty(
+        name="Right Finished End", default=False,
+        update=_update_starter_prop)  # type: ignore
+    turn_off_left_panel: BoolProperty(
+        name="Turn Off Left Panel",
+        description="Hide the left end panel and give its thickness to "
+                    "the first bay (share a panel with the neighbor)",
+        default=False, update=_update_starter_prop)  # type: ignore
+    turn_off_right_panel: BoolProperty(
+        name="Turn Off Right Panel",
+        description="Hide the right end panel and give its thickness to "
+                    "the last bay (share a panel with the neighbor)",
+        default=False, update=_update_starter_prop)  # type: ignore
+    drill_through_left: BoolProperty(
+        name="Drill Through Left Side", default=False,
+        update=_update_starter_prop)  # type: ignore
+    drill_through_right: BoolProperty(
+        name="Drill Through Right Side", default=False,
+        update=_update_starter_prop)  # type: ignore
+    include_batten_left: BoolProperty(
+        name="Include Batten Left", default=False,
+        update=_update_starter_prop)  # type: ignore
+    include_batten_right: BoolProperty(
+        name="Include Batten Right", default=False,
+        update=_update_starter_prop)  # type: ignore
+
+    # Top accent shelf: a decorative shelf on
+    # top of the run projecting forward by the overhang, with a side
+    # overhang past each finished end.
+    add_top_accent_shelf: BoolProperty(
+        name="Add Top Accent Shelf", default=False,
+        update=_update_starter_prop)  # type: ignore
+    top_accent_overhang: FloatProperty(
+        name="Top Accent Shelf Overhang",
+        default=const.TOP_ACCENT_OVERHANG, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
+    # Hang rail options.
+    remove_hang_rail: BoolProperty(
+        name="Remove Hang Rail",
+        description="Hide the wall hang rail on every bay",
+        default=False, update=_update_starter_prop)  # type: ignore
+    extend_hang_rail_left: FloatProperty(
+        name="Extend Hang Rail Left",
+        description="Lengthen the leftmost bay's rail toward the left "
+                    "wall by this much",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    extend_hang_rail_right: FloatProperty(
+        name="Extend Hang Rail Right",
+        description="Lengthen the rightmost bay's rail toward the right "
+                    "wall by this much",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    use_one_hang_rail_height: BoolProperty(
+        name="Use One Hang Rail Height",
+        description="Force every bay's rail to a single height instead "
+                    "of each bay's own top",
+        default=False, update=_update_starter_prop)  # type: ignore
+    hang_rail_height_location: FloatProperty(
+        name="Hang Rail Height",
+        description="Rail height above the floor when Use One Hang Rail "
+                    "Height is on",
+        default=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
+    # Side wall fillers: a front scribe
+    # strip standing past the end of the run to close the gap to a side
+    # wall. Width 0 = no filler. The prompt value is the filler width.
+    left_side_wall_filler: FloatProperty(
+        name="Left Side Wall Filler",
+        description="Width of the scribe filler past the left end (0 = "
+                    "none)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    right_side_wall_filler: FloatProperty(
+        name="Right Side Wall Filler",
+        description="Width of the scribe filler past the right end (0 = "
+                    "none)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
+    # Corner (L-shelf) starter prompts. Only meaningful when the
+    # starter class is an L-shelf variant (is_corner); the prompts
+    # dialog gates on that.
+    l_left_depth: FloatProperty(
+        name="Left Depth", description="Left wing panel depth",
+        default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_right_depth: FloatProperty(
+        name="Right Depth", description="Right wing panel depth",
+        default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_shelf_qty: IntProperty(
+        name="Shelf Quantity",
+        description="Interior L shelves between the bottom and top",
+        default=const.L_SHELF_QTY, min=0, max=12,
+        update=_update_starter_prop)  # type: ignore
+    l_back_width: FloatProperty(
+        name="Back Partition Width",
+        description="Width of the corner back partition the L shelves "
+                    "notch around",
+        default=const.L_BACK_STRIP_WIDTH, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_flip_partition: BoolProperty(
+        name="Flip Back Partition",
+        description="Move the back partition from the back wall to the "
+                    "side wall",
+        default=False,
         update=_update_starter_prop)  # type: ignore
 
 
@@ -178,6 +314,12 @@ class Closet_Bay_Props(PropertyGroup):
     remove_cleat: BoolProperty(
         name="Remove Cleat", default=starter_presets.BAY_PROP_DEFAULTS['remove_cleat'],
         update=_update_bay_prop)  # type: ignore
+    double_panel_left: BoolProperty(
+        name="Double Panel",
+        description="Add a second partition at this bay's left junction "
+                    "so this bay and its left neighbor each get their "
+                    "own panel",
+        default=False, update=_update_bay_prop)  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +333,23 @@ class Closets_Scene_Props(PropertyGroup):
         unit='LENGTH', precision=4)  # type: ignore
     default_panel_depth: FloatProperty(
         name="Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    # Per-type panel depths. Seeded onto a new starter by
+    # its closet type; default_panel_depth is the fallback.
+    default_base_panel_depth: FloatProperty(
+        name="Base Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_tall_panel_depth: FloatProperty(
+        name="Tall Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_hanging_panel_depth: FloatProperty(
+        name="Hanging Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_corner_closet_size: FloatProperty(
+        name="Corner Closet Size", default=const.L_SHELF_SIZE,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_accent_overhang: FloatProperty(
+        name="Accent Shelf Overhang", default=const.TOP_ACCENT_OVERHANG,
         unit='LENGTH', precision=4)  # type: ignore
     base_panel_height: FloatProperty(
         name="Base Panel Height", default=const.BASE_PANEL_HEIGHT,
@@ -382,11 +541,15 @@ class Closets_Scene_Props(PropertyGroup):
                  emboss=False)
         if self.show_closet_sizes:
             for prop_name in ('default_closet_width', 'default_panel_depth',
+                              'default_base_panel_depth',
+                              'default_tall_panel_depth',
+                              'default_hanging_panel_depth',
+                              'default_corner_closet_size',
                               'base_panel_height', 'tall_panel_height',
                               'hanging_panel_height', 'hanging_top_height',
                               'panel_thickness', 'shelf_thickness',
-                              'countertop_thickness', 'toe_kick_height',
-                              'toe_kick_setback'):
+                              'countertop_thickness', 'default_accent_overhang',
+                              'toe_kick_height', 'toe_kick_setback'):
                 box.prop(self, prop_name)
 
         box = col.box()

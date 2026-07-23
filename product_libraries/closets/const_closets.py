@@ -15,6 +15,10 @@ SHELF_THICKNESS = inch(0.75)
 COUNTERTOP_THICKNESS = inch(1.125)
 APPLIED_BACK_THICKNESS = inch(0.75)
 CLEAT_WIDTH = inch(4.0)
+# End-panel batten: a cosmetic scribe strip against the
+# inner face of an end panel at the front edge.
+BATTEN_WIDTH = inch(1.125)
+BATTEN_THICKNESS = inch(0.25)
 # Wall hang rail (the strip the closet hangs from / anchors to). Legacy
 # profile: 1.125 in tall x 0.25 in thick, rail bottom 3.3125 in below
 # the section top.
@@ -65,6 +69,10 @@ KICK_HEIGHT_ITEMS = [
 # ---------------------------------------------------------------------------
 COUNTERTOP_OVERHANG_FRONT = inch(1.875)
 
+# Top accent shelf: a decorative shelf laid on top of the run, projecting
+# forward (and past finished ends) by the overhang. Default 1".
+TOP_ACCENT_OVERHANG = inch(1.0)
+
 # Minimum bay width the redistributor will assign to an unlocked bay.
 MIN_BAY_WIDTH = inch(1.0)
 
@@ -107,7 +115,12 @@ ISLAND_CTOP_OVERHANG = inch(1.5)    # legacy islands overhang all sides
 # L Shelves (inside-corner units)
 L_SHELF_SIZE = inch(24.0)           # corner footprint each way
 L_SHELF_QTY = 3                     # interior L shelves between top/bottom
-L_BACK_STRIP_WIDTH = inch(6.0)      # wall support strips at the corner
+L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
+# Corner construction: shelves and the back partition are held
+# off the walls by the wall offset; the shelves' partition notch clears
+# the partition by the router tool radius.
+L_WALL_OFFSET = inch(0.5)
+L_NOTCH_TOOL_RADIUS = inch(0.25)
 # Default distance from the opening TOP to a hang rod's center when the
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.5)

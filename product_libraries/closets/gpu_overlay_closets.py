@@ -268,7 +268,9 @@ def _starter_shown(starter, space=None):
     the first partition panel (never design-hidden, present on every
     starter class including L shelves)."""
     for child in starter.children:
-        if child.get('hb_part_role') == types_closets.PART_ROLE_PANEL:
+        if (child.get('hb_part_role') == types_closets.PART_ROLE_PANEL
+                and not child.get('hb_double_partition')
+                and not child.get('hb_panel_off')):
             try:
                 if (space is not None
                         and getattr(space, 'type', '') == 'VIEW_3D'):

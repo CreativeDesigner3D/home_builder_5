@@ -1993,7 +1993,8 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
         items=[('NONE', "None", "Remove doors"),
                ('LEFT', "Left", "Single door hinged left"),
                ('RIGHT', "Right", "Single door hinged right"),
-               ('DOUBLE', "Double", "Pair of doors")],
+               ('DOUBLE', "Double", "Pair of doors"),
+               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door")],
         default='LEFT')  # type: ignore
     is_hamper: bpy.props.BoolProperty(
         name="Hamper (tilt-out)", default=False)  # type: ignore
@@ -2433,14 +2434,74 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         if root is None:
             return
         sp = root.hb_closet_starter
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+        is_corner = getattr(cls, 'is_corner', False)
         col = layout.column(align=True)
         col.prop(sp, 'width')
         col.prop(sp, 'height')
         col.prop(sp, 'depth')
         col = layout.column(align=True)
-        col.prop(sp, 'toe_kick_height')
+        col.prop(sp, 'toe_kick_height_preset')
+        if sp.toe_kick_height_preset == 'CUSTOM':
+            col.prop(sp, 'toe_kick_height')
         col.prop(sp, 'toe_kick_setback')
-        col.prop(sp, 'include_countertop')
+        if not is_corner:
+            col.prop(sp, 'include_countertop')
+        if is_corner:
+            box = layout.box()
+            box.label(text="Corner")
+            col = box.column(align=True)
+            col.prop(sp, 'l_left_depth')
+            col.prop(sp, 'l_right_depth')
+            col.prop(sp, 'l_shelf_qty')
+            col = box.column(align=True)
+            col.prop(sp, 'l_back_width')
+            col.prop(sp, 'l_flip_partition')
+        else:
+            box = layout.box()
+            box.label(text="Ends")
+            row = box.row(align=True)
+            col = row.column(align=True)
+            col.label(text="Left")
+            col.prop(sp, 'left_finished_end', text="Finished End")
+            col.prop(sp, 'turn_off_left_panel', text="Turn Off Panel")
+            col.prop(sp, 'drill_through_left', text="Drill Through")
+            col.prop(sp, 'include_batten_left', text="Batten")
+            col = row.column(align=True)
+            col.label(text="Right")
+            col.prop(sp, 'right_finished_end', text="Finished End")
+            col.prop(sp, 'turn_off_right_panel', text="Turn Off Panel")
+            col.prop(sp, 'drill_through_right', text="Drill Through")
+            col.prop(sp, 'include_batten_right', text="Batten")
+
+            box = layout.box()
+            box.label(text="Top")
+            col = box.column(align=True)
+            col.prop(sp, 'add_top_accent_shelf')
+            sub = col.column(align=True)
+            sub.enabled = sp.add_top_accent_shelf
+            sub.prop(sp, 'top_accent_overhang')
+
+            if getattr(cls, 'has_hang_rail', False):
+                box = layout.box()
+                box.label(text="Hang Rail")
+                col = box.column(align=True)
+                col.prop(sp, 'remove_hang_rail')
+                sub = col.column(align=True)
+                sub.enabled = not sp.remove_hang_rail
+                sub.prop(sp, 'extend_hang_rail_left')
+                sub.prop(sp, 'extend_hang_rail_right')
+                sub.prop(sp, 'use_one_hang_rail_height')
+                row = sub.row(align=True)
+                row.enabled = sp.use_one_hang_rail_height
+                row.prop(sp, 'hang_rail_height_location')
+
+            box = layout.box()
+            box.label(text="Side Wall Fillers")
+            row = box.row(align=True)
+            row.prop(sp, 'left_side_wall_filler', text="Left")
+            row.prop(sp, 'right_side_wall_filler', text="Right")
         # Compact per-bay rows: width+lock / floor toggle.
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],
@@ -2458,6 +2519,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 row.prop(bp, 'height', text="")
                 row.prop(bp, 'depth', text="")
                 row.prop(bp, 'floor_mounted', text="", icon='TRIA_DOWN_BAR')
+                if bp.bay_index >= 1:
+                    row.prop(bp, 'double_panel_left', text="",
+                             icon='DUPLICATE')
+                else:
+                    row.label(text="", icon='BLANK1')
 
     def execute(self, context):
         return {'FINISHED'}
