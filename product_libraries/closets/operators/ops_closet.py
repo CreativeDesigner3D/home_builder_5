@@ -1993,7 +1993,8 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
         items=[('NONE', "None", "Remove doors"),
                ('LEFT', "Left", "Single door hinged left"),
                ('RIGHT', "Right", "Single door hinged right"),
-               ('DOUBLE', "Double", "Pair of doors")],
+               ('DOUBLE', "Double", "Pair of doors"),
+               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door")],
         default='LEFT')  # type: ignore
     is_hamper: bpy.props.BoolProperty(
         name="Hamper (tilt-out)", default=False)  # type: ignore

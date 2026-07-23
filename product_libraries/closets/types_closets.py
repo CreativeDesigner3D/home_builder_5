@@ -90,7 +90,7 @@ PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
 # resolved height, so overlay labels always read the true value.
 PROP_FRONT_HEIGHT = 'hb_front_height'
 PROP_FRONT_LOCKED = 'hb_front_locked'
-PROP_DOOR_SWING = 'hb_door_swing'        # ''|'LEFT'|'RIGHT'|'DOUBLE'
+PROP_DOOR_SWING = 'hb_door_swing'        # ''|'LEFT'|'RIGHT'|'DOUBLE'|'LIFT_UP'
 PROP_IS_HAMPER = 'hb_is_hamper'
 # Bay-level doors span the WHOLE bay (all segments), parented to the bay
 # cage; set from the bay menu. Mutually exclusive with opening doors on
@@ -967,7 +967,8 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Width', interior_h + to + bo)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 _apply_front_style(child, is_drawer=False)
-                _stash_door_closed(child, x, front_y, -bo, leaf, side)
+                _stash_door_closed(child, x, front_y, -bo, leaf, side,
+                                   height=interior_h + to + bo)
                 self._position_front_pull(
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
@@ -1129,6 +1130,12 @@ class ClosetStarter(GeoNodeCage):
             x = width / 2.0
             y = height - v_base - half
             rot = (math.radians(-90.0), 0.0, 0.0)
+        elif front.get('hb_hinge') == 'TOP':
+            # Lift-up door: horizontal bar centered near the bottom edge
+            # (the free edge that lifts).
+            x = width / 2.0
+            y = v_base + half
+            rot = (math.radians(-90.0), 0.0, 0.0)
         else:
             hinge = front.get('hb_hinge', 'LEFT')
             # 5-piece doors center the pull on the latch stile; slab
@@ -1212,7 +1219,7 @@ class ClosetStarter(GeoNodeCage):
         follow-up)."""
         swing = (bay_obj.get(PROP_BAY_DOOR_SWING, '')
                  if side == 'FRONT' else '')
-        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2}.get(swing, 0)
+        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
         existing = [c for c in bay_obj.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR
                     and c.get('hb_bay_door')]
@@ -1236,6 +1243,8 @@ class ClosetStarter(GeoNodeCage):
         for i, obj in enumerate(existing):
             if swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
+            elif swing == 'LIFT_UP':
+                obj['hb_hinge'] = 'TOP'
             else:
                 obj['hb_hinge'] = swing or 'LEFT'
         return existing
@@ -1263,7 +1272,8 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Width', interior_h + to + bo)
             part.set_input('Thickness', const.FRONT_THICKNESS)
             _apply_front_style(child, is_drawer=False)
-            _stash_door_closed(child, x, front_y, z, leaf, side)
+            _stash_door_closed(child, x, front_y, z, leaf, side,
+                               height=interior_h + to + bo)
             self._position_front_pull(
                 child, 'hamper' if child.get('hb_is_hamper') else 'door',
                 side)
@@ -1278,7 +1288,7 @@ class ClosetStarter(GeoNodeCage):
             swing = ''
         else:
             swing = opening.get(PROP_DOOR_SWING, '')
-        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2}.get(swing, 0)
+        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
@@ -1290,12 +1300,15 @@ class ClosetStarter(GeoNodeCage):
             obj['hb_door_index'] = len(existing)
             obj['hb_is_hamper'] = 1 if opening.get(PROP_IS_HAMPER) else 0
             existing.append(obj)
-        # Hinge side per leaf (drives pull placement): singles hinge on
-        # their swing side; a DOUBLE pair hinges outward so the pulls
-        # meet at the center.
+        # Hinge side per leaf (drives pull placement + open swing): a
+        # DOUBLE pair hinges outward so the pulls meet at the center; a
+        # lift-up door hinges at the TOP; singles hinge on their swing
+        # side.
         for i, obj in enumerate(existing):
             if swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
+            elif swing == 'LIFT_UP':
+                obj['hb_hinge'] = 'TOP'
             else:
                 obj['hb_hinge'] = swing or 'LEFT'
 
@@ -2090,6 +2103,22 @@ def apply_door_open(door, frac):
     # the room: LEFT hinge -> negative Z rotation, RIGHT -> positive.
     # Back-side island doors mirror.
     swing = -1.0 if side == 'BACK' else 1.0
+    if hinge == 'TOP':
+        # Lift-up: pivot at the TOP edge (a line parallel to +X at the
+        # door top), the bottom swinging out into the room (-Y) and up.
+        # The closed door stands with rot_x 90 spanning its height in
+        # +Z; rotating that base by -angle about world X lifts the
+        # bottom while the origin (bottom edge) moves so the top edge
+        # stays put.
+        h = door.get('hb_door_h', 0.0)
+        ang = DOOR_OPEN_ANGLE * frac * swing
+        # Bottom-origin offset from the top pivot is (0, 0, -h); rotate
+        # it about X by -ang and re-anchor at the fixed top point.
+        door.location = (cx,
+                         cy - math.sin(ang) * h,
+                         cz + h - math.cos(ang) * h)
+        door.rotation_euler = (math.radians(90.0) - ang, 0.0, 0.0)
+        return
     if hinge == 'LEFT':
         ez = -DOOR_OPEN_ANGLE * frac * swing
         loc = (cx, cy, cz)
@@ -2102,12 +2131,14 @@ def apply_door_open(door, frac):
     door.rotation_euler = (math.radians(90.0), 0.0, ez)
 
 
-def _stash_door_closed(door, cx, cy, cz, leaf, side):
+def _stash_door_closed(door, cx, cy, cz, leaf, side, height=0.0):
     door['hb_door_cx'] = float(cx)
     door['hb_door_cy'] = float(cy)
     door['hb_door_cz'] = float(cz)
     door['hb_door_leaf'] = float(leaf)
     door['hb_door_side'] = side
+    # Door height, needed to pivot a lift-up door about its top edge.
+    door['hb_door_h'] = float(height)
 
 
 def _distribute_front_heights(avail, fronts):
@@ -2529,7 +2560,8 @@ OPENING_CONFIG_GROUPS = [
     [('ADJ_SHELVES', "Adjustable Shelves")],
     [('DOOR_LEFT', "Left Swing Door"),
      ('DOOR_RIGHT', "Right Swing Door"),
-     ('DOOR_DOUBLE', "Double Door")],
+     ('DOOR_DOUBLE', "Double Door"),
+     ('DOOR_LIFT_UP', "Lift Up Door")],
     [('DRAWERS_1', "1 Drawer"), ('DRAWERS_2', "2 Drawer"),
      ('DRAWERS_3', "3 Drawer"), ('DRAWERS_4', "4 Drawer"),
      ('DRAWERS_5', "5 Drawer"), ('DRAWERS_6', "6 Drawer"),
@@ -2556,6 +2588,9 @@ def apply_opening_config(opening, config):
         seed_door_shelves(opening)
     elif config == 'DOOR_DOUBLE':
         opening[PROP_DOOR_SWING] = 'DOUBLE'
+        seed_door_shelves(opening)
+    elif config == 'DOOR_LIFT_UP':
+        opening[PROP_DOOR_SWING] = 'LIFT_UP'
         seed_door_shelves(opening)
     elif config == 'CUBBIES':
         opening[PROP_CUBBY_COLS] = 3
