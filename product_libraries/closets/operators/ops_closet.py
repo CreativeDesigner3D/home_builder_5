@@ -2064,6 +2064,38 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         })
 
 
+class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
+    """Set the pull-out (rollout) trays for the active opening. Each tray
+    stands the given Rollout Height; the trays are spaced evenly (0
+    quantity removes them)."""
+    bl_idname = "hb_closets.add_rollouts"
+    bl_label = "Rollout Trays"
+    bl_options = {'UNDO'}
+
+    qty: bpy.props.IntProperty(name="Quantity", default=3,
+                               min=0, max=12)  # type: ignore
+    rollout_height: bpy.props.FloatProperty(
+        name="Rollout Height", default=0.1016,  # 4"
+        unit='LENGTH', precision=4)  # type: ignore
+
+    def invoke(self, context, event):
+        from .. import const_closets as const
+        opening = _active_opening_for_insert(context)
+        if opening is not None:
+            self.qty = int(opening.get(
+                types_closets.PROP_ROLLOUT_QTY,
+                const.ROLLOUT_DEFAULT_QTY)) or const.ROLLOUT_DEFAULT_QTY
+            self.rollout_height = float(opening.get(
+                types_closets.PROP_ROLLOUT_HEIGHT, const.ROLLOUT_HEIGHT))
+        return context.window_manager.invoke_props_dialog(self, width=250)
+
+    def execute(self, context):
+        return self._commit(context, {
+            types_closets.PROP_ROLLOUT_QTY: self.qty,
+            types_closets.PROP_ROLLOUT_HEIGHT: self.rollout_height,
+        })
+
+
 class hb_closets_OT_change_bay(bpy.types.Operator):
     """Rebuild every selected bay as a standard configuration (clears
     the bays' current contents first). Shift-select several bays to
@@ -2923,6 +2955,7 @@ classes = (
     hb_closets_OT_add_drawers,
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
+    hb_closets_OT_add_rollouts,
     hb_closets_OT_change_bay,
     hb_closets_OT_change_opening,
     hb_closets_OT_copy_bay,

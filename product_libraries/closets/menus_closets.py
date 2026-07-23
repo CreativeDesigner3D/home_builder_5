@@ -112,6 +112,8 @@ def _draw_add_part_entries(layout):
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
     layout.operator("hb_closets.add_cubbies",
                     text="Cubbies...", icon='MESH_GRID')
+    layout.operator("hb_closets.add_rollouts",
+                    text="Rollout Trays...", icon='MESH_PLANE')
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):

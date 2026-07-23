@@ -83,6 +83,7 @@ PART_ROLE_BRIDGE_SHELF = 'CLOSET_BRIDGE_SHELF'
 PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
+PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
 PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills its
 # opening: unlocked fronts share the remaining span equally. Editing a
@@ -1054,7 +1055,12 @@ class ClosetStarter(GeoNodeCage):
                     child, 1.0 if child.get('hb_drawer_open') else 0.0)
                 z += dh + const.FRONT_GAP
 
-        # ----- Rollout trays (drawer boxes, no fronts, evenly spaced) -----
+        # ----- Rollout trays -----
+        # Each tray stands a fixed Rollout Height (default 4"), the trays
+        # spaced with equal gaps above, below, and between (legacy sizing:
+        # 4" tray, 0.327" side clearance for the slides, full opening
+        # depth). If the stack can't fit at the full height the trays
+        # shrink to keep the minimum gap.
         rollouts = [c for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                     if c.get('hb_rollout')]
         if rollouts:
@@ -1062,30 +1068,28 @@ class ClosetStarter(GeoNodeCage):
             from . import drawer_boxes_closets as dbx
             box_type = dbx.current_type()
             box_mat = dbx.box_material(box_type)
-            box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
-            wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
+            box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
+            box_d = max(depth, inch(2.0))
             n = len(rollouts)
-            # Evenly space the trays over the interior height; each gets
-            # an equal slice and sits at the bottom of its slice.
-            slice_h = interior_h / n
-            wood_h = max(min(slice_h, inch(4.0))
-                         - const.DRAWER_BOX_HEIGHT_DEDUCT, inch(2.0))
-            spec = dbx.size_box(box_type, slice_h, depth, wood_h, wood_d)
-            box_d = spec[1] if spec is not None else wood_d
-            box_h = spec[0] if spec is not None else wood_h
+            tray_h = float(opening.get(PROP_ROLLOUT_HEIGHT,
+                                       const.ROLLOUT_HEIGHT))
+            gap = (interior_h - n * tray_h) / (n + 1)
+            if gap < const.ROLLOUT_MIN_GAP:
+                # Won't fit at the full height: hold the minimum gap and
+                # shrink the trays to share the remainder.
+                gap = const.ROLLOUT_MIN_GAP
+                tray_h = max((interior_h - (n + 1) * gap) / n, inch(2.0))
+            y_box = (-box_d if side == 'BACK' else -depth)
             for i, box in enumerate(rollouts):
                 box['hb_drawer_box_type'] = box_type
-                box['hb_drawer_box_size'] = (spec[2] if spec else 'NONE')
-                _set_part_hidden(box, spec is None)
-                if spec is None:
-                    continue
-                y_box = (-box_d if side == 'BACK' else -depth)
-                z = i * slice_h + const.DRAWER_BOX_Z_LIFT
-                box.location = (const.DRAWER_SLIDE_GAP, y_box, z)
+                box['hb_drawer_box_size'] = 'ROLLOUT'
+                _set_part_hidden(box, False)
+                z = gap + i * (tray_h + gap)
+                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
-                gb.set_input('Dim Z', box_h)
+                gb.set_input('Dim Z', tray_h)
                 try:
                     gb.set_input('Material', box_mat)
                 except Exception:
@@ -2319,6 +2323,7 @@ def clear_opening_contents(opening):
     loose parts (rods). Splitting shelves are bay structure, not
     contents - clear_bay_contents handles those."""
     for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY, PROP_ROLLOUT_QTY,
+                PROP_ROLLOUT_HEIGHT,
                 PROP_DRAWER_FRONT_HEIGHT, PROP_DOOR_SWING, PROP_IS_HAMPER,
                 PROP_CUBBY_COLS, PROP_CUBBY_ROWS):
         if key in opening:
@@ -2354,6 +2359,8 @@ def serialize_opening(opening):
         'adj': int(opening.get(PROP_ADJ_SHELF_QTY, 0)),
         'drawer_qty': int(opening.get(PROP_DRAWER_QTY, 0)),
         'rollout_qty': int(opening.get(PROP_ROLLOUT_QTY, 0)),
+        'rollout_h': float(opening.get(PROP_ROLLOUT_HEIGHT,
+                                       const.ROLLOUT_HEIGHT)),
         'drawer_fh': float(opening.get(PROP_DRAWER_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)),
         'door_swing': opening.get(PROP_DOOR_SWING, ''),
@@ -2377,6 +2384,8 @@ def apply_opening_data(opening, data, recalc=True):
         opening[PROP_DRAWER_FRONT_HEIGHT] = data['drawer_fh']
     if data.get('rollout_qty'):
         opening[PROP_ROLLOUT_QTY] = data['rollout_qty']
+        opening[PROP_ROLLOUT_HEIGHT] = data.get('rollout_h',
+                                                const.ROLLOUT_HEIGHT)
     if data.get('door_swing'):
         opening[PROP_DOOR_SWING] = data['door_swing']
         opening[PROP_IS_HAMPER] = data.get('is_hamper', 0)
@@ -2662,6 +2671,7 @@ def apply_opening_config(opening, config):
         opening[PROP_CUBBY_ROWS] = 3
     elif config == 'ROLLOUTS':
         opening[PROP_ROLLOUT_QTY] = const.ROLLOUT_DEFAULT_QTY
+        opening[PROP_ROLLOUT_HEIGHT] = const.ROLLOUT_HEIGHT
     elif config.startswith('DRAWERS_'):
         try:
             opening[PROP_DRAWER_QTY] = int(config.split('_')[1])
