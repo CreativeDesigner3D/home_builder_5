@@ -248,6 +248,15 @@ class ClosetStarter(GeoNodeCage):
             'ISLAND': scene_props.base_panel_height,
         }[self.default_closet_type]
 
+    def _default_depth_for_type(self, scene_props):
+        """Per-type default panel depth, falling back to
+        the general default_panel_depth."""
+        return {
+            'BASE': scene_props.default_base_panel_depth,
+            'TALL': scene_props.default_tall_panel_depth,
+            'HANGING': scene_props.default_hanging_panel_depth,
+        }.get(self.default_closet_type, scene_props.default_panel_depth)
+
     def _default_bay_height(self, scene_props, sp):
         """Initial per-bay height. Full starter height by default; a
         Hanging starter seeds shorter hanging bays under the run top."""
@@ -284,7 +293,8 @@ class ClosetStarter(GeoNodeCage):
             sp.height = self.default_height(scene_props)
             sp.depth = (self.default_depth
                         if self.default_depth is not None
-                        else scene_props.default_panel_depth)
+                        else self._default_depth_for_type(scene_props))
+            sp.top_accent_overhang = scene_props.default_accent_overhang
             self._build_parts(bay_qty, scene_props)
         finally:
             _RECALCULATING.discard(cabinet_id)
@@ -1738,9 +1748,10 @@ class LShelfClosetStarter(GeoNodeCage):
             sp.l_flip_partition = False
             # Construction default with no prompt (wall offset).
             self.obj['hb_l_wall_offset'] = float(const.L_WALL_OFFSET)
-            sp.width = const.L_SHELF_SIZE
+            corner_size = scene_props.default_corner_closet_size
+            sp.width = corner_size
             sp.height = self.default_height(scene_props)
-            sp.depth = const.L_SHELF_SIZE
+            sp.depth = corner_size
             self._build_parts(scene_props)
         finally:
             _RECALCULATING.discard(cabinet_id)

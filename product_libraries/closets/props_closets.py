@@ -334,6 +334,23 @@ class Closets_Scene_Props(PropertyGroup):
     default_panel_depth: FloatProperty(
         name="Panel Depth", default=const.DEFAULT_DEPTH,
         unit='LENGTH', precision=4)  # type: ignore
+    # Per-type panel depths. Seeded onto a new starter by
+    # its closet type; default_panel_depth is the fallback.
+    default_base_panel_depth: FloatProperty(
+        name="Base Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_tall_panel_depth: FloatProperty(
+        name="Tall Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_hanging_panel_depth: FloatProperty(
+        name="Hanging Panel Depth", default=const.DEFAULT_DEPTH,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_corner_closet_size: FloatProperty(
+        name="Corner Closet Size", default=const.L_SHELF_SIZE,
+        unit='LENGTH', precision=4)  # type: ignore
+    default_accent_overhang: FloatProperty(
+        name="Accent Shelf Overhang", default=const.TOP_ACCENT_OVERHANG,
+        unit='LENGTH', precision=4)  # type: ignore
     base_panel_height: FloatProperty(
         name="Base Panel Height", default=const.BASE_PANEL_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
@@ -524,11 +541,15 @@ class Closets_Scene_Props(PropertyGroup):
                  emboss=False)
         if self.show_closet_sizes:
             for prop_name in ('default_closet_width', 'default_panel_depth',
+                              'default_base_panel_depth',
+                              'default_tall_panel_depth',
+                              'default_hanging_panel_depth',
+                              'default_corner_closet_size',
                               'base_panel_height', 'tall_panel_height',
                               'hanging_panel_height', 'hanging_top_height',
                               'panel_thickness', 'shelf_thickness',
-                              'countertop_thickness', 'toe_kick_height',
-                              'toe_kick_setback'):
+                              'countertop_thickness', 'default_accent_overhang',
+                              'toe_kick_height', 'toe_kick_setback'):
                 box.prop(self, prop_name)
 
         box = col.box()
