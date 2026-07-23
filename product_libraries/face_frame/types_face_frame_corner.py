@@ -1050,11 +1050,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         frame - same as straight cabinets).
 
         Pie cut: the panel stops at the arm's FF back plane (fft short
-        of the front); the end stile's front band covers the rest.
-        Diagonal: the angled stile's back corner intrudes into the band
-        by fft * (diagonal direction component), so the panel stops
-        there and the stile closes the joint - a butt joint, not a
-        miter, in this first pass.
+        of the front); the end stile's front band covers the rest - a
+        square joint, same as straight cabinets. Diagonal: the panel
+        runs all the way to the FF front-outer corner (A / B) and
+        _apply_corner_panel_miter trims panel and stile to the
+        bisector plane for a true outside miter.
         """
         p = inch(0.75)
         width = cab_props.width
@@ -1063,13 +1063,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         ld = cab_props.left_depth
         rd = cab_props.right_depth
         if cab_props.corner_type == 'DIAGONAL':
-            dx = width - ld
-            dy = depth - rd
-            diag = math.sqrt(dx * dx + dy * dy)
-            ux = dx / diag if diag > 0.0 else math.sqrt(0.5)
-            uy = dy / diag if diag > 0.0 else math.sqrt(0.5)
-            trim_l = fft * uy
-            trim_r = fft * ux
+            trim_l = 0.0
+            trim_r = 0.0
         else:
             trim_l = fft
             trim_r = fft
@@ -1113,6 +1108,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             if condition not in ff.APPLIED_PANEL_END_TYPES:
                 if panel_obj is not None:
                     ff._remove_root_with_children(panel_obj)
+                # Clear any stale miter cut off the diagonal end stile.
+                self._apply_corner_panel_miter(cab_props, side, None)
                 continue
 
             if panel_obj is None:
@@ -1148,12 +1145,72 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             applied_panel_sizing.apply_panel_toe_kick_notch(
                 self.obj, panel_obj, side)
 
+            # Miter the panel into the diagonal FF end stile (no-op,
+            # with cleanup, on the square pie cut joints).
+            self._apply_corner_panel_miter(cab_props, side, panel_obj)
+
             # Right-click menu on the panel's menu-less parts so any
             # click surfaces the panel's prompts.
             for part in panel_obj.children_recursive:
                 if part.get('hb_part_role') and not part.get('MENU_ID'):
                     part['MENU_ID'] = (
                         'HOME_BUILDER_MT_face_frame_part_commands')
+
+    def _apply_corner_panel_miter(self, cab_props, side, panel_obj):
+        """Miter the diagonal FF end stile and the applied panel's
+        facing stile into each other at the arm-end corner (A for
+        LEFT, B for RIGHT).
+
+        Same outside-miter construction as the straight cabinet's
+        _apply_panel_front_miter: the panel runs to the FF front-outer
+        corner (see _corner_applied_panel_geometry) and both members
+        are trimmed to the vertical bisector plane between the panel's
+        outer face line and the FF front line, via the inherited wedge
+        cutters. No-op (with cleanup) on the square pie cut joints or
+        when the side carries no applied panel.
+        """
+        from mathutils import Vector
+        stile_part = _find_ff_part(
+            self.obj,
+            ff.PART_ROLE_LEFT_STILE if side == 'LEFT'
+            else ff.PART_ROLE_RIGHT_STILE,
+            'DIAGONAL')
+        dx = cab_props.width - cab_props.left_depth
+        dy = cab_props.depth - cab_props.right_depth
+        diag = math.sqrt(dx * dx + dy * dy)
+        if (panel_obj is None or stile_part is None or diag <= 0.0
+                or cab_props.corner_type != 'DIAGONAL'):
+            self._cleanup_panel_miter(side, stile_part, panel_obj)
+            return
+        u = Vector((dx / diag, dy / diag))
+        if side == 'LEFT':
+            # Corner A; FF front line runs toward B, the panel's outer
+            # face line (Y=-depth) runs toward the X=0 wall.
+            corner = Vector((cab_props.left_depth, -cab_props.depth))
+            ff_dir = u
+            panel_dir = Vector((-1.0, 0.0))
+        else:
+            # Corner B; FF front line runs toward A, the panel's outer
+            # face line (X=width) runs toward the Y=0 wall.
+            corner = Vector((cab_props.width, -cab_props.right_depth))
+            ff_dir = -u
+            panel_dir = Vector((0.0, 1.0))
+        miter_dir = (ff_dir + panel_dir).normalized()
+        z0, z1 = -0.05, cab_props.height + 0.05
+        # Stile cutter removes stile material past the miter plane on
+        # the covering side; the panel cutter mirrors on the FF side.
+        stile_cut = self._ensure_panel_miter_cutter(side, 'STILE')
+        self._miter_wedge_mesh(stile_cut, corner, miter_dir, panel_dir,
+                               z0, z1)
+        self._miter_boolean(stile_part, stile_cut, True)
+        panel_cut = self._ensure_panel_miter_cutter(side, 'PANEL')
+        self._miter_wedge_mesh(panel_cut, corner, miter_dir, ff_dir,
+                               z0, z1)
+        facing_role = (ff.PART_ROLE_RIGHT_STILE if side == 'LEFT'
+                       else ff.PART_ROLE_LEFT_STILE)
+        for part in panel_obj.children_recursive:
+            if part.get('hb_part_role') == facing_role:
+                self._miter_boolean(part, panel_cut, True)
 
     def _reconcile_pie_cut_sections(self, cab_props):
         """Create / remove the section-dependent pie cut parts - one door
