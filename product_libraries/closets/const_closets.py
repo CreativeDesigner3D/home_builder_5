@@ -125,6 +125,9 @@ L_NOTCH_TOOL_RADIUS = inch(0.25)
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.5)
 ADJ_SHELF_DEFAULT_QTY = 3
+# Pullout trays (rollouts): drawer boxes with no fronts, evenly spaced
+# in an opening.
+ROLLOUT_DEFAULT_QTY = 3
 # Modal add-part height snapping increment (legacy fallback; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
