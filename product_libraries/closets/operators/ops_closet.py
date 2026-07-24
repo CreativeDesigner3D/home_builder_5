@@ -1999,6 +1999,73 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_drawer_accessory(bpy.types.Operator):
+    """Add or change a drawer accessory on the selected drawer front.
+    Currently a fitted jewelry tray, chosen by color; the tray size and
+    name come from the drawer's inside width and depth."""
+    bl_idname = "hb_closets.drawer_accessory"
+    bl_label = "Drawer Accessory"
+    bl_options = {'UNDO'}
+
+    jewelry_tray: bpy.props.EnumProperty(
+        name="Jewelry Tray",
+        items=types_closets.JEWELRY_TRAY_COLOR_ITEMS,
+        default='NONE')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT)
+
+    def _front(self, context):
+        obj = context.active_object
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT):
+            return obj
+        return None
+
+    def invoke(self, context, event):
+        front = self._front(context)
+        if front is not None:
+            self.jewelry_tray = (
+                front.get(types_closets.PROP_JEWELRY_TRAY, '') or 'NONE')
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        front = self._front(context)
+        box = layout.box()
+        row = box.row()
+        row.label(text="Jewelry Tray:")
+        row.prop(self, 'jewelry_tray', text="")
+        if front is not None and self.jewelry_tray != 'NONE':
+            inside = float(front.get('hb_inside_w', 0.0))
+            depth = float(front.get('hb_open_depth', 0.0))
+            name = types_closets.jewelry_tray_name(
+                self.jewelry_tray, inside, depth)
+            if name:
+                box.label(text="Tray: " + name)
+            else:
+                box.label(text="Drawer size not valid for this tray.",
+                          icon='ERROR')
+
+    def execute(self, context):
+        front = self._front(context)
+        if front is None:
+            return {'CANCELLED'}
+        if self.jewelry_tray and self.jewelry_tray != 'NONE':
+            front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
+        elif types_closets.PROP_JEWELRY_TRAY in front:
+            del front[types_closets.PROP_JEWELRY_TRAY]
+        root = types_closets.find_starter_root(front)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
     """Add a door front to the active opening. No dialog - the menu
     entries bake the swing (left / right / double) and the hamper flag;
@@ -2973,6 +3040,7 @@ classes = (
     hb_closets_OT_add_part,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,
+    hb_closets_OT_drawer_accessory,
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
     hb_closets_OT_add_rollouts,

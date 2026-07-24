@@ -25,7 +25,7 @@ import math
 from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
                          GeoNodeDrawerBox, CabinetPartModifier)
-from ...units import inch
+from ...units import inch, millimeter
 from ..frameless.types_frameless import CabinetPart
 from . import solver_closets as solver
 from . import const_closets as const
@@ -89,6 +89,12 @@ PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
 # scene-wide box selection; any other value forces this opening's boxes
 # to that system (or turns them off with 'NONE').
 PROP_DRAWER_BOX_OVERRIDE = 'hb_drawer_box_override'
+# Per-drawer accessory: a fitted drawer jewelry tray, chosen by color.
+# Stored on the drawer FRONT ('' = none). The tray size (and name) is
+# derived from the drawer's inside width and depth; the resolved name is
+# stamped back on the front as hb_jewelry_tray_name for reporting.
+PROP_JEWELRY_TRAY = 'hb_jewelry_tray'
+PROP_JEWELRY_TRAY_NAME = 'hb_jewelry_tray_name'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills its
 # opening: unlocked fronts share the remaining span equally. Editing a
 # front's height locks it (hb_front_locked=1) so it holds while the others
@@ -140,6 +146,71 @@ def _remove_part_tree(obj):
 def _set_part_hidden(obj, hidden):
     obj.hide_viewport = hidden
     obj.hide_render = hidden
+
+
+# ---------------------------------------------------------------------------
+# Drawer jewelry trays (a fitted, purchased drawer accessory). Two
+# families: fabric-lined trays in seven colors sized S/M/L/XL by the
+# drawer's inside width, and contour trays in three colors sized by
+# inside width and depth. The tray is not a machined part - the library
+# records the color and derives the size/name; downstream reads the name.
+# ---------------------------------------------------------------------------
+JEWELRY_TRAY_FABRIC = ('Brown', 'Black', 'Navy Blue', 'Pearl', 'Silver',
+                       'Burgundy', 'Green')
+JEWELRY_TRAY_CONTOUR = ('Oyster', 'Pewter', 'Winter')
+# Enum rows for the accessory dialog: 'None' plus every color.
+JEWELRY_TRAY_COLOR_ITEMS = (
+    [('NONE', "None", "No jewelry tray")]
+    + [(c, c, c) for c in (JEWELRY_TRAY_FABRIC + JEWELRY_TRAY_CONTOUR)])
+
+
+def drawer_inside_width(front_width, box_type):
+    """Inside (usable) width of a drawer given its front width and the
+    resolved box system, matching the prior library's tray-fit math:
+    a 5/16" overlay each side plus a box-system side allowance."""
+    overlay = inch(0.3125) * 2
+    if box_type in ('AVANTECH', 'AVANTECH_ILL'):
+        return front_width - overlay - inch(1.0) * 2
+    if box_type == 'METABOX':
+        return front_width - overlay - millimeter(31)
+    if box_type == 'WOOD':
+        return front_width - overlay - inch(0.327) * 2
+    return 0.0
+
+
+def jewelry_tray_name(color, inside_width, depth):
+    """Resolved tray name for a color and drawer size (inside_width and
+    depth in meters), or '' when the drawer is out of range for that
+    tray. Bands match the prior library exactly."""
+    if not color or color == 'NONE':
+        return ''
+    if color in JEWELRY_TRAY_CONTOUR:
+        w_mid = inch(6.1875) < inside_width < inch(36.0)
+        w_wide = inside_width >= inch(36.0)
+        d_std = inch(10.0) < depth < inch(20.0)
+        d_deep = depth > inch(20.0)
+        size = ''
+        if w_mid and d_std:
+            size = '24 x 16'
+        elif w_mid and d_deep:
+            size = '24 x 20'
+        elif w_wide and d_std:
+            size = '36 x 16'
+        elif w_wide and d_deep:
+            size = '36 x 20'
+        return "%s Contour Jewelry Tray %s" % (size, color) if size else ''
+    if color in JEWELRY_TRAY_FABRIC:
+        size = ''
+        if inch(12.0) <= inside_width < inch(16.0):
+            size = 'S'
+        elif inch(16.0) <= inside_width < inch(24.0):
+            size = 'M'
+        elif inch(24.0) <= inside_width < inch(30.0):
+            size = 'L'
+        elif inch(30.0) <= inside_width <= inch(36.875):
+            size = 'XL'
+        return "%s Drawer Jewelry Tray %s" % (size, color) if size else ''
+    return ''
 
 
 # ---------------------------------------------------------------------------
@@ -1019,6 +1090,18 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width + lo + ro)
                 part.set_input('Width', dh)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
+                # Stamp the drawer's inside width and depth so the
+                # accessory dialog can size a tray live; resolve the
+                # jewelry-tray name so it tracks any resize.
+                _inside = drawer_inside_width(width + lo + ro, box_type)
+                child['hb_inside_w'] = _inside
+                child['hb_open_depth'] = depth
+                _tray = child.get(PROP_JEWELRY_TRAY, '')
+                if _tray and _tray != 'NONE':
+                    child[PROP_JEWELRY_TRAY_NAME] = jewelry_tray_name(
+                        _tray, _inside, depth)
+                elif PROP_JEWELRY_TRAY_NAME in child:
+                    del child[PROP_JEWELRY_TRAY_NAME]
                 _apply_front_style(child, is_drawer=True)
                 self._position_front_pull(child, 'drawer', side)
                 box = boxes.get(i)

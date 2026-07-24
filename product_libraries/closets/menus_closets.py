@@ -214,6 +214,11 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                                  text="Remove Shelf", icon='REMOVE')
             op.delta = -1
             layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT):
+            layout.operator("hb_closets.drawer_accessory",
+                            text="Drawer Accessory...", icon='MODIFIER')
+            layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')
 
