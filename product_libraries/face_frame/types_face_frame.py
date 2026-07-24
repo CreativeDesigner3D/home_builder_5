@@ -9260,6 +9260,11 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             r_fin_end=cab.right_finished_end_condition,
             l_scribe=cab.left_scribe,
             r_scribe=cab.right_scribe,
+            # Legs are never angled, but the miter / splay passes the
+            # reconcile always runs (even for cleanup on UNFINISHED
+            # sides) gate on these fields, so they must be present.
+            is_angled=False,
+            angled_multi=False,
         )
         self._reconcile_applied_panels(leg_layout)
 
