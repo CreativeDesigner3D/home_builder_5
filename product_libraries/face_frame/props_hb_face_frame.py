@@ -4336,13 +4336,47 @@ def _update_remove_bottom(self, context):
 # matching auto flag off so subsequent exposure recalcs don't clobber the
 # choice. Exposure recalc re-arms auto explicitly after writing its own
 # value, so its own writes don't permanently disable auto.
+def _restore_scribe_on_unfinished(self, side):
+    """Manually switching a side back to UNFINISHED restores its scribe.
+    The finished state zeroed the scribe (non-UNFINISHED types carry
+    none), and pinning the side (auto off) meant nothing ever put it
+    back -- the user had to re-type 0.5" every time a placed-in
+    finished end was removed (islands especially). Re-resolve from the
+    side's live exposure facts (wall edge 0.5", neighbor / dishwasher
+    0.25"); an EXPOSED side -- the usual case, that's why it came in
+    finished -- falls back to the scene's Default Scribe (0.5"). A
+    nonzero scribe is a prior manual overwrite and is left alone.
+    """
+    if getattr(self, f'{side}_finished_end_condition') != 'UNFINISHED':
+        return
+    if getattr(self, f'{side}_scribe') > 1e-9:
+        return
+    from . import exposure
+    cab_obj = self.id_data
+    if not cab_obj or not cab_obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+        return
+    try:
+        state, dishwasher, wall_edge = exposure._side_exposure(cab_obj, side)
+        scribe = exposure._resolve_scribe(state, dishwasher, wall_edge,
+                                          'UNFINISHED')
+    except Exception:
+        scribe = 0.0
+    if scribe <= 0.0:
+        scene = bpy.context.scene
+        props = getattr(scene, 'hb_face_frame', None)
+        scribe = getattr(props, 'default_scribe', 0.0) or units.inch(0.5)
+    setattr(self, f'{side}_scribe', scribe)
+
+
 def _on_left_finish_end_user_set(self, context):
     self.left_finish_end_auto = False
+    _restore_scribe_on_unfinished(self, 'left')
     _update_cabinet_dim(self, context)
 
 
 def _on_right_finish_end_user_set(self, context):
     self.right_finish_end_auto = False
+    _restore_scribe_on_unfinished(self, 'right')
     _update_cabinet_dim(self, context)
 
 
