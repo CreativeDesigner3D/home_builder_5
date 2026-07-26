@@ -94,6 +94,13 @@ def draw_dimensions(layout, root):
     col.prop(cab_props, 'width', text="Width")
     col.prop(cab_props, 'depth', text="Depth")
     col.prop(cab_props, 'height', text="Height")
+    # Height above floor: local Z (walls and cabinet groups sit at the
+    # floor, so local Z reads as distance off the floor). Uppers always
+    # show it - setting one down on a counter top was a transform-only
+    # move before. Other types surface it only once they're lifted, so
+    # a floor cabinet doesn't invite an accidental float.
+    if root.get('CABINET_TYPE') == 'UPPER' or abs(root.location.z) > 0.001:
+        col.prop(root, 'location', index=2, text="Height Above Floor")
     # Corner cabinets: stub-side lengths perpendicular to each wall.
     # Drive the L-shape of the carcass and the inset of each face frame
     # from the wall corner. width / depth here is the full bounding
