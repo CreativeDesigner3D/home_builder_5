@@ -473,6 +473,16 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
     # Openings scale with width when the panel splits into real bays
     # (no rail-matched H-split in play); see the width ladder above.
     n_open = _panel_opening_qty(panel_props.width)
+    # Explicit user override of the vertical-division count (the
+    # ladder's count couldn't be changed before - removing the mid
+    # stile never merged the columns back). 0 = automatic. On a
+    # rail-matched panel the columns are in-bay V-splits, which build
+    # a single centered stile - so >2 clamps to 2 there (desired_qty
+    # stays 1; add_mid_stile below carries the choice).
+    override = getattr(panel_props, 'panel_vertical_bays', 0)
+    if override > 0:
+        n_open = override
+        wide = override > 1
 
     # Default front per condition; per-opening overrides survive a
     # same-condition rebuild (captured before the wipe, reapplied

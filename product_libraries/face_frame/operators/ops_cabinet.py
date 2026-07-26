@@ -691,10 +691,16 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             # per bay with editable size + an expand toggle for more.
             ui_face_frame.draw_bays_in_prompts(layout, root)
             # Applied panels: surface the auto-openings toggle so a user
-            # can return a manually-pinned panel to width-driven openings.
+            # can return a manually-pinned panel to width-driven openings,
+            # plus the vertical-divisions override (0 = width-driven).
+            # The override only applies while Auto Openings is on -- a
+            # pinned panel keeps whatever tree the user built by hand.
             if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                     or types_face_frame._is_standalone_panel(root)):
                 layout.prop(cab_props, 'panel_split_auto')
+                row = layout.row()
+                row.enabled = cab_props.panel_split_auto
+                row.prop(cab_props, 'panel_vertical_bays')
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated

@@ -4198,6 +4198,12 @@ def _update_panel_split_auto(self, context):
         types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
+# Vertical-divisions override on an applied panel: same host-recalc
+# routing as the split-auto toggle (the split structure is rebuilt by
+# the host's _reconcile_applied_panels pass).
+_update_panel_vertical_bays = _update_panel_split_auto
+
+
 # Standard rollout box heights (inches) keyed by the preset enum id, plus the
 # matching enum items. CUSTOM is intentionally absent from the map: it leaves
 # a box's height untouched so a typed value stands.
@@ -5205,6 +5211,17 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "turns this off so your opening count survives "
                     "recalculation",
         update=_update_panel_split_auto)  # type: ignore
+    # Explicit vertical-division override for the width ladder. 0 keeps
+    # the automatic count. Rail-matched side panels (the panel mirrors
+    # the source bay's stacked-door rails) build their columns as
+    # in-bay V-splits and support at most 2.
+    panel_vertical_bays: IntProperty(
+        name="Vertical Divisions",
+        description="Number of vertical panel divisions (columns). "
+                    "0 = automatic from the panel width. Panels that "
+                    "mirror a stacked-door mid rail support at most 2",
+        default=0, min=0, max=8,
+        update=_update_panel_vertical_bays)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
         unit='LENGTH', precision=4,
