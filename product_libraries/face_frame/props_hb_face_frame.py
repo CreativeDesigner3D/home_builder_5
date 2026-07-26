@@ -4129,6 +4129,39 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_cabinet_width(self, context):
+    """Width update: honor the cabinet's anchor side, then recalc.
+
+    A cabinet's origin is its LEFT edge, so a width change naturally
+    grows / shrinks the right side. Anchored RIGHT, the origin shifts
+    by the width delta so the right edge stays put instead - resize
+    without having to move the cabinet after (the old version's
+    anchor-left/right). The previous width is stashed on the object
+    (seeded from the cage's Dim X, which still holds the pre-write
+    value when the callback fires) so back-to-back writes under a
+    suspended recalc compute the right delta. System width writes
+    during a group/bay distribution (_DISTRIBUTING_WIDTHS) never
+    shift - those passes place cabinets themselves.
+    """
+    from . import types_face_frame
+    root = self.id_data
+    old = root.get('HB_ANCHOR_LAST_WIDTH')
+    if old is None:
+        from ... import hb_types
+        try:
+            old = hb_types.GeoNodeCage(root).get_input('Dim X')
+        except Exception:
+            old = None
+    if (old is not None
+            and getattr(self, 'anchor_side', 'LEFT') == 'RIGHT'
+            and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
+        delta = self.width - old
+        if abs(delta) > 1e-9:
+            root.location.x -= delta
+    root['HB_ANCHOR_LAST_WIDTH'] = self.width
+    _update_cabinet_dim(self, context)
+
+
 _BOTTOM_RAIL_PROFILE_ITEMS_CACHE = []
 
 
@@ -4939,7 +4972,19 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Width",
         description="Cabinet width (X dimension)",
         default=units.inch(36.0), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_cabinet_width,
+    )  # type: ignore
+    # Which edge stays put when the width changes. LEFT is the natural
+    # behavior (origin at the left edge); RIGHT shifts the origin by the
+    # width delta so the cabinet resizes toward the left instead.
+    anchor_side: EnumProperty(
+        name="Anchor Side",
+        description="Which side of the cabinet stays put when the width changes",
+        items=[
+            ('LEFT', "Left", "The left edge stays put; width changes move the right edge"),
+            ('RIGHT', "Right", "The right edge stays put; width changes move the left edge"),
+        ],
+        default='LEFT',
     )  # type: ignore
     height: FloatProperty(
         name="Height",

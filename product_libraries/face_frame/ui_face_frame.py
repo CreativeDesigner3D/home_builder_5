@@ -92,6 +92,12 @@ def draw_dimensions(layout, root):
     )
     col = layout.column(align=True)
     col.prop(cab_props, 'width', text="Width")
+    # Resize anchor: which edge holds still when the width changes.
+    # Not meaningful on corner cabinets (their footprint is wall-tied).
+    if cab_props.corner_type == 'NONE':
+        anchor_row = col.row(align=True)
+        anchor_row.label(text="Anchor")
+        anchor_row.prop(cab_props, 'anchor_side', expand=True)
     col.prop(cab_props, 'depth', text="Depth")
     col.prop(cab_props, 'height', text="Height")
     # Height above floor: local Z (walls and cabinet groups sit at the
