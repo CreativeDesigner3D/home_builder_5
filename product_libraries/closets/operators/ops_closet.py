@@ -1999,14 +1999,45 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         return {'FINISHED'}
 
 
+_BOX_LABELS = {b[0]: b[1] for b in drawer_boxes_closets.BOX_TYPES}
+
+
+def _box_size_names(tag):
+    """(height name, length name) parsed from a box size tag such as
+    'H251 L350'. WOOD/NONE map to a plain readout."""
+    if not tag or tag in ('NONE', ''):
+        return ('None', 'None')
+    if tag == 'WOOD':
+        return ('Wood', 'Wood')
+    height_name = length_name = ""
+    for part in str(tag).split():
+        if part.startswith('H'):
+            height_name = part[1:]
+        elif part.startswith('L'):
+            length_name = part[1:]
+    return (height_name or '-', length_name or '-')
+
+
 class hb_closets_OT_drawer_accessory(bpy.types.Operator):
-    """Add or change a drawer accessory on the selected drawer front.
-    Currently a fitted jewelry tray, chosen by color; the tray size and
-    name come from the drawer's inside width and depth."""
+    """Drawer Options for the selected drawer front: the current box
+    system and its size names, a per-drawer box-system and size override,
+    and a fitted jewelry tray."""
     bl_idname = "hb_closets.drawer_accessory"
-    bl_label = "Drawer Accessory"
+    bl_label = "Drawer Options"
     bl_options = {'UNDO'}
 
+    box_override: bpy.props.EnumProperty(
+        name="Override Drawer Type",
+        items=_DRAWER_BOX_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
+    override_depth: bpy.props.FloatProperty(
+        name="Depth", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Force the box depth (0 = system size)")  # type: ignore
+    override_height: bpy.props.FloatProperty(
+        name="Height", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Force the box height (0 = system size)")  # type: ignore
     jewelry_tray: bpy.props.EnumProperty(
         name="Jewelry Tray",
         items=types_closets.JEWELRY_TRAY_COLOR_ITEMS,
@@ -2032,13 +2063,50 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
     def invoke(self, context, event):
         front = self._front(context)
         if front is not None:
+            self.box_override = (
+                front.get(types_closets.PROP_FRONT_BOX_OVERRIDE, '')
+                or 'DEFAULT')
+            self.override_depth = float(
+                front.get(types_closets.PROP_BOX_DEPTH_OVERRIDE, 0.0))
+            self.override_height = float(
+                front.get(types_closets.PROP_BOX_HEIGHT_OVERRIDE, 0.0))
             self.jewelry_tray = (
                 front.get(types_closets.PROP_JEWELRY_TRAY, '') or 'NONE')
-        return context.window_manager.invoke_props_dialog(self, width=300)
+        return context.window_manager.invoke_props_dialog(self, width=320)
 
     def draw(self, context):
         layout = self.layout
         front = self._front(context)
+
+        box = layout.box()
+        if front is not None:
+            resolved = front.get(types_closets.PROP_BOX_TYPE_RESOLVED, '')
+            row = box.row()
+            row.label(text="Current Drawer:")
+            row.label(text=_BOX_LABELS.get(resolved, "-"))
+        row = box.row()
+        row.label(text="Override Drawer Type:")
+        row.prop(self, 'box_override', text="")
+        row = box.row(align=True)
+        row.label(text="Override Size:")
+        row.prop(self, 'override_depth')
+        row.prop(self, 'override_height')
+        if front is not None:
+            h_name, l_name = _box_size_names(
+                front.get(types_closets.PROP_BOX_SIZE_TAG, ''))
+            row = box.row()
+            row.label(text="Height Name:")
+            row.label(text=h_name)
+            row = box.row()
+            row.label(text="Length Name:")
+            row.label(text=l_name)
+            open_h_mm = round(
+                float(front.get(types_closets.PROP_OPEN_HEIGHT, 0.0))
+                / 0.001, 1)
+            row = box.row()
+            row.label(text="Opening Height:")
+            row.label(text=str(open_h_mm) + " mm")
+
         box = layout.box()
         row = box.row()
         row.label(text="Jewelry Tray:")
@@ -2059,6 +2127,21 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         front = self._front(context)
         if front is None:
             return {'CANCELLED'}
+        # Box-system override (Use Default clears it).
+        if self.box_override and self.box_override != 'DEFAULT':
+            front[types_closets.PROP_FRONT_BOX_OVERRIDE] = self.box_override
+        elif types_closets.PROP_FRONT_BOX_OVERRIDE in front:
+            del front[types_closets.PROP_FRONT_BOX_OVERRIDE]
+        # Size overrides (0 clears them).
+        if self.override_depth > 0.0:
+            front[types_closets.PROP_BOX_DEPTH_OVERRIDE] = self.override_depth
+        elif types_closets.PROP_BOX_DEPTH_OVERRIDE in front:
+            del front[types_closets.PROP_BOX_DEPTH_OVERRIDE]
+        if self.override_height > 0.0:
+            front[types_closets.PROP_BOX_HEIGHT_OVERRIDE] = self.override_height
+        elif types_closets.PROP_BOX_HEIGHT_OVERRIDE in front:
+            del front[types_closets.PROP_BOX_HEIGHT_OVERRIDE]
+        # Jewelry tray.
         if self.jewelry_tray and self.jewelry_tray != 'NONE':
             front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
         elif types_closets.PROP_JEWELRY_TRAY in front:

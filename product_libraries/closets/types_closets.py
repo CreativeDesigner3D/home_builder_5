@@ -95,6 +95,18 @@ PROP_DRAWER_BOX_OVERRIDE = 'hb_drawer_box_override'
 # stamped back on the front as hb_jewelry_tray_name for reporting.
 PROP_JEWELRY_TRAY = 'hb_jewelry_tray'
 PROP_JEWELRY_TRAY_NAME = 'hb_jewelry_tray_name'
+# Per-front drawer-box overrides (on each drawer FRONT), matching the
+# prior Drawer Options: a box-system override ('' / 'DEFAULT' defers to
+# the opening/scene setting) and explicit box depth/height overrides
+# (0 = use the system-calculated size). The layout also stamps the
+# resolved box type, size tag, and opening height back on the front so
+# the dialog can report the current drawer.
+PROP_FRONT_BOX_OVERRIDE = 'hb_front_box_override'
+PROP_BOX_DEPTH_OVERRIDE = 'hb_box_depth_override'
+PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
+PROP_BOX_TYPE_RESOLVED = 'hb_box_type'
+PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
+PROP_OPEN_HEIGHT = 'hb_open_height'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills its
 # opening: unlocked fronts share the remaining span equally. Editing a
 # front's height locks it (hb_front_locked=1) so it holds while the others
@@ -1121,11 +1133,10 @@ class ClosetStarter(GeoNodeCage):
                 [(f.get(PROP_FRONT_HEIGHT, 0.0),
                   bool(f.get(PROP_FRONT_LOCKED, 0))) for f in fronts])
             from . import drawer_boxes_closets as dbx
-            # Per-opening override wins; otherwise use the scene default.
+            # Opening-level default: opening override wins, else scene.
             _ovr = opening.get(PROP_DRAWER_BOX_OVERRIDE, '')
-            box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
-                        else dbx.current_type())
-            box_mat = dbx.box_material(box_type)
+            default_box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
+                                else dbx.current_type())
             box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
             z = -bo
@@ -1138,12 +1149,20 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width + lo + ro)
                 part.set_input('Width', dh)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
+                # Per-front box-system override wins over the opening
+                # default; its material follows the resolved system.
+                _fovr = child.get(PROP_FRONT_BOX_OVERRIDE, '')
+                box_type = (_fovr if _fovr and _fovr != 'DEFAULT'
+                            else default_box_type)
+                box_mat = dbx.box_material(box_type)
                 # Stamp the drawer's inside width and depth so the
                 # accessory dialog can size a tray live; resolve the
                 # jewelry-tray name so it tracks any resize.
                 _inside = drawer_inside_width(width + lo + ro, box_type)
                 child['hb_inside_w'] = _inside
                 child['hb_open_depth'] = depth
+                child[PROP_OPEN_HEIGHT] = dh
+                child[PROP_BOX_TYPE_RESOLVED] = box_type
                 _tray = child.get(PROP_JEWELRY_TRAY, '')
                 if _tray and _tray != 'NONE':
                     child[PROP_JEWELRY_TRAY_NAME] = jewelry_tray_name(
@@ -1159,14 +1178,20 @@ class ClosetStarter(GeoNodeCage):
                 wood_h = max(dh - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
                 spec = dbx.size_box(box_type, dh, depth, wood_h, wood_d)
+                # Explicit per-front size overrides (0 = system size).
+                _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
+                _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
                 box_d = spec[1] if spec is not None else wood_d
+                if _dov > 0.0:
+                    box_d = _dov
+                child[PROP_BOX_SIZE_TAG] = (spec[2] if spec else 'NONE')
                 if box is not None:
                     box['hb_drawer_box_type'] = box_type
                     box['hb_drawer_box_size'] = (spec[2] if spec
                                                  else 'NONE')
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
-                    box_h = spec[0]
+                    box_h = _hov if _hov > 0.0 else spec[0]
                     # GeoNodeDrawerBox extrudes +Y from its origin, so
                     # anchor the origin at the face the drawer serves:
                     # box spans [y_box, y_box + box_d], front edge flush
