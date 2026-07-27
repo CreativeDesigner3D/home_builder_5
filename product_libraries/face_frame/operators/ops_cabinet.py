@@ -2760,24 +2760,32 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
         layout.prop(self, "product")
         host, item = self._selected()
         is_pullout = host == _ACCESSORY_PULLOUT_HOST
-        if is_pullout:
+        tgt = _resolve_interior_target(self, context)
+        # A pullout aimed at an interior REGION stays a data-only item
+        # (no front conversion, no bay-width write) -- the width field
+        # would set the BAY width, which is wrong for a divider region.
+        region_pullout = (is_pullout and tgt is not None
+                          and tgt.get(types_face_frame.TAG_INTERIOR_REGION))
+        if is_pullout and not region_pullout:
             layout.prop(self, "opening_width")
         box = layout.box()
         if item is None:
             box.label(text="No accessory selected")
             return
         box.label(text="Accessory: %s" % item.get('name', self.product))
-        if is_pullout:
+        if region_pullout:
+            box.label(text="Adds the pullout inside this divider region "
+                           "(front unchanged)", icon='INFO')
+        elif is_pullout:
             box.label(text="Adds a pullout front to the opening", icon='INFO')
         mw = item.get('min_opening_w')
         if mw is None:
             box.label(text="Minimum opening width: not specified")
         else:
             box.label(text="Minimum opening width: %g\"" % mw)
-            if is_pullout:
+            if is_pullout and not region_pullout:
                 ow = meter_to_inch(self.opening_width)
             else:
-                tgt = _resolve_interior_target(self, context)
                 ow = _opening_width_in(tgt) if tgt is not None else None
             if ow is not None and ow + 1e-6 < mw:
                 box.label(
@@ -2796,6 +2804,32 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
             return {'CANCELLED'}
 
         if host == _ACCESSORY_PULLOUT_HOST:
+            # Pull-out / trash on an interior REGION: the divider splits
+            # one opening behind one front (e.g. a trash pullout one side
+            # of a vertical divider, a foil pullout the other), so
+            # converting the whole opening is wrong -- store the model as
+            # a data-only ACCESSORY item on the region instead. Drives
+            # the 2D legend; the opening's front (the door attached to
+            # the pullout) is left alone.
+            if target.get(types_face_frame.TAG_INTERIOR_REGION):
+                region_props = _interior_items_target(target)
+                if region_props is None:
+                    self.report({'WARNING'},
+                                "Select an opening or interior region first")
+                    return {'CANCELLED'}
+                new_item = region_props.interior_items.add()
+                new_item.kind = 'ACCESSORY'
+                new_item.accessory_label = name
+                new_item.accessory_code = self.product
+                region_props.interior_items_index = (
+                    len(region_props.interior_items) - 1)
+                root = types_face_frame.find_cabinet_root(target)
+                if root is not None:
+                    types_face_frame.recalculate_face_frame_cabinet(root)
+                self.report({'INFO'},
+                            "Added %s to the divider region (front "
+                            "unchanged)" % name)
+                return {'FINISHED'}
             # Pull-out / trash: convert the opening front and record the model,
             # mirroring hb_face_frame.add_pullout_accessory.
             if not target.get(types_face_frame.TAG_OPENING_CAGE):
