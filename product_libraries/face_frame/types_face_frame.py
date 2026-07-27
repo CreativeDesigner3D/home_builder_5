@@ -33,6 +33,7 @@ from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
+from . import bar_storage
 from . import pulls
 
 
@@ -460,6 +461,11 @@ PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+# Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
+# / half-circle, stemware, plate rack). One role for the whole family:
+# each insert is a single derived mesh built in bar_storage.py; the
+# specific product is read from the interior item's kind.
+PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
 # Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
 # top of an appliance bay so plan views read like a dealer drawing.
 # Wiped + recreated every recalc (sized from the live bay cage); the
@@ -493,6 +499,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_VANITY_SHELF,
     PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_ACCESSORY_LABEL,
+    PART_ROLE_BAR_STORAGE,
     PART_ROLE_INTERIOR_DIVISION,
     PART_ROLE_INTERIOR_FIXED_SHELF,
     PART_ROLE_INTERIOR_FF_RAIL,
@@ -513,6 +520,16 @@ INTERIOR_KIND_TO_ROLE = {
     'ACCESSORY':             PART_ROLE_ACCESSORY_LABEL,
     'INTERIOR_DIVISION':     PART_ROLE_INTERIOR_DIVISION,
     'INTERIOR_FIXED_SHELF':  PART_ROLE_INTERIOR_FIXED_SHELF,
+    # Bar storage family: every kind materializes as one derived mesh
+    # under the shared role.
+    'WINE_CUBBY':            PART_ROLE_BAR_STORAGE,
+    'WINE_CELLAR':           PART_ROLE_BAR_STORAGE,
+    'WINE_LATTICE':          PART_ROLE_BAR_STORAGE,
+    'WINE_X':                PART_ROLE_BAR_STORAGE,
+    'WINE_DIAGONAL':         PART_ROLE_BAR_STORAGE,
+    'WINE_HALF_CIRCLE':      PART_ROLE_BAR_STORAGE,
+    'STEMWARE_RACK':         PART_ROLE_BAR_STORAGE,
+    'PLATE_RACK':            PART_ROLE_BAR_STORAGE,
 }
 
 # Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
@@ -7892,6 +7909,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind in bar_storage.KINDS:
+                self._create_bar_storage_part(opening_obj, desc)
             elif kind in ('INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE'):
                 self._create_interior_face_frame_part(
                     opening_obj, desc,
@@ -8239,6 +8258,30 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
         return part
+
+    def _create_bar_storage_part(self, opening_obj, desc):
+        """Bar storage insert (wine rack / cubby / stemware / plate
+        rack family). One derived mesh per insert, built in
+        bar_storage.py from the opening size. Like shelf nosings it is
+        deliberately NOT tagged CABINET_PART: it is a purchased catalog
+        unit, not sheet-stock cutparts, so part-collection passes
+        (reports, machining) must not pick it up. The material walk
+        finds it by role and applies the exterior finish ("Finished to
+        match exterior").
+        """
+        w, depth, h = desc['dims']
+        obj = bar_storage.build_bar_storage_object(
+            desc['kind'], desc['name'], w, h, depth,
+        )
+        if obj is None:
+            return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
 
     def _create_rollout_box(self, opening_obj, desc):
         """Drawer box for ROLLOUT items. Uses GeoNodeDrawerBox parented

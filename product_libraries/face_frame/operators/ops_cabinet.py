@@ -1964,6 +1964,28 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.half_depth = False
             op.target_name = target_name
 
+            layout.separator()
+
+            # Tableware & Bar Storage Solutions - auto-sized from
+            # the opening; every kind is a single derived-mesh insert.
+            layout.label(text="Bar Storage")
+            for bar_kind, bar_label in (
+                ('WINE_CUBBY',       "Wine Storage Cubby"),
+                ('WINE_CELLAR',      "Wine Cellar Rack"),
+                ('WINE_LATTICE',     "Lattice Wine Rack"),
+                ('WINE_X',           "X-Style Wine Rack"),
+                ('WINE_DIAGONAL',    "Diagonal Wine Dividers"),
+                ('WINE_HALF_CIRCLE', "Half Circle Wine Rack"),
+                ('STEMWARE_RACK',    "Stemware Rack"),
+                ('PLATE_RACK',       "Plate Rack"),
+            ):
+                op = layout.operator(
+                    "hb_face_frame.add_interior_item", text=bar_label,
+                )
+                op.kind = bar_kind
+                op.half_depth = False
+                op.target_name = target_name
+
             # Operator buttons in a popup_menu default to EXEC context,
             # which would skip invoke() and add the default item without
             # showing the picker. Force INVOKE so the props dialog opens.

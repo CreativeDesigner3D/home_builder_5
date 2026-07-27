@@ -26,6 +26,7 @@ import bpy
 
 from ...units import inch
 from . import shelf_nosing
+from . import bar_storage
 
 
 # ---------------------------------------------------------------------------
@@ -4509,6 +4510,37 @@ def _vanity_shelves_descriptors(rect, cage_dim_y, item):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Bar storage inserts (Tableware & Bar Storage Solutions)
+# ---------------------------------------------------------------------------
+# The insert sits at the front of the cavity behind the face frame and
+# is blocked off at 12" deep in deeper cabinets (catalog rule). Sizing
+# is fully automatic from the opening: bar_storage.py fits the grids /
+# spacing to the catalog charts, so one descriptor carries the whole
+# unit and the materialize step builds a single derived mesh.
+BAR_STORAGE_FRONT_Y = inch(0.75)
+
+
+def _bar_storage_descriptor(rect, cage_dim_y, item):
+    depth = min(
+        bar_storage.MAX_DEPTH,
+        cage_dim_y - BAR_STORAGE_FRONT_Y - SHELF_BACK_SETBACK,
+    )
+    if depth <= 0.0:
+        return None
+    label = bar_storage.KIND_LABELS.get(item.kind, item.kind)
+    return {
+        'kind':     item.kind,
+        'role':     'BAR_STORAGE',
+        'name':     label,
+        'position': (0.0, BAR_STORAGE_FRONT_Y, 0.0),
+        # (w, depth, h) of the insert volume - consumed only by the
+        # bar-storage materialize branch, which builds a mesh rather
+        # than an oriented cutpart.
+        'dims':     (rect['cage_dim_x'], depth, rect['cage_dim_z']),
+    }
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
@@ -4550,6 +4582,10 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
             out.append(_accessory_label_descriptor(
                 rect, cage_dim_y, item.accessory_label
             ))
+        elif item.kind in bar_storage.KINDS:
+            desc = _bar_storage_descriptor(rect, cage_dim_y, item)
+            if desc is not None:
+                out.append(desc)
     return out
 
 

@@ -19,6 +19,7 @@ import bpy
 
 from . import types_face_frame
 from . import shelf_nosing
+from . import bar_storage
 from ... import units
 
 
@@ -1061,6 +1062,10 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+        elif item.kind in bar_storage.KINDS:
+            # Bar storage inserts are fully auto-fit from the opening
+            # per the catalog charts - no per-item knobs in v1.
+            sub.label(text="Auto-sized to the opening", icon='INFO')
 
         if i < len(target_props.interior_items) - 1:
             box.separator()

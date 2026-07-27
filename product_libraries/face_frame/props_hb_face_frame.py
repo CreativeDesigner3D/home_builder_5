@@ -2182,12 +2182,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
-                # Shelf nosings are plain meshes, deliberately not
-                # CABINET_PART (they are molding stock, not cutparts),
-                # so the material goes on the mesh slot directly.
-                # Always the exterior finish: nosing is finished-
-                # opening trim.
-                if (child.get('hb_part_role') == 'SHELF_NOSING'
+                # Shelf nosings and bar storage inserts are plain
+                # meshes, deliberately not CABINET_PART (molding stock
+                # / purchased catalog units, not cutparts), so the
+                # material goes on the mesh slot directly. Always the
+                # exterior finish: nosing is finished-opening trim and
+                # the bar storage units are "finished to match
+                # exterior" per the catalog.
+                if (child.get('hb_part_role') in ('SHELF_NOSING',
+                                                  'BAR_STORAGE')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
@@ -6333,6 +6336,18 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('TRAY_DIVIDERS',    "Tray Dividers",      "Vertical dividers for trays / cookie sheets, optionally with a locked shelf above"),
         ('VANITY_SHELVES',   "Vanity Shelves",     "Pair of L/R shelves on corbel supports, around plumbing"),
         ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),
+        # Tableware & Bar Storage Solutions (catalog printed pages
+        # 293-295). All auto-sized from the opening per the catalog
+        # charts; geometry lives in bar_storage.py. Appended at the end
+        # so saved files keep their stored enum indices.
+        ('WINE_CUBBY',       "Wine Storage Cubby", "WRC: 1/2\" plywood cubbies, openings 4\"-6\" equally spaced"),
+        ('WINE_CELLAR',      "Wine Cellar Rack",   "WRWCR: 3/4\" hardwood grid with exact 4\" x 4\" bottle openings"),
+        ('WINE_LATTICE',     "Lattice Wine Rack",  "WRL: 45-degree lattice, max 3-3/4\" square bottle openings"),
+        ('WINE_X',           "X-Style Wine Rack",  "WRXS/WRXR: two panels crossing corner to corner"),
+        ('WINE_DIAGONAL',    "Diagonal Wine Dividers", "WRD: parallel 45-degree dividers spaced equally 4\"-7\""),
+        ('WINE_HALF_CIRCLE', "Half Circle Wine Rack",  "WRHC: scalloped rails, bottles 5\" on center"),
+        ('STEMWARE_RACK',    "Stemware Rack",      "SR: slotted hardwood slats at the top of the opening, slots 4\" on center"),
+        ('PLATE_RACK',       "Plate Rack",         "PR: 3/8\" birch dowels 2\" on center"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
