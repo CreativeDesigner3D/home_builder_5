@@ -2011,6 +2011,10 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         name="Jewelry Tray",
         items=types_closets.JEWELRY_TRAY_COLOR_ITEMS,
         default='NONE')  # type: ignore
+    resize_to_fit: bpy.props.BoolProperty(
+        name="Resize drawer to fit tray",
+        description="Adjust this drawer's width so the tray fits",
+        default=False)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -2049,6 +2053,7 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             else:
                 box.label(text="Drawer size not valid for this tray.",
                           icon='ERROR')
+                box.prop(self, 'resize_to_fit')
 
     def execute(self, context):
         front = self._front(context)
@@ -2061,8 +2066,39 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         root = types_closets.find_starter_root(front)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+            # A drawer too small/large for the tray can size itself to fit.
+            if self.resize_to_fit:
+                types_closets.resize_for_jewelry_tray(front)
             _apply_finish(root)
             _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_resize_drawer_for_tray(bpy.types.Operator):
+    """Resize the selected drawer's width so its assigned jewelry tray
+    fits. A single-bay closet grows overall; a multi-bay closet resizes
+    just this bay and lets the others redistribute."""
+    bl_idname = "hb_closets.resize_drawer_for_tray"
+    bl_label = "Resize Drawer to Fit Tray"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT
+                and bool(obj.get(types_closets.PROP_JEWELRY_TRAY, '')))
+
+    def execute(self, context):
+        front = context.active_object
+        changed = types_closets.resize_for_jewelry_tray(front)
+        root = types_closets.find_starter_root(front)
+        if root is not None:
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        if not changed:
+            self.report({'INFO'}, "Drawer already fits the tray.")
         return {'FINISHED'}
 
 
@@ -3041,6 +3077,7 @@ classes = (
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,
     hb_closets_OT_drawer_accessory,
+    hb_closets_OT_resize_drawer_for_tray,
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
     hb_closets_OT_add_rollouts,

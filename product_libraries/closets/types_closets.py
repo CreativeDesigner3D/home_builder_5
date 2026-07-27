@@ -213,6 +213,54 @@ def jewelry_tray_name(color, inside_width, depth):
     return ''
 
 
+def target_inside_width_for_tray(color, inside_width, depth):
+    """The inside width (meters) the drawer should have so the chosen
+    tray fits, or the current width when it already fits. Fabric trays
+    need 12"-36.875"; contour trays need > 6.1875"."""
+    if color in JEWELRY_TRAY_FABRIC:
+        if inside_width < inch(12.0):
+            return inch(14.0)
+        if inside_width > inch(36.875):
+            return inch(33.0)
+    elif color in JEWELRY_TRAY_CONTOUR:
+        if inside_width <= inch(6.1875):
+            return inch(8.0)
+    return inside_width
+
+
+def resize_for_jewelry_tray(front):
+    """Grow or shrink the drawer's bay so the assigned jewelry tray fits,
+    mirroring the prior library's fit-the-opening behavior: a single-bay
+    closet grows overall, a multi-bay closet resizes just this bay (the
+    others redistribute). Returns True when a resize was applied."""
+    color = front.get(PROP_JEWELRY_TRAY, '')
+    if not color or color == 'NONE':
+        return False
+    inside_w = float(front.get('hb_inside_w', 0.0))
+    depth = float(front.get('hb_open_depth', 0.0))
+    if inside_w <= 0.0:
+        return False
+    target = target_inside_width_for_tray(color, inside_w, depth)
+    if abs(target - inside_w) < inch(0.05):
+        return False
+    bay = find_bay_cage(front)
+    root = find_starter_root(front)
+    if bay is None or root is None:
+        return False
+    # inside width and bay width differ by a constant (panels + overlays
+    # + box side), so the bay width that yields the target inside width is
+    # a simple shift.
+    actual_bay_w = GeoNodeCage(bay).get_input('Dim X')
+    target_bay_w = target + (actual_bay_w - inside_w)
+    bays = [c for c in root.children if c.get(TAG_BAY_CAGE)]
+    if len(bays) <= 1:
+        sp = root.hb_closet_starter
+        sp.width = sp.width + (target_bay_w - actual_bay_w)
+    else:
+        bay.hb_closet_bay.width = target_bay_w  # setter locks + relays out
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Cage classes
 # ---------------------------------------------------------------------------

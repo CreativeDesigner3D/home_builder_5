@@ -218,6 +218,10 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 == types_closets.PART_ROLE_DRAWER_FRONT):
             layout.operator("hb_closets.drawer_accessory",
                             text="Drawer Accessory...", icon='MODIFIER')
+            if obj.get(types_closets.PROP_JEWELRY_TRAY, ''):
+                layout.operator("hb_closets.resize_drawer_for_tray",
+                                text="Resize Drawer to Fit Tray",
+                                icon='FULLSCREEN_ENTER')
             layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')
