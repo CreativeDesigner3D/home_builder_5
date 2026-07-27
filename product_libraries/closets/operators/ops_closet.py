@@ -2123,10 +2123,9 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
                           icon='ERROR')
                 box.prop(self, 'resize_to_fit')
 
-    def execute(self, context):
-        front = self._front(context)
-        if front is None:
-            return {'CANCELLED'}
+    def _write_front(self, front):
+        """Store the dialog's overrides and tray choice on the front,
+        clearing each when it is left at its default."""
         # Box-system override (Use Default clears it).
         if self.box_override and self.box_override != 'DEFAULT':
             front[types_closets.PROP_FRONT_BOX_OVERRIDE] = self.box_override
@@ -2146,6 +2145,24 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
         elif types_closets.PROP_JEWELRY_TRAY in front:
             del front[types_closets.PROP_JEWELRY_TRAY]
+
+    def check(self, context):
+        """Live re-solve: apply the current choices and rebuild so the
+        readouts (current drawer, size names, tray) update as edited."""
+        front = self._front(context)
+        if front is None:
+            return False
+        self._write_front(front)
+        root = types_closets.find_starter_root(front)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        return True
+
+    def execute(self, context):
+        front = self._front(context)
+        if front is None:
+            return {'CANCELLED'}
+        self._write_front(front)
         root = types_closets.find_starter_root(front)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
