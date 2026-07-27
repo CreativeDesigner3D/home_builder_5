@@ -1022,7 +1022,7 @@ class TitleBlock:
         self.obj = border.obj
 
         # This object stays as the title-block PARENT ANCHOR: its
-        # normalized local frame positions the Spaces view-name field,
+        # normalized local frame positions the host add-on's view-name field,
         # legend blocks, detail stacks and style columns. But the visible
         # rectangle is unwanted on shop drawings (and was mis-positioning
         # on some views), so hide it from render + viewport. Children are

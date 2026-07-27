@@ -610,7 +610,7 @@ def edge_profile_section(profile, thickness):
 
 
 # ---- Catalog edge profiles -----------------------------------------
-# The CWP catalog's "Door and Drawer Edge Profiles" chart is a set of
+# The catalog's "Door and Drawer Edge Profiles" chart is a set of
 # exact geometric specs (roundover radii, chamfer legs, a bevel, a
 # cove), so these sections are generated in code instead of drawn as
 # .blend assets. Output matches edge_profile_section's sweep space.

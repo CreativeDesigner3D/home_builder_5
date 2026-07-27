@@ -105,7 +105,7 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         existing = [s.name for s in ff.cabinet_styles]
         # New style duplicates the currently-selected one so adding is
         # "copy + tweak" (matches the door / drawer-front style Add), which
-        # is what dealers want for a second style in the same job.
+        # is what users want for a second style in the same job.
         idx = ff.active_cabinet_style_index
         src = ff.cabinet_styles[idx] if 0 <= idx < len(ff.cabinet_styles) else None
         base = src.name if src is not None else "Style"
@@ -181,7 +181,7 @@ class hb_face_frame_OT_move_cabinet_style(Operator):
             return {'CANCELLED'}
         # Styles are referenced by name (STYLE_NAME on cabinets), so reordering
         # the pool is safe -- only the order-driven 2D colour assignment
-        # (Spaces assign_style_colors, applied at page generation) changes.
+        # (the host add-on's style colors, applied at page generation) changes.
         ff.cabinet_styles.move(idx, new_idx)
         ff.active_cabinet_style_index = new_idx
         return {'FINISHED'}

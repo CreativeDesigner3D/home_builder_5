@@ -305,7 +305,7 @@ PART_ROLE_APRON = 'APRON'
 # panels (proud of the leaf, with reveal gaps that read as faux mid
 # rails) so it looks like a drawer stack but opens as one door. Built in
 # _update_fronts_in_opening as children of the door part (inherit swing);
-# carry no DOOR_STYLE_NAME, so pricing / machining see one door.
+# carry no DOOR_STYLE_NAME, so downstream consumers see one door.
 PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
@@ -4773,7 +4773,7 @@ class FaceFrameCabinet(GeoNodeCage):
         self._apply_pipe_chase_cuts(cutter, cab)
         self._build_pipe_chase_panels(layout, cab, x_lo, x_hi, depth)
         # Publish the applied spec on the root (meters) so downstream
-        # consumers (drawings / pricing) can read it without recomputing.
+        # consumers (drawings / reports) can read it without recomputing.
         # Cleared when the chase is removed.
         self.obj['PIPE_CHASE_LOCATION'] = cab.chase_location
         self.obj['PIPE_CHASE_WIDTH'] = x_hi - x_lo
@@ -6009,7 +6009,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
 
         # Hide the driven cutpart display; it stays as the L/W/T
-        # carrier for pricing / machining reads.
+        # carrier for downstream reads.
         mod_name = getattr(part_obj.home_builder, 'mod_name', '')
         mod = part_obj.modifiers.get(mod_name) if mod_name else None
         if mod is not None:
@@ -7076,7 +7076,7 @@ class FaceFrameCabinet(GeoNodeCage):
         idx = rect['splitter_index'] + 1
         # A remove_bottom bay's lowest framed splitter is the section's
         # bottom rail, not a mid rail (e.g. refrigerator cabinet). Tag it
-        # BOTTOM_RAIL so pricing / manufacturing / the toe-kick detail
+        # BOTTOM_RAIL so downstream consumers / the toe-kick detail
         # reader classify it correctly; IS_BAY_SPLITTER_RAIL keeps the
         # reconcile sweep able to clean it on rebuild.
         as_bottom = bool(rect.get('as_bottom_rail'))
@@ -7799,7 +7799,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # the chase cutter into the box. The notch does NOT change
             # the box's Dim inputs - the box ships full size and the
             # notch is a custom shop operation, so publish the notch
-            # rect for pricing / drawings to flag.
+            # rect for drawings / reports to flag.
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
@@ -7931,7 +7931,7 @@ class FaceFrameCabinet(GeoNodeCage):
         """Solid-stock nosing profile on the front edge of an
         adjustable shelf. A plain swept mesh, deliberately NOT tagged
         CABINET_PART: it is molding stock, not a sheet-stock cutpart,
-        so part-collection passes (pricing, machining) must not pick
+        so part-collection passes (reports, machining) must not pick
         it up as one. The material walk finds it by role instead.
         """
         obj = shelf_nosing.build_nosing_object(

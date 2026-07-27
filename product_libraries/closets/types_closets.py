@@ -1183,7 +1183,7 @@ class ClosetStarter(GeoNodeCage):
             inst['hb_part_role'] = 'PULL'
             inst['IS_CABINET_PULL'] = True
         # Model name rides the instance (the mesh datablock name is the
-        # asset's internal name) - pricing keys on it.
+        # asset's internal name) - downstream reports key on it.
         inst['hb_pull_name'] = pulls_closets.current_pull_stem()
         inst.location = (x, y, z)
         inst.rotation_euler = rot

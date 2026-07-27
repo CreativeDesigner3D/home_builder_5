@@ -2498,7 +2498,7 @@ def _interior_product_enum(self, context):
 class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
     """Add a catalog interior accessory (used behind a standard swing
     door) to the selected opening or region as an ACCESSORY interior
-    item. Data only -- drives the 2D legend + pricing, no 3D effect."""
+    item. Data only -- drives the 2D legend + reports, no 3D effect."""
     bl_idname = "hb_face_frame.add_interior_accessory"
     bl_label = "Add Accessory"
     bl_description = (
@@ -2701,7 +2701,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
     opening, showing the model's minimum opening width. Pull-out / trash
     models convert the opening front to a pullout and set the opening width;
     every other accessory is stored as a data-only ACCESSORY interior item
-    (drives the 2D legend + pricing, no 3D effect)."""
+    (drives the 2D legend + reports, no 3D effect)."""
     bl_idname = "hb_face_frame.add_accessory"
     bl_label = "Add Accessory"
     bl_description = (
@@ -3811,7 +3811,7 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     object (None for an empty roots list).
 
     No bpy.ops and no selection handling, so it is callable from any
-    context -- the operator delegates here, and Spaces' 2D generation
+    context -- the operator delegates here, and the host add-on's 2D generation
     calls it directly to auto-group ungrouped free-standing runs
     (peninsulas) so the island view machinery can target them.
     """

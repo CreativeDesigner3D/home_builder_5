@@ -1306,7 +1306,7 @@ def loose_kick_rear_rail(layout):
 # (minus a fudge allowance) the corner won't clear, so we chamfer it. The
 # wedge height is capped by the base molding that later covers it.
 def compute_wedge(leg_depth, leg_height, ceiling, fudge, max_wedge_height):
-    """Wedge dimensions, ported from CWP's calculator. All lengths in meters.
+    """Wedge dimensions, ported from the catalog wedge calculator. All lengths in meters.
 
     Returns (wedge_length, wedge_height, clamped, needed). ``needed`` is False
     when the diagonal already fits the effective ceiling (both dims 0).

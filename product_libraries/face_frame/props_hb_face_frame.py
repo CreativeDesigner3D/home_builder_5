@@ -834,7 +834,7 @@ class Face_Frame_Millwork_Item(PropertyGroup):
     """One millwork line item on a cabinet style's Style Section.
 
     Shown on the Style Section page as ``name`` + ``quantity`` (always in
-    FEET). ``product_code`` is stored for later pricing. ``auto_collected``
+    FEET). ``product_code`` is stored for downstream reports. ``auto_collected``
     flags items added by the Collect Millwork scan so a re-collect can replace
     just those while leaving hand-typed items alone.
     """
@@ -852,7 +852,7 @@ class Face_Frame_Millwork_Item(PropertyGroup):
     )  # type: ignore
     product_code: StringProperty(
         name="Product Code",
-        description="Millwork product code (used for pricing)",
+        description="Millwork product code (used by downstream reports)",
         default="",
     )  # type: ignore
     auto_collected: BoolProperty(
@@ -1265,7 +1265,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
     # ---- Style-section descriptors (free text shown on the Style Section
     # page). These have no geometric effect -- they're presentation fields the
-    # dealer types in. Defaults mirror common CWP selections so a fresh style
+    # user types in. Defaults mirror common catalog selections so a fresh style
     # reads sensibly. Editable from the Style Sections panel.
     ss_corner_treatment: EnumProperty(
         name="Corner Treatment",
@@ -2918,7 +2918,7 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     front, it is torn down with the front on every recalc (the pivot
     wipe removes children_recursive) and recreated here; it rides into
     elevations like any other IS_2D_ANNOTATION FONT under the cabinet,
-    where the Spaces elevation pass links it to IGNORE freestyle.
+    where the host add-on's elevation pass links it to IGNORE freestyle.
 
     Idempotent: an existing annotation is removed first, covering live
     style edits (unlock toggled off) with no front rebuild in between.
@@ -3699,7 +3699,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             front_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
 
         # Tag glass-panel fronts so the 2D drawing layer can hatch the glass
-        # panel (Spaces reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
+        # panel (the host add-on reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
         # Set on every style assignment so it tracks the current panel choice.
         # Covers every GLASS panel kind (Prep for Glass + the mullion
         # choices, which render as plain glass until the bars land).
@@ -3708,7 +3708,7 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         # Tri-view mirror doors carry a fixed look -- plain square wood
         # frame + flat mirror panel -- independent of this style's
-        # door_type / series (no CWP door style models a wood-trimmed
+        # door_type / series (no catalog door style models a wood-trimmed
         # mirror door; the tri-view product stamps HB_MIRROR_DOOR on its
         # opening cages).
         if _front_frame_store(front_obj).get('HB_MIRROR_DOOR'):
@@ -3991,7 +3991,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                 del front_obj['HB_STATIC_SLAB']
             # Effective frame record for readers that used to consult the
             # modifier inputs (Set Door Frame dialog, panel-opening readout,
-            # the Spaces glass-hatch pass).
+            # the host add-on's glass-hatch pass).
             front_obj['HB_DOOR_FRAME'] = {
                 'left_stile': eff_left_stile,
                 'right_stile': eff_right_stile,
@@ -6497,7 +6497,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
 
     # ACCESSORY: product code from the host application's accessory catalog,
     # set when the accessory is picked from the catalog rather than typed as
-    # a free label. Drives the 2D legend + pricing; no 3D effect. Empty for a
+    # a free label. Drives the 2D legend + reports; no 3D effect. Empty for a
     # hand-typed accessory_label.
     accessory_code: StringProperty(
         name="Accessory Code", default="",
@@ -6649,7 +6649,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # opening. Stored as a bare string code; the display name, price and
     # minimum opening width are looked up from whatever accessory catalog
     # the host application registers (see accessory_registry). Empty when
-    # no model is chosen. No 3D effect -- drives 2D annotation and pricing.
+    # no model is chosen. No 3D effect -- drives 2D annotation and reports.
     pullout_accessory_code: StringProperty(
         name="Pullout Model",
         description="Accessory product code selected for this pullout opening",
@@ -6658,7 +6658,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # Tilt-out: a FALSE_FRONT on hinges (tray behind). Geometrically
     # identical to a plain false front, so it's a flag rather than a
     # front_type -- the only behavioral difference is the 2D elevation
-    # label (TILT-OUT instead of FALSE, read by Spaces). Set / cleared
+    # label (TILT-OUT instead of FALSE, read by the host add-on). Set / cleared
     # by the TILT_OUT opening preset; lives on the persistent opening
     # cage so it survives recalcs.
     is_tilt_out: BoolProperty(
@@ -6672,7 +6672,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # rails) so it looks like a stack of drawers but opens as one door.
     # NONE = a plain door. The applied fronts + their pulls are built in
     # _update_fronts_in_opening, parented to the door so they swing as one;
-    # they carry no pricing tags (the leaf prices as a single door). Lives
+    # they carry no product tags (the leaf reads as a single door). Lives
     # on the persistent opening cage so it survives recalcs.
     drawer_look_divisions: EnumProperty(
         name="Drawer-Look Divisions",
