@@ -919,6 +919,17 @@ class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Style_Note(PropertyGroup):
+    """One free-text note line on a cabinet style, printed in a NOTES
+    section at the end of the style's Style Section block (e.g.
+    'TOUCH LATCH = TL'). Pure documentation -- no geometric effect."""
+    text: StringProperty(
+        name="Note",
+        description="Free-text note printed on the Style Section page",
+        default="",
+    )  # type: ignore
+
+
 class Face_Frame_Cabinet_Style(PropertyGroup):
     """Face frame cabinet style: wood species, finish color, interior
     material, door overlay, and references to a door style + drawer front
@@ -1317,6 +1328,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         ],
         default='French',
     )  # type: ignore
+    # Free-text note lines printed in a NOTES section at the end of this
+    # style's Style Section block (e.g. 'TOUCH LATCH = TL').
+    ss_notes: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
 
     # ---- Style-section OVERRIDES for the catalog-backed fields ----
     # Each is blank by default: blank => the page shows the catalog/derived
@@ -2834,6 +2848,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         row.label(text="DOOR & DRAWER EDGE PROFILE")
         col = box.column(align=True)
         self._draw_toggle_field(col, "ss_edge_profile", "Edge Profile")
+
+        # Free-text notes printed in a NOTES section at the end of this
+        # style's Style Section block (e.g. 'TOUCH LATCH = TL').
+        box = main.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="NOTES")
+        col = box.column(align=True)
+        for i, note in enumerate(self.ss_notes):
+            r = col.row(align=True)
+            r.prop(note, "text", text="")
+            r.operator("hb_face_frame.remove_style_note",
+                       text="", icon='X', emboss=False).index = i
+        col.operator("hb_face_frame.add_style_note",
+                     text="Add Note", icon='ADD')
 
 
 class HB_UL_face_frame_cabinet_styles(UIList):
@@ -8686,6 +8715,7 @@ classes = (
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
     Face_Frame_Cabinet_Extra_Front_Style,
+    Face_Frame_Style_Note,
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
     Face_Frame_Door_Style,
