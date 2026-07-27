@@ -69,6 +69,9 @@ PART_ROLE_DRAWER_FRONT = 'CLOSET_DRAWER_FRONT'
 PART_ROLE_DRAWER_BOX = 'CLOSET_DRAWER_BOX'
 PART_ROLE_CUBBY_DIVISION = 'CLOSET_CUBBY_DIVISION'
 PART_ROLE_CUBBY_SHELF = 'CLOSET_CUBBY_SHELF'
+# Slanted shoe shelves: a tilted shelf plus a purchased metal shoe fence.
+PART_ROLE_SLANTED_SHELF = 'CLOSET_SLANTED_SHELF'
+PART_ROLE_SHOE_FENCE = 'CLOSET_SHOE_FENCE'
 # Double-sided island structure.
 PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
 # Corner-clearance bridge parts (starter-root children, lazily created
@@ -84,6 +87,12 @@ PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
 PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
+# Slanted shoe shelves: quantity, vertical spacing, tilt angle (radians),
+# and the metal fence color.
+PROP_SLANT_QTY = 'hb_slant_qty'
+PROP_SLANT_SPACING = 'hb_slant_spacing'
+PROP_SLANT_ANGLE = 'hb_slant_angle'
+PROP_SLANT_COLOR = 'hb_slant_color'
 PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
 # Per-opening box-system override. Empty / 'DEFAULT' falls back to the
 # scene-wide box selection; any other value forces this opening's boxes
@@ -174,6 +183,11 @@ JEWELRY_TRAY_CONTOUR = ('Oyster', 'Pewter', 'Winter')
 JEWELRY_TRAY_COLOR_ITEMS = (
     [('NONE', "None", "No jewelry tray")]
     + [(c, c, c) for c in (JEWELRY_TRAY_FABRIC + JEWELRY_TRAY_CONTOUR)])
+
+# Metal shoe-fence finishes (enum rows for the slanted-shelf dialog).
+SHOE_FENCE_COLORS = ('Black', 'Chrome', 'Slate Graphite', 'Matte Nickel',
+                     'Matte Aluminum', 'Matte Gold')
+SHOE_FENCE_COLOR_ITEMS = [(c, c, c) for c in SHOE_FENCE_COLORS]
 
 
 def drawer_inside_width(front_width, box_type):
@@ -1019,6 +1033,7 @@ class ClosetStarter(GeoNodeCage):
         side = opening.get(PROP_OPENING_SIDE, 'FRONT')
 
         self._reconcile_adj_shelves(opening)
+        self._reconcile_slanted_shelves(opening)
         self._reconcile_doors(opening, side)
         self._reconcile_drawers(opening, side)
         self._reconcile_rollouts(opening)
@@ -1087,6 +1102,43 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width)
                 part.set_input('Width', depth)
                 part.set_input('Thickness', st)
+
+        # ----- Slanted shoe shelves (tilted, front metal fence) -----
+        # Stacked bottom-up at a fixed vertical spacing; each shelf tilts
+        # back by the shelf angle and is set back from the front so the
+        # metal fence sits flush. The fence is a purchased rail across the
+        # front, parented to the shelf so it rides the tilt.
+        slants = groups.get(PART_ROLE_SLANTED_SHELF, [])
+        if slants:
+            slants.sort(key=lambda o: o.get('hb_slant_index', 0))
+            spacing = float(opening.get(PROP_SLANT_SPACING,
+                                        const.SLANT_SHELF_SPACING))
+            angle = float(opening.get(
+                PROP_SLANT_ANGLE,
+                math.radians(const.SLANT_SHELF_ANGLE_DEG)))
+            setback = const.SLANT_SHELF_SETBACK
+            shelf_depth = max(depth - setback, inch(1.0))
+            y_front = -shelf_depth  # front edge in opening-local Y
+            for i, child in enumerate(slants):
+                z = spacing * i
+                child.location = (0.0, 0.0, z)
+                child.rotation_euler = (angle, 0.0, 0.0)
+                part = GeoNodeCutpart(child)
+                part.set_input('Length', width)
+                part.set_input('Width', shelf_depth)
+                part.set_input('Thickness', st)
+                fence = next(
+                    (c for c in child.children
+                     if c.get('hb_part_role') == PART_ROLE_SHOE_FENCE), None)
+                if fence is not None:
+                    # Sit on the shelf top, frontmost strip, inset each side.
+                    fence.location = (const.SHOE_FENCE_INSET,
+                                      y_front + const.SHOE_FENCE_DEPTH, st)
+                    fpart = GeoNodeCutpart(fence)
+                    fpart.set_input('Length',
+                                    width - 2 * const.SHOE_FENCE_INSET)
+                    fpart.set_input('Width', const.SHOE_FENCE_DEPTH)
+                    fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
 
         # ----- Doors (1 leaf, or 2 for DOUBLE swing) -----
         doors = groups.get(PART_ROLE_DOOR, [])
@@ -1406,6 +1458,31 @@ class ClosetStarter(GeoNodeCage):
             obj = add_fixed_shelf(opening, 0.0, role=PART_ROLE_ADJ_SHELF)
             obj['hb_adj_index'] = len(existing)
             existing.append(obj)
+
+    def _reconcile_slanted_shelves(self, opening):
+        """Slanted shoe shelves: create/remove tilted shelves to match the
+        quantity, each carrying a metal shoe fence child (removed with it).
+        Positions and angle come from the layout pass."""
+        qty = max(0, int(opening.get(PROP_SLANT_QTY, 0)))
+        existing = [c for c in opening.children
+                    if c.get('hb_part_role') == PART_ROLE_SLANTED_SHELF]
+        existing.sort(key=lambda o: o.get('hb_slant_index', 0))
+        while len(existing) > qty:
+            _remove_part_tree(existing.pop())  # shelf + its fence child
+        while len(existing) < qty:
+            shelf = CabinetPart()
+            shelf.create('Slanted Shelf')
+            shelf.obj.parent = opening
+            shelf.obj['hb_part_role'] = PART_ROLE_SLANTED_SHELF
+            shelf.obj['hb_slant_index'] = len(existing)
+            shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            shelf.set_input('Mirror Y', True)
+            fence = CabinetPart()
+            fence.create('Shoe Fence')
+            fence.obj.parent = shelf.obj
+            fence.obj['hb_part_role'] = PART_ROLE_SHOE_FENCE
+            fence.set_input('Mirror Y', True)
+            existing.append(shelf.obj)
 
     def _make_front(self, opening, name, role, side):
         """Vertical slab front. rot_x 90 stands the part up (thickness
@@ -2502,6 +2579,8 @@ def clear_opening_contents(opening):
     contents - clear_bay_contents handles those."""
     for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY, PROP_ROLLOUT_QTY,
                 PROP_ROLLOUT_HEIGHT,
+                PROP_SLANT_QTY, PROP_SLANT_SPACING, PROP_SLANT_ANGLE,
+                PROP_SLANT_COLOR,
                 PROP_DRAWER_FRONT_HEIGHT, PROP_DRAWER_BOX_OVERRIDE,
                 PROP_DOOR_SWING, PROP_IS_HAMPER,
                 PROP_CUBBY_COLS, PROP_CUBBY_ROWS):
@@ -2540,6 +2619,11 @@ def serialize_opening(opening):
         'rollout_qty': int(opening.get(PROP_ROLLOUT_QTY, 0)),
         'rollout_h': float(opening.get(PROP_ROLLOUT_HEIGHT,
                                        const.ROLLOUT_HEIGHT)),
+        'slant_qty': int(opening.get(PROP_SLANT_QTY, 0)),
+        'slant_spacing': float(opening.get(PROP_SLANT_SPACING,
+                                           const.SLANT_SHELF_SPACING)),
+        'slant_angle': float(opening.get(PROP_SLANT_ANGLE, 0.0)),
+        'slant_color': opening.get(PROP_SLANT_COLOR, ''),
         'drawer_fh': float(opening.get(PROP_DRAWER_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)),
         'drawer_box': opening.get(PROP_DRAWER_BOX_OVERRIDE, ''),
@@ -2568,6 +2652,14 @@ def apply_opening_data(opening, data, recalc=True):
         opening[PROP_ROLLOUT_QTY] = data['rollout_qty']
         opening[PROP_ROLLOUT_HEIGHT] = data.get('rollout_h',
                                                 const.ROLLOUT_HEIGHT)
+    if data.get('slant_qty'):
+        opening[PROP_SLANT_QTY] = data['slant_qty']
+        opening[PROP_SLANT_SPACING] = data.get('slant_spacing',
+                                               const.SLANT_SHELF_SPACING)
+        opening[PROP_SLANT_ANGLE] = data.get(
+            'slant_angle', math.radians(const.SLANT_SHELF_ANGLE_DEG))
+        if data.get('slant_color'):
+            opening[PROP_SLANT_COLOR] = data['slant_color']
     if data.get('door_swing'):
         opening[PROP_DOOR_SWING] = data['door_swing']
         opening[PROP_IS_HAMPER] = data.get('is_hamper', 0)

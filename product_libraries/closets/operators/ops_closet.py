@@ -2319,6 +2319,53 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
         })
 
 
+class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
+                                        bpy.types.Operator):
+    """Set the slanted shoe shelves for the active opening: a stack of
+    tilted shelves, each with a metal shoe fence across the front (0
+    quantity removes them)."""
+    bl_idname = "hb_closets.add_slanted_shelves"
+    bl_label = "Slanted Shoe Shelves"
+    bl_options = {'UNDO'}
+
+    qty: bpy.props.IntProperty(name="Shelf Quantity", default=4,
+                               min=0, max=10)  # type: ignore
+    spacing: bpy.props.FloatProperty(
+        name="Distance Between Shelves", default=0.2032,  # 8"
+        unit='LENGTH', precision=4)  # type: ignore
+    angle: bpy.props.FloatProperty(
+        name="Shelf Angle", default=math.radians(17.25),
+        subtype='ANGLE', unit='ROTATION')  # type: ignore
+    color: bpy.props.EnumProperty(
+        name="Fence Color",
+        items=types_closets.SHOE_FENCE_COLOR_ITEMS,
+        default='Black')  # type: ignore
+
+    def invoke(self, context, event):
+        from .. import const_closets as const
+        opening = _active_opening_for_insert(context)
+        if opening is not None:
+            self.qty = int(opening.get(
+                types_closets.PROP_SLANT_QTY,
+                const.SLANT_SHELF_DEFAULT_QTY)) or const.SLANT_SHELF_DEFAULT_QTY
+            self.spacing = float(opening.get(
+                types_closets.PROP_SLANT_SPACING, const.SLANT_SHELF_SPACING))
+            self.angle = float(opening.get(
+                types_closets.PROP_SLANT_ANGLE,
+                math.radians(const.SLANT_SHELF_ANGLE_DEG)))
+            self.color = (opening.get(types_closets.PROP_SLANT_COLOR, '')
+                          or 'Black')
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def execute(self, context):
+        return self._commit(context, {
+            types_closets.PROP_SLANT_QTY: self.qty,
+            types_closets.PROP_SLANT_SPACING: self.spacing,
+            types_closets.PROP_SLANT_ANGLE: self.angle,
+            types_closets.PROP_SLANT_COLOR: self.color,
+        })
+
+
 class hb_closets_OT_change_bay(bpy.types.Operator):
     """Rebuild every selected bay as a standard configuration (clears
     the bays' current contents first). Shift-select several bays to
@@ -3181,6 +3228,7 @@ classes = (
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
     hb_closets_OT_add_rollouts,
+    hb_closets_OT_add_slanted_shelves,
     hb_closets_OT_change_bay,
     hb_closets_OT_change_opening,
     hb_closets_OT_copy_bay,

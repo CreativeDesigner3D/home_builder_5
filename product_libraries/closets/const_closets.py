@@ -133,6 +133,15 @@ ROLLOUT_HEIGHT = inch(4.0)
 ROLLOUT_SLIDE_GAP = inch(0.327)
 # Smallest gap left between stacked trays / above and below the stack.
 ROLLOUT_MIN_GAP = inch(1.0)
+# Slanted shoe shelves: angled shelves stacked bottom-up, each with a
+# metal shoe fence across the front. Sizes ported from the prior library.
+SLANT_SHELF_DEFAULT_QTY = 4
+SLANT_SHELF_SPACING = inch(8.0)       # Distance Between Shelves
+SLANT_SHELF_ANGLE_DEG = 17.25         # Shelf Angle (degrees)
+SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
+SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
+SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
+SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
 # Modal add-part height snapping increment (legacy fallback; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
