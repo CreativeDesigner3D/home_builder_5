@@ -701,6 +701,7 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
                 row = layout.row()
                 row.enabled = cab_props.panel_split_auto
                 row.prop(cab_props, 'panel_vertical_bays')
+                layout.prop(cab_props, 'panel_x_frame')
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated

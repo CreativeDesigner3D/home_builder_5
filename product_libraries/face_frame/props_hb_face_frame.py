@@ -5251,6 +5251,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "mirror a stacked-door mid rail support at most 2",
         default=0, min=0, max=8,
         update=_update_panel_vertical_bays)  # type: ignore
+    # X-Frame End: one open frame with a 3/4" x 3" solid lumber X
+    # applied within it, held 1/4" back of the frame face. Typical
+    # frame sizes are 3" stiles, 3" top rail, 5-1/4" bottom rail --
+    # unlock + type those on the panel if the auto-sized frame should
+    # not stand.
+    panel_x_frame: BoolProperty(
+        name="X Frame",
+        description="Build this applied panel as an X-Frame End: one "
+                    "open frame with a crossing lumber X held 1/4\" "
+                    "back of the frame face",
+        default=False,
+        update=_update_panel_split_auto)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
         unit='LENGTH', precision=4,

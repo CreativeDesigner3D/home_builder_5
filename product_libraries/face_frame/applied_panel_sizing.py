@@ -232,6 +232,150 @@ _PANEL_PART_THICKNESS = 0.75 * 0.0254  # meters
 # auto-generated vertical splitter at their center.
 _MID_STILE_WIDTH_THRESHOLD = 21.0 * 0.0254
 
+
+# ---------------------------------------------------------------------------
+# X-Frame End braces
+# ---------------------------------------------------------------------------
+# 3/4" x 3" solid lumber X applied within the panel frame, held 1/4"
+# back of the frame face. Built as one wipe-and-rebuild mesh part
+# tagged X_BRACE_TAG; the two bars are plain intersecting prisms (the
+# real part half-laps them, which reads identically from outside).
+X_BRACE_TAG = 'IS_X_FRAME_BRACE'
+_X_BAR_WIDTH = 3.0 * 0.0254
+_X_FACE_SETBACK = 0.25 * 0.0254
+
+
+def _clip_poly_half_plane(poly, p, n):
+    """Sutherland-Hodgman step: keep the part of ``poly`` (list of
+    (x, z) tuples) on the +``n`` side of the line through ``p``."""
+    out = []
+    m = len(poly)
+    for i in range(m):
+        a = poly[i]
+        b = poly[(i + 1) % m]
+        da = (a[0] - p[0]) * n[0] + (a[1] - p[1]) * n[1]
+        db = (b[0] - p[0]) * n[0] + (b[1] - p[1]) * n[1]
+        if da >= 0.0:
+            out.append(a)
+        if (da >= 0.0) != (db >= 0.0):
+            t = da / (da - db)
+            out.append((a[0] + (b[0] - a[0]) * t,
+                        a[1] + (b[1] - a[1]) * t))
+    return out
+
+
+def _diagonal_bar_poly(x0, z0, x1, z1, flip, bar_w):
+    """Convex (x, z) polygon of one X bar: a ``bar_w``-wide strip along
+    the opening diagonal, clipped to the opening rectangle (so the bar
+    ends land as angled cuts against the frame, like the catalog
+    drawing). ``flip`` picks the other diagonal."""
+    import math
+    if flip:
+        a, b = (x0, z1), (x1, z0)
+    else:
+        a, b = (x0, z0), (x1, z1)
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dz)
+    if length < 1e-6:
+        return []
+    ux, uz = dx / length, dz / length
+    nx, nz = -uz, ux
+    h = bar_w / 2.0
+    # Overshoot the strip past both corners; the rectangle clip owns
+    # the end cuts.
+    ex, ez = ux * bar_w, uz * bar_w
+    poly = [
+        (a[0] - ex + nx * h, a[1] - ez + nz * h),
+        (b[0] + ex + nx * h, b[1] + ez + nz * h),
+        (b[0] + ex - nx * h, b[1] + ez - nz * h),
+        (a[0] - ex - nx * h, a[1] - ez - nz * h),
+    ]
+    for p, n in (((x0, z0), (1.0, 0.0)), ((x1, z0), (-1.0, 0.0)),
+                 ((x0, z0), (0.0, 1.0)), ((x0, z1), (0.0, -1.0))):
+        poly = _clip_poly_half_plane(poly, p, n)
+        if not poly:
+            return []
+    return poly
+
+
+def apply_panel_x_frame(cab_obj, panel_obj, side):
+    """Build / refresh the X-Frame braces on an applied panel.
+
+    Wipe-and-rebuild on every host recalc (like the split structure):
+    the previous brace part is removed, and rebuilt only while the
+    panel's ``panel_x_frame`` flag is on -- toggling off cleans up.
+    The opening rectangle is analytic (panel dims minus the frame
+    widths apply_panel_sizing just wrote), the bar front sits
+    _X_FACE_SETBACK behind the frame face and the bar runs back to the
+    cabinet side so no gap shows from an angle. The brace takes the
+    cabinet style's finish material.
+    """
+    panel_props = panel_obj.face_frame_cabinet
+    for child in list(panel_obj.children):
+        if child.get(X_BRACE_TAG):
+            mesh = child.data
+            bpy.data.objects.remove(child, do_unlink=True)
+            if mesh is not None and getattr(mesh, 'users', 0) == 0:
+                bpy.data.meshes.remove(mesh)
+    if not getattr(panel_props, 'panel_x_frame', False):
+        return
+
+    width = panel_props.width
+    height = panel_props.height
+    depth = panel_props.depth
+    x0 = panel_props.left_stile_width
+    x1 = width - panel_props.right_stile_width
+    z0 = panel_props.bottom_rail_width
+    z1 = height - panel_props.top_rail_width
+    if x1 - x0 < _X_BAR_WIDTH or z1 - z0 < _X_BAR_WIDTH:
+        return
+
+    y_front = -depth + _X_FACE_SETBACK
+    y_back = 0.0   # against the cabinet side / wall plane
+    verts, faces = [], []
+    for flip in (False, True):
+        poly = _diagonal_bar_poly(x0, z0, x1, z1, flip, _X_BAR_WIDTH)
+        if len(poly) < 3:
+            continue
+        base = len(verts)
+        count = len(poly)
+        verts.extend((px, y_front, pz) for px, pz in poly)
+        verts.extend((px, y_back, pz) for px, pz in poly)
+        faces.append(tuple(range(base, base + count)))
+        faces.append(tuple(reversed(range(base + count, base + 2 * count))))
+        for i in range(count):
+            j = (i + 1) % count
+            faces.append((base + i, base + j,
+                          base + count + j, base + count + i))
+    if not verts:
+        return
+
+    mesh = bpy.data.meshes.new(f"{panel_obj.name}_XBrace")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    # Consistent outward normals regardless of the winding math above.
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+
+    obj = bpy.data.objects.new(f"{panel_obj.name} X Brace", mesh)
+    obj[X_BRACE_TAG] = True
+    obj['IS_CABINET_PART'] = True
+    obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+    obj.parent = panel_obj
+    for coll in panel_obj.users_collection:
+        coll.objects.link(obj)
+    try:
+        from ...molding import adapters as _molding_adapters
+        mat = _molding_adapters.finish_material(cab_obj)
+        if mat is not None:
+            mesh.materials.append(mat)
+    except Exception:
+        pass
+
 # Applied-panel opening count by panel width: one opening up to 20",
 # then one extra
 # opening (and thus one extra mid stile) at roughly every 18" step,
@@ -483,6 +627,13 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
     if override > 0:
         n_open = override
         wide = override > 1
+    # X-Frame End: one open frame -- no rail-matched H-splits and no
+    # width-ladder columns. The X braces themselves are separate parts
+    # built by apply_panel_x_frame after this pass.
+    if getattr(panel_props, 'panel_x_frame', False):
+        rails = []
+        n_open = 1
+        wide = False
 
     # Default front per condition; per-opening overrides survive a
     # same-condition rebuild (captured before the wipe, reapplied

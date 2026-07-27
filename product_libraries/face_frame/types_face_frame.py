@@ -5144,6 +5144,11 @@ class FaceFrameCabinet(GeoNodeCage):
             applied_panel_sizing.apply_panel_toe_kick_notch(
                 self.obj, panel_obj, side,
             )
+            # X-Frame End braces (wipe-and-rebuild; removes the part
+            # when the panel's X Frame flag is off).
+            applied_panel_sizing.apply_panel_x_frame(
+                self.obj, panel_obj, side,
+            )
 
             # Stamp a right-click menu onto the panel's menu-less parts
             # (inset panel fronts, pivots) so clicking any part of the
@@ -10252,6 +10257,8 @@ def _reconcile_standalone_panel(root):
         # keeps its own style-driven face-frame widths; only the split
         # structure (ladder + auto openings + mid-stile widths) is applied.
         aps.apply_panel_split_structure(root, root, 'BACK')
+        # X-Frame braces (the catalog's matching X-Frame Back).
+        aps.apply_panel_x_frame(root, root, 'BACK')
         # Surface the panel's properties from any of its parts: stamp the
         # part-commands menu onto menu-less parts (inset panels / pivots).
         for part in root.children_recursive:
