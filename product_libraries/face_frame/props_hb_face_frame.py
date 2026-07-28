@@ -1673,7 +1673,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'wall_stile':  (2.5, 2.5, 2.5),
             'mid_stile':   (2.25, 2.25, 2.25),
             'end_stile':   (1.25, 1.25, 1.25),
-            'blind_stile': (3.75, 3.75, 2.75),
+            # EXPOSED width (the 0.75" tuck behind the adjacent face is
+            # added in code) - the old 3.75/2.75 row predated that split
+            # and double-counted the tuck at 90-degree inside corners.
+            'blind_stile': (3.5, 3.5, 3.5),
             'butt_stile':      (1.125, 1.125, 1.125),
             'inside_90_stile': (3.5, 3.5, 3.5),
             'angle_stile':     (1.75, 1.75, 1.75),
