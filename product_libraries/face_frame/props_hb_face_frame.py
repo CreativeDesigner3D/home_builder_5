@@ -6377,7 +6377,9 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     # Finished-opening nosing on the shelf front edge (ADJUSTABLE_SHELF
     # only). Clover / Kelli match the shelf thickness; the extra-height
-    # styles read shelf_nosing_height (catalog: 1-1/4" to 3").
+    # styles read shelf_nosing_height. The old 1-1/4"..3" catalog range
+    # is no longer enforced -- custom jobs run outside it; only a tiny
+    # floor remains so a zero height can't build degenerate geometry.
     shelf_nosing_style: EnumProperty(
         name="Shelf Nosing",
         description="Finished-opening nosing profile applied to the front edge of each shelf",
@@ -6386,8 +6388,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     shelf_nosing_height: FloatProperty(
         name="Nosing Height",
-        description="Overall height of an extra-height nosing (1-1/4\" to 3\"). Clover / Kelli ignore this and match the shelf thickness",
-        default=units.inch(1.5), min=units.inch(1.25), max=units.inch(3.0),
+        description="Overall height of an extra-height nosing. Clover / Kelli ignore this and match the shelf thickness",
+        default=units.inch(1.5), min=units.inch(0.125),
         unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
