@@ -796,13 +796,23 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Thickness', pt)
 
     def _layout_battens(self, layout, scene_props, sp):
-        """A 0.25 x 1.125 in vertical
-        scribe strip against the inner face of an end panel at the
-        front edge, spanning the end bay's height. Cosmetic part -
-        no machining."""
+        """A 0.25 x 1.125 in scribe strip laid flat on the FRONT face of
+        an end panel, running that panel's full height. It covers the
+        panel's 0.75 in edge and projects the remaining 0.375 in past the
+        outside of the run, so it can be scribed to the wall. Cosmetic
+        part - no machining.
+
+        The strip lies in the face plane: Length runs up Z, Width runs
+        across X (outward, away from the run) and Thickness stands proud
+        of the front face. Rotation and mirroring are rewritten on every
+        pass so a part built before this orientation was settled
+        re-orients itself the next time the closet recalculates.
+        """
         bays = layout['bays']
-        if not bays:
+        panels = layout['panels']
+        if not bays or not panels:
             return
+        pt = scene_props.panel_thickness
         have = {c.get('hb_batten'): c for c in self.obj.children
                 if c.get('hb_batten')}
         for side in ('LEFT', 'RIGHT'):
@@ -813,20 +823,24 @@ class ClosetStarter(GeoNodeCage):
                 p.obj.parent = self.obj
                 p.obj['hb_part_role'] = PART_ROLE_BATTEN
                 p.obj['hb_batten'] = side
-                p.obj.rotation_euler.y = math.radians(-90)
-                p.set_input('Mirror Y', True)
-                p.set_input('Mirror Z', True)
                 c = p.obj
             bay = bays[0] if side == 'LEFT' else bays[-1]
+            panel = panels[0] if side == 'LEFT' else panels[-1]
             include = (sp.include_batten_left if side == 'LEFT'
                        else sp.include_batten_right)
-            if side == 'LEFT':
-                x = bay['x']
-            else:
-                x = bay['x'] + bay['width'] - const.BATTEN_THICKNESS
-            c.location = (x, -bay['depth'] + const.BATTEN_WIDTH, bay['z0'])
+            c.rotation_euler = (0.0, math.radians(-90), math.radians(90))
             part = GeoNodeCutpart(c)
-            part.set_input('Length', bay['height'])
+            # Width runs off the outside of the run: away from -X on the
+            # left, toward +X on the right.
+            part.set_input('Mirror Y', side == 'RIGHT')
+            part.set_input('Mirror Z', False)
+            # Anchor on the face of the end panel that faces the run, so
+            # the strip laps the panel and overhangs the outside.
+            x = panel['x'] + pt if side == 'LEFT' else panel['x']
+            # The panel entry already carries the height and the floor /
+            # extend-to-countertop drop, so the strip tracks the panel.
+            c.location = (x, -bay['depth'], panel['z'])
+            part.set_input('Length', panel['length'])
             part.set_input('Width', const.BATTEN_WIDTH)
             part.set_input('Thickness', const.BATTEN_THICKNESS)
             _set_part_hidden(c, not include)
@@ -1188,8 +1202,15 @@ class ClosetStarter(GeoNodeCage):
             setback = const.SLANT_SHELF_SETBACK
             shelf_depth = max(depth - setback, inch(1.0))
             y_front = -shelf_depth  # front edge in opening-local Y
+            # The shelf tips down toward the front, and it pivots about
+            # its REAR edge, so the front edge finishes a shelf-depth's
+            # worth of rise below the origin. Lift the whole stack by
+            # that rise: the bottom shelf's front lip then lands on the
+            # opening floor instead of hanging through it, which is
+            # where the prior library's stack started.
+            rise = shelf_depth * math.sin(angle)
             for i, child in enumerate(slants):
-                z = spacing * i
+                z = spacing * i + rise
                 child.location = (0.0, 0.0, z)
                 child.rotation_euler = (angle, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
@@ -1296,9 +1317,17 @@ class ClosetStarter(GeoNodeCage):
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                wood_h = max(dh - const.DRAWER_BOX_HEIGHT_DEDUCT,
+                # A front laps the part above it, so the top drawer of a
+                # stack has less room behind the front than the front is
+                # tall. Size the box to the clear space that is really
+                # there, or it runs up through the shelf above.
+                z_bot = max(z, 0.0)
+                room = max(interior_h - z_bot, inch(1.0))
+                avail_h = min(dh, room)
+                wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
-                spec = dbx.size_box(box_type, dh, depth, wood_h, wood_d)
+                spec = dbx.size_box(box_type, avail_h, depth, wood_h,
+                                    wood_d)
                 # Explicit per-front size overrides (0 = system size).
                 _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
                 _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
@@ -1318,8 +1347,12 @@ class ClosetStarter(GeoNodeCage):
                     # box spans [y_box, y_box + box_d], front edge flush
                     # with the opening face, clearance at the rear.
                     y_box = (-box_d if side == 'BACK' else -depth)
+                    # Stand the box off the drawer's floor, giving the
+                    # lift up when the remaining room is tighter than it.
+                    lift = min(const.DRAWER_BOX_Z_LIFT,
+                               max(0.0, room - box_h))
                     box.location = (const.DRAWER_SLIDE_GAP, y_box,
-                                    max(z, 0.0) + const.DRAWER_BOX_Z_LIFT)
+                                    z_bot + lift)
                     gb = GeoNodeObject(box)
                     gb.set_input('Dim X', box_w)
                     gb.set_input('Dim Y', box_d)
