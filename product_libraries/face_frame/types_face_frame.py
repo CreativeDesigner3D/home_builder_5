@@ -5608,6 +5608,24 @@ class FaceFrameCabinet(GeoNodeCage):
     FO_CORNER_MITER_MOD_NAME = 'FO Corner Miter'
     FO_CORNER_REVEAL = inch(0.25)
 
+    @staticmethod
+    def _settled_world_matrix(obj):
+        """obj's world matrix with its OWN local transform read fresh.
+
+        The blind-corner apply shifts the blind cabinet's location and
+        the recalc drain runs before the depsgraph refreshes
+        matrix_world, so reading obj.matrix_world there is stale by the
+        void shift - the applied corner stile then lands short by
+        exactly that amount. Recompose only the cabinet's own level
+        (parent world @ parent_inverse @ fresh basis): the parent's
+        matrix_world must be used as-is because walls are positioned by
+        constraints, which matrix_basis composition would drop - and
+        parents don't move inside the drain."""
+        if obj.parent is None:
+            return obj.matrix_basis.copy()
+        return (obj.parent.matrix_world
+                @ obj.matrix_parent_inverse @ obj.matrix_basis)
+
     def _corner_fo_stile_geometry(self, layout, side):
         """Cabinet-local geometry for the applied overlay stile on a
         FULL-overlay blind corner side: (x_anchor, width, seam).
@@ -5641,8 +5659,11 @@ class FaceFrameCabinet(GeoNodeCage):
         pff = getattr(partner, 'face_frame_cabinet', None)
         if pff is None or pff.depth <= 0:
             return None
-        mw_p = partner.matrix_world
-        mw_inv = self.obj.matrix_world.inverted()
+        # Settled matrices, NOT matrix_world: the blind-corner apply
+        # moves the blind cabinet inside the same recalc drain, and the
+        # depsgraph hasn't refreshed matrix_world yet at that point.
+        mw_p = self._settled_world_matrix(partner)
+        mw_inv = self._settled_world_matrix(self.obj).inverted()
         # Partner's front direction in OUR local frame must run along
         # our width axis, else this isn't a 90-degree corner.
         front_dir = (mw_inv.to_3x3() @ (mw_p.to_3x3() @ Vector((0.0, -1.0, 0.0))))
