@@ -547,8 +547,10 @@ class Closet_Bay_Props(PropertyGroup):
         default=True, update=_update_bay_prop)  # type: ignore
     remove_bottom: BoolProperty(
         name="Remove Bottom",
-        description="Leave this bay's fixed bottom shelf out, opening the "
-                    "bay down to the kick or the hang line",
+        description="Leave this bay's fixed bottom shelf out. On a floor "
+                    "bay the toe kick goes with it and the bay opens all "
+                    "the way to the floor; on a hanging bay it opens to "
+                    "the hang line",
         default=starter_presets.BAY_PROP_DEFAULTS['remove_bottom'],
         update=_update_bay_prop)  # type: ignore
     remove_cleat: BoolProperty(
