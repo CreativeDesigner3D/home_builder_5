@@ -124,7 +124,11 @@ class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         # Properties, Change Opening, then the add entries, then clear.
+        # Both levels are offered: the opening dialog edits what fills
+        # this segment, the bay dialog the section it sits in.
         layout = self.layout
+        layout.operator("hb_closets.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
         layout.operator("hb_closets.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
         layout.separator()

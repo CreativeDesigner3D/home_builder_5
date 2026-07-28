@@ -70,8 +70,9 @@ def compute_layout(spec):
     """Full starter layout.
 
     spec attributes: width, height, pt (panel thickness), st (shelf
-    thickness), kick_height, kick_setback, and bays - a list of dicts with
-    width, locked, height, depth, floor, remove_bottom, remove_cleat.
+    thickness), kick_height, kick_setback, extend_panels / extend_amount,
+    and bays - a list of dicts with width, locked, height, depth, floor,
+    remove_bottom, remove_cleat.
 
     Returns a dict:
       widths:  final bay widths (write back to the bay props)
@@ -83,6 +84,8 @@ def compute_layout(spec):
     n = len(spec.bays)
     left_off = getattr(spec, 'left_panel_off', False)
     right_off = getattr(spec, 'right_panel_off', False)
+    extend_amount = (getattr(spec, 'extend_amount', 0.0)
+                     if getattr(spec, 'extend_panels', False) else 0.0)
 
     # Per-junction panel thickness: a turned-off
     # end panel gives its thickness back to the interior; a doubled
@@ -131,6 +134,14 @@ def compute_layout(spec):
             px = xs[i]
         top = max(_side_top(s, spec.height) for s in sides)
         bottom = min(_side_bottom(s, spec.height) for s in sides)
+        # Extend Panels to Countertop: a hanging panel drops past the
+        # underside of its section so it finishes alongside the
+        # countertop of whatever sits below. A panel touching a
+        # floor-mounted bay already reaches the floor, so it never
+        # extends - matching the prior library, where the extension is
+        # skipped as soon as either neighbor is floor mounted.
+        if extend_amount > 0.0 and all(not s['floor'] for s in sides):
+            bottom -= extend_amount
         panels.append({
             'x': px,
             'z': bottom,

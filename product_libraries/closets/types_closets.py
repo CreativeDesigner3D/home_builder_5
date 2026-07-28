@@ -48,6 +48,7 @@ PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
+PART_ROLE_BACKSPLASH = 'CLOSET_BACKSPLASH'
 PART_ROLE_ACCENT_SHELF = 'CLOSET_TOP_ACCENT_SHELF'
 PART_ROLE_FILLER = 'CLOSET_FILLER'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
@@ -132,6 +133,7 @@ PROP_BAY_DOOR_SWING = 'hb_bay_door_swing'
 PROP_BAY_IS_HAMPER = 'hb_bay_is_hamper'
 PROP_CUBBY_COLS = 'hb_cubby_cols'
 PROP_CUBBY_ROWS = 'hb_cubby_rows'
+PROP_CUBBY_SETBACK = 'hb_cubby_setback'
 # Opening idprop on double islands: which face the opening serves.
 PROP_OPENING_SIDE = 'hb_opening_side'    # 'FRONT' (default) | 'BACK'
 
@@ -440,6 +442,14 @@ class ClosetStarter(GeoNodeCage):
                                   if self.allows_toe_kick else 0.0)
             sp.toe_kick_setback = scene_props.toe_kick_setback
             sp.include_countertop = self.has_countertop
+            sp.countertop_thickness = scene_props.countertop_thickness
+            # A double-sided island is reachable from every side, so its
+            # top overhangs all round; everything else only overhangs at
+            # the front until a prompt says otherwise.
+            if self.ctop_overhang_all:
+                for side in ('front', 'rear', 'left', 'right'):
+                    setattr(sp, 'countertop_overhang_' + side,
+                            const.ISLAND_CTOP_OVERHANG)
             sp.width = scene_props.default_closet_width
             sp.height = self.default_height(scene_props)
             sp.depth = (self.default_depth
@@ -623,6 +633,8 @@ class ClosetStarter(GeoNodeCage):
             kick_setback=sp.toe_kick_setback,
             left_panel_off=sp.turn_off_left_panel,
             right_panel_off=sp.turn_off_right_panel,
+            extend_panels=sp.extend_panels_to_countertop,
+            extend_amount=sp.extend_panel_amount,
             bays=bays,
         )
 
@@ -849,12 +861,20 @@ class ClosetStarter(GeoNodeCage):
             cage.set_input('Dim Z', bay['height'])
             bp = bay_obj.hb_closet_bay
 
+            # Inset Bottom (run-wide) plus this bay's own Bottom Shelf
+            # Inset hold the bottom shelf off the wall; the front edge
+            # stays where it was, so the shelf just gets shallower. Only
+            # a floor bay has a bottom to set in.
+            inset_b = ((sp.inset_bottom + bp.bottom_shelf_inset)
+                       if bay['floor'] else 0.0)
+            inset_b = max(0.0, min(inset_b, bay['depth'] - 0.001))
+
             bottom = self._bay_part(bay_obj, PART_ROLE_BOTTOM_SHELF)
             if bottom is not None:
-                bottom.location = (0.0, 0.0, bay['bottom_z'])
+                bottom.location = (0.0, -inset_b, bay['bottom_z'])
                 part = GeoNodeCutpart(bottom)
                 part.set_input('Length', bay['width'])
-                part.set_input('Width', bay['depth'])
+                part.set_input('Width', bay['depth'] - inset_b)
                 part.set_input('Thickness', st)
                 _set_part_hidden(bottom, bp.remove_bottom)
 
@@ -883,9 +903,16 @@ class ClosetStarter(GeoNodeCage):
                                  or bp.remove_bottom
                                  or bay['kick'] <= 0.0)
 
+            # Inset Cleat lifts the cleat above the bottom shelf it sits
+            # on, so it only applies where there is one: a floor bay
+            # that still has its bottom.
+            cleat_z = bay['cleat_z']
+            if bay['floor'] and not bp.remove_bottom:
+                cleat_z += sp.inset_cleat
+
             cleat = self._bay_part(bay_obj, PART_ROLE_CLEAT)
             if cleat is not None:
-                cleat.location = (0.0, 0.0, bay['cleat_z'])
+                cleat.location = (0.0, 0.0, cleat_z)
                 part = GeoNodeCutpart(cleat)
                 part.set_input('Length', bay['width'])
                 part.set_input('Width', const.CLEAT_WIDTH)
@@ -937,24 +964,36 @@ class ClosetStarter(GeoNodeCage):
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
-                back.location = (0.0, 0.0, bay['interior_z'])
+                # The back laps onto the panels and shelves around its
+                # bay by the overlay, and either starts above the kick
+                # and bottom shelf or runs on down to the floor.
+                ov = sp.applied_back_overlay
+                back_z = (0.0 if sp.back_to_floor
+                          else max(bay['interior_z'] - ov, 0.0))
+                back.location = (-ov, 0.0, back_z)
                 part = GeoNodeCutpart(back)
-                part.set_input('Length', bay['width'])
-                part.set_input('Width', bay['interior_h'])
+                part.set_input('Length', bay['width'] + ov * 2.0)
+                part.set_input('Width',
+                               max(bay['top_z'] + ov - back_z, 0.001))
                 part.set_input('Thickness', const.APPLIED_BACK_THICKNESS)
                 _set_part_hidden(back, False)
 
-            # Center back (double islands): st thick, centered in depth,
-            # spanning the interior. Horizontal grain for now; the
-            # machining layer decides grain later.
+            # Center back (double islands): st thick, spanning the
+            # interior. Centered in depth unless the bay names a
+            # location. Horizontal grain for now; the machining layer
+            # decides grain later.
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
-                center_back.location = (
-                    0.0, -(bay['depth'] / 2.0 + st / 2.0), bay['interior_z'])
+                cb_y = bp.center_back_location
+                if cb_y <= 0.0:
+                    cb_y = bay['depth'] / 2.0 + st / 2.0
+                cb_y = min(cb_y, bay['depth'])
+                center_back.location = (0.0, -cb_y, bay['interior_z'])
                 part = GeoNodeCutpart(center_back)
                 part.set_input('Length', bay['width'])
                 part.set_input('Width', bay['interior_h'])
                 part.set_input('Thickness', st)
+                _set_part_hidden(center_back, not bp.include_center_back)
 
             # Openings. Fixed shelves are SPLITTERS: committed shelves
             # live at bay level and divide the interior into segments,
@@ -1311,6 +1350,12 @@ class ClosetStarter(GeoNodeCage):
                     pass
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
+        # Both are held back from the front edge by the setback, so the
+        # grid reads as recessed instead of finishing flush with the
+        # panels.
+        cub_setback = float(opening.get(PROP_CUBBY_SETBACK,
+                                        const.CUBBY_SETBACK))
+        cub_depth = max(depth - cub_setback, inch(1.0))
         divs = groups.get(PART_ROLE_CUBBY_DIVISION, [])
         if divs:
             divs.sort(key=lambda o: o.get('hb_cubby_index', 0))
@@ -1321,7 +1366,7 @@ class ClosetStarter(GeoNodeCage):
                 child.location = (x, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', interior_h)
-                part.set_input('Width', depth)
+                part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
         cub_shelves = groups.get(PART_ROLE_CUBBY_SHELF, [])
         if cub_shelves:
@@ -1333,7 +1378,7 @@ class ClosetStarter(GeoNodeCage):
                 child.location = (0.0, 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', width)
-                part.set_input('Width', depth)
+                part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
 
     # ----- regenerators (create/remove children to match config) -----
@@ -1750,20 +1795,87 @@ class ClosetStarter(GeoNodeCage):
             ctop = part.obj
         if ctop is not None:
             part = GeoNodeCutpart(ctop)
-            if self.ctop_overhang_all:
-                oh = const.ISLAND_CTOP_OVERHANG
-                ctop.location = (-oh, oh, sp.height)
-                part.set_input('Length', sp.width + 2 * oh)
-                part.set_input('Width', sp.depth + 2 * oh)
-            else:
-                ctop.location = (0.0, 0.0, sp.height)
-                part.set_input('Length', sp.width)
-                part.set_input('Width',
-                               sp.depth + const.COUNTERTOP_OVERHANG_FRONT)
-            part.set_input('Thickness', scene_props.countertop_thickness)
+            # Overhang per side. The run grows left/right by the side
+            # overhangs and front/back by the front and rear ones; the
+            # part is drawn from its back-left corner.
+            # Overhang per side; the top is drawn from its back-left
+            # corner, so the left and rear overhangs move its origin.
+            oh_l = sp.countertop_overhang_left
+            oh_r = sp.countertop_overhang_right
+            oh_f = sp.countertop_overhang_front
+            oh_b = sp.countertop_overhang_rear
+            ctop.location = (-oh_l, oh_b, sp.height)
+            part.set_input('Length', sp.width + oh_l + oh_r)
+            part.set_input('Width', sp.depth + oh_f + oh_b)
+            part.set_input('Thickness', sp.countertop_thickness)
+            # Exposed-end treatment travels with the part so the edging
+            # and corner work downstream match what was asked for here.
+            ctop['hb_ctop_left_finished'] = (
+                1 if sp.countertop_left_finished_end else 0)
+            ctop['hb_ctop_right_finished'] = (
+                1 if sp.countertop_right_finished_end else 0)
+            ctop['hb_ctop_corner_radius'] = (
+                const.COUNTERTOP_END_RADIUS
+                if sp.countertop_radius_finished_ends else 0.0)
             _set_part_hidden(ctop, not sp.include_countertop)
 
+        self._layout_backsplashes(scene_props, sp)
         self._layout_accent_shelf(scene_props, sp)
+
+    def _backsplash_part(self, slot):
+        for c in self.obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_BACKSPLASH
+                    and c.get('hb_splash_slot') == slot):
+                return c
+        return None
+
+    def _layout_backsplashes(self, scene_props, sp):
+        """Upstands along the countertop's wall edges: one across the
+        back, plus one at each end that meets a wall. An end marked
+        finished is exposed, so it gets no splash. Lazily created the
+        same way the countertop is, so turning the prompt on works on
+        units built before it existed. Splash thickness follows the
+        countertop's, matching the prior library."""
+        on = sp.include_countertop and sp.include_backsplash
+        oh_l = sp.countertop_overhang_left
+        oh_r = sp.countertop_overhang_right
+        oh_f = sp.countertop_overhang_front
+        oh_b = sp.countertop_overhang_rear
+        thk = sp.countertop_thickness
+        run = sp.width + oh_l + oh_r
+        reach = abs(sp.depth + oh_f + oh_b - thk)
+        z = sp.height + thk
+        specs = (
+            ('REAR', on, "Backsplash",
+             (-oh_l, oh_b, z), 0.0, run),
+            ('LEFT', on and not sp.countertop_left_finished_end,
+             "Left Backsplash", (-oh_l, oh_b - thk, z),
+             math.radians(-90), reach),
+            ('RIGHT', on and not sp.countertop_right_finished_end,
+             "Right Backsplash", (sp.width + oh_r, oh_b - thk, z),
+             math.radians(-90), reach),
+        )
+        for slot, show, label, loc, rot_z, length in specs:
+            splash = self._backsplash_part(slot)
+            if splash is None:
+                if not show:
+                    continue
+                part = CabinetPart()
+                part.create(label)
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = PART_ROLE_BACKSPLASH
+                part.obj['hb_splash_slot'] = slot
+                # Stands up off the countertop.
+                part.obj.rotation_euler.x = math.radians(-90)
+                part.set_input('Mirror Y', True)
+                splash = part.obj
+            splash.rotation_euler.z = rot_z
+            splash.location = loc
+            cut = GeoNodeCutpart(splash)
+            cut.set_input('Length', length)
+            cut.set_input('Width', sp.backsplash_height)
+            cut.set_input('Thickness', thk)
+            _set_part_hidden(splash, not show)
 
     def _layout_accent_shelf(self, scene_props, sp):
         """A decorative shelf laid on top of the
@@ -1816,12 +1928,29 @@ class ClosetStarter(GeoNodeCage):
         bay's depth and shelf heights so they line up with that bay's
         fixed shelves (top_z / bottom_z are shelf undersides)."""
         st = scene_props.shelf_thickness
+        # One-time migration: units built before the bridge prompts
+        # existed carry the settings as idprops. Move them onto the
+        # prompts once, then read the prompts from here on.
+        for key in ('left', 'right'):
+            if f'hb_bridge_{key}' in self.obj:
+                setattr(sp, f'bridge_{key}',
+                        bool(self.obj[f'hb_bridge_{key}']))
+                del self.obj[f'hb_bridge_{key}']
+            if f'hb_bridge_w_{key}' in self.obj:
+                setattr(sp, f'bridge_{key}_width',
+                        float(self.obj[f'hb_bridge_w_{key}']))
+                del self.obj[f'hb_bridge_w_{key}']
+            if f'hb_bridge_bot_{key}' in self.obj:
+                setattr(sp, f'include_bottom_bridge_{key}',
+                        bool(self.obj[f'hb_bridge_bot_{key}']))
+                del self.obj[f'hb_bridge_bot_{key}']
+
         for side in ('LEFT', 'RIGHT'):
             key = side.lower()
-            enabled = bool(self.obj.get(f'hb_bridge_{key}'))
-            span = float(self.obj.get(f'hb_bridge_w_{key}', 0.0))
+            enabled = getattr(sp, f'bridge_{key}')
+            span = getattr(sp, f'bridge_{key}_width')
             bottom_on = (enabled
-                         and bool(self.obj.get(f'hb_bridge_bot_{key}')))
+                         and getattr(sp, f'include_bottom_bridge_{key}'))
             bay = layout['bays'][0 if side == 'LEFT' else -1]
             base_x = -span if side == 'LEFT' else sp.width
             specs = (
@@ -2583,7 +2712,7 @@ def clear_opening_contents(opening):
                 PROP_SLANT_COLOR,
                 PROP_DRAWER_FRONT_HEIGHT, PROP_DRAWER_BOX_OVERRIDE,
                 PROP_DOOR_SWING, PROP_IS_HAMPER,
-                PROP_CUBBY_COLS, PROP_CUBBY_ROWS):
+                PROP_CUBBY_COLS, PROP_CUBBY_ROWS, PROP_CUBBY_SETBACK):
         if key in opening:
             del opening[key]
     for child in list(opening.children):
@@ -2631,6 +2760,8 @@ def serialize_opening(opening):
         'is_hamper': int(opening.get(PROP_IS_HAMPER, 0)),
         'cubby_cols': int(opening.get(PROP_CUBBY_COLS, 1)),
         'cubby_rows': int(opening.get(PROP_CUBBY_ROWS, 1)),
+        'cubby_setback': float(opening.get(PROP_CUBBY_SETBACK,
+                                           const.CUBBY_SETBACK)),
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -2666,6 +2797,8 @@ def apply_opening_data(opening, data, recalc=True):
     if data.get('cubby_cols', 1) > 1 or data.get('cubby_rows', 1) > 1:
         opening[PROP_CUBBY_COLS] = data.get('cubby_cols', 1)
         opening[PROP_CUBBY_ROWS] = data.get('cubby_rows', 1)
+        opening[PROP_CUBBY_SETBACK] = data.get('cubby_setback',
+                                               const.CUBBY_SETBACK)
     for z in data.get('rods', ()):
         add_rod(opening, z)
     if recalc and root is not None:

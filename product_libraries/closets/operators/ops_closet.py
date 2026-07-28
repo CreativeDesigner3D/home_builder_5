@@ -2717,8 +2717,45 @@ class hb_closets_OT_delete_starter(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _set_enum_silent(pgroup, prop_name, identifier):
+    """Set an enum on a PropertyGroup without firing its update
+    callback (writes the underlying value directly). Used to make a
+    dropdown reflect a distance that was set some other way."""
+    items = pgroup.bl_rna.properties[prop_name].enum_items
+    item = items.get(identifier)
+    if item is not None:
+        pgroup[prop_name] = item.value
+
+
+def _sync_height_dropdown(pgroup):
+    """Point a height dropdown at the standard height matching the
+    current distance, or Custom when it sits off the standard steps."""
+    key = const.nearest_panel_height_key(pgroup.height) or 'CUSTOM'
+    _set_enum_silent(pgroup, 'height_preset', key)
+
+
+def _starter_bays(root):
+    return sorted([c for c in root.children
+                   if c.get(types_closets.TAG_BAY_CAGE)],
+                  key=lambda o: o.get('hb_bay_index', 0))
+
+
+def _numbered_bay_row(box, bays, prop_name, label, first_bay=0):
+    """A labelled row of one checkbox per bay, numbered 1..n."""
+    box.label(text=label)
+    row = box.row(align=True)
+    for bay in bays:
+        bp = bay.hb_closet_bay
+        col = row.column(align=True)
+        col.label(text=str(bp.bay_index + 1))
+        if bp.bay_index < first_bay:
+            col.label(text="", icon='BLANK1')
+        else:
+            col.prop(bp, prop_name, text="")
+
+
 class hb_closets_OT_starter_prompts(bpy.types.Operator):
-    """Edit the active starter's dimensions and options."""
+    """Edit the active starter's sizes and options."""
     bl_idname = "hb_closets.starter_prompts"
     bl_label = "Closet Starter Properties"
     bl_options = {'UNDO'}
@@ -2728,28 +2765,27 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         return types_closets.find_starter_root(context.active_object) is not None
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=350)
-
-    def draw(self, context):
-        layout = self.layout
         root = types_closets.find_starter_root(context.active_object)
-        if root is None:
-            return
-        sp = root.hb_closet_starter
-        cls = types_closets.WRAP_CLASS_REGISTRY.get(
-            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
-        is_corner = getattr(cls, 'is_corner', False)
-        col = layout.column(align=True)
-        col.prop(sp, 'width')
-        col.prop(sp, 'height')
-        col.prop(sp, 'depth')
-        col = layout.column(align=True)
-        col.prop(sp, 'toe_kick_height_preset')
-        if sp.toe_kick_height_preset == 'CUSTOM':
-            col.prop(sp, 'toe_kick_height')
-        col.prop(sp, 'toe_kick_setback')
-        if not is_corner:
-            col.prop(sp, 'include_countertop')
+        if root is not None:
+            sp = root.hb_closet_starter
+            _sync_height_dropdown(sp)
+            bays = _starter_bays(root)
+            for bay in bays:
+                _sync_height_dropdown(bay.hb_closet_bay)
+            # "One height / one depth" describe what the run currently
+            # is, so opening the dialog never silently flattens a run
+            # that was deliberately built with mixed bays.
+            if bays:
+                sp['one_height'] = all(
+                    abs(b.hb_closet_bay.height - sp.height) < 1e-5
+                    for b in bays)
+                sp['one_depth'] = all(
+                    abs(b.hb_closet_bay.depth - sp.depth) < 1e-5
+                    for b in bays)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    # -- tab bodies ---------------------------------------------------
+    def _draw_sizes(self, layout, root, sp, bays, is_corner):
         if is_corner:
             box = layout.box()
             box.label(text="Corner")
@@ -2760,22 +2796,72 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(sp, 'l_back_width')
             col.prop(sp, 'l_flip_partition')
-        else:
+        if not bays:
+            return
+        box = layout.box()
+        box.label(text="Bays")
+        row = box.row(align=True)
+        row.label(text="Bay")
+        row.label(text="Width")
+        row.label(text="Height")
+        row.label(text="Depth")
+        row.label(text="Mounting")
+        for bay in bays:
+            bp = bay.hb_closet_bay
+            row = box.row(align=True)
+            row.label(text=str(bp.bay_index + 1))
+            # Width plus its lock: locked widths hold while the rest of
+            # the run is redistributed to fill the starter width.
+            sub = row.row(align=True)
+            sub.prop(bp, 'width', text="")
+            sub.prop(bp, 'width_locked', text="",
+                     icon='LOCKED' if bp.width_locked else 'UNLOCKED')
+            sub = row.row(align=True)
+            sub.enabled = not sp.one_height
+            if sp.one_height:
+                sub.label(text=" (starter height)")
+            else:
+                sub.prop(bp, 'height', text="")
+            sub = row.row(align=True)
+            sub.enabled = not sp.one_depth
+            if sp.one_depth:
+                sub.label(text=" (starter depth)")
+            else:
+                sub.prop(bp, 'depth', text="")
+            row.prop(bp, 'floor_mounted', toggle=True,
+                     text="Floor" if bp.floor_mounted else "Hanging",
+                     icon=('TRIA_DOWN_BAR' if bp.floor_mounted
+                           else 'TRIA_UP_BAR'))
+
+    def _draw_construction(self, layout, root, sp, bays, cls, is_corner):
+        box = layout.box()
+        box.label(text="Toe Kick")
+        col = box.column(align=True)
+        col.prop(sp, 'toe_kick_height_preset')
+        if sp.toe_kick_height_preset == 'CUSTOM':
+            col.prop(sp, 'toe_kick_height')
+        col.prop(sp, 'toe_kick_setback')
+
+        if not is_corner:
             box = layout.box()
             box.label(text="Ends")
-            row = box.row(align=True)
-            col = row.column(align=True)
-            col.label(text="Left")
-            col.prop(sp, 'left_finished_end', text="Finished End")
-            col.prop(sp, 'turn_off_left_panel', text="Turn Off Panel")
-            col.prop(sp, 'drill_through_left', text="Drill Through")
-            col.prop(sp, 'include_batten_left', text="Batten")
-            col = row.column(align=True)
-            col.label(text="Right")
-            col.prop(sp, 'right_finished_end', text="Finished End")
-            col.prop(sp, 'turn_off_right_panel', text="Turn Off Panel")
-            col.prop(sp, 'drill_through_right', text="Drill Through")
-            col.prop(sp, 'include_batten_right', text="Batten")
+            row = box.row()
+            for side, cap in (('left', "Left"), ('right', "Right")):
+                col = row.column(align=True)
+                col.label(text=cap)
+                col.prop(sp, f'{side}_side_wall_filler', text="Wall Filler")
+                col.prop(sp, f'include_batten_{side}', text="Batten")
+                col.separator()
+                col.prop(sp, f'turn_off_{side}_panel', text="Turn Off Panel")
+                col.prop(sp, f'{side}_finished_end', text="Finished End")
+                col.prop(sp, f'drill_through_{side}', text="Drill Through")
+                col.separator()
+                col.prop(sp, f'bridge_{side}', text="Bridge")
+                sub = col.column(align=True)
+                sub.enabled = getattr(sp, f'bridge_{side}')
+                sub.prop(sp, f'bridge_{side}_width', text="Shelf Width")
+                sub.prop(sp, f'include_bottom_bridge_{side}',
+                         text="Bottom Bridge")
 
             box = layout.box()
             box.label(text="Top")
@@ -2792,40 +2878,122 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 col.prop(sp, 'remove_hang_rail')
                 sub = col.column(align=True)
                 sub.enabled = not sp.remove_hang_rail
-                sub.prop(sp, 'extend_hang_rail_left')
-                sub.prop(sp, 'extend_hang_rail_right')
+                row = sub.row(align=True)
+                row.prop(sp, 'extend_hang_rail_left', text="Extend Left")
+                row.prop(sp, 'extend_hang_rail_right', text="Extend Right")
                 sub.prop(sp, 'use_one_hang_rail_height')
                 row = sub.row(align=True)
                 row.enabled = sp.use_one_hang_rail_height
                 row.prop(sp, 'hang_rail_height_location')
 
+        if getattr(cls, 'has_applied_back', False):
             box = layout.box()
-            box.label(text="Side Wall Fillers")
-            row = box.row(align=True)
-            row.prop(sp, 'left_side_wall_filler', text="Left")
-            row.prop(sp, 'right_side_wall_filler', text="Right")
-        # Compact per-bay rows: width+lock / floor toggle.
-        bays = sorted([c for c in root.children
-                       if c.get(types_closets.TAG_BAY_CAGE)],
-                      key=lambda o: o.get('hb_bay_index', 0))
+            box.label(text="Applied Back")
+            col = box.column(align=True)
+            col.prop(sp, 'back_to_floor')
+            col.prop(sp, 'applied_back_overlay')
+
+        # Both insets act on parts a floor bay has and a hanging bay does
+        # not, so say so rather than letting them read as run-wide.
+        box = layout.box()
+        box.label(text="Insets")
+        col = box.column(align=True)
+        col.prop(sp, 'inset_bottom')
+        col.prop(sp, 'inset_cleat')
+        box.label(text="Floor bays only", icon='INFO')
+
         if bays:
             box = layout.box()
-            box.label(text="Bays (width / height / depth)")
-            for bay in bays:
-                bp = bay.hb_closet_bay
-                row = box.row(align=True)
-                row.label(text=f"{bp.bay_index + 1}")
-                row.prop(bp, 'width', text="")
-                row.prop(bp, 'width_locked', text="",
-                         icon='LOCKED' if bp.width_locked else 'UNLOCKED')
-                row.prop(bp, 'height', text="")
-                row.prop(bp, 'depth', text="")
-                row.prop(bp, 'floor_mounted', text="", icon='TRIA_DOWN_BAR')
-                if bp.bay_index >= 1:
-                    row.prop(bp, 'double_panel_left', text="",
-                             icon='DUPLICATE')
-                else:
-                    row.label(text="", icon='BLANK1')
+            box.label(text="Per Bay")
+            _numbered_bay_row(box, bays, 'remove_bottom', "Remove Bottom")
+            _numbered_bay_row(box, bays, 'remove_cleat', "Remove Cleat")
+            if len(bays) > 1:
+                _numbered_bay_row(box, bays, 'double_panel_left',
+                                  "Double Panel", first_bay=1)
+
+    def _draw_countertop(self, layout, root, sp, is_corner):
+        if is_corner:
+            layout.label(text="Corner units do not take a countertop.",
+                         icon='INFO')
+            return
+        layout.prop(sp, 'include_countertop')
+        col = layout.column()
+        col.enabled = sp.include_countertop
+
+        box = col.box()
+        box.label(text="Countertop")
+        sub = box.column(align=True)
+        sub.prop(sp, 'countertop_thickness')
+        sub = box.column(align=True)
+        sub.label(text="Overhang")
+        row = sub.row(align=True)
+        row.prop(sp, 'countertop_overhang_front')
+        row.prop(sp, 'countertop_overhang_rear')
+        row = sub.row(align=True)
+        row.prop(sp, 'countertop_overhang_left')
+        row.prop(sp, 'countertop_overhang_right')
+        sub = box.column(align=True)
+        row = sub.row(align=True)
+        row.prop(sp, 'countertop_left_finished_end', text="Left Finished End")
+        row.prop(sp, 'countertop_right_finished_end',
+                 text="Right Finished End")
+        row = sub.row(align=True)
+        row.enabled = (sp.countertop_left_finished_end
+                       or sp.countertop_right_finished_end)
+        row.prop(sp, 'countertop_radius_finished_ends')
+
+        box = col.box()
+        box.label(text="Backsplash")
+        sub = box.column(align=True)
+        sub.prop(sp, 'include_backsplash')
+        row = sub.row(align=True)
+        row.enabled = sp.include_backsplash
+        row.prop(sp, 'backsplash_height')
+
+        # The extension drops hanging panels past the bottom of their
+        # section - every panel, not just the ends - so it is named for
+        # what it touches.
+        box = col.box()
+        box.label(text="Panels")
+        sub = box.column(align=True)
+        sub.prop(sp, 'extend_panels_to_countertop')
+        row = sub.row(align=True)
+        row.enabled = sp.extend_panels_to_countertop
+        row.prop(sp, 'extend_panel_amount')
+
+    def draw(self, context):
+        layout = self.layout
+        root = types_closets.find_starter_root(context.active_object)
+        if root is None:
+            return
+        sp = root.hb_closet_starter
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+        is_corner = getattr(cls, 'is_corner', False)
+        bays = _starter_bays(root)
+
+        # Overall size stays visible on every tab - it is what people
+        # come here to change most often.
+        box = layout.box()
+        box.label(text=root.name, icon='OUTLINER_OB_LATTICE')
+        col = box.column(align=True)
+        col.prop(sp, 'width')
+        row = col.row(align=True)
+        row.prop(sp, 'height_preset', text="Height")
+        row.prop(sp, 'one_height', text="One Height", toggle=True)
+        if sp.height_preset == 'CUSTOM':
+            col.prop(sp, 'height', text="Custom Height")
+        row = col.row(align=True)
+        row.prop(sp, 'depth')
+        row.prop(sp, 'one_depth', text="One Depth", toggle=True)
+
+        layout.prop(sp, 'prompt_tab', expand=True)
+        if sp.prompt_tab == 'SIZES':
+            self._draw_sizes(layout, root, sp, bays, is_corner)
+        elif sp.prompt_tab == 'CONSTRUCTION':
+            self._draw_construction(layout, root, sp, bays, cls, is_corner)
+        else:
+            self._draw_countertop(layout, root, sp, is_corner)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -2842,7 +3010,10 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         return types_closets.find_bay_cage(context.active_object) is not None
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=350)
+        bay = types_closets.find_bay_cage(context.active_object)
+        if bay is not None:
+            _sync_height_dropdown(bay.hb_closet_bay)
+        return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
         layout = self.layout
@@ -2850,19 +3021,339 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         if bay is None:
             return
         bp = bay.hb_closet_bay
-        row = layout.row(align=True)
+
+        box = layout.box()
+        box.label(text="Bay %d" % (bp.bay_index + 1), icon='MOD_ARRAY')
+        col = box.column(align=True)
+        row = col.row(align=True)
         row.prop(bp, 'width')
         row.prop(bp, 'width_locked', text="",
                  icon='LOCKED' if bp.width_locked else 'UNLOCKED')
-        col = layout.column(align=True)
-        col.prop(bp, 'height')
+        col.prop(bp, 'height_preset')
+        if bp.height_preset == 'CUSTOM':
+            col.prop(bp, 'height', text="Custom Height")
         col.prop(bp, 'depth')
-        col = layout.column(align=True)
-        col.prop(bp, 'floor_mounted')
+
+        box = layout.box()
+        box.label(text="Construction", icon='SNAP_VERTEX')
+        col = box.column(align=True)
+        col.prop(bp, 'floor_mounted',
+                 text="Floor Mounted" if bp.floor_mounted else "Hanging",
+                 icon=('TRIA_DOWN_BAR' if bp.floor_mounted
+                       else 'TRIA_UP_BAR'))
         col.prop(bp, 'remove_bottom')
         col.prop(bp, 'remove_cleat')
+        # A double panel splits the junction this bay shares with the bay
+        # on its left, so the leftmost bay has nothing to double up on.
+        if bp.bay_index > 0:
+            col.prop(bp, 'double_panel_left')
+        col.separator()
+        # Stacks on top of the starter's run-wide Inset Bottom, and like
+        # it only means anything where there is a bottom shelf to set in.
+        sub = col.column(align=True)
+        sub.enabled = bp.floor_mounted and not bp.remove_bottom
+        sub.prop(bp, 'bottom_shelf_inset')
+
+        # The center back divides a double-sided island's two faces, so
+        # it is only meaningful there.
+        root = types_closets.find_starter_root(bay)
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', '') if root is not None else '',
+            types_closets.ClosetStarter)
+        if getattr(cls, 'is_double', False):
+            box = layout.box()
+            box.label(text="Center Back", icon='MESH_PLANE')
+            col = box.column(align=True)
+            col.prop(bp, 'include_center_back')
+            sub = col.column(align=True)
+            sub.enabled = bp.include_center_back
+            sub.prop(bp, 'center_back_location')
 
     def execute(self, context):
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Opening properties
+# ---------------------------------------------------------------------------
+# What an opening can be filled with. One choice at a time - picking a
+# different one replaces what is there, the same way Change Opening does.
+_OPENING_FILL_ITEMS = [
+    ('NONE', "Empty", "Nothing in this opening"),
+    ('ADJ_SHELVES', "Adjustable Shelves", "Evenly spaced adjustable shelves"),
+    ('DRAWERS', "Drawers", "A stack of drawer fronts and boxes"),
+    ('CUBBIES', "Cubbies", "A grid of divided cubby holes"),
+    ('ROLLOUTS', "Rollout Trays", "Pull-out trays on slides"),
+    ('SLANTED_SHELVES', "Slanted Shoe Shelves",
+     "Tilted shelves with a shoe fence across the front"),
+]
+
+
+def _opening_fill(opening):
+    """Which of the standard fills currently occupies an opening."""
+    if int(opening.get(types_closets.PROP_DRAWER_QTY, 0)):
+        return 'DRAWERS'
+    if int(opening.get(types_closets.PROP_ROLLOUT_QTY, 0)):
+        return 'ROLLOUTS'
+    if int(opening.get(types_closets.PROP_SLANT_QTY, 0)):
+        return 'SLANTED_SHELVES'
+    if (int(opening.get(types_closets.PROP_CUBBY_COLS, 1)) > 1
+            or int(opening.get(types_closets.PROP_CUBBY_ROWS, 1)) > 1):
+        return 'CUBBIES'
+    if int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0)):
+        return 'ADJ_SHELVES'
+    return 'NONE'
+
+
+def _opening_dims(opening):
+    """(width, depth, height) of an opening cage, zeros when the cage
+    has no geometry node inputs yet."""
+    try:
+        cage = types_closets.GeoNodeCage(opening)
+        return (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                cage.get_input('Dim Z'))
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
+class hb_closets_OT_opening_prompts(bpy.types.Operator):
+    """Edit what fills the active opening: its size readout, the interior
+    (shelves / drawers / cubbies / trays / shoe shelves) with that
+    interior's own settings, and the front on it."""
+    bl_idname = "hb_closets.opening_prompts"
+    bl_label = "Closet Opening Properties"
+    bl_options = {'UNDO'}
+
+    fill: bpy.props.EnumProperty(
+        name="Interior", items=_OPENING_FILL_ITEMS,
+        default='ADJ_SHELVES')  # type: ignore
+
+    shelf_qty: bpy.props.IntProperty(
+        name="Shelf Quantity",
+        description="How many adjustable shelves to space through the "
+                    "opening",
+        default=3, min=0, max=20)  # type: ignore
+
+    drawer_qty: bpy.props.IntProperty(
+        name="Drawer Quantity",
+        description="How many drawers to stack in the opening",
+        default=3, min=1, max=10)  # type: ignore
+    drawer_front_height: bpy.props.FloatProperty(
+        name="Front Height",
+        description="Height of each drawer front. The top drawer takes up "
+                    "whatever height is left over",
+        default=0.1905,  # 7.5"
+        unit='LENGTH', precision=4)  # type: ignore
+    drawer_box: bpy.props.EnumProperty(
+        name="Drawer Box",
+        description="Which drawer box to build instead of the one the "
+                    "opening size would pick on its own",
+        items=_DRAWER_BOX_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
+
+    cubby_cols: bpy.props.IntProperty(
+        name="Columns", description="How many cubbies across the opening",
+        default=3, min=1, max=12)  # type: ignore
+    cubby_rows: bpy.props.IntProperty(
+        name="Rows", description="How many cubbies up the opening",
+        default=3, min=1, max=12)  # type: ignore
+    cubby_setback: bpy.props.FloatProperty(
+        name="Setback",
+        description="How far the cubby divisions and shelves sit back "
+                    "from the front edge of the opening",
+        default=0.00635,  # 1/4"
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
+    rollout_qty: bpy.props.IntProperty(
+        name="Quantity",
+        description="How many pull-out trays to space through the opening",
+        default=3, min=1, max=12)  # type: ignore
+    rollout_height: bpy.props.FloatProperty(
+        name="Rollout Height", description="Height of each tray",
+        default=0.1016,  # 4"
+        unit='LENGTH', precision=4)  # type: ignore
+
+    slant_qty: bpy.props.IntProperty(
+        name="Shelf Quantity",
+        description="How many slanted shoe shelves to stack from the "
+                    "bottom of the opening up",
+        default=4, min=1, max=10)  # type: ignore
+    slant_spacing: bpy.props.FloatProperty(
+        name="Distance Between Shelves",
+        description="Vertical spacing from one shoe shelf to the next",
+        default=0.2032,  # 8"
+        unit='LENGTH', precision=4)  # type: ignore
+    slant_angle: bpy.props.FloatProperty(
+        name="Shelf Angle",
+        description="How far the shoe shelves tilt up toward the front",
+        default=math.radians(17.25),
+        subtype='ANGLE', unit='ROTATION')  # type: ignore
+    slant_color: bpy.props.EnumProperty(
+        name="Fence Color",
+        description="Finish of the metal shoe fence across the front of "
+                    "each shelf",
+        items=types_closets.SHOE_FENCE_COLOR_ITEMS,
+        default='Black')  # type: ignore
+
+    door_swing: bpy.props.EnumProperty(
+        name="Door",
+        items=[('NONE', "None", "No front on this opening"),
+               ('LEFT', "Left Swing", "Single door hinged left"),
+               ('RIGHT', "Right Swing", "Single door hinged right"),
+               ('DOUBLE', "Double Door", "Pair of doors"),
+               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door")],
+        default='NONE')  # type: ignore
+    is_hamper: bpy.props.BoolProperty(
+        name="Tilt Out Hamper",
+        description="Hang the front on a tilt-out hamper with a wire "
+                    "basket behind it instead of a plain door",
+        default=False)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return types_closets.find_opening_cage(
+            context.active_object) is not None
+
+    def invoke(self, context, event):
+        from .. import const_closets as const
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        self.fill = _opening_fill(opening)
+        self.shelf_qty = (int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0))
+                          or types_closets.default_adj_shelf_qty(opening))
+        self.drawer_qty = int(
+            opening.get(types_closets.PROP_DRAWER_QTY, 0)) or 3
+        self.drawer_front_height = float(opening.get(
+            types_closets.PROP_DRAWER_FRONT_HEIGHT,
+            const.DRAWER_FRONT_HEIGHT))
+        self.drawer_box = (opening.get(
+            types_closets.PROP_DRAWER_BOX_OVERRIDE, '') or 'DEFAULT')
+        self.cubby_cols = int(
+            opening.get(types_closets.PROP_CUBBY_COLS, 0)) or 3
+        self.cubby_rows = int(
+            opening.get(types_closets.PROP_CUBBY_ROWS, 0)) or 3
+        self.cubby_setback = float(opening.get(
+            types_closets.PROP_CUBBY_SETBACK, const.CUBBY_SETBACK))
+        self.rollout_qty = int(opening.get(
+            types_closets.PROP_ROLLOUT_QTY, 0)) or const.ROLLOUT_DEFAULT_QTY
+        self.rollout_height = float(opening.get(
+            types_closets.PROP_ROLLOUT_HEIGHT, const.ROLLOUT_HEIGHT))
+        self.slant_qty = int(opening.get(
+            types_closets.PROP_SLANT_QTY, 0)) or const.SLANT_SHELF_DEFAULT_QTY
+        self.slant_spacing = float(opening.get(
+            types_closets.PROP_SLANT_SPACING, const.SLANT_SHELF_SPACING))
+        self.slant_angle = float(opening.get(
+            types_closets.PROP_SLANT_ANGLE,
+            math.radians(const.SLANT_SHELF_ANGLE_DEG)))
+        self.slant_color = (opening.get(types_closets.PROP_SLANT_COLOR, '')
+                            or 'Black')
+        self.door_swing = (opening.get(types_closets.PROP_DOOR_SWING, '')
+                           or 'NONE')
+        self.is_hamper = bool(opening.get(types_closets.PROP_IS_HAMPER, 0))
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        layout = self.layout
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return
+        width, depth, height = _opening_dims(opening)
+
+        # Size readout. An opening is the space between fixed shelves, so
+        # its size is a result of the bay - move a shelf to change it.
+        box = layout.box()
+        box.label(text="Opening %d"
+                       % (int(opening.get('hb_opening_index', 0)) + 1),
+                  icon='MESH_PLANE')
+        row = box.row(align=True)
+        for label, value in (("Width", width), ("Height", height),
+                             ("Depth", depth)):
+            col = row.column(align=True)
+            col.label(text=label)
+            col.label(text=units.unit_to_string(
+                context.scene.unit_settings, value))
+        box.label(text="Sized by the bay and the shelves around it",
+                  icon='INFO')
+
+        box = layout.box()
+        box.label(text="Interior", icon='SNAP_VOLUME')
+        box.prop(self, 'fill', text="")
+        col = box.column(align=True)
+        if self.fill == 'ADJ_SHELVES':
+            col.prop(self, 'shelf_qty')
+        elif self.fill == 'DRAWERS':
+            col.prop(self, 'drawer_qty')
+            col.prop(self, 'drawer_front_height')
+            col.prop(self, 'drawer_box')
+        elif self.fill == 'CUBBIES':
+            col.prop(self, 'cubby_cols')
+            col.prop(self, 'cubby_rows')
+            col.prop(self, 'cubby_setback')
+        elif self.fill == 'ROLLOUTS':
+            col.prop(self, 'rollout_qty')
+            col.prop(self, 'rollout_height')
+        elif self.fill == 'SLANTED_SHELVES':
+            col.prop(self, 'slant_qty')
+            col.prop(self, 'slant_spacing')
+            col.prop(self, 'slant_angle')
+            col.prop(self, 'slant_color')
+
+        box = layout.box()
+        box.label(text="Front", icon='MOD_SOLIDIFY')
+        box.prop(self, 'door_swing', text="")
+        sub = box.row()
+        sub.enabled = self.door_swing != 'NONE'
+        sub.prop(self, 'is_hamper')
+
+    def execute(self, context):
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(opening)
+        if root is None:
+            return {'CANCELLED'}
+
+        # One interior at a time: zero out the fills that were not
+        # picked, then write the picked one's settings.
+        opening[types_closets.PROP_ADJ_SHELF_QTY] = (
+            self.shelf_qty if self.fill == 'ADJ_SHELVES' else 0)
+        opening[types_closets.PROP_DRAWER_QTY] = (
+            self.drawer_qty if self.fill == 'DRAWERS' else 0)
+        opening[types_closets.PROP_ROLLOUT_QTY] = (
+            self.rollout_qty if self.fill == 'ROLLOUTS' else 0)
+        opening[types_closets.PROP_SLANT_QTY] = (
+            self.slant_qty if self.fill == 'SLANTED_SHELVES' else 0)
+        opening[types_closets.PROP_CUBBY_COLS] = (
+            self.cubby_cols if self.fill == 'CUBBIES' else 1)
+        opening[types_closets.PROP_CUBBY_ROWS] = (
+            self.cubby_rows if self.fill == 'CUBBIES' else 1)
+
+        if self.fill == 'CUBBIES':
+            opening[types_closets.PROP_CUBBY_SETBACK] = self.cubby_setback
+        elif self.fill == 'DRAWERS':
+            opening[types_closets.PROP_DRAWER_FRONT_HEIGHT] = \
+                self.drawer_front_height
+            if self.drawer_box and self.drawer_box != 'DEFAULT':
+                opening[types_closets.PROP_DRAWER_BOX_OVERRIDE] = \
+                    self.drawer_box
+            elif types_closets.PROP_DRAWER_BOX_OVERRIDE in opening:
+                del opening[types_closets.PROP_DRAWER_BOX_OVERRIDE]
+        elif self.fill == 'ROLLOUTS':
+            opening[types_closets.PROP_ROLLOUT_HEIGHT] = self.rollout_height
+        elif self.fill == 'SLANTED_SHELVES':
+            opening[types_closets.PROP_SLANT_SPACING] = self.slant_spacing
+            opening[types_closets.PROP_SLANT_ANGLE] = self.slant_angle
+            opening[types_closets.PROP_SLANT_COLOR] = self.slant_color
+
+        swing = '' if self.door_swing == 'NONE' else self.door_swing
+        opening[types_closets.PROP_DOOR_SWING] = swing
+        opening[types_closets.PROP_IS_HAMPER] = (
+            1 if (swing and self.is_hamper) else 0)
+
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
         return {'FINISHED'}
 
 
@@ -3009,10 +3500,12 @@ class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
             actual = red[side] * factor
             span = getattr(self, f'gap_{side}') + actual
             top_on = getattr(self, f'top_{side}') and span > 1e-4
-            root[f'hb_bridge_{side}'] = 1 if top_on else 0
-            root[f'hb_bridge_w_{side}'] = float(max(span, 0.0))
-            root[f'hb_bridge_bot_{side}'] = (
-                1 if (top_on and getattr(self, f'bottom_{side}')) else 0)
+            # Straight onto the starter's bridge prompts, so what the
+            # dialog set is what the prompts show afterwards.
+            setattr(sp, f'bridge_{side}', top_on)
+            setattr(sp, f'bridge_{side}_width', float(max(span, 0.0)))
+            setattr(sp, f'include_bottom_bridge_{side}',
+                    bool(top_on and getattr(self, f'bottom_{side}')))
             if side == 'left':
                 root.location.x += actual
 
@@ -3242,6 +3735,7 @@ classes = (
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,
     hb_closets_OT_bay_prompts,
+    hb_closets_OT_opening_prompts,
     hb_closets_OT_set_corner_clearance,
     hb_closets_OT_add_molding,
     hb_closets_OT_delete_molding,
