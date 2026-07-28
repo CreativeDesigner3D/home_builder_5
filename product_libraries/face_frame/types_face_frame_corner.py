@@ -1861,7 +1861,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if right_top_rail is not None:
             right_top_rail.location = (width - rsw, -rd + fft, height)
             _set_mod_inputs(right_top_rail, right_top_rail.home_builder.mod_name, (
-                ('Length', width - ld - lsw + fft),
+                # Right arm run minus its OWN stile (rsw, not lsw - the
+                # widths differ once a corner join widens one side).
+                ('Length', width - ld - rsw + fft),
                 ('Width', trw),
                 ('Thickness', fft),
             ))
@@ -1879,7 +1881,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if right_bot_rail is not None:
             right_bot_rail.location = (width - rsw, -rd + fft, z_ff_floor)
             _set_mod_inputs(right_bot_rail, right_bot_rail.home_builder.mod_name, (
-                ('Length', width - ld - lsw + fft),
+                ('Length', width - ld - rsw + fft),
                 ('Width', brw_eff),
                 ('Thickness', fft),
             ))
@@ -2071,7 +2073,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     right_mr.location = (width - rsw, -rd + fft, z_cursor)
                     _set_mod_inputs(
                         right_mr, right_mr.home_builder.mod_name, (
-                            ('Length', width - ld - lsw + fft),
+                            ('Length', width - ld - rsw + fft),
                             ('Width', mrw),
                             ('Thickness', fft),
                         ))
