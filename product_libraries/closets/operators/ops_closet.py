@@ -2900,6 +2900,18 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         col.prop(sp, 'inset_cleat')
         box.label(text="Floor bays only", icon='INFO')
 
+        # The extension drops hanging panels past the bottom of their
+        # section so they finish alongside whatever sits below - every
+        # panel, not just the ends. It only reaches hanging panels, which
+        # is why it lives here rather than with the countertop.
+        box = layout.box()
+        box.label(text="Panels")
+        sub = box.column(align=True)
+        sub.prop(sp, 'extend_panels_to_countertop')
+        row = sub.row(align=True)
+        row.enabled = sp.extend_panels_to_countertop
+        row.prop(sp, 'extend_panel_amount')
+
         if bays:
             box = layout.box()
             box.label(text="Per Bay")
@@ -2909,11 +2921,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 _numbered_bay_row(box, bays, 'double_panel_right',
                                   "Double Panel", last_bay=len(bays) - 2)
 
-    def _draw_countertop(self, layout, root, sp, is_corner):
-        if is_corner:
-            layout.label(text="Corner units do not take a countertop.",
-                         icon='INFO')
-            return
+    def _draw_countertop(self, layout, root, sp):
         layout.prop(sp, 'include_countertop')
         col = layout.column()
         col.enabled = sp.include_countertop
@@ -2948,17 +2956,6 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.enabled = sp.include_backsplash
         row.prop(sp, 'backsplash_height')
 
-        # The extension drops hanging panels past the bottom of their
-        # section - every panel, not just the ends - so it is named for
-        # what it touches.
-        box = col.box()
-        box.label(text="Panels")
-        sub = box.column(align=True)
-        sub.prop(sp, 'extend_panels_to_countertop')
-        row = sub.row(align=True)
-        row.enabled = sp.extend_panels_to_countertop
-        row.prop(sp, 'extend_panel_amount')
-
     def draw(self, context):
         layout = self.layout
         root = types_closets.find_starter_root(context.active_object)
@@ -2990,13 +2987,26 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                  icon='LOCKED' if sp.depth_locked else 'UNLOCKED')
         row.prop(sp, 'depth')
 
-        layout.prop(sp, 'prompt_tab', expand=True)
-        if sp.prompt_tab == 'SIZES':
+        # A countertop belongs to a unit that has a top to sit on - a
+        # base run or an island. A tall or hanging unit finishes at its
+        # own top shelf, and a corner unit has no run to cap, so neither
+        # is offered the tab at all.
+        has_countertop = getattr(cls, 'has_countertop', False)
+        row = layout.row(align=True)
+        row.prop_enum(sp, 'prompt_tab', 'SIZES')
+        row.prop_enum(sp, 'prompt_tab', 'CONSTRUCTION')
+        if has_countertop:
+            row.prop_enum(sp, 'prompt_tab', 'COUNTERTOP')
+
+        tab = sp.prompt_tab
+        if tab == 'COUNTERTOP' and not has_countertop:
+            tab = 'SIZES'
+        if tab == 'SIZES':
             self._draw_sizes(layout, root, sp, bays, is_corner)
-        elif sp.prompt_tab == 'CONSTRUCTION':
+        elif tab == 'CONSTRUCTION':
             self._draw_construction(layout, root, sp, bays, cls, is_corner)
         else:
-            self._draw_countertop(layout, root, sp, is_corner)
+            self._draw_countertop(layout, root, sp)
 
     def execute(self, context):
         return {'FINISHED'}

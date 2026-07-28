@@ -1812,11 +1812,21 @@ class ClosetStarter(GeoNodeCage):
                 op_obj['hb_opening_index'] = i
 
     def _layout_starter_parts(self, layout, scene_props, sp):
+        # Only a unit with a top to cap takes a countertop - a base run
+        # or an island. A tall or hanging unit finishes at its own top
+        # shelf, so the prompt is not offered there and a value left on
+        # by an older file is ignored rather than built.
+        want_ctop = self.has_countertop and sp.include_countertop
         ctop = self._root_part(PART_ROLE_COUNTERTOP)
-        if ctop is None and sp.include_countertop:
-            # Lazily create the part so include_countertop works on
-            # starters whose class didn't seed one (Tall/Hanging, and
-            # units placed before this landed).
+        if ctop is not None and not self.has_countertop:
+            # An older file that turned a top on where one is no longer
+            # offered: take the part out rather than leave it hidden in
+            # the outliner and on the part list.
+            bpy.data.objects.remove(ctop, do_unlink=True)
+            ctop = None
+        if ctop is None and want_ctop:
+            # Lazily created so the prompt works on units placed before
+            # the countertop landed.
             part = CabinetPart()
             part.create('Countertop')
             part.obj.parent = self.obj
@@ -1847,7 +1857,7 @@ class ClosetStarter(GeoNodeCage):
             ctop['hb_ctop_corner_radius'] = (
                 const.COUNTERTOP_END_RADIUS
                 if sp.countertop_radius_finished_ends else 0.0)
-            _set_part_hidden(ctop, not sp.include_countertop)
+            _set_part_hidden(ctop, not want_ctop)
 
         self._layout_backsplashes(scene_props, sp)
         self._layout_accent_shelf(scene_props, sp)
@@ -1866,7 +1876,8 @@ class ClosetStarter(GeoNodeCage):
         same way the countertop is, so turning the prompt on works on
         units built before it existed. Splash thickness follows the
         countertop's, matching the prior library."""
-        on = sp.include_countertop and sp.include_backsplash
+        on = (self.has_countertop and sp.include_countertop
+              and sp.include_backsplash)
         oh_l = sp.countertop_overhang_left
         oh_r = sp.countertop_overhang_right
         oh_f = sp.countertop_overhang_front
@@ -1887,6 +1898,12 @@ class ClosetStarter(GeoNodeCage):
         )
         for slot, show, label, loc, rot_z, length in specs:
             splash = self._backsplash_part(slot)
+            if splash is not None and not self.has_countertop:
+                # An older file that turned a top on where one is no
+                # longer offered: take the splash out with it rather than
+                # leave it hidden in the outliner and on the part list.
+                bpy.data.objects.remove(splash, do_unlink=True)
+                continue
             if splash is None:
                 if not show:
                     continue
