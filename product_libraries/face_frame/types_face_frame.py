@@ -5529,6 +5529,15 @@ class FaceFrameCabinet(GeoNodeCage):
         height of the door front, flush to the cabinet side. Spawn / resize
         / remove per side. Mirrors the end-stile build (rotation + mirror
         flags) shifted one face-frame thickness forward.
+
+        BLIND corner sides get the same applied part sized to the CWP
+        corner detail instead: inner edge a 1/4" reveal off the door
+        front (which pulls back to a 1/4" overlay on that side - see
+        solver.front_overlay), outer end running past the FF end to the
+        partner cabinet's planes and mitered 45 degrees so the two
+        cabinets' applied stiles close the corner. Geometry comes from
+        _corner_fo_stile_geometry; the miter is a hidden wedge cutter
+        (same pattern as the mid-stile miter).
         """
         cab = self.obj.face_frame_cabinet
         is_full = _resolve_style_overlay(self.obj) == 'FULL'
@@ -5543,13 +5552,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_FULL_OVERLAY_STILE
             and child.get(TAG_FO_STILE_SIDE) in ('LEFT', 'RIGHT')
         }
-        width = inch(1.25)
+        wall_width = inch(1.25)
         for side, stile_type, bi, ff_x in side_specs:
-            wants = is_full and stile_type == 'WALL'
+            wants_wall = is_full and stile_type == 'WALL'
+            corner_geo = None
+            if is_full and stile_type == 'BLIND' and not layout.is_angled:
+                corner_geo = self._corner_fo_stile_geometry(layout, side)
             part_obj = existing.get(side)
-            if not wants:
+            if not (wants_wall or corner_geo is not None):
                 if part_obj is not None:
                     bpy.data.objects.remove(part_obj, do_unlink=True)
+                self._clear_corner_fo_miter(side, None)
                 continue
             bay = layout.bays[bi]
             bottom_rail = solver.effective_bottom_rail_width(layout, bi)
@@ -5560,10 +5573,15 @@ class FaceFrameCabinet(GeoNodeCage):
                       + layout.default_bottom_overlay)
             door_bottom_z = (solver.bay_bottom_z(layout, bi) + bottom_rail
                              - layout.default_bottom_overlay)
-            # One fft FORWARD of the FF outer plane -> right in front of
-            # the stile (perp_offset positive is INTO the cabinet).
-            pos = solver.ff_perpendicular_offset(
-                layout, ff_x, -layout.fft, door_bottom_z)
+            if corner_geo is not None:
+                x_anchor, width, seam = corner_geo
+                pos = (x_anchor, -layout.dim_y - layout.fft, door_bottom_z)
+            else:
+                width = wall_width
+                # One fft FORWARD of the FF outer plane -> right in front
+                # of the stile (perp_offset positive is INTO the cabinet).
+                pos = solver.ff_perpendicular_offset(
+                    layout, ff_x, -layout.fft, door_bottom_z)
             if part_obj is None:
                 part = CabinetPart()
                 part.create(f'FO Stile {side[0]}')
@@ -5582,6 +5600,125 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Length', door_h)
             part.set_input('Width', width)
             part.set_input('Thickness', layout.fft)
+            if corner_geo is not None:
+                self._apply_corner_fo_miter(part_obj, layout, side, seam)
+            else:
+                self._clear_corner_fo_miter(side, part_obj)
+
+    FO_CORNER_MITER_MOD_NAME = 'FO Corner Miter'
+    FO_CORNER_REVEAL = inch(0.25)
+
+    def _corner_fo_stile_geometry(self, layout, side):
+        """Cabinet-local geometry for the applied overlay stile on a
+        FULL-overlay blind corner side: (x_anchor, width, seam).
+
+        The inner edge sits reveal + corner overlay inboard of the
+        corner stile's inner edge (a 1/4" reveal off the door front,
+        which takes the 1/4" corner overlay). The outer end runs past
+        the FF end so the part's BACK face reaches the partner
+        cabinet's FF front plane and its FRONT face reaches the
+        partner's applied-stile front plane - the 45-degree seam
+        between those two lines is where the partner's applied stile
+        meets it, closing the corner at any corner spacing. seam is
+        (x_at_ff_plane, x_at_applied_plane) for the wedge cutter.
+        Returns None when no perpendicular blind partner resolves.
+        """
+        from mathutils import Vector
+        pair_name = self.obj.get('HB_BLIND_PAIR')
+        partner = bpy.data.objects.get(pair_name) if pair_name else None
+        if partner is None:
+            # Corners configured before HB_BLIND_PAIR was stamped (or via
+            # side channels that skip the dialog): reuse the right-click
+            # editor's recovery, which falls back to geometric detection.
+            from .operators import ops_placement
+            resolved = ops_placement._blind_corner_pair_for(self.obj)
+            if resolved is None:
+                return None
+            blind_obj, placed_obj, _blind_side = resolved
+            partner = placed_obj if blind_obj is self.obj else blind_obj
+        if partner is self.obj:
+            return None
+        pff = getattr(partner, 'face_frame_cabinet', None)
+        if pff is None or pff.depth <= 0:
+            return None
+        mw_p = partner.matrix_world
+        mw_inv = self.obj.matrix_world.inverted()
+        # Partner's front direction in OUR local frame must run along
+        # our width axis, else this isn't a 90-degree corner.
+        front_dir = (mw_inv.to_3x3() @ (mw_p.to_3x3() @ Vector((0.0, -1.0, 0.0))))
+        if abs(front_dir.x) < 0.99:
+            return None
+        p_fft = pff.face_frame_thickness
+        x_bff = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth, 0.0)))).x
+        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fft, 0.0)))).x
+        pullback = (solver.FULL_CORNER_SIDE_OVERLAY + self.FO_CORNER_REVEAL)
+        if side == 'LEFT':
+            x_inner = layout.blind_offset_left + layout.lsw - pullback
+            x_outer = min(x_bff, x_bap)
+            width = x_inner - x_outer
+            x_anchor = x_outer
+        else:
+            x_inner = (layout.dim_x - layout.blind_offset_right
+                       - layout.rsw + pullback)
+            x_outer = max(x_bff, x_bap)
+            width = x_outer - x_inner
+            x_anchor = x_outer
+        if width <= self.FO_CORNER_REVEAL:
+            return None
+        return x_anchor, width, (x_bff, x_bap)
+
+    def _ensure_corner_fo_miter_cutter(self, side):
+        role = 'FO_STILE_MITER_CUTTER'
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get(TAG_FO_STILE_SIDE) == side):
+                return child
+        name = f'FO Stile Miter Cutter {side.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = role
+        cutter[TAG_FO_STILE_SIDE] = side
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_corner_fo_miter(self, part_obj, layout, side, seam):
+        """Rebuild the corner side's miter wedge (a vertical prism over
+        the triangle between the partner's FF-front and applied-front
+        lines) and ensure the boolean on the applied stile."""
+        from mathutils import Vector
+        x_bff, x_bap = seam
+        cutter = self._ensure_corner_fo_miter_cutter(side)
+        corner = Vector((x_bff, -layout.dim_y))
+        miter_dir = Vector((x_bap - x_bff, -layout.fft)).normalized()
+        open_dir = Vector((-1.0, 0.0)) if side == 'LEFT' else Vector((1.0, 0.0))
+        self._miter_wedge_mesh(cutter, corner, miter_dir, open_dir,
+                               -0.05, layout.dim_z + 0.05)
+        mod = part_obj.modifiers.get(self.FO_CORNER_MITER_MOD_NAME)
+        if mod is None:
+            mod = part_obj.modifiers.new(
+                name=self.FO_CORNER_MITER_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod.object is not cutter:
+            mod.object = cutter
+
+    def _clear_corner_fo_miter(self, side, part_obj):
+        """Drop the corner miter modifier + cutter for a side that is no
+        longer a FULL-overlay blind corner (or lost its part)."""
+        if part_obj is not None:
+            mod = part_obj.modifiers.get(self.FO_CORNER_MITER_MOD_NAME)
+            if mod is not None:
+                part_obj.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == 'FO_STILE_MITER_CUTTER'
+                    and child.get(TAG_FO_STILE_SIDE) == side):
+                bpy.data.objects.remove(child, do_unlink=True)
 
     def _reconcile_flush_x_strips(self, layout):
         """Spawn / resize / remove the FLUSH_X applied strip on each
