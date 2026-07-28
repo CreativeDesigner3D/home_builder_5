@@ -1706,9 +1706,14 @@ class ElevationView(LayoutView):
             # their root is a cage, so without this they fall to the else
             # branch, which links only the (invisible) cage object and
             # never walks the subtree: no geometry in elevation views.
+            # PRODUCT_CAGE roots (Support Frame, Half Wall, ...) share the
+            # same shape -- a cage root over part children -- and were
+            # dropped the same way, so they join this branch too.
             if (child.get('IS_FRAMELESS_CABINET_CAGE')
                     or child.get('IS_FACE_FRAME_CABINET_CAGE')
-                    or child.get('IS_CLOSET_STARTER_CAGE')):
+                    or child.get('IS_CLOSET_STARTER_CAGE')
+                    or child.get('IS_FRAMELESS_PRODUCT_CAGE')
+                    or child.get('IS_FACE_FRAME_PRODUCT_CAGE')):
                 # Cabinet: create solid and dashed collections
                 cabinet_name = child.name
                 cab_solid = bpy.data.collections.new(f"{view_name}_{cabinet_name}_Solid")
