@@ -499,8 +499,18 @@ class ClosetStarter(GeoNodeCage):
             bp.bay_index = i
             bp.width = equal_width
             bp.width_locked = False
-            bp.height = self._default_bay_height(scene_props, sp)
+            bay_height = self._default_bay_height(scene_props, sp)
+            bp.height = bay_height
             bp.depth = sp.depth
+            bp.height_locked = False
+            bp.depth_locked = False
+            # A run whose bays seed to a height other than the run
+            # height - a hanging run tops out above its bays - starts
+            # with the run height unlocked and each bay holding its own
+            # value, so the seeded heights survive the first solve.
+            if abs(bay_height - sp.height) > 1e-6:
+                bp.height_locked = True
+                sp.height_locked = False
             bp.floor_mounted = self.floor_mounted
             self._build_bay_parts(bay.obj)
 
@@ -606,11 +616,37 @@ class ClosetStarter(GeoNodeCage):
     # -----------------------------------------------------------------
     # Layout
     # -----------------------------------------------------------------
+    def _migrate_double_panel_numbering(self):
+        """Runs saved while a doubled junction was numbered by the bay to
+        its RIGHT stored the option one bay too far along. Shift it once,
+        so those runs come back looking the way they were drawn."""
+        if self.obj.get('hb_double_panel_numbering'):
+            return
+        self.obj['hb_double_panel_numbering'] = 1
+        bay_objs = self._sorted_bays()
+        old = [bool(b.hb_closet_bay.get('double_panel_left', False))
+               for b in bay_objs]
+        for i, bay_obj in enumerate(bay_objs):
+            bp = bay_obj.hb_closet_bay
+            if any(old):
+                bp.double_panel_right = (old[i + 1] if i + 1 < len(old)
+                                         else False)
+            try:
+                del bp['double_panel_left']
+            except (KeyError, TypeError):
+                pass
+
     def _spec_from_props(self, scene_props):
         sp = self.obj.hb_closet_starter
+        bay_objs = self._sorted_bays()
         bays = []
-        for idx, bay_obj in enumerate(self._sorted_bays()):
+        for idx, bay_obj in enumerate(bay_objs):
             bp = bay_obj.hb_closet_bay
+            # Junction option: a doubled partition is numbered by the bay
+            # on its LEFT, so a bay's left junction reads the option off
+            # the bay before it (the first bay's left side is the end of
+            # the run, which is never doubled).
+            prev = bay_objs[idx - 1].hb_closet_bay if idx > 0 else None
             bays.append({
                 'width': bp.width,
                 'locked': bp.width_locked,
@@ -619,9 +655,7 @@ class ClosetStarter(GeoNodeCage):
                 'floor': bp.floor_mounted,
                 'remove_bottom': bp.remove_bottom,
                 'remove_cleat': bp.remove_cleat,
-                # Junction option: doubled partition at this bay's LEFT
-                # junction (never on the first bay - that's the end).
-                'double_left': bool(bp.double_panel_left) if idx > 0
+                'double_left': bool(prev.double_panel_right) if prev
                                else False,
             })
         return SimpleNamespace(
@@ -649,25 +683,21 @@ class ClosetStarter(GeoNodeCage):
             scene_props = bpy.context.scene.hb_closets
             sp = self.obj.hb_closet_starter
 
-            # Starter height/depth edits propagate to every bay still at
-            # the previous starter value; individually overridden bays
-            # keep their override. The last-applied values ride idprops
-            # (also used below for the hanging top-anchor). Bay writes
-            # here can't recurse - the update callbacks bail while this
-            # starter is in _RECALCULATING.
-            last_h = self.obj.get('hb_last_height')
-            last_d = self.obj.get('hb_last_depth')
+            # The run height and depth carry down to the bays. A locked
+            # run size holds every bay at it; with the run size unlocked
+            # a bay follows along until someone types a size into that
+            # bay, which locks it. Bay writes here can't recurse - the
+            # update callbacks bail while this starter is in
+            # _RECALCULATING.
+            self._migrate_double_panel_numbering()
             for bay_obj in self._sorted_bays():
                 bp = bay_obj.hb_closet_bay
-                if (last_h is not None
-                        and abs(bp.height - last_h) < 1e-6
-                        and abs(sp.height - last_h) > 1e-9):
-                    bp.height = sp.height
-                if (last_d is not None
-                        and abs(bp.depth - last_d) < 1e-6
-                        and abs(sp.depth - last_d) > 1e-9):
-                    bp.depth = sp.depth
-            self.obj['hb_last_depth'] = sp.depth
+                if sp.height_locked or not bp.height_locked:
+                    if abs(bp.height - sp.height) > 1e-9:
+                        bp.height = sp.height
+                if sp.depth_locked or not bp.depth_locked:
+                    if abs(bp.depth - sp.depth) > 1e-9:
+                        bp.depth = sp.depth
 
             spec = self._spec_from_props(scene_props)
             if not spec.bays:
@@ -2051,6 +2081,8 @@ class ClosetStarter(GeoNodeCage):
             bp.width_locked = False
             bp.height = src.height
             bp.depth = src.depth
+            bp.height_locked = src.height_locked
+            bp.depth_locked = src.depth_locked
             bp.floor_mounted = src.floor_mounted
             self._build_bay_parts(bay.obj)
         finally:

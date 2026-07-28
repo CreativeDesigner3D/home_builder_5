@@ -88,32 +88,7 @@ def _update_height_preset(self, context):
     distance alone."""
     if self.height_preset != 'CUSTOM':
         self.height = const.millimeter(int(self.height_preset))
-    _update_starter_size(self, context)
-
-
-def _starter_bays(starter_props):
-    """Bay cages under the starter this property group belongs to."""
-    from . import types_closets
-    root = starter_props.id_data
-    return sorted([c for c in root.children
-                   if c.get(types_closets.TAG_BAY_CAGE)],
-                  key=lambda o: o.get('hb_bay_index', 0))
-
-
-def _update_starter_size(self, context):
-    """Starter height/depth changed. When the run is set to one height
-    (or one depth) the new value is pushed down to every bay, so the
-    common case is a single edit instead of one per bay. Bays keep
-    their own values when the matching toggle is off."""
-    from . import types_closets
-    if self.one_height or self.one_depth:
-        for bay in _starter_bays(self):
-            bp = bay.hb_closet_bay
-            if self.one_height:
-                bp['height'] = self.height
-            if self.one_depth:
-                bp['depth'] = self.depth
-    types_closets.recalculate_closet_starter(self.id_data)
+    _update_starter_prop(self, context)
 
 
 def _update_bay_prop(self, context):
@@ -126,22 +101,56 @@ def _update_bay_height_preset(self, context):
     """Bay height dropdown changed (the key is millimetres)."""
     if self.height_preset != 'CUSTOM':
         self.height = const.millimeter(int(self.height_preset))
-    _update_bay_prop(self, context)
+    _update_bay_height(self, context)
 
 
-def _update_bay_width(self, context):
-    """Bay width changed. System writes during redistribution are
-    ignored; a user edit locks the bay so the value holds when the
-    remaining widths are redistributed."""
+def _bay_edit_root(bay_props):
+    """The starter a bay belongs to, or None when the write came from
+    the system rather than from someone typing in the dialog. Layout
+    writes its own values back to the bays, and those must not read as
+    edits - otherwise every bay would lock itself the first time the
+    run was solved."""
     from . import types_closets
-    root = types_closets.find_starter_root(self.id_data)
+    root = types_closets.find_starter_root(bay_props.id_data)
     if root is None:
-        return
+        return None
     root_id = id(root)
     if (root_id in types_closets._RECALCULATING
             or root_id in types_closets._DISTRIBUTING_WIDTHS):
+        return None
+    return root
+
+
+def _update_bay_width(self, context):
+    """Bay width changed. A user edit locks the bay so the value holds
+    when the remaining widths are redistributed."""
+    from . import types_closets
+    root = _bay_edit_root(self)
+    if root is None:
         return
     self.width_locked = True
+    types_closets.recalculate_closet_starter(root)
+
+
+def _update_bay_height(self, context):
+    """Bay height changed. Same idea as the width: typing a height here
+    locks the bay, so it keeps that height when the run height changes.
+    Clear the lock to put the bay back on the run height."""
+    from . import types_closets
+    root = _bay_edit_root(self)
+    if root is None:
+        return
+    self.height_locked = True
+    types_closets.recalculate_closet_starter(root)
+
+
+def _update_bay_depth(self, context):
+    """Bay depth changed - locks the bay off the run depth, as above."""
+    from . import types_closets
+    root = _bay_edit_root(self)
+    if root is None:
+        return
+    self.depth_locked = True
     types_closets.recalculate_closet_starter(root)
 
 
@@ -175,11 +184,11 @@ class Closet_Starter_Props(PropertyGroup):
     height: FloatProperty(
         name="Height", description="Panel height (Z)",
         default=const.BASE_PANEL_HEIGHT, unit='LENGTH', precision=4,
-        update=_update_starter_size)  # type: ignore
+        update=_update_starter_prop)  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Panel depth (Y)",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
-        update=_update_starter_size)  # type: ignore
+        update=_update_starter_prop)  # type: ignore
 
     # Standard section heights (the 32mm-system lattice). Picking one
     # writes the distance above; Custom leaves whatever is typed there.
@@ -191,16 +200,19 @@ class Closet_Starter_Props(PropertyGroup):
                                            "Use the typed height")],
         default='819', update=_update_height_preset)  # type: ignore
 
-    one_height: BoolProperty(
-        name="One Height",
-        description="Every bay uses the starter height. Turn off to give "
-                    "each bay its own height in the table below",
-        default=True, update=_update_starter_size)  # type: ignore
-    one_depth: BoolProperty(
-        name="One Depth",
-        description="Every bay uses the starter depth. Turn off to give "
-                    "each bay its own depth in the table below",
-        default=True, update=_update_starter_size)  # type: ignore
+    # Run-wide locks on the two sizes that a bay can also carry on its
+    # own. Locked holds every bay at the run value; unlocked hands the
+    # Bays table its own field (and its own lock) per bay.
+    height_locked: BoolProperty(
+        name="Lock Height",
+        description="Hold every bay at this height. Unlock to size the "
+                    "bays one at a time in the Bays table",
+        default=True, update=_update_starter_prop)  # type: ignore
+    depth_locked: BoolProperty(
+        name="Lock Depth",
+        description="Hold every bay at this depth. Unlock to size the "
+                    "bays one at a time in the Bays table",
+        default=True, update=_update_starter_prop)  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -527,7 +539,12 @@ class Closet_Bay_Props(PropertyGroup):
     height: FloatProperty(
         name="Height", description="Bay height (envelope, floor to top shelf)",
         default=const.BASE_PANEL_HEIGHT, unit='LENGTH', precision=4,
-        update=_update_bay_prop)  # type: ignore
+        update=_update_bay_height)  # type: ignore
+    height_locked: BoolProperty(
+        name="Lock Height",
+        description="Hold this bay at its own height instead of following "
+                    "the run height",
+        default=starter_presets.BAY_PROP_DEFAULTS['height_locked'])  # type: ignore
     height_preset: EnumProperty(
         name="Height",
         description="Standard section height (Custom keeps the typed "
@@ -538,7 +555,12 @@ class Closet_Bay_Props(PropertyGroup):
     depth: FloatProperty(
         name="Depth", description="Bay depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
-        update=_update_bay_prop)  # type: ignore
+        update=_update_bay_depth)  # type: ignore
+    depth_locked: BoolProperty(
+        name="Lock Depth",
+        description="Hold this bay at its own depth instead of following "
+                    "the run depth",
+        default=starter_presets.BAY_PROP_DEFAULTS['depth_locked'])  # type: ignore
 
     floor_mounted: BoolProperty(
         name="Floor Mounted",
@@ -564,11 +586,14 @@ class Closet_Bay_Props(PropertyGroup):
                     "much on top of the run-wide Inset Bottom",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_bay_prop)  # type: ignore
-    double_panel_left: BoolProperty(
+    # Numbered the way the prior library numbered it: the checkbox for a
+    # doubled junction belongs to the bay on its LEFT, so a four bay run
+    # offers Double Panel 1, 2 and 3 for its three shared partitions.
+    double_panel_right: BoolProperty(
         name="Double Panel",
-        description="Add a second partition at this bay's left junction "
-                    "so this bay and its left neighbor each get their "
-                    "own panel",
+        description="Add a second partition at the junction on this bay's "
+                    "right, so this bay and its right neighbor each get "
+                    "their own panel",
         default=False, update=_update_bay_prop)  # type: ignore
 
     # Double-sided islands only: the divider between the two faces.

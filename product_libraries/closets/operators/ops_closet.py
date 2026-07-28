@@ -2740,15 +2740,21 @@ def _starter_bays(root):
                   key=lambda o: o.get('hb_bay_index', 0))
 
 
-def _numbered_bay_row(box, bays, prop_name, label, first_bay=0):
-    """A labelled row of one checkbox per bay, numbered 1..n."""
+def _numbered_bay_row(box, bays, prop_name, label, first_bay=0,
+                      last_bay=None):
+    """A labelled row of one checkbox per bay, numbered 1..n. Bays
+    outside first_bay..last_bay get a blank instead of a checkbox, which
+    is how an option that belongs to a junction rather than to a bay is
+    shown: a four bay run has three junctions, so it offers three
+    checkboxes under the bays that own them."""
     box.label(text=label)
     row = box.row(align=True)
     for bay in bays:
         bp = bay.hb_closet_bay
         col = row.column(align=True)
         col.label(text=str(bp.bay_index + 1))
-        if bp.bay_index < first_bay:
+        if (bp.bay_index < first_bay
+                or (last_bay is not None and bp.bay_index > last_bay)):
             col.label(text="", icon='BLANK1')
         else:
             col.prop(bp, prop_name, text="")
@@ -2769,20 +2775,9 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         if root is not None:
             sp = root.hb_closet_starter
             _sync_height_dropdown(sp)
-            bays = _starter_bays(root)
-            for bay in bays:
+            for bay in _starter_bays(root):
                 _sync_height_dropdown(bay.hb_closet_bay)
-            # "One height / one depth" describe what the run currently
-            # is, so opening the dialog never silently flattens a run
-            # that was deliberately built with mixed bays.
-            if bays:
-                sp['one_height'] = all(
-                    abs(b.hb_closet_bay.height - sp.height) < 1e-5
-                    for b in bays)
-                sp['one_depth'] = all(
-                    abs(b.hb_closet_bay.depth - sp.depth) < 1e-5
-                    for b in bays)
-        return context.window_manager.invoke_props_dialog(self, width=520)
+        return context.window_manager.invoke_props_dialog(self, width=560)
 
     # -- tab bodies ---------------------------------------------------
     def _draw_sizes(self, layout, root, sp, bays, is_corner):
@@ -2810,24 +2805,27 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             bp = bay.hb_closet_bay
             row = box.row(align=True)
             row.label(text=str(bp.bay_index + 1))
-            # Width plus its lock: locked widths hold while the rest of
-            # the run is redistributed to fill the starter width.
+            # All three sizes read the same way: a size and a lock. A
+            # locked width holds while the rest of the run is
+            # redistributed to fill the run width; a locked height or
+            # depth holds while the run height or depth changes.
             sub = row.row(align=True)
             sub.prop(bp, 'width', text="")
             sub.prop(bp, 'width_locked', text="",
                      icon='LOCKED' if bp.width_locked else 'UNLOCKED')
+            # The lock on the run height and depth above overrides the
+            # column: with it on, every bay is held at the run size and
+            # there is nothing to set here.
             sub = row.row(align=True)
-            sub.enabled = not sp.one_height
-            if sp.one_height:
-                sub.label(text=" (starter height)")
-            else:
-                sub.prop(bp, 'height', text="")
+            sub.enabled = not sp.height_locked
+            sub.prop(bp, 'height', text="")
+            sub.prop(bp, 'height_locked', text="",
+                     icon='LOCKED' if bp.height_locked else 'UNLOCKED')
             sub = row.row(align=True)
-            sub.enabled = not sp.one_depth
-            if sp.one_depth:
-                sub.label(text=" (starter depth)")
-            else:
-                sub.prop(bp, 'depth', text="")
+            sub.enabled = not sp.depth_locked
+            sub.prop(bp, 'depth', text="")
+            sub.prop(bp, 'depth_locked', text="",
+                     icon='LOCKED' if bp.depth_locked else 'UNLOCKED')
             row.prop(bp, 'floor_mounted', toggle=True,
                      text="Floor" if bp.floor_mounted else "Hanging",
                      icon=('TRIA_DOWN_BAR' if bp.floor_mounted
@@ -2908,8 +2906,8 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             _numbered_bay_row(box, bays, 'remove_bottom', "Remove Bottom")
             _numbered_bay_row(box, bays, 'remove_cleat', "Remove Cleat")
             if len(bays) > 1:
-                _numbered_bay_row(box, bays, 'double_panel_left',
-                                  "Double Panel", first_bay=1)
+                _numbered_bay_row(box, bays, 'double_panel_right',
+                                  "Double Panel", last_bay=len(bays) - 2)
 
     def _draw_countertop(self, layout, root, sp, is_corner):
         if is_corner:
@@ -2978,14 +2976,19 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         box.label(text=root.name, icon='OUTLINER_OB_LATTICE')
         col = box.column(align=True)
         col.prop(sp, 'width')
+        # Locked (the usual case) means the whole run is this one height
+        # and this one depth. Unlock either to size the bays one at a
+        # time in the Bays table.
         row = col.row(align=True)
+        row.prop(sp, 'height_locked', text="",
+                 icon='LOCKED' if sp.height_locked else 'UNLOCKED')
         row.prop(sp, 'height_preset', text="Height")
-        row.prop(sp, 'one_height', text="One Height", toggle=True)
         if sp.height_preset == 'CUSTOM':
             col.prop(sp, 'height', text="Custom Height")
         row = col.row(align=True)
+        row.prop(sp, 'depth_locked', text="",
+                 icon='LOCKED' if sp.depth_locked else 'UNLOCKED')
         row.prop(sp, 'depth')
-        row.prop(sp, 'one_depth', text="One Depth", toggle=True)
 
         layout.prop(sp, 'prompt_tab', expand=True)
         if sp.prompt_tab == 'SIZES':
@@ -3021,6 +3024,9 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         if bay is None:
             return
         bp = bay.hb_closet_bay
+        root = types_closets.find_starter_root(bay)
+        sp = root.hb_closet_starter if root is not None else None
+        bay_count = len(_starter_bays(root)) if root is not None else 1
 
         box = layout.box()
         box.label(text="Bay %d" % (bp.bay_index + 1), icon='MOD_ARRAY')
@@ -3029,10 +3035,22 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         row.prop(bp, 'width')
         row.prop(bp, 'width_locked', text="",
                  icon='LOCKED' if bp.width_locked else 'UNLOCKED')
-        col.prop(bp, 'height_preset')
+        # Height and depth are the run's unless this bay is locked off
+        # them; a run held to one height or one depth leaves nothing to
+        # set here, so the fields go quiet.
+        sub = col.column(align=True)
+        sub.enabled = sp is None or not sp.height_locked
+        row = sub.row(align=True)
+        row.prop(bp, 'height_preset')
+        row.prop(bp, 'height_locked', text="",
+                 icon='LOCKED' if bp.height_locked else 'UNLOCKED')
         if bp.height_preset == 'CUSTOM':
-            col.prop(bp, 'height', text="Custom Height")
-        col.prop(bp, 'depth')
+            sub.prop(bp, 'height', text="Custom Height")
+        sub = col.row(align=True)
+        sub.enabled = sp is None or not sp.depth_locked
+        sub.prop(bp, 'depth')
+        sub.prop(bp, 'depth_locked', text="",
+                 icon='LOCKED' if bp.depth_locked else 'UNLOCKED')
 
         box = layout.box()
         box.label(text="Construction", icon='SNAP_VERTEX')
@@ -3044,9 +3062,9 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         col.prop(bp, 'remove_bottom')
         col.prop(bp, 'remove_cleat')
         # A double panel splits the junction this bay shares with the bay
-        # on its left, so the leftmost bay has nothing to double up on.
-        if bp.bay_index > 0:
-            col.prop(bp, 'double_panel_left')
+        # on its right, so the last bay has nothing to double up on.
+        if bp.bay_index < bay_count - 1:
+            col.prop(bp, 'double_panel_right')
         col.separator()
         # Stacks on top of the starter's run-wide Inset Bottom, and like
         # it only means anything where there is a bottom shelf to set in.
@@ -3056,7 +3074,6 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
 
         # The center back divides a double-sided island's two faces, so
         # it is only meaningful there.
-        root = types_closets.find_starter_root(bay)
         cls = types_closets.WRAP_CLASS_REGISTRY.get(
             root.get('CLASS_NAME', '') if root is not None else '',
             types_closets.ClosetStarter)
