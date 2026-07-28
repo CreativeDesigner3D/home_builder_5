@@ -10419,9 +10419,31 @@ def _reapply_selection_mode_highlights(root):
                 type_name=mode_tags.get(mode, ''),
             )
 
+    # toggle_cabinet_color select_set()s as a side effect -- wanted when
+    # the user explicitly toggles a selection mode, but this path runs
+    # after EVERY recalc (accessory adds, width edits, prop callbacks),
+    # and silently selecting every matching cage in the cabinet destroys
+    # the user's one-opening selection. Snapshot and restore around the
+    # highlight pass so a recalc never changes what is selected.
+    view_layer = bpy.context.view_layer
+    prev_selected = {o.name for o in bpy.context.selected_objects}
+    prev_active = view_layer.objects.active
+
     apply(root)
     for child in root.children_recursive:
         apply(child)
+
+    for obj in [root, *root.children_recursive]:
+        try:
+            obj.select_set(obj.name in prev_selected)
+        except RuntimeError:
+            pass  # not in the view layer / hidden by the highlight pass
+    if prev_active is not None \
+            and view_layer.objects.active is not prev_active:
+        try:
+            view_layer.objects.active = prev_active
+        except Exception:
+            pass
 
 
 def _reapply_cabinet_style(root):
