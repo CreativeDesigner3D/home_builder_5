@@ -1908,7 +1908,16 @@ class ClosetStarter(GeoNodeCage):
         finished is exposed, so it gets no splash. Lazily created the
         same way the countertop is, so turning the prompt on works on
         units built before it existed. Splash thickness follows the
-        countertop's, matching the prior library."""
+        countertop's, matching the prior library.
+
+        Each splash is anchored on the countertop edge it stands on, so
+        its thickness has to grow back across the top rather than out
+        past that edge: the rear one forward off the back edge and the
+        right-hand one inward off the right edge, which is what the two
+        mirrored slots below are for. The left one already grows the
+        right way unmirrored. Orientation and mirroring are rewritten on
+        every pass so a splash built before this was settled corrects
+        itself the next time the closet recalculates."""
         on = (self.has_countertop and sp.include_countertop
               and sp.include_backsplash)
         oh_l = sp.countertop_overhang_left
@@ -1921,15 +1930,15 @@ class ClosetStarter(GeoNodeCage):
         z = sp.height + thk
         specs = (
             ('REAR', on, "Backsplash",
-             (-oh_l, oh_b, z), 0.0, run),
+             (-oh_l, oh_b, z), 0.0, run, True),
             ('LEFT', on and not sp.countertop_left_finished_end,
              "Left Backsplash", (-oh_l, oh_b - thk, z),
-             math.radians(-90), reach),
+             math.radians(-90), reach, False),
             ('RIGHT', on and not sp.countertop_right_finished_end,
              "Right Backsplash", (sp.width + oh_r, oh_b - thk, z),
-             math.radians(-90), reach),
+             math.radians(-90), reach, True),
         )
-        for slot, show, label, loc, rot_z, length in specs:
+        for slot, show, label, loc, rot_z, length, mirror_z in specs:
             splash = self._backsplash_part(slot)
             if splash is not None and not self.has_countertop:
                 # An older file that turned a top on where one is no
@@ -1945,13 +1954,14 @@ class ClosetStarter(GeoNodeCage):
                 part.obj.parent = self.obj
                 part.obj['hb_part_role'] = PART_ROLE_BACKSPLASH
                 part.obj['hb_splash_slot'] = slot
-                # Stands up off the countertop.
-                part.obj.rotation_euler.x = math.radians(-90)
-                part.set_input('Mirror Y', True)
                 splash = part.obj
-            splash.rotation_euler.z = rot_z
+            # Tipped up on edge so its height stands off the top, then
+            # turned to run along whichever edge it belongs to.
+            splash.rotation_euler = (math.radians(-90), 0.0, rot_z)
             splash.location = loc
             cut = GeoNodeCutpart(splash)
+            cut.set_input('Mirror Y', True)
+            cut.set_input('Mirror Z', mirror_z)
             cut.set_input('Length', length)
             cut.set_input('Width', sp.backsplash_height)
             cut.set_input('Thickness', thk)
