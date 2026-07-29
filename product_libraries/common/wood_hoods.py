@@ -681,12 +681,14 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     shelf.set_input("Thickness", mt)
     shelf.set_input("Mirror Z", False)
 
-    # Interior depth available to the opening (a front-inset board has
-    # less; a mantle-extended board still keeps the opening over the
-    # hood interior proper). The opening may use the full interior --
-    # rim widths are the dealer's call (liners can need a 3/8" front
-    # rim), so no extra reserve beyond the hood sides/front material.
-    interior = (D - mt) + min(ext, 0.0)
+    # Depth available to the opening: the full board -- including the
+    # forward extension under a projecting mantle (the cut-out must be
+    # able to reference the mantle depth too, not just the hood body);
+    # a front-inset board (angled hood) has less. The
+    # opening may use all of it -- rim widths are the dealer's call
+    # (liners can need a 3/8" front rim), so no extra reserve beyond the
+    # hood sides/front material.
+    interior = (D - mt) + ext
     cw = max(0.0, min(cutout_w, W - 2.0 * mt))
     cd = max(0.0, min(cutout_d, interior))
     if cw <= 0.0 or cd <= 0.0:
@@ -696,15 +698,17 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     cpm = shelf.add_part_modifier('CPM_CUTOUT', 'Cutout')
     cpm.mod.show_render = True
     # Cutout coords are in the part's Length/Width space (Length =
-    # dim_x - 2mt, Width = dim_y - mt + ext): centered over the hood
-    # interior, which starts ``ext`` up the extended board, then
-    # shifted forward by ``off``.
+    # dim_x - 2mt, Width = dim_y - mt + ext, origin at the board's front
+    # edge): centered over the full board when it extends under a mantle,
+    # over the hood-body interior (which starts ``ext`` up the board) when
+    # inset; then shifted forward by ``off``.
+    ctr = ext if ext > 0.0 else 2.0 * ext
     cpm.driver_input('X', '(dim_x - %f) * 0.5' % (2.0 * mt + cw), [dim_x])
     cpm.driver_input('End X', '(dim_x - %f) * 0.5' % (2.0 * mt - cw), [dim_x])
     cpm.driver_input('Y', '(dim_y - %f) * 0.5'
-                     % (mt + cd - 2.0 * ext + 2.0 * off), [dim_y])
+                     % (mt + cd - ctr + 2.0 * off), [dim_y])
     cpm.driver_input('End Y', '(dim_y - %f) * 0.5'
-                     % (mt - cd - 2.0 * ext + 2.0 * off), [dim_y])
+                     % (mt - cd - ctr + 2.0 * off), [dim_y])
     cpm.set_input('Route Depth', mt)
 
 
