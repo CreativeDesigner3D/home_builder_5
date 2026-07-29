@@ -177,6 +177,26 @@ class Closet_Starter_Props(PropertyGroup):
         ],
         default='SIZES')  # type: ignore
 
+    # Which Construction sections are open. Purely UI state - every
+    # section starts closed so the page opens as a short list of headers
+    # and only what is being worked on is unfolded.
+    show_toe_kick: BoolProperty(
+        name="Show Toe Kick", default=False)  # type: ignore
+    show_ends: BoolProperty(
+        name="Show Ends", default=False)  # type: ignore
+    show_top: BoolProperty(
+        name="Show Top", default=False)  # type: ignore
+    show_hang_rail: BoolProperty(
+        name="Show Hang Rail", default=False)  # type: ignore
+    show_applied_back: BoolProperty(
+        name="Show Applied Back", default=False)  # type: ignore
+    show_insets: BoolProperty(
+        name="Show Insets", default=False)  # type: ignore
+    show_panels: BoolProperty(
+        name="Show Panels", default=False)  # type: ignore
+    show_per_bay: BoolProperty(
+        name="Show Per Bay", default=False)  # type: ignore
+
     width: FloatProperty(
         name="Width", description="Starter width (X)",
         default=const.DEFAULT_WIDTH, unit='LENGTH', precision=4,

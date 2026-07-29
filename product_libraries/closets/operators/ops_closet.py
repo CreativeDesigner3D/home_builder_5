@@ -2740,24 +2740,65 @@ def _starter_bays(root):
                   key=lambda o: o.get('hb_bay_index', 0))
 
 
-def _numbered_bay_row(box, bays, prop_name, label, first_bay=0,
-                      last_bay=None):
-    """A labelled row of one checkbox per bay, numbered 1..n. Bays
-    outside first_bay..last_bay get a blank instead of a checkbox, which
-    is how an option that belongs to a junction rather than to a bay is
-    shown: a four bay run has three junctions, so it offers three
-    checkboxes under the bays that own them."""
-    box.label(text=label)
-    row = box.row(align=True)
+# How much of a per-bay row the option name takes, leaving the rest for
+# the checkboxes.
+_BAY_GRID_LABEL = 0.35
+
+
+def _bay_grid(box, bays, rows):
+    """The per-bay options as one grid: bay numbers across the top once,
+    then a single row per option with its checkboxes lining up under the
+    numbers.
+
+    Each entry in `rows` is (prop_name, label, first_bay, last_bay).
+    Bays outside first_bay..last_bay get a blank instead of a checkbox,
+    which is how an option that belongs to a junction rather than to a
+    bay is shown: a four bay run has three junctions, so it offers three
+    checkboxes under the bays that own them.
+
+    Every row is an even-column grid one column per bay, and each cell
+    centers what it holds, so a checkbox lands under the middle of its
+    bay number. Both halves matter: a plain row hands each cell only as
+    much width as its contents need, so a row that blanks a cell - the
+    junction options do - would space its checkboxes differently from
+    the row above it."""
+    col = box.column(align=True)
+
+    def _cells(parent):
+        return parent.grid_flow(row_major=True, columns=len(bays),
+                                even_columns=True, align=True)
+
+    header = col.split(factor=_BAY_GRID_LABEL)
+    header.label(text="")
+    numbers = _cells(header)
     for bay in bays:
-        bp = bay.hb_closet_bay
-        col = row.column(align=True)
-        col.label(text=str(bp.bay_index + 1))
-        if (bp.bay_index < first_bay
-                or (last_bay is not None and bp.bay_index > last_bay)):
-            col.label(text="", icon='BLANK1')
-        else:
-            col.prop(bp, prop_name, text="")
+        cell = numbers.row()
+        cell.alignment = 'CENTER'
+        cell.label(text=str(bay.hb_closet_bay.bay_index + 1))
+    for prop_name, label, first_bay, last_bay in rows:
+        split = col.split(factor=_BAY_GRID_LABEL)
+        split.label(text=label)
+        cells = _cells(split)
+        for bay in bays:
+            bp = bay.hb_closet_bay
+            cell = cells.row()
+            cell.alignment = 'CENTER'
+            if (bp.bay_index < first_bay
+                    or (last_bay is not None and bp.bay_index > last_bay)):
+                cell.label(text="")
+            else:
+                cell.prop(bp, prop_name, text="")
+
+
+def _section(layout, sp, toggle, label):
+    """A collapsible Construction section, folding the same way the face
+    frame library folds its option groups: click the header to open or
+    close it. Returns the box to fill, or None when it is closed."""
+    box = layout.box()
+    box.prop(sp, toggle, text=label,
+             icon='TRIA_DOWN' if getattr(sp, toggle) else 'TRIA_RIGHT',
+             emboss=False)
+    return box if getattr(sp, toggle) else None
 
 
 class hb_closets_OT_starter_prompts(bpy.types.Operator):
@@ -2832,94 +2873,101 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                            else 'TRIA_UP_BAR'))
 
     def _draw_construction(self, layout, root, sp, bays, cls, is_corner):
-        box = layout.box()
-        box.label(text="Toe Kick")
-        col = box.column(align=True)
-        col.prop(sp, 'toe_kick_height_preset')
-        if sp.toe_kick_height_preset == 'CUSTOM':
-            col.prop(sp, 'toe_kick_height')
-        col.prop(sp, 'toe_kick_setback')
+        box = _section(layout, sp, 'show_toe_kick', "Toe Kick")
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'toe_kick_height_preset')
+            if sp.toe_kick_height_preset == 'CUSTOM':
+                col.prop(sp, 'toe_kick_height')
+            col.prop(sp, 'toe_kick_setback')
 
         if not is_corner:
-            box = layout.box()
-            box.label(text="Ends")
-            row = box.row()
-            for side, cap in (('left', "Left"), ('right', "Right")):
-                col = row.column(align=True)
-                col.label(text=cap)
-                col.prop(sp, f'{side}_side_wall_filler', text="Wall Filler")
-                col.prop(sp, f'include_batten_{side}', text="Batten")
-                col.separator()
-                col.prop(sp, f'turn_off_{side}_panel', text="Turn Off Panel")
-                col.prop(sp, f'{side}_finished_end', text="Finished End")
-                col.prop(sp, f'drill_through_{side}', text="Drill Through")
-                col.separator()
-                col.prop(sp, f'bridge_{side}', text="Bridge")
-                sub = col.column(align=True)
-                sub.enabled = getattr(sp, f'bridge_{side}')
-                sub.prop(sp, f'bridge_{side}_width', text="Shelf Width")
-                sub.prop(sp, f'include_bottom_bridge_{side}',
-                         text="Bottom Bridge")
+            box = _section(layout, sp, 'show_ends', "Ends")
+            if box is not None:
+                row = box.row()
+                for side, cap in (('left', "Left"), ('right', "Right")):
+                    col = row.column(align=True)
+                    col.label(text=cap)
+                    col.prop(sp, f'{side}_side_wall_filler',
+                             text="Wall Filler")
+                    col.prop(sp, f'include_batten_{side}', text="Batten")
+                    col.separator()
+                    col.prop(sp, f'turn_off_{side}_panel',
+                             text="Turn Off Panel")
+                    col.prop(sp, f'{side}_finished_end', text="Finished End")
+                    col.prop(sp, f'drill_through_{side}',
+                             text="Drill Through")
+                    col.separator()
+                    col.prop(sp, f'bridge_{side}', text="Bridge")
+                    sub = col.column(align=True)
+                    sub.enabled = getattr(sp, f'bridge_{side}')
+                    sub.prop(sp, f'bridge_{side}_width', text="Shelf Width")
+                    sub.prop(sp, f'include_bottom_bridge_{side}',
+                             text="Bottom Bridge")
 
-            box = layout.box()
-            box.label(text="Top")
-            col = box.column(align=True)
-            col.prop(sp, 'add_top_accent_shelf')
-            sub = col.column(align=True)
-            sub.enabled = sp.add_top_accent_shelf
-            sub.prop(sp, 'top_accent_overhang')
+            box = _section(layout, sp, 'show_top', "Top")
+            if box is not None:
+                col = box.column(align=True)
+                col.prop(sp, 'add_top_accent_shelf')
+                sub = col.column(align=True)
+                sub.enabled = sp.add_top_accent_shelf
+                sub.prop(sp, 'top_accent_overhang')
 
             if getattr(cls, 'has_hang_rail', False):
-                box = layout.box()
-                box.label(text="Hang Rail")
-                col = box.column(align=True)
-                col.prop(sp, 'remove_hang_rail')
-                sub = col.column(align=True)
-                sub.enabled = not sp.remove_hang_rail
-                row = sub.row(align=True)
-                row.prop(sp, 'extend_hang_rail_left', text="Extend Left")
-                row.prop(sp, 'extend_hang_rail_right', text="Extend Right")
-                sub.prop(sp, 'use_one_hang_rail_height')
-                row = sub.row(align=True)
-                row.enabled = sp.use_one_hang_rail_height
-                row.prop(sp, 'hang_rail_height_location')
+                box = _section(layout, sp, 'show_hang_rail', "Hang Rail")
+                if box is not None:
+                    col = box.column(align=True)
+                    col.prop(sp, 'remove_hang_rail')
+                    sub = col.column(align=True)
+                    sub.enabled = not sp.remove_hang_rail
+                    row = sub.row(align=True)
+                    row.prop(sp, 'extend_hang_rail_left', text="Extend Left")
+                    row.prop(sp, 'extend_hang_rail_right',
+                             text="Extend Right")
+                    sub.prop(sp, 'use_one_hang_rail_height')
+                    row = sub.row(align=True)
+                    row.enabled = sp.use_one_hang_rail_height
+                    row.prop(sp, 'hang_rail_height_location')
 
         if getattr(cls, 'has_applied_back', False):
-            box = layout.box()
-            box.label(text="Applied Back")
-            col = box.column(align=True)
-            col.prop(sp, 'back_to_floor')
-            col.prop(sp, 'applied_back_overlay')
+            box = _section(layout, sp, 'show_applied_back', "Applied Back")
+            if box is not None:
+                col = box.column(align=True)
+                col.prop(sp, 'back_to_floor')
+                col.prop(sp, 'applied_back_overlay')
 
         # Both insets act on parts a floor bay has and a hanging bay does
         # not, so say so rather than letting them read as run-wide.
-        box = layout.box()
-        box.label(text="Insets")
-        col = box.column(align=True)
-        col.prop(sp, 'inset_bottom')
-        col.prop(sp, 'inset_cleat')
-        box.label(text="Floor bays only", icon='INFO')
+        box = _section(layout, sp, 'show_insets', "Insets")
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'inset_bottom')
+            col.prop(sp, 'inset_cleat')
+            box.label(text="Floor bays only", icon='INFO')
 
         # The extension drops hanging panels past the bottom of their
         # section so they finish alongside whatever sits below - every
         # panel, not just the ends. It only reaches hanging panels, which
         # is why it lives here rather than with the countertop.
-        box = layout.box()
-        box.label(text="Panels")
-        sub = box.column(align=True)
-        sub.prop(sp, 'extend_panels_to_countertop')
-        row = sub.row(align=True)
-        row.enabled = sp.extend_panels_to_countertop
-        row.prop(sp, 'extend_panel_amount')
+        box = _section(layout, sp, 'show_panels', "Panels")
+        if box is not None:
+            sub = box.column(align=True)
+            sub.prop(sp, 'extend_panels_to_countertop')
+            row = sub.row(align=True)
+            row.enabled = sp.extend_panels_to_countertop
+            row.prop(sp, 'extend_panel_amount')
 
         if bays:
-            box = layout.box()
-            box.label(text="Per Bay")
-            _numbered_bay_row(box, bays, 'remove_bottom', "Remove Bottom")
-            _numbered_bay_row(box, bays, 'remove_cleat', "Remove Cleat")
-            if len(bays) > 1:
-                _numbered_bay_row(box, bays, 'double_panel_right',
-                                  "Double Panel", last_bay=len(bays) - 2)
+            box = _section(layout, sp, 'show_per_bay', "Per Bay")
+            if box is not None:
+                rows = [('remove_bottom', "Remove Bottom", 0, None),
+                        ('remove_cleat', "Remove Cleat", 0, None)]
+                # A double panel stands at a junction between two bays,
+                # so the last bay has none to offer.
+                if len(bays) > 1:
+                    rows.append(('double_panel_right', "Double Panel",
+                                 0, len(bays) - 2))
+                _bay_grid(box, bays, rows)
 
     def _draw_countertop(self, layout, root, sp):
         layout.prop(sp, 'include_countertop')
