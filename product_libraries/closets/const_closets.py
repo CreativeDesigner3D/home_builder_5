@@ -171,7 +171,7 @@ DRAWER_BOX_DEPTH_DEDUCT = inch(0.5)
 DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
 # Double-sided island
 ISLAND_DOUBLE_DEPTH = inch(30.0)
-ISLAND_CTOP_OVERHANG = inch(1.5)    # legacy islands overhang all sides
+ISLAND_CTOP_OVERHANG = inch(1.5)    # island tops overhang all sides
 # L Shelves (inside-corner units)
 L_SHELF_SIZE = inch(24.0)           # corner footprint each way
 L_SHELF_QTY = 3                     # interior L shelves between top/bottom
@@ -181,6 +181,12 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # the partition by the router tool radius.
 L_WALL_OFFSET = inch(0.5)
 L_NOTCH_TOOL_RADIUS = inch(0.25)
+# The inside front corner of an L shelf is rounded by default
+# rather than cut square. Segments are how finely the arc is
+# drawn - fifteen reads smooth at shelf scale without loading
+# the viewport with geometry.
+L_CORNER_RADIUS = inch(6.0)
+L_CORNER_RADIUS_SEGMENTS = 15
 # Default distance from the opening TOP to a hang rod's center when the
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.5)

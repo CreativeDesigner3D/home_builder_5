@@ -2844,6 +2844,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(sp, 'l_back_width')
             col.prop(sp, 'l_flip_partition')
+            col = box.column(align=True)
+            col.prop(sp, 'l_use_radius')
+            sub = col.column(align=True)
+            sub.enabled = sp.l_use_radius
+            sub.prop(sp, 'l_corner_radius')
         if not bays:
             return
         box = layout.box()

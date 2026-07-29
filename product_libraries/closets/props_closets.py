@@ -543,6 +543,18 @@ class Closet_Starter_Props(PropertyGroup):
                     "side wall",
         default=False,
         update=_update_starter_prop)  # type: ignore
+    l_use_radius: BoolProperty(
+        name="Radius Front Corner",
+        description="Round the inside front corner of the L shelves "
+                    "instead of cutting it square",
+        default=True,
+        update=_update_starter_prop)  # type: ignore
+    l_corner_radius: FloatProperty(
+        name="Corner Radius",
+        description="Radius of the rounded inside front corner",
+        default=const.L_CORNER_RADIUS, min=0.0, unit='LENGTH',
+        precision=4,
+        update=_update_starter_prop)  # type: ignore
 
 
 # ---------------------------------------------------------------------------

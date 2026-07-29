@@ -2287,8 +2287,8 @@ class DoubleIslandClosetStarter(IslandClosetStarter):
 class LShelfClosetStarter(GeoNodeCage):
     """Inside-corner L-shelf unit: two wing panels against the walls,
     wall support strips at the corner, and a stack of L-shaped shelves
-    (a full-footprint cutpart with the inner corner notched out via
-    CPM_CORNERNOTCH). No bays/openings - its own recalculate() lays the
+    (a full-footprint cutpart with the inner corner cut away, square
+    or rounded). No bays/openings - its own recalculate() lays the
     whole unit out. Local space: corner at the origin, right wing runs
     +X along the back wall, left wing runs -Y along the side wall.
 
@@ -2423,14 +2423,22 @@ class LShelfClosetStarter(GeoNodeCage):
             shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             shelf.set_input('Mirror Y', True)
             shelf.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+            # The rounded front corner is a second cut on the same
+            # corner rather than a setting on the first - only one of
+            # the pair is ever shown.
+            shelf.add_part_modifier('CPM_RADIUSNOTCH', 'L Radius')
             shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
             shelves.append(shelf.obj)
-        # Older files: shelves created before the Back Partition landed
-        # have no Back Notch modifier - add it so they reconcile.
+        # Older files: shelves built before the Back Partition and the
+        # rounded corner landed are missing those cuts - add them so
+        # the shelves reconcile.
         for shelf in shelves:
             if shelf.modifiers.get('Back Notch') is None:
                 GeoNodeCutpart(shelf).add_part_modifier(
                     'CPM_CORNERNOTCH', 'Back Notch')
+            if shelf.modifiers.get('L Radius') is None:
+                GeoNodeCutpart(shelf).add_part_modifier(
+                    'CPM_RADIUSNOTCH', 'L Radius')
         return shelves
 
     def recalculate(self):
@@ -2456,6 +2464,8 @@ class LShelfClosetStarter(GeoNodeCage):
             RD = min(sp.l_right_depth, D - pt)
             bw = sp.l_back_width
             flip = sp.l_flip_partition
+            use_radius = bool(sp.l_use_radius)
+            rad = max(float(sp.l_corner_radius), 0.0)
             wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
             floor = self.floor_mounted
             kick = sp.toe_kick_height if floor else 0.0
@@ -2556,21 +2566,48 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Length', max(W - pt - wo, 0.001))
                 gp.set_input('Width', max(D - pt - wo, 0.001))
                 gp.set_input('Thickness', st)
+                # The front corner comes away either square or
+                # rounded. Both cuts are on the shelf and both take the
+                # same extents; only the chosen one is shown. Wing
+                # depths are measured from the walls, so the wall
+                # offset cancels out of those extents.
+                cut_x = max(W - pt - LD, 0.001)
+                cut_y = max(D - pt - RD, 0.001)
                 notch = shelf.modifiers.get('L Notch')
                 if notch is not None:
                     cpm = CabinetPartModifier(shelf)
                     cpm.mod = notch
-                    # Wing depths measured from the walls, so the wall
-                    # offset cancels out of the notch extents.
-                    cpm.set_input('X', max(W - pt - LD, 0.001))
-                    cpm.set_input('Y', max(D - pt - RD, 0.001))
+                    cpm.set_input('X', cut_x)
+                    cpm.set_input('Y', cut_y)
                     cpm.set_input('Route Depth', st + 0.001)
                     # Probed: True/True lands the cut on the front-
                     # inner corner, leaving the two wings.
                     cpm.set_input('Flip X', True)
                     cpm.set_input('Flip Y', True)
-                    notch.show_viewport = True
-                    notch.show_render = True
+                    notch.show_viewport = not use_radius
+                    notch.show_render = not use_radius
+                lrad = shelf.modifiers.get('L Radius')
+                if lrad is not None:
+                    cpm = CabinetPartModifier(shelf)
+                    cpm.mod = lrad
+                    cpm.set_input('X', cut_x)
+                    cpm.set_input('Y', cut_y)
+                    cpm.set_input('Route Depth', st + 0.001)
+                    # A radius wider than the cut itself would round
+                    # past the wings, so it is held inside them.
+                    cpm.set_input('Radius',
+                                  max(min(rad, cut_x - 0.001,
+                                          cut_y - 0.001), 0.0))
+                    cpm.set_input('Resolution',
+                                  const.L_CORNER_RADIUS_SEGMENTS)
+                    cpm.set_input('Turn On', True)
+                    # Same corner as the square cut. This one reads
+                    # Flip Y the other way round, so it takes False
+                    # where the square cut takes True (probed).
+                    cpm.set_input('Flip X', True)
+                    cpm.set_input('Flip Y', False)
+                    lrad.show_viewport = use_radius
+                    lrad.show_render = use_radius
                 # Back Notch: clears the Back Partition at the rear
                 # corner (the shelf's back-support notch: pt deep,
                 # back-width less the wall offset plus the router tool
