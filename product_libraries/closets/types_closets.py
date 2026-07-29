@@ -174,6 +174,22 @@ def _set_part_hidden(obj, hidden):
     obj.hide_render = hidden
 
 
+# Every surface and edge slot on a cutpart. A purchased metal rail is one
+# material all the way round, so it fills all six rather than taking a
+# separate banding.
+_CUTPART_MATERIAL_SOCKETS = ('Top Surface', 'Bottom Surface',
+                             'Edge W1', 'Edge W2', 'Edge L1', 'Edge L2')
+
+
+def _set_fence_finish(fpart, mat):
+    """Put one metal finish on every slot of a shoe fence."""
+    for socket in _CUTPART_MATERIAL_SOCKETS:
+        try:
+            fpart.set_input(socket, mat)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Drawer jewelry trays (a fitted, purchased drawer accessory). Two
 # families: fabric-lined trays in seven colors sized S/M/L/XL by the
@@ -190,9 +206,35 @@ JEWELRY_TRAY_COLOR_ITEMS = (
     + [(c, c, c) for c in (JEWELRY_TRAY_FABRIC + JEWELRY_TRAY_CONTOUR)])
 
 # Metal shoe-fence finishes (enum rows for the slanted-shelf dialog).
-SHOE_FENCE_COLORS = ('Black', 'Chrome', 'Slate Graphite', 'Matte Nickel',
-                     'Matte Aluminum', 'Matte Gold')
+# These are material names, matched exactly on append, so each one has to
+# read the way it is spelled in the accessory finishes blend - the
+# polished finish is the same 'Polished Chrome' the pulls and the hang
+# rods already use.
+SHOE_FENCE_COLORS = ('Black', 'Polished Chrome', 'Slate Graphite',
+                     'Matte Nickel', 'Matte Aluminum', 'Matte Gold')
 SHOE_FENCE_COLOR_ITEMS = [(c, c, c) for c in SHOE_FENCE_COLORS]
+# Colors saved under an earlier spelling, mapped onto the material that
+# carries that finish now, so a shelf stack built before the rename keeps
+# the finish it was given.
+SHOE_FENCE_COLOR_ALIASES = {'Chrome': 'Polished Chrome'}
+
+
+def shoe_fence_color(saved):
+    """A saved fence color resolved to a current enum row. Anything
+    unrecognized falls back to the first row rather than failing an enum
+    assignment."""
+    if not saved:
+        return SHOE_FENCE_COLORS[0]
+    saved = SHOE_FENCE_COLOR_ALIASES.get(saved, saved)
+    return saved if saved in SHOE_FENCE_COLORS else SHOE_FENCE_COLORS[0]
+
+
+def shoe_fence_material(saved):
+    """Metal finish material for a shoe fence. None when the finishes
+    blend has no such material - the fence then keeps the closet look
+    rather than losing its surfaces."""
+    from . import pulls_closets
+    return pulls_closets.load_finish_material(shoe_fence_color(saved))
 
 
 def drawer_inside_width(front_width, box_type):
@@ -1209,6 +1251,8 @@ class ClosetStarter(GeoNodeCage):
             # opening floor instead of hanging through it, which is
             # where the prior library's stack started.
             rise = shelf_depth * math.sin(angle)
+            fence_mat = shoe_fence_material(
+                opening.hb_closet_opening.slant_color)
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 child.location = (0.0, 0.0, z)
@@ -1229,6 +1273,8 @@ class ClosetStarter(GeoNodeCage):
                                     width - 2 * const.SHOE_FENCE_INSET)
                     fpart.set_input('Width', const.SHOE_FENCE_DEPTH)
                     fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
+                    if fence_mat is not None:
+                        _set_fence_finish(fpart, fence_mat)
 
         # ----- Doors (1 leaf, or 2 for DOUBLE swing) -----
         doors = groups.get(PART_ROLE_DOOR, [])

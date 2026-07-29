@@ -237,6 +237,20 @@ def _resolve_edge_base(prop_name, fallback):
     return load_material(selection) or fallback
 
 
+def _fence_finish(fence_obj, cache):
+    """Metal finish for one shoe fence, looked up through the opening
+    that owns its shelf stack and cached per opening."""
+    from . import types_closets
+    opening = types_closets.find_opening_cage(fence_obj)
+    if opening is None:
+        return None
+    key = opening.name
+    if key not in cache:
+        cache[key] = types_closets.shoe_fence_material(
+            opening.hb_closet_opening.slant_color)
+    return cache[key]
+
+
 def apply_to_starter(root, carcass_name=None, front_name=None):
     """Assign the selected materials to every cutpart under a starter:
     fronts (door/drawer/hamper) get the fronts material (Match Closet
@@ -276,6 +290,8 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     drawer_face = front if drawer_grain == 'HORIZONTAL' else front_v
     role_door = types_closets.PART_ROLE_DOOR
     role_drawer = types_closets.PART_ROLE_DRAWER_FRONT
+    role_fence = types_closets.PART_ROLE_SHOE_FENCE
+    fence_cache = {}
     for child in root.children_recursive:
         if child.type != 'MESH':
             continue
@@ -284,6 +300,16 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             mat, edge = door_face, front_edge
         elif role == role_drawer:
             mat, edge = drawer_face, front_edge
+        elif role == role_fence:
+            # A purchased metal rail. It takes the finish chosen for its
+            # shelf stack rather than the closet material, and it is one
+            # material all the way round, so the edge slots match the
+            # surfaces. An unresolvable finish leaves the part alone
+            # instead of painting it like a panel.
+            mat = _fence_finish(child, fence_cache)
+            if mat is None:
+                continue
+            edge = mat
         else:
             mat, edge = carcass, carcass_edge
         if mat is None:

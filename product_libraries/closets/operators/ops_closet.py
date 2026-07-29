@@ -2356,7 +2356,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
     color: bpy.props.EnumProperty(
         name="Fence Color",
         items=types_closets.SHOE_FENCE_COLOR_ITEMS,
-        default='Black')  # type: ignore
+        default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
 
     def invoke(self, context, event):
         from .. import const_closets as const
@@ -2366,7 +2366,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
             self.qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
             self.spacing = float(op.slant_spacing)
             self.angle = float(op.slant_angle)
-            self.color = op.slant_color or 'Black'
+            self.color = types_closets.shoe_fence_color(op.slant_color)
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def execute(self, context):
@@ -3280,7 +3280,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="Finish of the metal shoe fence across the front of "
                     "each shelf",
         items=types_closets.SHOE_FENCE_COLOR_ITEMS,
-        default='Black')  # type: ignore
+        default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
 
     door_swing: bpy.props.EnumProperty(
         name="Door",
@@ -3329,7 +3329,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.slant_qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
         self.slant_spacing = float(op.slant_spacing)
         self.slant_angle = float(op.slant_angle)
-        self.slant_color = op.slant_color or 'Black'
+        self.slant_color = types_closets.shoe_fence_color(
+            op.slant_color)
         self.door_swing = op.door_swing or 'NONE'
         self.is_hamper = bool(op.is_hamper)
         return context.window_manager.invoke_props_dialog(self, width=380)
