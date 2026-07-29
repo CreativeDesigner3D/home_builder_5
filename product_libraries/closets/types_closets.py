@@ -175,8 +175,8 @@ def _set_part_hidden(obj, hidden):
 # Drawer jewelry trays (a fitted, purchased drawer accessory). Two
 # families: fabric-lined trays in seven colors sized S/M/L/XL by the
 # drawer's inside width, and contour trays in three colors sized by
-# inside width and depth. The tray is not a machined part - the library
-# records the color and derives the size/name; downstream reads the name.
+# inside width and depth. The tray is bought as-is - the library records
+# the color and derives the size/name; downstream reads the name.
 # ---------------------------------------------------------------------------
 JEWELRY_TRAY_FABRIC = ('Brown', 'Black', 'Navy Blue', 'Pearl', 'Silver',
                        'Burgundy', 'Green')
@@ -800,7 +800,7 @@ class ClosetStarter(GeoNodeCage):
         an end panel, running that panel's full height. It covers the
         panel's 0.75 in edge and projects the remaining 0.375 in past the
         outside of the run, so it can be scribed to the wall. Cosmetic
-        part - no machining.
+        part.
 
         The strip lies in the face plane: Length runs up Z, Width runs
         across X (outward, away from the run) and Thickness stands proud
@@ -1024,8 +1024,8 @@ class ClosetStarter(GeoNodeCage):
 
             # Center back (double islands): st thick, spanning the
             # interior. Centered in depth unless the bay names a
-            # location. Horizontal grain for now; the machining layer
-            # decides grain later.
+            # location. Horizontal grain for now; grain direction is
+            # decided downstream.
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
                 cb_y = bp.center_back_location
@@ -1374,9 +1374,9 @@ class ClosetStarter(GeoNodeCage):
 
         # ----- Rollout trays -----
         # Each tray stands a fixed Rollout Height (default 4"), the trays
-        # spaced with equal gaps above, below, and between (legacy sizing:
-        # 4" tray, 0.327" side clearance for the slides, full opening
-        # depth). If the stack can't fit at the full height the trays
+        # spaced with equal gaps above, below, and between (sizing from
+        # the prior library: 4" tray, 0.327" side clearance for the
+        # slides, full opening depth). If the stack can't fit the trays
         # shrink to keep the minimum gap.
         rollouts = [c for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                     if c.get('hb_rollout')]
@@ -2609,7 +2609,7 @@ def find_bay_cage(obj):
 
 DOOR_OPEN_ANGLE = math.radians(110.0)
 # A tilt-out hamper front pivots at its bottom edge and tilts out this
-# far when fully open (legacy value).
+# far when fully open (angle from the prior library).
 HAMPER_TILT_ANGLE = math.radians(50.0)
 
 
