@@ -31,8 +31,8 @@ _DRAWER_BOX_OVERRIDE_ITEMS = [
     ('DEFAULT', "Use Default", "Use the project drawer box setting"),
 ] + list(drawer_boxes_closets.BOX_TYPES)
 
-_BAY_QTY_MIN = 1
-_BAY_QTY_MAX = 9
+_BAY_QTY_MIN = const.MIN_BAY_QTY
+_BAY_QTY_MAX = const.MAX_BAY_QTY
 # Cursor must cross the wall centerline by this much before the
 # placement side flips (mirrors face_frame's hysteresis).
 _FRONT_BACK_HYSTERESIS = 0.05
@@ -375,6 +375,16 @@ def _flip_swing_idprop(obj, key):
         obj[key] = 'LEFT'
 
 
+def _flip_opening_swing(opening):
+    """LEFT<->RIGHT flip of an opening's door swing; DOUBLE and no-door
+    openings pass through unchanged."""
+    op = opening.hb_closet_opening
+    if op.door_swing == 'LEFT':
+        op.door_swing = 'RIGHT'
+    elif op.door_swing == 'RIGHT':
+        op.door_swing = 'LEFT'
+
+
 def _mirror_starter_config(root):
     """Flip a duplicated starter's configuration left<->right: reverse
     the bay order (bay widths and contents travel with their bays) and
@@ -390,7 +400,7 @@ def _mirror_starter_config(root):
         _flip_swing_idprop(bay, types_closets.PROP_BAY_DOOR_SWING)
         for child in bay.children:
             if child.get(types_closets.TAG_OPENING_CAGE):
-                _flip_swing_idprop(child, types_closets.PROP_DOOR_SWING)
+                _flip_opening_swing(child)
     types_closets.recalculate_closet_starter(root)
 
 
@@ -1810,7 +1820,7 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         opening = types_closets.find_opening_cage(context.active_object)
         # Default to the computed count for this opening's height; keep
         # an existing user setting if the opening already has shelves.
-        existing = int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0))
+        existing = int(opening.hb_closet_opening.adj_shelf_qty)
         self.qty = existing or types_closets.default_adj_shelf_qty(opening)
         return context.window_manager.invoke_props_dialog(self, width=250)
 
@@ -1818,7 +1828,7 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         opening = types_closets.find_opening_cage(context.active_object)
         if opening is None:
             return {'CANCELLED'}
-        opening[types_closets.PROP_ADJ_SHELF_QTY] = self.qty
+        opening.hb_closet_opening.adj_shelf_qty = self.qty
         root = types_closets.find_starter_root(opening)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -1909,11 +1919,16 @@ class _ClosetInsertDialog:
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def _commit(self, context, values):
+        """Write a dialog's settings onto the active opening and redraw.
+
+        Keys are field names on the opening's settings group, so a
+        subclass names what it is setting rather than reaching for a
+        storage key."""
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
-        for key, value in values.items():
-            opening[key] = value
+        for name, value in values.items():
+            setattr(opening.hb_closet_opening, name, value)
         root = types_closets.find_starter_root(opening)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -1939,15 +1954,12 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         default='DEFAULT')  # type: ignore
 
     def invoke(self, context, event):
-        from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is not None:
-            self.qty = int(opening.get(types_closets.PROP_DRAWER_QTY, 3)) or 3
-            self.front_height = float(opening.get(
-                types_closets.PROP_DRAWER_FRONT_HEIGHT,
-                const.DRAWER_FRONT_HEIGHT))
-            self.drawer_box = (opening.get(
-                types_closets.PROP_DRAWER_BOX_OVERRIDE, '') or 'DEFAULT')
+            op = opening.hb_closet_opening
+            self.qty = int(op.drawer_qty) or 3
+            self.front_height = float(op.drawer_front_height)
+            self.drawer_box = op.drawer_box_override or 'DEFAULT'
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def execute(self, context):
@@ -1955,14 +1967,14 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
-        opening[types_closets.PROP_DRAWER_QTY] = self.qty
-        opening[types_closets.PROP_DRAWER_FRONT_HEIGHT] = self.front_height
+        opening.hb_closet_opening.drawer_qty = self.qty
+        opening.hb_closet_opening.drawer_front_height = self.front_height
         # 'Use Default' clears the per-opening override so the box system
         # follows the project setting again.
         if self.drawer_box and self.drawer_box != 'DEFAULT':
-            opening[types_closets.PROP_DRAWER_BOX_OVERRIDE] = self.drawer_box
-        elif types_closets.PROP_DRAWER_BOX_OVERRIDE in opening:
-            del opening[types_closets.PROP_DRAWER_BOX_OVERRIDE]
+            opening.hb_closet_opening.drawer_box_override = self.drawer_box
+        else:
+            opening.hb_closet_opening.property_unset('drawer_box_override')
         root = types_closets.find_starter_root(opening)
         bay = types_closets.find_bay_cage(opening)
 
@@ -2245,7 +2257,7 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
                 if (op.get(types_closets.TAG_OPENING_CAGE)
                         and op.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
                         == 'FRONT'):
-                    op[types_closets.PROP_DOOR_SWING] = ''
+                    op.hb_closet_opening.door_swing = ''
                     if swing and not self.is_hamper:
                         types_closets.seed_door_shelves(op)
             types_closets.recalculate_closet_starter(root)
@@ -2259,8 +2271,8 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             if opening is not None:
                 types_closets.seed_door_shelves(opening)
         return self._commit(context, {
-            types_closets.PROP_DOOR_SWING: swing,
-            types_closets.PROP_IS_HAMPER: 1 if self.is_hamper else 0,
+            'door_swing': swing,
+            'is_hamper': self.is_hamper,
         })
 
 
@@ -2276,14 +2288,21 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
     def invoke(self, context, event):
         opening = _active_opening_for_insert(context)
         if opening is not None:
-            self.cols = int(opening.get(types_closets.PROP_CUBBY_COLS, 3)) or 3
-            self.rows = int(opening.get(types_closets.PROP_CUBBY_ROWS, 3)) or 3
+            op = opening.hb_closet_opening
+            # One by one is no grid at all, so the dialog opens on the
+            # standard 3x3 rather than showing the empty state back.
+            if op.cubby_cols > 1 or op.cubby_rows > 1:
+                self.cols = int(op.cubby_cols)
+                self.rows = int(op.cubby_rows)
+            else:
+                self.cols = 3
+                self.rows = 3
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def execute(self, context):
         return self._commit(context, {
-            types_closets.PROP_CUBBY_COLS: self.cols,
-            types_closets.PROP_CUBBY_ROWS: self.rows,
+            'cubby_cols': self.cols,
+            'cubby_rows': self.rows,
         })
 
 
@@ -2305,17 +2324,15 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
         from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is not None:
-            self.qty = int(opening.get(
-                types_closets.PROP_ROLLOUT_QTY,
-                const.ROLLOUT_DEFAULT_QTY)) or const.ROLLOUT_DEFAULT_QTY
-            self.rollout_height = float(opening.get(
-                types_closets.PROP_ROLLOUT_HEIGHT, const.ROLLOUT_HEIGHT))
+            op = opening.hb_closet_opening
+            self.qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
+            self.rollout_height = float(op.rollout_height)
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def execute(self, context):
         return self._commit(context, {
-            types_closets.PROP_ROLLOUT_QTY: self.qty,
-            types_closets.PROP_ROLLOUT_HEIGHT: self.rollout_height,
+            'rollout_qty': self.qty,
+            'rollout_height': self.rollout_height,
         })
 
 
@@ -2345,24 +2362,19 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
         from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is not None:
-            self.qty = int(opening.get(
-                types_closets.PROP_SLANT_QTY,
-                const.SLANT_SHELF_DEFAULT_QTY)) or const.SLANT_SHELF_DEFAULT_QTY
-            self.spacing = float(opening.get(
-                types_closets.PROP_SLANT_SPACING, const.SLANT_SHELF_SPACING))
-            self.angle = float(opening.get(
-                types_closets.PROP_SLANT_ANGLE,
-                math.radians(const.SLANT_SHELF_ANGLE_DEG)))
-            self.color = (opening.get(types_closets.PROP_SLANT_COLOR, '')
-                          or 'Black')
+            op = opening.hb_closet_opening
+            self.qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+            self.spacing = float(op.slant_spacing)
+            self.angle = float(op.slant_angle)
+            self.color = op.slant_color or 'Black'
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def execute(self, context):
         return self._commit(context, {
-            types_closets.PROP_SLANT_QTY: self.qty,
-            types_closets.PROP_SLANT_SPACING: self.spacing,
-            types_closets.PROP_SLANT_ANGLE: self.angle,
-            types_closets.PROP_SLANT_COLOR: self.color,
+            'slant_qty': self.qty,
+            'slant_spacing': self.spacing,
+            'slant_angle': self.angle,
+            'slant_color': self.color,
         })
 
 
@@ -2616,8 +2628,8 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
         root = types_closets.find_starter_root(obj)
         if opening is None or root is None:
             return {'CANCELLED'}
-        qty = int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0))
-        opening[types_closets.PROP_ADJ_SHELF_QTY] = max(0, qty + self.delta)
+        qty = int(opening.hb_closet_opening.adj_shelf_qty)
+        opening.hb_closet_opening.adj_shelf_qty = max(0, qty + self.delta)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
         _apply_selection_shading(context, root)
@@ -2664,24 +2676,24 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         if opening is not None:
             tcm = types_closets
             if role == tcm.PART_ROLE_ADJ_SHELF:
-                qty = int(opening.get(tcm.PROP_ADJ_SHELF_QTY, 0))
-                opening[tcm.PROP_ADJ_SHELF_QTY] = max(0, qty - 1)
+                qty = int(opening.hb_closet_opening.adj_shelf_qty)
+                opening.hb_closet_opening.adj_shelf_qty = max(0, qty - 1)
             elif role == tcm.PART_ROLE_DRAWER_FRONT:
                 # The regenerator removes the highest-index front AND its
                 # box; let it own the removal.
-                qty = int(opening.get(tcm.PROP_DRAWER_QTY, 0))
-                opening[tcm.PROP_DRAWER_QTY] = max(0, qty - 1)
+                qty = int(opening.hb_closet_opening.drawer_qty)
+                opening.hb_closet_opening.drawer_qty = max(0, qty - 1)
                 remove_obj = False
             elif role == tcm.PART_ROLE_DOOR:
-                opening[tcm.PROP_DOOR_SWING] = ''
+                opening.hb_closet_opening.door_swing = ''
                 remove_obj = False
             elif role == tcm.PART_ROLE_CUBBY_DIVISION:
-                cols = int(opening.get(tcm.PROP_CUBBY_COLS, 1))
-                opening[tcm.PROP_CUBBY_COLS] = max(1, cols - 1)
+                cols = int(opening.hb_closet_opening.cubby_cols)
+                opening.hb_closet_opening.cubby_cols = max(1, cols - 1)
                 remove_obj = False
             elif role == tcm.PART_ROLE_CUBBY_SHELF:
-                rows = int(opening.get(tcm.PROP_CUBBY_ROWS, 1))
-                opening[tcm.PROP_CUBBY_ROWS] = max(1, rows - 1)
+                rows = int(opening.hb_closet_opening.cubby_rows)
+                opening.hb_closet_opening.cubby_rows = max(1, rows - 1)
                 remove_obj = False
 
         if remove_obj:
@@ -3166,16 +3178,16 @@ _OPENING_FILL_ITEMS = [
 
 def _opening_fill(opening):
     """Which of the standard fills currently occupies an opening."""
-    if int(opening.get(types_closets.PROP_DRAWER_QTY, 0)):
+    if int(opening.hb_closet_opening.drawer_qty):
         return 'DRAWERS'
-    if int(opening.get(types_closets.PROP_ROLLOUT_QTY, 0)):
+    if int(opening.hb_closet_opening.rollout_qty):
         return 'ROLLOUTS'
-    if int(opening.get(types_closets.PROP_SLANT_QTY, 0)):
+    if int(opening.hb_closet_opening.slant_qty):
         return 'SLANTED_SHELVES'
-    if (int(opening.get(types_closets.PROP_CUBBY_COLS, 1)) > 1
-            or int(opening.get(types_closets.PROP_CUBBY_ROWS, 1)) > 1):
+    if (int(opening.hb_closet_opening.cubby_cols) > 1
+            or int(opening.hb_closet_opening.cubby_rows) > 1):
         return 'CUBBIES'
-    if int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0)):
+    if int(opening.hb_closet_opening.adj_shelf_qty):
         return 'ADJ_SHELVES'
     return 'NONE'
 
@@ -3294,38 +3306,32 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
+        # An empty opening reads back as zero of everything. The dialog
+        # opens on the quantity a user would want if they picked that
+        # interior, so a zero falls back to the standard starting count;
+        # nothing is written until they accept.
+        op = opening.hb_closet_opening
         self.fill = _opening_fill(opening)
-        self.shelf_qty = (int(opening.get(types_closets.PROP_ADJ_SHELF_QTY, 0))
+        self.shelf_qty = (int(op.adj_shelf_qty)
                           or types_closets.default_adj_shelf_qty(opening))
-        self.drawer_qty = int(
-            opening.get(types_closets.PROP_DRAWER_QTY, 0)) or 3
-        self.drawer_front_height = float(opening.get(
-            types_closets.PROP_DRAWER_FRONT_HEIGHT,
-            const.DRAWER_FRONT_HEIGHT))
-        self.drawer_box = (opening.get(
-            types_closets.PROP_DRAWER_BOX_OVERRIDE, '') or 'DEFAULT')
-        self.cubby_cols = int(
-            opening.get(types_closets.PROP_CUBBY_COLS, 0)) or 3
-        self.cubby_rows = int(
-            opening.get(types_closets.PROP_CUBBY_ROWS, 0)) or 3
-        self.cubby_setback = float(opening.get(
-            types_closets.PROP_CUBBY_SETBACK, const.CUBBY_SETBACK))
-        self.rollout_qty = int(opening.get(
-            types_closets.PROP_ROLLOUT_QTY, 0)) or const.ROLLOUT_DEFAULT_QTY
-        self.rollout_height = float(opening.get(
-            types_closets.PROP_ROLLOUT_HEIGHT, const.ROLLOUT_HEIGHT))
-        self.slant_qty = int(opening.get(
-            types_closets.PROP_SLANT_QTY, 0)) or const.SLANT_SHELF_DEFAULT_QTY
-        self.slant_spacing = float(opening.get(
-            types_closets.PROP_SLANT_SPACING, const.SLANT_SHELF_SPACING))
-        self.slant_angle = float(opening.get(
-            types_closets.PROP_SLANT_ANGLE,
-            math.radians(const.SLANT_SHELF_ANGLE_DEG)))
-        self.slant_color = (opening.get(types_closets.PROP_SLANT_COLOR, '')
-                            or 'Black')
-        self.door_swing = (opening.get(types_closets.PROP_DOOR_SWING, '')
-                           or 'NONE')
-        self.is_hamper = bool(opening.get(types_closets.PROP_IS_HAMPER, 0))
+        self.drawer_qty = int(op.drawer_qty) or 3
+        self.drawer_front_height = float(op.drawer_front_height)
+        self.drawer_box = op.drawer_box_override or 'DEFAULT'
+        if op.cubby_cols > 1 or op.cubby_rows > 1:
+            self.cubby_cols = int(op.cubby_cols)
+            self.cubby_rows = int(op.cubby_rows)
+        else:
+            self.cubby_cols = 3
+            self.cubby_rows = 3
+        self.cubby_setback = float(op.cubby_setback)
+        self.rollout_qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
+        self.rollout_height = float(op.rollout_height)
+        self.slant_qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+        self.slant_spacing = float(op.slant_spacing)
+        self.slant_angle = float(op.slant_angle)
+        self.slant_color = op.slant_color or 'Black'
+        self.door_swing = op.door_swing or 'NONE'
+        self.is_hamper = bool(op.is_hamper)
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3391,40 +3397,40 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
 
         # One interior at a time: zero out the fills that were not
         # picked, then write the picked one's settings.
-        opening[types_closets.PROP_ADJ_SHELF_QTY] = (
+        opening.hb_closet_opening.adj_shelf_qty = (
             self.shelf_qty if self.fill == 'ADJ_SHELVES' else 0)
-        opening[types_closets.PROP_DRAWER_QTY] = (
+        opening.hb_closet_opening.drawer_qty = (
             self.drawer_qty if self.fill == 'DRAWERS' else 0)
-        opening[types_closets.PROP_ROLLOUT_QTY] = (
+        opening.hb_closet_opening.rollout_qty = (
             self.rollout_qty if self.fill == 'ROLLOUTS' else 0)
-        opening[types_closets.PROP_SLANT_QTY] = (
+        opening.hb_closet_opening.slant_qty = (
             self.slant_qty if self.fill == 'SLANTED_SHELVES' else 0)
-        opening[types_closets.PROP_CUBBY_COLS] = (
+        opening.hb_closet_opening.cubby_cols = (
             self.cubby_cols if self.fill == 'CUBBIES' else 1)
-        opening[types_closets.PROP_CUBBY_ROWS] = (
+        opening.hb_closet_opening.cubby_rows = (
             self.cubby_rows if self.fill == 'CUBBIES' else 1)
 
         if self.fill == 'CUBBIES':
-            opening[types_closets.PROP_CUBBY_SETBACK] = self.cubby_setback
+            opening.hb_closet_opening.cubby_setback = self.cubby_setback
         elif self.fill == 'DRAWERS':
-            opening[types_closets.PROP_DRAWER_FRONT_HEIGHT] = \
+            opening.hb_closet_opening.drawer_front_height = \
                 self.drawer_front_height
             if self.drawer_box and self.drawer_box != 'DEFAULT':
-                opening[types_closets.PROP_DRAWER_BOX_OVERRIDE] = \
+                opening.hb_closet_opening.drawer_box_override = \
                     self.drawer_box
-            elif types_closets.PROP_DRAWER_BOX_OVERRIDE in opening:
-                del opening[types_closets.PROP_DRAWER_BOX_OVERRIDE]
+            else:
+                opening.hb_closet_opening.property_unset(
+                    'drawer_box_override')
         elif self.fill == 'ROLLOUTS':
-            opening[types_closets.PROP_ROLLOUT_HEIGHT] = self.rollout_height
+            opening.hb_closet_opening.rollout_height = self.rollout_height
         elif self.fill == 'SLANTED_SHELVES':
-            opening[types_closets.PROP_SLANT_SPACING] = self.slant_spacing
-            opening[types_closets.PROP_SLANT_ANGLE] = self.slant_angle
-            opening[types_closets.PROP_SLANT_COLOR] = self.slant_color
+            opening.hb_closet_opening.slant_spacing = self.slant_spacing
+            opening.hb_closet_opening.slant_angle = self.slant_angle
+            opening.hb_closet_opening.slant_color = self.slant_color
 
         swing = '' if self.door_swing == 'NONE' else self.door_swing
-        opening[types_closets.PROP_DOOR_SWING] = swing
-        opening[types_closets.PROP_IS_HAMPER] = (
-            1 if (swing and self.is_hamper) else 0)
+        opening.hb_closet_opening.door_swing = swing
+        opening.hb_closet_opening.is_hamper = bool(swing and self.is_hamper)
 
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)

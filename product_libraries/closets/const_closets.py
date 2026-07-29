@@ -36,7 +36,15 @@ DEFAULT_WIDTH = inch(80.0)
 DEFAULT_BAY_QTY = 4
 DEFAULT_DEPTH = inch(14.0)
 
-# Panel heights by starter type. The mm values are legacy 32mm-system
+# Automatic bay count while a run is being dragged out. The run is split
+# into the fewest bays that keep every bay at or under the target width.
+# A starter carries at most MAX_BAY_QTY openings, so that is the hard
+# ceiling on the count however wide the run gets.
+BAY_WIDTH_TARGET = inch(30.0)
+MIN_BAY_QTY = 1
+MAX_BAY_QTY = 9
+
+# Panel heights by starter type. The mm values are the 32mm-system
 # heights: Base 819mm = 32.25", Tall 2131mm = 83.94", Hanging 1267mm = 49.88".
 BASE_PANEL_HEIGHT = millimeter(819)
 TALL_PANEL_HEIGHT = millimeter(2131)

@@ -1,17 +1,22 @@
 """Closet library properties.
 
-Three PropertyGroups:
+One typed group per level of the product tree, each attached to the cage
+object for that level, so every setting has one declared home, one
+declared default and one declared range:
 - Closets_Scene_Props (Scene.hb_closets): library defaults + library UI.
 - Closet_Starter_Props (Object.hb_closet_starter): live dimensions and
   starter-level options on each starter root cage.
 - Closet_Bay_Props (Object.hb_closet_bay): per-bay overrides on each bay
   cage (width/lock, height, depth, floor-mounted, remove flags).
+- Closet_Opening_Props (Object.hb_closet_opening): what fills each
+  opening (shelves, drawers, cubbies, trays, shoe shelves, front).
 
 No drivers: every update callback routes through
 types_closets.recalculate_closet_starter, which is guarded against
 reentry (system writes during a recalc don't loop back here).
 """
 import bpy
+import math
 from bpy.types import PropertyGroup
 from bpy.props import (
         BoolProperty,
@@ -631,6 +636,142 @@ class Closet_Bay_Props(PropertyGroup):
 
 
 # ---------------------------------------------------------------------------
+# Object-level: opening
+# ---------------------------------------------------------------------------
+class Closet_Opening_Props(PropertyGroup):
+    """What fills one opening, on that opening's cage object.
+
+    Every default here is the EMPTY state, not the state the Change
+    Opening dialog offers when you pick an interior. An untouched opening
+    reads zero shelves, zero drawers, one cubby column, no front - which
+    is what an untouched opening is. The dialog carries its own starting
+    numbers (three shelves, three drawers, and so on) and only writes them
+    here once the user accepts them.
+
+    Deliberately no update callbacks. An opening is edited through the
+    Change Opening dialog, which writes the whole set at once and then
+    recalculates the run a single time. Callbacks here would fire a full
+    recalculation per field written.
+    """
+
+    # Note on what is NOT here: which face of a double-sided island an
+    # opening serves stays a plain idprop (hb_opening_side). It is stamped
+    # on splitting shelves as well as on openings, so it is a tag the
+    # whole tree is sorted by rather than a setting one opening owns.
+
+    # ----- Adjustable shelves -----
+    adj_shelf_qty: IntProperty(
+        name="Shelf Quantity",
+        description="How many adjustable shelves to space through the "
+                    "opening",
+        default=0, min=0, max=20)  # type: ignore
+
+    # ----- Drawers -----
+    drawer_qty: IntProperty(
+        name="Drawer Quantity",
+        description="How many drawers to stack in the opening",
+        default=0, min=0, max=10)  # type: ignore
+    drawer_front_height: FloatProperty(
+        name="Front Height",
+        description="Height of each drawer front. The top drawer takes up "
+                    "whatever height is left over",
+        default=const.DRAWER_FRONT_HEIGHT,
+        unit='LENGTH', precision=4)  # type: ignore
+    # Held as a plain string rather than an enum so an opening keeps a box
+    # system that is not in the current list, and so an empty value can
+    # mean "no override" alongside the explicit 'DEFAULT'.
+    drawer_box_override: bpy.props.StringProperty(
+        name="Drawer Box",
+        description="Which drawer box to build instead of the one the "
+                    "opening size would pick on its own. Empty or DEFAULT "
+                    "defers to the scene setting",
+        default='')  # type: ignore
+
+    # ----- Pull-out trays -----
+    rollout_qty: IntProperty(
+        name="Rollout Quantity",
+        description="How many pull-out trays to space through the opening",
+        default=0, min=0, max=12)  # type: ignore
+    rollout_height: FloatProperty(
+        name="Rollout Height", description="Height of each tray",
+        default=const.ROLLOUT_HEIGHT,
+        unit='LENGTH', precision=4)  # type: ignore
+
+    # ----- Slanted shoe shelves -----
+    slant_qty: IntProperty(
+        name="Shoe Shelf Quantity",
+        description="How many slanted shoe shelves to stack from the "
+                    "bottom of the opening up",
+        default=0, min=0, max=10)  # type: ignore
+    slant_spacing: FloatProperty(
+        name="Distance Between Shelves",
+        description="Vertical spacing from one shoe shelf to the next",
+        default=const.SLANT_SHELF_SPACING,
+        unit='LENGTH', precision=4)  # type: ignore
+    slant_angle: FloatProperty(
+        name="Shelf Angle",
+        description="How far the shoe shelves tilt up toward the front",
+        # A shoe shelf that is not tilted is just a shelf, so the standard
+        # tilt is the default rather than zero. An opening with no shoe
+        # shelves in it still reports this angle; nothing reads it until
+        # the shelf quantity goes above zero.
+        default=math.radians(const.SLANT_SHELF_ANGLE_DEG),
+        subtype='ANGLE', unit='ROTATION')  # type: ignore
+    slant_color: bpy.props.StringProperty(
+        name="Fence Color",
+        description="Finish of the metal shoe fence across the front of "
+                    "each shelf",
+        default='')  # type: ignore
+
+    # ----- Cubbies -----
+    # One column by one row is "no cubbies"; the regenerator only builds
+    # divisions once either count goes above one.
+    cubby_cols: IntProperty(
+        name="Columns", description="How many cubbies across the opening",
+        default=1, min=1, max=12)  # type: ignore
+    cubby_rows: IntProperty(
+        name="Rows", description="How many cubbies up the opening",
+        default=1, min=1, max=12)  # type: ignore
+    cubby_setback: FloatProperty(
+        name="Setback",
+        description="How far the cubby divisions and shelves sit back "
+                    "from the front edge of the opening",
+        default=const.CUBBY_SETBACK,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
+    # ----- Front -----
+    # Empty means no front. Held as a string for the same reason as the
+    # box override: an empty value has to be distinguishable from a choice.
+    door_swing: bpy.props.StringProperty(
+        name="Door",
+        description="Front on this opening: LEFT, RIGHT, DOUBLE or "
+                    "LIFT_UP. Empty leaves the opening open",
+        default='')  # type: ignore
+    is_hamper: BoolProperty(
+        name="Tilt Out Hamper",
+        description="Hang the front on a tilt-out hamper with a wire "
+                    "basket behind it instead of a plain door",
+        default=False)  # type: ignore
+
+    # Every field on this group is contents, so stripping an opening
+    # clears the lot. Kept as an explicit list so a field added later has
+    # to be considered rather than silently surviving a clear.
+    CONTENTS_FIELDS = (
+        'adj_shelf_qty',
+        'drawer_qty', 'drawer_front_height', 'drawer_box_override',
+        'rollout_qty', 'rollout_height',
+        'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
+        'cubby_cols', 'cubby_rows', 'cubby_setback',
+        'door_swing', 'is_hamper',
+    )
+
+    def clear_contents(self):
+        """Put every field back to its empty default."""
+        for name in self.CONTENTS_FIELDS:
+            self.property_unset(name)
+
+
+# ---------------------------------------------------------------------------
 # Scene-level: defaults + library UI
 # ---------------------------------------------------------------------------
 class Closets_Scene_Props(PropertyGroup):
@@ -986,6 +1127,7 @@ class Closets_Scene_Props(PropertyGroup):
 classes = (
     Closet_Starter_Props,
     Closet_Bay_Props,
+    Closet_Opening_Props,
     Closets_Scene_Props,
 )
 
@@ -999,6 +1141,8 @@ def register():
         name="Closet Starter Props", type=Closet_Starter_Props)
     bpy.types.Object.hb_closet_bay = PointerProperty(
         name="Closet Bay Props", type=Closet_Bay_Props)
+    bpy.types.Object.hb_closet_opening = PointerProperty(
+        name="Closet Opening Props", type=Closet_Opening_Props)
 
 
 def unregister():
@@ -1014,5 +1158,7 @@ def unregister():
         del bpy.types.Object.hb_closet_starter
     if hasattr(bpy.types.Object, 'hb_closet_bay'):
         del bpy.types.Object.hb_closet_bay
+    if hasattr(bpy.types.Object, 'hb_closet_opening'):
+        del bpy.types.Object.hb_closet_opening
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

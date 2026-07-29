@@ -82,8 +82,11 @@ PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
 #   hb_bridge_w_left / hb_bridge_w_right   span (m) past the end panel
 #   hb_bridge_bot_left / hb_bridge_bot_right  1 = bottom shelf (+ kick)
 PART_ROLE_BRIDGE_SHELF = 'CLOSET_BRIDGE_SHELF'
-# Opening idprops: insert configuration, reconciled by regenerators on
-# every recalc (create/remove children to match, then lay out).
+# Opening insert configuration - what fills one opening. These live on
+# the opening's typed settings group now (hb_closet_opening); the keys
+# below are the storage the group replaced, kept so a file saved before
+# the change can be carried over on open. See
+# carry_over_opening_settings(). Nothing else should read or write them.
 PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
@@ -1194,11 +1197,8 @@ class ClosetStarter(GeoNodeCage):
         slants = groups.get(PART_ROLE_SLANTED_SHELF, [])
         if slants:
             slants.sort(key=lambda o: o.get('hb_slant_index', 0))
-            spacing = float(opening.get(PROP_SLANT_SPACING,
-                                        const.SLANT_SHELF_SPACING))
-            angle = float(opening.get(
-                PROP_SLANT_ANGLE,
-                math.radians(const.SLANT_SHELF_ANGLE_DEG)))
+            spacing = float(opening.hb_closet_opening.slant_spacing)
+            angle = float(opening.hb_closet_opening.slant_angle)
             setback = const.SLANT_SHELF_SETBACK
             shelf_depth = max(depth - setback, inch(1.0))
             y_front = -shelf_depth  # front edge in opening-local Y
@@ -1276,7 +1276,7 @@ class ClosetStarter(GeoNodeCage):
                   bool(f.get(PROP_FRONT_LOCKED, 0))) for f in fronts])
             from . import drawer_boxes_closets as dbx
             # Opening-level default: opening override wins, else scene.
-            _ovr = opening.get(PROP_DRAWER_BOX_OVERRIDE, '')
+            _ovr = opening.hb_closet_opening.drawer_box_override
             default_box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
                                 else dbx.current_type())
             box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
@@ -1388,8 +1388,7 @@ class ClosetStarter(GeoNodeCage):
             box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
             box_d = max(depth, inch(2.0))
             n = len(rollouts)
-            tray_h = float(opening.get(PROP_ROLLOUT_HEIGHT,
-                                       const.ROLLOUT_HEIGHT))
+            tray_h = float(opening.hb_closet_opening.rollout_height)
             gap = (interior_h - n * tray_h) / (n + 1)
             if gap < const.ROLLOUT_MIN_GAP:
                 # Won't fit at the full height: hold the minimum gap and
@@ -1416,8 +1415,7 @@ class ClosetStarter(GeoNodeCage):
         # Both are held back from the front edge by the setback, so the
         # grid reads as recessed instead of finishing flush with the
         # panels.
-        cub_setback = float(opening.get(PROP_CUBBY_SETBACK,
-                                        const.CUBBY_SETBACK))
+        cub_setback = float(opening.hb_closet_opening.cubby_setback)
         cub_depth = max(depth - cub_setback, inch(1.0))
         divs = groups.get(PART_ROLE_CUBBY_DIVISION, [])
         if divs:
@@ -1556,7 +1554,7 @@ class ClosetStarter(GeoNodeCage):
         inst.rotation_euler = rot
 
     def _reconcile_adj_shelves(self, opening):
-        qty = max(0, int(opening.get(PROP_ADJ_SHELF_QTY, 0)))
+        qty = max(0, int(opening.hb_closet_opening.adj_shelf_qty))
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF]
         existing.sort(key=lambda o: o.get('hb_adj_index', 0))
@@ -1571,7 +1569,7 @@ class ClosetStarter(GeoNodeCage):
         """Slanted shoe shelves: create/remove tilted shelves to match the
         quantity, each carrying a metal shoe fence child (removed with it).
         Positions and angle come from the layout pass."""
-        qty = max(0, int(opening.get(PROP_SLANT_QTY, 0)))
+        qty = max(0, int(opening.hb_closet_opening.slant_qty))
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_SLANTED_SHELF]
         existing.sort(key=lambda o: o.get('hb_slant_index', 0))
@@ -1681,7 +1679,7 @@ class ClosetStarter(GeoNodeCage):
                 and bay.get(PROP_BAY_DOOR_SWING)):
             swing = ''
         else:
-            swing = opening.get(PROP_DOOR_SWING, '')
+            swing = opening.hb_closet_opening.door_swing
         qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR]
@@ -1689,10 +1687,12 @@ class ClosetStarter(GeoNodeCage):
         while len(existing) > qty:
             _remove_part_tree(existing.pop())  # front + its pull
         while len(existing) < qty:
-            name = 'Hamper Front' if opening.get(PROP_IS_HAMPER) else 'Door'
+            name = ('Hamper Front'
+                    if opening.hb_closet_opening.is_hamper else 'Door')
             obj = self._make_front(opening, name, PART_ROLE_DOOR, side)
             obj['hb_door_index'] = len(existing)
-            obj['hb_is_hamper'] = 1 if opening.get(PROP_IS_HAMPER) else 0
+            obj['hb_is_hamper'] = (
+                1 if opening.hb_closet_opening.is_hamper else 0)
             existing.append(obj)
         # Hinge side per leaf (drives pull placement + open swing): a
         # tilt-out hamper hinges at the BOTTOM; a DOUBLE pair hinges
@@ -1709,7 +1709,7 @@ class ClosetStarter(GeoNodeCage):
                 obj['hb_hinge'] = swing or 'LEFT'
 
     def _reconcile_drawers(self, opening, side):
-        qty = max(0, int(opening.get(PROP_DRAWER_QTY, 0)))
+        qty = max(0, int(opening.hb_closet_opening.drawer_qty))
         fronts = [c for c in opening.children
                   if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
         boxes = [c for c in opening.children
@@ -1738,7 +1738,7 @@ class ClosetStarter(GeoNodeCage):
         """Pullout trays: drawer boxes with no fronts. Same box part and
         role as a drawer box (tagged hb_rollout so the drawer reconciler
         leaves them alone); laid out evenly by the opening layout."""
-        qty = max(0, int(opening.get(PROP_ROLLOUT_QTY, 0)))
+        qty = max(0, int(opening.hb_closet_opening.rollout_qty))
         boxes = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
                  and c.get('hb_rollout')]
@@ -1755,8 +1755,8 @@ class ClosetStarter(GeoNodeCage):
             boxes.append(box.obj)
 
     def _reconcile_cubbies(self, opening):
-        cols = max(1, int(opening.get(PROP_CUBBY_COLS, 1)))
-        rows = max(1, int(opening.get(PROP_CUBBY_ROWS, 1)))
+        cols = max(1, int(opening.hb_closet_opening.cubby_cols))
+        rows = max(1, int(opening.hb_closet_opening.cubby_rows))
         want_divs = cols - 1
         want_shelves = rows - 1
         divs = [c for c in opening.children
@@ -2590,11 +2590,22 @@ def get_starter_class(starter_name):
 
 
 def auto_bay_qty(width):
-    """Bay count for a given total width. Targets a 42" bay and never
-    lets a bay exceed 42" (round up), so a run splits into the fewest
-    bays that keep each opening <= 42". Used by the placement modal."""
-    target = inch(42.0)
-    return max(1, min(9, int(math.ceil(width / target))))
+    """Bay count for a given total width. Targets a 30" bay and never lets
+    a bay exceed 30" (round up), so a run splits into the fewest bays that
+    keep each opening <= 30".
+
+    The quotient is rounded to four decimals before the ceiling so that an
+    exact multiple of the target - 60" giving 2.0000000001 in floating
+    point - cannot tip over into an extra bay.
+
+    Nine is the hard ceiling: a starter carries at most nine openings.
+
+    This is advisory only. It seeds the count while a run is being dragged
+    out; once the run is placed the count is the user's and is never
+    recomputed from the width again."""
+    quotient = round(width / const.BAY_WIDTH_TARGET, 4)
+    return max(const.MIN_BAY_QTY,
+               min(const.MAX_BAY_QTY, int(math.ceil(quotient))))
 
 
 def find_bay_cage(obj):
@@ -2783,6 +2794,51 @@ def _wrap_starter(obj):
     return instance
 
 
+# Opening settings used to live as loose custom properties on the
+# opening cage, one key per setting. They live on a typed settings group
+# now. A file saved before that change still carries the loose keys, so
+# the first recalc after it opens moves them across and drops them. The
+# move is one-way and self-clearing: once an opening has been carried
+# over, the check below costs a handful of dictionary lookups and does
+# nothing.
+_OPENING_CARRIED_KEYS = (
+    (PROP_ADJ_SHELF_QTY, 'adj_shelf_qty', int),
+    (PROP_DRAWER_QTY, 'drawer_qty', int),
+    (PROP_DRAWER_FRONT_HEIGHT, 'drawer_front_height', float),
+    (PROP_DRAWER_BOX_OVERRIDE, 'drawer_box_override', str),
+    (PROP_ROLLOUT_QTY, 'rollout_qty', int),
+    (PROP_ROLLOUT_HEIGHT, 'rollout_height', float),
+    (PROP_SLANT_QTY, 'slant_qty', int),
+    (PROP_SLANT_SPACING, 'slant_spacing', float),
+    (PROP_SLANT_ANGLE, 'slant_angle', float),
+    (PROP_SLANT_COLOR, 'slant_color', str),
+    (PROP_CUBBY_COLS, 'cubby_cols', int),
+    (PROP_CUBBY_ROWS, 'cubby_rows', int),
+    (PROP_CUBBY_SETBACK, 'cubby_setback', float),
+    (PROP_DOOR_SWING, 'door_swing', str),
+    (PROP_IS_HAMPER, 'is_hamper', bool),
+)
+
+
+def carry_over_opening_settings(root):
+    """Move any pre-typed-group opening settings onto the settings group.
+
+    Values that fall outside a property's range are clamped by Blender on
+    assignment rather than rejected, so a stale file cannot stop a
+    starter from drawing."""
+    openings = [o for bay in root.children if bay.get(TAG_BAY_CAGE)
+                for o in bay.children if o.get(TAG_OPENING_CAGE)]
+    for opening in openings:
+        for key, name, cast in _OPENING_CARRIED_KEYS:
+            if key not in opening:
+                continue
+            try:
+                setattr(opening.hb_closet_opening, name, cast(opening[key]))
+            except (TypeError, ValueError):
+                pass  # unreadable leftover: the default stands
+            del opening[key]
+
+
 def recalculate_closet_starter(obj):
     """Public recalc entry point for prop update callbacks and operators.
     Accepts the root or any descendant; no-ops while that starter is
@@ -2790,23 +2846,16 @@ def recalculate_closet_starter(obj):
     root = find_starter_root(obj)
     if root is None or id(root) in _RECALCULATING:
         return
+    carry_over_opening_settings(root)
     _wrap_starter(root).recalculate()
 
 
 def clear_opening_contents(opening):
-    """Strip one opening back to empty: clear every insert config idprop
-    (the regenerators remove their parts on the next recalc) and delete
-    loose parts (rods). Splitting shelves are bay structure, not
-    contents - clear_bay_contents handles those."""
-    for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY, PROP_ROLLOUT_QTY,
-                PROP_ROLLOUT_HEIGHT,
-                PROP_SLANT_QTY, PROP_SLANT_SPACING, PROP_SLANT_ANGLE,
-                PROP_SLANT_COLOR,
-                PROP_DRAWER_FRONT_HEIGHT, PROP_DRAWER_BOX_OVERRIDE,
-                PROP_DOOR_SWING, PROP_IS_HAMPER,
-                PROP_CUBBY_COLS, PROP_CUBBY_ROWS, PROP_CUBBY_SETBACK):
-        if key in opening:
-            del opening[key]
+    """Strip one opening back to empty: put every insert setting back to
+    its default (the regenerators remove their parts on the next recalc)
+    and delete loose parts (rods). Splitting shelves are bay structure,
+    not contents - clear_bay_contents handles those."""
+    opening.hb_closet_opening.clear_contents()
     for child in list(opening.children):
         if child.get('hb_part_role') in (PART_ROLE_ROD,
                                          PART_ROLE_FIXED_SHELF):
@@ -2832,28 +2881,24 @@ def clear_bay_contents(bay_obj):
 # survives object deletion and pastes onto any target).
 # ---------------------------------------------------------------------------
 def serialize_opening(opening):
-    """Contents of one opening: its insert config idprops + loose rods
-    (with their opening-local offsets)."""
+    """Contents of one opening: its insert settings + loose rods (with
+    their opening-local offsets)."""
     return {
-        'adj': int(opening.get(PROP_ADJ_SHELF_QTY, 0)),
-        'drawer_qty': int(opening.get(PROP_DRAWER_QTY, 0)),
-        'rollout_qty': int(opening.get(PROP_ROLLOUT_QTY, 0)),
-        'rollout_h': float(opening.get(PROP_ROLLOUT_HEIGHT,
-                                       const.ROLLOUT_HEIGHT)),
-        'slant_qty': int(opening.get(PROP_SLANT_QTY, 0)),
-        'slant_spacing': float(opening.get(PROP_SLANT_SPACING,
-                                           const.SLANT_SHELF_SPACING)),
-        'slant_angle': float(opening.get(PROP_SLANT_ANGLE, 0.0)),
-        'slant_color': opening.get(PROP_SLANT_COLOR, ''),
-        'drawer_fh': float(opening.get(PROP_DRAWER_FRONT_HEIGHT,
-                                       const.DRAWER_FRONT_HEIGHT)),
-        'drawer_box': opening.get(PROP_DRAWER_BOX_OVERRIDE, ''),
-        'door_swing': opening.get(PROP_DOOR_SWING, ''),
-        'is_hamper': int(opening.get(PROP_IS_HAMPER, 0)),
-        'cubby_cols': int(opening.get(PROP_CUBBY_COLS, 1)),
-        'cubby_rows': int(opening.get(PROP_CUBBY_ROWS, 1)),
-        'cubby_setback': float(opening.get(PROP_CUBBY_SETBACK,
-                                           const.CUBBY_SETBACK)),
+        'adj': int(opening.hb_closet_opening.adj_shelf_qty),
+        'drawer_qty': int(opening.hb_closet_opening.drawer_qty),
+        'rollout_qty': int(opening.hb_closet_opening.rollout_qty),
+        'rollout_h': float(opening.hb_closet_opening.rollout_height),
+        'slant_qty': int(opening.hb_closet_opening.slant_qty),
+        'slant_spacing': float(opening.hb_closet_opening.slant_spacing),
+        'slant_angle': float(opening.hb_closet_opening.slant_angle),
+        'slant_color': opening.hb_closet_opening.slant_color,
+        'drawer_fh': float(opening.hb_closet_opening.drawer_front_height),
+        'drawer_box': opening.hb_closet_opening.drawer_box_override,
+        'door_swing': opening.hb_closet_opening.door_swing,
+        'is_hamper': int(opening.hb_closet_opening.is_hamper),
+        'cubby_cols': int(opening.hb_closet_opening.cubby_cols),
+        'cubby_rows': int(opening.hb_closet_opening.cubby_rows),
+        'cubby_setback': float(opening.hb_closet_opening.cubby_setback),
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -2865,31 +2910,32 @@ def apply_opening_data(opening, data, recalc=True):
     root = find_starter_root(opening)
     clear_opening_contents(opening)
     if data.get('adj'):
-        opening[PROP_ADJ_SHELF_QTY] = data['adj']
+        opening.hb_closet_opening.adj_shelf_qty = data['adj']
     if data.get('drawer_qty'):
-        opening[PROP_DRAWER_QTY] = data['drawer_qty']
-        opening[PROP_DRAWER_FRONT_HEIGHT] = data['drawer_fh']
+        opening.hb_closet_opening.drawer_qty = data['drawer_qty']
+        opening.hb_closet_opening.drawer_front_height = data['drawer_fh']
         if data.get('drawer_box'):
-            opening[PROP_DRAWER_BOX_OVERRIDE] = data['drawer_box']
+            opening.hb_closet_opening.drawer_box_override = \
+                data['drawer_box']
     if data.get('rollout_qty'):
-        opening[PROP_ROLLOUT_QTY] = data['rollout_qty']
-        opening[PROP_ROLLOUT_HEIGHT] = data.get('rollout_h',
+        opening.hb_closet_opening.rollout_qty = data['rollout_qty']
+        opening.hb_closet_opening.rollout_height = data.get('rollout_h',
                                                 const.ROLLOUT_HEIGHT)
     if data.get('slant_qty'):
-        opening[PROP_SLANT_QTY] = data['slant_qty']
-        opening[PROP_SLANT_SPACING] = data.get('slant_spacing',
+        opening.hb_closet_opening.slant_qty = data['slant_qty']
+        opening.hb_closet_opening.slant_spacing = data.get('slant_spacing',
                                                const.SLANT_SHELF_SPACING)
-        opening[PROP_SLANT_ANGLE] = data.get(
+        opening.hb_closet_opening.slant_angle = data.get(
             'slant_angle', math.radians(const.SLANT_SHELF_ANGLE_DEG))
         if data.get('slant_color'):
-            opening[PROP_SLANT_COLOR] = data['slant_color']
+            opening.hb_closet_opening.slant_color = data['slant_color']
     if data.get('door_swing'):
-        opening[PROP_DOOR_SWING] = data['door_swing']
-        opening[PROP_IS_HAMPER] = data.get('is_hamper', 0)
+        opening.hb_closet_opening.door_swing = data['door_swing']
+        opening.hb_closet_opening.is_hamper = data.get('is_hamper', 0)
     if data.get('cubby_cols', 1) > 1 or data.get('cubby_rows', 1) > 1:
-        opening[PROP_CUBBY_COLS] = data.get('cubby_cols', 1)
-        opening[PROP_CUBBY_ROWS] = data.get('cubby_rows', 1)
-        opening[PROP_CUBBY_SETBACK] = data.get('cubby_setback',
+        opening.hb_closet_opening.cubby_cols = data.get('cubby_cols', 1)
+        opening.hb_closet_opening.cubby_rows = data.get('cubby_rows', 1)
+        opening.hb_closet_opening.cubby_setback = data.get('cubby_setback',
                                                const.CUBBY_SETBACK)
     for z in data.get('rods', ()):
         add_rod(opening, z)
@@ -2992,14 +3038,16 @@ def seed_door_shelves(opening):
     a rod) - adding doors over an existing interior never overwrites
     it. Hampers are the callers' business (a tilt-out basket leaves no
     room for shelves)."""
-    if (opening.get(PROP_ADJ_SHELF_QTY)
-            or opening.get(PROP_DRAWER_QTY)
-            or opening.get(PROP_CUBBY_COLS)):
+    op = opening.hb_closet_opening
+    # One column by one row is the empty state, not a cubby grid, so it
+    # does not count as an interior.
+    if (op.adj_shelf_qty or op.drawer_qty
+            or op.cubby_cols > 1 or op.cubby_rows > 1):
         return
     for c in opening.children:
         if c.get('hb_part_role') == PART_ROLE_ROD:
             return
-    opening[PROP_ADJ_SHELF_QTY] = default_adj_shelf_qty(opening)
+    opening.hb_closet_opening.adj_shelf_qty = default_adj_shelf_qty(opening)
 
 
 def _cfg_rod(opening):
@@ -3007,14 +3055,14 @@ def _cfg_rod(opening):
 
 
 def _cfg_doors(opening):
-    opening[PROP_DOOR_SWING] = 'DOUBLE'
-    opening[PROP_IS_HAMPER] = 0
+    opening.hb_closet_opening.door_swing = 'DOUBLE'
+    opening.hb_closet_opening.is_hamper = 0
     seed_door_shelves(opening)
 
 
 def _cfg_hamper(opening):
-    opening[PROP_DOOR_SWING] = 'LEFT'
-    opening[PROP_IS_HAMPER] = 1
+    opening.hb_closet_opening.door_swing = 'LEFT'
+    opening.hb_closet_opening.is_hamper = 1
 
 
 def apply_bay_config(bay_obj, config):
@@ -3059,7 +3107,8 @@ def apply_bay_config(bay_obj, config):
     actions = []
     bay_door = None           # FULL_HEIGHT_DOORS -> bay-wide double door
     if config == 'ADJ_SHELVES':
-        opening[PROP_ADJ_SHELF_QTY] = max(1, min(8, int(ih / inch(12.0))))
+        opening.hb_closet_opening.adj_shelf_qty = max(
+            1, min(8, int(ih / inch(12.0))))
     elif config == 'DOUBLE_HANG':
         splits = [ih / 2.0]
         actions = [(0, _cfg_rod), (1, _cfg_rod)]
@@ -3076,8 +3125,8 @@ def apply_bay_config(bay_obj, config):
         qty = drawer_qty
 
         def _cfg_drawers(op, q=qty, h=dh):
-            op[PROP_DRAWER_QTY] = q
-            op[PROP_DRAWER_FRONT_HEIGHT] = h
+            op.hb_closet_opening.drawer_qty = q
+            op.hb_closet_opening.drawer_front_height = h
 
         cap = cap_z(qty)
         if doors_open:
@@ -3152,29 +3201,31 @@ def apply_opening_config(opening, config):
         return False
     clear_opening_contents(opening)
     if config == 'ADJ_SHELVES':
-        opening[PROP_ADJ_SHELF_QTY] = default_adj_shelf_qty(opening)
+        opening.hb_closet_opening.adj_shelf_qty = \
+            default_adj_shelf_qty(opening)
     elif config == 'DOOR_LEFT':
-        opening[PROP_DOOR_SWING] = 'LEFT'
+        opening.hb_closet_opening.door_swing = 'LEFT'
         seed_door_shelves(opening)
     elif config == 'DOOR_RIGHT':
-        opening[PROP_DOOR_SWING] = 'RIGHT'
+        opening.hb_closet_opening.door_swing = 'RIGHT'
         seed_door_shelves(opening)
     elif config == 'DOOR_DOUBLE':
-        opening[PROP_DOOR_SWING] = 'DOUBLE'
+        opening.hb_closet_opening.door_swing = 'DOUBLE'
         seed_door_shelves(opening)
     elif config == 'DOOR_LIFT_UP':
-        opening[PROP_DOOR_SWING] = 'LIFT_UP'
+        opening.hb_closet_opening.door_swing = 'LIFT_UP'
         seed_door_shelves(opening)
     elif config == 'CUBBIES':
-        opening[PROP_CUBBY_COLS] = 3
-        opening[PROP_CUBBY_ROWS] = 3
+        opening.hb_closet_opening.cubby_cols = 3
+        opening.hb_closet_opening.cubby_rows = 3
     elif config == 'ROLLOUTS':
-        opening[PROP_ROLLOUT_QTY] = const.ROLLOUT_DEFAULT_QTY
-        opening[PROP_ROLLOUT_HEIGHT] = const.ROLLOUT_HEIGHT
+        opening.hb_closet_opening.rollout_qty = const.ROLLOUT_DEFAULT_QTY
+        opening.hb_closet_opening.rollout_height = const.ROLLOUT_HEIGHT
     elif config.startswith('DRAWERS_'):
         try:
-            opening[PROP_DRAWER_QTY] = int(config.split('_')[1])
-            opening[PROP_DRAWER_FRONT_HEIGHT] = const.DRAWER_FRONT_HEIGHT
+            opening.hb_closet_opening.drawer_qty = int(config.split('_')[1])
+            opening.hb_closet_opening.drawer_front_height = \
+                const.DRAWER_FRONT_HEIGHT
         except (ValueError, IndexError):
             return False
     else:
