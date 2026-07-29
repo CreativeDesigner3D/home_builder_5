@@ -10,7 +10,7 @@ import bpy
 import mathutils
 
 from . import engine
-from .. import hb_types
+from .. import hb_types, units
 
 
 # Roots eligible per molding type, per library.
@@ -72,6 +72,38 @@ def collect_bridges(scene):
 # ---------------------------------------------------------------------------
 
 _RECESSED_FF_KICKS = {'NOTCH', 'LOOSE', 'FLOATING'}
+
+
+def _floor_flush_spans(cage):
+    """LOCAL width spans (x0, x1) where a recessed-kick cabinet's
+    front runs to the floor: a bay with its kick height zeroed builds
+    its bottom rail down to the floor, and the mid stiles flanking it
+    run to the floor with it - together they are the flush section the
+    base molding wraps out of the recess. Read from the built geometry
+    (it's exactly what's drawn); touching spans merge, so rail plus
+    flanking stiles become one wrap. End stiles are handled by the
+    stile facts instead."""
+    found = []
+    inv = cage.matrix_world.inverted()
+    for child in cage.children_recursive:
+        if child.get('hb_part_role') not in ('BOTTOM_RAIL', 'MID_STILE'):
+            continue
+        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
+                   for c in child.bound_box]
+        if min(c.z for c in corners) > 0.005:
+            continue  # rail stops above the kick - bay is recessed
+        xs = [c.x for c in corners]
+        if max(xs) - min(xs) < 1e-4:
+            continue
+        found.append((min(xs), max(xs)))
+    found.sort()
+    merged = []
+    for x0, x1 in found:
+        if merged and x0 - merged[-1][1] < 1e-4:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], x1))
+        else:
+            merged.append((x0, x1))
+    return merged
 
 
 def _top_rail_width(cage):
@@ -181,20 +213,38 @@ def build_facts(scene, members):
                 corner = {'ld': ffc.left_depth, 'rd': ffc.right_depth,
                           'diagonal': ffc.corner_type == 'DIAGONAL'}
             if obj.get('CLASS_NAME') == 'RefrigeratorCabinet':
-                kick = {'skip': True, 'setback': 0.0}
+                # The end stiles run to the floor and carry molding
+                # like legs; the opening between them (where the
+                # refrigerator sits) has no kick face behind it, so it
+                # is skipped outright - never a RECESS to opt into.
+                # Returns die into the stile edges (one frame
+                # thickness) instead of running back to a kick line.
+                kick = {
+                    'skip': False,
+                    'setback': getattr(ffc, 'face_frame_thickness',
+                                       0.0) or units.inch(0.75),
+                    'middle_skip': True,
+                    'stile_left': True,
+                    'stile_right': True,
+                    'stile_left_w': ffc.left_stile_width,
+                    'stile_right_w': ffc.right_stile_width,
+                }
             elif obj.get('IS_LEG_PRODUCT'):
-                # Leg products keep their toe kick on the leg_product
-                # propgroup (is_column / only_stile suppress it), not on
-                # face_frame_cabinet - whose untouched 'NOTCH' default
-                # read every leg as recessed. Columns and stile-only
-                # legs run to the floor: flush front.
+                # Leg products: the leg's foot stays bare - base
+                # molding runs INSIDE the toe kick, across the leg at
+                # the setback line (at the front for columns /
+                # stile-only legs, which have no kick). Finished sides
+                # wrap from the setback line to the rear via the
+                # finished-end treatment.
                 leg = getattr(obj, 'leg_product', None)
-                kick_active = (leg is not None and not leg.is_column
-                               and not leg.only_stile
-                               and leg.toe_kick_height > 0.0)
-                kick = {'skip': False,
-                        'setback': leg.toe_kick_setback if kick_active
-                        else 0.0}
+                has_kick = (leg is not None and not leg.is_column
+                            and not leg.only_stile
+                            and leg.toe_kick_height > 0.0)
+                kick = {
+                    'skip': False,
+                    'leg': True,
+                    'setback': leg.toe_kick_setback if has_kick else 0.0,
+                }
             elif ffc.toe_kick_type not in _RECESSED_FF_KICKS:
                 kick = {'skip': False, 'setback': 0.0}
             else:
@@ -206,10 +256,22 @@ def build_facts(scene, members):
                     'stile_left_w': ffc.left_stile_width,
                     'stile_right_w': ffc.right_stile_width,
                 }
+                flush = _floor_flush_spans(obj)
+                if flush:
+                    kick['flush_spans'] = flush
             fin_l = getattr(ffc, 'left_finished_end_condition',
                             'UNFINISHED') not in ('UNFINISHED', '', None)
             fin_r = getattr(ffc, 'right_finished_end_condition',
                             'UNFINISHED') not in ('UNFINISHED', '', None)
+            if obj.get('IS_LEG_PRODUCT'):
+                # Legs carry their exposure on leg_product.finish_type,
+                # not the generic finished-end conditions: a finished
+                # side gets the molding wrapped around it to the rear
+                # (INTERMEDIATE legs sit between cabinets - no wrap).
+                ft = getattr(getattr(obj, 'leg_product', None),
+                             'finish_type', '')
+                fin_l = fin_l or ft in ('FINISH_LEFT', 'FINISH_BOTH')
+                fin_r = fin_r or ft in ('FINISH_RIGHT', 'FINISH_BOTH')
             # Crown mounting datum: the DOOR TOP (face-frame opening top
             # plus the door's top overlay). The room's crown reveal is
             # measured up from here, matching the crown detail drawing.

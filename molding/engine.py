@@ -13,7 +13,9 @@ Facts, one dict per member object (keyed by id(obj)):
            wall corner, left arm fronting local +X at x=ld, right arm
            fronting local -Y at y=-rd)
     kick:  {'skip', 'setback', 'stile_left', 'stile_right',
-           'stile_left_w', 'stile_right_w'} - base molding only
+           'stile_left_w', 'stile_right_w', 'middle_skip'} - base
+           molding only; middle_skip makes the between-stiles span a
+           hard SKIP (refrigerator openings) instead of a RECESS
     finished_left / finished_right: bool - end treatments
 
 Paths are built as raw front polylines, offset to the RIGHT of travel
@@ -397,8 +399,9 @@ def _kick_spans_local(obj, f):
     """Canonical (left -> right) LOCAL kick-level spans for a straight
     member: [(points, kind)] with kind 'FRONT' (always carries
     molding: flush faces, floor stiles including their side returns),
-    'RECESS' (dropped unless opted in) or 'SKIP' (appliances,
-    refrigerator cabinets)."""
+    'KICK' (always carries molding at the kick line - legs - and never
+    receives a drop-boundary return), 'RECESS' (dropped unless opted
+    in) or 'SKIP' (appliances, refrigerator openings)."""
     width, depth, _ = cage_dims(obj)
     V = mathutils.Vector
     front = -depth
@@ -406,6 +409,16 @@ def _kick_spans_local(obj, f):
     if f.get('role') == 'APPLIANCE' or kick.get('skip'):
         return [([V((0.0, front)), V((width, front))], 'SKIP')]
     setback = kick.get('setback', 0.0)
+    if kick.get('leg'):
+        # Leg products: the leg's foot itself stays bare - the molding
+        # lives INSIDE the toe kick, running across the leg at the
+        # setback line (at the front when the leg has no kick).
+        # Finished sides wrap from there to the rear via the terminal
+        # end treatment. 'KICK' spans always carry molding but never
+        # receive a drop-boundary return - they are already at the
+        # kick line.
+        r = front + setback
+        return [([V((0.0, r)), V((width, r))], 'KICK')]
     if setback <= 1e-5:
         return [([V((0.0, front)), V((width, front))], 'FRONT')]
     r = front + setback
@@ -416,7 +429,25 @@ def _kick_spans_local(obj, f):
     x1 = width - (kick.get('stile_right_w', 0.0) if right_stile else 0.0)
     if left_stile:
         spans.append(([V((0.0, front)), V((x0, front)), V((x0, r))], 'FRONT'))
-    spans.append(([V((x0, r)), V((x1, r))], 'RECESS'))
+    # middle_skip: no kick face exists between the stiles (refrigerator
+    # openings) - the span is dropped outright, never opted back in.
+    mid_kind = 'SKIP' if kick.get('middle_skip') else 'RECESS'
+    # Flush sections (bays whose front runs to the floor) are carved
+    # out of the recessed middle: the molding wraps out of the recess,
+    # across the flush face, and back.
+    cursor = x0
+    for fx0, fx1 in kick.get('flush_spans') or []:
+        fx0 = max(fx0, cursor)
+        fx1 = min(fx1, x1)
+        if fx1 - fx0 < 1e-5:
+            continue
+        if fx0 - cursor > 1e-5:
+            spans.append(([V((cursor, r)), V((fx0, r))], mid_kind))
+        spans.append(([V((fx0, r)), V((fx0, front)), V((fx1, front)),
+                       V((fx1, r))], 'FRONT'))
+        cursor = fx1
+    if x1 - cursor > 1e-5:
+        spans.append(([V((cursor, r)), V((x1, r))], mid_kind))
     if right_stile:
         spans.append(([V((x1, r)), V((x1, front)), V((width, front))],
                       'FRONT'))
@@ -503,15 +534,20 @@ def _assemble_kick_spans(chain, facts):
                  kind)
                 for pts, kind in _kick_spans_local(obj, f)
             ]
-            first_pt = cage_spans[0][0][0]
-            last_pt = cage_spans[-1][0][-1]
+            # Orient by which SIDE of the member the neighbor sits on
+            # (local-X projection) - endpoint-distance comparison flips
+            # narrow members whose spans carry an asymmetric return
+            # tail (legs, single floor stiles).
+            inv = mw.inverted()
+
+            def _local_x(p2):
+                return (inv @ mathutils.Vector((p2.x, p2.y, 0.0))).x
+
             reverse = False
             if prev_ref is not None:
-                reverse = ((prev_ref - first_pt).length
-                           > (prev_ref - last_pt).length)
+                reverse = _local_x(prev_ref) > width / 2.0
             elif next_ref is not None:
-                reverse = ((next_ref - last_pt).length
-                           > (next_ref - first_pt).length)
+                reverse = _local_x(next_ref) < width / 2.0
             if reverse:
                 cage_spans = [(list(reversed(p)), k)
                               for p, k in reversed(cage_spans)]
@@ -531,13 +567,16 @@ def _assemble_kick_spans(chain, facts):
 
 def _stretch_segments(spans, include_recessed, x_off,
                       facts=None, terminals=None, island=False):
-    """Offset path segments from a span list. Kept spans (FRONT always,
-    RECESS when opted in) merge into stretches; a stretch that meets a
-    dropped span appends its adjacent endpoint so the molding RETURNS
-    into the finished kick. Chain-extremity ends get the finished /
+    """Offset path segments from a span list. Kept spans (FRONT and
+    KICK always, RECESS when opted in) merge into stretches; a FRONT
+    stretch that meets a dropped span appends its adjacent endpoint so
+    the molding RETURNS into the finished kick. Stretches already at
+    the kick line (KICK, RECESS) never return - they die in place
+    rather than jutting out toward an appliance front. Chain-extremity ends get the finished /
     unfinished treatment (suppressed on island perimeters). Returns
     [(points, cyclic)]."""
-    kept_kinds = {'FRONT', 'RECESS'} if include_recessed else {'FRONT'}
+    kept_kinds = ({'FRONT', 'KICK', 'RECESS'} if include_recessed
+                  else {'FRONT', 'KICK'})
     n = len(spans)
 
     if island and all(kind in kept_kinds for _p, kind in spans):
@@ -554,6 +593,12 @@ def _stretch_segments(spans, include_recessed, x_off,
         if first_dropped is not None:
             order = order[first_dropped:] + order[:first_dropped]
 
+    def _fresh_return(neighbors, pt):
+        """False when a drop-boundary return point would double back
+        over a return the kept span already carries (leg wraps end off
+        the front line; re-adding the shared front corner would zig)."""
+        return all((pt - p).length > 1e-6 for p in neighbors)
+
     segments = []
     current = None
     current_meta = None
@@ -563,22 +608,30 @@ def _stretch_segments(spans, include_recessed, x_off,
             if current is None:
                 current = []
                 current_meta = {'start_idx': k}
-                if pos > 0:
+                if pos > 0 and kind == 'FRONT':
                     prev_k = order[pos - 1]
                     if spans[prev_k][1] not in kept_kinds:
-                        current.append(spans[prev_k][0][-1])
+                        p = spans[prev_k][0][-1]
+                        if _fresh_return(pts[:2], p):
+                            current.append(p)
             current.extend(pts)
             current_meta['end_idx'] = k
+            current_meta['last_kind'] = kind
         else:
             if current is not None:
-                current.append(pts[0])
+                if (current_meta.get('last_kind') == 'FRONT'
+                        and _fresh_return(current[-2:], pts[0])):
+                    current.append(pts[0])
                 segments.append((current, current_meta))
                 current = None
     if current is not None:
         if island:
             seam = spans[order[0]]
             if seam[1] not in kept_kinds:
-                current.append(seam[0][0])
+                p = seam[0][0]
+                if (current_meta.get('last_kind') == 'FRONT'
+                        and _fresh_return(current[-2:], p)):
+                    current.append(p)
         segments.append((current, current_meta))
 
     out = []
