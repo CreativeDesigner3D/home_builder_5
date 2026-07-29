@@ -112,6 +112,10 @@ def _draw_add_part_entries(layout):
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
     layout.operator("hb_closets.add_cubbies",
                     text="Cubbies...", icon='MESH_GRID')
+    layout.operator("hb_closets.add_rollouts",
+                    text="Rollout Trays...", icon='MESH_PLANE')
+    layout.operator("hb_closets.add_slanted_shelves",
+                    text="Slanted Shoe Shelves...", icon='SORTBYEXT')
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
@@ -120,7 +124,11 @@ class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         # Properties, Change Opening, then the add entries, then clear.
+        # Both levels are offered: the opening dialog edits what fills
+        # this segment, the bay dialog the section it sits in.
         layout = self.layout
+        layout.operator("hb_closets.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
         layout.operator("hb_closets.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
         layout.separator()
@@ -211,6 +219,15 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             op = layout.operator("hb_closets.adj_shelf_step",
                                  text="Remove Shelf", icon='REMOVE')
             op.delta = -1
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DRAWER_FRONT):
+            layout.operator("hb_closets.drawer_accessory",
+                            text="Drawer Options...", icon='MODIFIER')
+            if obj.get(types_closets.PROP_JEWELRY_TRAY, ''):
+                layout.operator("hb_closets.resize_drawer_for_tray",
+                                text="Resize Drawer to Fit Tray",
+                                icon='FULLSCREEN_ENTER')
             layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')

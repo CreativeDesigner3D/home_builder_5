@@ -25,7 +25,7 @@ import math
 from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
                          GeoNodeDrawerBox, CabinetPartModifier)
-from ...units import inch
+from ...units import inch, millimeter
 from ..frameless.types_frameless import CabinetPart
 from . import solver_closets as solver
 from . import const_closets as const
@@ -48,6 +48,7 @@ PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
+PART_ROLE_BACKSPLASH = 'CLOSET_BACKSPLASH'
 PART_ROLE_ACCENT_SHELF = 'CLOSET_TOP_ACCENT_SHELF'
 PART_ROLE_FILLER = 'CLOSET_FILLER'
 PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
@@ -69,6 +70,9 @@ PART_ROLE_DRAWER_FRONT = 'CLOSET_DRAWER_FRONT'
 PART_ROLE_DRAWER_BOX = 'CLOSET_DRAWER_BOX'
 PART_ROLE_CUBBY_DIVISION = 'CLOSET_CUBBY_DIVISION'
 PART_ROLE_CUBBY_SHELF = 'CLOSET_CUBBY_SHELF'
+# Slanted shoe shelves: a tilted shelf plus a purchased metal shoe fence.
+PART_ROLE_SLANTED_SHELF = 'CLOSET_SLANTED_SHELF'
+PART_ROLE_SHOE_FENCE = 'CLOSET_SHOE_FENCE'
 # Double-sided island structure.
 PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
 # Corner-clearance bridge parts (starter-root children, lazily created
@@ -82,7 +86,37 @@ PART_ROLE_BRIDGE_SHELF = 'CLOSET_BRIDGE_SHELF'
 # every recalc (create/remove children to match, then lay out).
 PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
+PROP_ROLLOUT_QTY = 'hb_rollout_qty'
+PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
+# Slanted shoe shelves: quantity, vertical spacing, tilt angle (radians),
+# and the metal fence color.
+PROP_SLANT_QTY = 'hb_slant_qty'
+PROP_SLANT_SPACING = 'hb_slant_spacing'
+PROP_SLANT_ANGLE = 'hb_slant_angle'
+PROP_SLANT_COLOR = 'hb_slant_color'
 PROP_DRAWER_FRONT_HEIGHT = 'hb_drawer_front_height'
+# Per-opening box-system override. Empty / 'DEFAULT' falls back to the
+# scene-wide box selection; any other value forces this opening's boxes
+# to that system (or turns them off with 'NONE').
+PROP_DRAWER_BOX_OVERRIDE = 'hb_drawer_box_override'
+# Per-drawer accessory: a fitted drawer jewelry tray, chosen by color.
+# Stored on the drawer FRONT ('' = none). The tray size (and name) is
+# derived from the drawer's inside width and depth; the resolved name is
+# stamped back on the front as hb_jewelry_tray_name for reporting.
+PROP_JEWELRY_TRAY = 'hb_jewelry_tray'
+PROP_JEWELRY_TRAY_NAME = 'hb_jewelry_tray_name'
+# Per-front drawer-box overrides (on each drawer FRONT), matching the
+# prior Drawer Options: a box-system override ('' / 'DEFAULT' defers to
+# the opening/scene setting) and explicit box depth/height overrides
+# (0 = use the system-calculated size). The layout also stamps the
+# resolved box type, size tag, and opening height back on the front so
+# the dialog can report the current drawer.
+PROP_FRONT_BOX_OVERRIDE = 'hb_front_box_override'
+PROP_BOX_DEPTH_OVERRIDE = 'hb_box_depth_override'
+PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
+PROP_BOX_TYPE_RESOLVED = 'hb_box_type'
+PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
+PROP_OPEN_HEIGHT = 'hb_open_height'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills its
 # opening: unlocked fronts share the remaining span equally. Editing a
 # front's height locks it (hb_front_locked=1) so it holds while the others
@@ -99,6 +133,7 @@ PROP_BAY_DOOR_SWING = 'hb_bay_door_swing'
 PROP_BAY_IS_HAMPER = 'hb_bay_is_hamper'
 PROP_CUBBY_COLS = 'hb_cubby_cols'
 PROP_CUBBY_ROWS = 'hb_cubby_rows'
+PROP_CUBBY_SETBACK = 'hb_cubby_setback'
 # Opening idprop on double islands: which face the opening serves.
 PROP_OPENING_SIDE = 'hb_opening_side'    # 'FRONT' (default) | 'BACK'
 
@@ -134,6 +169,124 @@ def _remove_part_tree(obj):
 def _set_part_hidden(obj, hidden):
     obj.hide_viewport = hidden
     obj.hide_render = hidden
+
+
+# ---------------------------------------------------------------------------
+# Drawer jewelry trays (a fitted, purchased drawer accessory). Two
+# families: fabric-lined trays in seven colors sized S/M/L/XL by the
+# drawer's inside width, and contour trays in three colors sized by
+# inside width and depth. The tray is bought as-is - the library records
+# the color and derives the size/name; downstream reads the name.
+# ---------------------------------------------------------------------------
+JEWELRY_TRAY_FABRIC = ('Brown', 'Black', 'Navy Blue', 'Pearl', 'Silver',
+                       'Burgundy', 'Green')
+JEWELRY_TRAY_CONTOUR = ('Oyster', 'Pewter', 'Winter')
+# Enum rows for the accessory dialog: 'None' plus every color.
+JEWELRY_TRAY_COLOR_ITEMS = (
+    [('NONE', "None", "No jewelry tray")]
+    + [(c, c, c) for c in (JEWELRY_TRAY_FABRIC + JEWELRY_TRAY_CONTOUR)])
+
+# Metal shoe-fence finishes (enum rows for the slanted-shelf dialog).
+SHOE_FENCE_COLORS = ('Black', 'Chrome', 'Slate Graphite', 'Matte Nickel',
+                     'Matte Aluminum', 'Matte Gold')
+SHOE_FENCE_COLOR_ITEMS = [(c, c, c) for c in SHOE_FENCE_COLORS]
+
+
+def drawer_inside_width(front_width, box_type):
+    """Inside (usable) width of a drawer given its front width and the
+    resolved box system, matching the prior library's tray-fit math:
+    a 5/16" overlay each side plus a box-system side allowance."""
+    overlay = inch(0.3125) * 2
+    if box_type in ('AVANTECH', 'AVANTECH_ILL'):
+        return front_width - overlay - inch(1.0) * 2
+    if box_type == 'METABOX':
+        return front_width - overlay - millimeter(31)
+    if box_type == 'WOOD':
+        return front_width - overlay - inch(0.327) * 2
+    return 0.0
+
+
+def jewelry_tray_name(color, inside_width, depth):
+    """Resolved tray name for a color and drawer size (inside_width and
+    depth in meters), or '' when the drawer is out of range for that
+    tray. Bands match the prior library exactly."""
+    if not color or color == 'NONE':
+        return ''
+    if color in JEWELRY_TRAY_CONTOUR:
+        w_mid = inch(6.1875) < inside_width < inch(36.0)
+        w_wide = inside_width >= inch(36.0)
+        d_std = inch(10.0) < depth < inch(20.0)
+        d_deep = depth > inch(20.0)
+        size = ''
+        if w_mid and d_std:
+            size = '24 x 16'
+        elif w_mid and d_deep:
+            size = '24 x 20'
+        elif w_wide and d_std:
+            size = '36 x 16'
+        elif w_wide and d_deep:
+            size = '36 x 20'
+        return "%s Contour Jewelry Tray %s" % (size, color) if size else ''
+    if color in JEWELRY_TRAY_FABRIC:
+        size = ''
+        if inch(12.0) <= inside_width < inch(16.0):
+            size = 'S'
+        elif inch(16.0) <= inside_width < inch(24.0):
+            size = 'M'
+        elif inch(24.0) <= inside_width < inch(30.0):
+            size = 'L'
+        elif inch(30.0) <= inside_width <= inch(36.875):
+            size = 'XL'
+        return "%s Drawer Jewelry Tray %s" % (size, color) if size else ''
+    return ''
+
+
+def target_inside_width_for_tray(color, inside_width, depth):
+    """The inside width (meters) the drawer should have so the chosen
+    tray fits, or the current width when it already fits. Fabric trays
+    need 12"-36.875"; contour trays need > 6.1875"."""
+    if color in JEWELRY_TRAY_FABRIC:
+        if inside_width < inch(12.0):
+            return inch(14.0)
+        if inside_width > inch(36.875):
+            return inch(33.0)
+    elif color in JEWELRY_TRAY_CONTOUR:
+        if inside_width <= inch(6.1875):
+            return inch(8.0)
+    return inside_width
+
+
+def resize_for_jewelry_tray(front):
+    """Grow or shrink the drawer's bay so the assigned jewelry tray fits,
+    mirroring the prior library's fit-the-opening behavior: a single-bay
+    closet grows overall, a multi-bay closet resizes just this bay (the
+    others redistribute). Returns True when a resize was applied."""
+    color = front.get(PROP_JEWELRY_TRAY, '')
+    if not color or color == 'NONE':
+        return False
+    inside_w = float(front.get('hb_inside_w', 0.0))
+    depth = float(front.get('hb_open_depth', 0.0))
+    if inside_w <= 0.0:
+        return False
+    target = target_inside_width_for_tray(color, inside_w, depth)
+    if abs(target - inside_w) < inch(0.05):
+        return False
+    bay = find_bay_cage(front)
+    root = find_starter_root(front)
+    if bay is None or root is None:
+        return False
+    # inside width and bay width differ by a constant (panels + overlays
+    # + box side), so the bay width that yields the target inside width is
+    # a simple shift.
+    actual_bay_w = GeoNodeCage(bay).get_input('Dim X')
+    target_bay_w = target + (actual_bay_w - inside_w)
+    bays = [c for c in root.children if c.get(TAG_BAY_CAGE)]
+    if len(bays) <= 1:
+        sp = root.hb_closet_starter
+        sp.width = sp.width + (target_bay_w - actual_bay_w)
+    else:
+        bay.hb_closet_bay.width = target_bay_w  # setter locks + relays out
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +442,14 @@ class ClosetStarter(GeoNodeCage):
                                   if self.allows_toe_kick else 0.0)
             sp.toe_kick_setback = scene_props.toe_kick_setback
             sp.include_countertop = self.has_countertop
+            sp.countertop_thickness = scene_props.countertop_thickness
+            # A double-sided island is reachable from every side, so its
+            # top overhangs all round; everything else only overhangs at
+            # the front until a prompt says otherwise.
+            if self.ctop_overhang_all:
+                for side in ('front', 'rear', 'left', 'right'):
+                    setattr(sp, 'countertop_overhang_' + side,
+                            const.ISLAND_CTOP_OVERHANG)
             sp.width = scene_props.default_closet_width
             sp.height = self.default_height(scene_props)
             sp.depth = (self.default_depth
@@ -338,8 +499,18 @@ class ClosetStarter(GeoNodeCage):
             bp.bay_index = i
             bp.width = equal_width
             bp.width_locked = False
-            bp.height = self._default_bay_height(scene_props, sp)
+            bay_height = self._default_bay_height(scene_props, sp)
+            bp.height = bay_height
             bp.depth = sp.depth
+            bp.height_locked = False
+            bp.depth_locked = False
+            # A run whose bays seed to a height other than the run
+            # height - a hanging run tops out above its bays - starts
+            # with the run height unlocked and each bay holding its own
+            # value, so the seeded heights survive the first solve.
+            if abs(bay_height - sp.height) > 1e-6:
+                bp.height_locked = True
+                sp.height_locked = False
             bp.floor_mounted = self.floor_mounted
             self._build_bay_parts(bay.obj)
 
@@ -445,11 +616,37 @@ class ClosetStarter(GeoNodeCage):
     # -----------------------------------------------------------------
     # Layout
     # -----------------------------------------------------------------
+    def _migrate_double_panel_numbering(self):
+        """Runs saved while a doubled junction was numbered by the bay to
+        its RIGHT stored the option one bay too far along. Shift it once,
+        so those runs come back looking the way they were drawn."""
+        if self.obj.get('hb_double_panel_numbering'):
+            return
+        self.obj['hb_double_panel_numbering'] = 1
+        bay_objs = self._sorted_bays()
+        old = [bool(b.hb_closet_bay.get('double_panel_left', False))
+               for b in bay_objs]
+        for i, bay_obj in enumerate(bay_objs):
+            bp = bay_obj.hb_closet_bay
+            if any(old):
+                bp.double_panel_right = (old[i + 1] if i + 1 < len(old)
+                                         else False)
+            try:
+                del bp['double_panel_left']
+            except (KeyError, TypeError):
+                pass
+
     def _spec_from_props(self, scene_props):
         sp = self.obj.hb_closet_starter
+        bay_objs = self._sorted_bays()
         bays = []
-        for idx, bay_obj in enumerate(self._sorted_bays()):
+        for idx, bay_obj in enumerate(bay_objs):
             bp = bay_obj.hb_closet_bay
+            # Junction option: a doubled partition is numbered by the bay
+            # on its LEFT, so a bay's left junction reads the option off
+            # the bay before it (the first bay's left side is the end of
+            # the run, which is never doubled).
+            prev = bay_objs[idx - 1].hb_closet_bay if idx > 0 else None
             bays.append({
                 'width': bp.width,
                 'locked': bp.width_locked,
@@ -458,9 +655,7 @@ class ClosetStarter(GeoNodeCage):
                 'floor': bp.floor_mounted,
                 'remove_bottom': bp.remove_bottom,
                 'remove_cleat': bp.remove_cleat,
-                # Junction option: doubled partition at this bay's LEFT
-                # junction (never on the first bay - that's the end).
-                'double_left': bool(bp.double_panel_left) if idx > 0
+                'double_left': bool(prev.double_panel_right) if prev
                                else False,
             })
         return SimpleNamespace(
@@ -472,6 +667,8 @@ class ClosetStarter(GeoNodeCage):
             kick_setback=sp.toe_kick_setback,
             left_panel_off=sp.turn_off_left_panel,
             right_panel_off=sp.turn_off_right_panel,
+            extend_panels=sp.extend_panels_to_countertop,
+            extend_amount=sp.extend_panel_amount,
             bays=bays,
         )
 
@@ -486,25 +683,21 @@ class ClosetStarter(GeoNodeCage):
             scene_props = bpy.context.scene.hb_closets
             sp = self.obj.hb_closet_starter
 
-            # Starter height/depth edits propagate to every bay still at
-            # the previous starter value; individually overridden bays
-            # keep their override. The last-applied values ride idprops
-            # (also used below for the hanging top-anchor). Bay writes
-            # here can't recurse - the update callbacks bail while this
-            # starter is in _RECALCULATING.
-            last_h = self.obj.get('hb_last_height')
-            last_d = self.obj.get('hb_last_depth')
+            # The run height and depth carry down to the bays. A locked
+            # run size holds every bay at it; with the run size unlocked
+            # a bay follows along until someone types a size into that
+            # bay, which locks it. Bay writes here can't recurse - the
+            # update callbacks bail while this starter is in
+            # _RECALCULATING.
+            self._migrate_double_panel_numbering()
             for bay_obj in self._sorted_bays():
                 bp = bay_obj.hb_closet_bay
-                if (last_h is not None
-                        and abs(bp.height - last_h) < 1e-6
-                        and abs(sp.height - last_h) > 1e-9):
-                    bp.height = sp.height
-                if (last_d is not None
-                        and abs(bp.depth - last_d) < 1e-6
-                        and abs(sp.depth - last_d) > 1e-9):
-                    bp.depth = sp.depth
-            self.obj['hb_last_depth'] = sp.depth
+                if sp.height_locked or not bp.height_locked:
+                    if abs(bp.height - sp.height) > 1e-9:
+                        bp.height = sp.height
+                if sp.depth_locked or not bp.depth_locked:
+                    if abs(bp.depth - sp.depth) > 1e-9:
+                        bp.depth = sp.depth
 
             spec = self._spec_from_props(scene_props)
             if not spec.bays:
@@ -603,13 +796,23 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Thickness', pt)
 
     def _layout_battens(self, layout, scene_props, sp):
-        """A 0.25 x 1.125 in vertical
-        scribe strip against the inner face of an end panel at the
-        front edge, spanning the end bay's height. Cosmetic part -
-        no machining."""
+        """A 0.25 x 1.125 in scribe strip laid flat on the FRONT face of
+        an end panel, running that panel's full height. It covers the
+        panel's 0.75 in edge and projects the remaining 0.375 in past the
+        outside of the run, so it can be scribed to the wall. Cosmetic
+        part.
+
+        The strip lies in the face plane: Length runs up Z, Width runs
+        across X (outward, away from the run) and Thickness stands proud
+        of the front face. Rotation and mirroring are rewritten on every
+        pass so a part built before this orientation was settled
+        re-orients itself the next time the closet recalculates.
+        """
         bays = layout['bays']
-        if not bays:
+        panels = layout['panels']
+        if not bays or not panels:
             return
+        pt = scene_props.panel_thickness
         have = {c.get('hb_batten'): c for c in self.obj.children
                 if c.get('hb_batten')}
         for side in ('LEFT', 'RIGHT'):
@@ -620,20 +823,24 @@ class ClosetStarter(GeoNodeCage):
                 p.obj.parent = self.obj
                 p.obj['hb_part_role'] = PART_ROLE_BATTEN
                 p.obj['hb_batten'] = side
-                p.obj.rotation_euler.y = math.radians(-90)
-                p.set_input('Mirror Y', True)
-                p.set_input('Mirror Z', True)
                 c = p.obj
             bay = bays[0] if side == 'LEFT' else bays[-1]
+            panel = panels[0] if side == 'LEFT' else panels[-1]
             include = (sp.include_batten_left if side == 'LEFT'
                        else sp.include_batten_right)
-            if side == 'LEFT':
-                x = bay['x']
-            else:
-                x = bay['x'] + bay['width'] - const.BATTEN_THICKNESS
-            c.location = (x, -bay['depth'] + const.BATTEN_WIDTH, bay['z0'])
+            c.rotation_euler = (0.0, math.radians(-90), math.radians(90))
             part = GeoNodeCutpart(c)
-            part.set_input('Length', bay['height'])
+            # Width runs off the outside of the run: away from -X on the
+            # left, toward +X on the right.
+            part.set_input('Mirror Y', side == 'RIGHT')
+            part.set_input('Mirror Z', False)
+            # Anchor on the face of the end panel that faces the run, so
+            # the strip laps the panel and overhangs the outside.
+            x = panel['x'] + pt if side == 'LEFT' else panel['x']
+            # The panel entry already carries the height and the floor /
+            # extend-to-countertop drop, so the strip tracks the panel.
+            c.location = (x, -bay['depth'], panel['z'])
+            part.set_input('Length', panel['length'])
             part.set_input('Width', const.BATTEN_WIDTH)
             part.set_input('Thickness', const.BATTEN_THICKNESS)
             _set_part_hidden(c, not include)
@@ -698,12 +905,20 @@ class ClosetStarter(GeoNodeCage):
             cage.set_input('Dim Z', bay['height'])
             bp = bay_obj.hb_closet_bay
 
+            # Inset Bottom (run-wide) plus this bay's own Bottom Shelf
+            # Inset hold the bottom shelf off the wall; the front edge
+            # stays where it was, so the shelf just gets shallower. Only
+            # a floor bay has a bottom to set in.
+            inset_b = ((sp.inset_bottom + bp.bottom_shelf_inset)
+                       if bay['floor'] else 0.0)
+            inset_b = max(0.0, min(inset_b, bay['depth'] - 0.001))
+
             bottom = self._bay_part(bay_obj, PART_ROLE_BOTTOM_SHELF)
             if bottom is not None:
-                bottom.location = (0.0, 0.0, bay['bottom_z'])
+                bottom.location = (0.0, -inset_b, bay['bottom_z'])
                 part = GeoNodeCutpart(bottom)
                 part.set_input('Length', bay['width'])
-                part.set_input('Width', bay['depth'])
+                part.set_input('Width', bay['depth'] - inset_b)
                 part.set_input('Thickness', st)
                 _set_part_hidden(bottom, bp.remove_bottom)
 
@@ -732,9 +947,16 @@ class ClosetStarter(GeoNodeCage):
                                  or bp.remove_bottom
                                  or bay['kick'] <= 0.0)
 
+            # Inset Cleat lifts the cleat above the bottom shelf it sits
+            # on, so it only applies where there is one: a floor bay
+            # that still has its bottom.
+            cleat_z = bay['cleat_z']
+            if bay['floor'] and not bp.remove_bottom:
+                cleat_z += sp.inset_cleat
+
             cleat = self._bay_part(bay_obj, PART_ROLE_CLEAT)
             if cleat is not None:
-                cleat.location = (0.0, 0.0, bay['cleat_z'])
+                cleat.location = (0.0, 0.0, cleat_z)
                 part = GeoNodeCutpart(cleat)
                 part.set_input('Length', bay['width'])
                 part.set_input('Width', const.CLEAT_WIDTH)
@@ -786,24 +1008,36 @@ class ClosetStarter(GeoNodeCage):
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
-                back.location = (0.0, 0.0, bay['interior_z'])
+                # The back laps onto the panels and shelves around its
+                # bay by the overlay, and either starts above the kick
+                # and bottom shelf or runs on down to the floor.
+                ov = sp.applied_back_overlay
+                back_z = (0.0 if sp.back_to_floor
+                          else max(bay['interior_z'] - ov, 0.0))
+                back.location = (-ov, 0.0, back_z)
                 part = GeoNodeCutpart(back)
-                part.set_input('Length', bay['width'])
-                part.set_input('Width', bay['interior_h'])
+                part.set_input('Length', bay['width'] + ov * 2.0)
+                part.set_input('Width',
+                               max(bay['top_z'] + ov - back_z, 0.001))
                 part.set_input('Thickness', const.APPLIED_BACK_THICKNESS)
                 _set_part_hidden(back, False)
 
-            # Center back (double islands): st thick, centered in depth,
-            # spanning the interior. Horizontal grain for now; the
-            # machining layer decides grain later.
+            # Center back (double islands): st thick, spanning the
+            # interior. Centered in depth unless the bay names a
+            # location. Horizontal grain for now; grain direction is
+            # decided downstream.
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
-                center_back.location = (
-                    0.0, -(bay['depth'] / 2.0 + st / 2.0), bay['interior_z'])
+                cb_y = bp.center_back_location
+                if cb_y <= 0.0:
+                    cb_y = bay['depth'] / 2.0 + st / 2.0
+                cb_y = min(cb_y, bay['depth'])
+                center_back.location = (0.0, -cb_y, bay['interior_z'])
                 part = GeoNodeCutpart(center_back)
                 part.set_input('Length', bay['width'])
                 part.set_input('Width', bay['interior_h'])
                 part.set_input('Thickness', st)
+                _set_part_hidden(center_back, not bp.include_center_back)
 
             # Openings. Fixed shelves are SPLITTERS: committed shelves
             # live at bay level and divide the interior into segments,
@@ -882,8 +1116,10 @@ class ClosetStarter(GeoNodeCage):
         side = opening.get(PROP_OPENING_SIDE, 'FRONT')
 
         self._reconcile_adj_shelves(opening)
+        self._reconcile_slanted_shelves(opening)
         self._reconcile_doors(opening, side)
         self._reconcile_drawers(opening, side)
+        self._reconcile_rollouts(opening)
         self._reconcile_cubbies(opening)
 
         lo = ro = (pt - const.FRONT_GAP) / 2.0
@@ -950,6 +1186,50 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Width', depth)
                 part.set_input('Thickness', st)
 
+        # ----- Slanted shoe shelves (tilted, front metal fence) -----
+        # Stacked bottom-up at a fixed vertical spacing; each shelf tilts
+        # back by the shelf angle and is set back from the front so the
+        # metal fence sits flush. The fence is a purchased rail across the
+        # front, parented to the shelf so it rides the tilt.
+        slants = groups.get(PART_ROLE_SLANTED_SHELF, [])
+        if slants:
+            slants.sort(key=lambda o: o.get('hb_slant_index', 0))
+            spacing = float(opening.get(PROP_SLANT_SPACING,
+                                        const.SLANT_SHELF_SPACING))
+            angle = float(opening.get(
+                PROP_SLANT_ANGLE,
+                math.radians(const.SLANT_SHELF_ANGLE_DEG)))
+            setback = const.SLANT_SHELF_SETBACK
+            shelf_depth = max(depth - setback, inch(1.0))
+            y_front = -shelf_depth  # front edge in opening-local Y
+            # The shelf tips down toward the front, and it pivots about
+            # its REAR edge, so the front edge finishes a shelf-depth's
+            # worth of rise below the origin. Lift the whole stack by
+            # that rise: the bottom shelf's front lip then lands on the
+            # opening floor instead of hanging through it, which is
+            # where the prior library's stack started.
+            rise = shelf_depth * math.sin(angle)
+            for i, child in enumerate(slants):
+                z = spacing * i + rise
+                child.location = (0.0, 0.0, z)
+                child.rotation_euler = (angle, 0.0, 0.0)
+                part = GeoNodeCutpart(child)
+                part.set_input('Length', width)
+                part.set_input('Width', shelf_depth)
+                part.set_input('Thickness', st)
+                fence = next(
+                    (c for c in child.children
+                     if c.get('hb_part_role') == PART_ROLE_SHOE_FENCE), None)
+                if fence is not None:
+                    # Sit on the shelf top, frontmost strip, inset each side.
+                    fence.location = (const.SHOE_FENCE_INSET,
+                                      y_front + const.SHOE_FENCE_DEPTH, st)
+                    fpart = GeoNodeCutpart(fence)
+                    fpart.set_input('Length',
+                                    width - 2 * const.SHOE_FENCE_INSET)
+                    fpart.set_input('Width', const.SHOE_FENCE_DEPTH)
+                    fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
+
         # ----- Doors (1 leaf, or 2 for DOUBLE swing) -----
         doors = groups.get(PART_ROLE_DOOR, [])
         if doors:
@@ -983,7 +1263,8 @@ class ClosetStarter(GeoNodeCage):
         # its height (hb_front_locked) while the rest absorb the difference.
         fronts = groups.get(PART_ROLE_DRAWER_FRONT, [])
         boxes = {c.get('hb_drawer_index', 0): c
-                 for c in groups.get(PART_ROLE_DRAWER_BOX, [])}
+                 for c in groups.get(PART_ROLE_DRAWER_BOX, [])
+                 if not c.get('hb_rollout')}
         if fronts:
             fronts.sort(key=lambda o: o.get('hb_drawer_index', 0))
             n = len(fronts)
@@ -994,8 +1275,10 @@ class ClosetStarter(GeoNodeCage):
                 [(f.get(PROP_FRONT_HEIGHT, 0.0),
                   bool(f.get(PROP_FRONT_LOCKED, 0))) for f in fronts])
             from . import drawer_boxes_closets as dbx
-            box_type = dbx.current_type()
-            box_mat = dbx.box_material(box_type)
+            # Opening-level default: opening override wins, else scene.
+            _ovr = opening.get(PROP_DRAWER_BOX_OVERRIDE, '')
+            default_box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
+                                else dbx.current_type())
             box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
             z = -bo
@@ -1008,30 +1291,68 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width + lo + ro)
                 part.set_input('Width', dh)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
+                # Per-front box-system override wins over the opening
+                # default; its material follows the resolved system.
+                _fovr = child.get(PROP_FRONT_BOX_OVERRIDE, '')
+                box_type = (_fovr if _fovr and _fovr != 'DEFAULT'
+                            else default_box_type)
+                box_mat = dbx.box_material(box_type)
+                # Stamp the drawer's inside width and depth so the
+                # accessory dialog can size a tray live; resolve the
+                # jewelry-tray name so it tracks any resize.
+                _inside = drawer_inside_width(width + lo + ro, box_type)
+                child['hb_inside_w'] = _inside
+                child['hb_open_depth'] = depth
+                child[PROP_OPEN_HEIGHT] = dh
+                child[PROP_BOX_TYPE_RESOLVED] = box_type
+                _tray = child.get(PROP_JEWELRY_TRAY, '')
+                if _tray and _tray != 'NONE':
+                    child[PROP_JEWELRY_TRAY_NAME] = jewelry_tray_name(
+                        _tray, _inside, depth)
+                elif PROP_JEWELRY_TRAY_NAME in child:
+                    del child[PROP_JEWELRY_TRAY_NAME]
                 _apply_front_style(child, is_drawer=True)
                 self._position_front_pull(child, 'drawer', side)
                 box = boxes.get(i)
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                wood_h = max(dh - const.DRAWER_BOX_HEIGHT_DEDUCT,
+                # A front laps the part above it, so the top drawer of a
+                # stack has less room behind the front than the front is
+                # tall. Size the box to the clear space that is really
+                # there, or it runs up through the shelf above.
+                z_bot = max(z, 0.0)
+                room = max(interior_h - z_bot, inch(1.0))
+                avail_h = min(dh, room)
+                wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
-                spec = dbx.size_box(box_type, dh, depth, wood_h, wood_d)
+                spec = dbx.size_box(box_type, avail_h, depth, wood_h,
+                                    wood_d)
+                # Explicit per-front size overrides (0 = system size).
+                _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
+                _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
                 box_d = spec[1] if spec is not None else wood_d
+                if _dov > 0.0:
+                    box_d = _dov
+                child[PROP_BOX_SIZE_TAG] = (spec[2] if spec else 'NONE')
                 if box is not None:
                     box['hb_drawer_box_type'] = box_type
                     box['hb_drawer_box_size'] = (spec[2] if spec
                                                  else 'NONE')
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
-                    box_h = spec[0]
+                    box_h = _hov if _hov > 0.0 else spec[0]
                     # GeoNodeDrawerBox extrudes +Y from its origin, so
                     # anchor the origin at the face the drawer serves:
                     # box spans [y_box, y_box + box_d], front edge flush
                     # with the opening face, clearance at the rear.
                     y_box = (-box_d if side == 'BACK' else -depth)
+                    # Stand the box off the drawer's floor, giving the
+                    # lift up when the remaining room is tighter than it.
+                    lift = min(const.DRAWER_BOX_Z_LIFT,
+                               max(0.0, room - box_h))
                     box.location = (const.DRAWER_SLIDE_GAP, y_box,
-                                    max(z, 0.0) + const.DRAWER_BOX_Z_LIFT)
+                                    z_bot + lift)
                     gb = GeoNodeObject(box)
                     gb.set_input('Dim X', box_w)
                     gb.set_input('Dim Y', box_d)
@@ -1051,7 +1372,53 @@ class ClosetStarter(GeoNodeCage):
                     child, 1.0 if child.get('hb_drawer_open') else 0.0)
                 z += dh + const.FRONT_GAP
 
+        # ----- Rollout trays -----
+        # Each tray stands a fixed Rollout Height (default 4"), the trays
+        # spaced with equal gaps above, below, and between (sizing from
+        # the prior library: 4" tray, 0.327" side clearance for the
+        # slides, full opening depth). If the stack can't fit the trays
+        # shrink to keep the minimum gap.
+        rollouts = [c for c in groups.get(PART_ROLE_DRAWER_BOX, [])
+                    if c.get('hb_rollout')]
+        if rollouts:
+            rollouts.sort(key=lambda o: o.get('hb_rollout_index', 0))
+            from . import drawer_boxes_closets as dbx
+            box_type = dbx.current_type()
+            box_mat = dbx.box_material(box_type)
+            box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
+            box_d = max(depth, inch(2.0))
+            n = len(rollouts)
+            tray_h = float(opening.get(PROP_ROLLOUT_HEIGHT,
+                                       const.ROLLOUT_HEIGHT))
+            gap = (interior_h - n * tray_h) / (n + 1)
+            if gap < const.ROLLOUT_MIN_GAP:
+                # Won't fit at the full height: hold the minimum gap and
+                # shrink the trays to share the remainder.
+                gap = const.ROLLOUT_MIN_GAP
+                tray_h = max((interior_h - (n + 1) * gap) / n, inch(2.0))
+            y_box = (-box_d if side == 'BACK' else -depth)
+            for i, box in enumerate(rollouts):
+                box['hb_drawer_box_type'] = box_type
+                box['hb_drawer_box_size'] = 'ROLLOUT'
+                _set_part_hidden(box, False)
+                z = gap + i * (tray_h + gap)
+                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z)
+                gb = GeoNodeObject(box)
+                gb.set_input('Dim X', box_w)
+                gb.set_input('Dim Y', box_d)
+                gb.set_input('Dim Z', tray_h)
+                try:
+                    gb.set_input('Material', box_mat)
+                except Exception:
+                    pass
+
         # ----- Cubby grid (divisions full height, shelves full width) -----
+        # Both are held back from the front edge by the setback, so the
+        # grid reads as recessed instead of finishing flush with the
+        # panels.
+        cub_setback = float(opening.get(PROP_CUBBY_SETBACK,
+                                        const.CUBBY_SETBACK))
+        cub_depth = max(depth - cub_setback, inch(1.0))
         divs = groups.get(PART_ROLE_CUBBY_DIVISION, [])
         if divs:
             divs.sort(key=lambda o: o.get('hb_cubby_index', 0))
@@ -1062,7 +1429,7 @@ class ClosetStarter(GeoNodeCage):
                 child.location = (x, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', interior_h)
-                part.set_input('Width', depth)
+                part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
         cub_shelves = groups.get(PART_ROLE_CUBBY_SHELF, [])
         if cub_shelves:
@@ -1074,7 +1441,7 @@ class ClosetStarter(GeoNodeCage):
                 child.location = (0.0, 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', width)
-                part.set_input('Width', depth)
+                part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
 
     # ----- regenerators (create/remove children to match config) -----
@@ -1200,6 +1567,31 @@ class ClosetStarter(GeoNodeCage):
             obj['hb_adj_index'] = len(existing)
             existing.append(obj)
 
+    def _reconcile_slanted_shelves(self, opening):
+        """Slanted shoe shelves: create/remove tilted shelves to match the
+        quantity, each carrying a metal shoe fence child (removed with it).
+        Positions and angle come from the layout pass."""
+        qty = max(0, int(opening.get(PROP_SLANT_QTY, 0)))
+        existing = [c for c in opening.children
+                    if c.get('hb_part_role') == PART_ROLE_SLANTED_SHELF]
+        existing.sort(key=lambda o: o.get('hb_slant_index', 0))
+        while len(existing) > qty:
+            _remove_part_tree(existing.pop())  # shelf + its fence child
+        while len(existing) < qty:
+            shelf = CabinetPart()
+            shelf.create('Slanted Shelf')
+            shelf.obj.parent = opening
+            shelf.obj['hb_part_role'] = PART_ROLE_SLANTED_SHELF
+            shelf.obj['hb_slant_index'] = len(existing)
+            shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            shelf.set_input('Mirror Y', True)
+            fence = CabinetPart()
+            fence.create('Shoe Fence')
+            fence.obj.parent = shelf.obj
+            fence.obj['hb_part_role'] = PART_ROLE_SHOE_FENCE
+            fence.set_input('Mirror Y', True)
+            existing.append(shelf.obj)
+
     def _make_front(self, opening, name, role, side):
         """Vertical slab front. rot_x 90 stands the part up (thickness
         extrudes -Y); BACK-side fronts Mirror Z to extrude +Y instead."""
@@ -1241,7 +1633,9 @@ class ClosetStarter(GeoNodeCage):
                 1 if bay_obj.get(PROP_BAY_IS_HAMPER) else 0)
             existing.append(front.obj)
         for i, obj in enumerate(existing):
-            if swing == 'DOUBLE':
+            if obj.get('hb_is_hamper'):
+                obj['hb_hinge'] = 'BOTTOM'
+            elif swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
             elif swing == 'LIFT_UP':
                 obj['hb_hinge'] = 'TOP'
@@ -1301,11 +1695,13 @@ class ClosetStarter(GeoNodeCage):
             obj['hb_is_hamper'] = 1 if opening.get(PROP_IS_HAMPER) else 0
             existing.append(obj)
         # Hinge side per leaf (drives pull placement + open swing): a
-        # DOUBLE pair hinges outward so the pulls meet at the center; a
-        # lift-up door hinges at the TOP; singles hinge on their swing
-        # side.
+        # tilt-out hamper hinges at the BOTTOM; a DOUBLE pair hinges
+        # outward so the pulls meet at the center; a lift-up door hinges
+        # at the TOP; singles hinge on their swing side.
         for i, obj in enumerate(existing):
-            if swing == 'DOUBLE':
+            if obj.get('hb_is_hamper'):
+                obj['hb_hinge'] = 'BOTTOM'
+            elif swing == 'DOUBLE':
                 obj['hb_hinge'] = 'LEFT' if i == 0 else 'RIGHT'
             elif swing == 'LIFT_UP':
                 obj['hb_hinge'] = 'TOP'
@@ -1317,7 +1713,8 @@ class ClosetStarter(GeoNodeCage):
         fronts = [c for c in opening.children
                   if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
         boxes = [c for c in opening.children
-                 if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX]
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
+                 and not c.get('hb_rollout')]
         fronts.sort(key=lambda o: o.get('hb_drawer_index', 0))
         boxes.sort(key=lambda o: o.get('hb_drawer_index', 0))
         while len(fronts) > qty:
@@ -1335,6 +1732,26 @@ class ClosetStarter(GeoNodeCage):
             box.obj.parent = opening
             box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
             box.obj['hb_drawer_index'] = len(boxes)
+            boxes.append(box.obj)
+
+    def _reconcile_rollouts(self, opening):
+        """Pullout trays: drawer boxes with no fronts. Same box part and
+        role as a drawer box (tagged hb_rollout so the drawer reconciler
+        leaves them alone); laid out evenly by the opening layout."""
+        qty = max(0, int(opening.get(PROP_ROLLOUT_QTY, 0)))
+        boxes = [c for c in opening.children
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
+                 and c.get('hb_rollout')]
+        boxes.sort(key=lambda o: o.get('hb_rollout_index', 0))
+        while len(boxes) > qty:
+            bpy.data.objects.remove(boxes.pop(), do_unlink=True)
+        while len(boxes) < qty:
+            box = GeoNodeDrawerBox()
+            box.create('Rollout Tray')
+            box.obj.parent = opening
+            box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
+            box.obj['hb_rollout'] = 1
+            box.obj['hb_rollout_index'] = len(boxes)
             boxes.append(box.obj)
 
     def _reconcile_cubbies(self, opening):
@@ -1428,11 +1845,21 @@ class ClosetStarter(GeoNodeCage):
                 op_obj['hb_opening_index'] = i
 
     def _layout_starter_parts(self, layout, scene_props, sp):
+        # Only a unit with a top to cap takes a countertop - a base run
+        # or an island. A tall or hanging unit finishes at its own top
+        # shelf, so the prompt is not offered there and a value left on
+        # by an older file is ignored rather than built.
+        want_ctop = self.has_countertop and sp.include_countertop
         ctop = self._root_part(PART_ROLE_COUNTERTOP)
-        if ctop is None and sp.include_countertop:
-            # Lazily create the part so include_countertop works on
-            # starters whose class didn't seed one (Tall/Hanging, and
-            # units placed before this landed).
+        if ctop is not None and not self.has_countertop:
+            # An older file that turned a top on where one is no longer
+            # offered: take the part out rather than leave it hidden in
+            # the outliner and on the part list.
+            bpy.data.objects.remove(ctop, do_unlink=True)
+            ctop = None
+        if ctop is None and want_ctop:
+            # Lazily created so the prompt works on units placed before
+            # the countertop landed.
             part = CabinetPart()
             part.create('Countertop')
             part.obj.parent = self.obj
@@ -1441,20 +1868,104 @@ class ClosetStarter(GeoNodeCage):
             ctop = part.obj
         if ctop is not None:
             part = GeoNodeCutpart(ctop)
-            if self.ctop_overhang_all:
-                oh = const.ISLAND_CTOP_OVERHANG
-                ctop.location = (-oh, oh, sp.height)
-                part.set_input('Length', sp.width + 2 * oh)
-                part.set_input('Width', sp.depth + 2 * oh)
-            else:
-                ctop.location = (0.0, 0.0, sp.height)
-                part.set_input('Length', sp.width)
-                part.set_input('Width',
-                               sp.depth + const.COUNTERTOP_OVERHANG_FRONT)
-            part.set_input('Thickness', scene_props.countertop_thickness)
-            _set_part_hidden(ctop, not sp.include_countertop)
+            # Overhang per side. The run grows left/right by the side
+            # overhangs and front/back by the front and rear ones; the
+            # part is drawn from its back-left corner.
+            # Overhang per side; the top is drawn from its back-left
+            # corner, so the left and rear overhangs move its origin.
+            oh_l = sp.countertop_overhang_left
+            oh_r = sp.countertop_overhang_right
+            oh_f = sp.countertop_overhang_front
+            oh_b = sp.countertop_overhang_rear
+            ctop.location = (-oh_l, oh_b, sp.height)
+            part.set_input('Length', sp.width + oh_l + oh_r)
+            part.set_input('Width', sp.depth + oh_f + oh_b)
+            part.set_input('Thickness', sp.countertop_thickness)
+            # Exposed-end treatment travels with the part so the edging
+            # and corner work downstream match what was asked for here.
+            ctop['hb_ctop_left_finished'] = (
+                1 if sp.countertop_left_finished_end else 0)
+            ctop['hb_ctop_right_finished'] = (
+                1 if sp.countertop_right_finished_end else 0)
+            ctop['hb_ctop_corner_radius'] = (
+                const.COUNTERTOP_END_RADIUS
+                if sp.countertop_radius_finished_ends else 0.0)
+            _set_part_hidden(ctop, not want_ctop)
 
+        self._layout_backsplashes(scene_props, sp)
         self._layout_accent_shelf(scene_props, sp)
+
+    def _backsplash_part(self, slot):
+        for c in self.obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_BACKSPLASH
+                    and c.get('hb_splash_slot') == slot):
+                return c
+        return None
+
+    def _layout_backsplashes(self, scene_props, sp):
+        """Upstands along the countertop's wall edges: one across the
+        back, plus one at each end that meets a wall. An end marked
+        finished is exposed, so it gets no splash. Lazily created the
+        same way the countertop is, so turning the prompt on works on
+        units built before it existed. Splash thickness follows the
+        countertop's, matching the prior library.
+
+        Each splash is anchored on the countertop edge it stands on, so
+        its thickness has to grow back across the top rather than out
+        past that edge: the rear one forward off the back edge and the
+        right-hand one inward off the right edge, which is what the two
+        mirrored slots below are for. The left one already grows the
+        right way unmirrored. Orientation and mirroring are rewritten on
+        every pass so a splash built before this was settled corrects
+        itself the next time the closet recalculates."""
+        on = (self.has_countertop and sp.include_countertop
+              and sp.include_backsplash)
+        oh_l = sp.countertop_overhang_left
+        oh_r = sp.countertop_overhang_right
+        oh_f = sp.countertop_overhang_front
+        oh_b = sp.countertop_overhang_rear
+        thk = sp.countertop_thickness
+        run = sp.width + oh_l + oh_r
+        reach = abs(sp.depth + oh_f + oh_b - thk)
+        z = sp.height + thk
+        specs = (
+            ('REAR', on, "Backsplash",
+             (-oh_l, oh_b, z), 0.0, run, True),
+            ('LEFT', on and not sp.countertop_left_finished_end,
+             "Left Backsplash", (-oh_l, oh_b - thk, z),
+             math.radians(-90), reach, False),
+            ('RIGHT', on and not sp.countertop_right_finished_end,
+             "Right Backsplash", (sp.width + oh_r, oh_b - thk, z),
+             math.radians(-90), reach, True),
+        )
+        for slot, show, label, loc, rot_z, length, mirror_z in specs:
+            splash = self._backsplash_part(slot)
+            if splash is not None and not self.has_countertop:
+                # An older file that turned a top on where one is no
+                # longer offered: take the splash out with it rather than
+                # leave it hidden in the outliner and on the part list.
+                bpy.data.objects.remove(splash, do_unlink=True)
+                continue
+            if splash is None:
+                if not show:
+                    continue
+                part = CabinetPart()
+                part.create(label)
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = PART_ROLE_BACKSPLASH
+                part.obj['hb_splash_slot'] = slot
+                splash = part.obj
+            # Tipped up on edge so its height stands off the top, then
+            # turned to run along whichever edge it belongs to.
+            splash.rotation_euler = (math.radians(-90), 0.0, rot_z)
+            splash.location = loc
+            cut = GeoNodeCutpart(splash)
+            cut.set_input('Mirror Y', True)
+            cut.set_input('Mirror Z', mirror_z)
+            cut.set_input('Length', length)
+            cut.set_input('Width', sp.backsplash_height)
+            cut.set_input('Thickness', thk)
+            _set_part_hidden(splash, not show)
 
     def _layout_accent_shelf(self, scene_props, sp):
         """A decorative shelf laid on top of the
@@ -1507,12 +2018,29 @@ class ClosetStarter(GeoNodeCage):
         bay's depth and shelf heights so they line up with that bay's
         fixed shelves (top_z / bottom_z are shelf undersides)."""
         st = scene_props.shelf_thickness
+        # One-time migration: units built before the bridge prompts
+        # existed carry the settings as idprops. Move them onto the
+        # prompts once, then read the prompts from here on.
+        for key in ('left', 'right'):
+            if f'hb_bridge_{key}' in self.obj:
+                setattr(sp, f'bridge_{key}',
+                        bool(self.obj[f'hb_bridge_{key}']))
+                del self.obj[f'hb_bridge_{key}']
+            if f'hb_bridge_w_{key}' in self.obj:
+                setattr(sp, f'bridge_{key}_width',
+                        float(self.obj[f'hb_bridge_w_{key}']))
+                del self.obj[f'hb_bridge_w_{key}']
+            if f'hb_bridge_bot_{key}' in self.obj:
+                setattr(sp, f'include_bottom_bridge_{key}',
+                        bool(self.obj[f'hb_bridge_bot_{key}']))
+                del self.obj[f'hb_bridge_bot_{key}']
+
         for side in ('LEFT', 'RIGHT'):
             key = side.lower()
-            enabled = bool(self.obj.get(f'hb_bridge_{key}'))
-            span = float(self.obj.get(f'hb_bridge_w_{key}', 0.0))
+            enabled = getattr(sp, f'bridge_{key}')
+            span = getattr(sp, f'bridge_{key}_width')
             bottom_on = (enabled
-                         and bool(self.obj.get(f'hb_bridge_bot_{key}')))
+                         and getattr(sp, f'include_bottom_bridge_{key}'))
             bay = layout['bays'][0 if side == 'LEFT' else -1]
             base_x = -span if side == 'LEFT' else sp.width
             specs = (
@@ -1613,6 +2141,8 @@ class ClosetStarter(GeoNodeCage):
             bp.width_locked = False
             bp.height = src.height
             bp.depth = src.depth
+            bp.height_locked = src.height_locked
+            bp.depth_locked = src.depth_locked
             bp.floor_mounted = src.floor_mounted
             self._build_bay_parts(bay.obj)
         finally:
@@ -2078,6 +2608,9 @@ def find_bay_cage(obj):
 
 
 DOOR_OPEN_ANGLE = math.radians(110.0)
+# A tilt-out hamper front pivots at its bottom edge and tilts out this
+# far when fully open (angle from the prior library).
+HAMPER_TILT_ANGLE = math.radians(50.0)
 
 
 def apply_door_open(door, frac):
@@ -2118,6 +2651,14 @@ def apply_door_open(door, frac):
                          cy - math.sin(ang) * h,
                          cz + h - math.cos(ang) * h)
         door.rotation_euler = (math.radians(90.0) - ang, 0.0, 0.0)
+        return
+    if hinge == 'BOTTOM':
+        # Tilt-out hamper: pivot at the BOTTOM edge (the door origin),
+        # the top swinging out into the room. The origin stays put; the
+        # front just rotates about world X by the tilt angle.
+        ang = HAMPER_TILT_ANGLE * frac * swing
+        door.location = (cx, cy, cz)
+        door.rotation_euler = (math.radians(90.0) + ang, 0.0, 0.0)
         return
     if hinge == 'LEFT':
         ez = -DOOR_OPEN_ANGLE * frac * swing
@@ -2257,9 +2798,13 @@ def clear_opening_contents(opening):
     (the regenerators remove their parts on the next recalc) and delete
     loose parts (rods). Splitting shelves are bay structure, not
     contents - clear_bay_contents handles those."""
-    for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY,
-                PROP_DRAWER_FRONT_HEIGHT, PROP_DOOR_SWING, PROP_IS_HAMPER,
-                PROP_CUBBY_COLS, PROP_CUBBY_ROWS):
+    for key in (PROP_ADJ_SHELF_QTY, PROP_DRAWER_QTY, PROP_ROLLOUT_QTY,
+                PROP_ROLLOUT_HEIGHT,
+                PROP_SLANT_QTY, PROP_SLANT_SPACING, PROP_SLANT_ANGLE,
+                PROP_SLANT_COLOR,
+                PROP_DRAWER_FRONT_HEIGHT, PROP_DRAWER_BOX_OVERRIDE,
+                PROP_DOOR_SWING, PROP_IS_HAMPER,
+                PROP_CUBBY_COLS, PROP_CUBBY_ROWS, PROP_CUBBY_SETBACK):
         if key in opening:
             del opening[key]
     for child in list(opening.children):
@@ -2292,12 +2837,23 @@ def serialize_opening(opening):
     return {
         'adj': int(opening.get(PROP_ADJ_SHELF_QTY, 0)),
         'drawer_qty': int(opening.get(PROP_DRAWER_QTY, 0)),
+        'rollout_qty': int(opening.get(PROP_ROLLOUT_QTY, 0)),
+        'rollout_h': float(opening.get(PROP_ROLLOUT_HEIGHT,
+                                       const.ROLLOUT_HEIGHT)),
+        'slant_qty': int(opening.get(PROP_SLANT_QTY, 0)),
+        'slant_spacing': float(opening.get(PROP_SLANT_SPACING,
+                                           const.SLANT_SHELF_SPACING)),
+        'slant_angle': float(opening.get(PROP_SLANT_ANGLE, 0.0)),
+        'slant_color': opening.get(PROP_SLANT_COLOR, ''),
         'drawer_fh': float(opening.get(PROP_DRAWER_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)),
+        'drawer_box': opening.get(PROP_DRAWER_BOX_OVERRIDE, ''),
         'door_swing': opening.get(PROP_DOOR_SWING, ''),
         'is_hamper': int(opening.get(PROP_IS_HAMPER, 0)),
         'cubby_cols': int(opening.get(PROP_CUBBY_COLS, 1)),
         'cubby_rows': int(opening.get(PROP_CUBBY_ROWS, 1)),
+        'cubby_setback': float(opening.get(PROP_CUBBY_SETBACK,
+                                           const.CUBBY_SETBACK)),
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -2313,12 +2869,28 @@ def apply_opening_data(opening, data, recalc=True):
     if data.get('drawer_qty'):
         opening[PROP_DRAWER_QTY] = data['drawer_qty']
         opening[PROP_DRAWER_FRONT_HEIGHT] = data['drawer_fh']
+        if data.get('drawer_box'):
+            opening[PROP_DRAWER_BOX_OVERRIDE] = data['drawer_box']
+    if data.get('rollout_qty'):
+        opening[PROP_ROLLOUT_QTY] = data['rollout_qty']
+        opening[PROP_ROLLOUT_HEIGHT] = data.get('rollout_h',
+                                                const.ROLLOUT_HEIGHT)
+    if data.get('slant_qty'):
+        opening[PROP_SLANT_QTY] = data['slant_qty']
+        opening[PROP_SLANT_SPACING] = data.get('slant_spacing',
+                                               const.SLANT_SHELF_SPACING)
+        opening[PROP_SLANT_ANGLE] = data.get(
+            'slant_angle', math.radians(const.SLANT_SHELF_ANGLE_DEG))
+        if data.get('slant_color'):
+            opening[PROP_SLANT_COLOR] = data['slant_color']
     if data.get('door_swing'):
         opening[PROP_DOOR_SWING] = data['door_swing']
         opening[PROP_IS_HAMPER] = data.get('is_hamper', 0)
     if data.get('cubby_cols', 1) > 1 or data.get('cubby_rows', 1) > 1:
         opening[PROP_CUBBY_COLS] = data.get('cubby_cols', 1)
         opening[PROP_CUBBY_ROWS] = data.get('cubby_rows', 1)
+        opening[PROP_CUBBY_SETBACK] = data.get('cubby_setback',
+                                               const.CUBBY_SETBACK)
     for z in data.get('rods', ()):
         add_rod(opening, z)
     if recalc and root is not None:
@@ -2566,7 +3138,8 @@ OPENING_CONFIG_GROUPS = [
      ('DRAWERS_3', "3 Drawer"), ('DRAWERS_4', "4 Drawer"),
      ('DRAWERS_5', "5 Drawer"), ('DRAWERS_6', "6 Drawer"),
      ('DRAWERS_7', "7 Drawer"), ('DRAWERS_8', "8 Drawer")],
-    [('CUBBIES', "Cubbies")],
+    [('CUBBIES', "Cubbies"),
+     ('ROLLOUTS', "Rollout Trays")],
 ]
 OPENING_CONFIGS = [item for group in OPENING_CONFIG_GROUPS for item in group]
 
@@ -2595,6 +3168,9 @@ def apply_opening_config(opening, config):
     elif config == 'CUBBIES':
         opening[PROP_CUBBY_COLS] = 3
         opening[PROP_CUBBY_ROWS] = 3
+    elif config == 'ROLLOUTS':
+        opening[PROP_ROLLOUT_QTY] = const.ROLLOUT_DEFAULT_QTY
+        opening[PROP_ROLLOUT_HEIGHT] = const.ROLLOUT_HEIGHT
     elif config.startswith('DRAWERS_'):
         try:
             opening[PROP_DRAWER_QTY] = int(config.split('_')[1])

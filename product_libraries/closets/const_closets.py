@@ -14,6 +14,9 @@ PANEL_THICKNESS = inch(0.75)
 SHELF_THICKNESS = inch(0.75)
 COUNTERTOP_THICKNESS = inch(1.125)
 APPLIED_BACK_THICKNESS = inch(0.75)
+# How far an applied back laps onto the panels and shelves around the
+# bay it closes.
+APPLIED_BACK_OVERLAY = inch(0.3125)
 CLEAT_WIDTH = inch(4.0)
 # End-panel batten: a cosmetic scribe strip against the
 # inner face of an end panel at the front edge.
@@ -43,15 +46,51 @@ HANGING_PANEL_HEIGHT = millimeter(1267)
 # section top-aligns with an adjacent tall tower (tall panel height).
 HANGING_TOP_HEIGHT = millimeter(2131)
 
+
+def inch_label(mm_value):
+    """Readable inch-fraction label for a millimeter size ('32 1/4"')."""
+    sixteenths = int(round(mm_value / 25.4 * 16.0))
+    whole, rem = divmod(sixteenths, 16)
+    if rem == 0:
+        return '%d"' % whole
+    num, den = rem, 16
+    while num % 2 == 0:
+        num //= 2
+        den //= 2
+    if whole:
+        return '%d %d/%d"' % (whole, num, den)
+    return '%d/%d"' % (num, den)
+
+
+# Standard panel / section heights: the full 32mm-system lattice the
+# prior library offered, 83mm through 3027mm in 32mm steps. The mm
+# string is the identifier, so a height picked here is the same height
+# the prior library produced.
+PANEL_HEIGHT_MIN_MM = 83
+PANEL_HEIGHT_MAX_MM = 3027
+PANEL_HEIGHT_ITEMS = [
+    (str(v), inch_label(v), inch_label(v))
+    for v in range(PANEL_HEIGHT_MIN_MM, PANEL_HEIGHT_MAX_MM + 1, 32)
+]
+
+
+def nearest_panel_height_key(value):
+    """Closest PANEL_HEIGHT_ITEMS identifier for a distance, or '' when
+    the distance is off the lattice by more than half a step."""
+    mm = value / millimeter(1.0)
+    n = int(round((mm - PANEL_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0), (PANEL_HEIGHT_MAX_MM - PANEL_HEIGHT_MIN_MM) // 32)
+    snapped = PANEL_HEIGHT_MIN_MM + n * 32
+    return str(snapped) if abs(snapped - mm) <= 0.5 else ''
+
 # ---------------------------------------------------------------------------
 # Toe kick
 # ---------------------------------------------------------------------------
 DEFAULT_TOE_KICK_HEIGHT = millimeter(96)   # 3.78"
 DEFAULT_TOE_KICK_SETBACK = inch(1.625)
 
-# Standard kick-height choices (mm string, label) for a kick-height
-# dropdown; the starter prompts currently expose a plain distance
-# defaulting to 96mm.
+# Standard kick-height choices (mm string, label) for the kick-height
+# dropdown in the starter prompts. Custom is offered alongside these.
 KICK_HEIGHT_ITEMS = [
     ('64', '2 1/2"', '2 1/2"'),
     ('96', '3 3/4"', '3 3/4"'),
@@ -68,6 +107,19 @@ KICK_HEIGHT_ITEMS = [
 # Countertop (Base and Island starters)
 # ---------------------------------------------------------------------------
 COUNTERTOP_OVERHANG_FRONT = inch(1.875)
+# Backsplash: an upstand along the wall edge of a countertop.
+BACKSPLASH_HEIGHT = inch(4.0)
+BACKSPLASH_THICKNESS = inch(0.75)
+# Radius applied to a countertop's finished (exposed) end corners when
+# the radius option is on.
+COUNTERTOP_END_RADIUS = inch(1.5)
+
+# Amount an end panel grows past the section top when it is extended to
+# wrap a countertop.
+EXTEND_PANEL_AMOUNT = inch(1.125)
+
+# Bridge shelves spanning the gap to a corner neighbor.
+BRIDGE_SHELF_WIDTH = inch(14.0)
 
 # Top accent shelf: a decorative shelf laid on top of the run, projecting
 # forward (and past finished ends) by the overhang. Default 1".
@@ -125,6 +177,26 @@ L_NOTCH_TOOL_RADIUS = inch(0.25)
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.5)
 ADJ_SHELF_DEFAULT_QTY = 3
+# Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
+# opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side
+# clearance for the slides is ROLLOUT_SLIDE_GAP per side.
+ROLLOUT_DEFAULT_QTY = 3
+ROLLOUT_HEIGHT = inch(4.0)
+ROLLOUT_SLIDE_GAP = inch(0.327)
+# Smallest gap left between stacked trays / above and below the stack.
+ROLLOUT_MIN_GAP = inch(1.0)
+# Cubbies: a grid of divisions and shelves filling an opening. Both are
+# held back from the front edge by the setback.
+CUBBY_SETBACK = inch(0.25)
+# Slanted shoe shelves: angled shelves stacked bottom-up, each with a
+# metal shoe fence across the front. Sizes ported from the prior library.
+SLANT_SHELF_DEFAULT_QTY = 4
+SLANT_SHELF_SPACING = inch(8.0)       # Distance Between Shelves
+SLANT_SHELF_ANGLE_DEG = 17.25         # Shelf Angle (degrees)
+SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
+SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
+SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
+SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
 # Modal add-part height snapping increment (legacy fallback; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)

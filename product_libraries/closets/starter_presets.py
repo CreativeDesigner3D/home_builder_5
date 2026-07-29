@@ -35,6 +35,8 @@ STARTER_MENU_ENTRIES = [entry for _sec, entries in STARTER_SECTIONS
 # face_frame's BAY_PROPS does.
 BAY_PROP_DEFAULTS = {
     'width_locked': False,
+    'height_locked': False,
+    'depth_locked': False,
     'remove_bottom': False,
     'remove_cleat': False,
 }
