@@ -810,6 +810,11 @@ class Closets_Scene_Props(PropertyGroup):
         description="Profile used by Add Crown Molding",
         items=molding_closets.profile_enum_items)  # type: ignore
 
+    closet_base_profile: EnumProperty(
+        name="Base Profile",
+        description="Profile used by Add Base Molding",
+        items=molding_closets.base_profile_enum_items)  # type: ignore
+
     # ----- Library UI state -----
     show_closet_sizes: BoolProperty(name="Show Closet Sizes", default=False)  # type: ignore
     show_starter_library: BoolProperty(name="Show Closet Starters", default=True)  # type: ignore
@@ -943,10 +948,19 @@ class Closets_Scene_Props(PropertyGroup):
             option_row(opts, "Drawer Box").prop(
                 self, 'closet_drawer_box', text="")
 
-            mrow = option_row(opts, "Molding")
+            mrow = option_row(opts, "Crown Molding")
             mrow.prop(self, 'closet_crown_profile', text="")
-            mrow.operator('hb_closets.add_molding', text="", icon='ADD')
-            mrow.operator('hb_closets.delete_molding', text="", icon='X')
+            mrow.operator('hb_closets.add_molding', text="",
+                          icon='ADD').molding_kind = 'CROWN'
+            mrow.operator('hb_closets.delete_molding', text="",
+                          icon='X').molding_kind = 'CROWN'
+
+            brow = option_row(opts, "Base Molding")
+            brow.prop(self, 'closet_base_profile', text="")
+            brow.operator('hb_closets.add_molding', text="",
+                          icon='ADD').molding_kind = 'BASE'
+            brow.operator('hb_closets.delete_molding', text="",
+                          icon='X').molding_kind = 'BASE'
 
 
 classes = (

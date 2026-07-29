@@ -3688,49 +3688,89 @@ class hb_closets_OT_install_model_pack(bpy.types.Operator):
 
 
 class hb_closets_OT_add_molding(bpy.types.Operator):
-    """Add crown molding along the top of every closet in the room
-    using the selected profile (re-run after layout changes; clears
-    each starter's previous crown first)."""
+    """Add molding along every closet in the room using the selected
+    profile (re-run after layout changes; clears each starter's previous
+    run of the same kind first)."""
     bl_idname = "hb_closets.add_molding"
-    bl_label = "Add Crown Molding"
+    bl_label = "Add Molding"
     bl_options = {'UNDO'}
+
+    molding_kind: bpy.props.StringProperty(
+        name="Kind", default='CROWN')  # type: ignore
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.molding_kind == 'BASE':
+            return ("Add base molding along the floor of every closet in "
+                    "the room using the selected profile (hanging bays "
+                    "are skipped)")
+        return ("Add crown molding along the top of every closet in the "
+                "room using the selected profile (bays under 60\" are "
+                "skipped)")
 
     def execute(self, context):
         from .. import molding_closets
-        profile_name = getattr(context.scene.hb_closets,
-                               'closet_crown_profile',
-                               molding_closets.DEFAULT_PROFILE)
-        profile = molding_closets.load_profile(profile_name)
+        kind = (self.molding_kind
+                if self.molding_kind in molding_closets.KINDS else 'CROWN')
+        base = kind == 'BASE'
+        prop_name = ('closet_base_profile' if base
+                     else 'closet_crown_profile')
+        # A dynamic enum reads back empty until something sets it, so an
+        # untouched dropdown falls through to the kind's standard profile
+        # rather than quietly adding nothing.
+        profile_name = (getattr(context.scene.hb_closets, prop_name, '')
+                        or molding_closets.KINDS[kind][1])
+        profile = molding_closets.load_profile(profile_name, kind)
+        label = "Base" if base else "Crown"
         if profile is None:
-            self.report({'WARNING'}, "Crown profile not found")
+            self.report({'WARNING'}, f"{label} profile not found")
             return {'CANCELLED'}
+        add = (molding_closets.add_base_to_starter if base
+               else molding_closets.add_crown_to_starter)
         made = 0
         for obj in context.scene.objects:
             if (obj.get(types_closets.TAG_STARTER_CAGE)
                     and not str(obj.get('CLASS_NAME', '')
                                 ).startswith('LShelf')):
-                made += molding_closets.add_crown_to_starter(obj, profile)
+                made += add(obj, profile)
         if made == 0:
-            self.report({'INFO'},
-                        "No qualifying runs (bays under 60\" are skipped)")
+            skipped = ("hanging bays are skipped" if base
+                       else "bays under 60\" are skipped")
+            self.report({'INFO'}, f"No qualifying runs ({skipped})")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Added crown to {made} runs")
+        self.report({'INFO'}, f"Added {label.lower()} to {made} runs")
         return {'FINISHED'}
 
 
 class hb_closets_OT_delete_molding(bpy.types.Operator):
-    """Remove all closet molding from the room"""
+    """Remove closet molding from the room"""
     bl_idname = "hb_closets.delete_molding"
     bl_label = "Clear Closet Molding"
     bl_options = {'UNDO'}
 
+    # Empty clears both runs; a kind clears just that one.
+    molding_kind: bpy.props.StringProperty(name="Kind", default="")  # type: ignore
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.molding_kind == 'BASE':
+            return "Remove all closet base molding from the room"
+        if properties.molding_kind == 'CROWN':
+            return "Remove all closet crown molding from the room"
+        return "Remove all closet molding from the room"
+
     def execute(self, context):
         from .. import molding_closets
+        kind = self.molding_kind or None
         removed = 0
         for obj in list(context.scene.objects):
-            if obj.get(molding_closets.TAG_MOLDING):
-                bpy.data.objects.remove(obj, do_unlink=True)
-                removed += 1
+            if not obj.get(molding_closets.TAG_MOLDING):
+                continue
+            if kind is not None and obj.get(
+                    molding_closets.PROP_MOLDING_KIND, 'CROWN') != kind:
+                continue
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed += 1
         self.report({'INFO'}, f"Removed {removed} molding runs")
         return {'FINISHED'}
 
