@@ -691,10 +691,17 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             # per bay with editable size + an expand toggle for more.
             ui_face_frame.draw_bays_in_prompts(layout, root)
             # Applied panels: surface the auto-openings toggle so a user
-            # can return a manually-pinned panel to width-driven openings.
+            # can return a manually-pinned panel to width-driven openings,
+            # plus the vertical-divisions override (0 = width-driven).
+            # The override only applies while Auto Openings is on -- a
+            # pinned panel keeps whatever tree the user built by hand.
             if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                     or types_face_frame._is_standalone_panel(root)):
                 layout.prop(cab_props, 'panel_split_auto')
+                row = layout.row()
+                row.enabled = cab_props.panel_split_auto
+                row.prop(cab_props, 'panel_vertical_bays')
+                layout.prop(cab_props, 'panel_x_frame')
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated
@@ -1957,6 +1964,28 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.half_depth = False
             op.target_name = target_name
 
+            layout.separator()
+
+            # Tableware & Bar Storage Solutions - auto-sized from
+            # the opening; every kind is a single derived-mesh insert.
+            layout.label(text="Bar Storage")
+            for bar_kind, bar_label in (
+                ('WINE_CUBBY',       "Wine Storage Cubby"),
+                ('WINE_CELLAR',      "Wine Cellar Rack"),
+                ('WINE_LATTICE',     "Lattice Wine Rack"),
+                ('WINE_X',           "X-Style Wine Rack"),
+                ('WINE_DIAGONAL',    "Diagonal Wine Dividers"),
+                ('WINE_HALF_CIRCLE', "Half Circle Wine Rack"),
+                ('STEMWARE_RACK',    "Stemware Rack"),
+                ('PLATE_RACK',       "Plate Rack"),
+            ):
+                op = layout.operator(
+                    "hb_face_frame.add_interior_item", text=bar_label,
+                )
+                op.kind = bar_kind
+                op.half_depth = False
+                op.target_name = target_name
+
             # Operator buttons in a popup_menu default to EXEC context,
             # which would skip invoke() and add the default item without
             # showing the picker. Force INVOKE so the props dialog opens.
@@ -2491,7 +2520,7 @@ def _interior_product_enum(self, context):
 class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
     """Add a catalog interior accessory (used behind a standard swing
     door) to the selected opening or region as an ACCESSORY interior
-    item. Data only -- drives the 2D legend + pricing, no 3D effect."""
+    item. Data only -- drives the 2D legend + reports, no 3D effect."""
     bl_idname = "hb_face_frame.add_interior_accessory"
     bl_label = "Add Accessory"
     bl_description = (
@@ -2694,7 +2723,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
     opening, showing the model's minimum opening width. Pull-out / trash
     models convert the opening front to a pullout and set the opening width;
     every other accessory is stored as a data-only ACCESSORY interior item
-    (drives the 2D legend + pricing, no 3D effect)."""
+    (drives the 2D legend + reports, no 3D effect)."""
     bl_idname = "hb_face_frame.add_accessory"
     bl_label = "Add Accessory"
     bl_description = (
@@ -2753,24 +2782,32 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
         layout.prop(self, "product")
         host, item = self._selected()
         is_pullout = host == _ACCESSORY_PULLOUT_HOST
-        if is_pullout:
+        tgt = _resolve_interior_target(self, context)
+        # A pullout aimed at an interior REGION stays a data-only item
+        # (no front conversion, no bay-width write) -- the width field
+        # would set the BAY width, which is wrong for a divider region.
+        region_pullout = (is_pullout and tgt is not None
+                          and tgt.get(types_face_frame.TAG_INTERIOR_REGION))
+        if is_pullout and not region_pullout:
             layout.prop(self, "opening_width")
         box = layout.box()
         if item is None:
             box.label(text="No accessory selected")
             return
         box.label(text="Accessory: %s" % item.get('name', self.product))
-        if is_pullout:
+        if region_pullout:
+            box.label(text="Adds the pullout inside this divider region "
+                           "(front unchanged)", icon='INFO')
+        elif is_pullout:
             box.label(text="Adds a pullout front to the opening", icon='INFO')
         mw = item.get('min_opening_w')
         if mw is None:
             box.label(text="Minimum opening width: not specified")
         else:
             box.label(text="Minimum opening width: %g\"" % mw)
-            if is_pullout:
+            if is_pullout and not region_pullout:
                 ow = meter_to_inch(self.opening_width)
             else:
-                tgt = _resolve_interior_target(self, context)
                 ow = _opening_width_in(tgt) if tgt is not None else None
             if ow is not None and ow + 1e-6 < mw:
                 box.label(
@@ -2789,6 +2826,32 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
             return {'CANCELLED'}
 
         if host == _ACCESSORY_PULLOUT_HOST:
+            # Pull-out / trash on an interior REGION: the divider splits
+            # one opening behind one front (e.g. a trash pullout one side
+            # of a vertical divider, a foil pullout the other), so
+            # converting the whole opening is wrong -- store the model as
+            # a data-only ACCESSORY item on the region instead. Drives
+            # the 2D legend; the opening's front (the door attached to
+            # the pullout) is left alone.
+            if target.get(types_face_frame.TAG_INTERIOR_REGION):
+                region_props = _interior_items_target(target)
+                if region_props is None:
+                    self.report({'WARNING'},
+                                "Select an opening or interior region first")
+                    return {'CANCELLED'}
+                new_item = region_props.interior_items.add()
+                new_item.kind = 'ACCESSORY'
+                new_item.accessory_label = name
+                new_item.accessory_code = self.product
+                region_props.interior_items_index = (
+                    len(region_props.interior_items) - 1)
+                root = types_face_frame.find_cabinet_root(target)
+                if root is not None:
+                    types_face_frame.recalculate_face_frame_cabinet(root)
+                self.report({'INFO'},
+                            "Added %s to the divider region (front "
+                            "unchanged)" % name)
+                return {'FINISHED'}
             # Pull-out / trash: convert the opening front and record the model,
             # mirroring hb_face_frame.add_pullout_accessory.
             if not target.get(types_face_frame.TAG_OPENING_CAGE):
@@ -3770,7 +3833,7 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     object (None for an empty roots list).
 
     No bpy.ops and no selection handling, so it is callable from any
-    context -- the operator delegates here, and Spaces' 2D generation
+    context -- the operator delegates here, and the host add-on's 2D generation
     calls it directly to auto-group ungrouped free-standing runs
     (peninsulas) so the island view machinery can target them.
     """

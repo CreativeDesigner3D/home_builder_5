@@ -33,6 +33,7 @@ from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
+from . import bar_storage
 from . import pulls
 
 
@@ -305,7 +306,7 @@ PART_ROLE_APRON = 'APRON'
 # panels (proud of the leaf, with reveal gaps that read as faux mid
 # rails) so it looks like a drawer stack but opens as one door. Built in
 # _update_fronts_in_opening as children of the door part (inherit swing);
-# carry no DOOR_STYLE_NAME, so pricing / machining see one door.
+# carry no DOOR_STYLE_NAME, so downstream consumers see one door.
 PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
@@ -460,6 +461,11 @@ PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+# Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
+# / half-circle, stemware, plate rack). One role for the whole family:
+# each insert is a single derived mesh built in bar_storage.py; the
+# specific product is read from the interior item's kind.
+PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
 # Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
 # top of an appliance bay so plan views read like a dealer drawing.
 # Wiped + recreated every recalc (sized from the live bay cage); the
@@ -493,6 +499,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_VANITY_SHELF,
     PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_ACCESSORY_LABEL,
+    PART_ROLE_BAR_STORAGE,
     PART_ROLE_INTERIOR_DIVISION,
     PART_ROLE_INTERIOR_FIXED_SHELF,
     PART_ROLE_INTERIOR_FF_RAIL,
@@ -513,6 +520,16 @@ INTERIOR_KIND_TO_ROLE = {
     'ACCESSORY':             PART_ROLE_ACCESSORY_LABEL,
     'INTERIOR_DIVISION':     PART_ROLE_INTERIOR_DIVISION,
     'INTERIOR_FIXED_SHELF':  PART_ROLE_INTERIOR_FIXED_SHELF,
+    # Bar storage family: every kind materializes as one derived mesh
+    # under the shared role.
+    'WINE_CUBBY':            PART_ROLE_BAR_STORAGE,
+    'WINE_CELLAR':           PART_ROLE_BAR_STORAGE,
+    'WINE_LATTICE':          PART_ROLE_BAR_STORAGE,
+    'WINE_X':                PART_ROLE_BAR_STORAGE,
+    'WINE_DIAGONAL':         PART_ROLE_BAR_STORAGE,
+    'WINE_HALF_CIRCLE':      PART_ROLE_BAR_STORAGE,
+    'STEMWARE_RACK':         PART_ROLE_BAR_STORAGE,
+    'PLATE_RACK':            PART_ROLE_BAR_STORAGE,
 }
 
 # Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
@@ -4773,7 +4790,7 @@ class FaceFrameCabinet(GeoNodeCage):
         self._apply_pipe_chase_cuts(cutter, cab)
         self._build_pipe_chase_panels(layout, cab, x_lo, x_hi, depth)
         # Publish the applied spec on the root (meters) so downstream
-        # consumers (drawings / pricing) can read it without recomputing.
+        # consumers (drawings / reports) can read it without recomputing.
         # Cleared when the chase is removed.
         self.obj['PIPE_CHASE_LOCATION'] = cab.chase_location
         self.obj['PIPE_CHASE_WIDTH'] = x_hi - x_lo
@@ -5144,6 +5161,11 @@ class FaceFrameCabinet(GeoNodeCage):
             applied_panel_sizing.apply_panel_toe_kick_notch(
                 self.obj, panel_obj, side,
             )
+            # X-Frame End braces (wipe-and-rebuild; removes the part
+            # when the panel's X Frame flag is off).
+            applied_panel_sizing.apply_panel_x_frame(
+                self.obj, panel_obj, side,
+            )
 
             # Stamp a right-click menu onto the panel's menu-less parts
             # (inset panel fronts, pivots) so clicking any part of the
@@ -5507,6 +5529,15 @@ class FaceFrameCabinet(GeoNodeCage):
         height of the door front, flush to the cabinet side. Spawn / resize
         / remove per side. Mirrors the end-stile build (rotation + mirror
         flags) shifted one face-frame thickness forward.
+
+        BLIND corner sides get the same applied part sized to the CWP
+        corner detail instead: inner edge a 1/4" reveal off the door
+        front (which pulls back to a 1/4" overlay on that side - see
+        solver.front_overlay), outer end running past the FF end to the
+        partner cabinet's planes and mitered 45 degrees so the two
+        cabinets' applied stiles close the corner. Geometry comes from
+        _corner_fo_stile_geometry; the miter is a hidden wedge cutter
+        (same pattern as the mid-stile miter).
         """
         cab = self.obj.face_frame_cabinet
         is_full = _resolve_style_overlay(self.obj) == 'FULL'
@@ -5521,13 +5552,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_FULL_OVERLAY_STILE
             and child.get(TAG_FO_STILE_SIDE) in ('LEFT', 'RIGHT')
         }
-        width = inch(1.25)
+        wall_width = inch(1.25)
         for side, stile_type, bi, ff_x in side_specs:
-            wants = is_full and stile_type == 'WALL'
+            wants_wall = is_full and stile_type == 'WALL'
+            corner_geo = None
+            if is_full and stile_type == 'BLIND' and not layout.is_angled:
+                corner_geo = self._corner_fo_stile_geometry(layout, side)
             part_obj = existing.get(side)
-            if not wants:
+            if not (wants_wall or corner_geo is not None):
                 if part_obj is not None:
                     bpy.data.objects.remove(part_obj, do_unlink=True)
+                self._clear_corner_fo_miter(side, None)
                 continue
             bay = layout.bays[bi]
             bottom_rail = solver.effective_bottom_rail_width(layout, bi)
@@ -5538,10 +5573,15 @@ class FaceFrameCabinet(GeoNodeCage):
                       + layout.default_bottom_overlay)
             door_bottom_z = (solver.bay_bottom_z(layout, bi) + bottom_rail
                              - layout.default_bottom_overlay)
-            # One fft FORWARD of the FF outer plane -> right in front of
-            # the stile (perp_offset positive is INTO the cabinet).
-            pos = solver.ff_perpendicular_offset(
-                layout, ff_x, -layout.fft, door_bottom_z)
+            if corner_geo is not None:
+                x_anchor, width, seam = corner_geo
+                pos = (x_anchor, -layout.dim_y - layout.fft, door_bottom_z)
+            else:
+                width = wall_width
+                # One fft FORWARD of the FF outer plane -> right in front
+                # of the stile (perp_offset positive is INTO the cabinet).
+                pos = solver.ff_perpendicular_offset(
+                    layout, ff_x, -layout.fft, door_bottom_z)
             if part_obj is None:
                 part = CabinetPart()
                 part.create(f'FO Stile {side[0]}')
@@ -5560,6 +5600,146 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Length', door_h)
             part.set_input('Width', width)
             part.set_input('Thickness', layout.fft)
+            if corner_geo is not None:
+                self._apply_corner_fo_miter(part_obj, layout, side, seam)
+            else:
+                self._clear_corner_fo_miter(side, part_obj)
+
+    FO_CORNER_MITER_MOD_NAME = 'FO Corner Miter'
+    FO_CORNER_REVEAL = inch(0.25)
+
+    @staticmethod
+    def _settled_world_matrix(obj):
+        """obj's world matrix with its OWN local transform read fresh.
+
+        The blind-corner apply shifts the blind cabinet's location and
+        the recalc drain runs before the depsgraph refreshes
+        matrix_world, so reading obj.matrix_world there is stale by the
+        void shift - the applied corner stile then lands short by
+        exactly that amount. Recompose only the cabinet's own level
+        (parent world @ parent_inverse @ fresh basis): the parent's
+        matrix_world must be used as-is because walls are positioned by
+        constraints, which matrix_basis composition would drop - and
+        parents don't move inside the drain."""
+        if obj.parent is None:
+            return obj.matrix_basis.copy()
+        return (obj.parent.matrix_world
+                @ obj.matrix_parent_inverse @ obj.matrix_basis)
+
+    def _corner_fo_stile_geometry(self, layout, side):
+        """Cabinet-local geometry for the applied overlay stile on a
+        FULL-overlay blind corner side: (x_anchor, width, seam).
+
+        The inner edge sits reveal + corner overlay inboard of the
+        corner stile's inner edge (a 1/4" reveal off the door front,
+        which takes the 1/4" corner overlay). The outer end runs past
+        the FF end so the part's BACK face reaches the partner
+        cabinet's FF front plane and its FRONT face reaches the
+        partner's applied-stile front plane - the 45-degree seam
+        between those two lines is where the partner's applied stile
+        meets it, closing the corner at any corner spacing. seam is
+        (x_at_ff_plane, x_at_applied_plane) for the wedge cutter.
+        Returns None when no perpendicular blind partner resolves.
+        """
+        from mathutils import Vector
+        pair_name = self.obj.get('HB_BLIND_PAIR')
+        partner = bpy.data.objects.get(pair_name) if pair_name else None
+        if partner is None:
+            # Corners configured before HB_BLIND_PAIR was stamped (or via
+            # side channels that skip the dialog): reuse the right-click
+            # editor's recovery, which falls back to geometric detection.
+            from .operators import ops_placement
+            resolved = ops_placement._blind_corner_pair_for(self.obj)
+            if resolved is None:
+                return None
+            blind_obj, placed_obj, _blind_side = resolved
+            partner = placed_obj if blind_obj is self.obj else blind_obj
+        if partner is self.obj:
+            return None
+        pff = getattr(partner, 'face_frame_cabinet', None)
+        if pff is None or pff.depth <= 0:
+            return None
+        # Settled matrices, NOT matrix_world: the blind-corner apply
+        # moves the blind cabinet inside the same recalc drain, and the
+        # depsgraph hasn't refreshed matrix_world yet at that point.
+        mw_p = self._settled_world_matrix(partner)
+        mw_inv = self._settled_world_matrix(self.obj).inverted()
+        # Partner's front direction in OUR local frame must run along
+        # our width axis, else this isn't a 90-degree corner.
+        front_dir = (mw_inv.to_3x3() @ (mw_p.to_3x3() @ Vector((0.0, -1.0, 0.0))))
+        if abs(front_dir.x) < 0.99:
+            return None
+        p_fft = pff.face_frame_thickness
+        x_bff = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth, 0.0)))).x
+        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fft, 0.0)))).x
+        pullback = (solver.FULL_CORNER_SIDE_OVERLAY + self.FO_CORNER_REVEAL)
+        if side == 'LEFT':
+            x_inner = layout.blind_offset_left + layout.lsw - pullback
+            x_outer = min(x_bff, x_bap)
+            width = x_inner - x_outer
+            x_anchor = x_outer
+        else:
+            x_inner = (layout.dim_x - layout.blind_offset_right
+                       - layout.rsw + pullback)
+            x_outer = max(x_bff, x_bap)
+            width = x_outer - x_inner
+            x_anchor = x_outer
+        if width <= self.FO_CORNER_REVEAL:
+            return None
+        return x_anchor, width, (x_bff, x_bap)
+
+    def _ensure_corner_fo_miter_cutter(self, side):
+        role = 'FO_STILE_MITER_CUTTER'
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get(TAG_FO_STILE_SIDE) == side):
+                return child
+        name = f'FO Stile Miter Cutter {side.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = role
+        cutter[TAG_FO_STILE_SIDE] = side
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_corner_fo_miter(self, part_obj, layout, side, seam):
+        """Rebuild the corner side's miter wedge (a vertical prism over
+        the triangle between the partner's FF-front and applied-front
+        lines) and ensure the boolean on the applied stile."""
+        from mathutils import Vector
+        x_bff, x_bap = seam
+        cutter = self._ensure_corner_fo_miter_cutter(side)
+        corner = Vector((x_bff, -layout.dim_y))
+        miter_dir = Vector((x_bap - x_bff, -layout.fft)).normalized()
+        open_dir = Vector((-1.0, 0.0)) if side == 'LEFT' else Vector((1.0, 0.0))
+        self._miter_wedge_mesh(cutter, corner, miter_dir, open_dir,
+                               -0.05, layout.dim_z + 0.05)
+        mod = part_obj.modifiers.get(self.FO_CORNER_MITER_MOD_NAME)
+        if mod is None:
+            mod = part_obj.modifiers.new(
+                name=self.FO_CORNER_MITER_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod.object is not cutter:
+            mod.object = cutter
+
+    def _clear_corner_fo_miter(self, side, part_obj):
+        """Drop the corner miter modifier + cutter for a side that is no
+        longer a FULL-overlay blind corner (or lost its part)."""
+        if part_obj is not None:
+            mod = part_obj.modifiers.get(self.FO_CORNER_MITER_MOD_NAME)
+            if mod is not None:
+                part_obj.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == 'FO_STILE_MITER_CUTTER'
+                    and child.get(TAG_FO_STILE_SIDE) == side):
+                bpy.data.objects.remove(child, do_unlink=True)
 
     def _reconcile_flush_x_strips(self, layout):
         """Spawn / resize / remove the FLUSH_X applied strip on each
@@ -6004,7 +6184,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
 
         # Hide the driven cutpart display; it stays as the L/W/T
-        # carrier for pricing / machining reads.
+        # carrier for downstream reads.
         mod_name = getattr(part_obj.home_builder, 'mod_name', '')
         mod = part_obj.modifiers.get(mod_name) if mod_name else None
         if mod is not None:
@@ -7071,7 +7251,7 @@ class FaceFrameCabinet(GeoNodeCage):
         idx = rect['splitter_index'] + 1
         # A remove_bottom bay's lowest framed splitter is the section's
         # bottom rail, not a mid rail (e.g. refrigerator cabinet). Tag it
-        # BOTTOM_RAIL so pricing / manufacturing / the toe-kick detail
+        # BOTTOM_RAIL so downstream consumers / the toe-kick detail
         # reader classify it correctly; IS_BAY_SPLITTER_RAIL keeps the
         # reconcile sweep able to clean it on rebuild.
         as_bottom = bool(rect.get('as_bottom_rail'))
@@ -7794,7 +7974,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # the chase cutter into the box. The notch does NOT change
             # the box's Dim inputs - the box ships full size and the
             # notch is a custom shop operation, so publish the notch
-            # rect for pricing / drawings to flag.
+            # rect for drawings / reports to flag.
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
@@ -7887,6 +8067,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind in bar_storage.KINDS:
+                self._create_bar_storage_part(opening_obj, desc)
             elif kind in ('INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE'):
                 self._create_interior_face_frame_part(
                     opening_obj, desc,
@@ -7926,7 +8108,7 @@ class FaceFrameCabinet(GeoNodeCage):
         """Solid-stock nosing profile on the front edge of an
         adjustable shelf. A plain swept mesh, deliberately NOT tagged
         CABINET_PART: it is molding stock, not a sheet-stock cutpart,
-        so part-collection passes (pricing, machining) must not pick
+        so part-collection passes (reports, machining) must not pick
         it up as one. The material walk finds it by role instead.
         """
         obj = shelf_nosing.build_nosing_object(
@@ -8234,6 +8416,30 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
         return part
+
+    def _create_bar_storage_part(self, opening_obj, desc):
+        """Bar storage insert (wine rack / cubby / stemware / plate
+        rack family). One derived mesh per insert, built in
+        bar_storage.py from the opening size. Like shelf nosings it is
+        deliberately NOT tagged CABINET_PART: it is a purchased catalog
+        unit, not sheet-stock cutparts, so part-collection passes
+        (reports, machining) must not pick it up. The material walk
+        finds it by role and applies the exterior finish ("Finished to
+        match exterior").
+        """
+        w, depth, h = desc['dims']
+        obj = bar_storage.build_bar_storage_object(
+            desc['kind'], desc['name'], w, h, depth,
+        )
+        if obj is None:
+            return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
 
     def _create_rollout_box(self, opening_obj, desc):
         """Drawer box for ROLLOUT items. Uses GeoNodeDrawerBox parented
@@ -9260,6 +9466,11 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             r_fin_end=cab.right_finished_end_condition,
             l_scribe=cab.left_scribe,
             r_scribe=cab.right_scribe,
+            # Legs are never angled, but the miter / splay passes the
+            # reconcile always runs (even for cleanup on UNFINISHED
+            # sides) gate on these fields, so they must be present.
+            is_angled=False,
+            angled_multi=False,
         )
         self._reconcile_applied_panels(leg_layout)
 
@@ -10247,6 +10458,8 @@ def _reconcile_standalone_panel(root):
         # keeps its own style-driven face-frame widths; only the split
         # structure (ladder + auto openings + mid-stile widths) is applied.
         aps.apply_panel_split_structure(root, root, 'BACK')
+        # X-Frame braces (the catalog's matching X-Frame Back).
+        aps.apply_panel_x_frame(root, root, 'BACK')
         # Surface the panel's properties from any of its parts: stamp the
         # part-commands menu onto menu-less parts (inset panels / pivots).
         for part in root.children_recursive:
@@ -10364,9 +10577,31 @@ def _reapply_selection_mode_highlights(root):
                 type_name=mode_tags.get(mode, ''),
             )
 
+    # toggle_cabinet_color select_set()s as a side effect -- wanted when
+    # the user explicitly toggles a selection mode, but this path runs
+    # after EVERY recalc (accessory adds, width edits, prop callbacks),
+    # and silently selecting every matching cage in the cabinet destroys
+    # the user's one-opening selection. Snapshot and restore around the
+    # highlight pass so a recalc never changes what is selected.
+    view_layer = bpy.context.view_layer
+    prev_selected = {o.name for o in bpy.context.selected_objects}
+    prev_active = view_layer.objects.active
+
     apply(root)
     for child in root.children_recursive:
         apply(child)
+
+    for obj in [root, *root.children_recursive]:
+        try:
+            obj.select_set(obj.name in prev_selected)
+        except RuntimeError:
+            pass  # not in the view layer / hidden by the highlight pass
+    if prev_active is not None \
+            and view_layer.objects.active is not prev_active:
+        try:
+            view_layer.objects.active = prev_active
+        except Exception:
+            pass
 
 
 def _reapply_cabinet_style(root):

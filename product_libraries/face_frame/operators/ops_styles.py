@@ -105,7 +105,7 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         existing = [s.name for s in ff.cabinet_styles]
         # New style duplicates the currently-selected one so adding is
         # "copy + tweak" (matches the door / drawer-front style Add), which
-        # is what dealers want for a second style in the same job.
+        # is what users want for a second style in the same job.
         idx = ff.active_cabinet_style_index
         src = ff.cabinet_styles[idx] if 0 <= idx < len(ff.cabinet_styles) else None
         base = src.name if src is not None else "Style"
@@ -181,7 +181,7 @@ class hb_face_frame_OT_move_cabinet_style(Operator):
             return {'CANCELLED'}
         # Styles are referenced by name (STYLE_NAME on cabinets), so reordering
         # the pool is safe -- only the order-driven 2D colour assignment
-        # (Spaces assign_style_colors, applied at page generation) changes.
+        # (the host add-on's style colors, applied at page generation) changes.
         ff.cabinet_styles.move(idx, new_idx)
         ff.active_cabinet_style_index = new_idx
         return {'FINISHED'}
@@ -1013,6 +1013,42 @@ class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_add_style_note(Operator):
+    """Add a free-text note row to the active cabinet style. Notes print
+    in a NOTES section at the end of the style's Style Section block
+    (e.g. 'TOUCH LATCH = TL'). No geometric effect."""
+    bl_idname = "hb_face_frame.add_style_note"
+    bl_label = "Add Note"
+    bl_description = "Add a note line printed on the Style Section page"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        style = _active_cabinet_style(context)
+        if style is None:
+            self.report({'ERROR'}, "No active cabinet style.")
+            return {'CANCELLED'}
+        style.ss_notes.add()
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_style_note(Operator):
+    """Remove a note row from the active cabinet style."""
+    bl_idname = "hb_face_frame.remove_style_note"
+    bl_label = "Remove Note"
+    bl_description = "Remove this note from the Style Section page"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(name="Index", default=-1)  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context)
+        if style is None:
+            return {'CANCELLED'}
+        if 0 <= self.index < len(style.ss_notes):
+            style.ss_notes.remove(self.index)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
     """Modal part-paint: click parts (or any object) to paint the active
     cabinet style's Finish or Interior material onto them, or Reset a
@@ -1254,6 +1290,8 @@ classes = (
     hb_face_frame_OT_remove_special_effect,
     hb_face_frame_OT_add_cabinet_extra_front_style,
     hb_face_frame_OT_remove_cabinet_extra_front_style,
+    hb_face_frame_OT_add_style_note,
+    hb_face_frame_OT_remove_style_note,
     hb_face_frame_OT_add_cabinet_style,
     hb_face_frame_OT_remove_cabinet_style,
     hb_face_frame_OT_move_cabinet_style,

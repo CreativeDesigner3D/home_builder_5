@@ -753,7 +753,7 @@ def _mullion_layout(pattern, w, h, bw):
     opening: a list of convex polygons [(x, z), ...] in opening-local
     coords. Muntin construction: verticals run through, horizontals
     butt between them; the X pattern half-laps its falling diagonal
-    around the rising one. Patterns follow the CWP Enhanced Panel
+    around the rising one. Patterns follow the catalog's Enhanced Panel
     Options specs (catalog pdf 143-144):
 
     GRID    -- Wood Mullion: 2 lites across, rows by the height chart

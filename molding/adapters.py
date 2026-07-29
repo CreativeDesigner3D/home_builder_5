@@ -182,6 +182,19 @@ def build_facts(scene, members):
                           'diagonal': ffc.corner_type == 'DIAGONAL'}
             if obj.get('CLASS_NAME') == 'RefrigeratorCabinet':
                 kick = {'skip': True, 'setback': 0.0}
+            elif obj.get('IS_LEG_PRODUCT'):
+                # Leg products keep their toe kick on the leg_product
+                # propgroup (is_column / only_stile suppress it), not on
+                # face_frame_cabinet - whose untouched 'NOTCH' default
+                # read every leg as recessed. Columns and stile-only
+                # legs run to the floor: flush front.
+                leg = getattr(obj, 'leg_product', None)
+                kick_active = (leg is not None and not leg.is_column
+                               and not leg.only_stile
+                               and leg.toe_kick_height > 0.0)
+                kick = {'skip': False,
+                        'setback': leg.toe_kick_setback if kick_active
+                        else 0.0}
             elif ffc.toe_kick_type not in _RECESSED_FF_KICKS:
                 kick = {'skip': False, 'setback': 0.0}
             else:

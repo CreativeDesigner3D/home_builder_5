@@ -26,6 +26,7 @@ import bpy
 
 from ...units import inch
 from . import shelf_nosing
+from . import bar_storage
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,21 @@ class FaceFrameLayout:
                           and cab.blind_amount_right > 0)
         self.blind_offset_left = cab.blind_amount_left if is_blind_left else 0.0
         self.blind_offset_right = cab.blind_amount_right if is_blind_right else 0.0
+
+        # FULL-overlay blind corner sides: the corner stile carries an
+        # applied overlay stile in front (mitered with the partner
+        # cabinet's - see _reconcile_full_overlay_stiles) and the door
+        # pulls back to a 1/4" overlay on that side so a 1/4" reveal
+        # fits between it and the applied stile. Captured here so the
+        # front builders and the FO-stile reconcile agree.
+        self.left_stile_type = cab.left_stile_type
+        self.right_stile_type = cab.right_stile_type
+        is_full_overlay = (
+            types_face_frame._resolve_style_overlay(cabinet_obj) == 'FULL')
+        self.corner_overlay_left = (
+            is_full_overlay and cab.left_stile_type == 'BLIND')
+        self.corner_overlay_right = (
+            is_full_overlay and cab.right_stile_type == 'BLIND')
 
         # Side scribe + finish end condition. The pair determines how
         # far the side panel sits inboard of the face frame outer face
@@ -1306,7 +1322,7 @@ def loose_kick_rear_rail(layout):
 # (minus a fudge allowance) the corner won't clear, so we chamfer it. The
 # wedge height is capped by the base molding that later covers it.
 def compute_wedge(leg_depth, leg_height, ceiling, fudge, max_wedge_height):
-    """Wedge dimensions, ported from CWP's calculator. All lengths in meters.
+    """Wedge dimensions, ported from the catalog wedge calculator. All lengths in meters.
 
     Returns (wedge_length, wedge_height, clamped, needed). ``needed`` is False
     when the diagonal already fits the effective ceiling (both dims 0).
@@ -3550,6 +3566,18 @@ def bay_openings(layout, bay_index):
         leaves=leaves, splitters=splitters, backings=backings,
         is_bay_root=True,
     )
+    # Stamp the leaves that sit against a FULL-overlay blind corner
+    # stile: only the edge bay's edge leaf pulls its front back to the
+    # corner overlay (interior leaves face mid stiles, not the corner).
+    if layout.corner_overlay_left or layout.corner_overlay_right:
+        last = layout.bay_count - 1
+        for r in leaves:
+            if (layout.corner_overlay_left and bay_index == 0
+                    and r['cage_x'] <= 1e-6):
+                r['corner_left'] = True
+            if (layout.corner_overlay_right and bay_index == last
+                    and r['cage_x'] + r['cage_dim_x'] >= cage_dim_x_ - 1e-6):
+                r['corner_right'] = True
     return {'leaves': leaves, 'splitters': splitters, 'backings': backings}
 
 
@@ -3592,6 +3620,24 @@ def resolved_overlay(cab_props, opening_props, side):
     if getattr(opening_props, f'unlock_{side}_overlay'):
         return getattr(opening_props, f'{side}_overlay')
     return getattr(cab_props, f'default_{side}_overlay')
+
+
+# Side overlay a front takes against a FULL-overlay blind corner stile:
+# pulled back from the style's full side overlay so the applied overlay
+# stile fits in front of the frame stile with a 1/4" reveal to the door
+# (CWP corner detail: 3.5" frame stiles, mitered overlay stiles, 1/4"
+# reveal). See bay_openings for the corner_left/right rect stamps.
+FULL_CORNER_SIDE_OVERLAY = inch(0.25)
+
+
+def front_overlay(rect, cab_props, opening_props, side):
+    """resolved_overlay plus the FULL-overlay corner pullback: a front
+    whose rect is stamped corner_left/right takes the corner overlay on
+    that side (an explicit per-opening unlock still wins)."""
+    if (side in ('left', 'right') and rect.get(f'corner_{side}')
+            and not getattr(opening_props, f'unlock_{side}_overlay')):
+        return FULL_CORNER_SIDE_OVERLAY
+    return resolved_overlay(cab_props, opening_props, side)
 
 
 
@@ -3653,8 +3699,8 @@ def _door_panel_size(rect, cab_props, opening_props):
     )
     width = (
         opening_width
-        + resolved_overlay(cab_props, opening_props, 'left')
-        + resolved_overlay(cab_props, opening_props, 'right')
+        + front_overlay(rect, cab_props, opening_props, 'left')
+        + front_overlay(rect, cab_props, opening_props, 'right')
     )
     height = (
         opening_height
@@ -3708,7 +3754,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     """
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
-    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     # Door pivot lives in OPENING-local coords. The opening cage origin
@@ -3757,7 +3803,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     leaf_width = (width - DOUBLE_DOOR_REVEAL) / 2.0
-    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
@@ -3789,7 +3835,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     swing_percent * max_slide; no rotation."""
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
-    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
@@ -3889,7 +3935,7 @@ def _triple_door_leaves(layout, rect, cab_props, opening_props, role):
     """
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
-    left_overlay = resolved_overlay(cab_props, opening_props, 'left')
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
@@ -4509,6 +4555,37 @@ def _vanity_shelves_descriptors(rect, cage_dim_y, item):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Bar storage inserts (Tableware & Bar Storage Solutions)
+# ---------------------------------------------------------------------------
+# The insert sits at the front of the cavity behind the face frame and
+# is blocked off at 12" deep in deeper cabinets (catalog rule). Sizing
+# is fully automatic from the opening: bar_storage.py fits the grids /
+# spacing to the catalog charts, so one descriptor carries the whole
+# unit and the materialize step builds a single derived mesh.
+BAR_STORAGE_FRONT_Y = inch(0.75)
+
+
+def _bar_storage_descriptor(rect, cage_dim_y, item):
+    depth = min(
+        bar_storage.MAX_DEPTH,
+        cage_dim_y - BAR_STORAGE_FRONT_Y - SHELF_BACK_SETBACK,
+    )
+    if depth <= 0.0:
+        return None
+    label = bar_storage.KIND_LABELS.get(item.kind, item.kind)
+    return {
+        'kind':     item.kind,
+        'role':     'BAR_STORAGE',
+        'name':     label,
+        'position': (0.0, BAR_STORAGE_FRONT_Y, 0.0),
+        # (w, depth, h) of the insert volume - consumed only by the
+        # bar-storage materialize branch, which builds a mesh rather
+        # than an oriented cutpart.
+        'dims':     (rect['cage_dim_x'], depth, rect['cage_dim_z']),
+    }
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
@@ -4550,6 +4627,10 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
             out.append(_accessory_label_descriptor(
                 rect, cage_dim_y, item.accessory_label
             ))
+        elif item.kind in bar_storage.KINDS:
+            desc = _bar_storage_descriptor(rect, cage_dim_y, item)
+            if desc is not None:
+                out.append(desc)
     return out
 
 

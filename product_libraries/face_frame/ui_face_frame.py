@@ -19,6 +19,7 @@ import bpy
 
 from . import types_face_frame
 from . import shelf_nosing
+from . import bar_storage
 from ... import units
 
 
@@ -92,8 +93,21 @@ def draw_dimensions(layout, root):
     )
     col = layout.column(align=True)
     col.prop(cab_props, 'width', text="Width")
+    # Resize anchor: which edge holds still when the width changes.
+    # Not meaningful on corner cabinets (their footprint is wall-tied).
+    if cab_props.corner_type == 'NONE':
+        anchor_row = col.row(align=True)
+        anchor_row.label(text="Anchor")
+        anchor_row.prop(cab_props, 'anchor_side', expand=True)
     col.prop(cab_props, 'depth', text="Depth")
     col.prop(cab_props, 'height', text="Height")
+    # Height above floor: local Z (walls and cabinet groups sit at the
+    # floor, so local Z reads as distance off the floor). Uppers always
+    # show it - setting one down on a counter top was a transform-only
+    # move before. Other types surface it only once they're lifted, so
+    # a floor cabinet doesn't invite an accidental float.
+    if root.get('CABINET_TYPE') == 'UPPER' or abs(root.location.z) > 0.001:
+        col.prop(root, 'location', index=2, text="Height Above Floor")
     # Corner cabinets: stub-side lengths perpendicular to each wall.
     # Drive the L-shape of the carcass and the inset of each face frame
     # from the wall corner. width / depth here is the full bounding
@@ -1048,6 +1062,10 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+        elif item.kind in bar_storage.KINDS:
+            # Bar storage inserts are fully auto-fit from the opening
+            # per the catalog charts - no per-item knobs in v1.
+            sub.label(text="Auto-sized to the opening", icon='INFO')
 
         if i < len(target_props.interior_items) - 1:
             box.separator()

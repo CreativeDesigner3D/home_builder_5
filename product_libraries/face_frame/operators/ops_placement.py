@@ -1555,14 +1555,59 @@ def _abutting_corner_stile(cab_obj, side, wall):
     return None
 
 
+def _cross_wall_corner_stile(cab_obj, side):
+    """Corner cabinet on ANOTHER wall whose perpendicular arm-end meets
+    cab_obj's ``side`` end. A pie cut is parented to one wall while its
+    other arm runs along the perpendicular wall, so the same-wall scan
+    can't see it from a cabinet placed on that second wall. World-space
+    test: our end's back corner against both of the corner cabinet's
+    arm-end meeting points (RIGHT arm end at local (Dim X, 0), LEFT arm
+    end at local (0, -Dim Y) - both on their wall lines). Returns
+    (stile_type, corner_obj, corner_side) or None."""
+    props = cab_obj.face_frame_cabinet
+    edge_local = 0.0 if side == 'LEFT' else props.width
+    edge = cab_obj.matrix_world @ Vector((edge_local, 0.0, 0.0))
+    my_range = _cabinet_world_z_range(cab_obj)
+    tol = units.inch(1.0)
+    wall = cab_obj.parent
+    scenes = cab_obj.users_scene
+    scene_objects = (scenes[0].objects if scenes
+                     else bpy.context.scene.objects)
+    for sib in scene_objects:
+        if sib is cab_obj or not _is_corner_cabinet(sib):
+            continue
+        if wall is not None and sib.parent is wall:
+            continue  # same-wall corners are _abutting_corner_stile's job
+        stile_type = _CORNER_TYPE_TO_STILE.get(
+            sib.face_frame_cabinet.corner_type)
+        if stile_type is None:
+            continue
+        if not _z_ranges_overlap(my_range, _cabinet_world_z_range(sib), tol):
+            continue
+        try:
+            gn = hb_types.GeoNodeObject(sib)
+            dim_x = gn.get_input('Dim X') or sib.face_frame_cabinet.width
+            dim_y = gn.get_input('Dim Y') or sib.face_frame_cabinet.depth
+        except Exception:
+            dim_x = sib.face_frame_cabinet.width
+            dim_y = sib.face_frame_cabinet.depth
+        mw = sib.matrix_world
+        for corner_side, pt in (('RIGHT', Vector((dim_x, 0.0, 0.0))),
+                                ('LEFT', Vector((0.0, -dim_y, 0.0)))):
+            meet = mw @ pt
+            if (meet.xy - edge.xy).length <= tol:
+                return (stile_type, sib, corner_side)
+    return None
+
+
 def _auto_detect_stile_types(cab_obj):
     """Set end stile types from placement context, per end with precedence:
     a corner cabinet abutting that end (pie cut -> INSIDE_90, diagonal ->
-    ANGLE) wins; else WALL when the end reaches the end of its wall run; else
-    STANDARD. Corner cabinets manage their own ends and are skipped. Setting
-    a type re-derives its width + recalcs via the prop callback, coalesced
-    under one suspend. (Same-wall abutment only; a left-return onto the
-    perpendicular wall is a follow-up.)"""
+    ANGLE) wins - same-wall first, then a corner reaching over from the
+    perpendicular wall; else WALL when the end reaches the end of its
+    wall run; else STANDARD. Corner cabinets manage their own ends and
+    are skipped. Setting a type re-derives its width + recalcs via the
+    prop callback, coalesced under one suspend."""
     if _is_corner_cabinet(cab_obj):
         return
     wall = cab_obj.parent
@@ -1581,6 +1626,8 @@ def _auto_detect_stile_types(cab_obj):
     for side, at_wall_end in (('LEFT', left <= tol),
                               ('RIGHT', right >= wall_length - tol)):
         hit = _abutting_corner_stile(cab_obj, side, wall)
+        if hit is None:
+            hit = _cross_wall_corner_stile(cab_obj, side)
         if hit:
             stile_type, corner_obj, corner_side = hit
             want[side] = stile_type

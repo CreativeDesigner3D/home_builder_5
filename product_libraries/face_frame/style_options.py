@@ -1,4 +1,4 @@
-"""Baked CWP residential style options + compatibility matrices.
+"""Baked residential style options + compatibility matrices.
 
 Generated from the reference partner spreadsheets (Color/Wood/Varnish/Glaze
 compatibility matrix and the doors/drawers catalog). Do NOT hand-edit -- this
@@ -4941,7 +4941,7 @@ def ff_overlay_bucket(overlay):
 # UI display + filtering layer.
 #
 # The raw catalog names above are the stored enum IDENTIFIERS (sizing bucket,
-# hinge, and pricing lookups all key on them, so they must NOT change). This
+# hinge, and catalog lookups all key on them, so they must NOT change). This
 # layer only controls what the dropdowns SHOW: which entries are hidden, and a
 # friendlier display label for a few. Identifier in -> (display label) out.
 # ===========================================================================
@@ -4978,7 +4978,7 @@ def woods_for_ui():
 
 # Color names hidden from the UI: "Let Down" paint duplicates, "limited time"
 # offers, discontinued colors, and price-referencing entries. Identifiers stay
-# raw (pricing / cascade lookups are unaffected); these are display-only drops.
+# raw (catalog / cascade lookups are unaffected); these are display-only drops.
 import re as _re
 
 _COLOR_HIDE_PATTERNS = (
@@ -5157,7 +5157,7 @@ def profiles_for_series(series):
 
 # Recessed (flat) center panel construction, applied to every
 # non-Raised panel choice regardless of the series' raised spec: a
-# 1/4" panel held 1/8" off the BACK of the door (CWP standard).
+# 1/4" panel held 1/8" off the BACK of the door (catalog standard).
 # SERIES_RECESSED overrides per series when one deviates. Inches.
 RECESSED_PANEL = {'thickness': 0.25, 'back_inset': 0.125}
 SERIES_RECESSED = {}

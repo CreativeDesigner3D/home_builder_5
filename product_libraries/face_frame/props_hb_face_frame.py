@@ -834,7 +834,7 @@ class Face_Frame_Millwork_Item(PropertyGroup):
     """One millwork line item on a cabinet style's Style Section.
 
     Shown on the Style Section page as ``name`` + ``quantity`` (always in
-    FEET). ``product_code`` is stored for later pricing. ``auto_collected``
+    FEET). ``product_code`` is stored for downstream reports. ``auto_collected``
     flags items added by the Collect Millwork scan so a re-collect can replace
     just those while leaving hand-typed items alone.
     """
@@ -852,7 +852,7 @@ class Face_Frame_Millwork_Item(PropertyGroup):
     )  # type: ignore
     product_code: StringProperty(
         name="Product Code",
-        description="Millwork product code (used for pricing)",
+        description="Millwork product code (used by downstream reports)",
         default="",
     )  # type: ignore
     auto_collected: BoolProperty(
@@ -916,6 +916,17 @@ class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
         name="Front Style",
         description="Additional front style shown on the Style Section page",
         items=get_cabinet_extra_front_style_items,
+    )  # type: ignore
+
+
+class Face_Frame_Style_Note(PropertyGroup):
+    """One free-text note line on a cabinet style, printed in a NOTES
+    section at the end of the style's Style Section block (e.g.
+    'TOUCH LATCH = TL'). Pure documentation -- no geometric effect."""
+    text: StringProperty(
+        name="Note",
+        description="Free-text note printed on the Style Section page",
+        default="",
     )  # type: ignore
 
 
@@ -1254,7 +1265,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
     # ---- Style-section descriptors (free text shown on the Style Section
     # page). These have no geometric effect -- they're presentation fields the
-    # dealer types in. Defaults mirror common CWP selections so a fresh style
+    # user types in. Defaults mirror common catalog selections so a fresh style
     # reads sensibly. Editable from the Style Sections panel.
     ss_corner_treatment: EnumProperty(
         name="Corner Treatment",
@@ -1317,6 +1328,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         ],
         default='French',
     )  # type: ignore
+    # Free-text note lines printed in a NOTES section at the end of this
+    # style's Style Section block (e.g. 'TOUCH LATCH = TL').
+    ss_notes: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
 
     # ---- Style-section OVERRIDES for the catalog-backed fields ----
     # Each is blank by default: blank => the page shows the catalog/derived
@@ -1659,7 +1673,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'wall_stile':  (2.5, 2.5, 2.5),
             'mid_stile':   (2.25, 2.25, 2.25),
             'end_stile':   (1.25, 1.25, 1.25),
-            'blind_stile': (3.75, 3.75, 2.75),
+            # EXPOSED width (the 0.75" tuck behind the adjacent face is
+            # added in code) - the old 3.75/2.75 row predated that split
+            # and double-counted the tuck at 90-degree inside corners.
+            'blind_stile': (3.5, 3.5, 3.5),
             'butt_stile':      (1.125, 1.125, 1.125),
             'inside_90_stile': (3.5, 3.5, 3.5),
             'angle_stile':     (1.75, 1.75, 1.75),
@@ -2168,12 +2185,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
 
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
-                # Shelf nosings are plain meshes, deliberately not
-                # CABINET_PART (they are molding stock, not cutparts),
-                # so the material goes on the mesh slot directly.
-                # Always the exterior finish: nosing is finished-
-                # opening trim.
-                if (child.get('hb_part_role') == 'SHELF_NOSING'
+                # Shelf nosings and bar storage inserts are plain
+                # meshes, deliberately not CABINET_PART (molding stock
+                # / purchased catalog units, not cutparts), so the
+                # material goes on the mesh slot directly. Always the
+                # exterior finish: nosing is finished-opening trim and
+                # the bar storage units are "finished to match
+                # exterior" per the catalog.
+                if (child.get('hb_part_role') in ('SHELF_NOSING',
+                                                  'BAR_STORAGE')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
@@ -2835,6 +2855,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         self._draw_toggle_field(col, "ss_edge_profile", "Edge Profile")
 
+        # Free-text notes printed in a NOTES section at the end of this
+        # style's Style Section block (e.g. 'TOUCH LATCH = TL').
+        box = main.box()
+        row = box.row()
+        row.alignment = 'CENTER'
+        row.label(text="NOTES")
+        col = box.column(align=True)
+        for i, note in enumerate(self.ss_notes):
+            r = col.row(align=True)
+            r.prop(note, "text", text="")
+            r.operator("hb_face_frame.remove_style_note",
+                       text="", icon='X', emboss=False).index = i
+        col.operator("hb_face_frame.add_style_note",
+                     text="Add Note", icon='ADD')
+
 
 class HB_UL_face_frame_cabinet_styles(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
@@ -2889,7 +2924,7 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     front, it is torn down with the front on every recalc (the pivot
     wipe removes children_recursive) and recreated here; it rides into
     elevations like any other IS_2D_ANNOTATION FONT under the cabinet,
-    where the Spaces elevation pass links it to IGNORE freestyle.
+    where the host add-on's elevation pass links it to IGNORE freestyle.
 
     Idempotent: an existing annotation is removed first, covering live
     style edits (unlock toggled off) with no front rebuild in between.
@@ -3670,7 +3705,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             front_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
 
         # Tag glass-panel fronts so the 2D drawing layer can hatch the glass
-        # panel (Spaces reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
+        # panel (the host add-on reads IS_PREP_FOR_GLASS); mirrors the 3D glass render.
         # Set on every style assignment so it tracks the current panel choice.
         # Covers every GLASS panel kind (Prep for Glass + the mullion
         # choices, which render as plain glass until the bars land).
@@ -3679,7 +3714,7 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         # Tri-view mirror doors carry a fixed look -- plain square wood
         # frame + flat mirror panel -- independent of this style's
-        # door_type / series (no CWP door style models a wood-trimmed
+        # door_type / series (no catalog door style models a wood-trimmed
         # mirror door; the tri-view product stamps HB_MIRROR_DOOR on its
         # opening cages).
         if _front_frame_store(front_obj).get('HB_MIRROR_DOOR'):
@@ -3962,7 +3997,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                 del front_obj['HB_STATIC_SLAB']
             # Effective frame record for readers that used to consult the
             # modifier inputs (Set Door Frame dialog, panel-opening readout,
-            # the Spaces glass-hatch pass).
+            # the host add-on's glass-hatch pass).
             front_obj['HB_DOOR_FRAME'] = {
                 'left_stile': eff_left_stile,
                 'right_stile': eff_right_stile,
@@ -4129,6 +4164,39 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_cabinet_width(self, context):
+    """Width update: honor the cabinet's anchor side, then recalc.
+
+    A cabinet's origin is its LEFT edge, so a width change naturally
+    grows / shrinks the right side. Anchored RIGHT, the origin shifts
+    by the width delta so the right edge stays put instead - resize
+    without having to move the cabinet after (the old version's
+    anchor-left/right). The previous width is stashed on the object
+    (seeded from the cage's Dim X, which still holds the pre-write
+    value when the callback fires) so back-to-back writes under a
+    suspended recalc compute the right delta. System width writes
+    during a group/bay distribution (_DISTRIBUTING_WIDTHS) never
+    shift - those passes place cabinets themselves.
+    """
+    from . import types_face_frame
+    root = self.id_data
+    old = root.get('HB_ANCHOR_LAST_WIDTH')
+    if old is None:
+        from ... import hb_types
+        try:
+            old = hb_types.GeoNodeCage(root).get_input('Dim X')
+        except Exception:
+            old = None
+    if (old is not None
+            and getattr(self, 'anchor_side', 'LEFT') == 'RIGHT'
+            and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
+        delta = self.width - old
+        if abs(delta) > 1e-9:
+            root.location.x -= delta
+    root['HB_ANCHOR_LAST_WIDTH'] = self.width
+    _update_cabinet_dim(self, context)
+
+
 _BOTTOM_RAIL_PROFILE_ITEMS_CACHE = []
 
 
@@ -4163,6 +4231,12 @@ def _update_panel_split_auto(self, context):
         types_face_frame.recalculate_face_frame_cabinet(obj.parent)
     else:
         types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
+# Vertical-divisions override on an applied panel: same host-recalc
+# routing as the split-auto toggle (the split structure is rebuilt by
+# the host's _reconcile_applied_panels pass).
+_update_panel_vertical_bays = _update_panel_split_auto
 
 
 # Standard rollout box heights (inches) keyed by the preset enum id, plus the
@@ -4336,13 +4410,47 @@ def _update_remove_bottom(self, context):
 # matching auto flag off so subsequent exposure recalcs don't clobber the
 # choice. Exposure recalc re-arms auto explicitly after writing its own
 # value, so its own writes don't permanently disable auto.
+def _restore_scribe_on_unfinished(self, side):
+    """Manually switching a side back to UNFINISHED restores its scribe.
+    The finished state zeroed the scribe (non-UNFINISHED types carry
+    none), and pinning the side (auto off) meant nothing ever put it
+    back -- the user had to re-type 0.5" every time a placed-in
+    finished end was removed (islands especially). Re-resolve from the
+    side's live exposure facts (wall edge 0.5", neighbor / dishwasher
+    0.25"); an EXPOSED side -- the usual case, that's why it came in
+    finished -- falls back to the scene's Default Scribe (0.5"). A
+    nonzero scribe is a prior manual overwrite and is left alone.
+    """
+    if getattr(self, f'{side}_finished_end_condition') != 'UNFINISHED':
+        return
+    if getattr(self, f'{side}_scribe') > 1e-9:
+        return
+    from . import exposure
+    cab_obj = self.id_data
+    if not cab_obj or not cab_obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+        return
+    try:
+        state, dishwasher, wall_edge = exposure._side_exposure(cab_obj, side)
+        scribe = exposure._resolve_scribe(state, dishwasher, wall_edge,
+                                          'UNFINISHED')
+    except Exception:
+        scribe = 0.0
+    if scribe <= 0.0:
+        scene = bpy.context.scene
+        props = getattr(scene, 'hb_face_frame', None)
+        scribe = getattr(props, 'default_scribe', 0.0) or units.inch(0.5)
+    setattr(self, f'{side}_scribe', scribe)
+
+
 def _on_left_finish_end_user_set(self, context):
     self.left_finish_end_auto = False
+    _restore_scribe_on_unfinished(self, 'left')
     _update_cabinet_dim(self, context)
 
 
 def _on_right_finish_end_user_set(self, context):
     self.right_finish_end_auto = False
+    _restore_scribe_on_unfinished(self, 'right')
     _update_cabinet_dim(self, context)
 
 
@@ -4905,7 +5013,19 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Width",
         description="Cabinet width (X dimension)",
         default=units.inch(36.0), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_cabinet_width,
+    )  # type: ignore
+    # Which edge stays put when the width changes. LEFT is the natural
+    # behavior (origin at the left edge); RIGHT shifts the origin by the
+    # width delta so the cabinet resizes toward the left instead.
+    anchor_side: EnumProperty(
+        name="Anchor Side",
+        description="Which side of the cabinet stays put when the width changes",
+        items=[
+            ('LEFT', "Left", "The left edge stays put; width changes move the right edge"),
+            ('RIGHT', "Right", "The right edge stays put; width changes move the left edge"),
+        ],
+        default='LEFT',
     )  # type: ignore
     height: FloatProperty(
         name="Height",
@@ -5125,6 +5245,29 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "follows its width. Inserting or deleting a bay "
                     "turns this off so your opening count survives "
                     "recalculation",
+        update=_update_panel_split_auto)  # type: ignore
+    # Explicit vertical-division override for the width ladder. 0 keeps
+    # the automatic count. Rail-matched side panels (the panel mirrors
+    # the source bay's stacked-door rails) build their columns as
+    # in-bay V-splits and support at most 2.
+    panel_vertical_bays: IntProperty(
+        name="Vertical Divisions",
+        description="Number of vertical panel divisions (columns). "
+                    "0 = automatic from the panel width. Panels that "
+                    "mirror a stacked-door mid rail support at most 2",
+        default=0, min=0, max=8,
+        update=_update_panel_vertical_bays)  # type: ignore
+    # X-Frame End: one open frame with a 3/4" x 3" solid lumber X
+    # applied within it, held 1/4" back of the frame face. Typical
+    # frame sizes are 3" stiles, 3" top rail, 5-1/4" bottom rail --
+    # unlock + type those on the panel if the auto-sized frame should
+    # not stand.
+    panel_x_frame: BoolProperty(
+        name="X Frame",
+        description="Build this applied panel as an X-Frame End: one "
+                    "open frame with a crossing lumber X held 1/4\" "
+                    "back of the frame face",
+        default=False,
         update=_update_panel_split_auto)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
@@ -6196,6 +6339,18 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('TRAY_DIVIDERS',    "Tray Dividers",      "Vertical dividers for trays / cookie sheets, optionally with a locked shelf above"),
         ('VANITY_SHELVES',   "Vanity Shelves",     "Pair of L/R shelves on corbel supports, around plumbing"),
         ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),
+        # Tableware & Bar Storage Solutions (catalog printed pages
+        # 293-295). All auto-sized from the opening per the catalog
+        # charts; geometry lives in bar_storage.py. Appended at the end
+        # so saved files keep their stored enum indices.
+        ('WINE_CUBBY',       "Wine Storage Cubby", "WRC: 1/2\" plywood cubbies, openings 4\"-6\" equally spaced"),
+        ('WINE_CELLAR',      "Wine Cellar Rack",   "WRWCR: 3/4\" hardwood grid with exact 4\" x 4\" bottle openings"),
+        ('WINE_LATTICE',     "Lattice Wine Rack",  "WRL: 45-degree lattice, max 3-3/4\" square bottle openings"),
+        ('WINE_X',           "X-Style Wine Rack",  "WRXS/WRXR: two panels crossing corner to corner"),
+        ('WINE_DIAGONAL',    "Diagonal Wine Dividers", "WRD: parallel 45-degree dividers spaced equally 4\"-7\""),
+        ('WINE_HALF_CIRCLE', "Half Circle Wine Rack",  "WRHC: scalloped rails, bottles 5\" on center"),
+        ('STEMWARE_RACK',    "Stemware Rack",      "SR: slotted hardwood slats at the top of the opening, slots 4\" on center"),
+        ('PLATE_RACK',       "Plate Rack",         "PR: 3/8\" birch dowels 2\" on center"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
@@ -6225,7 +6380,9 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     # Finished-opening nosing on the shelf front edge (ADJUSTABLE_SHELF
     # only). Clover / Kelli match the shelf thickness; the extra-height
-    # styles read shelf_nosing_height (catalog: 1-1/4" to 3").
+    # styles read shelf_nosing_height. The old 1-1/4"..3" catalog range
+    # is no longer enforced -- custom jobs run outside it; only a tiny
+    # floor remains so a zero height can't build degenerate geometry.
     shelf_nosing_style: EnumProperty(
         name="Shelf Nosing",
         description="Finished-opening nosing profile applied to the front edge of each shelf",
@@ -6234,8 +6391,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     shelf_nosing_height: FloatProperty(
         name="Nosing Height",
-        description="Overall height of an extra-height nosing (1-1/4\" to 3\"). Clover / Kelli ignore this and match the shelf thickness",
-        default=units.inch(1.5), min=units.inch(1.25), max=units.inch(3.0),
+        description="Overall height of an extra-height nosing. Clover / Kelli ignore this and match the shelf thickness",
+        default=units.inch(1.5), min=units.inch(0.125),
         unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
@@ -6360,7 +6517,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
 
     # ACCESSORY: product code from the host application's accessory catalog,
     # set when the accessory is picked from the catalog rather than typed as
-    # a free label. Drives the 2D legend + pricing; no 3D effect. Empty for a
+    # a free label. Drives the 2D legend + reports; no 3D effect. Empty for a
     # hand-typed accessory_label.
     accessory_code: StringProperty(
         name="Accessory Code", default="",
@@ -6512,7 +6669,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # opening. Stored as a bare string code; the display name, price and
     # minimum opening width are looked up from whatever accessory catalog
     # the host application registers (see accessory_registry). Empty when
-    # no model is chosen. No 3D effect -- drives 2D annotation and pricing.
+    # no model is chosen. No 3D effect -- drives 2D annotation and reports.
     pullout_accessory_code: StringProperty(
         name="Pullout Model",
         description="Accessory product code selected for this pullout opening",
@@ -6521,7 +6678,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # Tilt-out: a FALSE_FRONT on hinges (tray behind). Geometrically
     # identical to a plain false front, so it's a flag rather than a
     # front_type -- the only behavioral difference is the 2D elevation
-    # label (TILT-OUT instead of FALSE, read by Spaces). Set / cleared
+    # label (TILT-OUT instead of FALSE, read by the host add-on). Set / cleared
     # by the TILT_OUT opening preset; lives on the persistent opening
     # cage so it survives recalcs.
     is_tilt_out: BoolProperty(
@@ -6535,7 +6692,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # rails) so it looks like a stack of drawers but opens as one door.
     # NONE = a plain door. The applied fronts + their pulls are built in
     # _update_fronts_in_opening, parented to the door so they swing as one;
-    # they carry no pricing tags (the leaf prices as a single door). Lives
+    # they carry no product tags (the leaf reads as a single door). Lives
     # on the persistent opening cage so it survives recalcs.
     drawer_look_divisions: EnumProperty(
         name="Drawer-Look Divisions",
@@ -8590,6 +8747,7 @@ classes = (
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
     Face_Frame_Cabinet_Extra_Front_Style,
+    Face_Frame_Style_Note,
     Face_Frame_Cabinet_Style,
     HB_UL_face_frame_cabinet_styles,
     Face_Frame_Door_Style,
