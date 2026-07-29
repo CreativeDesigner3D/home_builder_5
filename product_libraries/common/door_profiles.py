@@ -633,11 +633,88 @@ def _edge_arc(r, concave, segs=10):
     return pts
 
 
+# ---- Drawn-cutter sections (digitized) ------------------------------
+# Sections traced from the installed molding asset pack's edge
+# drawings (Base Molding/<name> Edge.blend) -- the same
+# cutters the catalog names refer to, so the door edge matches the
+# shop's base/light-rail tooling. Each list is the shaped run in the
+# builders' shared sweep space, in INCHES (u inward across the face
+# from the member edge, v into the thickness from the front face),
+# ordered from the front-face landing to where the cut exits. Sampled
+# from the bezier outlines and simplified to 2.5-mil tolerance.
+#
+# 'New Cut' is a full-thickness sweep: the cut crosses the whole 3/4"
+# stock and lands on the BACK face (u > 0 at v = 3/4), so its section
+# ends off the edge plane -- named_edge_section continues the edge run
+# from the landing point's u, not from 0.
+
+_ESTATE_PTS = [
+    (0.6636, 0.0000), (0.6409, 0.0072), (0.6262, 0.0202), (0.6182, 0.0398),
+    (0.6166, 0.0658), (0.5228, 0.0658), (0.4985, 0.1074), (0.4624, 0.1437),
+    (0.4147, 0.1747), (0.3633, 0.1976), (0.2840, 0.2210), (0.2010, 0.2363),
+    (0.1064, 0.2463), (0.0000, 0.2511),
+]
+
+_ECLIPSE_PTS = [
+    (0.4397, 0.0000), (0.4397, 0.0637), (0.3715, 0.0637), (0.3520, 0.1198),
+    (0.3234, 0.1753), (0.2881, 0.2218), (0.2459, 0.2592), (0.1903, 0.2905),
+    (0.1337, 0.3086), (0.0702, 0.3177), (0.0000, 0.3177),
+]
+
+_NEW_CUT_PTS = [
+    (0.6181, 0.0000), (0.5898, 0.0288), (0.5527, 0.0578), (0.5099, 0.0834),
+    (0.4616, 0.1055), (0.3686, 0.1347), (0.2186, 0.1633), (0.1479, 0.1894),
+    (0.1108, 0.2105), (0.0821, 0.2323), (0.0384, 0.2819), (0.0171, 0.3233),
+    (0.0038, 0.3717), (0.0000, 0.4179), (0.0037, 0.4697), (0.0099, 0.5036),
+    (0.1098, 0.7500),
+]
+
+_CLASSIC_CUT_PTS = [
+    (0.3778, 0.0000), (0.3778, 0.0700), (0.3201, 0.0716), (0.2760, 0.0814),
+    (0.2392, 0.0991), (0.2097, 0.1247), (0.1918, 0.1501), (0.1783, 0.1803),
+    (0.1651, 0.2490), (0.1009, 0.2490), (0.0794, 0.2758), (0.0555, 0.2954),
+    (0.0290, 0.3078), (0.0000, 0.3131),
+]
+
+_DROP_RADIUS_PTS = [
+    (0.3814, 0.0000), (0.3814, 0.1349), (0.3154, 0.1414), (0.2412, 0.1620),
+    (0.1733, 0.1942), (0.1166, 0.2349), (0.0728, 0.2806), (0.0370, 0.3365),
+    (0.0116, 0.4032), (0.0000, 0.4695),
+]
+
+
+def _poly(pts_inches):
+    """Inch point list -> meters, for the digitized sections above."""
+    return [(u * _INCH, v * _INCH) for (u, v) in pts_inches]
+
+
+# 3/8" Inset (lipped door) edges: a 3/8 x 3/8 rabbet on the BACK of the
+# door forms the lip that sits over the face-frame opening; the front
+# arris of the lip is finished square, 1/8" roundover, or a full 3/8"
+# roundover. Drafted from the names' standard lipped-door reading
+# (no catalog drawing exists for these) -- adjust the constants if the
+# shop's lip cutter differs.
+_LIP = 0.375 * _INCH   # lip depth (v) and rabbet width (u)
+
+
+def _inset_edge(front_pts):
+    """Lipped-door section: ``front_pts`` shapes the front arris, the
+    edge line continues to the lip depth, then the rabbet shoulder runs
+    inward; named_edge_section's edge run continues from the shoulder
+    (u = _LIP) to the door back."""
+    pts = list(front_pts)
+    if pts[-1][1] < _LIP - 1e-9:
+        pts.append((0.0, _LIP))
+    pts.append((_LIP, _LIP))
+    return pts
+
+
 # Lowercased catalog name -> zero-arg builder for the shaped run
 # [(u, v), ...]; named_edge_section appends the straight edge run to
-# the door back. Names follow the catalog chart / the cabinet style's
-# ss_edge_profile items; profiles not listed here (Estate, Eclipse,
-# New Cut, ...) read as Square until a builder is added.
+# the door back, continuing from the run's landing u (0 for ordinary
+# edge cuts, the rabbet width for lipped edges, the back-face landing
+# for New Cut's full sweep). Names follow the catalog chart / the
+# cabinet style's ss_edge_profile items.
 _EDGE_SECTION_BUILDERS = {
     '1/8" radius': lambda: _edge_arc(0.125 * _INCH, False),
     '1/4" radius': lambda: _edge_arc(0.25 * _INCH, False),
@@ -651,6 +728,18 @@ _EDGE_SECTION_BUILDERS = {
     'beveled': lambda: [(0.75 * _INCH, 0.0), (0.0, 0.25 * _INCH)],
     # Concave 3/8 cove scooped out of the front arris.
     'bay': lambda: _edge_arc(0.375 * _INCH, True),
+    # Digitized from the molding edge asset pack (see above).
+    'estate': lambda: _poly(_ESTATE_PTS),
+    'eclipse': lambda: _poly(_ECLIPSE_PTS),
+    'new cut': lambda: _poly(_NEW_CUT_PTS),
+    'classic cut': lambda: _poly(_CLASSIC_CUT_PTS),
+    'drop radius': lambda: _poly(_DROP_RADIUS_PTS),
+    # 3/8" lipped-door edges (drafted; see _inset_edge).
+    '3/8" inset square': lambda: _inset_edge([(0.0, 0.0)]),
+    '3/8" inset 1/8" radius': lambda: _inset_edge(
+        _edge_arc(0.125 * _INCH, False)),
+    '3/8" inset radius': lambda: _inset_edge(
+        _edge_arc(0.375 * _INCH, False)),
 }
 
 
@@ -672,7 +761,10 @@ def named_edge_section(name, thickness):
         k = thickness / vmax
         pts = [(u * k, v * k) for (u, v) in pts]
     if pts[-1][1] < thickness - 1e-9:
-        pts.append((0.0, thickness))
+        # Straight run to the door back, continuing at the section's
+        # landing u: 0 for ordinary edge cuts (on the edge plane), the
+        # rabbet width for the lipped 3/8" Inset edges.
+        pts.append((pts[-1][0], thickness))
     return pts
 
 
