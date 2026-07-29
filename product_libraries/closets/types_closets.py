@@ -487,7 +487,12 @@ class ClosetStarter(GeoNodeCage):
                                   if self.allows_toe_kick else 0.0)
             sp.toe_kick_setback = scene_props.toe_kick_setback
             sp.include_countertop = self.has_countertop
-            sp.countertop_thickness = scene_props.countertop_thickness
+            # A top surfaced in the closet material is a shelf, so
+            # it is as thick as one.
+            sp.countertop_thickness = (
+                scene_props.shelf_thickness
+                if scene_props.use_closet_material_for_countertops
+                else scene_props.countertop_thickness)
             # A double-sided island is reachable from every side, so its
             # top overhangs all round; everything else only overhangs at
             # the front until a prompt says otherwise.

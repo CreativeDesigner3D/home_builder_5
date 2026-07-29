@@ -165,6 +165,27 @@ def _update_closet_selection_mode(self, context):
     bpy.ops.hb_closets.toggle_mode(search_obj_name="")
 
 
+def _update_countertop_mode(self, context):
+    """Switching the tops between a countertop material and the closet
+    material changes what they are made of, so it changes how thick
+    they are too. Every top in the room follows, the same way the
+    material selections do - a thickness typed on one starter is a
+    setting for that material, not a size to carry across."""
+    from . import types_closets
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    thickness = (self.shelf_thickness
+                 if self.use_closet_material_for_countertops
+                 else self.countertop_thickness)
+    for obj in scene.objects:
+        if obj.get(types_closets.TAG_STARTER_CAGE):
+            sp = obj.hb_closet_starter
+            if abs(sp.countertop_thickness - thickness) > 1e-9:
+                # Assigning re-runs the starter, which is what puts the
+                # new thickness on the part.
+                sp.countertop_thickness = thickness
+    materials_closets.update_room(self, context)
+
+
 # ---------------------------------------------------------------------------
 # Object-level: starter root
 # ---------------------------------------------------------------------------
@@ -892,6 +913,20 @@ class Closets_Scene_Props(PropertyGroup):
         items=materials_closets.match_enum_items,
         update=materials_closets.update_room)  # type: ignore
 
+    closet_countertop_material: EnumProperty(
+        name="Countertop Material",
+        description="Surface material on countertops and their "
+                    "backsplashes",
+        items=materials_closets.countertop_material_enum_items,
+        update=materials_closets.update_room)  # type: ignore
+    use_closet_material_for_countertops: BoolProperty(
+        name="Use Closet Material for Countertops",
+        description="Surface the tops in the closet material instead "
+                    "of a countertop material, so the run reads as one "
+                    "piece. Tops then take the shelf thickness",
+        default=False,
+        update=_update_countertop_mode)  # type: ignore
+
     closet_panel_type: EnumProperty(
         name="Door Panel",
         description="Center panel on 5-piece doors: wood or glass",
@@ -1088,6 +1123,11 @@ class Closets_Scene_Props(PropertyGroup):
                     self, 'closet_door_grain', text="")
                 option_row(sub, "Drawer Grain").prop(
                     self, 'closet_drawer_grain', text="")
+                crow = option_row(sub, "Countertop")
+                crow.enabled = not self.use_closet_material_for_countertops
+                crow.prop(self, 'closet_countertop_material', text="")
+                sub.prop(self, 'use_closet_material_for_countertops',
+                         text="Use Closet Material for Tops")
 
             option_row(opts, "Pulls").prop(self, 'closet_pull', text="")
             if sub_toggle(opts, 'show_pull_options', "More Pull Options"):

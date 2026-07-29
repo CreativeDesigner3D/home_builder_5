@@ -2,10 +2,18 @@
 
 A bundled .blend of asset materials (assets/materials/library.blend)
 feeds the scene-level material dropdowns in the closets sidebar: one
-selection for the carcass (panels, shelves, kicks, countertops, bridge
-shelves) and one for door/drawer fronts. Changing a dropdown re-applies
-to every closet in the room; new placements pick the selection up
-through ops_closet._apply_finish.
+selection for the carcass (panels, shelves, kicks, bridge shelves) and
+one for door/drawer fronts. Changing a dropdown re-applies to every
+closet in the room; new placements pick the selection up through
+ops_closet._apply_finish.
+
+Countertops are surfaced in a different material entirely, so they read
+from their own blend (assets/materials/countertops.blend) and their own
+dropdown. Keeping them apart is what stops the eight laminates showing
+up as panel choices - both dropdowns above read the library blend with
+assets_only, so anything asset-marked in there is offered as a carcass
+material. A toggle puts the closet material on the tops instead, for a
+run that is meant to read as one piece.
 
 Materials are appended on first use and reused by name afterwards, so
 switching back and forth never duplicates datablocks. Enum item tuples
@@ -22,9 +30,19 @@ from ... import hb_utils
 
 MATERIALS_BLEND = os.path.join(os.path.dirname(__file__), 'assets',
                                'materials', 'library.blend')
+COUNTERTOPS_BLEND = os.path.join(os.path.dirname(__file__), 'assets',
+                                 'materials', 'countertops.blend')
 # Hoisted to the front of the name list, so the dynamic enums (which
 # default to their first item) default to it.
 DEFAULT_MATERIAL = 'White'
+DEFAULT_COUNTERTOP_MATERIAL = 'Gray Mesh'
+# The order the countertop laminates have always been listed in. The
+# names still come out of the blend, so a material added there shows up
+# without a code change - it just lands after the known ones.
+COUNTERTOP_ORDER = (
+    'Gray Mesh', 'Pewter Mesh', 'Organic Cotton', 'Raw Cotton',
+    'Earth', 'Flax Gauze', 'White Shalestone', 'Black Shalestone',
+)
 
 # Sentinel for the fronts / edgebanding dropdowns: follow the base
 # material selection instead of picking an explicit one.
@@ -44,6 +62,8 @@ PANEL_TYPES = [
 _names_cache = None
 _enum_cache = None
 _match_enum_cache = None
+_ctop_names_cache = None
+_ctop_enum_cache = None
 
 
 def get_material_names():
@@ -69,6 +89,35 @@ def get_material_names():
     return _names_cache
 
 
+def get_countertop_material_names():
+    """Countertop material names from the countertops blend, in the
+    listed order with anything unlisted after it (cached). Empty list
+    when the blend is missing - the dropdown then shows a single None
+    entry and application falls back to the closet material."""
+    global _ctop_names_cache
+    if _ctop_names_cache is None:
+        found = []
+        try:
+            with bpy.data.libraries.load(
+                    COUNTERTOPS_BLEND, assets_only=True) as (src, _dst):
+                found = sorted(src.materials)
+        except Exception:
+            found = []
+        known = [n for n in COUNTERTOP_ORDER if n in found]
+        rest = [n for n in found if n not in COUNTERTOP_ORDER]
+        _ctop_names_cache = known + rest
+    return _ctop_names_cache
+
+
+def countertop_material_enum_items(self, context):
+    global _ctop_enum_cache
+    if _ctop_enum_cache is None:
+        items = [(n, n, "") for n in get_countertop_material_names()]
+        _ctop_enum_cache = items or [('NONE', "None",
+                                      "No countertop materials library")]
+    return _ctop_enum_cache
+
+
 def material_enum_items(self, context):
     global _enum_cache
     if _enum_cache is None:
@@ -92,20 +141,25 @@ def match_enum_items(self, context):
 def refresh():
     """Drop the caches so a changed library blend re-scans."""
     global _names_cache, _enum_cache, _match_enum_cache
+    global _ctop_names_cache, _ctop_enum_cache
     _names_cache = None
     _enum_cache = None
     _match_enum_cache = None
+    _ctop_names_cache = None
+    _ctop_enum_cache = None
 
 
-def load_material(name):
-    """Existing-or-appended material by name; None when unavailable."""
+def load_material(name, blend=None):
+    """Existing-or-appended material by name; None when unavailable.
+    Looks in the materials library unless another blend is named."""
     if not name or name == 'NONE':
         return None
     mat = bpy.data.materials.get(name)
     if mat is not None:
         return mat
     try:
-        with bpy.data.libraries.load(MATERIALS_BLEND) as (src, dst):
+        with bpy.data.libraries.load(blend or MATERIALS_BLEND) as (src,
+                                                                   dst):
             if name in src.materials:
                 dst.materials = [name]
     except Exception:
@@ -169,6 +223,23 @@ def resolve_front_material(carcass=None):
     if selection in ('', MATCH):
         return carcass
     return load_material(selection) or carcass
+
+
+def resolve_countertop_material(carcass=None):
+    """The material for tops and their upstands: the countertop
+    selection, or the closet material when the run is meant to read as
+    one piece. Falls back to the closet material if the selection
+    cannot be resolved, so a missing blend leaves a painted top rather
+    than a grey one."""
+    props = bpy.context.scene.hb_closets
+    if carcass is None:
+        carcass = load_material(
+            getattr(props, 'closet_material', DEFAULT_MATERIAL))
+    if getattr(props, 'use_closet_material_for_countertops', False):
+        return carcass
+    name = getattr(props, 'closet_countertop_material',
+                   DEFAULT_COUNTERTOP_MATERIAL)
+    return load_material(name, COUNTERTOPS_BLEND) or carcass
 
 
 def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
@@ -256,8 +327,9 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     fronts (door/drawer/hamper) get the fronts material (Match Closet
     follows the closet material) oriented by the door/drawer grain
     setting - the library textures read horizontal as authored, so
-    VERTICAL is the rotated in-plane variant. Everything else gets the
-    closet material. Edge slots take the edgebanding selections (Match
+    VERTICAL is the rotated in-plane variant. Tops and their upstands
+    get the countertop selection. Everything else gets the closet
+    material. Edge slots take the edgebanding selections (Match
     = the surface material) as their X-rotated variant so grain reads
     along the banding; styled fronts additionally get per-member
     modifier materials. Non-cutpart meshes (cages, rods, pulls, drawer
@@ -291,6 +363,12 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     role_door = types_closets.PART_ROLE_DOOR
     role_drawer = types_closets.PART_ROLE_DRAWER_FRONT
     role_fence = types_closets.PART_ROLE_SHOE_FENCE
+    # A top and its upstands are one surface, banded all the way round
+    # in the same material.
+    ctop_roles = (types_closets.PART_ROLE_COUNTERTOP,
+                  types_closets.PART_ROLE_BACKSPLASH)
+    ctop = resolve_countertop_material(carcass)
+    ctop_edge = rotated_variant(ctop)
     fence_cache = {}
     for child in root.children_recursive:
         if child.type != 'MESH':
@@ -300,6 +378,8 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             mat, edge = door_face, front_edge
         elif role == role_drawer:
             mat, edge = drawer_face, front_edge
+        elif role in ctop_roles:
+            mat, edge = ctop, ctop_edge
         elif role == role_fence:
             # A purchased metal rail. It takes the finish chosen for its
             # shelf stack rather than the closet material, and it is one
