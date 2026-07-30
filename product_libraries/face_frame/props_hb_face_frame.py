@@ -6499,7 +6499,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     tray_opening_height: FloatProperty(
         name="Tray Opening Height",
         description="Z position of the locked shelf above the tray dividers (only when Remove Locked Shelf is off)",
-        default=units.inch(20.0), unit='LENGTH', precision=4,
+        default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_divider_thickness: FloatProperty(
