@@ -229,7 +229,7 @@ class Closet_Starter_Props(PropertyGroup):
         update=_update_starter_prop)  # type: ignore
     height: FloatProperty(
         name="Height", description="Panel height (Z)",
-        default=const.BASE_PANEL_HEIGHT, unit='LENGTH', precision=4,
+        default=const.TALL_PANEL_HEIGHT, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Panel depth (Y)",
@@ -244,7 +244,7 @@ class Closet_Starter_Props(PropertyGroup):
                     "value)",
         items=const.PANEL_HEIGHT_ITEMS + [('CUSTOM', "Custom",
                                            "Use the typed height")],
-        default='819', update=_update_height_preset)  # type: ignore
+        default='2131', update=_update_height_preset)  # type: ignore
 
     # Run-wide locks on the two sizes that a bay can also carry on its
     # own. Locked holds every bay at the run value; unlocked hands the
@@ -331,6 +331,9 @@ class Closet_Starter_Props(PropertyGroup):
         description="The countertop's right end is exposed, so it gets an "
                     "edge treatment and no side backsplash",
         default=False, update=_update_starter_prop)  # type: ignore
+    # Not drawn in the dialog yet - rounding an exposed countertop
+    # corner needs a node group the library does not have. The
+    # property stays defined so putting the row back is one line.
     countertop_radius_finished_ends: BoolProperty(
         name="Radius Finished Ends",
         description="Round the exposed countertop corners instead of "
@@ -431,9 +434,9 @@ class Closet_Starter_Props(PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
 
-    # End options. Finished end and drill
-    # through are flags a downstream machining pass consumes (blind vs
-    # through machining, edge treatment); turn-off frees the panel
+    # End options. Finished end and drill through are recorded on the
+    # panel as flags - whether the end is exposed, and whether its
+    # system holes run all the way through; turn-off frees the panel
     # thickness back to the openings for shared-panel runs; battens are
     # cosmetic scribe strips.
     left_finished_end: BoolProperty(
@@ -609,7 +612,7 @@ class Closet_Bay_Props(PropertyGroup):
                     "value)",
         items=const.PANEL_HEIGHT_ITEMS + [('CUSTOM', "Custom",
                                            "Use the typed height")],
-        default='819', update=_update_bay_height_preset)  # type: ignore
+        default='2131', update=_update_bay_height_preset)  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Bay depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,

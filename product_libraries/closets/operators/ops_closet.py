@@ -3008,10 +3008,6 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.prop(sp, 'countertop_left_finished_end', text="Left Finished End")
         row.prop(sp, 'countertop_right_finished_end',
                  text="Right Finished End")
-        row = sub.row(align=True)
-        row.enabled = (sp.countertop_left_finished_end
-                       or sp.countertop_right_finished_end)
-        row.prop(sp, 'countertop_radius_finished_ends')
 
         box = col.box()
         box.label(text="Backsplash")
@@ -3639,7 +3635,8 @@ class hb_closets_OT_change_hanger(bpy.types.Operator):
             obj.data = model.data
 
     def check(self, context):
-        # Live preview while the dialog is open (legacy behavior).
+        # Live preview while the dialog is open, as in the prior
+        # library.
         self._apply(context)
         return True
 

@@ -1,6 +1,6 @@
 """Closet library constants.
 
-Values ported from the legacy closet system so dealers migrating projects
+Values ported from the prior closet library so dealers migrating projects
 see the same defaults. Heights are defined in millimeters (32mm-system
 panel drilling heights); everything else is inches.
 """
@@ -22,9 +22,9 @@ CLEAT_WIDTH = inch(4.0)
 # inner face of an end panel at the front edge.
 BATTEN_WIDTH = inch(1.125)
 BATTEN_THICKNESS = inch(0.25)
-# Wall hang rail (the strip the closet hangs from / anchors to). Legacy
-# profile: 1.125 in tall x 0.25 in thick, rail bottom 3.3125 in below
-# the section top.
+# Wall hang rail (the strip the closet hangs from / anchors to). The
+# prior library's profile: 1.125 in tall x 0.25 in thick, rail bottom
+# 3.3125 in below the section top.
 HANG_RAIL_WIDTH = inch(1.125)
 HANG_RAIL_THICKNESS = inch(0.25)
 HANG_RAIL_DROP = inch(3.3125)
@@ -156,7 +156,7 @@ ROD_CUP_DEPTH_2 = inch(0.8)
 # Hang-rod centerline distance from the rear (wall side) of the opening.
 ROD_FROM_REAR = inch(12.0)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
-# the legacy closet system: each front overlays a shared panel/shelf by
+# the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.
 FRONT_THICKNESS = inch(0.75)
 DOOR_TO_CABINET_GAP = inch(0.125)   # front face held off the carcass
@@ -211,7 +211,7 @@ SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
 SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
 SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
 SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
-# Modal add-part height snapping increment (legacy fallback; the 32mm
+# Modal add-part height snapping increment (fallback only; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
 
@@ -219,8 +219,8 @@ PART_Z_SNAP = inch(0.25)
 # 32mm system. Panel/bay heights increment on a 32mm lattice with a 19mm
 # base (819 / 1267 / 2131mm - the Base / Hanging / Tall defaults - all
 # sit on it). Shelf and rod locations land on system holes: a 12.95mm
-# base + n*32mm from the interior bottom (the legacy opening-height
-# enum steps on exactly this lattice).
+# base + n*32mm from the interior bottom (the prior library's
+# opening-height enum steps on exactly this lattice).
 # ---------------------------------------------------------------------------
 SYSTEM_PITCH = millimeter(32.0)
 SYSTEM_HEIGHT_BASE = millimeter(19.0)

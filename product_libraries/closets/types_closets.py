@@ -64,7 +64,7 @@ PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 PART_ROLE_FIXED_SHELF = 'CLOSET_FIXED_SHELF'
 PART_ROLE_ADJ_SHELF = 'CLOSET_ADJ_SHELF'
 PART_ROLE_ROD = 'CLOSET_ROD'
-# Inserts. Fronts follow the legacy half-overlay convention.
+# Inserts. Fronts follow the prior library's half-overlay convention.
 PART_ROLE_DOOR = 'CLOSET_DOOR_FRONT'
 PART_ROLE_DRAWER_FRONT = 'CLOSET_DRAWER_FRONT'
 PART_ROLE_DRAWER_BOX = 'CLOSET_DRAWER_BOX'
@@ -362,8 +362,9 @@ class ClosetOpening(GeoNodeCage):
 
 
 class ClosetRod(GeoNodeObject):
-    """Hang rod. Uses the legacy rod node group (round/oval profile with
-    end cups); Dim X is the rod length along local +X."""
+    """Hang rod. Uses the rod node group carried over from the prior
+    library (round/oval profile with end cups); Dim X is the rod
+    length along local +X."""
 
     def create(self, name="Closet Rod"):
         super().create('GeoNodeClosetRod', name)
@@ -568,8 +569,9 @@ class ClosetStarter(GeoNodeCage):
         """One bay's fixed parts + opening cage, in bay-local coords.
         Static rotations/mirrors are set here; recalculate() owns the
         positions and sizes. Toe kick / cleat orientation reproduces the
-        legacy build: rot_x -90 stands the kick board up behind the
-        setback line; rot_x +90 stands the cleat against the back."""
+        prior library's build: rot_x -90 stands the kick board up
+        behind the setback line; rot_x +90 stands the cleat against
+        the back."""
         bottom = CabinetPart()
         bottom.create('Bottom Shelf')
         bottom.obj.parent = bay_obj
@@ -800,9 +802,9 @@ class ClosetStarter(GeoNodeCage):
             off = bool(panel.get('hidden'))
             child['hb_panel_off'] = 1 if off else 0
             _set_part_hidden(child, off)
-            # End flags for downstream machining (blind vs
-            # through system holes, edge treatment). Flags only - no
-            # machining in the library.
+            # End flags recorded on the panel: whether the end is
+            # exposed, and whether its system holes run all the way
+            # through. Flags only - they carry no geometry.
             if i == 0:
                 child['hb_finished_end'] = 1 if sp.left_finished_end else 0
                 child['hb_drill_through'] = 1 if sp.drill_through_left else 0
@@ -901,8 +903,8 @@ class ClosetStarter(GeoNodeCage):
         truth from a live reference build: Length runs vertical, the filler
         WIDTH extends outward past the end (left filler -X, right +X),
         thickness = shelf material at the front face, origin at the end
-        opening's front-bottom. Reconciled by width>0 (like battens);
-        no machining is authored here."""
+        opening's front-bottom. Reconciled by width>0 (like
+        battens)."""
         bays = layout['bays']
         if not bays:
             return
@@ -1156,8 +1158,9 @@ class ClosetStarter(GeoNodeCage):
         the opening's config idprops (regenerators create/remove children
         to match, so config edits and old files always converge).
 
-        Fronts use the legacy half-overlay convention: each edge overlays
-        its shared panel/shelf by (thickness - gap)/2. On a double
+        Fronts use the prior library's half-overlay convention: each
+        edge overlays its shared panel/shelf by (thickness - gap)/2.
+        On a double
         island's BACK opening the fronts flip to the y=0 face (Mirror Z
         flips the extrude direction, set at part creation).
         """
@@ -2022,8 +2025,8 @@ class ClosetStarter(GeoNodeCage):
         """A decorative shelf laid on top of the
         run at the panel top, projecting forward by the overhang and
         past each finished end by the same amount. One spanning piece
-        (uniform run); no machining - a plain shelf part
-        picked up downstream by role."""
+        (uniform run) - a plain shelf part identified by its
+        role."""
         want = sp.add_top_accent_shelf
         shelf = None
         for c in self.obj.children:
@@ -2366,9 +2369,8 @@ class LShelfClosetStarter(GeoNodeCage):
         # Back Partition: one
         # full-height vertical strip lying parallel to the back wall
         # (or the side wall when flipped) that the L shelves notch
-        # around. Construction only - all machining/tokens belong to
-        # downstream machining, which reads the geometry,
-        # role, and idprops left here.
+        # around. Construction only - the geometry, role and idprops
+        # left here are what anything downstream reads.
         self._make_back_partition()
         # Toe kicks (one per wing front; hidden for hung units).
         for pname, rz, my, mz in (('Right Wing Kick', 0.0, True, False),
@@ -2390,8 +2392,8 @@ class LShelfClosetStarter(GeoNodeCage):
         part.obj['hb_part_role'] = PART_ROLE_PANEL
         part.obj['hb_panel_index'] = 2
         part.obj['hb_l_partition'] = True
-        # Width-lookup key read by downstream machining (the
-        # back-support width the L-shelf rear machining derives from).
+        # Width-lookup key (the back-support width the L-shelf rear
+        # notch derives from).
         part.obj['hb_l_strip'] = 'Back Partition'
         part.obj.rotation_euler.y = math.radians(-90)
         part.set_input('Mirror Y', True)
@@ -2535,9 +2537,9 @@ class LShelfClosetStarter(GeoNodeCage):
                     # panel thickness short of the wing panel and of the
                     # back wall; the back-wall kick (mate) starts at the
                     # receiver's face plane and butts square into it.
-                    # the downstream wing-kick machining resolves
-                    # the pair from this geometry (the mate's end must
-                    # land against the receiver's face, never cross it).
+                    # the pair reads off this geometry (the mate's end
+                    # must land against the receiver's face, never
+                    # cross it).
                     gp = GeoNodeCutpart(c)
                     if c['hb_l_kick'] == 'Right Wing Kick':
                         # Mate: receiver face -> right wing end panel
@@ -2570,7 +2572,7 @@ class LShelfClosetStarter(GeoNodeCage):
                 else:
                     z = z_bottom + (z_top - z_bottom) * i / (len(shelves) - 1)
                 # shelves are held off both walls by the wall
-                # offset (partition and machining formulas assume it).
+                # offset (the partition and shelf formulas assume it).
                 shelf.location = (wo, -wo, z)
                 gp = GeoNodeCutpart(shelf)
                 gp.set_input('Length', max(W - pt - wo, 0.001))
@@ -2842,8 +2844,8 @@ def _stash_drawer_closed(front, box, dist, side):
 
 def default_adj_shelf_qty(opening):
     """Sensible starting shelf count for an opening: aim for ~one shelf
-    per 12" of interior height (the legacy default spacing), clamped to
-    at least one."""
+    per 12" of interior height (the prior library's default spacing),
+    clamped to at least one."""
     try:
         interior_h = GeoNodeCage(opening).get_input('Dim Z')
     except Exception:

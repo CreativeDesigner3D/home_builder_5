@@ -10,8 +10,8 @@ node group the cabinet libraries use):
   Combination                2.5" stiles, 3" rails (2" on drawers)
   Slab                       flat (no modifier)
 
-Panel: 1/4" thick, inset 1/2" from the frame face. Each style carries
-a MINIMUM front size; a front smaller than the minimum stays a slab so
+Panel: 1/4" thick, sitting flush in the frame opening. Each style
+carries a MINIMUM front size; a front smaller than the minimum stays a slab so
 short drawer stacks never grow squeezed frames.
 
 AXIS NOTE: closet front cutparts run Length ACROSS and Width UP - the
@@ -66,7 +66,9 @@ _MIN_SIZES = {
 }
 
 _PANEL_THICKNESS = inch(0.25)
-_PANEL_INSET = inch(0.5)
+# The prior library sits the center panel flush in the frame
+# opening, so there is no inset to set back.
+_PANEL_INSET = 0.0
 
 
 WRAP_GROUP_NAME = 'Closet Door Style'
