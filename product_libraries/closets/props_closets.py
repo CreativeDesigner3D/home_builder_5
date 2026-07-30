@@ -1024,156 +1024,297 @@ class Closets_Scene_Props(PropertyGroup):
         items=molding_closets.base_profile_enum_items)  # type: ignore
 
     # ----- Library UI state -----
-    show_closet_sizes: BoolProperty(name="Show Closet Sizes", default=False)  # type: ignore
-    show_starter_library: BoolProperty(name="Show Closet Starters", default=True)  # type: ignore
-    show_closet_options: BoolProperty(name="Show Closet Options", default=False)  # type: ignore
-    # Sub-toggles inside Closet Options for the two dense categories.
-    show_material_options: BoolProperty(name="More Material Options", default=False)  # type: ignore
-    show_pull_options: BoolProperty(name="More Pull Options", default=False)  # type: ignore
+    closet_tabs: EnumProperty(
+        name="Closet Tabs",
+        items=[
+            ('LIBRARY', "Library", "Library"),
+            ('OPTIONS', "Options", "Options"),
+        ],
+        default='LIBRARY')  # type: ignore
 
-    def draw_library_ui(self, layout, context):
+    library_view_mode: EnumProperty(
+        name="Library View",
+        description="Show library items as thumbnail tiles or a compact list",
+        items=[
+            ('THUMBNAIL', "Thumbnail", "Thumbnail tiles with previews",
+             'IMGDISPLAY', 0),
+            ('LIST', "List", "Compact list of names", 'LONGDISPLAY', 1),
+        ],
+        default='THUMBNAIL')  # type: ignore
+
+    # ---- Library tab section toggles ----
+    show_closet_sizes: BoolProperty(
+        name="Show Closet Sizes", default=False)  # type: ignore
+    show_starter_library: BoolProperty(
+        name="Show Closet Starters", default=True)  # type: ignore
+    show_thickness_sizes: BoolProperty(
+        name="Show Part Thicknesses", default=False)  # type: ignore
+    show_toe_kick_sizes: BoolProperty(
+        name="Show Toe Kick Sizes", default=False)  # type: ignore
+
+    # ---- Options tab section toggles ----
+    show_material_options: BoolProperty(
+        name="Show Materials", default=False)  # type: ignore
+    show_front_options: BoolProperty(
+        name="Show Front Styles", default=False)  # type: ignore
+    show_pull_options: BoolProperty(
+        name="Show Pulls", default=False)  # type: ignore
+    show_drawer_box_options: BoolProperty(
+        name="Show Drawer Boxes", default=False)  # type: ignore
+    show_rod_options: BoolProperty(
+        name="Show Rods and Hangers", default=False)  # type: ignore
+    show_countertop_options: BoolProperty(
+        name="Show Countertops", default=False)  # type: ignore
+    show_molding_options: BoolProperty(
+        name="Show Molding", default=False)  # type: ignore
+
+    # =====================================================================
+    # UI: closet sizes (Library tab)
+    # =====================================================================
+    def draw_closet_sizes_ui(self, layout, context):
+        """Seed sizes for new starters. The three closet types share a
+        depth / height grid so the columns read across; the values that
+        belong to one type only sit under it."""
         col = layout.column(align=True)
 
-        box = col.box()
-        row = box.row()
-        row.alignment = 'LEFT'
-        row.prop(self, 'show_closet_sizes', text="Closet Sizes",
-                 icon='TRIA_DOWN' if self.show_closet_sizes else 'TRIA_RIGHT',
-                 emboss=False)
-        if self.show_closet_sizes:
-            for prop_name in ('default_closet_width', 'default_panel_depth',
-                              'default_base_panel_depth',
-                              'default_tall_panel_depth',
-                              'default_hanging_panel_depth',
-                              'default_corner_closet_size',
-                              'base_panel_height', 'tall_panel_height',
-                              'hanging_panel_height', 'hanging_top_height',
-                              'panel_thickness', 'shelf_thickness',
-                              'countertop_thickness', 'default_accent_overhang',
-                              'toe_kick_height', 'toe_kick_setback'):
-                box.prop(self, prop_name)
+        row = col.row()
+        row.label(text="Default Width:")
+        row.prop(self, 'default_closet_width', text="")
 
-        box = col.box()
-        row = box.row()
-        row.alignment = 'LEFT'
-        row.prop(self, 'show_starter_library', text="Closet Starters",
-                 icon='TRIA_DOWN' if self.show_starter_library else 'TRIA_RIGHT',
-                 emboss=False)
-        if self.show_starter_library:
-            # One row per section: the section LABEL on the left, then a
-            # thumbnail tile + place button per product to its right
-            # (matches the face_frame catalog's labeled-row layout). Bay
-            # count is derived from width at placement (target ~42").
-            for sec_label, entries in starter_presets.STARTER_SECTIONS:
-                row = box.row(align=True)
-                row.label(text=sec_label)
-                for name, label, _desc in entries:
-                    cell = row.column(align=True)
+        col.separator()
+        row = col.row()
+        row.label(text="Sizes")
+        row.label(text="Base")
+        row.label(text="Tall")
+        row.label(text="Hanging")
+
+        row = col.row()
+        row.label(text="Depth:")
+        row.prop(self, 'default_base_panel_depth', text="")
+        row.prop(self, 'default_tall_panel_depth', text="")
+        row.prop(self, 'default_hanging_panel_depth', text="")
+
+        row = col.row()
+        row.label(text="Height:")
+        row.prop(self, 'base_panel_height', text="")
+        row.prop(self, 'tall_panel_height', text="")
+        row.prop(self, 'hanging_panel_height', text="")
+
+        col.separator()
+        # The fallback depth serves any starter whose type has no depth
+        # of its own - the corner starters read it for both wings.
+        row = col.row()
+        row.label(text="Fallback Depth:")
+        row.prop(self, 'default_panel_depth', text="")
+        row = col.row()
+        row.label(text="Hanging Top Height:")
+        row.prop(self, 'hanging_top_height', text="")
+        row = col.row()
+        row.label(text="Corner Size:")
+        row.prop(self, 'default_corner_closet_size', text="")
+        row = col.row()
+        row.label(text="Accent Overhang:")
+        row.prop(self, 'default_accent_overhang', text="")
+
+        box = layout.box()
+        box.prop(self, 'show_thickness_sizes', text="Part Thicknesses",
+                 icon='TRIA_DOWN' if self.show_thickness_sizes
+                 else 'TRIA_RIGHT', emboss=False)
+        if self.show_thickness_sizes:
+            sub = box.column(align=True)
+            sub.prop(self, 'panel_thickness', text="Panel")
+            sub.prop(self, 'shelf_thickness', text="Shelf")
+
+        box = layout.box()
+        box.prop(self, 'show_toe_kick_sizes', text="Toe Kick",
+                 icon='TRIA_DOWN' if self.show_toe_kick_sizes
+                 else 'TRIA_RIGHT', emboss=False)
+        if self.show_toe_kick_sizes:
+            sub = box.column(align=True)
+            sub.prop(self, 'toe_kick_height', text="Height")
+            sub.prop(self, 'toe_kick_setback', text="Setback")
+
+    # =====================================================================
+    # UI: starters (Library tab)
+    # =====================================================================
+    def draw_starter_library_ui(self, layout, context):
+        """One row per section: the section label on the left, then a
+        cell per product to its right. Thumbnail view puts a preview
+        tile above each button; list view drops the tiles for a compact
+        list of names. Bay count is derived from width at placement."""
+        for sec_label, entries in starter_presets.STARTER_SECTIONS:
+            row = layout.row(align=True)
+            row.label(text=sec_label)
+            for name, label, _desc in entries:
+                cell = row.column(align=True)
+                if self.library_view_mode == 'THUMBNAIL':
                     icon_id = load_starter_thumbnail(name)
                     if icon_id:
                         cell.template_icon(icon_value=icon_id, scale=4.0)
-                    op = cell.operator('hb_closets.place_starter',
-                                      text=label)
-                    op.starter_name = name
+                op = cell.operator('hb_closets.place_starter', text=label)
+                op.starter_name = name
 
-        # ----- Options: one collapsible "Closet Options" section.
-        # One aligned label / value row per category; the two dense
-        # categories (Materials, Pulls) tuck their extra fields behind
-        # "More ..." sub-toggles. Dropdown changes re-apply room-wide.
-        box = col.box()
-        row = box.row()
-        row.alignment = 'LEFT'
-        row.prop(self, 'show_closet_options', text="Closet Options",
-                 icon='TRIA_DOWN' if self.show_closet_options
-                 else 'TRIA_RIGHT',
-                 emboss=False)
-        if self.show_closet_options:
-            def option_row(parent, label):
-                """Aligned label / value row: label in a fixed-width
-                left column so the dropdowns line up in one column."""
-                split = parent.split(factor=0.35)
-                split.label(text=label)
-                return split.row(align=True)
+    # =====================================================================
+    # UI: materials (Options tab)
+    # =====================================================================
+    def draw_material_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'closet_material', text="Closet")
+        col.prop(self, 'closet_front_material', text="Fronts")
 
-            def sub_toggle(parent, prop_name, label):
-                row = parent.row()
-                row.alignment = 'LEFT'
-                row.prop(self, prop_name, text=label,
-                         icon='TRIA_DOWN' if getattr(self, prop_name)
-                         else 'TRIA_RIGHT',
-                         emboss=False)
-                return getattr(self, prop_name)
+        col.separator()
+        col.label(text="Edgebanding:")
+        col.prop(self, 'closet_edge_material', text="Closet Edge")
+        col.prop(self, 'closet_front_edge_material', text="Front Edge")
 
-            # align=False keeps Blender's normal row spacing so the
-            # option rows read as separate items rather than a block.
-            opts = box.column(align=False)
+        col.separator()
+        col.label(text="Grain Direction:")
+        col.prop(self, 'closet_door_grain', text="Doors")
+        col.prop(self, 'closet_drawer_grain', text="Drawer Fronts")
 
-            option_row(opts, "Materials").prop(
-                self, 'closet_material', text="")
-            if sub_toggle(opts, 'show_material_options',
-                          "More Material Options"):
-                sub = opts.box().column(align=True)
-                option_row(sub, "Fronts").prop(
-                    self, 'closet_front_material', text="")
-                option_row(sub, "Closet Edge").prop(
-                    self, 'closet_edge_material', text="")
-                option_row(sub, "Front Edge").prop(
-                    self, 'closet_front_edge_material', text="")
-                option_row(sub, "Door Grain").prop(
-                    self, 'closet_door_grain', text="")
-                option_row(sub, "Drawer Grain").prop(
-                    self, 'closet_drawer_grain', text="")
-                crow = option_row(sub, "Countertop")
-                crow.enabled = not self.use_closet_material_for_countertops
-                crow.prop(self, 'closet_countertop_material', text="")
-                sub.prop(self, 'use_closet_material_for_countertops',
-                         text="Use Closet Material for Tops")
+    # =====================================================================
+    # UI: door and drawer front styles (Options tab)
+    # =====================================================================
+    def draw_front_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'closet_front_style', text="Front Style")
+        col.prop(self, 'closet_panel_type', text="Door Panel")
 
-            option_row(opts, "Pulls").prop(self, 'closet_pull', text="")
-            if sub_toggle(opts, 'show_pull_options', "More Pull Options"):
-                sub = opts.box().column(align=True)
-                option_row(sub, "Finish").prop(
-                    self, 'closet_pull_finish', text="")
-                sub.label(text="Vertical Location:")
-                vrow = sub.row(align=True)
-                vrow.prop(self, 'pull_vertical_location_base')
-                vrow.prop(self, 'pull_vertical_location_upper')
-                vrow.prop(self, 'pull_vertical_location_tall')
-                option_row(sub, "From Edge").prop(
-                    self, 'pull_horizontal_offset', text="")
-                sub.prop(self, 'center_pulls_on_drawer_front')
+    # =====================================================================
+    # UI: pulls (Options tab)
+    # =====================================================================
+    def draw_pull_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'closet_pull', text="Pull")
+        col.prop(self, 'closet_pull_finish', text="Finish")
 
-            rrow = option_row(opts, "Rods")
-            rrow.prop(self, 'closet_rod_type', text="")
-            rrow.prop(self, 'closet_rod_finish', text="")
+        col.separator()
+        col.label(text="Position:")
+        col.prop(self, 'pull_horizontal_offset', text="From Edge")
+        col.prop(self, 'pull_vertical_location_base', text="Base Vertical")
+        col.prop(self, 'pull_vertical_location_tall', text="Tall Vertical")
+        col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
+        col.prop(self, 'center_pulls_on_drawer_front',
+                 text="Center Drawer Pulls")
 
-            hrow = option_row(opts, "Hangers")
-            hrow.prop(self, 'closet_hanger_model', text="")
-            hrow.operator('hb_closets.randomize_hangers', text="",
-                          icon='FILE_REFRESH')
-            hrow.operator('hb_closets.install_model_pack', text="",
-                          icon='IMPORT')
+    # =====================================================================
+    # UI: drawer boxes (Options tab)
+    # =====================================================================
+    def draw_drawer_box_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'closet_drawer_box', text="Drawer Box")
 
-            option_row(opts, "Front Style").prop(
-                self, 'closet_front_style', text="")
-            option_row(opts, "Door Panel").prop(
-                self, 'closet_panel_type', text="")
-            option_row(opts, "Drawer Box").prop(
-                self, 'closet_drawer_box', text="")
+    # =====================================================================
+    # UI: rods and hangers (Options tab)
+    # =====================================================================
+    def draw_rod_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.label(text="Hanging Rods:")
+        col.prop(self, 'closet_rod_type', text="Type")
+        col.prop(self, 'closet_rod_finish', text="Finish")
 
-            mrow = option_row(opts, "Crown Molding")
-            mrow.prop(self, 'closet_crown_profile', text="")
-            mrow.operator('hb_closets.add_molding', text="",
-                          icon='ADD').molding_kind = 'CROWN'
-            mrow.operator('hb_closets.delete_molding', text="",
-                          icon='X').molding_kind = 'CROWN'
+        col.separator()
+        col.label(text="Hangers:")
+        col.prop(self, 'closet_hanger_model', text="Model")
 
-            brow = option_row(opts, "Base Molding")
-            brow.prop(self, 'closet_base_profile', text="")
-            brow.operator('hb_closets.add_molding', text="",
-                          icon='ADD').molding_kind = 'BASE'
-            brow.operator('hb_closets.delete_molding', text="",
-                          icon='X').molding_kind = 'BASE'
+        row = layout.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_closets.randomize_hangers',
+                     text="Randomize Hangers", icon='FILE_REFRESH')
+        row.operator('hb_closets.install_model_pack', text="", icon='IMPORT')
+
+    # =====================================================================
+    # UI: countertops (Options tab)
+    # =====================================================================
+    def draw_countertop_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        # With the toggle on, tops take the closet material and the
+        # shelf thickness, so neither field below applies.
+        col.prop(self, 'use_closet_material_for_countertops',
+                 text="Use Closet Material for Tops")
+        sub = col.row()
+        sub.enabled = not self.use_closet_material_for_countertops
+        sub.prop(self, 'closet_countertop_material', text="Material")
+        sub = col.row()
+        sub.enabled = not self.use_closet_material_for_countertops
+        sub.prop(self, 'countertop_thickness', text="Thickness")
+
+    # =====================================================================
+    # UI: molding (Options tab)
+    # =====================================================================
+    def draw_molding_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.label(text="Crown:")
+        col.prop(self, 'closet_crown_profile', text="Profile")
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_closets.add_molding', text="Add Crown Molding",
+                     icon='ADD').molding_kind = 'CROWN'
+        row.operator('hb_closets.delete_molding', text="",
+                     icon='X').molding_kind = 'CROWN'
+
+        col.separator()
+        col.label(text="Base:")
+        col.prop(self, 'closet_base_profile', text="Profile")
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_closets.add_molding', text="Add Base Molding",
+                     icon='ADD').molding_kind = 'BASE'
+        row.operator('hb_closets.delete_molding', text="",
+                     icon='X').molding_kind = 'BASE'
+
+    # =====================================================================
+    # UI: master draw entry point (called by view3d_sidebar)
+    # =====================================================================
+    def draw_library_ui(self, layout, context):
+        col = layout.column(align=True)
+
+        # Tab selector. On the LIBRARY tab an icon-only Thumbnail/List
+        # toggle is pinned to the right end of this same row.
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.prop_enum(self, 'closet_tabs', 'LIBRARY', icon='ASSET_MANAGER')
+        row.prop_enum(self, 'closet_tabs', 'OPTIONS', icon='PREFERENCES')
+
+        if self.closet_tabs == 'LIBRARY':
+            view = row.row(align=True)
+            view.alignment = 'RIGHT'
+            view.prop(self, 'library_view_mode', expand=True, icon_only=True)
+            sections = [
+                ('show_closet_sizes', "Closet Sizes",
+                 self.draw_closet_sizes_ui),
+                ('show_starter_library', "Closet Starters",
+                 self.draw_starter_library_ui),
+            ]
+        else:
+            # Dropdown changes on this tab re-apply room-wide.
+            sections = [
+                ('show_material_options', "Materials",
+                 self.draw_material_options_ui),
+                ('show_front_options', "Door & Drawer Front Styles",
+                 self.draw_front_options_ui),
+                ('show_pull_options', "Pulls",
+                 self.draw_pull_options_ui),
+                ('show_drawer_box_options', "Drawer Boxes",
+                 self.draw_drawer_box_options_ui),
+                ('show_rod_options', "Rods & Hangers",
+                 self.draw_rod_options_ui),
+                ('show_countertop_options', "Countertops",
+                 self.draw_countertop_options_ui),
+                ('show_molding_options', "Molding",
+                 self.draw_molding_options_ui),
+            ]
+
+        for prop_name, label, draw_fn in sections:
+            expanded = getattr(self, prop_name)
+            box = col.box()
+            hrow = box.row()
+            hrow.alignment = 'LEFT'
+            hrow.prop(self, prop_name, text=label,
+                      icon='TRIA_DOWN' if expanded else 'TRIA_RIGHT',
+                      emboss=False)
+            if expanded:
+                draw_fn(box, context)
 
 
 classes = (
