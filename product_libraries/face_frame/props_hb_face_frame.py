@@ -3151,6 +3151,26 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=update_grain_direction,
     )  # type: ignore
 
+    # ---- Hardware / machining callouts ----
+    # Documentation flags with no 3D geometry: downstream drawing
+    # consumers letter-mark fronts using this style (RC / TL / FR) and
+    # list the option beside the style name.
+    include_restrictor_clips: BoolProperty(
+        name="Include Restrictor Clips (RC)",
+        description="Fronts using this style get an RC callout on drawings",
+        default=False,
+    )  # type: ignore
+    include_touch_latches: BoolProperty(
+        name="Include Touch Latches (TL)",
+        description="Fronts using this style get a TL callout on drawings",
+        default=False,
+    )  # type: ignore
+    include_finger_rout: BoolProperty(
+        name="Include Finger Rout (FR)",
+        description="Fronts using this style get an FR callout on drawings",
+        default=False,
+    )  # type: ignore
+
     # ---- Profile references ----
     # Named picks from the shipped face_frame_assets/door_profiles
     # library (see _profile_enum_items); the Object pointers below are
@@ -4088,6 +4108,11 @@ class Face_Frame_Door_Style(PropertyGroup):
         col.prop(self, "front_panel", text="Panel")
 
         box.prop(self, "grain_direction", text="Grain Direction")
+
+        hw = box.column(align=True)
+        hw.prop(self, "include_restrictor_clips")
+        hw.prop(self, "include_touch_latches")
+        hw.prop(self, "include_finger_rout")
 
         # Frame widths derive from the catalog series by default (read-only).
         # Stile and rail each have an independent unlock toggle to override
