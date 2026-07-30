@@ -2859,7 +2859,7 @@ OVERLAY_TO_HINGES = {'*Standard Overlay': [['HCB', 'COMPACT BLUMOTION Hinge', Fa
                          ['H030', 'Knife - Antique Brass', False],
                          ['NONE', 'None', False]],
  'Classic Overlay': [['HCB', 'COMPACT BLUMOTION Hinge', False],
-                     ['HCTB', 'CLIPtop BLUMOTION Hinge', False],
+                     ['HCTB', 'CLIPtop BLUMOTION Hinge', True],
                      ['H005', 'Demountable - Burnished Brass', False],
                      ['H006', 'Demountable - Oil Rubbed Bronze', False],
                      ['H007', 'Demountable - Satin Nickel', False],
@@ -4924,7 +4924,10 @@ OVERLAY_TO_FF_BUCKET = {'*Standard Overlay': 'CLASSIC',
  'Partial Inset, Beaded Edge': 'PARTIAL_INSET',
  'Partial Inset, Chamfer': 'PARTIAL_INSET',
  'Partial Inset, Metro': 'PARTIAL_INSET',
- '3/8" Inset (Lipped)': 'PARTIAL_INSET',
+ # Lipped 3/8 inset reads as an overlay on the face plane (face = opening
+ # + 1/4 per side); the inset buckets now carry a negative face reveal, so
+ # it sizes through the overlay bucket until real lip geometry exists.
+ '3/8" Inset (Lipped)': 'CLASSIC',
  'Full Inset, Square Edge': 'FULL_INSET',
  'Full Inset, Beaded Edge': 'FULL_INSET',
  'Full Inset, Chamfer': 'FULL_INSET',
