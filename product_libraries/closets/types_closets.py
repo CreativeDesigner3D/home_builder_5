@@ -121,18 +121,33 @@ PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
 PROP_BOX_TYPE_RESOLVED = 'hb_box_type'
 PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
 PROP_OPEN_HEIGHT = 'hb_open_height'
-# Per-front idprops (on each drawer FRONT object). A drawer stack fills its
-# opening: unlocked fronts share the remaining span equally. Editing a
-# front's height locks it (hb_front_locked=1) so it holds while the others
-# absorb the difference. hb_front_height is rewritten every recalc with the
-# resolved height, so overlay labels always read the true value.
+# Per-front idprops (on each drawer FRONT object). A drawer stack fills
+# its opening: the fronts the stack owns share the remaining span
+# equally. Typing a front's height hands that front its own
+# (hb_unlock_front_height=1) so it holds while the others absorb the
+# difference - the same padlock reading the bays use, where the flag
+# that is set is the one the user pinned. hb_front_height is rewritten
+# every recalc with the resolved height, so overlay labels always read
+# the true value.
+#
+# These stay on the part as idprops rather than moving to a settings
+# group: a group belongs to a cage - the run, a bay, an opening - and
+# the parts under one are laid out by the solve, so the whole part layer
+# stays hot-reloadable.
 PROP_FRONT_HEIGHT = 'hb_front_height'
-PROP_FRONT_LOCKED = 'hb_front_locked'
+PROP_UNLOCK_FRONT_HEIGHT = 'hb_unlock_front_height'
+# The name the flag was saved under before the padlocks were made to
+# read one way across the library. Same meaning, so it carries straight
+# across. See carry_over_front_locks().
+OLD_PROP_FRONT_LOCKED = 'hb_front_locked'
 PROP_DOOR_SWING = 'hb_door_swing'        # ''|'LEFT'|'RIGHT'|'DOUBLE'|'LIFT_UP'
 PROP_IS_HAMPER = 'hb_is_hamper'
 # Bay-level doors span the WHOLE bay (all segments), parented to the bay
 # cage; set from the bay menu. Mutually exclusive with opening doors on
-# the same side (setting one clears the other).
+# the same side (setting one clears the other). These live on the bay's
+# typed settings group now (hb_closet_bay); the keys below are the
+# storage the group replaced, kept so a file saved before the change can
+# be carried over on open. See carry_over_bay_fronts().
 PROP_BAY_DOOR_SWING = 'hb_bay_door_swing'
 PROP_BAY_IS_HAMPER = 'hb_bay_is_hamper'
 PROP_CUBBY_COLS = 'hb_cubby_cols'
@@ -1347,9 +1362,9 @@ class ClosetStarter(GeoNodeCage):
 
         # ----- Drawer stack (bottom-up fronts + boxes) -----
         # The stack FILLS the opening: fronts span the full front extent
-        # (interior_h + to + bo) less the inter-front gaps. Unlocked fronts
-        # share the remainder equally; a front the user has resized holds
-        # its height (hb_front_locked) while the rest absorb the difference.
+        # (interior_h + to + bo) less the inter-front gaps. The fronts the
+        # stack owns share the remainder equally; a front the user has
+        # pinned holds its height while the rest absorb the difference.
         fronts = groups.get(PART_ROLE_DRAWER_FRONT, [])
         boxes = {c.get('hb_drawer_index', 0): c
                  for c in groups.get(PART_ROLE_DRAWER_BOX, [])
@@ -1362,7 +1377,8 @@ class ClosetStarter(GeoNodeCage):
             heights = _distribute_front_heights(
                 avail,
                 [(f.get(PROP_FRONT_HEIGHT, 0.0),
-                  bool(f.get(PROP_FRONT_LOCKED, 0))) for f in fronts])
+                  bool(f.get(PROP_UNLOCK_FRONT_HEIGHT, 0)))
+                 for f in fronts])
             from . import drawer_boxes_closets as dbx
             # Opening-level default: opening override wins, else scene.
             _ovr = opening.hb_closet_opening.drawer_box_override
@@ -1696,18 +1712,18 @@ class ClosetStarter(GeoNodeCage):
         """Bay-wide doors: parented to the bay cage, hb_bay_door=1.
         FRONT side only for now (double-island back-side bay doors are a
         follow-up)."""
-        swing = (bay_obj.get(PROP_BAY_DOOR_SWING, '')
+        swing = (bay_obj.hb_closet_bay.door_swing
                  if side == 'FRONT' else '')
         qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
         existing = [c for c in bay_obj.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR
                     and c.get('hb_bay_door')]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
+        hamper = 1 if bay_obj.hb_closet_bay.is_hamper else 0
+        name = 'Hamper Front' if hamper else 'Door'
         while len(existing) > qty:
             _remove_part_tree(existing.pop())  # front + its pull
         while len(existing) < qty:
-            name = ('Hamper Front' if bay_obj.get(PROP_BAY_IS_HAMPER)
-                    else 'Door')
             front = CabinetPart()
             front.create(name)
             front.obj.parent = bay_obj
@@ -1716,10 +1732,18 @@ class ClosetStarter(GeoNodeCage):
             front.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             front.obj.rotation_euler.x = math.radians(90)
             front.obj['hb_door_index'] = len(existing)
-            front.obj['hb_is_hamper'] = (
-                1 if bay_obj.get(PROP_BAY_IS_HAMPER) else 0)
+            front.obj['hb_is_hamper'] = hamper
             existing.append(front.obj)
         for i, obj in enumerate(existing):
+            # Turning the hamper on or off under a front that is already
+            # hanging has to reach that front: the pull it carries and
+            # the edge it hinges on both read this, and only the build
+            # above used to set it. Renamed with it so the outliner says
+            # what the part is, and only when it actually changes, to
+            # keep Blender from walking the numeric suffix every solve.
+            if obj.get('hb_is_hamper', 0) != hamper:
+                obj['hb_is_hamper'] = hamper
+                obj.name = name
             if obj.get('hb_is_hamper'):
                 obj['hb_hinge'] = 'BOTTOM'
             elif swing == 'DOUBLE':
@@ -1765,7 +1789,7 @@ class ClosetStarter(GeoNodeCage):
         # A bay-wide door supersedes opening doors on its side.
         bay = find_bay_cage(opening)
         if (side == 'FRONT' and bay is not None
-                and bay.get(PROP_BAY_DOOR_SWING)):
+                and bay.hb_closet_bay.door_swing):
             swing = ''
         else:
             swing = opening.hb_closet_opening.door_swing
@@ -2950,6 +2974,59 @@ _OPENING_CARRIED_KEYS = (
 )
 
 
+def carry_over_bay_fronts(root):
+    """Move a pre-typed-group bay-wide front onto the bay's settings
+    group. One way and self-clearing, the same as the openings.
+
+    The bay's fields relay the run out when they are written, and this
+    runs from inside the recalc entry point, so the writes are made
+    behind the reentrance guard - the solve that is already on its way
+    picks them up."""
+    stale = [bay for bay in root.children
+             if bay.get(TAG_BAY_CAGE)
+             and (PROP_BAY_DOOR_SWING in bay or PROP_BAY_IS_HAMPER in bay)]
+    if not stale:
+        return
+    root_id = id(root)
+    _RECALCULATING.add(root_id)
+    try:
+        for bay in stale:
+            bp = bay.hb_closet_bay
+            if PROP_BAY_DOOR_SWING in bay:
+                try:
+                    bp.door_swing = str(bay[PROP_BAY_DOOR_SWING])
+                except (TypeError, ValueError):
+                    pass  # unreadable leftover: the default stands
+                del bay[PROP_BAY_DOOR_SWING]
+            if PROP_BAY_IS_HAMPER in bay:
+                try:
+                    bp.is_hamper = bool(bay[PROP_BAY_IS_HAMPER])
+                except (TypeError, ValueError):
+                    pass
+                del bay[PROP_BAY_IS_HAMPER]
+    finally:
+        _RECALCULATING.discard(root_id)
+
+
+def carry_over_front_locks(root):
+    """Rename a drawer front's pinned-height flag on a run saved before
+    the padlocks were made to read one way across the library.
+
+    Nothing about the flag changed but its name - a set flag has always
+    meant the user handed that front a height of its own. These are
+    plain object idprops with no update callback behind them, so the
+    writes cost no solve and the one already on its way reads them."""
+    for obj in root.children_recursive:
+        if OLD_PROP_FRONT_LOCKED not in obj:
+            continue
+        try:
+            obj[PROP_UNLOCK_FRONT_HEIGHT] = (
+                1 if obj[OLD_PROP_FRONT_LOCKED] else 0)
+        except (TypeError, ValueError):
+            pass  # unreadable leftover: the front goes back on the stack
+        del obj[OLD_PROP_FRONT_LOCKED]
+
+
 def carry_over_opening_settings(root):
     """Move any pre-typed-group opening settings onto the settings group.
 
@@ -3059,6 +3136,8 @@ def recalculate_closet_starter(obj):
         return
     carry_over_lock_flags(root)
     carry_over_opening_settings(root)
+    carry_over_bay_fronts(root)
+    carry_over_front_locks(root)
     _wrap_starter(root).recalculate()
 
 
@@ -3078,9 +3157,11 @@ def clear_bay_contents(bay_obj):
     """Strip a whole bay: every splitting shelf goes (the reconciler
     merges back to one opening per side), the bay-wide door config is
     cleared, and every opening's contents are cleared."""
-    for key in (PROP_BAY_DOOR_SWING, PROP_BAY_IS_HAMPER):
-        if key in bay_obj:
-            del bay_obj[key]
+    # property_unset puts a field back to its default without running
+    # the update callback, so clearing the front here costs no solve of
+    # its own; the caller recalculates once when the strip is done.
+    bay_obj.hb_closet_bay.property_unset('door_swing')
+    bay_obj.hb_closet_bay.property_unset('is_hamper')
     for child in list(bay_obj.children):
         if child.get('hb_part_role') == PART_ROLE_FIXED_SHELF:
             bpy.data.objects.remove(child, do_unlink=True)
@@ -3175,8 +3256,8 @@ def serialize_bay(bay_obj):
     return {
         'remove_bottom': bool(bp.remove_bottom),
         'remove_cleat': bool(bp.remove_cleat),
-        'bay_door_swing': bay_obj.get(PROP_BAY_DOOR_SWING, ''),
-        'bay_is_hamper': int(bay_obj.get(PROP_BAY_IS_HAMPER, 0)),
+        'bay_door_swing': bp.door_swing,
+        'bay_is_hamper': int(bp.is_hamper),
         'shelves': list(shelves),
         'openings': [serialize_opening(o) for o in _front_openings(bay_obj)],
     }
@@ -3208,8 +3289,8 @@ def apply_bay_data(bay_obj, data):
         bp.remove_bottom = data.get('remove_bottom', False)
         bp.remove_cleat = data.get('remove_cleat', False)
         if data.get('bay_door_swing'):
-            bay_obj[PROP_BAY_DOOR_SWING] = data['bay_door_swing']
-            bay_obj[PROP_BAY_IS_HAMPER] = data.get('bay_is_hamper', 0)
+            bp.door_swing = data['bay_door_swing']
+            bp.is_hamper = bool(data.get('bay_is_hamper', 0))
 
         for op_obj, od in zip(_front_openings(bay_obj),
                               data.get('openings', ())):
@@ -3382,11 +3463,15 @@ def apply_bay_config(bay_obj, config):
     for idx, fn in actions:
         if idx < len(openings) and fn is not None:
             fn(openings[idx])
-    if bay_door:
-        bay_obj[PROP_BAY_DOOR_SWING] = bay_door
-        bay_obj[PROP_BAY_IS_HAMPER] = 0
-        seed_door_shelves(opening)
-    recalculate_closet_starter(root)
+    # The bay-wide front relays the run out on its own, so the front and
+    # the shelves behind it land together on the one solve at the end.
+    with suspend_recalc():
+        if bay_door:
+            bp = bay_obj.hb_closet_bay
+            bp.door_swing = bay_door
+            bp.is_hamper = False
+            seed_door_shelves(opening)
+        recalculate_closet_starter(root)
     return True
 
 

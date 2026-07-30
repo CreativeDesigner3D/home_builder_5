@@ -365,14 +365,14 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 # Placement modal
 # ---------------------------------------------------------------------------
-def _flip_swing_idprop(obj, key):
-    """LEFT<->RIGHT flip of a door-swing idprop; DOUBLE and unset
-    values pass through unchanged."""
-    v = obj.get(key)
-    if v == 'LEFT':
-        obj[key] = 'RIGHT'
-    elif v == 'RIGHT':
-        obj[key] = 'LEFT'
+def _flip_bay_swing(bay):
+    """LEFT<->RIGHT flip of a bay-wide front's swing; DOUBLE, LIFT_UP
+    and empty values pass through unchanged."""
+    bp = bay.hb_closet_bay
+    if bp.door_swing == 'LEFT':
+        bp.door_swing = 'RIGHT'
+    elif bp.door_swing == 'RIGHT':
+        bp.door_swing = 'LEFT'
 
 
 def _flip_opening_swing(opening):
@@ -397,7 +397,7 @@ def _mirror_starter_config(root):
     for i, bay in enumerate(bays):
         bay['hb_bay_index'] = n - 1 - i
         bay.hb_closet_bay.bay_index = n - 1 - i
-        _flip_swing_idprop(bay, types_closets.PROP_BAY_DOOR_SWING)
+        _flip_bay_swing(bay)
         for child in bay.children:
             if child.get(types_closets.TAG_OPENING_CAGE):
                 _flip_opening_swing(child)
@@ -2250,19 +2250,23 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             root = types_closets.find_starter_root(bay)
             if bay is None or root is None:
                 return {'CANCELLED'}
-            bay[types_closets.PROP_BAY_DOOR_SWING] = swing
-            bay[types_closets.PROP_BAY_IS_HAMPER] = 1 if self.is_hamper else 0
-            # Bay-wide doors supersede opening doors on the front side;
-            # door openings get default adjustable shelves behind them
-            # (seed_door_shelves skips occupied openings).
-            for op in bay.children:
-                if (op.get(types_closets.TAG_OPENING_CAGE)
-                        and op.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-                        == 'FRONT'):
-                    op.hb_closet_opening.door_swing = ''
-                    if swing and not self.is_hamper:
-                        types_closets.seed_door_shelves(op)
-            types_closets.recalculate_closet_starter(root)
+            # The bay's front relays the run out itself, so the whole
+            # write burst is held to the one solve at the end.
+            with types_closets.suspend_recalc():
+                bp = bay.hb_closet_bay
+                bp.door_swing = swing
+                bp.is_hamper = bool(self.is_hamper)
+                # Bay-wide doors supersede opening doors on the front
+                # side; door openings get default adjustable shelves
+                # behind them (seed_door_shelves skips occupied ones).
+                for op in bay.children:
+                    if (op.get(types_closets.TAG_OPENING_CAGE)
+                            and op.get(types_closets.PROP_OPENING_SIDE,
+                                       'FRONT') == 'FRONT'):
+                        op.hb_closet_opening.door_swing = ''
+                        if swing and not self.is_hamper:
+                            types_closets.seed_door_shelves(op)
+                types_closets.recalculate_closet_starter(root)
             _apply_finish(root)
             _apply_selection_shading(context, root)
             return {'FINISHED'}
@@ -2667,10 +2671,11 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         # removes it (the reconciler drops the part on recalc).
         if role == types_closets.PART_ROLE_DOOR and obj.get('hb_bay_door'):
             bay = types_closets.find_bay_cage(obj)
-            if bay is not None:
-                bay[types_closets.PROP_BAY_DOOR_SWING] = ''
-            if root is not None:
-                types_closets.recalculate_closet_starter(root)
+            with types_closets.suspend_recalc():
+                if bay is not None:
+                    bay.hb_closet_bay.door_swing = ''
+                if root is not None:
+                    types_closets.recalculate_closet_starter(root)
             return {'FINISHED'}
         opening = types_closets.find_opening_cage(obj)
         remove_obj = True

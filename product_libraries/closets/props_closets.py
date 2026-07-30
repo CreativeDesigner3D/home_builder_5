@@ -679,6 +679,23 @@ class Closet_Bay_Props(PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_bay_prop)  # type: ignore
 
+    # ----- Bay-wide front -----
+    # A front that spans the whole bay rather than one opening. Held as a
+    # string for the same reason the opening's front is: an empty value
+    # has to be tellable from a choice, and empty means no bay-wide
+    # front at all.
+    door_swing: bpy.props.StringProperty(
+        name="Door",
+        description="Front spanning the whole bay: LEFT, RIGHT, DOUBLE "
+                    "or LIFT_UP. Empty leaves the bay's openings to "
+                    "carry their own fronts",
+        default='', update=_update_bay_prop)  # type: ignore
+    is_hamper: BoolProperty(
+        name="Tilt Out Hamper",
+        description="Hang the bay-wide front on a tilt-out hamper with a "
+                    "wire basket behind it instead of a plain door",
+        default=False, update=_update_bay_prop)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Object-level: opening

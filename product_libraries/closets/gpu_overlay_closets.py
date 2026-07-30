@@ -412,17 +412,17 @@ def compute_labels(context, region, rv3d):
                                         anchor, child.location.z, ""))
                     elif role == types_closets.PART_ROLE_DRAWER_FRONT:
                         # Every drawer front carries its own editable height
-                        # label at its center; the bullet marks fronts the
-                        # user has pinned (locked) so the stack redistributes
-                        # around them.
+                        # label at its center; the bullet marks the fronts
+                        # the user has pinned, which the stack redistributes
+                        # around.
                         dh = child.get(types_closets.PROP_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)
-                        locked = bool(child.get(
-                            types_closets.PROP_FRONT_LOCKED, 0))
+                        pinned = bool(child.get(
+                            types_closets.PROP_UNLOCK_FRONT_HEIGHT, 0))
                         anchor = o_mw @ Vector(
                             (o_w / 2.0, -0.003,
                              child.location.z + dh / 2.0))
-                        targets.append((child, 'DRAWER_H', True, locked,
+                        targets.append((child, 'DRAWER_H', True, pinned,
                                         anchor, dh, ""))
 
     # SELECTED scope on the Dims pill: keep only labels whose object
@@ -711,28 +711,29 @@ def _commit(obj, kind, value):
         types_closets.recalculate_closet_starter(root)
         return True
     if kind == 'DRAWER_H':
-        # obj is a single drawer FRONT. Pin its height and let the stack
-        # redistribute the remaining span across the unlocked fronts.
+        # obj is a single drawer FRONT. Hand it this height and let the
+        # stack spread what is left over the fronts it still owns.
         root = types_closets.find_starter_root(obj)
         if root is None:
             return False
         obj[types_closets.PROP_FRONT_HEIGHT] = float(max(0.0, value))
-        obj[types_closets.PROP_FRONT_LOCKED] = 1
+        obj[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 1
         types_closets.recalculate_closet_starter(root)
         return True
     return False
 
 
 def _reset_to_auto(obj, kind):
-    """Clear a manual lock so redistribution owns the value again. BAY_W
-    releases a bay width; DRAWER_H un-pins a drawer front so the stack
-    fills evenly."""
+    """Hand a pinned value back so the run owns it again. BAY_W puts a
+    bay width back on the run; DRAWER_H puts a drawer front back on the
+    stack, which then fills evenly."""
     if kind == 'BAY_W' and obj.hb_closet_bay.unlock_width:
         # Handing the width back carries its own recalc.
         obj.hb_closet_bay.unlock_width = False
         return True
-    if kind == 'DRAWER_H' and obj.get(types_closets.PROP_FRONT_LOCKED):
-        obj[types_closets.PROP_FRONT_LOCKED] = 0
+    if kind == 'DRAWER_H' and obj.get(
+            types_closets.PROP_UNLOCK_FRONT_HEIGHT):
+        obj[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 0
         root = types_closets.find_starter_root(obj)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
