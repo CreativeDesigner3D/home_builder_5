@@ -3652,6 +3652,8 @@ def front_overlay(rect, cab_props, opening_props, side):
 # residential hinge / slide hardware.
 DOOR_MAX_SWING_ANGLE = math.radians(100.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
+# Inset doors butt closer than overlay doors where a pair meets.
+INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)   # 1/16"
 # Front-to-front reveal left when a mid rail is removed between two
 # (typically drawer) openings. The split is kept but the face-frame
 # member + its backing are dropped; the solver collapses the splitter
@@ -3804,11 +3806,15 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
 def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     """Two leaves for a DOUBLE door: left half hinged on its outer-left
     edge, right half hinged on its outer-right edge, with a small
-    DOUBLE_DOOR_REVEAL gap where they meet in the middle.
+    reveal gap where they meet in the middle (1/16" for inset doors,
+    1/8" for overlay).
     """
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
-    leaf_width = (width - DOUBLE_DOOR_REVEAL) / 2.0
+    reveal = (INSET_DOUBLE_DOOR_REVEAL
+              if cab_props.default_door_inset_amount > 0
+              else DOUBLE_DOOR_REVEAL)
+    leaf_width = (width - reveal) / 2.0
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 

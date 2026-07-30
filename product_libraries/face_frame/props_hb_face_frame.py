@@ -1715,8 +1715,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CLASSIC':       (0.5,    0.5,    0.5,    0.5),
         'TRANSITIONAL':  (0.625,  0.625,  0.875,  0.875),
         'FULL':          (1.0,    1.0,    0.875,  0.875),
-        'PARTIAL_INSET': (0.5,    0.5,    0.5,    0.5),
-        'FULL_INSET':    (-0.125, -0.125, -0.125, -0.125),
+        # Both inset modes size the face INSIDE the opening with a 3/32"
+        # reveal all around (face = opening - 3/16" per axis); partial
+        # inset differs from full inset only in depth, which
+        # assign_style_to_cabinet handles via the inset amount.
+        'PARTIAL_INSET': (-0.09375, -0.09375, -0.09375, -0.09375),
+        'FULL_INSET':    (-0.09375, -0.09375, -0.09375, -0.09375),
     }
 
     def assign_style_to_cabinet(self, cabinet_obj):
