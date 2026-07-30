@@ -2472,7 +2472,12 @@ class LShelfClosetStarter(GeoNodeCage):
             use_radius = bool(sp.l_use_radius)
             rad = max(float(sp.l_corner_radius), 0.0)
             wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
-            floor = self.floor_mounted
+            # Mounting belongs to the unit, not to the class it was
+            # placed from: a corner standing on the floor can be lifted
+            # off it, and one on the wall set back down, by dragging
+            # its bottom edge. The closet type is where that lives -
+            # it is already what marks an Upper corner as wall-hung.
+            floor = sp.closet_type != 'HANGING'
             kick = sp.toe_kick_height if floor else 0.0
             setback = sp.toe_kick_setback
 
