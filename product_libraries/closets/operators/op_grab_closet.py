@@ -137,13 +137,15 @@ def _corner_boundaries(root, mw, mode):
     so neither end shifts the object the way a run's left end does -
     the corner stays against the walls no matter which end is pulled.
 
-    Six handles. The right wing's end panel sets the width and the
-    left wing's end panel sets the depth, each drawn on its own wing's
-    front face so it reads as that wing's end. The two wing front
-    edges at the top set the height together, and the two at the
-    bottom set the mounting - lift them off the floor and the unit
-    hangs. Each wing's front edge at a middle shelf sets that wing's
-    depth, pulling the inner corner of the L in or out.
+    The right wing's end panel sets the width and the left wing's end
+    panel sets the depth, each drawn on its own wing's front face so
+    it reads as that wing's end. The two wing front edges at the top
+    set the height together, and the two at the bottom set the
+    mounting - lift them off the floor and the unit hangs. In between,
+    every interior shelf front on a wing sets that wing's depth,
+    pulling the inner corner of the L in or out. A wing's front reads
+    as one face, so grabbing it anywhere between the top and bottom
+    edges pulls that wing in or out.
 
     Every line is measured the way the recalculate measures it - the
     same wing clamps, the same shelf heights - so a handle always sits
@@ -165,20 +167,25 @@ def _corner_boundaries(root, mw, mode):
     # Only a corner standing on the floor carries a kick, and the
     # closet type is what says whether it does.
     kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
-    # Three pairs of wing-front lines: the mount at the bottom, the
-    # wing depths at a middle shelf, the height at the top. Putting
-    # the depths on a middle shelf rather than the bottom one keeps
-    # them clear of the mount handle, which on a shallow kick would
-    # otherwise sit within the same few pixels. The middle shelf is
-    # found the way the build spaces them.
+    # Three sets of wing-front lines: the mount at the bottom, the
+    # wing depths on the shelves in between, the height at the top.
+    # Every interior shelf front is a depth handle, so the whole front
+    # of a wing pulls that wing in or out. One lone line partway up
+    # reads as a shelf; a stack of them reads as the wing's front
+    # face, which is what it is. The bottom-most and top-most shelves
+    # are left out - their fronts land on the mount and height lines,
+    # inside the same few pixels. The shelves are spaced the way the
+    # build spaces them.
     n_sh = max(int(sp.l_shelf_qty) + 2, 2)
     z_bottom = kick
     z_top = H - st
     if n_sh >= 3:
-        z_mid = z_bottom + (z_top - z_bottom) * (n_sh // 2) / (n_sh - 1)
+        z_depths = [(i, z_bottom + (z_top - z_bottom) * i / (n_sh - 1) + st)
+                    for i in range(1, n_sh - 1)]
     else:
-        z_mid = (z_bottom + z_top) / 2.0
-    z_low = z_mid + st
+        # Nothing interior to hang them on - one line halfway up keeps
+        # the depths reachable.
+        z_depths = [(0, (z_bottom + z_top) / 2.0 + st)]
     z_high = H
     # The shelves stop a panel thickness short of each end panel, and
     # the notch leaves the inner corner at (LD, -RD).
@@ -211,13 +218,15 @@ def _corner_boundaries(root, mw, mode):
     out.append(dict(kind='TOP', root=root.name, side='L',
                     p0=mw @ Vector((LD, -RD, z_high)),
                     p1=mw @ Vector((LD, y_out, z_high)), axis=ax_z))
-    # Middle shelf front edge of each wing -> that wing's depth.
-    out.append(dict(kind='L_DEPTH_R', root=root.name,
-                    p0=mw @ Vector((LD, -RD, z_low)),
-                    p1=mw @ Vector((x_out, -RD, z_low)), axis=ax_y))
-    out.append(dict(kind='L_DEPTH_L', root=root.name,
-                    p0=mw @ Vector((LD, -RD, z_low)),
-                    p1=mw @ Vector((LD, y_out, z_low)), axis=ax_x))
+    # Shelf front edge of each wing -> that wing's depth. The shelf
+    # index keeps the lines apart for hover highlighting.
+    for _i, z_low in z_depths:
+        out.append(dict(kind='L_DEPTH_R', root=root.name, shelf=_i,
+                        p0=mw @ Vector((LD, -RD, z_low)),
+                        p1=mw @ Vector((x_out, -RD, z_low)), axis=ax_y))
+        out.append(dict(kind='L_DEPTH_L', root=root.name, shelf=_i,
+                        p0=mw @ Vector((LD, -RD, z_low)),
+                        p1=mw @ Vector((LD, y_out, z_low)), axis=ax_x))
     # Bottom front edge of each wing -> the mounting, the same way a
     # bay's bottom edge works. Two segments to match the top pair.
     out.append(dict(kind='L_BOTTOM', root=root.name, side='R',
