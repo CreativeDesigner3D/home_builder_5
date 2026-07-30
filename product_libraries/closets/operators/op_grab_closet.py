@@ -492,6 +492,11 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             snap['bh'] = bay.hb_closet_bay.height
             snap['floor'] = bay.hb_closet_bay.floor_mounted
             snap['runH'] = root.hb_closet_starter.height
+            # Both height locks: giving a bay its own height means
+            # locking the bay and unlocking the run, so a cancel has to
+            # restore the pair rather than just the height.
+            snap['bay_locked'] = bay.hb_closet_bay.height_locked
+            snap['run_locked'] = root.hb_closet_starter.height_locked
             snap['shelves'] = [
                 (c.name, c.get('hb_z_offset', 0.0))
                 for c in bay.children
@@ -525,6 +530,50 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 sh['hb_z_offset'] = float(
                     max(0.0, min(off0 - delta, interior_h - st)))
         types_closets.recalculate_closet_starter(root)
+
+    def _set_bay_height(self, root, bay, new_h, recalc=True):
+        """Give a bay a height of its own, the way the Bays table does.
+
+        A bay keeps its own height only while the run height is
+        unlocked and the bay is locked; otherwise the next solve pulls
+        it back to the run height. Typing into the Bays table performs
+        that unlock through the property callback, so a drag has to do
+        the same or the bay snaps back and nothing appears to happen.
+        Hanging runs seed their bays shorter than the run and are
+        already unlocked, which is why they were the only ones that
+        worked. A height that matches the run puts the bay back on the
+        run height instead of pinning it.
+
+        Written behind the recalc guard so the height and lock
+        callbacks don't each solve the run mid-drag; the caller decides
+        when the single solve happens."""
+        sp = root.hb_closet_starter
+        bp = bay.hb_closet_bay
+        own = abs(new_h - sp.height) > 1e-6
+        rid = id(root)
+        types_closets._RECALCULATING.add(rid)
+        try:
+            bp.height = new_h
+            bp.height_locked = own
+            if own:
+                sp.height_locked = False
+        finally:
+            types_closets._RECALCULATING.discard(rid)
+        if recalc:
+            types_closets.recalculate_closet_starter(root)
+
+    def _set_bay_mount(self, root, bay, floor_mounted):
+        """Flip a bay between floor-mounted and hanging without
+        letting the property callback solve the run mid-drag."""
+        bp = bay.hb_closet_bay
+        if bp.floor_mounted == floor_mounted:
+            return
+        rid = id(root)
+        types_closets._RECALCULATING.add(rid)
+        try:
+            bp.floor_mounted = floor_mounted
+        finally:
+            types_closets._RECALCULATING.discard(rid)
 
     def _min_bay_height(self, root, bay):
         scene_props = bpy.context.scene.hb_closets
@@ -626,7 +675,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 return
             new_h = self._snap_height(snap['bh'] + delta, event)
             new_h = max(self._min_bay_height(root, bay), new_h)
-            bay.hb_closet_bay.height = new_h
+            self._set_bay_height(root, bay, new_h)
             self._drag_text = "H " + units.unit_to_string(us, new_h)
         elif b['kind'] == 'BAY_BOT':
             bay = bpy.data.objects.get(b['bay'])
@@ -638,24 +687,24 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             # hanging with height = run_top - bottom. Continuous across
             # the transition, so a floor bay converts to hanging the
             # moment its bottom lifts, and back when it lands.
-            bp = bay.hb_closet_bay
             run_top = root.hb_closet_starter.height
             bottom0 = 0.0 if snap['floor'] else run_top - snap['bh']
             new_bottom = bottom0 + delta
-            if new_bottom <= inch(1.0):
-                if not bp.floor_mounted:
-                    bp.floor_mounted = True
+            # Set the mount first: the minimum height depends on it,
+            # since only a floor bay carries the toe kick.
+            floor = new_bottom <= inch(1.0)
+            self._set_bay_mount(root, bay, floor)
+            if floor:
                 new_h = max(self._min_bay_height(root, bay), run_top)
                 state = "Floor"
             else:
-                if bp.floor_mounted:
-                    bp.floor_mounted = False
                 # Snap the resulting HEIGHT to the 32mm lattice so a
                 # hung bay is always a system panel height.
                 new_h = self._snap_height(run_top - new_bottom, event)
                 new_h = max(self._min_bay_height(root, bay), new_h)
                 state = "Hung"
-            bp.height = new_h
+            # The shelf hold runs the solve, so skip the one here.
+            self._set_bay_height(root, bay, new_h, recalc=False)
             self._hold_shelves_absolute(bay, root, snap)
             self._drag_text = "H %s (%s)" % (
                 units.unit_to_string(us, new_h), state)
@@ -762,14 +811,21 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
                     bay = bpy.data.objects.get(b['bay'])
                     if bay is not None:
-                        bay.hb_closet_bay.floor_mounted = snap['floor']
-                        bay.hb_closet_bay.height = snap['bh']
+                        bp = bay.hb_closet_bay
                         for name, off0 in snap.get('shelves', ()):
                             sh = bpy.data.objects.get(name)
                             if sh is not None:
                                 sh['hb_z_offset'] = float(off0)
-                        types_closets.recalculate_closet_starter(
-                            bpy.data.objects.get(b['root']))
+                        # Restore behind the guard: writing the height
+                        # would otherwise re-lock the bay through its
+                        # own callback and undo the lock restore.
+                        self._write_guarded(root, lambda: (
+                            setattr(bp, 'floor_mounted', snap['floor']),
+                            setattr(bp, 'height', snap['bh']),
+                            setattr(bp, 'height_locked',
+                                    snap['bay_locked']),
+                            setattr(sp, 'height_locked',
+                                    snap['run_locked'])))
         self._drag_active = False
         self._drag_boundary = None
         self._drag_text = ""
@@ -819,9 +875,10 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
             bay = bpy.data.objects.get(b['bay'])
             if bay is not None:
-                bay.hb_closet_bay.height = max(
-                    self._min_bay_height(root, bay), value)
-                if b['kind'] == 'BAY_BOT':
+                new_h = max(self._min_bay_height(root, bay), value)
+                bottom = b['kind'] == 'BAY_BOT'
+                self._set_bay_height(root, bay, new_h, recalc=not bottom)
+                if bottom:
                     self._hold_shelves_absolute(bay, root, snap)
         self._end_drag(context, commit=True)
 
