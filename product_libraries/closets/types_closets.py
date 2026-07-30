@@ -1911,8 +1911,9 @@ class ClosetStarter(GeoNodeCage):
         """Adopt committed fixed shelves up to bay level (they arrive as
         opening children from the add-part modal / older files) and keep
         exactly one opening cage per interior segment on each side.
-        Removing a shelf merges segments; the removed opening's contents
-        re-home into the lowest surviving opening rather than dying."""
+        Removing a shelf merges the segments it was between, and the
+        openings that merge keep their contents at the height they were
+        put at."""
         for opening in [c for c in bay_obj.children
                         if c.get(TAG_OPENING_CAGE)]:
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
@@ -1936,26 +1937,68 @@ class ClosetStarter(GeoNodeCage):
 
         sides = ('FRONT', 'BACK') if self.is_double else ('FRONT',)
         for side in sides:
-            want = len(self._bay_split_shelves(bay_obj, side)) + 1
+            cuts = [float(sh.get('hb_z_offset', 0.0))
+                    for sh in self._bay_split_shelves(bay_obj, side)]
+            want = len(cuts) + 1
             openings = sorted(
                 [c for c in bay_obj.children
                  if c.get(TAG_OPENING_CAGE)
                  and c.get(PROP_OPENING_SIDE, 'FRONT') == side],
                 key=lambda o: o.get('hb_opening_index', 0))
-            while len(openings) > want:
-                extra = openings.pop()
-                for child in list(extra.children):
-                    child.parent = openings[0]
-                bpy.data.objects.remove(extra, do_unlink=True)
-            while len(openings) < want:
-                op = ClosetOpening()
-                op.create(f'Opening {len(openings) + 1}')
-                op.obj.parent = bay_obj
-                if side == 'BACK':
-                    op.obj[PROP_OPENING_SIDE] = 'BACK'
-                openings.append(op.obj)
-            for i, op_obj in enumerate(openings):
-                op_obj['hb_opening_index'] = i
+
+            # Put every opening back in the segment it is standing in.
+            # An opening's bottom and height are the last solve's and the
+            # cuts are this one's, so counting the cuts underneath an
+            # opening says which segment it is in now. Taking a shelf out
+            # of the middle of a bay merges the two segments it was
+            # between, and this is what leaves the openings above it
+            # holding what the user put in them instead of sliding
+            # everything down a segment. Adding one reads the same way
+            # from the other side: the new segment opens where the shelf
+            # went in and the openings around it stay as they are.
+            slots = [[] for _ in range(want)]
+            for op_obj in openings:
+                bottom = float(op_obj.get('hb_seg_bottom', 0.0))
+                try:
+                    seg_h = float(GeoNodeCage(op_obj).get_input('Dim Z'))
+                except Exception:
+                    seg_h = 0.0
+                k = min(sum(1 for c in cuts if c < bottom), want - 1)
+                slots[k].append((bottom, seg_h, op_obj))
+
+            for k, members in enumerate(slots):
+                if not members:
+                    op = ClosetOpening()
+                    op.create(f'Opening {k + 1}')
+                    op.obj.parent = bay_obj
+                    if side == 'BACK':
+                        op.obj[PROP_OPENING_SIDE] = 'BACK'
+                    op.obj['hb_opening_index'] = k
+                    continue
+                members.sort(key=lambda m: m[0])
+                keeper = members[0][2]
+                # A merged segment runs from the bottom of the lowest
+                # opening in it to the top of the highest, so a part
+                # measured from a bottom moves by the difference in
+                # bottoms and one measured from a top by the difference
+                # in tops. Either way it comes out at the height it was
+                # already hanging at.
+                base = members[0][0]
+                cap = max(b + h for b, h, _ in members)
+                for bottom, seg_h, op_obj in members:
+                    d_top = cap - (bottom + seg_h)
+                    d_bot = bottom - base
+                    for child in list(op_obj.children):
+                        if 'hb_z_offset' in child:
+                            d = d_top if child.get('hb_anchor_top') else d_bot
+                            if d:
+                                child['hb_z_offset'] = max(
+                                    0.0, float(child['hb_z_offset']) + d)
+                        if op_obj is not keeper:
+                            child.parent = keeper
+                    if op_obj is not keeper:
+                        bpy.data.objects.remove(op_obj, do_unlink=True)
+                keeper['hb_opening_index'] = k
 
     def _layout_starter_parts(self, layout, scene_props, sp):
         # Only a unit with a top to cap takes a countertop - a base run
