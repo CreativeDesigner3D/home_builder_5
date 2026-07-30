@@ -9,8 +9,9 @@ set:
                     auto-locks both (same as typing their labels).
 - End panels        drag X: overall starter width. The LEFT end keeps
                     the right edge planted by shifting the starter.
-- TOP edge          drag Z: overall starter height (hanging starters
-                    stay top-anchored via the recalc rule).
+- TOP edge          drag Z: overall starter height. The bottom
+                    stays planted, so on a hanging starter this is
+                    the hang height.
 - Fixed SHELVES     drag Z: the shelf slides between its neighbors;
                     the two openings trade height.
 
@@ -578,6 +579,14 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             # cancel rather than just the one that was dragged.
             snap['ld'] = sp.l_left_depth
             snap['rd'] = sp.l_right_depth
+        elif b['kind'] == 'TOP':
+            # Holding the bottom means overriding the build's own top
+            # anchor and growing the hung bays with the run, so both
+            # have to come back on a cancel.
+            snap['last_h'] = root.get('hb_last_height')
+            snap['bays'] = [
+                (c.name, c.hb_closet_bay.height) for c in root.children
+                if c.get(types_closets.TAG_BAY_CAGE)]
         elif b['kind'] == 'PANEL':
             left = bpy.data.objects.get(b['left'])
             right = bpy.data.objects.get(b['right'])
@@ -675,6 +684,38 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             bp.floor_mounted = floor_mounted
         finally:
             types_closets._RECALCULATING.discard(rid)
+
+    def _set_run_top(self, root, new_h):
+        """Move a starter's top, holding its bottom where it is.
+
+        A hanging starter hangs from its top: the build reads a height
+        change as growing the unit downward and slides the origin up by
+        the same amount, so the top stays put and a drag on the top
+        edge looks dead. The height the build last applied rides an
+        idprop, and writing the new height there first tells it this
+        edit is not one of those - the floor line holds and the top
+        moves, which on a hanging starter is the hang height itself.
+
+        A hung bay hangs from the run top too, so it grows with the run
+        to leave its own bottom where it was. A floor bay already
+        stands on the floor and keeps the height it was given. Bays
+        that follow the run height need no help either way.
+        """
+        sp = root.hb_closet_starter
+        delta = new_h - sp.height
+        bays = [c for c in root.children
+                if c.get(types_closets.TAG_BAY_CAGE)]
+
+        def _write():
+            for bay in bays:
+                bp = bay.hb_closet_bay
+                if bp.height_locked and not bp.floor_mounted:
+                    bp.height = max(self._min_bay_height(root, bay),
+                                    bp.height + delta)
+            sp.height = new_h
+            root['hb_last_height'] = new_h
+
+        self._write_guarded(root, _write)
 
     def _set_corner_size(self, root, kind, value):
         """Clamp and write one of an inside corner's four sizes, and
@@ -781,8 +822,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             sp = root.hb_closet_starter
             new_h = self._snap_height(snap['height'] + delta, event)
             new_h = max(MIN_STARTER_HEIGHT, new_h)
-            sp.height = new_h
-            self._drag_text = "H " + units.unit_to_string(us, new_h)
+            self._set_run_top(root, new_h)
+            # On a hanging starter the top edge IS the hang height, so
+            # say so rather than calling it the height.
+            label = "Hang Height" if sp.closet_type == 'HANGING' else "H"
+            self._drag_text = "%s %s" % (
+                label, units.unit_to_string(us, new_h))
         elif b['kind'] in L_SIZE_KINDS:
             base = {'L_END_R': snap['width'], 'L_END_L': snap['depth'],
                     'L_DEPTH_R': snap['rd'],
@@ -940,7 +985,20 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     root.location = snap['loc']
                     sp.width = snap['width']
                 elif b['kind'] == 'TOP':
-                    sp.height = snap['height']
+                    def _restore_top():
+                        for name, h0 in snap.get('bays', ()):
+                            bay = bpy.data.objects.get(name)
+                            if bay is not None:
+                                bay.hb_closet_bay.height = h0
+                        sp.height = snap['height']
+                        # Put the anchor back where it was so the next
+                        # height edit from the properties panel behaves
+                        # as though the drag never happened.
+                        last_h = snap.get('last_h')
+                        root['hb_last_height'] = (
+                            snap['height'] if last_h is None else last_h)
+                        root.location = snap['loc']
+                    self._write_guarded(root, _restore_top)
                 elif b['kind'] in L_SIZE_KINDS:
                     sp.width = snap['width']
                     sp.depth = snap['depth']
@@ -1008,7 +1066,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                  + self._end_shift_vector(root, shift))
             sp.width = max(MIN_STARTER_WIDTH, value)
         elif b['kind'] == 'TOP':
-            root.hb_closet_starter.height = max(MIN_STARTER_HEIGHT, value)
+            self._set_run_top(root, max(MIN_STARTER_HEIGHT, value))
         elif b['kind'] in L_SIZE_KINDS:
             self._set_corner_size(root, b['kind'], value)
         elif b['kind'] == 'SHELF':
