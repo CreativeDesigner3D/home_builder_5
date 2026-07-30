@@ -2408,6 +2408,12 @@ def carcass_back_segments(layout):
                 z_origin = 0.0
         else:
             z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        # Over-stool: the back runs FULL HEIGHT, following the extended
+        # sides down to the leg bottoms so the open area below the box
+        # is closed at the back.
+        overstool_drop = side_extend_down(layout)
+        if overstool_drop > 0.0:
+            z_origin = bay_bottom_z(layout, start) - overstool_drop
         # Cabinet-level override: raise the back's bottom edge above
         # the default origin (refrigerator cabinet, etc.). Honored
         # only when it raises the panel - never lowers it. The > 0.0

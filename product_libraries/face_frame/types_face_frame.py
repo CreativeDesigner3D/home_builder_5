@@ -630,19 +630,19 @@ PART_ROLE_SIDE_PROFILE_CUTTER = 'SIDE_PROFILE_CUTTER'
 SIDE_PROFILE_CUT_MOD_NAME = 'Side Profile Cut'
 PART_ROLE_OVERSTOOL_SHELF = 'OVERSTOOL_SHELF'
 PART_ROLE_OVERSTOOL_TOWEL_BAR = 'OVERSTOOL_TOWEL_BAR'
-# Leg-accessory sizing (effective real-world). Shelf is front-aligned (front
-# edge flush with the leg front, extending back); towel bar is a round rod.
-# Z positions are measured UP from the dropped leg bottom.
+# Leg-accessory sizing (effective real-world: 6" deep shelf with 6" clear
+# opening height, 3/4" round towel bar). The shelf is back-aligned against
+# the full-height back and hangs so the clear opening between the box
+# bottom and the shelf top is exactly the spec opening.
 OVERSTOOL_SHELF_DEPTH = inch(6.0)
 OVERSTOOL_SHELF_THICKNESS = inch(0.75)
-OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM = inch(0.0)  # flush with leg bottom
+OVERSTOOL_CLEAR_OPENING = inch(6.0)  # box bottom down to shelf top
 OVERSTOOL_TOWEL_BAR_DIAMETER = inch(0.75)
 OVERSTOOL_TOWEL_BAR_Z_ABOVE_LEG_BOTTOM = inch(4.0)
 OVERSTOOL_TOWEL_BAR_Y_FROM_FRONT = inch(1.0)
 OVERSTOOL_TOWEL_BAR_SEGMENTS = 16
-# When BOTH accessories are present they rearrange: the shelf raises and the
-# towel bar drops below it + moves back, so the bar tucks under the raised shelf.
-OVERSTOOL_SHELF_Z_COMBO_RAISE = inch(3.0)
+# The towel bar always sits low + back between the legs (the spot it takes
+# in the shelf-and-towel-bar layout, where the legs drop 13").
 OVERSTOOL_TOWEL_BAR_COMBO_Z_DROP = inch(3.5)
 OVERSTOOL_TOWEL_BAR_COMBO_Y_BACK = inch(2.0)
 _OVERSTOOL_PROFILE_BLEND = ('face_frame_assets', 'profiles', 'Over Stool Profile.blend')
@@ -4579,18 +4579,22 @@ class FaceFrameCabinet(GeoNodeCage):
         return shelf.obj
 
     def _position_overstool_shelf(self, shelf_obj, layout):
-        """Span the shelf between the leg inner faces, back-aligned (origin at
-        y=0, Mirror Y runs it forward), 6" deep, its bottom flush with the
-        leg bottom (OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM up from it)."""
+        """Span the shelf between the leg inner faces, seated against the
+        full-height back (Mirror Y runs its 6" depth forward), hung so the
+        clear opening from the box bottom down to the shelf top is exactly
+        OVERSTOOL_CLEAR_OPENING (6"). Clamped to the leg bottom if the
+        drop is too small to fit opening + shelf."""
         left_inner, right_inner, _front_y, leg_bottom = self._overstool_interior(layout)
         part = GeoNodeCutpart(shelf_obj)
         part.set_input('Length', right_inner - left_inner)
         part.set_input('Width', OVERSTOOL_SHELF_DEPTH)
         part.set_input('Thickness', OVERSTOOL_SHELF_THICKNESS)
-        z = leg_bottom + OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM
-        if layout.overstool_accessory == 'SHELF_AND_TOWEL_BAR':
-            z += OVERSTOOL_SHELF_Z_COMBO_RAISE   # tuck the bar below the shelf
-        shelf_obj.location = Vector((left_inner, 0.0, z))
+        drop = solver.side_extend_down(layout)
+        z = max(leg_bottom + drop - OVERSTOOL_CLEAR_OPENING
+                - OVERSTOOL_SHELF_THICKNESS, leg_bottom)
+        back_y = (solver.left_side_position(layout)[1]
+                  - solver.back_thickness(layout))
+        shelf_obj.location = Vector((left_inner, back_y, z))
         shelf_obj.rotation_euler = (0.0, 0.0, 0.0)
 
     def _ensure_overstool_towel_bar(self):

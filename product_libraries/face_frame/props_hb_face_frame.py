@@ -4164,6 +4164,23 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+def _update_overstool_accessory(self, context):
+    """Accessory change on an over-stool cabinet: sync the leg drop to the
+    product spec (face frame 7" less than overall height, 13" with shelf
+    AND towel bar) before the recalc. Only moves the drop when it still
+    sits at one of the presets - a hand-edited amount is left alone."""
+    presets = (units.inch(7.0), units.inch(13.0))
+    if self.extend_sides_down and any(
+            abs(self.extend_sides_down_amount - p) < 0.0001 for p in presets):
+        want = (units.inch(13.0)
+                if self.overstool_accessory == 'SHELF_AND_TOWEL_BAR'
+                else units.inch(7.0))
+        if abs(self.extend_sides_down_amount - want) > 0.0001:
+            self.extend_sides_down_amount = want
+            return  # its own update already ran the recalc
+    _update_cabinet_dim(self, context)
+
+
 def _update_cabinet_width(self, context):
     """Width update: honor the cabinet's anchor side, then recalc.
 
@@ -5845,7 +5862,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ],
         default='SHELF',
         description="What hangs between the extended sides (over-stool legs)",
-        update=_update_cabinet_dim,
+        update=_update_overstool_accessory,
     )  # type: ignore
     hutch_finished_back: BoolProperty(
         name="Finished Back in Recess",
