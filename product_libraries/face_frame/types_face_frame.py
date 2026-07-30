@@ -5534,7 +5534,7 @@ class FaceFrameCabinet(GeoNodeCage):
         / remove per side. Mirrors the end-stile build (rotation + mirror
         flags) shifted one face-frame thickness forward.
 
-        BLIND corner sides get the same applied part sized to the CWP
+        BLIND corner sides get the same applied part sized to the
         corner detail instead: inner edge a 1/4" reveal off the door
         front (which pulls back to a 1/4" overlay on that side - see
         solver.front_overlay), outer end running past the FF end to the

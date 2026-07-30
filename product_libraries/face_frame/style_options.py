@@ -5014,7 +5014,7 @@ _WOOD_HIDE = _WOOD_HIDE_BASE | {w for w in WOOD_SPECIES if not colors_for_wood_u
 
 # ===========================================================================
 # Door / drawer-front FRAME SPEC per series (baked from the reference
-# cwp_door_styles.py). Series sets stile + rail widths; drawer fronts use
+# door-style spec). Series sets stile + rail widths; drawer fronts use
 # drw_rail for the rail. panel_inset / panel_thickness override the GN
 # default when present. is_slab series have no 5-piece frame. Series not
 # listed use DEFAULT_FRAME (the reference's 2.5 / 3 / 2 fallback).

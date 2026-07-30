@@ -3631,7 +3631,7 @@ def resolved_overlay(cab_props, opening_props, side):
 # Side overlay a front takes against a FULL-overlay blind corner stile:
 # pulled back from the style's full side overlay so the applied overlay
 # stile fits in front of the frame stile with a 1/4" reveal to the door
-# (CWP corner detail: 3.5" frame stiles, mitered overlay stiles, 1/4"
+# (corner detail: 3.5" frame stiles, mitered overlay stiles, 1/4"
 # reveal). See bay_openings for the corner_left/right rect stamps.
 FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
