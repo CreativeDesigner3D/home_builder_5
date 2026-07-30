@@ -1461,14 +1461,16 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             root.matrix_world = captured_world
 
         # Mirror before the width push so the fill recalc lays out the
-        # already-flipped bay order.
-        if self.mirror:
-            _mirror_starter_config(root)
+        # already-flipped bay order. Both steps ride the one solve at
+        # the end of the block.
+        with types_closets.suspend_recalc():
+            if self.mirror:
+                _mirror_starter_config(root)
 
-        # Fill-the-gap commit: push the gap width through the prop
-        # update path so the copied bays stretch proportionally.
-        if abs(captured_width - root.hb_closet_starter.width) > 1e-5:
-            root.hb_closet_starter.width = captured_width
+            # Fill-the-gap commit: push the gap width through the prop
+            # update path so the copied bays stretch proportionally.
+            if abs(captured_width - root.hb_closet_starter.width) > 1e-5:
+                root.hb_closet_starter.width = captured_width
 
         for o in context.selected_objects:
             o.select_set(False)
@@ -2802,6 +2804,22 @@ def _bay_grid(box, bays, rows):
                 cell.prop(bp, prop_name, text="")
 
 
+def _locked_field(parent, bp, attr, unlock_attr, text=""):
+    """One size field and its padlock, drawn the way the face frame
+    library draws them: the field is quiet while the run owns the value
+    and the padlock reads closed; clicking it hands the value to this
+    bay, and the field opens for typing. Returns the row so a caller can
+    keep filling it."""
+    unlocked = getattr(bp, unlock_attr)
+    cell = parent.row(align=True)
+    field = cell.row(align=True)
+    field.enabled = unlocked
+    field.prop(bp, attr, text=text)
+    cell.prop(bp, unlock_attr, text="",
+              icon='UNLOCKED' if unlocked else 'LOCKED')
+    return cell
+
+
 def _section(layout, sp, toggle, label):
     """A collapsible Construction section, folding the same way the face
     frame library folds its option groups: click the header to open or
@@ -2863,27 +2881,15 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             bp = bay.hb_closet_bay
             row = box.row(align=True)
             row.label(text=str(bp.bay_index + 1))
-            # All three sizes read the same way: a size and a lock. A
-            # locked width holds while the rest of the run is
-            # redistributed to fill the run width; a locked height or
-            # depth holds while the run height or depth changes.
-            sub = row.row(align=True)
-            sub.prop(bp, 'width', text="")
-            sub.prop(bp, 'width_locked', text="",
-                     icon='LOCKED' if bp.width_locked else 'UNLOCKED')
-            # The lock on the run height and depth above overrides the
-            # column: with it on, every bay is held at the run size and
-            # there is nothing to set here.
-            sub = row.row(align=True)
-            sub.enabled = not sp.height_locked
-            sub.prop(bp, 'height', text="")
-            sub.prop(bp, 'height_locked', text="",
-                     icon='LOCKED' if bp.height_locked else 'UNLOCKED')
-            sub = row.row(align=True)
-            sub.enabled = not sp.depth_locked
-            sub.prop(bp, 'depth', text="")
-            sub.prop(bp, 'depth_locked', text="",
-                     icon='LOCKED' if bp.depth_locked else 'UNLOCKED')
+            # All three sizes read the same way: the field is quiet
+            # while the run owns the value, and the padlock hands it to
+            # this bay. A bay holding its own width keeps it while the
+            # rest of the run is redistributed to fill the run width; a
+            # bay holding its own height or depth keeps that while the
+            # run size changes.
+            _locked_field(row, bp, 'width', 'unlock_width')
+            _locked_field(row, bp, 'height', 'unlock_height')
+            _locked_field(row, bp, 'depth', 'unlock_depth')
             row.prop(bp, 'floor_mounted', toggle=True,
                      text="Floor" if bp.floor_mounted else "Hanging",
                      icon=('TRIA_DOWN_BAR' if bp.floor_mounted
@@ -3034,19 +3040,13 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         box.label(text=root.name, icon='OUTLINER_OB_LATTICE')
         col = box.column(align=True)
         col.prop(sp, 'width')
-        # Locked (the usual case) means the whole run is this one height
-        # and this one depth. Unlock either to size the bays one at a
-        # time in the Bays table.
-        row = col.row(align=True)
-        row.prop(sp, 'height_locked', text="",
-                 icon='LOCKED' if sp.height_locked else 'UNLOCKED')
-        row.prop(sp, 'height_preset', text="Height")
+        # The run height and depth carry to every bay that has not been
+        # handed one of its own. The Bays table is where a bay takes a
+        # size over, and where it gives it back.
+        col.prop(sp, 'height_preset', text="Height")
         if sp.height_preset == 'CUSTOM':
             col.prop(sp, 'height', text="Custom Height")
-        row = col.row(align=True)
-        row.prop(sp, 'depth_locked', text="",
-                 icon='LOCKED' if sp.depth_locked else 'UNLOCKED')
-        row.prop(sp, 'depth')
+        col.prop(sp, 'depth')
 
         # A countertop belongs to a unit that has a top to sit on - a
         # base run or an island. A tall or hanging unit finishes at its
@@ -3102,26 +3102,19 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         box = layout.box()
         box.label(text="Bay %d" % (bp.bay_index + 1), icon='MOD_ARRAY')
         col = box.column(align=True)
+        _locked_field(col, bp, 'width', 'unlock_width', text="Width")
+        # Height and depth follow the run until the padlock hands one of
+        # them to this bay, so both stay quiet until it does. The custom
+        # height only has somewhere to go once the bay owns its height.
         row = col.row(align=True)
-        row.prop(bp, 'width')
-        row.prop(bp, 'width_locked', text="",
-                 icon='LOCKED' if bp.width_locked else 'UNLOCKED')
-        # Height and depth are the run's unless this bay is locked off
-        # them; a run held to one height or one depth leaves nothing to
-        # set here, so the fields go quiet.
-        sub = col.column(align=True)
-        sub.enabled = sp is None or not sp.height_locked
-        row = sub.row(align=True)
-        row.prop(bp, 'height_preset')
-        row.prop(bp, 'height_locked', text="",
-                 icon='LOCKED' if bp.height_locked else 'UNLOCKED')
-        if bp.height_preset == 'CUSTOM':
-            sub.prop(bp, 'height', text="Custom Height")
-        sub = col.row(align=True)
-        sub.enabled = sp is None or not sp.depth_locked
-        sub.prop(bp, 'depth')
-        sub.prop(bp, 'depth_locked', text="",
-                 icon='LOCKED' if bp.depth_locked else 'UNLOCKED')
+        field = row.row(align=True)
+        field.enabled = bp.unlock_height
+        field.prop(bp, 'height_preset')
+        row.prop(bp, 'unlock_height', text="",
+                 icon='UNLOCKED' if bp.unlock_height else 'LOCKED')
+        if bp.unlock_height and bp.height_preset == 'CUSTOM':
+            col.prop(bp, 'height', text="Custom Height")
+        _locked_field(col, bp, 'depth', 'unlock_depth', text="Depth")
 
         box = layout.box()
         box.label(text="Construction", icon='SNAP_VERTEX')
@@ -3579,21 +3572,24 @@ class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
                   if total_red > 1e-9 and total_actual < total_red - 1e-9
                   else 1.0)
 
-        for side in sides:
-            actual = red[side] * factor
-            span = getattr(self, f'gap_{side}') + actual
-            top_on = getattr(self, f'top_{side}') and span > 1e-4
-            # Straight onto the starter's bridge prompts, so what the
-            # dialog set is what the prompts show afterwards.
-            setattr(sp, f'bridge_{side}', top_on)
-            setattr(sp, f'bridge_{side}_width', float(max(span, 0.0)))
-            setattr(sp, f'include_bottom_bridge_{side}',
-                    bool(top_on and getattr(self, f'bottom_{side}')))
-            if side == 'left':
-                root.location.x += actual
+        # Every prompt written here would relay the starter out on
+        # its own; holding them means the whole dialog costs one solve.
+        with types_closets.suspend_recalc():
+            for side in sides:
+                actual = red[side] * factor
+                span = getattr(self, f'gap_{side}') + actual
+                top_on = getattr(self, f'top_{side}') and span > 1e-4
+                # Straight onto the starter's bridge prompts, so what
+                # the dialog set is what the prompts show afterwards.
+                setattr(sp, f'bridge_{side}', top_on)
+                setattr(sp, f'bridge_{side}_width', float(max(span, 0.0)))
+                setattr(sp, f'include_bottom_bridge_{side}',
+                        bool(top_on and getattr(self, f'bottom_{side}')))
+                if side == 'left':
+                    root.location.x += actual
 
-        sp.width = new_width  # update callback relays out
-        types_closets.recalculate_closet_starter(root)
+            sp.width = new_width
+            types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
 
 

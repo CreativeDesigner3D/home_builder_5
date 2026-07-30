@@ -80,33 +80,44 @@ def _update_starter_prop(self, context):
 def _update_kick_preset(self, context):
     """Toe-kick height dropdown changed: set the distance to the chosen
     standard height (the key is millimetres), then recalc. 'CUSTOM'
-    leaves the typed distance alone."""
-    if self.toe_kick_height_preset != 'CUSTOM':
-        self.toe_kick_height = const.millimeter(
-            int(self.toe_kick_height_preset))
-    _update_starter_prop(self, context)
+    leaves the typed distance alone. The distance carries a recalc of
+    its own, so the pair is held to one solve."""
+    from . import types_closets
+    with types_closets.suspend_recalc():
+        if self.toe_kick_height_preset != 'CUSTOM':
+            self.toe_kick_height = const.millimeter(
+                int(self.toe_kick_height_preset))
+        _update_starter_prop(self, context)
 
 
 def _update_height_preset(self, context):
     """Section-height dropdown changed: set the distance to the chosen
     standard height (the key is millimetres). 'CUSTOM' leaves the typed
-    distance alone."""
-    if self.height_preset != 'CUSTOM':
-        self.height = const.millimeter(int(self.height_preset))
-    _update_starter_prop(self, context)
+    distance alone. Held to one solve - the distance recalcs too."""
+    from . import types_closets
+    with types_closets.suspend_recalc():
+        if self.height_preset != 'CUSTOM':
+            self.height = const.millimeter(int(self.height_preset))
+        _update_starter_prop(self, context)
 
 
 def _update_bay_prop(self, context):
-    """Bay-level prop changed (height/depth/floor/remove flags)."""
+    """Bay-level prop changed - a size the bay owns, one of the padlocks
+    that hands it a size, or a construction flag. Recalcs the run; the
+    call is a no-op while that run is already solving, so the seeding
+    passes that write these props in bulk cost nothing."""
     from . import types_closets
     types_closets.recalculate_closet_starter(self.id_data)
 
 
 def _update_bay_height_preset(self, context):
-    """Bay height dropdown changed (the key is millimetres)."""
-    if self.height_preset != 'CUSTOM':
-        self.height = const.millimeter(int(self.height_preset))
-    _update_bay_height(self, context)
+    """Bay height dropdown changed (the key is millimetres). Held to
+    one solve - the distance and the padlock both recalc."""
+    from . import types_closets
+    with types_closets.suspend_recalc():
+        if self.height_preset != 'CUSTOM':
+            self.height = const.millimeter(int(self.height_preset))
+        _update_bay_height(self, context)
 
 
 def _bay_edit_root(bay_props):
@@ -127,36 +138,44 @@ def _bay_edit_root(bay_props):
 
 
 def _update_bay_width(self, context):
-    """Bay width changed. A user edit locks the bay so the value holds
-    when the remaining widths are redistributed."""
+    """Bay width changed. The first edit hands the bay its own width so
+    the value holds while the remaining widths are redistributed. That
+    flag carries a recalc of its own, so only a later nudge - the bay
+    already owning its width - has to ask for one here."""
     from . import types_closets
     root = _bay_edit_root(self)
     if root is None:
         return
-    self.width_locked = True
-    types_closets.recalculate_closet_starter(root)
+    if not self.unlock_width:
+        self.unlock_width = True
+    else:
+        types_closets.recalculate_closet_starter(root)
 
 
 def _update_bay_height(self, context):
-    """Bay height changed. Same idea as the width: typing a height here
-    locks the bay, so it keeps that height when the run height changes.
-    Clear the lock to put the bay back on the run height."""
+    """Bay height changed. Same idea as the width: a height typed here
+    hands the bay its own, so it keeps it when the run height changes.
+    Clear the padlock to put the bay back on the run height."""
     from . import types_closets
     root = _bay_edit_root(self)
     if root is None:
         return
-    self.height_locked = True
-    types_closets.recalculate_closet_starter(root)
+    if not self.unlock_height:
+        self.unlock_height = True
+    else:
+        types_closets.recalculate_closet_starter(root)
 
 
 def _update_bay_depth(self, context):
-    """Bay depth changed - locks the bay off the run depth, as above."""
+    """Bay depth changed - hands the bay its own depth, as above."""
     from . import types_closets
     root = _bay_edit_root(self)
     if root is None:
         return
-    self.depth_locked = True
-    types_closets.recalculate_closet_starter(root)
+    if not self.unlock_depth:
+        self.unlock_depth = True
+    else:
+        types_closets.recalculate_closet_starter(root)
 
 
 def _update_closet_selection_mode(self, context):
@@ -245,20 +264,6 @@ class Closet_Starter_Props(PropertyGroup):
         items=const.PANEL_HEIGHT_ITEMS + [('CUSTOM', "Custom",
                                            "Use the typed height")],
         default='2131', update=_update_height_preset)  # type: ignore
-
-    # Run-wide locks on the two sizes that a bay can also carry on its
-    # own. Locked holds every bay at the run value; unlocked hands the
-    # Bays table its own field (and its own lock) per bay.
-    height_locked: BoolProperty(
-        name="Lock Height",
-        description="Hold every bay at this height. Unlock to size the "
-                    "bays one at a time in the Bays table",
-        default=True, update=_update_starter_prop)  # type: ignore
-    depth_locked: BoolProperty(
-        name="Lock Depth",
-        description="Hold every bay at this depth. Unlock to size the "
-                    "bays one at a time in the Bays table",
-        default=True, update=_update_starter_prop)  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -592,20 +597,23 @@ class Closet_Bay_Props(PropertyGroup):
         name="Width", description="Bay opening width",
         default=0.0, unit='LENGTH', precision=4,
         update=_update_bay_width)  # type: ignore
-    width_locked: BoolProperty(
-        name="Lock Width",
-        description="Hold this bay's width during redistribution",
-        default=starter_presets.BAY_PROP_DEFAULTS['width_locked'])  # type: ignore
+    unlock_width: BoolProperty(
+        name="Unlock Width",
+        description="Give this bay its own width, held while the rest "
+                    "of the run is redistributed to fill the run width",
+        default=starter_presets.BAY_PROP_DEFAULTS['unlock_width'],
+        update=_update_bay_prop)  # type: ignore
 
     height: FloatProperty(
         name="Height", description="Bay height (envelope, floor to top shelf)",
         default=const.BASE_PANEL_HEIGHT, unit='LENGTH', precision=4,
         update=_update_bay_height)  # type: ignore
-    height_locked: BoolProperty(
-        name="Lock Height",
-        description="Hold this bay at its own height instead of following "
+    unlock_height: BoolProperty(
+        name="Unlock Height",
+        description="Give this bay its own height instead of following "
                     "the run height",
-        default=starter_presets.BAY_PROP_DEFAULTS['height_locked'])  # type: ignore
+        default=starter_presets.BAY_PROP_DEFAULTS['unlock_height'],
+        update=_update_bay_prop)  # type: ignore
     height_preset: EnumProperty(
         name="Height",
         description="Standard section height (Custom keeps the typed "
@@ -617,11 +625,12 @@ class Closet_Bay_Props(PropertyGroup):
         name="Depth", description="Bay depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
         update=_update_bay_depth)  # type: ignore
-    depth_locked: BoolProperty(
-        name="Lock Depth",
-        description="Hold this bay at its own depth instead of following "
+    unlock_depth: BoolProperty(
+        name="Unlock Depth",
+        description="Give this bay its own depth instead of following "
                     "the run depth",
-        default=starter_presets.BAY_PROP_DEFAULTS['depth_locked'])  # type: ignore
+        default=starter_presets.BAY_PROP_DEFAULTS['unlock_depth'],
+        update=_update_bay_prop)  # type: ignore
 
     floor_mounted: BoolProperty(
         name="Floor Mounted",

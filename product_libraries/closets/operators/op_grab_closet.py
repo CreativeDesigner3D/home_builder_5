@@ -628,8 +628,8 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             right = bpy.data.objects.get(b['right'])
             snap['lw'] = left.hb_closet_bay.width
             snap['rw'] = right.hb_closet_bay.width
-            snap['ll'] = left.hb_closet_bay.width_locked
-            snap['rl'] = right.hb_closet_bay.width_locked
+            snap['ll'] = left.hb_closet_bay.unlock_width
+            snap['rl'] = right.hb_closet_bay.unlock_width
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             snap['z'] = sh.get('hb_z_offset', 0.0)
@@ -638,11 +638,9 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             snap['bh'] = bay.hb_closet_bay.height
             snap['floor'] = bay.hb_closet_bay.floor_mounted
             snap['runH'] = root.hb_closet_starter.height
-            # Both height locks: giving a bay its own height means
-            # locking the bay and unlocking the run, so a cancel has to
-            # restore the pair rather than just the height.
-            snap['bay_locked'] = bay.hb_closet_bay.height_locked
-            snap['run_locked'] = root.hb_closet_starter.height_locked
+            # Giving a bay its own height sets the bay's own padlock,
+            # so a cancel has to put that back as well as the height.
+            snap['bay_unlocked'] = bay.hb_closet_bay.unlock_height
             snap['shelves'] = [
                 (c.name, c.get('hb_z_offset', 0.0))
                 for c in bay.children
@@ -700,9 +698,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         types_closets._RECALCULATING.add(rid)
         try:
             bp.height = new_h
-            bp.height_locked = own
-            if own:
-                sp.height_locked = False
+            bp.unlock_height = own
         finally:
             types_closets._RECALCULATING.discard(rid)
         if recalc:
@@ -745,7 +741,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         def _write():
             for bay in bays:
                 bp = bay.hb_closet_bay
-                if bp.height_locked and not bp.floor_mounted:
+                if bp.unlock_height and not bp.floor_mounted:
                     bp.height = max(self._min_bay_height(root, bay),
                                     bp.height + delta)
             sp.height = new_h
@@ -872,9 +868,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                snap['lw'] + snap['rw'] - MIN_BAY_WIDTH))
             new_right = snap['lw'] + snap['rw'] - new_left
             lb, rb = left.hb_closet_bay, right.hb_closet_bay
-            lb.width_locked = True
-            rb.width_locked = True
+            # Both bays take their widths over, inside the guard - the
+            # padlocks relay the run out the same way the widths do, and
+            # a drag can't afford three solves per mouse move.
             self._write_guarded(root, lambda: (
+                setattr(lb, 'unlock_width', True),
+                setattr(rb, 'unlock_width', True),
                 setattr(lb, 'width', new_left),
                 setattr(rb, 'width', new_right)))
             self._drag_text = "%s | %s" % (
@@ -1080,8 +1079,8 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     self._write_guarded(root, lambda: (
                         setattr(lb, 'width', snap['lw']),
                         setattr(rb, 'width', snap['rw']),
-                        setattr(lb, 'width_locked', snap['ll']),
-                        setattr(rb, 'width_locked', snap['rl'])))
+                        setattr(lb, 'unlock_width', snap['ll']),
+                        setattr(rb, 'unlock_width', snap['rl'])))
                 elif b['kind'] in ('END_L', 'END_R'):
                     root.location = snap['loc']
                     sp.width = snap['width']
@@ -1114,10 +1113,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                 snap['floor_ctype'])
                     self._write_guarded(root, _restore_bottom)
                 elif b['kind'] in L_SIZE_KINDS:
-                    sp.width = snap['width']
-                    sp.depth = snap['depth']
-                    sp.l_left_depth = snap['ld']
-                    sp.l_right_depth = snap['rd']
+                    def _restore_l_size():
+                        sp.width = snap['width']
+                        sp.depth = snap['depth']
+                        sp.l_left_depth = snap['ld']
+                        sp.l_right_depth = snap['rd']
+                    self._write_guarded(root, _restore_l_size)
                 elif b['kind'] == 'SHELF':
                     sh = bpy.data.objects.get(b['shelf'])
                     if sh is not None:
@@ -1132,15 +1133,13 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                             if sh is not None:
                                 sh['hb_z_offset'] = float(off0)
                         # Restore behind the guard: writing the height
-                        # would otherwise re-lock the bay through its
-                        # own callback and undo the lock restore.
+                        # would otherwise hand the bay its own through
+                        # the callback and undo the restore.
                         self._write_guarded(root, lambda: (
                             setattr(bp, 'floor_mounted', snap['floor']),
                             setattr(bp, 'height', snap['bh']),
-                            setattr(bp, 'height_locked',
-                                    snap['bay_locked']),
-                            setattr(sp, 'height_locked',
-                                    snap['run_locked'])))
+                            setattr(bp, 'unlock_height',
+                                    snap['bay_unlocked'])))
         self._drag_active = False
         self._drag_boundary = None
         self._drag_text = ""
@@ -1167,9 +1166,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                snap['lw'] + snap['rw'] - MIN_BAY_WIDTH))
             new_right = snap['lw'] + snap['rw'] - new_left
             lb, rb = left.hb_closet_bay, right.hb_closet_bay
-            lb.width_locked = True
-            rb.width_locked = True
+            # Both bays take their widths over, inside the guard - the
+            # padlocks relay the run out the same way the widths do, and
+            # a drag can't afford three solves per mouse move.
             self._write_guarded(root, lambda: (
+                setattr(lb, 'unlock_width', True),
+                setattr(rb, 'unlock_width', True),
                 setattr(lb, 'width', new_left),
                 setattr(rb, 'width', new_right)))
         elif b['kind'] in ('END_L', 'END_R'):

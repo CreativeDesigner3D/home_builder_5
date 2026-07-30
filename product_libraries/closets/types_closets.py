@@ -21,6 +21,7 @@ Width runs -Y (Mirror Y), Thickness extrudes +X (Mirror Z).
 """
 import bpy
 import math
+from contextlib import contextmanager
 
 from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
@@ -145,6 +146,42 @@ PROP_OPENING_SIDE = 'hb_opening_side'    # 'FRONT' (default) | 'BACK'
 # would otherwise recurse; the callbacks consult these sets and bail.
 _RECALCULATING = set()
 _DISTRIBUTING_WIDTHS = set()
+
+# A batch that touches a run many times over - a preset that rewrites a
+# dozen props, a paste that refills every opening, a room-wide sweep -
+# would otherwise solve the run once per write. suspend_recalc() holds
+# those requests, keeps one per run, and solves each of them once on the
+# way out of the outermost block.
+_RECALC_SUSPEND_DEPTH = 0
+_PENDING_RECALC_NAMES = set()
+
+
+@contextmanager
+def suspend_recalc():
+    """Hold every recalc asked for inside the block and run them once at
+    the end, one per run. Nests: only leaving the outermost block solves
+    anything. Runs are remembered by name rather than by object so a
+    rebuild inside the block can't leave a stale pointer behind, and a
+    run that has since been deleted is simply skipped."""
+    global _RECALC_SUSPEND_DEPTH
+    _RECALC_SUSPEND_DEPTH += 1
+    try:
+        yield
+    finally:
+        _RECALC_SUSPEND_DEPTH -= 1
+        if _RECALC_SUSPEND_DEPTH == 0:
+            pending = list(_PENDING_RECALC_NAMES)
+            _PENDING_RECALC_NAMES.clear()
+            for root_name in pending:
+                root = bpy.data.objects.get(root_name)
+                if root is None:
+                    continue
+                try:
+                    recalculate_closet_starter(root)
+                except Exception:
+                    # One run failing to solve shouldn't strand the rest
+                    # of the batch.
+                    pass
 
 
 def _apply_front_style(front_obj, is_drawer):
@@ -549,19 +586,18 @@ class ClosetStarter(GeoNodeCage):
             bp = bay.obj.hb_closet_bay
             bp.bay_index = i
             bp.width = equal_width
-            bp.width_locked = False
+            bp.unlock_width = False
             bay_height = self._default_bay_height(scene_props, sp)
             bp.height = bay_height
             bp.depth = sp.depth
-            bp.height_locked = False
-            bp.depth_locked = False
+            bp.unlock_height = False
+            bp.unlock_depth = False
             # A run whose bays seed to a height other than the run
-            # height - a hanging run tops out above its bays - starts
-            # with the run height unlocked and each bay holding its own
-            # value, so the seeded heights survive the first solve.
+            # height - a hanging run tops out above its bays - hands
+            # each of those bays its own height, so the seeded values
+            # survive the first solve.
             if abs(bay_height - sp.height) > 1e-6:
-                bp.height_locked = True
-                sp.height_locked = False
+                bp.unlock_height = True
             bp.floor_mounted = self.floor_mounted
             self._build_bay_parts(bay.obj)
 
@@ -701,7 +737,7 @@ class ClosetStarter(GeoNodeCage):
             prev = bay_objs[idx - 1].hb_closet_bay if idx > 0 else None
             bays.append({
                 'width': bp.width,
-                'locked': bp.width_locked,
+                'locked': bp.unlock_width,
                 'height': bp.height,
                 'depth': bp.depth,
                 'floor': bp.floor_mounted,
@@ -735,19 +771,18 @@ class ClosetStarter(GeoNodeCage):
             scene_props = bpy.context.scene.hb_closets
             sp = self.obj.hb_closet_starter
 
-            # The run height and depth carry down to the bays. A locked
-            # run size holds every bay at it; with the run size unlocked
-            # a bay follows along until someone types a size into that
-            # bay, which locks it. Bay writes here can't recurse - the
-            # update callbacks bail while this starter is in
-            # _RECALCULATING.
+            # The run height and depth carry down to the bays. A bay
+            # follows the run until it is handed a size of its own, and
+            # goes back to following the moment that is cleared. Bay
+            # writes here can't recurse - the update callbacks bail
+            # while this starter is in _RECALCULATING.
             self._migrate_double_panel_numbering()
             for bay_obj in self._sorted_bays():
                 bp = bay_obj.hb_closet_bay
-                if sp.height_locked or not bp.height_locked:
+                if not bp.unlock_height:
                     if abs(bp.height - sp.height) > 1e-9:
                         bp.height = sp.height
-                if sp.depth_locked or not bp.depth_locked:
+                if not bp.unlock_depth:
                     if abs(bp.depth - sp.depth) > 1e-9:
                         bp.depth = sp.depth
 
@@ -2192,11 +2227,11 @@ class ClosetStarter(GeoNodeCage):
             bp = bay.obj.hb_closet_bay
             bp.bay_index = k
             bp.width = 0.0
-            bp.width_locked = False
+            bp.unlock_width = False
             bp.height = src.height
             bp.depth = src.depth
-            bp.height_locked = src.height_locked
-            bp.depth_locked = src.depth_locked
+            bp.unlock_height = src.unlock_height
+            bp.unlock_depth = src.unlock_depth
             bp.floor_mounted = src.floor_mounted
             self._build_bay_parts(bay.obj)
         finally:
@@ -2934,13 +2969,95 @@ def carry_over_opening_settings(root):
             del opening[key]
 
 
+# Bay sizes used to be flagged the other way round, and the run carried
+# a pair of locks of its own that held every bay at the run size. A file
+# saved under those names keeps them as leftover keys; they are read
+# once onto the unlock flags and then deleted.
+_OLD_BAY_LOCK_KEYS = (
+    ('width_locked', 'unlock_width'),
+    ('height_locked', 'unlock_height'),
+    ('depth_locked', 'unlock_depth'),
+)
+_OLD_RUN_LOCK_KEYS = (
+    ('height_locked', 'unlock_height'),
+    ('depth_locked', 'unlock_depth'),
+)
+
+
+def carry_over_lock_flags(root):
+    """Bring a run saved under the old lock names forward.
+
+    A bay flag carries straight across - it always meant what the unlock
+    flag means, that the bay owns its own value. The run-wide locks are
+    gone: a locked run held every bay at the run size whatever the bay
+    itself said, so bays under one come forward following the run. Those
+    run locks were on unless someone turned them off, so a key that was
+    never written reads as on.
+
+    A settings group holds its values under the property names, and a
+    value written under a name the library has since dropped stays there
+    as a leftover key. Reading and clearing go through the group itself
+    for that reason - the key is not on the object, it is inside the
+    group the object carries.
+    """
+    sp_data = root.hb_closet_starter
+    sp_keys = set(sp_data.keys())
+    stale_run = [old for old, _new in _OLD_RUN_LOCK_KEYS if old in sp_keys]
+    stale_bay = []
+    for bay in root.children:
+        if not bay.get(TAG_BAY_CAGE):
+            continue
+        data = bay.hb_closet_bay
+        keys = set(data.keys())
+        if any(old in keys for old, _new in _OLD_BAY_LOCK_KEYS):
+            stale_bay.append((data, keys))
+    if not stale_run and not stale_bay:
+        return
+    run_held = {}
+    for old, new in _OLD_RUN_LOCK_KEYS:
+        try:
+            run_held[new] = bool(sp_data.get(old, 1))
+        except Exception:
+            run_held[new] = True
+    root_id = id(root)
+    _RECALCULATING.add(root_id)
+    try:
+        for data, keys in stale_bay:
+            for old, new in _OLD_BAY_LOCK_KEYS:
+                if old not in keys:
+                    continue
+                try:
+                    own = bool(data[old]) and not run_held.get(new, False)
+                    setattr(data, new, own)
+                except (TypeError, ValueError):
+                    pass  # unreadable leftover: the default stands
+                try:
+                    del data[old]
+                except (TypeError, KeyError):
+                    pass
+    finally:
+        _RECALCULATING.discard(root_id)
+    for old in stale_run:
+        try:
+            del sp_data[old]
+        except (TypeError, KeyError):
+            pass
+
+
 def recalculate_closet_starter(obj):
     """Public recalc entry point for prop update callbacks and operators.
     Accepts the root or any descendant; no-ops while that starter is
-    already mid-recalc."""
+    already mid-recalc, and defers to the end of the block while a
+    suspend_recalc() batch is running."""
     root = find_starter_root(obj)
-    if root is None or id(root) in _RECALCULATING:
+    if root is None:
         return
+    if _RECALC_SUSPEND_DEPTH > 0:
+        _PENDING_RECALC_NAMES.add(root.name)
+        return
+    if id(root) in _RECALCULATING:
+        return
+    carry_over_lock_flags(root)
     carry_over_opening_settings(root)
     _wrap_starter(root).recalculate()
 
@@ -3083,17 +3200,21 @@ def apply_bay_data(bay_obj, data):
         add_fixed_shelf(front, z)
     recalculate_closet_starter(root)   # adopt shelves -> segments
 
-    bp = bay_obj.hb_closet_bay
-    bp.remove_bottom = data.get('remove_bottom', False)
-    bp.remove_cleat = data.get('remove_cleat', False)
-    if data.get('bay_door_swing'):
-        bay_obj[PROP_BAY_DOOR_SWING] = data['bay_door_swing']
-        bay_obj[PROP_BAY_IS_HAMPER] = data.get('bay_is_hamper', 0)
+    # The construction flags each carry a solve of their own; holding
+    # them means the openings and the flags land together on the one
+    # solve at the end.
+    with suspend_recalc():
+        bp = bay_obj.hb_closet_bay
+        bp.remove_bottom = data.get('remove_bottom', False)
+        bp.remove_cleat = data.get('remove_cleat', False)
+        if data.get('bay_door_swing'):
+            bay_obj[PROP_BAY_DOOR_SWING] = data['bay_door_swing']
+            bay_obj[PROP_BAY_IS_HAMPER] = data.get('bay_is_hamper', 0)
 
-    for op_obj, od in zip(_front_openings(bay_obj),
-                          data.get('openings', ())):
-        apply_opening_data(op_obj, od, recalc=False)
-    recalculate_closet_starter(root)
+        for op_obj, od in zip(_front_openings(bay_obj),
+                              data.get('openings', ())):
+            apply_opening_data(op_obj, od, recalc=False)
+        recalculate_closet_starter(root)
     return True
 
 

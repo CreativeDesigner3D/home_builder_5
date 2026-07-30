@@ -34,9 +34,9 @@ STARTER_MENU_ENTRIES = [entry for _sec, entries in STARTER_SECTIONS
 # data so Change Bay-style mechanisms can reset overrides the same way
 # face_frame's BAY_PROPS does.
 BAY_PROP_DEFAULTS = {
-    'width_locked': False,
-    'height_locked': False,
-    'depth_locked': False,
+    'unlock_width': False,
+    'unlock_height': False,
+    'unlock_depth': False,
     'remove_bottom': False,
     'remove_cleat': False,
 }
