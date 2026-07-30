@@ -39,6 +39,11 @@ MIN_BAY_WIDTH = inch(2.0)
 MIN_OPENING = inch(1.0)
 MIN_STARTER_WIDTH = inch(6.0)
 MIN_STARTER_HEIGHT = inch(6.0)
+# A corner wing has to stay wide enough to hold a shelf worth having.
+MIN_WING_DEPTH = inch(3.0)
+# The four sizes an inside corner is dragged by. All four are starter
+# prompts, so they share one snapshot, one clamp and one restore.
+L_SIZE_KINDS = ('L_END_R', 'L_END_L', 'L_DEPTH_R', 'L_DEPTH_L')
 SNAP_STEPS = {'COARSE': inch(0.25), 'FINE': inch(0.125)}
 GHOST_LINE = (0.85, 0.85, 0.85, 0.35)
 HOVER_LINE = (1.00, 0.85, 0.20, 1.00)
@@ -122,6 +127,88 @@ def _current_mode():
         return 'Bays'
 
 
+def _corner_boundaries(root, mw, mode):
+    """Handles for an inside-corner L unit, Starters mode only.
+
+    Its local frame plants the corner at the origin: the right wing
+    runs +X along the back wall and the left wing runs -Y along the
+    side wall. Both overall sizes therefore grow away from the corner,
+    so neither end shifts the object the way a run's left end does -
+    the corner stays against the walls no matter which end is pulled.
+
+    Five handles. The right wing's end panel sets the width and the
+    left wing's end panel sets the depth, each drawn on its own wing's
+    front face so it reads as that wing's end. The two wing front
+    edges at the top shelf set the height together. Each wing's front
+    edge at the bottom shelf sets that wing's depth, pulling the inner
+    corner of the L in or out.
+
+    Every line is measured the way the recalculate measures it - the
+    same wing clamps, the same shelf heights - so a handle always sits
+    on geometry that is really there.
+    """
+    if mode != 'Starters':
+        return []
+    sp = root.hb_closet_starter
+    scene_props = bpy.context.scene.hb_closets
+    st = scene_props.shelf_thickness
+    pt = scene_props.panel_thickness
+    W, D, H = sp.width, sp.depth, sp.height
+    if W <= 0.0 or D <= 0.0 or H <= 0.0:
+        return []
+    cls = types_closets.WRAP_CLASS_REGISTRY.get(
+        root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+    # Wing depths ride inside the opposite overall size; the build
+    # clamps them there, so the handles read the clamped values.
+    LD = min(sp.l_left_depth, W - pt)
+    RD = min(sp.l_right_depth, D - pt)
+    kick = (sp.toe_kick_height
+            if getattr(cls, 'floor_mounted', True) else 0.0)
+    # Front edges of the bottom and top shelves: the bottom shelf sits
+    # on the kick, the top one tucks under the unit top.
+    z_low = kick + st
+    z_high = H
+    # The shelves stop a panel thickness short of each end panel, and
+    # the notch leaves the inner corner at (LD, -RD).
+    x_out = W - pt
+    y_out = -(D - pt)
+
+    ax_x = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).normalized()
+    # Depth grows toward -Y, so that is the direction a pull outward
+    # has to move in for the drag delta to come out positive.
+    ax_y = (mw.to_3x3() @ Vector((0.0, -1.0, 0.0))).normalized()
+    ax_z = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+
+    out = []
+    # Right wing end panel -> overall width.
+    x_end = W - pt / 2.0
+    out.append(dict(kind='L_END_R', root=root.name,
+                    p0=mw @ Vector((x_end, -RD, 0.0)),
+                    p1=mw @ Vector((x_end, -RD, H)), axis=ax_x))
+    # Left wing end panel -> overall depth.
+    y_end = -(D - pt / 2.0)
+    out.append(dict(kind='L_END_L', root=root.name,
+                    p0=mw @ Vector((LD, y_end, 0.0)),
+                    p1=mw @ Vector((LD, y_end, H)), axis=ax_y))
+    # Top front edge of each wing -> overall height. Two segments so
+    # the whole top outline is grabbable; the side key keeps them
+    # separate for hover highlighting.
+    out.append(dict(kind='TOP', root=root.name, side='R',
+                    p0=mw @ Vector((LD, -RD, z_high)),
+                    p1=mw @ Vector((x_out, -RD, z_high)), axis=ax_z))
+    out.append(dict(kind='TOP', root=root.name, side='L',
+                    p0=mw @ Vector((LD, -RD, z_high)),
+                    p1=mw @ Vector((LD, y_out, z_high)), axis=ax_z))
+    # Bottom shelf front edge of each wing -> that wing's depth.
+    out.append(dict(kind='L_DEPTH_R', root=root.name,
+                    p0=mw @ Vector((LD, -RD, z_low)),
+                    p1=mw @ Vector((x_out, -RD, z_low)), axis=ax_y))
+    out.append(dict(kind='L_DEPTH_L', root=root.name,
+                    p0=mw @ Vector((LD, -RD, z_low)),
+                    p1=mw @ Vector((LD, y_out, z_low)), axis=ax_x))
+    return out
+
+
 def _collect_boundaries(scene, mode=None):
     """List of boundary dicts with world-space line segments, SCOPED BY
     SELECTION MODE: Starters mode grabs the whole
@@ -149,6 +236,13 @@ def _collect_boundaries(scene, mode=None):
             continue
         mw = split_preview._world_matrix(root)
         w, h, d = _starter_dims(root)
+        # An inside corner has perpendicular ends and no bays, so none
+        # of the run collection below applies to it.
+        _cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+        if getattr(_cls, 'is_corner', False):
+            out.extend(_corner_boundaries(root, mw, mode))
+            continue
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],
                       key=lambda o: o.get('hb_bay_index', 0))
@@ -476,8 +570,15 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         sp = root.hb_closet_starter
         snap['width'] = sp.width
         snap['height'] = sp.height
+        snap['depth'] = sp.depth
         snap['loc'] = tuple(root.location)
-        if b['kind'] == 'PANEL':
+        if b['kind'] in L_SIZE_KINDS:
+            # Any one of a corner's four sizes can be pulled against
+            # the others' clamps, so the whole set is restored on
+            # cancel rather than just the one that was dragged.
+            snap['ld'] = sp.l_left_depth
+            snap['rd'] = sp.l_right_depth
+        elif b['kind'] == 'PANEL':
             left = bpy.data.objects.get(b['left'])
             right = bpy.data.objects.get(b['right'])
             snap['lw'] = left.hb_closet_bay.width
@@ -575,6 +676,32 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         finally:
             types_closets._RECALCULATING.discard(rid)
 
+    def _set_corner_size(self, root, kind, value):
+        """Clamp and write one of an inside corner's four sizes, and
+        return what was written.
+
+        The overall sizes grow away from the planted corner, so there
+        is no origin shift to compensate. Each wing depth runs inside
+        the opposite overall size and stops a panel thickness short of
+        the end panel there - the same limit the build clamps to, so
+        dragging can never ask for a wing the unit cannot hold.
+        """
+        sp = root.hb_closet_starter
+        pt = bpy.context.scene.hb_closets.panel_thickness
+        if kind == 'L_END_R':
+            new = max(MIN_STARTER_WIDTH, sp.l_left_depth + pt, value)
+            sp.width = new
+        elif kind == 'L_END_L':
+            new = max(MIN_STARTER_WIDTH, sp.l_right_depth + pt, value)
+            sp.depth = new
+        elif kind == 'L_DEPTH_R':
+            new = max(MIN_WING_DEPTH, min(value, sp.depth - pt))
+            sp.l_right_depth = new
+        else:
+            new = max(MIN_WING_DEPTH, min(value, sp.width - pt))
+            sp.l_left_depth = new
+        return new
+
     def _min_bay_height(self, root, bay):
         scene_props = bpy.context.scene.hb_closets
         st = scene_props.shelf_thickness
@@ -656,6 +783,17 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             new_h = max(MIN_STARTER_HEIGHT, new_h)
             sp.height = new_h
             self._drag_text = "H " + units.unit_to_string(us, new_h)
+        elif b['kind'] in L_SIZE_KINDS:
+            base = {'L_END_R': snap['width'], 'L_END_L': snap['depth'],
+                    'L_DEPTH_R': snap['rd'],
+                    'L_DEPTH_L': snap['ld']}[b['kind']]
+            new = self._set_corner_size(
+                root, b['kind'], self._snap_value(base + delta, event))
+            label = {'L_END_R': "W", 'L_END_L': "D",
+                     'L_DEPTH_R': "Right Wing",
+                     'L_DEPTH_L': "Left Wing"}[b['kind']]
+            self._drag_text = "%s %s" % (
+                label, units.unit_to_string(us, new))
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             bay = bpy.data.objects.get(b['bay'])
@@ -803,6 +941,11 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     sp.width = snap['width']
                 elif b['kind'] == 'TOP':
                     sp.height = snap['height']
+                elif b['kind'] in L_SIZE_KINDS:
+                    sp.width = snap['width']
+                    sp.depth = snap['depth']
+                    sp.l_left_depth = snap['ld']
+                    sp.l_right_depth = snap['rd']
                 elif b['kind'] == 'SHELF':
                     sh = bpy.data.objects.get(b['shelf'])
                     if sh is not None:
@@ -866,6 +1009,8 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             sp.width = max(MIN_STARTER_WIDTH, value)
         elif b['kind'] == 'TOP':
             root.hb_closet_starter.height = max(MIN_STARTER_HEIGHT, value)
+        elif b['kind'] in L_SIZE_KINDS:
+            self._set_corner_size(root, b['kind'], value)
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             bay = bpy.data.objects.get(b['bay'])
