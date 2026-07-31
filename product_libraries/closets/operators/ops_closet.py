@@ -23,6 +23,7 @@ from ...face_frame.operators.ops_placement import _detect_wall
 from .. import const_closets as const
 from .. import types_closets
 from .. import drawer_boxes_closets
+from .. import materials_closets
 
 # Per-opening box-system choices: "Use Default" (defer to the project
 # setting) plus every box system. Held at module scope so the enum
@@ -3699,6 +3700,19 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default=const.DISTANCE_BETWEEN_PULLS,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
+    # Grain on this opening's fronts. Left locked it follows the room,
+    # which keeps doors and drawer fronts on separate settings.
+    unlock_grain: bpy.props.BoolProperty(
+        name="Grain",
+        description="Set which way the grain runs on this opening's "
+                    "fronts, instead of following the room",
+        default=False)  # type: ignore
+    grain_direction: bpy.props.EnumProperty(
+        name="Grain Direction",
+        description="Which way the grain runs on this opening's fronts",
+        items=materials_closets.GRAIN_ITEMS,
+        default='VERTICAL')  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(
@@ -3757,6 +3771,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.drawer_pull_vertical_location = float(
             op.drawer_pull_vertical_location)
         self.distance_between_pulls = float(op.distance_between_pulls)
+        self.unlock_grain = bool(op.unlock_grain)
+        self.grain_direction = op.grain_direction
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3811,6 +3827,20 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub = box.row()
         sub.enabled = self.door_swing != 'NONE'
         sub.prop(self, 'is_hamper')
+        # Which way the grain runs here. Locked, it reads back what the
+        # room does with doors and with drawer fronts, so there is
+        # something to compare against before unlocking it; unlocked,
+        # everything on this opening runs the one way.
+        room = context.scene.hb_closets
+        row = box.row(align=True)
+        row.prop(self, 'unlock_grain')
+        sub = row.row(align=True)
+        if self.unlock_grain:
+            sub.prop(self, 'grain_direction', text="")
+        else:
+            sub.label(text="Doors %s, Drawers %s"
+                           % (room.closet_door_grain.capitalize(),
+                              room.closet_drawer_grain.capitalize()))
 
         # What the run works out for a front, and any side this opening
         # has taken over. A locked side reads back the run's figure, so
@@ -3950,6 +3980,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.drawer_pull_vertical_location
         _op.double_pull_on_front = self.double_pull_on_front
         _op.distance_between_pulls = self.distance_between_pulls
+        _op.unlock_grain = self.unlock_grain
+        _op.grain_direction = self.grain_direction
 
         if _opening_rods(opening):
             op = opening.hb_closet_opening

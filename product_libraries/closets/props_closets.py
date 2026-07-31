@@ -1018,6 +1018,23 @@ class Closet_Opening_Props(PropertyGroup):
         default=const.DISTANCE_BETWEEN_PULLS,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
+    # Which way the grain runs on this opening's fronts. Locked,
+    # they follow the room's settings for doors and for drawer fronts;
+    # unlocked, everything on this opening runs the way it is set here.
+    # Left out of the contents list below on purpose, same as the
+    # overlays and the pulls: stripping an opening empties it, it does
+    # not re-finish it.
+    unlock_grain: BoolProperty(
+        name="Grain",
+        description="Set which way the grain runs on this opening's "
+                    "fronts, instead of following the room",
+        default=False)  # type: ignore
+    grain_direction: EnumProperty(
+        name="Grain Direction",
+        description="Which way the grain runs on this opening's fronts",
+        items=materials_closets.GRAIN_ITEMS,
+        default='VERTICAL')  # type: ignore
+
     # Every field on this group is contents, so stripping an opening
     # clears the lot. Kept as an explicit list so a field added later has
     # to be considered rather than silently surviving a clear.

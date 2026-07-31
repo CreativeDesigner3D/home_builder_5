@@ -203,6 +203,39 @@ def vertical_variant(mat):
     return _mapping_variant(mat, " GRAIN V", rot_z=math.radians(90.0))
 
 
+# Which way the grain runs on a front. The room sets doors and
+# drawer fronts apart; an opening can take the setting over for its own
+# fronts, which is how one bank runs vertical while the rest of the run
+# stays horizontal.
+GRAIN_ITEMS = [
+    ('VERTICAL', "Vertical", "Grain runs up the front"),
+    ('HORIZONTAL', "Horizontal", "Grain runs across the front"),
+]
+
+
+def front_grain(front_obj, is_drawer):
+    """Grain direction for one front: its opening's own setting where
+    the opening has taken it over, the room's otherwise. Plain lookup
+    on the way to picking a material, so a whole run re-grains in one
+    pass with nothing driven."""
+    props = bpy.context.scene.hb_closets
+    room = getattr(props,
+                   'closet_drawer_grain' if is_drawer
+                   else 'closet_door_grain',
+                   'HORIZONTAL' if is_drawer else 'VERTICAL')
+    try:
+        from . import types_closets
+        opening = types_closets.find_opening_cage(front_obj)
+    except Exception:
+        opening = None
+    if opening is None:
+        return room
+    op = opening.hb_closet_opening
+    if not op.unlock_grain:
+        return room
+    return op.grain_direction
+
+
 def _set_modifier_material(mod, socket_name, mat):
     ng = mod.node_group
     for item in ng.interface.items_tree:
@@ -260,10 +293,7 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     if front_mat is None:
         return
     vertical = vertical_variant(front_mat)
-    grain = getattr(props,
-                    'closet_drawer_grain' if is_drawer
-                    else 'closet_door_grain',
-                    'HORIZONTAL' if is_drawer else 'VERTICAL')
+    grain = front_grain(front_obj, is_drawer)
     panel = front_mat if grain == 'HORIZONTAL' else vertical
     # Door panel type: glass selections replace the wood panel (drawer
     # fronts always keep the wood panel). Clear Glass reuses the shared
@@ -325,9 +355,11 @@ def _fence_finish(fence_obj, cache):
 def apply_to_starter(root, carcass_name=None, front_name=None):
     """Assign the selected materials to every cutpart under a starter:
     fronts (door/drawer/hamper) get the fronts material (Match Closet
-    follows the closet material) oriented by the door/drawer grain
-    setting - the library textures read horizontal as authored, so
-    VERTICAL is the rotated in-plane variant. Tops and their upstands
+    follows the closet material) oriented by the grain the front
+    resolves to - its opening's setting where the opening has taken it
+    over, the room's door/drawer setting otherwise. The library
+    textures read horizontal as authored, so VERTICAL is the rotated
+    in-plane variant. Tops and their upstands
     get the countertop selection. Everything else gets the closet
     material. Edge slots take the edgebanding selections (Match
     = the surface material) as their X-rotated variant so grain reads
@@ -356,10 +388,6 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     front_edge = rotated_variant(
         _resolve_edge_base('closet_front_edge_material', front))
     front_v = vertical_variant(front)
-    door_grain = getattr(props, 'closet_door_grain', 'VERTICAL')
-    drawer_grain = getattr(props, 'closet_drawer_grain', 'HORIZONTAL')
-    door_face = front if door_grain == 'HORIZONTAL' else front_v
-    drawer_face = front if drawer_grain == 'HORIZONTAL' else front_v
     role_door = types_closets.PART_ROLE_DOOR
     role_drawer = types_closets.PART_ROLE_DRAWER_FRONT
     role_fence = types_closets.PART_ROLE_SHOE_FENCE
@@ -374,10 +402,14 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
-        if role == role_door:
-            mat, edge = door_face, front_edge
-        elif role == role_drawer:
-            mat, edge = drawer_face, front_edge
+        if role in (role_door, role_drawer):
+            # Grain is worked out per front rather than once for the
+            # run, so an opening that has taken the setting over gets
+            # the rotated material while its neighbours do not.
+            mat = (front_v
+                   if front_grain(child, role == role_drawer) == 'VERTICAL'
+                   else front)
+            edge = front_edge
         elif role in ctop_roles:
             mat, edge = ctop, ctop_edge
         elif role == role_fence:

@@ -3364,6 +3364,10 @@ def serialize_opening(opening):
             [int(getattr(opening.hb_closet_opening, 'unlock_%s_overlay' % s)),
              float(getattr(opening.hb_closet_opening, '%s_overlay' % s))]
             for s in ('left', 'right', 'top', 'bottom')],
+        # Which way the grain runs, so a copy reads the way the
+        # original did.
+        'grain': [int(opening.hb_closet_opening.unlock_grain),
+                  opening.hb_closet_opening.grain_direction],
         # How this opening hardwares its fronts, so a copy is pulled
         # the way the original was.
         'pulls': [
@@ -3418,6 +3422,10 @@ def apply_opening_data(opening, data, recalc=True):
                     float(value))
             setattr(opening.hb_closet_opening,
                     'unlock_%s_overlay' % s, True)
+    grain = data.get('grain')
+    if grain:
+        opening.hb_closet_opening.unlock_grain = bool(grain[0])
+        opening.hb_closet_opening.grain_direction = grain[1]
     pulls = data.get('pulls')
     if pulls:
         _op = opening.hb_closet_opening
