@@ -8439,9 +8439,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
         sub.enabled = crown_pkg != 'NONE'
         sub.prop(hb_scene, "molding_crown_reveal", text="Reveal")
         sub = col.row()
-        sub.enabled = molding_packages.stack_has_adjustable_offset(
-            'CROWN', crown_pkg)
-        sub.prop(hb_scene, "molding_crown_stack_offset", text="Stack Offset")
+        sub.enabled = crown_pkg != 'NONE'
+        sub.prop(hb_scene, "molding_crown_to_ceiling")
+        sub = col.row()
+        sub.enabled = (molding_packages.stack_uses_category(
+                           'CROWN', crown_pkg, 'Spacer')
+                       and not hb_scene.molding_crown_to_ceiling)
+        sub.prop(hb_scene, "molding_spacer_height", text="Spacer Height")
         if has_pack:
             sub = col.row()
             sub.enabled = molding_packages.stack_uses_category(
@@ -8455,7 +8459,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         col.prop(hb_scene, "molding_crown_furniture_cap")
         sub = col.row()
         sub.enabled = hb_scene.molding_crown_furniture_cap
-        sub.prop(hb_scene, "molding_cap_offset", text="Cap Offset")
+        sub.prop(hb_scene, "molding_cap_offset", text="Height Offset")
+        sub = col.row()
+        sub.enabled = hb_scene.molding_crown_furniture_cap
+        sub.prop(hb_scene, "molding_cap_overhang", text="Overhang")
         if has_pack:
             sub = col.row()
             sub.enabled = hb_scene.molding_crown_furniture_cap

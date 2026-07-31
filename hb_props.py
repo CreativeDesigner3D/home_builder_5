@@ -530,11 +530,17 @@ class Home_Builder_Scene_Props(PropertyGroup):
         unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore
-    molding_crown_stack_offset: FloatProperty(
-        name="Stack Offset",
-        description="For stacked crown packages: how far up the spacer the crown molding sits, measured from the spacer's bottom",
-        default=inch(3.5), min=0.0,
+    molding_spacer_height: FloatProperty(
+        name="Spacer Height",
+        description="Height of the flat-stock spacer in crown packages that use one - the profile is sized to this and the crown rides on top (ignored when Molding to Ceiling is on)",
+        default=inch(3.5), min=inch(0.25),
         unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_to_ceiling: BoolProperty(
+        name="Molding to Ceiling",
+        description="Run the crown stack to the ceiling: the crown molding tops out at the ceiling line and the spacer stretches to fill down to the reveal",
+        default=False,
         update=update_molding_package,
     )  # type: ignore
     molding_crown_furniture_cap: BoolProperty(
@@ -544,10 +550,18 @@ class Home_Builder_Scene_Props(PropertyGroup):
         update=update_molding_package,
     )  # type: ignore
     molding_cap_offset: FloatProperty(
-        name="Cap Offset",
+        name="Cap Height Offset",
         description="Adjust the furniture cap from its default position sitting on top of the tallest molding (negative lowers it)",
         default=0.0,
         soft_min=-inch(6.0), soft_max=inch(6.0),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_cap_overhang: FloatProperty(
+        name="Cap Overhang",
+        description="Push the furniture cap forward to increase how far it overhangs the cabinet face (negative pulls it back)",
+        default=0.0,
+        soft_min=-inch(2.0), soft_max=inch(6.0),
         unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore

@@ -93,7 +93,7 @@ CROWN_PACKAGES = [
      [('Spacer/Square Edge Spacer', 'flat_stock', 0.0, 0.0),
       # The crown mounts ON the spacer: STACK_FRONT pushes its path
       # forward by the spacer's measured thickness, and STACK_OFFSET
-      # resolves to the room's adjustable height on the spacer.
+      # resolves to the room's spacer height so the crown rides on top.
       ('Crown Molding/51 Crown', 'crown_simple', 'STACK_FRONT',
        'STACK_OFFSET')]),
     ('SPACER', "Spacer Only",
@@ -138,14 +138,6 @@ def package_stack(molding_type, identifier):
         if ident == identifier:
             return stack
     return None
-
-
-def stack_has_adjustable_offset(molding_type, identifier):
-    """True when the package's stack contains a STACK_OFFSET entry -
-    used to enable the room's stack-offset field in the UI."""
-    stack = package_stack(molding_type, identifier)
-    return bool(stack) and any(dy == 'STACK_OFFSET'
-                               for _r, _f, _dx, dy in stack)
 
 
 def stack_uses_category(molding_type, identifier, category):
@@ -325,24 +317,51 @@ def profile_front_depth(profile_ref, fallback_key):
     return _profile_metrics(profile_ref, fallback_key)[1]
 
 
-def make_profile_object(profile_ref, fallback_key, name, collection):
+def _scale_profile_height(obj, height):
+    """Scale a profile curve in Y so its overall height (max Y) equals
+    `height` - used for the room-adjustable spacer."""
+    top = 0.0
+    for spline in obj.data.splines:
+        points = (spline.bezier_points if spline.type == 'BEZIER'
+                  else spline.points)
+        for p in points:
+            top = max(top, p.co.y)
+    if top <= 1e-9 or abs(top - height) < 1e-9:
+        return
+    factor = height / top
+    for spline in obj.data.splines:
+        if spline.type == 'BEZIER':
+            for p in spline.bezier_points:
+                p.co.y *= factor
+                p.handle_left.y *= factor
+                p.handle_right.y *= factor
+        else:
+            for p in spline.points:
+                p.co.y *= factor
+
+
+def make_profile_object(profile_ref, fallback_key, name, collection,
+                        height=None):
     """Profile curve for a sweep's bevel_object: the library profile
     from an installed asset pack when available, else the built-in
-    placeholder outline for `fallback_key`. Returns None when neither
-    resolves."""
+    placeholder outline for `fallback_key`. When `height` is given the
+    outline is scaled in Y to that overall height (adjustable spacer).
+    Returns None when neither profile resolves."""
     obj = _load_library_profile(profile_ref, collection)
-    if obj is not None:
-        return obj
-    outline = _PROFILE_OUTLINES.get(fallback_key)
-    if outline is None:
-        return None
-    curve = bpy.data.curves.new(name, type='CURVE')
-    curve.dimensions = '2D'
-    curve.fill_mode = 'NONE'
-    spline = curve.splines.new('POLY')
-    spline.points.add(len(outline) - 1)
-    for pt, (x, y) in zip(spline.points, outline):
-        pt.co = (x, y, 0.0, 1.0)
-    spline.use_cyclic_u = True
-    obj = bpy.data.objects.new(name, curve)
-    return _finish_profile(obj, collection)
+    if obj is None:
+        outline = _PROFILE_OUTLINES.get(fallback_key)
+        if outline is None:
+            return None
+        curve = bpy.data.curves.new(name, type='CURVE')
+        curve.dimensions = '2D'
+        curve.fill_mode = 'NONE'
+        spline = curve.splines.new('POLY')
+        spline.points.add(len(outline) - 1)
+        for pt, (x, y) in zip(spline.points, outline):
+            pt.co = (x, y, 0.0, 1.0)
+        spline.use_cyclic_u = True
+        obj = bpy.data.objects.new(name, curve)
+        _finish_profile(obj, collection)
+    if height is not None and height > 1e-5:
+        _scale_profile_height(obj, height)
+    return obj
