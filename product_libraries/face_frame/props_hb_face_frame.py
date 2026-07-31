@@ -4322,6 +4322,17 @@ ROLLOUT_HEIGHT_PRESET_ITEMS = [
 ]
 
 
+def rollout_height_preset_for(height):
+    """Return the preset id whose standard height matches `height` within
+    half a millimeter, or 'CUSTOM' when no standard size matches. Lets
+    boxes seeded from a stored plain height land on the matching preset
+    instead of always reading as Custom."""
+    for key, inches in _ROLLOUT_HEIGHT_PRESETS_IN.items():
+        if abs(height - units.inch(inches)) < 0.0005:
+            return key
+    return 'CUSTOM'
+
+
 def _update_rollout_box_preset(self, context):
     """A rollout box's preset writes its inch value into the box's height
     (the field the solver reads when stacking boxes); CUSTOM leaves height

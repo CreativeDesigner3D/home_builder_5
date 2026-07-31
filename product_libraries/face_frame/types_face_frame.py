@@ -8054,10 +8054,14 @@ class FaceFrameCabinet(GeoNodeCage):
                     # height. Guarded on an empty collection so it runs once;
                     # the writes re-enter recalc but the _RECALCULATING guard
                     # absorbs that.
+                    from . import props_hb_face_frame
+                    preset = props_hb_face_frame.rollout_height_preset_for(
+                        item.rollout_height)
                     for _ in range(item.qty):
                         box = item.rollout_boxes.add()
-                        box.height_preset = 'CUSTOM'
-                        box.height = item.rollout_height
+                        box.height_preset = preset
+                        if preset == 'CUSTOM':
+                            box.height = item.rollout_height
 
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
