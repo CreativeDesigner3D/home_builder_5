@@ -978,6 +978,46 @@ class Closet_Opening_Props(PropertyGroup):
                     "one the run works out",
         default=False)  # type: ignore
 
+    # How the pulls sit on this opening's fronts. The room's Options
+    # tab sets what every opening starts from; unlocking a setting keeps
+    # it to this opening, which is how one bank of wide drawers ends up
+    # with a pair of pulls apiece while the rest of the run stays
+    # single. Left out of the contents list below on purpose: stripping
+    # an opening empties it, it does not re-hardware the job.
+    no_pulls: BoolProperty(
+        name="No Pulls",
+        description="Draw this opening's fronts without pulls",
+        default=False)  # type: ignore
+    unlock_center_pull: BoolProperty(
+        name="Centered",
+        description="Say here whether this opening's drawer pulls are "
+                    "centered, instead of following the room",
+        default=False)  # type: ignore
+    center_pull_on_front: BoolProperty(
+        name="Center Pull On Front",
+        description="Center the pull on the height of the drawer front",
+        default=True)  # type: ignore
+    unlock_pull_location: BoolProperty(
+        name="From Top",
+        description="Set how far down this opening's drawer pulls sit, "
+                    "instead of following the room",
+        default=False)  # type: ignore
+    drawer_pull_vertical_location: FloatProperty(
+        name="Drawer Pull Vertical Location",
+        description="Top of the drawer front to the middle of the pull",
+        default=const.DRAWER_PULL_VERTICAL_LOCATION,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    double_pull_on_front: BoolProperty(
+        name="Double Pull On Front",
+        description="Put two pulls on each of this opening's drawer "
+                    "fronts instead of one",
+        default=False)  # type: ignore
+    distance_between_pulls: FloatProperty(
+        name="Distance Between Pulls",
+        description="Middle to middle of the two pulls on a front",
+        default=const.DISTANCE_BETWEEN_PULLS,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
     # Every field on this group is contents, so stripping an opening
     # clears the lot. Kept as an explicit list so a field added later has
     # to be considered rather than silently surviving a clear.
@@ -1175,6 +1215,11 @@ class Closets_Scene_Props(PropertyGroup):
     center_pulls_on_drawer_front: BoolProperty(
         name="Center Pulls on Drawer Fronts",
         default=True,
+        update=pulls_closets.update_room)  # type: ignore
+    pull_vertical_location_drawers: FloatProperty(
+        name="Drawer",
+        description="Top of the drawer front to the middle of the pull",
+        default=const.DRAWER_PULL_VERTICAL_LOCATION, unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
 
     closet_rod_type: EnumProperty(
@@ -1390,6 +1435,10 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front',
                  text="Center Drawer Pulls")
+        sub = col.row()
+        sub.enabled = not self.center_pulls_on_drawer_front
+        sub.prop(self, 'pull_vertical_location_drawers',
+                 text="Drawer Vertical")
 
     # =====================================================================
     # UI: drawer boxes (Options tab)

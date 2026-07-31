@@ -223,6 +223,14 @@ RIGHT_REVEAL = inch(0.0625)
 # a starting value for a side an opening takes over for itself; the run
 # works its own out from the thicknesses actually in use.
 DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
+
+# Where a pull sits on a drawer front, and how far apart a pair of them
+# is set when one front carries two. The drawer figure is measured from
+# the top of the front down to the MIDDLE of the pull, where the door
+# figures above are measured to the pull's edge. That is how the prior
+# library had them and what gets measured on the floor, so it is kept.
+DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
+DISTANCE_BETWEEN_PULLS = inch(6.0)
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).

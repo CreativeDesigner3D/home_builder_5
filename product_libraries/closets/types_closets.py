@@ -1372,7 +1372,7 @@ class ClosetStarter(GeoNodeCage):
                 self._position_front_pull(
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
-                    side)
+                    side, opening)
                 apply_door_open(
                     child, 1.0 if child.get('hb_door_open') else 0.0)
 
@@ -1433,7 +1433,8 @@ class ClosetStarter(GeoNodeCage):
                 elif PROP_JEWELRY_TRAY_NAME in child:
                     del child[PROP_JEWELRY_TRAY_NAME]
                 _apply_front_style(child, is_drawer=True)
-                self._position_front_pull(child, 'drawer', side)
+                self._position_front_pull(child, 'drawer', side,
+                                          opening)
                 box = boxes.get(i)
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
@@ -1565,28 +1566,34 @@ class ClosetStarter(GeoNodeCage):
 
     # ----- regenerators (create/remove children to match config) -----
 
-    def _position_front_pull(self, front, kind, side):
+    def _position_front_pull(self, front, kind, side, opening=None):
         """Create/refresh the pull on a door / drawer / hamper front,
         using the face_frame pull assets and scene defaults (shared
         hardware across libraries). Closet front local space: X = width
         across, Y = height up, front face at Z = thickness. Doors get a
         vertical bar on the latch edge; drawers a centered horizontal
         bar; hampers a horizontal bar near the top. BACK-side island
-        fronts are pending (mirrored mounting)."""
-        existing = next((c for c in front.children
-                         if c.get('IS_CABINET_PULL')), None)
+        fronts are pending (mirrored mounting).
+
+        An opening can say how the pulls on its own fronts sit, or that
+        it wants none at all; anything it has not taken over follows the
+        room. All of it is plain arithmetic written into the pull's
+        location, so a run redraws in one pass."""
+        existing = [c for c in front.children
+                    if c.get('IS_CABINET_PULL')]
         try:
             from . import pulls_closets
             from ..face_frame import split_preview
             from ... import units
         except Exception:
             return
+        op = opening.hb_closet_opening if opening is not None else None
         pull_obj = None
-        if side != 'BACK':
+        if side != 'BACK' and not (op is not None and op.no_pulls):
             pull_obj = pulls_closets.resolve_pull_object()
         if pull_obj is None:
-            if existing is not None:
-                bpy.data.objects.remove(existing, do_unlink=True)
+            for child in existing:
+                bpy.data.objects.remove(child, do_unlink=True)
             return
         # Closet-scoped placement settings; getattr defaults keep the
         # math working when the scene props are not registered.
@@ -1598,6 +1605,22 @@ class ClosetStarter(GeoNodeCage):
         v_upper = getattr(cp, 'pull_vertical_location_upper',
                           units.inch(1.5))
         h_edge = getattr(cp, 'pull_horizontal_offset', units.inch(2.0))
+        # Drawer-front settings: the opening's own where it has taken
+        # them over, the room's otherwise. A pair of pulls and their
+        # spacing are the opening's alone - a whole run rarely wants
+        # every front doubled, but one bank of wide drawers often does.
+        centered = (bool(op.center_pull_on_front)
+                    if (op is not None and op.unlock_center_pull)
+                    else bool(getattr(cp, 'center_pulls_on_drawer_front',
+                                      True)))
+        v_drawer = (float(op.drawer_pull_vertical_location)
+                    if (op is not None and op.unlock_pull_location)
+                    else float(getattr(
+                        cp, 'pull_vertical_location_drawers',
+                        const.DRAWER_PULL_VERTICAL_LOCATION)))
+        double = bool(op.double_pull_on_front) if op is not None else False
+        pull_spacing = (float(op.distance_between_pulls) if op is not None
+                        else const.DISTANCE_BETWEEN_PULLS)
         part = GeoNodeCutpart(front)
         width = part.get_input('Length')
         height = part.get_input('Width')
@@ -1606,15 +1629,16 @@ class ClosetStarter(GeoNodeCage):
         z = thickness
 
         if kind == 'drawer':
+            # The drawer figure is measured to the middle of the pull,
+            # not to its edge the way the door figures below are.
             x = width / 2.0
-            if getattr(cp, 'center_pulls_on_drawer_front', True):
-                y = height / 2.0
-            else:
-                y = height - v_base - half
+            y = height / 2.0 if centered else height - v_drawer
             rot = (math.radians(-90.0), 0.0, 0.0)
         elif kind == 'hamper':
+            # A hamper front takes the measured location even where the
+            # room centers its drawer pulls, as the prior library had it.
             x = width / 2.0
-            y = height - v_base - half
+            y = height - v_drawer
             rot = (math.radians(-90.0), 0.0, 0.0)
         elif front.get('hb_hinge') == 'TOP':
             # Lift-up door: horizontal bar centered near the bottom edge
@@ -1657,22 +1681,33 @@ class ClosetStarter(GeoNodeCage):
                 y = tall_y if tall_y <= base_y else base_y
             rot = (math.radians(-90.0), 0.0, math.radians(90.0))
 
-        if existing is not None:
-            inst = existing
-            if inst.data is not pull_obj.data:
-                inst.data = pull_obj.data
+        # One pull, or a pair straddling the middle of the front where
+        # the opening has asked for two.
+        if double and kind in ('drawer', 'hamper'):
+            offsets = (-pull_spacing / 2.0, pull_spacing / 2.0)
         else:
+            offsets = (0.0,)
+        existing.sort(key=lambda o: o.get('hb_pull_index', 0))
+        while len(existing) > len(offsets):
+            bpy.data.objects.remove(existing.pop(), do_unlink=True)
+        while len(existing) < len(offsets):
             inst = bpy.data.objects.new(f"Pull - {front.name}",
                                         pull_obj.data)
             bpy.context.scene.collection.objects.link(inst)
             inst.parent = front
             inst['hb_part_role'] = 'PULL'
             inst['IS_CABINET_PULL'] = True
-        # Model name rides the instance (the mesh datablock name is the
-        # asset's internal name) - downstream reports key on it.
-        inst['hb_pull_name'] = pulls_closets.current_pull_stem()
-        inst.location = (x, y, z)
-        inst.rotation_euler = rot
+            existing.append(inst)
+        for i, dx in enumerate(offsets):
+            inst = existing[i]
+            if inst.data is not pull_obj.data:
+                inst.data = pull_obj.data
+            # Model name rides the instance (the mesh datablock name is
+            # the asset's internal name) - downstream reports key on it.
+            inst['hb_pull_index'] = i
+            inst['hb_pull_name'] = pulls_closets.current_pull_stem()
+            inst.location = (x + dx, y, z)
+            inst.rotation_euler = rot
 
     def _reconcile_adj_shelves(self, opening):
         qty = max(0, int(opening.hb_closet_opening.adj_shelf_qty))
@@ -3329,6 +3364,16 @@ def serialize_opening(opening):
             [int(getattr(opening.hb_closet_opening, 'unlock_%s_overlay' % s)),
              float(getattr(opening.hb_closet_opening, '%s_overlay' % s))]
             for s in ('left', 'right', 'top', 'bottom')],
+        # How this opening hardwares its fronts, so a copy is pulled
+        # the way the original was.
+        'pulls': [
+            int(opening.hb_closet_opening.no_pulls),
+            int(opening.hb_closet_opening.unlock_center_pull),
+            int(opening.hb_closet_opening.center_pull_on_front),
+            int(opening.hb_closet_opening.unlock_pull_location),
+            float(opening.hb_closet_opening.drawer_pull_vertical_location),
+            int(opening.hb_closet_opening.double_pull_on_front),
+            float(opening.hb_closet_opening.distance_between_pulls)],
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -3373,6 +3418,16 @@ def apply_opening_data(opening, data, recalc=True):
                     float(value))
             setattr(opening.hb_closet_opening,
                     'unlock_%s_overlay' % s, True)
+    pulls = data.get('pulls')
+    if pulls:
+        _op = opening.hb_closet_opening
+        _op.no_pulls = bool(pulls[0])
+        _op.unlock_center_pull = bool(pulls[1])
+        _op.center_pull_on_front = bool(pulls[2])
+        _op.unlock_pull_location = bool(pulls[3])
+        _op.drawer_pull_vertical_location = float(pulls[4])
+        _op.double_pull_on_front = bool(pulls[5])
+        _op.distance_between_pulls = float(pulls[6])
     if data.get('door_swing'):
         opening.hb_closet_opening.door_swing = data['door_swing']
         opening.hb_closet_opening.is_hamper = data.get('is_hamper', 0)

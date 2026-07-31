@@ -3662,6 +3662,43 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default=const.DEFAULT_OVERLAY, unit='LENGTH',
         precision=4)  # type: ignore
 
+    # How this opening's fronts are pulled. Anything left locked follows
+    # the room's Options tab; a pair of pulls and their spacing are this
+    # opening's own either way.
+    no_pulls: bpy.props.BoolProperty(
+        name="No Pulls",
+        description="Draw this opening's fronts without pulls",
+        default=False)  # type: ignore
+    unlock_center_pull: bpy.props.BoolProperty(
+        name="Centered",
+        description="Say here whether this opening's drawer pulls are "
+                    "centered, instead of following the room",
+        default=False)  # type: ignore
+    center_pull_on_front: bpy.props.BoolProperty(
+        name="Center Pull On Front",
+        description="Center the pull on the height of the drawer front",
+        default=True)  # type: ignore
+    unlock_pull_location: bpy.props.BoolProperty(
+        name="From Top",
+        description="Set how far down this opening's drawer pulls sit, "
+                    "instead of following the room",
+        default=False)  # type: ignore
+    drawer_pull_vertical_location: bpy.props.FloatProperty(
+        name="Drawer Pull Vertical Location",
+        description="Top of the drawer front to the middle of the pull",
+        default=const.DRAWER_PULL_VERTICAL_LOCATION,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    double_pull_on_front: bpy.props.BoolProperty(
+        name="Double Pull On Front",
+        description="Put two pulls on each of this opening's drawer "
+                    "fronts instead of one",
+        default=False)  # type: ignore
+    distance_between_pulls: bpy.props.FloatProperty(
+        name="Distance Between Pulls",
+        description="Middle to middle of the two pulls on a front",
+        default=const.DISTANCE_BETWEEN_PULLS,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(
@@ -3713,6 +3750,13 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     bool(getattr(op, 'unlock_%s_overlay' % side)))
             setattr(self, '%s_overlay' % side,
                     float(getattr(op, '%s_overlay' % side)))
+        for name in ('no_pulls', 'unlock_center_pull',
+                     'center_pull_on_front', 'unlock_pull_location',
+                     'double_pull_on_front'):
+            setattr(self, name, bool(getattr(op, name)))
+        self.drawer_pull_vertical_location = float(
+            op.drawer_pull_vertical_location)
+        self.distance_between_pulls = float(op.distance_between_pulls)
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3791,6 +3835,44 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             box.label(text="Unlocked sides are this opening's own",
                       icon='INFO')
 
+        # What the room does with a pull on this opening's fronts, and
+        # anything the opening has taken over for itself. A locked
+        # setting reads back the room's figure, so there is something to
+        # measure against before unlocking it.
+        cp = context.scene.hb_closets
+        box = layout.box()
+        box.label(text="Pulls", icon='MOD_SCREW')
+        col = box.column(align=True)
+        col.prop(self, 'no_pulls')
+        col = box.column(align=True)
+        col.enabled = not self.no_pulls
+        row = col.row(align=True)
+        row.prop(self, 'unlock_center_pull')
+        sub = row.row(align=True)
+        if self.unlock_center_pull:
+            sub.prop(self, 'center_pull_on_front', text="On Front")
+        else:
+            sub.label(text="Centered" if cp.center_pulls_on_drawer_front
+                      else "Measured")
+        row = col.row(align=True)
+        row.enabled = not (self.center_pull_on_front
+                           if self.unlock_center_pull
+                           else cp.center_pulls_on_drawer_front)
+        row.prop(self, 'unlock_pull_location')
+        sub = row.row(align=True)
+        if self.unlock_pull_location:
+            sub.prop(self, 'drawer_pull_vertical_location', text="")
+        else:
+            sub.label(text=units.unit_to_string(
+                context.scene.unit_settings,
+                cp.pull_vertical_location_drawers))
+        col.separator()
+        row = col.row(align=True)
+        row.prop(self, 'double_pull_on_front', text="Two Per Front")
+        sub = row.row(align=True)
+        sub.enabled = self.double_pull_on_front
+        sub.prop(self, 'distance_between_pulls', text="")
+
         # Only worth showing once something is hanging in here. The rod
         # itself is added from the opening's menu or by the bay's
         # configuration; this is where it is dimensioned afterwards.
@@ -3858,6 +3940,16 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     getattr(self, '%s_overlay' % side))
             setattr(opening.hb_closet_opening, 'unlock_%s_overlay' % side,
                     getattr(self, 'unlock_%s_overlay' % side))
+
+        _op = opening.hb_closet_opening
+        _op.no_pulls = self.no_pulls
+        _op.unlock_center_pull = self.unlock_center_pull
+        _op.center_pull_on_front = self.center_pull_on_front
+        _op.unlock_pull_location = self.unlock_pull_location
+        _op.drawer_pull_vertical_location = \
+            self.drawer_pull_vertical_location
+        _op.double_pull_on_front = self.double_pull_on_front
+        _op.distance_between_pulls = self.distance_between_pulls
 
         if _opening_rods(opening):
             op = opening.hb_closet_opening
