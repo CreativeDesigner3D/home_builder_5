@@ -815,6 +815,41 @@ class Closet_Opening_Props(PropertyGroup):
                     "basket behind it instead of a plain door",
         default=False)  # type: ignore
 
+    # ----- Hang rod -----
+    # One opening's worth of rod settings. How far the rod stands off the
+    # wall, how much shorter than the opening it is cut, and whether it
+    # is shown hung. They sit on the opening rather than on the rod for
+    # the same reason every other setting does: the opening is the cage
+    # the user edits, and the rod under it is placed by the solve.
+    rod_set_from_front: BoolProperty(
+        name="Set Distance From Front",
+        description="Measure the rod front to back from the front edge of "
+                    "the opening instead of from the back",
+        default=False)  # type: ignore
+    rod_from_front: FloatProperty(
+        name="Dim From Front",
+        description="How far back from the front edge of the opening the "
+                    "rod's centerline sits",
+        default=const.ROD_FROM_FRONT,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    rod_from_rear: FloatProperty(
+        name="Dim From Rear",
+        description="How far out from the back of the opening the rod's "
+                    "centerline sits",
+        default=const.ROD_FROM_REAR,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    rod_width_deduction: FloatProperty(
+        name="Width Deduction",
+        description="How much shorter than the opening the rod is cut, so "
+                    "it drops into the cups at each end",
+        default=const.ROD_WIDTH_DEDUCTION,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    remove_hangers: BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off the rods in this "
+                    "opening",
+        default=False)  # type: ignore
+
     # Every field on this group is contents, so stripping an opening
     # clears the lot. Kept as an explicit list so a field added later has
     # to be considered rather than silently surviving a clear.
@@ -825,6 +860,8 @@ class Closet_Opening_Props(PropertyGroup):
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
         'door_swing', 'is_hamper',
+        'rod_set_from_front', 'rod_from_front', 'rod_from_rear',
+        'rod_width_deduction', 'remove_hangers',
     )
 
     def clear_contents(self):

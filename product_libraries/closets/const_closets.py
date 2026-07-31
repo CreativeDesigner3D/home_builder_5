@@ -153,8 +153,14 @@ CLEARANCE_MAX_REACH = inch(240.0)
 ROD_RADIUS = inch(1.0)
 ROD_CUP_DEPTH = inch(0.2)
 ROD_CUP_DEPTH_2 = inch(0.8)
-# Hang-rod centerline distance from the rear (wall side) of the opening.
+# Hang-rod centerline distance from the rear (wall side) of the opening,
+# and the same distance measured from the front edge for an opening set
+# to read that way round.
 ROD_FROM_REAR = inch(12.0)
+ROD_FROM_FRONT = inch(2.0)
+# How much shorter than its opening a rod is cut so it drops into the
+# cups at each end.
+ROD_WIDTH_DEDUCTION = inch(0.25)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
 # the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.
@@ -189,7 +195,7 @@ L_CORNER_RADIUS = inch(6.0)
 L_CORNER_RADIUS_SEGMENTS = 15
 # Default distance from the opening TOP to a hang rod's center when the
 # rod is added from the menu (modal placement types an exact height).
-ROD_TOP_OFFSET = inch(2.5)
+ROD_TOP_OFFSET = inch(2.145)
 ADJ_SHELF_DEFAULT_QTY = 3
 # Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
 # opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side

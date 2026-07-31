@@ -3175,6 +3175,25 @@ _OPENING_FILL_ITEMS = [
 ]
 
 
+def _opening_rods(opening):
+    """The hang rods hanging straight off an opening, lowest first."""
+    return sorted(
+        [c for c in opening.children
+         if c.get('hb_part_role') == types_closets.PART_ROLE_ROD],
+        key=lambda o: float(o.get('hb_z_offset', 0.0)))
+
+
+def _single_top_rod(opening):
+    """The one rod hanging from an opening's top, when that is all there
+    is. A pair of rods comes from the bay's configuration and no single
+    distance from the top describes both, so the dialog leaves that
+    field off rather than writing one of them over the other."""
+    rods = _opening_rods(opening)
+    if len(rods) == 1 and rods[0].get('hb_anchor_top'):
+        return rods[0]
+    return None
+
+
 def _opening_fill(opening):
     """Which of the standard fills currently occupies an opening."""
     if int(opening.hb_closet_opening.drawer_qty):
@@ -3295,6 +3314,41 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "basket behind it instead of a plain door",
         default=False)  # type: ignore
 
+    rod_top_offset: bpy.props.FloatProperty(
+        name="Rod Distance From Top",
+        description="How far below the top of the opening the rod's "
+                    "centerline hangs",
+        default=0.0544830,  # 2.145"
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    rod_set_from_front: bpy.props.BoolProperty(
+        name="Set Distance From Front",
+        description="Measure the rod front to back from the front edge of "
+                    "the opening instead of from the back",
+        default=False)  # type: ignore
+    rod_from_front: bpy.props.FloatProperty(
+        name="Dim From Front",
+        description="How far back from the front edge of the opening the "
+                    "rod's centerline sits",
+        default=0.0508,  # 2"
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    rod_from_rear: bpy.props.FloatProperty(
+        name="Dim From Rear",
+        description="How far out from the back of the opening the rod's "
+                    "centerline sits",
+        default=0.3048,  # 12"
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    rod_width_deduction: bpy.props.FloatProperty(
+        name="Width Deduction",
+        description="How much shorter than the opening the rod is cut, so "
+                    "it drops into the cups at each end",
+        default=0.00635,  # 1/4"
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    remove_hangers: bpy.props.BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off the rods in this "
+                    "opening",
+        default=False)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(
@@ -3332,6 +3386,15 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             op.slant_color)
         self.door_swing = op.door_swing or 'NONE'
         self.is_hamper = bool(op.is_hamper)
+        self.rod_set_from_front = bool(op.rod_set_from_front)
+        self.rod_from_front = float(op.rod_from_front)
+        self.rod_from_rear = float(op.rod_from_rear)
+        self.rod_width_deduction = float(op.rod_width_deduction)
+        self.remove_hangers = bool(op.remove_hangers)
+        rod = _single_top_rod(opening)
+        self.rod_top_offset = float(
+            rod.get('hb_z_offset', const.ROD_TOP_OFFSET)
+            if rod is not None else const.ROD_TOP_OFFSET)
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3387,6 +3450,23 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub.enabled = self.door_swing != 'NONE'
         sub.prop(self, 'is_hamper')
 
+        # Only worth showing once something is hanging in here. The rod
+        # itself is added from the opening's menu or by the bay's
+        # configuration; this is where it is dimensioned afterwards.
+        if _opening_rods(opening):
+            box = layout.box()
+            box.label(text="Rod", icon='MESH_CYLINDER')
+            col = box.column(align=True)
+            if _single_top_rod(opening) is not None:
+                col.prop(self, 'rod_top_offset')
+            col.prop(self, 'rod_set_from_front')
+            if self.rod_set_from_front:
+                col.prop(self, 'rod_from_front')
+            else:
+                col.prop(self, 'rod_from_rear')
+            col.prop(self, 'rod_width_deduction')
+            col.prop(self, 'remove_hangers')
+
     def execute(self, context):
         opening = _active_opening_for_insert(context)
         if opening is None:
@@ -3431,6 +3511,17 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         swing = '' if self.door_swing == 'NONE' else self.door_swing
         opening.hb_closet_opening.door_swing = swing
         opening.hb_closet_opening.is_hamper = bool(swing and self.is_hamper)
+
+        if _opening_rods(opening):
+            op = opening.hb_closet_opening
+            op.rod_set_from_front = self.rod_set_from_front
+            op.rod_from_front = self.rod_from_front
+            op.rod_from_rear = self.rod_from_rear
+            op.rod_width_deduction = self.rod_width_deduction
+            op.remove_hangers = self.remove_hangers
+            rod = _single_top_rod(opening)
+            if rod is not None:
+                rod['hb_z_offset'] = self.rod_top_offset
 
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)

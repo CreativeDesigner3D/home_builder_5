@@ -1246,18 +1246,28 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Width', depth)
                 part.set_input('Thickness', st)
             elif role == PART_ROLE_ROD:
+                op = opening.hb_closet_opening
                 z_off = child.get('hb_z_offset', const.ROD_TOP_OFFSET)
                 z = (interior_h - z_off if child.get('hb_anchor_top')
                      else z_off)
                 z = max(const.ROD_RADIUS,
                         min(z, interior_h - const.ROD_RADIUS))
-                # Rod centerline sits 12" out from the rear (wall side,
-                # Y=0), clamped to stay within a shallow opening.
-                rod_y = -min(const.ROD_FROM_REAR, max(depth - const.ROD_RADIUS,
-                                                      const.ROD_RADIUS))
-                child.location = (0.0, rod_y, z)
+                # Front to back the rod stands where the opening says it
+                # does: so far out from the rear (wall side, Y=0), or so
+                # far back from the front when the opening is set to read
+                # that way. Either way it is clamped to stay inside a
+                # shallow opening.
+                from_rear = (depth - op.rod_from_front
+                             if op.rod_set_from_front else op.rod_from_rear)
+                rod_y = -min(max(from_rear, const.ROD_RADIUS),
+                             max(depth - const.ROD_RADIUS, const.ROD_RADIUS))
+                # The rod is cut shorter than its opening so it drops into
+                # the cups, and it is centered in what is left.
+                deduct = max(0.0, min(float(op.rod_width_deduction), width))
+                rod_len = width - deduct
+                child.location = (deduct / 2.0, rod_y, z)
                 rod_geo = GeoNodeObject(child)
-                rod_geo.set_input('Dim X', width)
+                rod_geo.set_input('Dim X', rod_len)
                 # Rod profile + finish follow the scene rod options.
                 props = bpy.context.scene.hb_closets
                 rod_geo.set_input(
@@ -1270,7 +1280,8 @@ class ClosetStarter(GeoNodeCage):
                                 'Polished Chrome'))
                     if rod_mat is not None:
                         rod_geo.set_input('Material', rod_mat)
-                    pulls_closets.reconcile_rod_hangers(child, width)
+                    pulls_closets.reconcile_rod_hangers(
+                        child, rod_len, allow=not op.remove_hangers)
                 except Exception:
                     pass
             elif role is not None:
@@ -3235,6 +3246,13 @@ def serialize_opening(opening):
         'cubby_cols': int(opening.hb_closet_opening.cubby_cols),
         'cubby_rows': int(opening.hb_closet_opening.cubby_rows),
         'cubby_setback': float(opening.hb_closet_opening.cubby_setback),
+        'rod_set_from_front':
+            int(opening.hb_closet_opening.rod_set_from_front),
+        'rod_from_front': float(opening.hb_closet_opening.rod_from_front),
+        'rod_from_rear': float(opening.hb_closet_opening.rod_from_rear),
+        'rod_deduct':
+            float(opening.hb_closet_opening.rod_width_deduction),
+        'remove_hangers': int(opening.hb_closet_opening.remove_hangers),
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -3273,6 +3291,14 @@ def apply_opening_data(opening, data, recalc=True):
         opening.hb_closet_opening.cubby_rows = data.get('cubby_rows', 1)
         opening.hb_closet_opening.cubby_setback = data.get('cubby_setback',
                                                const.CUBBY_SETBACK)
+    if data.get('rods'):
+        op = opening.hb_closet_opening
+        op.rod_set_from_front = bool(data.get('rod_set_from_front', 0))
+        op.rod_from_front = data.get('rod_from_front', const.ROD_FROM_FRONT)
+        op.rod_from_rear = data.get('rod_from_rear', const.ROD_FROM_REAR)
+        op.rod_width_deduction = data.get('rod_deduct',
+                                          const.ROD_WIDTH_DEDUCTION)
+        op.remove_hangers = bool(data.get('remove_hangers', 0))
     for z in data.get('rods', ()):
         add_rod(opening, z)
     if recalc and root is not None:

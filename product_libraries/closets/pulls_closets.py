@@ -187,12 +187,15 @@ def hangers_that_fit(clearance):
     return [shortest] if shortest else []
 
 
-def reconcile_rod_hangers(rod_obj, rod_length):
+def reconcile_rod_hangers(rod_obj, rod_length, allow=True):
     """Create/remove/refresh the three display hangers on one rod
     (called from the rod layout every recalc). Hangers parent to the
     rod at 6" in from each end plus the center, hanging in the rod's
     local frame the way the models were authored. Rods too short for
     the end offsets - and the None selection - carry no hangers.
+
+    An opening set to leave its hangers off passes allow=False, which
+    also takes off any that are already hanging there.
 
     A hanger can carry a per-object model override (hb_hanger_model,
     set from its right-click menu); overridden hangers keep their model
@@ -206,7 +209,7 @@ def reconcile_rod_hangers(rod_obj, rod_length):
         return
     selection = getattr(bpy.context.scene.hb_closets,
                         'closet_hanger_model', DEFAULT_HANGER)
-    show = (selection and selection != 'NONE'
+    show = (allow and selection and selection != 'NONE'
             and rod_length > 2.0 * _HANGER_END_OFFSET + inch(2.0))
     model = resolve_hanger_object(selection) if show else None
     if model is None:
