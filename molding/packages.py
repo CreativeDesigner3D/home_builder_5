@@ -175,23 +175,24 @@ def enum_items(molding_type):
 # ---------------------------------------------------------------------------
 # Built-in placeholder profiles
 # ---------------------------------------------------------------------------
-# Closed 2D outlines in profile-local coordinates: +Y is up along the
-# cabinet face, X is the depth direction (negative back toward the
-# cabinet). Authored so the outline sits against the swept path line;
-# swap for curated profile assets without touching the sweep code.
+# Closed 2D outlines in profile-local coordinates, matching the molding
+# asset-pack authoring convention: +Y is up along the cabinet face and
+# +X projects FORWARD of the swept path line (the path lies on the
+# cabinet face; material sits in front of it). Swap for curated profile
+# assets without touching the sweep code.
 
 _PROFILE_OUTLINES = {
-    # Sprung crown look-alike: rises above the top line, leaning back.
+    # Sprung crown look-alike: springs forward as it rises above the
+    # mount line, like the pack's 51 Crown.
     'crown_simple': [
-        (0.0, 0.0), (0.0, _in(0.5)), (-_in(0.125), _in(0.75)),
-        (-_in(0.625), _in(2.5)), (-_in(0.75), _in(2.75)),
-        (-_in(0.75), _in(3.0)), (-_in(0.875), _in(3.0)),
-        (-_in(0.875), 0.0),
+        (0.0, 0.0), (_in(0.25), 0.0), (_in(1.625), _in(2.375)),
+        (_in(1.75), _in(2.5)), (_in(1.75), _in(3.0)),
+        (_in(1.375), _in(3.0)), (0.0, _in(0.75)),
     ],
     # 1x4 flat stock spacer.
     'flat_stock': [
-        (0.0, 0.0), (0.0, _in(3.5)),
-        (-_in(0.75), _in(3.5)), (-_in(0.75), 0.0),
+        (0.0, 0.0), (_in(0.75), 0.0),
+        (_in(0.75), _in(3.5)), (0.0, _in(3.5)),
     ],
     # Flat cap slab with a nose overhanging the face.
     'furniture_cap': [
@@ -200,18 +201,18 @@ _PROFILE_OUTLINES = {
     ],
     # Base profile: flat stock with an eased top edge.
     'base_simple': [
-        (0.0, 0.0), (0.0, _in(2.5)), (-_in(0.25), _in(3.0)),
-        (-_in(0.625), _in(3.0)), (-_in(0.625), 0.0),
+        (0.0, 0.0), (_in(0.625), 0.0), (_in(0.625), _in(2.5)),
+        (_in(0.375), _in(3.0)), (0.0, _in(3.0)),
     ],
     # Base shoe: small quarter-round-ish trim at the floor line.
     'base_shoe': [
-        (0.0, 0.0), (0.0, _in(0.375)), (-_in(0.1875), _in(0.75)),
-        (-_in(0.4375), _in(0.75)), (-_in(0.4375), 0.0),
+        (0.0, 0.0), (_in(0.4375), 0.0), (_in(0.4375), _in(0.375)),
+        (_in(0.25), _in(0.75)), (0.0, _in(0.75)),
     ],
     # Light rail hanging below the upper's bottom line.
     'light_rail_simple': [
-        (0.0, 0.0), (0.0, -_in(1.25)), (-_in(0.25), -_in(1.5)),
-        (-_in(0.75), -_in(1.5)), (-_in(0.75), 0.0),
+        (0.0, 0.0), (0.0, -_in(1.5)), (_in(0.5), -_in(1.5)),
+        (_in(0.75), -_in(1.25)), (_in(0.75), 0.0),
     ],
 }
 
