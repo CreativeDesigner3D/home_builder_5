@@ -206,6 +206,23 @@ MID_SHELF_BAND_HEIGHT = inch(12.0)
 FRONT_THICKNESS = inch(0.75)
 DOOR_TO_CABINET_GAP = inch(0.125)   # front face held off the carcass
 FRONT_GAP = inch(0.125)             # gap between adjacent fronts
+
+# How a front sits against what is around it, as the prior library had
+# it. A half overlay splits what the front shares with its neighbour, so
+# the two meet over the middle of the panel or shelf between them with
+# the gap showing; a side that is not a half overlay is held back from
+# that edge by its reveal instead, leaving the edge showing. The bottom
+# comes in at nothing, so a bank of drawers finishes flush underneath.
+VERTICAL_GAP = inch(0.125)          # between a front and the one above
+HORIZONTAL_GAP = inch(0.125)        # between a front and the one beside
+TOP_REVEAL = inch(0.0625)
+BOTTOM_REVEAL = inch(0.0)
+LEFT_REVEAL = inch(0.0625)
+RIGHT_REVEAL = inch(0.0625)
+# What a half overlay works out to on stock of the usual thickness. Only
+# a starting value for a side an opening takes over for itself; the run
+# works its own out from the thicknesses actually in use.
+DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).

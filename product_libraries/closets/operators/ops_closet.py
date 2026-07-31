@@ -1980,6 +1980,22 @@ def _pin_drawer_front_heights(opening, sizes):
             front[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 1
 
 
+def _run_vertical_gap(context, opening=None):
+    """The gap this run stacks its fronts with.
+
+    A drawer bank stands as tall as its fronts plus a gap apiece, and
+    the gap is the run's to set, so the dialog has to ask the run rather
+    than assume the standard one. Falls back to the standard gap when
+    there is no run to ask."""
+    if opening is None:
+        opening = _active_opening_for_insert(context)
+    root = (types_closets.find_starter_root(opening)
+            if opening is not None else None)
+    if root is None:
+        return const.VERTICAL_GAP
+    return root.hb_closet_starter.vertical_gap
+
+
 class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     """Set the drawer stack for the active opening (fronts stack from
     the bottom; each drawer gets a box behind its front)."""
@@ -2072,7 +2088,8 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         # them are added up - the height the shelf capping it moves to.
         box.label(text="Drawer Stack Height: " + units.unit_to_string(
             context.scene.unit_settings,
-            sum(self._heights()) + self.qty * const.FRONT_GAP))
+            sum(self._heights())
+            + self.qty * _run_vertical_gap(context)))
 
     def execute(self, context):
         from .. import const_closets as const
@@ -2108,7 +2125,8 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         if self.qty > 0 and bay is not None:
             st = context.scene.hb_closets.shelf_thickness
             cap_z_local = (sum(self._heights())
-                           + self.qty * const.FRONT_GAP - st)
+                           + self.qty * _run_vertical_gap(context, opening)
+                           - st)
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
             side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
             shelves = sorted(
@@ -3105,6 +3123,29 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             row.enabled = sp.extend_panels_to_countertop
             row.prop(sp, 'extend_panel_amount')
 
+        # How every door and drawer front on the run sits against what it
+        # meets. A half overlay splits what the front shares with its
+        # neighbour, so the two meet over the middle of the panel or
+        # shelf between them and the gap is what shows; turning a side
+        # off holds the front back from that edge by the reveal instead,
+        # which is how a finished end or an exposed top is left showing.
+        # Any one opening can still take a side over for itself.
+        box = _section(layout, sp, 'show_fronts', "Fronts")
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'door_to_cabinet_gap')
+            col.prop(sp, 'vertical_gap')
+            col.prop(sp, 'horizontal_gap')
+            col = box.column(align=True)
+            col.label(text="Half Overlay / Reveal")
+            for side, label in (('top', "Top"), ('bottom', "Bottom"),
+                                ('left', "Left"), ('right', "Right")):
+                row = col.row(align=True)
+                row.prop(sp, 'half_overlay_%s' % side, text=label)
+                sub = row.row(align=True)
+                sub.enabled = not getattr(sp, 'half_overlay_%s' % side)
+                sub.prop(sp, '%s_reveal' % side, text="")
+
         if bays:
             box = _section(layout, sp, 'show_per_bay', "Per Bay")
             if box is not None:
@@ -3571,6 +3612,56 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "opening",
         default=False)  # type: ignore
 
+    # Per-side overrides of what the run works out. Unlocking a side
+    # lets this opening's front reach further over, or hold further back
+    # from, whatever it meets there - the opening against a finished
+    # end, say, where the run's half overlay would carry the front off
+    # the edge. A side left locked follows the run.
+    unlock_top_overlay: bpy.props.BoolProperty(
+        name="Top",
+        description="Set this opening's top overlay here instead of "
+                    "following the run",
+        default=False)  # type: ignore
+    top_overlay: bpy.props.FloatProperty(
+        name="Top Overlay",
+        description="How far this opening's front reaches over what is "
+                    "above it",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    unlock_bottom_overlay: bpy.props.BoolProperty(
+        name="Bottom",
+        description="Set this opening's bottom overlay here instead of "
+                    "following the run",
+        default=False)  # type: ignore
+    bottom_overlay: bpy.props.FloatProperty(
+        name="Bottom Overlay",
+        description="How far this opening's front reaches over what is "
+                    "below it",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    unlock_left_overlay: bpy.props.BoolProperty(
+        name="Left",
+        description="Set this opening's left overlay here instead of "
+                    "following the run",
+        default=False)  # type: ignore
+    left_overlay: bpy.props.FloatProperty(
+        name="Left Overlay",
+        description="How far this opening's front reaches over what is "
+                    "to its left",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    unlock_right_overlay: bpy.props.BoolProperty(
+        name="Right",
+        description="Set this opening's right overlay here instead of "
+                    "following the run",
+        default=False)  # type: ignore
+    right_overlay: bpy.props.FloatProperty(
+        name="Right Overlay",
+        description="How far this opening's front reaches over what is "
+                    "to its right",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(
@@ -3617,6 +3708,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.rod_top_offset = float(
             rod.get('hb_z_offset', const.ROD_TOP_OFFSET)
             if rod is not None else const.ROD_TOP_OFFSET)
+        for side in ('top', 'bottom', 'left', 'right'):
+            setattr(self, 'unlock_%s_overlay' % side,
+                    bool(getattr(op, 'unlock_%s_overlay' % side)))
+            setattr(self, '%s_overlay' % side,
+                    float(getattr(op, '%s_overlay' % side)))
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3671,6 +3767,29 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub = box.row()
         sub.enabled = self.door_swing != 'NONE'
         sub.prop(self, 'is_hamper')
+
+        # What the run works out for a front, and any side this opening
+        # has taken over. A locked side reads back the run's figure, so
+        # there is something to measure against before unlocking it.
+        run = types_closets.find_starter_root(opening)
+        if run is not None:
+            resolved = types_closets.front_overlays(
+                run.hb_closet_starter, context.scene.hb_closets)
+            box = layout.box()
+            box.label(text="Overlays", icon='MOD_EDGESPLIT')
+            col = box.column(align=True)
+            for side, value in zip(('left', 'right', 'top', 'bottom'),
+                                   resolved):
+                row = col.row(align=True)
+                row.prop(self, 'unlock_%s_overlay' % side)
+                sub = row.row(align=True)
+                if getattr(self, 'unlock_%s_overlay' % side):
+                    sub.prop(self, '%s_overlay' % side, text="")
+                else:
+                    sub.label(text=units.unit_to_string(
+                        context.scene.unit_settings, value))
+            box.label(text="Unlocked sides are this opening's own",
+                      icon='INFO')
 
         # Only worth showing once something is hanging in here. The rod
         # itself is added from the opening's menu or by the bay's
@@ -3733,6 +3852,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         swing = '' if self.door_swing == 'NONE' else self.door_swing
         opening.hb_closet_opening.door_swing = swing
         opening.hb_closet_opening.is_hamper = bool(swing and self.is_hamper)
+
+        for side in ('top', 'bottom', 'left', 'right'):
+            setattr(opening.hb_closet_opening, '%s_overlay' % side,
+                    getattr(self, '%s_overlay' % side))
+            setattr(opening.hb_closet_opening, 'unlock_%s_overlay' % side,
+                    getattr(self, 'unlock_%s_overlay' % side))
 
         if _opening_rods(opening):
             op = opening.hb_closet_opening

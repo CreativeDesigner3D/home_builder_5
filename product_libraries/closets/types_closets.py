@@ -1228,12 +1228,14 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_rollouts(opening)
         self._reconcile_cubbies(opening)
 
-        lo = ro = (pt - const.FRONT_GAP) / 2.0
-        to = bo = (st - const.FRONT_GAP) / 2.0
+        sp = self.obj.hb_closet_starter
+        lo, ro, to, bo = front_overlays(sp, scene_props, opening)
+        v_gap = sp.vertical_gap
+        h_gap = sp.horizontal_gap
         if side == 'BACK':
-            front_y = const.DOOR_TO_CABINET_GAP
+            front_y = sp.door_to_cabinet_gap
         else:
-            front_y = -depth - const.DOOR_TO_CABINET_GAP
+            front_y = -depth - sp.door_to_cabinet_gap
 
         groups = {}
         for child in list(opening.children):
@@ -1354,11 +1356,11 @@ class ClosetStarter(GeoNodeCage):
             doors.sort(key=lambda o: o.get('hb_door_index', 0))
             full = width + lo + ro
             if len(doors) == 2:
-                leaf = (full - const.FRONT_GAP) / 2.0
+                leaf = (full - h_gap) / 2.0
             else:
                 leaf = full
             for i, child in enumerate(doors):
-                x = -lo + i * (leaf + const.FRONT_GAP)
+                x = -lo + i * (leaf + h_gap)
                 child.location = (x, front_y, -bo)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', leaf)
@@ -1387,7 +1389,7 @@ class ClosetStarter(GeoNodeCage):
             fronts.sort(key=lambda o: o.get('hb_drawer_index', 0))
             n = len(fronts)
             span = interior_h + to + bo
-            avail = span - (n - 1) * const.FRONT_GAP
+            avail = span - (n - 1) * v_gap
             heights = _distribute_front_heights(
                 avail,
                 [(f.get(PROP_FRONT_HEIGHT, 0.0),
@@ -1489,7 +1491,7 @@ class ClosetStarter(GeoNodeCage):
                 _stash_drawer_closed(child, box, travel, side)
                 apply_drawer_open(
                     child, 1.0 if child.get('hb_drawer_open') else 0.0)
-                z += dh + const.FRONT_GAP
+                z += dh + v_gap
 
         # ----- Rollout trays -----
         # Each tray stands a fixed Rollout Height (default 4"), the trays
@@ -1775,15 +1777,18 @@ class ClosetStarter(GeoNodeCage):
             return
         st = scene_props.shelf_thickness
         pt = scene_props.panel_thickness
-        lo = ro = (pt - const.FRONT_GAP) / 2.0
-        to = bo = (st - const.FRONT_GAP) / 2.0
-        front_y = base_y - o_depth - const.DOOR_TO_CABINET_GAP
+        sp = self.obj.hb_closet_starter
+        # A door across a whole bay has no opening of its own, so it
+        # takes the run's overlays as they come.
+        lo, ro, to, bo = front_overlays(sp, scene_props)
+        h_gap = sp.horizontal_gap
+        front_y = base_y - o_depth - sp.door_to_cabinet_gap
         width = bay['width']
         interior_h = bay['interior_h']
         full = width + lo + ro
-        leaf = (full - const.FRONT_GAP) / 2.0 if len(doors) == 2 else full
+        leaf = (full - h_gap) / 2.0 if len(doors) == 2 else full
         for i, child in enumerate(doors):
-            x = -lo + i * (leaf + const.FRONT_GAP)
+            x = -lo + i * (leaf + h_gap)
             z = bay['interior_z'] - bo
             child.location = (x, front_y, z)
             part = GeoNodeCutpart(child)
@@ -2915,6 +2920,48 @@ def _stash_door_closed(door, cx, cy, cz, leaf, side, height=0.0):
     door['hb_door_h'] = float(height)
 
 
+def front_overlays(sp, scene_props, opening=None):
+    """How far a front reaches over what it meets on each of its four
+    sides, as (left, right, top, bottom).
+
+    A half overlay splits what the front shares with its neighbour: the
+    two meet over the middle of the panel or shelf between them and the
+    gap is what shows, so each side covers half the thickness less half
+    the gap. A side that is not a half overlay is held back from that
+    edge by its reveal instead, leaving the edge showing - what a
+    finished end or an exposed top wants. Left and right work off the
+    panel thickness and the horizontal gap, top and bottom off the
+    shelf thickness and the vertical gap.
+
+    Hand in an opening to let it take over any side it has unlocked,
+    the same way a face frame opening takes a side over from its
+    cabinet. Worked out in plain arithmetic and written straight into
+    the parts: there is nothing driven here, so a run redraws in one
+    pass rather than waiting on a dependency graph.
+    """
+    st = scene_props.shelf_thickness
+    pt = scene_props.panel_thickness
+    lo = ((pt - sp.horizontal_gap) / 2.0 if sp.half_overlay_left
+          else pt - sp.left_reveal)
+    ro = ((pt - sp.horizontal_gap) / 2.0 if sp.half_overlay_right
+          else pt - sp.right_reveal)
+    to = ((st - sp.vertical_gap) / 2.0 if sp.half_overlay_top
+          else st - sp.top_reveal)
+    bo = ((st - sp.vertical_gap) / 2.0 if sp.half_overlay_bottom
+          else st - sp.bottom_reveal)
+    if opening is not None:
+        op = opening.hb_closet_opening
+        if op.unlock_left_overlay:
+            lo = op.left_overlay
+        if op.unlock_right_overlay:
+            ro = op.right_overlay
+        if op.unlock_top_overlay:
+            to = op.top_overlay
+        if op.unlock_bottom_overlay:
+            bo = op.bottom_overlay
+    return lo, ro, to, bo
+
+
 def _distribute_front_heights(avail, fronts):
     """Split the available front span among a drawer stack so it fills the
     opening. `fronts` is a list of (height, locked) per front, bottom-up.
@@ -3276,6 +3323,12 @@ def serialize_opening(opening):
         'rod_deduct':
             float(opening.hb_closet_opening.rod_width_deduction),
         'remove_hangers': int(opening.hb_closet_opening.remove_hangers),
+        # Any side of the front this opening took over from the run, so
+        # a copied opening's front sits the way the original's did.
+        'overlays': [
+            [int(getattr(opening.hb_closet_opening, 'unlock_%s_overlay' % s)),
+             float(getattr(opening.hb_closet_opening, '%s_overlay' % s))]
+            for s in ('left', 'right', 'top', 'bottom')],
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -3312,6 +3365,14 @@ def apply_opening_data(opening, data, recalc=True):
             'slant_angle', math.radians(const.SLANT_SHELF_ANGLE_DEG))
         if data.get('slant_color'):
             opening.hb_closet_opening.slant_color = data['slant_color']
+    for s, pair in zip(('left', 'right', 'top', 'bottom'),
+                       data.get('overlays') or ()):
+        unlocked, value = pair
+        if unlocked:
+            setattr(opening.hb_closet_opening, '%s_overlay' % s,
+                    float(value))
+            setattr(opening.hb_closet_opening,
+                    'unlock_%s_overlay' % s, True)
     if data.get('door_swing'):
         opening.hb_closet_opening.door_swing = data['door_swing']
         opening.hb_closet_opening.is_hamper = data.get('is_hamper', 0)
@@ -3483,7 +3544,7 @@ def apply_bay_config(bay_obj, config):
 
     def cap_z(qty):
         # Drawer-bank cap: top front half-overlays the shelf.
-        return qty * (dh + const.FRONT_GAP) - st
+        return qty * (dh + root.hb_closet_starter.vertical_gap) - st
 
     # Parse "Doors Over N Drawers" (DOORS_NDR) and "Doors Open N Drawers"
     # (DOORS_OPEN_NDR - same build with the doors shown open).

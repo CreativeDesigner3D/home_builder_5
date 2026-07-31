@@ -239,6 +239,8 @@ class Closet_Starter_Props(PropertyGroup):
         name="Show Insets", default=False)  # type: ignore
     show_panels: BoolProperty(
         name="Show Panels", default=False)  # type: ignore
+    show_fronts: BoolProperty(
+        name="Show Fronts", default=False)  # type: ignore
     show_per_bay: BoolProperty(
         name="Show Per Bay", default=False)  # type: ignore
 
@@ -438,6 +440,77 @@ class Closet_Starter_Props(PropertyGroup):
                     "bottom shelf",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+
+    # ----- Fronts -----
+    # How far a door or drawer front reaches over what it meets on each
+    # of its four sides. A half overlay splits what the front shares
+    # with its neighbour: the two meet over the middle of the panel or
+    # shelf between them and the gap is what shows. Turning a side off
+    # holds the front back from that edge by the reveal instead, which
+    # is how a finished end or a top is left showing. Left and right
+    # work off the panel thickness and the horizontal gap, top and
+    # bottom off the shelf thickness and the vertical gap. Any opening
+    # can take a side over for itself.
+    half_overlay_top: BoolProperty(
+        name="Half Overlay Top",
+        description="Share the shelf above with the front over it, "
+                    "rather than holding back by the top reveal",
+        default=True, update=_update_starter_prop)  # type: ignore
+    half_overlay_bottom: BoolProperty(
+        name="Half Overlay Bottom",
+        description="Share the shelf below with the front under it, "
+                    "rather than holding back by the bottom reveal",
+        default=True, update=_update_starter_prop)  # type: ignore
+    half_overlay_left: BoolProperty(
+        name="Half Overlay Left",
+        description="Share the panel on the left with the front beside "
+                    "it, rather than holding back by the left reveal",
+        default=True, update=_update_starter_prop)  # type: ignore
+    half_overlay_right: BoolProperty(
+        name="Half Overlay Right",
+        description="Share the panel on the right with the front beside "
+                    "it, rather than holding back by the right reveal",
+        default=True, update=_update_starter_prop)  # type: ignore
+    top_reveal: FloatProperty(
+        name="Top Reveal",
+        description="How much of the shelf above is left showing when "
+                    "the top is not a half overlay",
+        default=const.TOP_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    bottom_reveal: FloatProperty(
+        name="Bottom Reveal",
+        description="How much of the shelf below is left showing when "
+                    "the bottom is not a half overlay",
+        default=const.BOTTOM_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    left_reveal: FloatProperty(
+        name="Left Reveal",
+        description="How much of the panel on the left is left showing "
+                    "when the left is not a half overlay",
+        default=const.LEFT_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    right_reveal: FloatProperty(
+        name="Right Reveal",
+        description="How much of the panel on the right is left showing "
+                    "when the right is not a half overlay",
+        default=const.RIGHT_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    vertical_gap: FloatProperty(
+        name="Vertical Gap",
+        description="Gap between a front and the front above or below it",
+        default=const.VERTICAL_GAP, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    horizontal_gap: FloatProperty(
+        name="Horizontal Gap",
+        description="Gap between a front and the front beside it",
+        default=const.HORIZONTAL_GAP, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    door_to_cabinet_gap: FloatProperty(
+        name="Door to Cabinet Gap",
+        description="How far the back of a front is held off the front "
+                    "edge of the closet",
+        default=const.DOOR_TO_CABINET_GAP, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
 
     # End options. Finished end and drill through are recorded on the
     # panel as flags - whether the end is exposed, and whether its
@@ -848,6 +921,61 @@ class Closet_Opening_Props(PropertyGroup):
         name="Remove Hangers",
         description="Leave the display hangers off the rods in this "
                     "opening",
+        default=False)  # type: ignore
+
+    # ----- Front overlays -----
+    # Per-side overrides of what the run works out. Unlocking a side
+    # lets this opening's front reach further over, or hold further
+    # back from, whatever it meets there - the opening against a
+    # finished end, say, where the run's half overlay would run the
+    # front off the edge. A side left locked follows the run.
+    #
+    # These say how a front sits rather than what is in the opening, so
+    # they are deliberately not contents: stripping an opening empties
+    # it without losing the way its front was set up.
+    top_overlay: FloatProperty(
+        name="Top Overlay",
+        description="How far this opening's front reaches over the shelf "
+                    "above it",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    bottom_overlay: FloatProperty(
+        name="Bottom Overlay",
+        description="How far this opening's front reaches over the shelf "
+                    "below it",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    left_overlay: FloatProperty(
+        name="Left Overlay",
+        description="How far this opening's front reaches over the panel "
+                    "on its left",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    right_overlay: FloatProperty(
+        name="Right Overlay",
+        description="How far this opening's front reaches over the panel "
+                    "on its right",
+        default=const.DEFAULT_OVERLAY, unit='LENGTH',
+        precision=4)  # type: ignore
+    unlock_top_overlay: BoolProperty(
+        name="Unlock Top Overlay",
+        description="Use this opening's own top overlay instead of the "
+                    "one the run works out",
+        default=False)  # type: ignore
+    unlock_bottom_overlay: BoolProperty(
+        name="Unlock Bottom Overlay",
+        description="Use this opening's own bottom overlay instead of "
+                    "the one the run works out",
+        default=False)  # type: ignore
+    unlock_left_overlay: BoolProperty(
+        name="Unlock Left Overlay",
+        description="Use this opening's own left overlay instead of the "
+                    "one the run works out",
+        default=False)  # type: ignore
+    unlock_right_overlay: BoolProperty(
+        name="Unlock Right Overlay",
+        description="Use this opening's own right overlay instead of the "
+                    "one the run works out",
         default=False)  # type: ignore
 
     # Every field on this group is contents, so stripping an opening
