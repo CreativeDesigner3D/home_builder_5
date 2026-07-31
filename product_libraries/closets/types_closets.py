@@ -3479,13 +3479,22 @@ def apply_bay_config(bay_obj, config):
         splits = [ih / 2.0]
         actions = [(0, _cfg_rod), (1, _cfg_rod)]
     elif config == 'DH_TOP_SHELF':
-        hang_top = ih - inch(12.0)   # 12" storage band above the hangs
+        # A shelf near the top leaves a storage opening above the two
+        # hangs, which split what is left of the bay between them.
+        hang_top = max(inch(2.0),
+                       ih - const.TOP_SHELF_OPENING_HEIGHT - st)
         splits = [hang_top / 2.0, hang_top]
         actions = [(0, _cfg_rod), (1, _cfg_rod)]
     elif config == 'DH_MID_SHELF':
-        # Two hangs with a 12" shelf band between them.
-        splits = [ih / 2.0,
-                  min(ih / 2.0 + inch(12.0), ih - st - inch(1.0))]
+        # Two hangs with a storage band between them. The upper hang is
+        # measured down from the top of the bay and the band hangs
+        # under it, so the lower hang takes whatever is left.
+        top = min(ih - const.MID_SHELF_OPENING_HEIGHT - st,
+                  ih - st - inch(1.0))
+        low = max(inch(1.0), top - const.MID_SHELF_BAND_HEIGHT)
+        if top - low < st + inch(1.0):
+            top = low + st + inch(1.0)
+        splits = [low, top]
         actions = [(0, _cfg_rod), (2, _cfg_rod)]
     elif drawer_qty is not None:
         qty = drawer_qty

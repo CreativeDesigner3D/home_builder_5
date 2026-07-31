@@ -161,6 +161,13 @@ ROD_FROM_FRONT = inch(2.0)
 # How much shorter than its opening a rod is cut so it drops into the
 # cups at each end.
 ROD_WIDTH_DEDUCTION = inch(0.25)
+# Double hang: the opening left above the top fixed shelf. A top shelf
+# leaves a shallow storage opening over the two hangs; a mid shelf hangs
+# a storage band under the upper hang, and the upper hang is what this
+# measures. Both are the sizes the prior library built to.
+TOP_SHELF_OPENING_HEIGHT = inch(10.5866)
+MID_SHELF_OPENING_HEIGHT = inch(40.8248)
+MID_SHELF_BAND_HEIGHT = inch(12.0)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
 # the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.

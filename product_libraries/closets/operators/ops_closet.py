@@ -3078,11 +3078,57 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _bay_split_shelves(bay, side='FRONT'):
+    """A bay's committed splitting shelves on one side, lowest first.
+    These are the shelves that divide the bay into openings; a shelf
+    still being previewed is not one of them yet."""
+    shelves = [c for c in bay.children
+               if c.get('hb_part_role') == types_closets.PART_ROLE_FIXED_SHELF
+               and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side
+               and not c.get('hb_preview')]
+    shelves.sort(key=lambda o: float(o.get('hb_z_offset', 0.0)))
+    return shelves
+
+
+def _bay_top_opening(bay, side='FRONT'):
+    """The opening standing above every splitting shelf in a bay."""
+    openings = sorted(
+        [c for c in bay.children
+         if c.get(types_closets.TAG_OPENING_CAGE)
+         and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side],
+        key=lambda o: o.get('hb_opening_index', 0))
+    return openings[-1] if openings else None
+
+
+def _top_opening_height(bay, side='FRONT'):
+    """How tall the opening above the top shelf currently measures, or
+    None where the bay has no shelf splitting it."""
+    if not _bay_split_shelves(bay, side):
+        return None
+    opening = _bay_top_opening(bay, side)
+    if opening is None:
+        return None
+    try:
+        return abs(float(hb_types.GeoNodeCage(opening).get_input('Dim Z')))
+    except Exception:
+        return None
+
+
 class hb_closets_OT_bay_prompts(bpy.types.Operator):
     """Edit the active bay's overrides (width/height/depth/mounting)."""
     bl_idname = "hb_closets.bay_prompts"
     bl_label = "Closet Bay Properties"
     bl_options = {'UNDO'}
+
+    # How tall the opening above the bay's top shelf reads. Typing a
+    # height here moves that shelf; everything below it stays where the
+    # user put it and the openings under it keep their contents.
+    top_opening_height: bpy.props.FloatProperty(
+        name="Top Opening Height",
+        description="Height of the opening above the top shelf in this "
+                    "bay. Changing it moves that shelf",
+        default=const.TOP_SHELF_OPENING_HEIGHT,
+        min=units.inch(1.0), unit='LENGTH', precision=4)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -3092,6 +3138,9 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         bay = types_closets.find_bay_cage(context.active_object)
         if bay is not None:
             _sync_height_dropdown(bay.hb_closet_bay)
+            height = _top_opening_height(bay)
+            if height is not None:
+                self.top_opening_height = height
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3141,6 +3190,15 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         sub.enabled = bp.floor_mounted and not bp.remove_bottom
         sub.prop(bp, 'bottom_shelf_inset')
 
+        # Only a bay with a shelf across it has an opening above that
+        # shelf to size. Which shelf that is depends on what the bay was
+        # built as, so the field reads whichever one is highest rather
+        # than belonging to any one configuration.
+        if _top_opening_height(bay) is not None:
+            box = layout.box()
+            box.label(text="Openings", icon='MESH_GRID')
+            box.prop(self, 'top_opening_height')
+
         # The center back divides a double-sided island's two faces, so
         # it is only meaningful there.
         cls = types_closets.WRAP_CLASS_REGISTRY.get(
@@ -3156,6 +3214,28 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             sub.prop(bp, 'center_back_location')
 
     def execute(self, context):
+        bay = types_closets.find_bay_cage(context.active_object)
+        if bay is None:
+            return {'FINISHED'}
+        # The top opening is as tall as the gap between the top shelf and
+        # the top of the bay, so asking for a different height is asking
+        # for that shelf to move by the difference. Working from the
+        # difference rather than from the bay's interior height keeps
+        # this honest whatever the run has done to the bay since.
+        current = _top_opening_height(bay)
+        if current is not None and abs(current - self.top_opening_height) > 1e-6:
+            shelves = _bay_split_shelves(bay)
+            shelf = shelves[-1]
+            below = (float(shelves[-2].get('hb_z_offset', 0.0))
+                     if len(shelves) > 1 else 0.0)
+            st = context.scene.hb_closets.shelf_thickness
+            floor = below + (st if len(shelves) > 1 else 0.0) + units.inch(1.0)
+            z = float(shelf.get('hb_z_offset', 0.0)) + (
+                current - self.top_opening_height)
+            shelf['hb_z_offset'] = float(max(floor, z))
+            root = types_closets.find_starter_root(bay)
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
 
 
