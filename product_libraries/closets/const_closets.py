@@ -174,7 +174,7 @@ MID_SHELF_BAND_HEIGHT = inch(12.0)
 FRONT_THICKNESS = inch(0.75)
 DOOR_TO_CABINET_GAP = inch(0.125)   # front face held off the carcass
 FRONT_GAP = inch(0.125)             # gap between adjacent fronts
-DRAWER_FRONT_HEIGHT = inch(7.5)
+DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
 MIN_DRAWER_FRONT = inch(2.0)
@@ -182,6 +182,40 @@ DRAWER_SLIDE_GAP = inch(0.5)        # per side, drawer box to panel
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
 DRAWER_BOX_DEPTH_DEDUCT = inch(0.5)
 DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
+
+# Standard drawer front heights: the 32mm ladder the prior closet
+# library ordered fronts from, 124.82mm and a 32mm step from there.
+# The identifier is the front's cut height in millimeters, the name is
+# the size the front is called by, and the description is the clear
+# opening a front that size covers - a front stands taller than its
+# opening because it half-overlays the shelf above and below it.
+DRAWER_FRONT_HEIGHT_ITEMS = [
+    ('124.82', '5"', 'Front over a 4 1/4" opening'),
+    ('156.82', '6 1/4"', 'Front over a 5 1/2" opening'),
+    ('188.82', '7 1/2"', 'Front over a 6 1/2" opening'),
+    ('220.82', '8 3/4"', 'Front over an 8" opening'),
+    ('252.82', '10"', 'Front over a 9 1/3" opening'),
+    ('284.82', '11 1/4"', 'Front over a 10 1/2" opening'),
+    ('316.82', '12 1/2"', 'Front over an 11 3/4" opening'),
+    ('348.82', '13 3/4"', 'Front over a 13 1/8" opening'),
+]
+DRAWER_FRONT_HEIGHT_KEY = '156.82'   # the size a bank comes in at
+
+
+def drawer_front_height(key):
+    """Distance for a DRAWER_FRONT_HEIGHT_ITEMS identifier, which is
+    the front's cut height in millimeters."""
+    try:
+        return millimeter(float(key))
+    except (TypeError, ValueError):
+        return DRAWER_FRONT_HEIGHT
+
+
+def nearest_drawer_front_height(value):
+    """Closest standard front height identifier for a distance, so a
+    drawer sized by hand reads back as the size it landed nearest."""
+    return min(DRAWER_FRONT_HEIGHT_ITEMS,
+               key=lambda it: abs(drawer_front_height(it[0]) - value))[0]
 # Double-sided island
 ISLAND_DOUBLE_DEPTH = inch(30.0)
 ISLAND_CTOP_OVERHANG = inch(1.5)    # island tops overhang all sides

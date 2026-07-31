@@ -1938,6 +1938,48 @@ class _ClosetInsertDialog:
         return {'FINISHED'}
 
 
+def _drawer_fronts(opening):
+    """A drawer bank's fronts, bottom drawer first."""
+    return sorted(
+        [c for c in opening.children
+         if c.get('hb_part_role')
+         == types_closets.PART_ROLE_DRAWER_FRONT],
+        key=lambda o: o.get('hb_drawer_index', 0))
+
+
+def _read_drawer_front_heights(opening, qty):
+    """What the drawers in a bank are holding, bottom drawer first, as
+    (equal, standard size) pairs. A drawer nobody has sized is equal -
+    it takes its share of the bank - and reads back as the standard
+    size nearest the share it got, so unticking the box starts from
+    what is on screen rather than from a default."""
+    out = []
+    for front in _drawer_fronts(opening)[:qty]:
+        equal = not front.get(types_closets.PROP_UNLOCK_FRONT_HEIGHT, 0)
+        key = const.nearest_drawer_front_height(
+            float(front.get(types_closets.PROP_FRONT_HEIGHT,
+                            const.DRAWER_FRONT_HEIGHT)))
+        out.append((equal, key))
+    return out
+
+
+def _pin_drawer_front_heights(opening, sizes):
+    """Hand each drawer in a bank the size it was given, or put it back
+    on the share the bank works out for itself.
+
+    A drawer holding a size of its own is held at it and the drawers
+    still sharing absorb the difference. This is the same flag the
+    viewport height label sets, so a height typed on screen and a size
+    picked here mean the same thing to the solve."""
+    for front, (equal, key) in zip(_drawer_fronts(opening), sizes):
+        if equal:
+            front[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 0
+        else:
+            front[types_closets.PROP_FRONT_HEIGHT] = \
+                const.drawer_front_height(key)
+            front[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 1
+
+
 class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     """Set the drawer stack for the active opening (fronts stack from
     the bottom; each drawer gets a box behind its front)."""
@@ -1948,12 +1990,30 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     qty: bpy.props.IntProperty(name="Drawer Quantity", default=3,
                                min=0, max=10)  # type: ignore
     front_height: bpy.props.FloatProperty(
-        name="Front Height", default=0.1905,  # 7.5"
+        name="Front Height",
+        description="Height of a drawer front that is sharing the "
+                    "bank rather than holding a size of its own",
+        default=const.DRAWER_FRONT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
     drawer_box: bpy.props.EnumProperty(
         name="Drawer Box",
         items=_DRAWER_BOX_OVERRIDE_ITEMS,
         default='DEFAULT')  # type: ignore
+    # Per-drawer sizes (front_1..front_10; the first `qty` are shown
+    # and used). A drawer left equal takes its share of the bank;
+    # unticking it holds that drawer at a standard size and lets the
+    # drawers still sharing absorb the difference.
+    for _i in range(1, 11):
+        __annotations__['front_%d_equal' % _i] = bpy.props.BoolProperty(
+            name="Equal", default=True,
+            description="Let drawer %d take an equal share of the bank "
+                        "instead of holding a size of its own" % _i)
+        __annotations__['front_%d_height' % _i] = bpy.props.EnumProperty(
+            name="Drawer %d Height" % _i,
+            items=const.DRAWER_FRONT_HEIGHT_ITEMS,
+            default=const.DRAWER_FRONT_HEIGHT_KEY,
+            description="Height drawer %d's front is held at" % _i)
+    del _i
 
     def invoke(self, context, event):
         opening = _active_opening_for_insert(context)
@@ -1962,7 +2022,57 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             self.qty = int(op.drawer_qty) or 3
             self.front_height = float(op.drawer_front_height)
             self.drawer_box = op.drawer_box_override or 'DEFAULT'
-        return context.window_manager.invoke_props_dialog(self, width=250)
+            for i, (equal, key) in enumerate(
+                    _read_drawer_front_heights(opening, self.qty), 1):
+                setattr(self, 'front_%d_equal' % i, equal)
+                setattr(self, 'front_%d_height' % i, key)
+        return context.window_manager.invoke_props_dialog(self, width=330)
+
+    def _sizes(self):
+        """The bank as the dialog has it, bottom drawer first."""
+        return [(bool(getattr(self, 'front_%d_equal' % i)),
+                 getattr(self, 'front_%d_height' % i))
+                for i in range(1, self.qty + 1)]
+
+    def _heights(self):
+        """What each front in the bank will measure. A drawer holding a
+        size measures that size; the ones sharing each measure the
+        bank's front height."""
+        return [self.front_height if equal
+                else const.drawer_front_height(key)
+                for equal, key in self._sizes()]
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Drawers", icon='SNAP_VOLUME')
+        col = box.column(align=True)
+        col.prop(self, 'qty')
+        col.prop(self, 'front_height')
+        col.prop(self, 'drawer_box')
+
+        # A row per drawer, bottom drawer first, the order the bank is
+        # built in. A drawer sharing the bank reads back the height it
+        # is getting; one holding a size shows the size instead.
+        if self.qty <= 0:
+            return
+        box = layout.box()
+        box.label(text="Drawer Heights", icon='MESH_GRID')
+        col = box.column(align=True)
+        for i in range(1, self.qty + 1):
+            row = col.row(align=True)
+            row.label(text="Drawer %d" % i)
+            row.prop(self, 'front_%d_equal' % i, text="")
+            if getattr(self, 'front_%d_equal' % i):
+                row.label(text=units.unit_to_string(
+                    context.scene.unit_settings, self.front_height))
+            else:
+                row.prop(self, 'front_%d_height' % i, text="")
+        # How tall the bank stands once the fronts and the gaps between
+        # them are added up - the height the shelf capping it moves to.
+        box.label(text="Drawer Stack Height: " + units.unit_to_string(
+            context.scene.unit_settings,
+            sum(self._heights()) + self.qty * const.FRONT_GAP))
 
     def execute(self, context):
         from .. import const_closets as const
@@ -1980,15 +2090,25 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         root = types_closets.find_starter_root(opening)
         bay = types_closets.find_bay_cage(opening)
 
+        # The fronts have to be standing there before they can be told
+        # what to hold, and the quantity just set is what decides how
+        # many of them there are. Build the bank, then size it.
+        types_closets.recalculate_closet_starter(root)
+        _pin_drawer_front_heights(opening, self._sizes())
+
         # A drawer bank comes in capped by a fixed shelf (shop
         # convention). The cap's underside sits so the top drawer front
-        # half-overlays it: qty*(front_h + gap) - shelf_thickness in
-        # opening-local Z. If this segment is already capped, MOVE the
-        # cap to match the new stack instead of stacking another shelf.
+        # half-overlays it, which puts it at the fronts' own heights
+        # plus a gap apiece, less the shelf, in opening-local Z. Adding
+        # up the heights the bank was actually given rather than taking
+        # them all for alike is what lets a drawer hold a size: the
+        # opening grows to the bank instead of the bank being squeezed
+        # back into the opening. If this segment is already capped, MOVE
+        # the cap to match the new stack instead of stacking another.
         if self.qty > 0 and bay is not None:
             st = context.scene.hb_closets.shelf_thickness
-            cap_z_local = self.qty * (self.front_height
-                                      + const.FRONT_GAP) - st
+            cap_z_local = (sum(self._heights())
+                           + self.qty * const.FRONT_GAP - st)
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
             side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
             shelves = sorted(
@@ -3327,7 +3447,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         name="Front Height",
         description="Height of each drawer front. The top drawer takes up "
                     "whatever height is left over",
-        default=0.1905,  # 7.5"
+        default=const.DRAWER_FRONT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
     drawer_box: bpy.props.EnumProperty(
         name="Drawer Box",

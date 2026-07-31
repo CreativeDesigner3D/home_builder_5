@@ -136,6 +136,9 @@ PROP_OPEN_HEIGHT = 'hb_open_height'
 # stays hot-reloadable.
 PROP_FRONT_HEIGHT = 'hb_front_height'
 PROP_UNLOCK_FRONT_HEIGHT = 'hb_unlock_front_height'
+# Heights a pasted drawer bank is owed, left on the opening until the
+# fronts it describes have been built and can be handed them.
+PROP_PASTED_FRONT_PINS = 'hb_pasted_front_pins'
 # The name the flag was saved under before the padlocks were made to
 # read one way across the library. Same meaning, so it carries straight
 # across. See carry_over_front_locks().
@@ -1850,6 +1853,17 @@ class ClosetStarter(GeoNodeCage):
                                    PART_ROLE_DRAWER_FRONT, side)
             obj['hb_drawer_index'] = len(fronts)
             fronts.append(obj)
+        # A bank pasted from another opening arrives with the heights
+        # its drawers were holding. They are handed over as the fronts
+        # come into being and the note is torn up, so a paste lands on
+        # the sizes that were copied and nothing is left to re-apply.
+        pins = opening.get(PROP_PASTED_FRONT_PINS)
+        if pins is not None:
+            flat = list(pins)
+            for front, (h, lk) in zip(fronts, zip(flat[::2], flat[1::2])):
+                front[PROP_FRONT_HEIGHT] = float(h)
+                front[PROP_UNLOCK_FRONT_HEIGHT] = int(lk)
+            del opening[PROP_PASTED_FRONT_PINS]
         while len(boxes) < qty:
             box = GeoNodeDrawerBox()
             box.create('Drawer Box')
@@ -3241,6 +3255,15 @@ def serialize_opening(opening):
         'slant_color': opening.hb_closet_opening.slant_color,
         'drawer_fh': float(opening.hb_closet_opening.drawer_front_height),
         'drawer_box': opening.hb_closet_opening.drawer_box_override,
+        # Per-drawer heights, bottom drawer first, with the flag saying
+        # whether that drawer was holding the height or sharing.
+        'drawer_fronts': [
+            [float(c.get(PROP_FRONT_HEIGHT, 0.0)),
+             int(bool(c.get(PROP_UNLOCK_FRONT_HEIGHT, 0)))]
+            for c in sorted(
+                (c for c in opening.children
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT),
+                key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
         'is_hamper': int(opening.hb_closet_opening.is_hamper),
         'cubby_cols': int(opening.hb_closet_opening.cubby_cols),
@@ -3271,6 +3294,12 @@ def apply_opening_data(opening, data, recalc=True):
         if data.get('drawer_box'):
             opening.hb_closet_opening.drawer_box_override = \
                 data['drawer_box']
+        # The fronts are not built yet, so the heights the copied bank
+        # was holding wait on the opening for them.
+        pins = data.get('drawer_fronts') or ()
+        if pins:
+            opening[PROP_PASTED_FRONT_PINS] = [
+                float(v) for pair in pins for v in pair]
     if data.get('rollout_qty'):
         opening.hb_closet_opening.rollout_qty = data['rollout_qty']
         opening.hb_closet_opening.rollout_height = data.get('rollout_h',
