@@ -91,6 +91,38 @@ def nearest_panel_height_key(value):
     snapped = PANEL_HEIGHT_MIN_MM + n * 32
     return str(snapped) if abs(snapped - mm) <= 0.5 else ''
 
+# Standard opening heights: the 32mm ladder the prior library offered
+# for the opening above a hanging rod, 12.95mm through 1932.95mm in
+# 32mm steps. The mm string is the identifier, so a height picked here
+# is the same height the prior library produced.
+OPENING_HEIGHT_MIN_MM = 12.95
+OPENING_HEIGHT_COUNT = 61
+OPENING_HEIGHT_ITEMS = [
+    ('%.2f' % (OPENING_HEIGHT_MIN_MM + i * 32),
+     inch_label(OPENING_HEIGHT_MIN_MM + i * 32),
+     inch_label(OPENING_HEIGHT_MIN_MM + i * 32))
+    for i in range(OPENING_HEIGHT_COUNT)
+]
+TOP_OPENING_HEIGHT_KEY = '716.95'   # the height the dropdown opens on
+
+def opening_height(key):
+    """Distance for an OPENING_HEIGHT_ITEMS identifier, which is the
+    opening's height in millimeters."""
+    try:
+        return millimeter(float(key))
+    except (TypeError, ValueError):
+        return millimeter(float(TOP_OPENING_HEIGHT_KEY))
+
+def nearest_opening_height_key(value):
+    """Closest OPENING_HEIGHT_ITEMS identifier for a distance, or ''
+    when the distance is off the ladder by more than half a step - an
+    opening left somewhere of its own by a shelf dragged by hand."""
+    mm = value / millimeter(1.0)
+    n = int(round((mm - OPENING_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0), OPENING_HEIGHT_COUNT - 1)
+    snapped = OPENING_HEIGHT_MIN_MM + n * 32
+    return ('%.2f' % snapped) if abs(snapped - mm) <= 0.5 else ''
+
 # ---------------------------------------------------------------------------
 # Toe kick
 # ---------------------------------------------------------------------------

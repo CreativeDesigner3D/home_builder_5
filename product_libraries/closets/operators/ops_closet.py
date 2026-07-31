@@ -3243,10 +3243,20 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
     # How tall the opening above the bay's top shelf reads. Typing a
     # height here moves that shelf; everything below it stays where the
     # user put it and the openings under it keep their contents.
-    top_opening_height: bpy.props.FloatProperty(
+    # The standard opening heights, with a typed height for an opening
+    # that is not on the ladder - a shelf dragged by hand can leave one
+    # anywhere, and the dialog has to be able to show what is there.
+    top_opening_preset: bpy.props.EnumProperty(
         name="Top Opening Height",
         description="Height of the opening above the top shelf in this "
                     "bay. Changing it moves that shelf",
+        items=const.OPENING_HEIGHT_ITEMS + [
+            ('CUSTOM', "Custom", "Type a height of your own")],
+        default=const.TOP_OPENING_HEIGHT_KEY)  # type: ignore
+    top_opening_height: bpy.props.FloatProperty(
+        name="Custom Height",
+        description="Height of the opening above the top shelf when it "
+                    "is not one of the standard heights",
         default=const.TOP_SHELF_OPENING_HEIGHT,
         min=units.inch(1.0), unit='LENGTH', precision=4)  # type: ignore
 
@@ -3261,6 +3271,8 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             height = _top_opening_height(bay)
             if height is not None:
                 self.top_opening_height = height
+                self.top_opening_preset = (
+                    const.nearest_opening_height_key(height) or 'CUSTOM')
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -3317,7 +3329,11 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         if _top_opening_height(bay) is not None:
             box = layout.box()
             box.label(text="Openings", icon='MESH_GRID')
-            box.prop(self, 'top_opening_height')
+            row = box.row()
+            row.label(text="Top Opening Height")
+            row.prop(self, 'top_opening_preset', text="")
+            if self.top_opening_preset == 'CUSTOM':
+                box.prop(self, 'top_opening_height')
 
         # The center back divides a double-sided island's two faces, so
         # it is only meaningful there.
@@ -3333,6 +3349,12 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             sub.enabled = bp.include_center_back
             sub.prop(bp, 'center_back_location')
 
+    def _top_opening_target(self):
+        """The height the dialog is asking the top opening to be."""
+        if self.top_opening_preset == 'CUSTOM':
+            return self.top_opening_height
+        return const.opening_height(self.top_opening_preset)
+
     def execute(self, context):
         bay = types_closets.find_bay_cage(context.active_object)
         if bay is None:
@@ -3343,15 +3365,15 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         # difference rather than from the bay's interior height keeps
         # this honest whatever the run has done to the bay since.
         current = _top_opening_height(bay)
-        if current is not None and abs(current - self.top_opening_height) > 1e-6:
+        target = self._top_opening_target()
+        if current is not None and abs(current - target) > 1e-6:
             shelves = _bay_split_shelves(bay)
             shelf = shelves[-1]
             below = (float(shelves[-2].get('hb_z_offset', 0.0))
                      if len(shelves) > 1 else 0.0)
             st = context.scene.hb_closets.shelf_thickness
             floor = below + (st if len(shelves) > 1 else 0.0) + units.inch(1.0)
-            z = float(shelf.get('hb_z_offset', 0.0)) + (
-                current - self.top_opening_height)
+            z = float(shelf.get('hb_z_offset', 0.0)) + (current - target)
             shelf['hb_z_offset'] = float(max(floor, z))
             root = types_closets.find_starter_root(bay)
             if root is not None:
