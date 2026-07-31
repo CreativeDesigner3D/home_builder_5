@@ -1027,12 +1027,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         elif item.kind == 'ROLLOUT':
             # One row per box: each box picks its own standard height (or
             # Custom to type one). The box count is the number of rows.
-            for j, box in enumerate(item.rollout_boxes):
+            for j, rollout_box in enumerate(item.rollout_boxes):
                 brow = sub.row(align=True)
                 brow.label(text=f"Box {j + 1}")
-                brow.prop(box, 'height_preset', text="")
-                if box.height_preset == 'CUSTOM':
-                    brow.prop(box, 'height', text="")
+                brow.prop(rollout_box, 'height_preset', text="")
+                if rollout_box.height_preset == 'CUSTOM':
+                    brow.prop(rollout_box, 'height', text="")
                 rm_box = brow.operator(
                     "hb_face_frame.remove_rollout_box", text="", icon='X',
                 )
