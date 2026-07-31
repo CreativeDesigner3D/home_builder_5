@@ -5375,7 +5375,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ('WALL', "Wall", "Wall stile (extends past carcass)"),
         ('BLIND', "Blind", "Blind corner stile"),
         ('BUTT', "Butt", "Butt joint against an adjacent cabinet"),
-        ('INSIDE_90', "Inside 90", "Against an inside 90 (pie cut) corner"),
+        ('INSIDE_90', "Inside 90", "Blind-stile condition: two runs meeting at an open 90-degree inside corner"),
         ('ANGLE', "Angle", "Against a diagonal / angled cabinet"),
     ]
     left_stile_type: EnumProperty(

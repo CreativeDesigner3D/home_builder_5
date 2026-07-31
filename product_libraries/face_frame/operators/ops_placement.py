@@ -1514,9 +1514,13 @@ def _align_base_tall_toe_kick(cab_obj):
         cab_props.toe_kick_setback = cab_target_setback
 
 
+# A pie-cut arm joint is coplanar with its neighbor, so both meeting
+# stiles are plain BUTT joints (the spec's butt width is the COMBINED
+# pair). INSIDE_90 is reserved for blind-stile conditions where two runs
+# meet at an open 90-degree inside corner.
 _CORNER_TYPE_TO_STILE = {
-    'PIE_CUT': 'INSIDE_90',
-    'PIE_CUT_DRAWER': 'INSIDE_90',
+    'PIE_CUT': 'BUTT',
+    'PIE_CUT_DRAWER': 'BUTT',
     'DIAGONAL': 'ANGLE',
 }
 
@@ -1524,7 +1528,7 @@ _CORNER_TYPE_TO_STILE = {
 def _abutting_corner_stile(cab_obj, side, wall):
     """Stile type implied by a corner cabinet on the SAME wall meeting
     cab_obj's `side` end (its arm-end at the placed cabinet's edge, in the
-    same height band): INSIDE_90 for a pie cut, ANGLE for a diagonal, else
+    same height band): BUTT for a pie cut, ANGLE for a diagonal, else
     None. The corner's right arm runs along the wall by its Dim X, so the
     abutment edge is location.x (its left) or location.x + Dim X (its
     right). Returns (stile_type, corner_obj, corner_side) so the caller can
@@ -1602,7 +1606,7 @@ def _cross_wall_corner_stile(cab_obj, side):
 
 def _auto_detect_stile_types(cab_obj):
     """Set end stile types from placement context, per end with precedence:
-    a corner cabinet abutting that end (pie cut -> INSIDE_90, diagonal ->
+    a corner cabinet abutting that end (pie cut -> BUTT, diagonal ->
     ANGLE) wins - same-wall first, then a corner reaching over from the
     perpendicular wall; else WALL when the end reaches the end of its
     wall run; else STANDARD. Corner cabinets manage their own ends and
@@ -1642,7 +1646,7 @@ def _auto_detect_stile_types(cab_obj):
         if props.right_stile_type != want['RIGHT']:
             props.right_stile_type = want['RIGHT']
     # Mirror the joint onto the abutting corner cabinet so both meeting
-    # stiles take the joint's stile width (pie cut -> INSIDE_90, diagonal
+    # stiles take the joint's stile width (pie cut -> BUTT, diagonal
     # -> ANGLE). Setting the corner's meeting-side stile type fires its
     # own width derivation + recalc; done outside the suspend so that
     # recalc runs.
