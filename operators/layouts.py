@@ -546,6 +546,38 @@ def lock_layout_camera(scene):
         camera.hide_select = True
 
 
+def _is_2d_view_scene(scene):
+    return bool(scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW')
+                or scene.get('IS_CROWN_DETAIL'))
+
+
+def _reset_part_selection_modes():
+    """Drop every room scene's face-frame selection mode back to Parts
+    before showing a 2D view. Part-highlighting modes (Interiors, Face
+    Frame) set draw-on-top state on real cabinet geometry, and those
+    objects are shared into the layout scenes - the highlighted parts
+    then render on top of everything in the 2D view. Parts mode routes
+    through the plain-render path.
+
+    The prop write's update callback only re-applies the CURRENT window
+    scene's mode, so each reset scene's objects are also swept directly
+    - that covers rooms other than the one being left.
+    """
+    from ..product_libraries.face_frame.operators import (
+        ops_cabinet as ff_ops)
+    for sc in bpy.data.scenes:
+        if _is_2d_view_scene(sc):
+            continue
+        ff = getattr(sc, 'hb_face_frame', None)
+        if ff is None:
+            continue
+        if ff.face_frame_selection_mode == 'Parts':
+            continue
+        ff.face_frame_selection_mode = 'Parts'
+        for obj in sc.objects:
+            ff_ops._selection_mode_toggle_one(obj, '__off__')
+
+
 class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
     bl_idname = "home_builder_layouts.go_to_layout_view"
     bl_label = "Go To Layout View"
@@ -562,6 +594,13 @@ class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
                 hb_utils.save_view_state(current_scene)
             
             target_scene = bpy.data.scenes[self.scene_name]
+
+            # Heading into a 2D view: clear part-highlighting selection
+            # modes first (Interiors / Face Frame draw parts on top of
+            # the shared geometry, which bleeds into the layout render).
+            if _is_2d_view_scene(target_scene):
+                _reset_part_selection_modes()
+
             context.window.scene = target_scene
             
             # Set appropriate view for the scene type
