@@ -124,6 +124,10 @@ PART_ROLE_BACK = 'BACK'
 PART_ROLE_FINISHED_BOTTOM = 'FINISHED_BOTTOM'
 PART_ROLE_FB_LED_CUTTER = 'FINISHED_BOTTOM_LED_CUTTER'
 PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
+# Visible LED diffuser: a thin emissive strip mesh up inside the route,
+# so the glow has a visible source when looking up at the cabinet (the
+# area light itself renders as nothing).
+PART_ROLE_FB_LED_STRIP = 'FINISHED_BOTTOM_LED_STRIP'
 PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
@@ -3737,7 +3741,27 @@ class FaceFrameCabinet(GeoNodeCage):
     _FB_CUT_MOD_NAME = 'FB LED Route'
 
     _FB_ROLES = (PART_ROLE_FB_LED_CUTTER, PART_ROLE_FINISHED_BOTTOM,
-                 PART_ROLE_FB_LIGHT)
+                 PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP)
+
+    @staticmethod
+    def _led_strip_material():
+        """Shared emissive LED-strip material, created on first use.
+        The viewport display color makes the strip read as a light
+        band in Solid shading too."""
+        mat = bpy.data.materials.get('HB LED Strip')
+        if mat is not None:
+            return mat
+        mat = bpy.data.materials.new('HB LED Strip')
+        mat.use_nodes = True
+        nt = mat.node_tree
+        nt.nodes.clear()
+        out = nt.nodes.new('ShaderNodeOutputMaterial')
+        em = nt.nodes.new('ShaderNodeEmission')
+        em.inputs['Color'].default_value = (1.0, 0.956, 0.839, 1.0)
+        em.inputs['Strength'].default_value = 5.0
+        nt.links.new(em.outputs['Emission'], out.inputs['Surface'])
+        mat.diffuse_color = (1.0, 0.956, 0.839, 1.0)
+        return mat
 
     def _fb_children(self, role):
         return [c for c in self.obj.children
@@ -3922,6 +3946,38 @@ class FaceFrameCabinet(GeoNodeCage):
                     route_y0 + route_width / 2.0,
                     z_fin - 0.002)
 
+                # Visible diffuser: a thin emissive strip up inside the
+                # route (the area light renders as nothing, so this is
+                # what reads as the light source from below). Sits in
+                # the top half of the groove, held a hair off the route
+                # ceiling and side walls.
+                strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
+                if strip is None:
+                    mesh = bpy.data.meshes.new('FB LED Strip')
+                    strip = bpy.data.objects.new('FB LED Strip', mesh)
+                    for coll in self.obj.users_collection:
+                        coll.objects.link(strip)
+                    strip.parent = self.obj
+                    strip['hb_part_role'] = PART_ROLE_FB_LED_STRIP
+                    strip['hb_fb_key'] = key
+                    strip['IS_2D_ANNOTATION'] = True
+                end_margin = (inch(1.0) if seg_len > inch(3.0)
+                              else seg_len * 0.1)
+                strip_top = z_fin + route_depth - 0.0005
+                strip_bottom = max(strip_top - inch(0.0625),
+                                   z_fin + 0.001)
+                self._rebuild_box_mesh(
+                    strip,
+                    x0 + end_margin, x0 + seg_len - end_margin,
+                    route_y0 + route_width * 0.1,
+                    route_y0 + route_width * 0.9,
+                    strip_bottom, strip_top)
+                mat = self._led_strip_material()
+                if strip.data.materials:
+                    strip.data.materials[0] = mat
+                else:
+                    strip.data.materials.append(mat)
+
         # Stale segments (bay merged away, bottom newly removed); with
         # the route off every cutter goes, and with the light off (or
         # the route off) every light.
@@ -3929,7 +3985,8 @@ class FaceFrameCabinet(GeoNodeCage):
         if not want_route:
             self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LED_CUTTER,))
         if not want_light:
-            self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LIGHT,))
+            self._cleanup_finished_bottom(
+                roles=(PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP))
 
     # =====================================================================
     # Hutch finished back (uppers with ends extended down)
