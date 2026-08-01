@@ -1,0 +1,10 @@
+{
+  "label": "Craftsman 3 Panel",
+  "category": "Entry Doors",
+  "sort": 30,
+  "options": {
+    "door_style": "PANEL_3",
+    "panel_raise": false,
+    "top_rail_width": 6.0
+  }
+}

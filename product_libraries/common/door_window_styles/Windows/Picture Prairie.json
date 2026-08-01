@@ -1,0 +1,9 @@
+{
+  "label": "Picture Prairie",
+  "category": "Windows",
+  "sort": 65,
+  "options": {
+    "window_type": "PICTURE",
+    "grille_pattern": "PRAIRIE"
+  }
+}

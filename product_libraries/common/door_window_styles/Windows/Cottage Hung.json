@@ -1,0 +1,9 @@
+{
+  "label": "Cottage Hung",
+  "category": "Windows",
+  "sort": 20,
+  "options": {
+    "window_type": "HUNG",
+    "sash_split": 0.6
+  }
+}

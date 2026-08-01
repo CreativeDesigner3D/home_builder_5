@@ -1,0 +1,8 @@
+{
+  "label": "Full Lite",
+  "category": "Entry Doors",
+  "sort": 65,
+  "options": {
+    "door_style": "LITE_FULL"
+  }
+}

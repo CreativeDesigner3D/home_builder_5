@@ -167,6 +167,18 @@ def update_show_entry_door_and_window_cages(self, context):
             obj.show_in_front = True if self.show_entry_door_and_window_cages else False
 
 
+def _entry_door_style_items(self, context):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.style_enum_items(
+        door_window_geo.DOOR_CATEGORY, include_none=True)
+
+
+def _window_style_items(self, context):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.style_enum_items(
+        door_window_geo.WINDOW_CATEGORY, include_none=True)
+
+
 def update_molding_package(self, context):
     """Re-apply the room's molding packages whenever a package dropdown
     (or the recessed-kick toggle) changes - the dropdown IS the UI."""
@@ -484,6 +496,15 @@ class Home_Builder_Scene_Props(PropertyGroup):
     window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)
     window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
     window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
+
+    entry_door_style: EnumProperty(
+        name="Entry Door Style",
+        description="3D style applied to newly placed entry doors",
+        items=_entry_door_style_items)  # type: ignore
+    window_style: EnumProperty(
+        name="Window Style",
+        description="3D style applied to newly placed windows",
+        items=_window_style_items)  # type: ignore
 
     wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
 

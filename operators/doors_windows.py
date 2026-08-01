@@ -7,6 +7,22 @@ from .. import hb_types, hb_snap, hb_placement, units
 import math
 from mathutils import Vector
 from ..hb_details import GeoNodeText
+from ..product_libraries.common import door_window_geo
+
+
+def _resolve_door_window_bp(obj, flag=None):
+    """The door/window cage for ``obj``: the object itself or its
+    nearest ancestor carrying a door/window BP flag. Generated 3D
+    geometry children route selection and menu commands back to their
+    cage through this. ``flag`` narrows the match to one kind."""
+    while obj is not None:
+        if obj.get('IS_ENTRY_DOOR_BP') or obj.get('IS_WINDOW_BP'):
+            if flag is None or obj.get(flag):
+                return obj
+            return None
+        obj = obj.parent
+    return None
+
 
 # Single door swing options: (label, {geo node inputs})
 SINGLE_DOOR_SWINGS = [
@@ -679,6 +695,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
     SWING_LIST = None                # SINGLE_DOOR_SWINGS / DOUBLE_DOOR_SWINGS / None
     INITIAL_SWING_INPUTS = None      # dict of initial inputs to set on the swing object
     RESET_Z_WHEN_FREE = True         # set z=0 when off-wall (False for window)
+    BUILD_GEO = True                 # build 3D geometry on drop (False = cage only)
 
     # ===== Abstract method implementations (mixin protocol) =====
 
@@ -989,6 +1006,9 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                     self.placement_objects.remove(self.placed_obj.obj)
                 self.delete_placement_dimensions()
                 self.cut_wall(self.selected_wall, self.placed_obj.obj)
+                if self.BUILD_GEO:
+                    door_window_geo.apply_scene_style_and_build(
+                        self.placed_obj.obj, context)
                 hb_placement.clear_header_text(context)
                 context.window.cursor_set('DEFAULT')
                 return {'FINISHED'}
@@ -1066,6 +1086,7 @@ class home_builder_doors_windows_OT_place_open_door(_PlaceWallObjectBase):
     HEIGHT_PROP_NAME = "door_height"
     TEXT_KIND = "DOOR"
     TEXT_NAME = "Door Text"
+    BUILD_GEO = False
 
 
 class home_builder_doors_windows_OT_place_window(_PlaceWallObjectBase):
@@ -1085,6 +1106,67 @@ class home_builder_doors_windows_OT_place_window(_PlaceWallObjectBase):
     RESET_Z_WHEN_FREE = False
 
 
+def _door_style_preset_items(self, context):
+    return door_window_geo.style_enum_items(
+        door_window_geo.DOOR_CATEGORY, include_custom=True,
+        include_none=True)
+
+
+def _window_style_preset_items(self, context):
+    return door_window_geo.style_enum_items(
+        door_window_geo.WINDOW_CATEGORY, include_custom=True,
+        include_none=True)
+
+
+def _apply_preset_to_operator(op, category):
+    """Style dropdown update: load the preset and push its option values
+    onto the dialog's matching properties. Skipped while invoke() is
+    seeding the dialog from the stored options."""
+    if getattr(op, '_loading', False):
+        return
+    if op.style in ('CUSTOM', 'NONE'):
+        return
+    opts = door_window_geo.load_style(category, op.style)
+    if not opts:
+        return
+    for key, val in opts.items():
+        if hasattr(op, key):
+            setattr(op, key, val)
+
+
+def _collect_operator_opts(op, defaults):
+    """The dialog's option values as a plain dict, keyed like the
+    defaults table (properties the dialog doesn't expose fall back to
+    the defaults on merge)."""
+    opts = {}
+    for key in defaults:
+        if key == 'style':
+            continue
+        if hasattr(op, key):
+            opts[key] = getattr(op, key)
+    opts['style'] = op.style
+    return opts
+
+
+def _seed_operator_from_opts(op, cage_obj, defaults, items_fn, context):
+    """Set the dialog's properties from the cage's stored options (or
+    the defaults when none are stored). Returns the stored style id the
+    dialog should display."""
+    opts = door_window_geo.merged_opts(cage_obj)
+    if opts is None:
+        style = 'NONE'
+        opts = dict(defaults)
+    else:
+        style = opts.get('style', 'CUSTOM')
+        valid = {item[0] for item in items_fn(op, context)}
+        if style not in valid:
+            style = 'CUSTOM'
+    for key, val in opts.items():
+        if key != 'style' and hasattr(op, key):
+            setattr(op, key, val)
+    return style
+
+
 class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     bl_idname = "home_builder_doors_windows.door_prompts"
     bl_label = "Door Prompts"
@@ -1094,23 +1176,62 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     door_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
     door_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
 
+    style: bpy.props.EnumProperty(
+        name="Style", items=_door_style_preset_items,
+        update=lambda self, context: _apply_preset_to_operator(
+            self, door_window_geo.DOOR_CATEGORY))  # type: ignore
+    door_style: bpy.props.EnumProperty(
+        name="Door Style", items=door_window_geo.DOOR_STYLE_ITEMS)  # type: ignore
+    panel_raise: bpy.props.BoolProperty(name="Raised Panels")  # type: ignore
+    stile_width: bpy.props.FloatProperty(name="Stile Width", unit='LENGTH', precision=5)  # type: ignore
+    top_rail_width: bpy.props.FloatProperty(name="Top Rail", unit='LENGTH', precision=5)  # type: ignore
+    bottom_rail_width: bpy.props.FloatProperty(name="Bottom Rail", unit='LENGTH', precision=5)  # type: ignore
+    lock_rail_width: bpy.props.FloatProperty(name="Lock Rail", unit='LENGTH', precision=5)  # type: ignore
+    glass_grid_cols: bpy.props.IntProperty(name="Lite Columns", min=1, max=6)  # type: ignore
+    glass_grid_rows: bpy.props.IntProperty(name="Lite Rows", min=1, max=8)  # type: ignore
+    grille_bar_width: bpy.props.FloatProperty(name="Grille Bar", unit='LENGTH', precision=5)  # type: ignore
+    include_interior_casing: bpy.props.BoolProperty(name="Interior Casing")  # type: ignore
+    include_exterior_casing: bpy.props.BoolProperty(name="Exterior Casing")  # type: ignore
+    casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
+    threshold_height: bpy.props.FloatProperty(name="Threshold Height", unit='LENGTH', precision=5)  # type: ignore
+    include_knob: bpy.props.BoolProperty(name="Knob")  # type: ignore
+    sidelite_left: bpy.props.FloatProperty(name="Left Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
+    sidelite_right: bpy.props.FloatProperty(name="Right Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
+    transom_height: bpy.props.FloatProperty(name="Transom Height", unit='LENGTH', precision=5, min=0)  # type: ignore
+
     door = None
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+        return _resolve_door_window_bp(context.object,
+                                       'IS_ENTRY_DOOR_BP') is not None
 
     def check(self, context):
         self.door.set_input('Dim X', self.door_width)
         self.door.set_input('Dim Z', self.door_height)
+        if self.style == 'NONE':
+            door_window_geo.remove_geometry(self.door.obj)
+            door_window_geo.clear_opts(self.door.obj)
+        else:
+            door_window_geo.set_opts(self.door.obj, _collect_operator_opts(
+                self, door_window_geo.DOOR_DEFAULTS))
+            door_window_geo.build_geometry(self.door.obj)
         return True
 
     def invoke(self, context, event):
-        self.door = hb_types.GeoNodeCage(context.object)
+        bp = _resolve_door_window_bp(context.object, 'IS_ENTRY_DOOR_BP')
+        self.door = hb_types.GeoNodeCage(bp)
         self.door_width = self.door.get_input('Dim X')
         self.door_height = self.door.get_input('Dim Z')
+        self._loading = True
+        try:
+            self.style = _seed_operator_from_opts(
+                self, bp, door_window_geo.DOOR_DEFAULTS,
+                _door_style_preset_items, context)
+        finally:
+            self._loading = False
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=300)
+        return wm.invoke_props_dialog(self, width=350)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -1118,18 +1239,78 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        
         row = box.row()
         row.label(text="Width:")
         row.prop(self, 'door_width', text="")
-        
         row = box.row()
         row.label(text="Height:")
         row.prop(self, 'door_height', text="")
-        
         row = box.row()
         row.label(text="Location X:")
         row.prop(self.door.obj, 'location', index=0, text="")
+
+        box = layout.box()
+        row = box.row()
+        row.label(text="3D Style:")
+        row.prop(self, 'style', text="")
+        if self.style == 'NONE':
+            return
+        row = box.row()
+        row.label(text="Door Style:")
+        row.prop(self, 'door_style', text="")
+        if self.door_style == 'LITE_FULL':
+            row = box.row(align=True)
+            row.prop(self, 'glass_grid_cols')
+            row.prop(self, 'glass_grid_rows')
+            row = box.row()
+            row.label(text="Grille Bar:")
+            row.prop(self, 'grille_bar_width', text="")
+        elif self.door_style.startswith('LITE_'):
+            row = box.row()
+            row.label(text="Lock Rail:")
+            row.prop(self, 'lock_rail_width', text="")
+        if not self.door_style.startswith('LITE_') \
+                and self.door_style != 'FLUSH':
+            row = box.row()
+            row.prop(self, 'panel_raise')
+
+        box = layout.box()
+        box.label(text="Construction")
+        row = box.row()
+        row.label(text="Stile Width:")
+        row.prop(self, 'stile_width', text="")
+        row = box.row()
+        row.label(text="Top Rail:")
+        row.prop(self, 'top_rail_width', text="")
+        row = box.row()
+        row.label(text="Bottom Rail:")
+        row.prop(self, 'bottom_rail_width', text="")
+
+        box = layout.box()
+        box.label(text="Unit")
+        row = box.row()
+        row.label(text="Left Sidelite:")
+        row.prop(self, 'sidelite_left', text="")
+        row = box.row()
+        row.label(text="Right Sidelite:")
+        row.prop(self, 'sidelite_right', text="")
+        row = box.row()
+        row.label(text="Transom Height:")
+        row.prop(self, 'transom_height', text="")
+
+        box = layout.box()
+        box.label(text="Trim")
+        row = box.row(align=True)
+        row.prop(self, 'include_interior_casing')
+        row.prop(self, 'include_exterior_casing')
+        row = box.row()
+        row.label(text="Casing Width:")
+        row.prop(self, 'casing_width', text="")
+        row = box.row()
+        row.label(text="Threshold Height:")
+        row.prop(self, 'threshold_height', text="")
+        row = box.row()
+        row.prop(self, 'include_knob')
 
 
 class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
@@ -1142,25 +1323,67 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     window_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
     height_from_floor: bpy.props.FloatProperty(name="Height From Floor", unit='LENGTH', precision=5)  # type: ignore
 
+    style: bpy.props.EnumProperty(
+        name="Style", items=_window_style_preset_items,
+        update=lambda self, context: _apply_preset_to_operator(
+            self, door_window_geo.WINDOW_CATEGORY))  # type: ignore
+    window_type: bpy.props.EnumProperty(
+        name="Window Type", items=door_window_geo.WINDOW_TYPE_ITEMS)  # type: ignore
+    panes: bpy.props.IntProperty(name="Panes", min=1, max=3)  # type: ignore
+    sash_split: bpy.props.FloatProperty(
+        name="Sash Split", min=0.25, max=0.75, default=0.5,
+        description="Bottom sash share of the opening height "
+                    "(0.5 = even, 0.6 = cottage)")  # type: ignore
+    frame_width: bpy.props.FloatProperty(name="Frame Width", unit='LENGTH', precision=5)  # type: ignore
+    sash_face_width: bpy.props.FloatProperty(name="Sash Width", unit='LENGTH', precision=5)  # type: ignore
+    check_rail_width: bpy.props.FloatProperty(name="Check Rail", unit='LENGTH', precision=5)  # type: ignore
+    grille_pattern: bpy.props.EnumProperty(
+        name="Grille", items=door_window_geo.GRILLE_PATTERN_ITEMS)  # type: ignore
+    grille_cols: bpy.props.IntProperty(name="Grille Columns", min=1, max=8)  # type: ignore
+    grille_rows: bpy.props.IntProperty(name="Grille Rows", min=1, max=8)  # type: ignore
+    grille_bar_width: bpy.props.FloatProperty(name="Grille Bar", unit='LENGTH', precision=5)  # type: ignore
+    include_interior_casing: bpy.props.BoolProperty(name="Interior Casing")  # type: ignore
+    include_exterior_casing: bpy.props.BoolProperty(name="Exterior Casing")  # type: ignore
+    casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
+    include_sill: bpy.props.BoolProperty(name="Exterior Sill")  # type: ignore
+    include_stool: bpy.props.BoolProperty(name="Interior Stool")  # type: ignore
+
     window = None
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.get('IS_WINDOW_BP')
+        return _resolve_door_window_bp(context.object,
+                                       'IS_WINDOW_BP') is not None
 
     def check(self, context):
         self.window.set_input('Dim X', self.window_width)
         self.window.set_input('Dim Z', self.window_height)
         self.window.obj.location.z = self.height_from_floor
+        if self.style == 'NONE':
+            door_window_geo.remove_geometry(self.window.obj)
+            door_window_geo.clear_opts(self.window.obj)
+        else:
+            door_window_geo.set_opts(
+                self.window.obj, _collect_operator_opts(
+                    self, door_window_geo.WINDOW_DEFAULTS))
+            door_window_geo.build_geometry(self.window.obj)
         return True
 
     def invoke(self, context, event):
-        self.window = hb_types.GeoNodeCage(context.object)
+        bp = _resolve_door_window_bp(context.object, 'IS_WINDOW_BP')
+        self.window = hb_types.GeoNodeCage(bp)
         self.window_width = self.window.get_input('Dim X')
         self.window_height = self.window.get_input('Dim Z')
         self.height_from_floor = self.window.obj.location.z
+        self._loading = True
+        try:
+            self.style = _seed_operator_from_opts(
+                self, bp, door_window_geo.WINDOW_DEFAULTS,
+                _window_style_preset_items, context)
+        finally:
+            self._loading = False
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=300)
+        return wm.invoke_props_dialog(self, width=350)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -1168,22 +1391,65 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        
         row = box.row()
         row.label(text="Width:")
         row.prop(self, 'window_width', text="")
-        
         row = box.row()
         row.label(text="Height:")
         row.prop(self, 'window_height', text="")
-        
         row = box.row()
         row.label(text="Height From Floor:")
         row.prop(self, 'height_from_floor', text="")
-        
         row = box.row()
         row.label(text="Location X:")
         row.prop(self.window.obj, 'location', index=0, text="")
+
+        box = layout.box()
+        row = box.row()
+        row.label(text="3D Style:")
+        row.prop(self, 'style', text="")
+        if self.style == 'NONE':
+            return
+        row = box.row()
+        row.label(text="Window Type:")
+        row.prop(self, 'window_type', text="")
+        if self.window_type == 'HUNG':
+            row = box.row()
+            row.prop(self, 'sash_split')
+        elif self.window_type in ('CASEMENT', 'SLIDER'):
+            row = box.row()
+            row.prop(self, 'panes')
+
+        box = layout.box()
+        box.label(text="Grille")
+        row = box.row()
+        row.prop(self, 'grille_pattern', expand=True)
+        if self.grille_pattern == 'COLONIAL':
+            row = box.row(align=True)
+            row.prop(self, 'grille_cols')
+            row.prop(self, 'grille_rows')
+        if self.grille_pattern != 'NONE':
+            row = box.row()
+            row.label(text="Grille Bar:")
+            row.prop(self, 'grille_bar_width', text="")
+
+        box = layout.box()
+        box.label(text="Frame & Trim")
+        row = box.row()
+        row.label(text="Frame Width:")
+        row.prop(self, 'frame_width', text="")
+        row = box.row()
+        row.label(text="Sash Width:")
+        row.prop(self, 'sash_face_width', text="")
+        row = box.row(align=True)
+        row.prop(self, 'include_interior_casing')
+        row.prop(self, 'include_exterior_casing')
+        row = box.row()
+        row.label(text="Casing Width:")
+        row.prop(self, 'casing_width', text="")
+        row = box.row(align=True)
+        row.prop(self, 'include_sill')
+        row.prop(self, 'include_stool')
 
 
 class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
@@ -1194,10 +1460,12 @@ class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+        return _resolve_door_window_bp(context.object,
+                                       'IS_ENTRY_DOOR_BP') is not None
 
     def execute(self, context):
-        door_obj = context.object
+        door_obj = _resolve_door_window_bp(context.object,
+                                           'IS_ENTRY_DOOR_BP')
         # Find the door swing child
         for child in door_obj.children:
             if 'Door Swing' in child.name:
@@ -1209,6 +1477,7 @@ class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
                 except:
                     self.report({'WARNING'}, "Could not find Swing Inside input")
                 break
+        door_window_geo.build_geometry(door_obj)
         return {'FINISHED'}
 
 
@@ -1220,10 +1489,12 @@ class home_builder_doors_windows_OT_flip_door_hand(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+        return _resolve_door_window_bp(context.object,
+                                       'IS_ENTRY_DOOR_BP') is not None
 
     def execute(self, context):
-        door_obj = context.object
+        door_obj = _resolve_door_window_bp(context.object,
+                                           'IS_ENTRY_DOOR_BP')
         # Find the door swing child
         for child in door_obj.children:
             if 'Door Swing' in child.name:
@@ -1235,6 +1506,7 @@ class home_builder_doors_windows_OT_flip_door_hand(bpy.types.Operator):
                 except:
                     self.report({'WARNING'}, "Could not find Is Left input")
                 break
+        door_window_geo.build_geometry(door_obj)
         return {'FINISHED'}
 
 
@@ -1246,10 +1518,12 @@ class home_builder_doors_windows_OT_toggle_double_door(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.get('IS_ENTRY_DOOR_BP')
+        return _resolve_door_window_bp(context.object,
+                                       'IS_ENTRY_DOOR_BP') is not None
 
     def execute(self, context):
-        door_obj = context.object
+        door_obj = _resolve_door_window_bp(context.object,
+                                           'IS_ENTRY_DOOR_BP')
         # Find the door swing child
         for child in door_obj.children:
             if 'Door Swing' in child.name:
@@ -1262,6 +1536,7 @@ class home_builder_doors_windows_OT_toggle_double_door(bpy.types.Operator):
                 except:
                     self.report({'WARNING'}, "Could not find Is Double input")
                 break
+        door_window_geo.build_geometry(door_obj)
         return {'FINISHED'}
 
 
@@ -1275,12 +1550,10 @@ class home_builder_doors_windows_OT_delete_door_window(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not context.object:
-            return False
-        return context.object.get('IS_ENTRY_DOOR_BP') or context.object.get('IS_WINDOW_BP')
+        return _resolve_door_window_bp(context.object) is not None
 
     def execute(self, context):
-        obj = context.object
+        obj = _resolve_door_window_bp(context.object)
         wall = obj.parent
         
         # Remove the boolean modifier from the wall if present
@@ -1361,13 +1634,17 @@ class _DuplicateWallObjectBase(_PlaceWallObjectBase):
 
     @classmethod
     def poll(cls, context):
-        return context.object is not None and bool(context.object.get(cls.SOURCE_FLAG))
+        return _resolve_door_window_bp(context.object,
+                                       cls.SOURCE_FLAG) is not None
 
     def execute(self, context):
-        source = context.object
+        source = _resolve_door_window_bp(context.object, self.SOURCE_FLAG)
         self._source = hb_types.GeoNodeCage(source)
         self._source_z = source.location.z
         self._source_has_swing = _find_door_swing_child(source) is not None
+        # The copy mirrors the source: a cage-only source stays cage
+        # only rather than picking up the scene's default style.
+        self.BUILD_GEO = door_window_geo.stored_opts(source) is not None
         return super().execute(context)
 
     def create_placed_object(self, context):
@@ -1381,6 +1658,12 @@ class _DuplicateWallObjectBase(_PlaceWallObjectBase):
             if src_swing is not None:
                 _copy_geo_value_inputs(
                     hb_types.GeoNodeObject(src_swing), self.swing_obj)
+        # Clone the 3D geometry options so the copy rebuilds the same
+        # style on drop (geometry itself builds through the normal
+        # cut-on-drop path).
+        src_opts = door_window_geo.stored_opts(self._source.obj)
+        if src_opts is not None:
+            door_window_geo.set_opts(self.placed_obj.obj, src_opts)
 
     def get_two_point_z_offset(self, context):
         # Mount the copy at the source's height, not the scene default.
@@ -1430,6 +1713,41 @@ class home_builder_doors_windows_OT_duplicate_door(_DuplicateWallObjectBase):
 
 
 
+class home_builder_doors_windows_OT_rebuild_geometry(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.rebuild_geometry"
+    bl_label = "Rebuild 3D Geometry"
+    bl_description = ("Rebuild the selected door/window's 3D geometry "
+                      "from its stored style options")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _resolve_door_window_bp(context.object) is not None
+
+    def execute(self, context):
+        bp = _resolve_door_window_bp(context.object)
+        door_window_geo.build_geometry(bp)
+        return {'FINISHED'}
+
+
+class home_builder_doors_windows_OT_remove_geometry(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.remove_geometry"
+    bl_label = "Remove 3D Geometry"
+    bl_description = ("Remove the selected door/window's 3D geometry and "
+                      "return it to a cage-only opening")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _resolve_door_window_bp(context.object) is not None
+
+    def execute(self, context):
+        bp = _resolve_door_window_bp(context.object)
+        door_window_geo.remove_geometry(bp)
+        door_window_geo.clear_opts(bp)
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_doors_windows_OT_place_door,
     home_builder_doors_windows_OT_place_double_door,
@@ -1443,6 +1761,8 @@ classes = (
     home_builder_doors_windows_OT_flip_door_hand,
     home_builder_doors_windows_OT_toggle_double_door,
     home_builder_doors_windows_OT_delete_door_window,
+    home_builder_doors_windows_OT_rebuild_geometry,
+    home_builder_doors_windows_OT_remove_geometry,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

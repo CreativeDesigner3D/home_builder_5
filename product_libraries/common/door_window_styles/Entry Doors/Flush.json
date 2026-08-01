@@ -1,0 +1,8 @@
+{
+  "label": "Flush",
+  "category": "Entry Doors",
+  "sort": 40,
+  "options": {
+    "door_style": "FLUSH"
+  }
+}

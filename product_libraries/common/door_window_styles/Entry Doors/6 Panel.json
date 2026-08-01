@@ -1,0 +1,9 @@
+{
+  "label": "6 Panel",
+  "category": "Entry Doors",
+  "sort": 10,
+  "options": {
+    "door_style": "PANEL_6",
+    "panel_raise": true
+  }
+}

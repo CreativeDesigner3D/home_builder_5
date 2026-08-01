@@ -1,0 +1,9 @@
+{
+  "label": "Three Quarter Lite",
+  "category": "Entry Doors",
+  "sort": 60,
+  "options": {
+    "door_style": "LITE_34",
+    "panel_raise": false
+  }
+}

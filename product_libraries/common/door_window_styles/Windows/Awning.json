@@ -1,0 +1,8 @@
+{
+  "label": "Awning",
+  "category": "Windows",
+  "sort": 50,
+  "options": {
+    "window_type": "AWNING"
+  }
+}

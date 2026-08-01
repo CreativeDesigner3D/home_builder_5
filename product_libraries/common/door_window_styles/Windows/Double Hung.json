@@ -1,0 +1,8 @@
+{
+  "label": "Double Hung",
+  "category": "Windows",
+  "sort": 10,
+  "options": {
+    "window_type": "HUNG"
+  }
+}

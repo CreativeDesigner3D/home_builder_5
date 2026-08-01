@@ -1,0 +1,9 @@
+{
+  "label": "Half Lite",
+  "category": "Entry Doors",
+  "sort": 55,
+  "options": {
+    "door_style": "LITE_HALF",
+    "panel_raise": false
+  }
+}
