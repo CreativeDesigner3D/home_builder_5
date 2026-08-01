@@ -2666,15 +2666,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 elif near_r and gap_end >= wall_len - 1e-6:
                     cs_end = 'RIGHT'
                 if cs_end is not None:
+                    scene_props = context.scene.hb_face_frame
                     if self._fill_mode:
                         self._fill_mode_before_corner_sink = True
-                        scene_props = context.scene.hb_face_frame
                         self._apply_width(scene_props.default_cabinet_width,
                                           fill_mode=False)
                     self._corner_sink_snap = cs_end
                     cs_depth = self._preview_cage.get_input('Dim Y')
                     (csx, csy), cs_rot, _ra, _rb = _corner_sink_layout(
-                        wall_len, self._cabinet_width, cs_depth, 0.0, cs_end)
+                        wall_len, self._cabinet_width, cs_depth,
+                        _corner_sink_pull_out(scene_props, cs_depth),
+                        cs_end)
                     cage_obj.location.x = csx
                     cage_obj.location.y = csy
                     cage_obj.rotation_euler = (0.0, 0.0, cs_rot)
@@ -6174,6 +6176,17 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
 # closing the recess from each front corner back to its wall. The voids
 # behind the angled back are left open - that is the product.
 # ---------------------------------------------------------------------------
+def _corner_sink_pull_out(scene_props, depth):
+    """Pull-out along the corner bisector that lands each front corner
+    of the 45-degree sink exactly base_cabinet_depth off its wall, so
+    a standard-depth neighbor's face frame meets the angled front at
+    the corner. Clamped at 0 for cabinets deep enough to reach that
+    plane from the walls on their own.
+    """
+    return max(0.0,
+               math.sqrt(2.0) * scene_props.base_cabinet_depth - depth)
+
+
 def _corner_sink_layout(wall_len, width, depth, pull_out, wall_end):
     """Pure layout math for the 45-degree corner sink placement, in
     wall-local XY (wall runs +X, interior at -Y, corner at x=0 for
@@ -6223,12 +6236,14 @@ def _commit_corner_sink(context, cab_obj, wall, wall_end):
     except Exception:
         return
     cab_props = cab_obj.face_frame_cabinet
+    pull_out = _corner_sink_pull_out(context.scene.hb_face_frame,
+                                     cab_props.depth)
     (ox, oy), rot, _ret_a, _ret_b = _corner_sink_layout(
-        wall_len, cab_props.width, cab_props.depth, 0.0, wall_end)
+        wall_len, cab_props.width, cab_props.depth, pull_out, wall_end)
     cab_obj.location = (ox, oy, 0.0)
     cab_obj.rotation_euler = (0.0, 0.0, rot)
     cab_obj['HB_CORNER_SINK_45'] = True
-    cab_obj['HB_CS_PULL_OUT'] = 0.0
+    cab_obj['HB_CS_PULL_OUT'] = pull_out
     cab_obj['HB_CS_WALL_END'] = wall_end
 
 
