@@ -1814,6 +1814,31 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=3,
                                min=0, max=20)  # type: ignore
+    # A shelf on clips is cut narrower than the opening so it drops
+    # in, and can be held back from the front edge. Both figures come
+    # from the room until this opening takes one over.
+    unlock_clip_gap: bpy.props.BoolProperty(
+        name="Clip Gap",
+        description="Set this opening's shelf clip gap here instead "
+                    "of following the room",
+        default=False)  # type: ignore
+    clip_gap: bpy.props.FloatProperty(
+        name="Clip Gap",
+        description="How much narrower than the opening each shelf is "
+                    "cut, per side, so it drops onto its clips",
+        default=const.SHELF_CLIP_GAP, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    unlock_setback: bpy.props.BoolProperty(
+        name="Setback",
+        description="Set this opening's shelf setback here instead of "
+                    "following the room",
+        default=False)  # type: ignore
+    setback: bpy.props.FloatProperty(
+        name="Setback",
+        description="How far back from the front edge of the opening "
+                    "each shelf stops",
+        default=const.SHELF_SETBACK, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1825,13 +1850,39 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         # an existing user setting if the opening already has shelves.
         existing = int(opening.hb_closet_opening.adj_shelf_qty)
         self.qty = existing or types_closets.default_adj_shelf_qty(opening)
+        op = opening.hb_closet_opening
+        room = context.scene.hb_closets
+        # A figure the opening has not taken over reads back as the
+        # room's, so there is something to see before unlocking it.
+        self.unlock_clip_gap = bool(op.unlock_shelf_clip_gap)
+        self.clip_gap = float(
+            op.shelf_clip_gap if op.unlock_shelf_clip_gap
+            else room.shelf_clip_gap)
+        self.unlock_setback = bool(op.unlock_shelf_setback)
+        self.setback = float(
+            op.shelf_setback if op.unlock_shelf_setback
+            else room.shelf_setback)
         return context.window_manager.invoke_props_dialog(self, width=250)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'qty')
+        col = self.layout.column(align=True)
+        _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
+                      text="Clip Gap")
+        _locked_field(col, self, 'setback', 'unlock_setback',
+                      text="Setback")
 
     def execute(self, context):
         opening = types_closets.find_opening_cage(context.active_object)
         if opening is None:
             return {'CANCELLED'}
-        opening.hb_closet_opening.adj_shelf_qty = self.qty
+        op = opening.hb_closet_opening
+        op.adj_shelf_qty = self.qty
+        op.unlock_shelf_clip_gap = self.unlock_clip_gap
+        op.shelf_clip_gap = self.clip_gap
+        op.unlock_shelf_setback = self.unlock_setback
+        op.shelf_setback = self.setback
         root = types_closets.find_starter_root(opening)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -3588,6 +3639,30 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="How many adjustable shelves to space through the "
                     "opening",
         default=3, min=0, max=20)  # type: ignore
+    # How the shelves here are cut. Both are the room's until this
+    # opening takes one over.
+    unlock_clip_gap: bpy.props.BoolProperty(
+        name="Clip Gap",
+        description="Set this opening's shelf clip gap here instead "
+                    "of following the room",
+        default=False)  # type: ignore
+    clip_gap: bpy.props.FloatProperty(
+        name="Clip Gap",
+        description="How much narrower than the opening each shelf is "
+                    "cut, per side, so it drops onto its clips",
+        default=const.SHELF_CLIP_GAP, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    unlock_setback: bpy.props.BoolProperty(
+        name="Setback",
+        description="Set this opening's shelf setback here instead of "
+                    "following the room",
+        default=False)  # type: ignore
+    setback: bpy.props.FloatProperty(
+        name="Setback",
+        description="How far back from the front edge of the opening "
+                    "each shelf stops",
+        default=const.SHELF_SETBACK, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     drawer_qty: bpy.props.IntProperty(
         name="Drawer Quantity",
@@ -3817,6 +3892,15 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.fill = _opening_fill(opening)
         self.shelf_qty = (int(op.adj_shelf_qty)
                           or types_closets.default_adj_shelf_qty(opening))
+        _room = context.scene.hb_closets
+        self.unlock_clip_gap = bool(op.unlock_shelf_clip_gap)
+        self.clip_gap = float(
+            op.shelf_clip_gap if op.unlock_shelf_clip_gap
+            else _room.shelf_clip_gap)
+        self.unlock_setback = bool(op.unlock_shelf_setback)
+        self.setback = float(
+            op.shelf_setback if op.unlock_shelf_setback
+            else _room.shelf_setback)
         self.drawer_qty = int(op.drawer_qty) or 3
         self.drawer_front_height = float(op.drawer_front_height)
         self.drawer_box = op.drawer_box_override or 'DEFAULT'
@@ -3890,6 +3974,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         col = box.column(align=True)
         if self.fill == 'ADJ_SHELVES':
             col.prop(self, 'shelf_qty')
+            _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
+                          text="Clip Gap")
+            _locked_field(col, self, 'setback', 'unlock_setback',
+                          text="Setback")
         elif self.fill == 'DRAWERS':
             col.prop(self, 'drawer_qty')
             col.prop(self, 'drawer_front_height')
@@ -3906,6 +3994,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'slant_spacing')
             col.prop(self, 'slant_angle')
             col.prop(self, 'slant_color')
+            # These sit on clips as well, so the gap reaches them.
+            # Their setback is the fence's, so it is not offered.
+            _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
+                          text="Clip Gap")
 
         box = layout.box()
         box.label(text="Front", icon='MOD_SOLIDIFY')
@@ -4028,6 +4120,15 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.cubby_cols if self.fill == 'CUBBIES' else 1)
         opening.hb_closet_opening.cubby_rows = (
             self.cubby_rows if self.fill == 'CUBBIES' else 1)
+
+        # How a shelf is cut says nothing about what is in the
+        # opening, so it is written whichever interior was picked.
+        opening.hb_closet_opening.unlock_shelf_clip_gap = \
+            self.unlock_clip_gap
+        opening.hb_closet_opening.shelf_clip_gap = self.clip_gap
+        opening.hb_closet_opening.unlock_shelf_setback = \
+            self.unlock_setback
+        opening.hb_closet_opening.shelf_setback = self.setback
 
         if self.fill == 'CUBBIES':
             opening.hb_closet_opening.cubby_setback = self.cubby_setback

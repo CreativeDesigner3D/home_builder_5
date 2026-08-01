@@ -800,6 +800,34 @@ class Closet_Opening_Props(PropertyGroup):
         description="How many adjustable shelves to space through the "
                     "opening",
         default=0, min=0, max=20)  # type: ignore
+    # How the shelves in this opening are cut. Both figures are the
+    # room's until this opening takes one over, which is what the
+    # unlock flags say. They describe how a shelf is made rather than
+    # what is in the opening, so like the overlays they are
+    # deliberately not contents: stripping an opening empties it
+    # without losing the way its shelves were cut.
+    unlock_shelf_clip_gap: BoolProperty(
+        name="Clip Gap",
+        description="Set this opening's shelf clip gap here instead "
+                    "of following the room",
+        default=False)  # type: ignore
+    shelf_clip_gap: FloatProperty(
+        name="Clip Gap",
+        description="How much narrower than the opening each shelf is "
+                    "cut, per side, so it drops onto its clips",
+        default=const.SHELF_CLIP_GAP,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    unlock_shelf_setback: BoolProperty(
+        name="Setback",
+        description="Set this opening's shelf setback here instead of "
+                    "following the room",
+        default=False)  # type: ignore
+    shelf_setback: FloatProperty(
+        name="Setback",
+        description="How far back from the front edge of the opening "
+                    "each shelf stops",
+        default=const.SHELF_SETBACK,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Drawers -----
     drawer_qty: IntProperty(
@@ -1103,6 +1131,14 @@ class Closets_Scene_Props(PropertyGroup):
     shelf_thickness: FloatProperty(
         name="Shelf Thickness", default=const.SHELF_THICKNESS,
         unit='LENGTH', precision=4)  # type: ignore
+    # The room's standard for how a shelf on clips is cut. An opening
+    # can take either figure over for itself.
+    shelf_clip_gap: FloatProperty(
+        name="Shelf Clip Gap", default=const.SHELF_CLIP_GAP,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    shelf_setback: FloatProperty(
+        name="Shelf Setback", default=const.SHELF_SETBACK,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
     countertop_thickness: FloatProperty(
         name="Countertop Thickness", default=const.COUNTERTOP_THICKNESS,
         unit='LENGTH', precision=4)  # type: ignore
@@ -1305,6 +1341,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Closet Starters", default=True)  # type: ignore
     show_thickness_sizes: BoolProperty(
         name="Show Part Thicknesses", default=False)  # type: ignore
+    show_shelf_sizes: BoolProperty(
+        name="Show Shelf Sizes", default=False)  # type: ignore
     show_toe_kick_sizes: BoolProperty(
         name="Show Toe Kick Sizes", default=False)  # type: ignore
 
@@ -1380,6 +1418,15 @@ class Closets_Scene_Props(PropertyGroup):
             sub = box.column(align=True)
             sub.prop(self, 'panel_thickness', text="Panel")
             sub.prop(self, 'shelf_thickness', text="Shelf")
+
+        box = layout.box()
+        box.prop(self, 'show_shelf_sizes', text="Adjustable Shelves",
+                 icon='TRIA_DOWN' if self.show_shelf_sizes
+                 else 'TRIA_RIGHT', emboss=False)
+        if self.show_shelf_sizes:
+            sub = box.column(align=True)
+            sub.prop(self, 'shelf_clip_gap', text="Clip Gap")
+            sub.prop(self, 'shelf_setback', text="Setback")
 
         box = layout.box()
         box.prop(self, 'show_toe_kick_sizes', text="Toe Kick",

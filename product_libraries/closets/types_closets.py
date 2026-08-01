@@ -1292,17 +1292,32 @@ class ClosetStarter(GeoNodeCage):
             elif role is not None:
                 groups.setdefault(role, []).append(child)
 
+        # A shelf that rests on clips is cut narrower than the opening
+        # so it can drop in, and it can be held back from the front
+        # edge. Both figures are the room's unless this opening has
+        # taken one over. Worked out once for the opening rather than
+        # per shelf: every shelf in an opening is cut the same.
+        _shp = opening.hb_closet_opening
+        clip = max(0.0, float(
+            _shp.shelf_clip_gap if _shp.unlock_shelf_clip_gap
+            else scene_props.shelf_clip_gap))
+        shelf_w = max(width - clip * 2.0, inch(1.0))
+        adj_setback = max(0.0, float(
+            _shp.shelf_setback if _shp.unlock_shelf_setback
+            else scene_props.shelf_setback))
+
         # ----- Adjustable shelves: even spacing bottom-up -----
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
         if adj:
             adj.sort(key=lambda o: o.get('hb_adj_index', 0))
             spacing = interior_h / (len(adj) + 1)
+            adj_depth = max(depth - adj_setback, inch(1.0))
             for i, child in enumerate(adj):
                 z = max(0.0, min(spacing * (i + 1), interior_h - st))
-                child.location = (0.0, 0.0, z)
+                child.location = (clip, 0.0, z)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', width)
-                part.set_input('Width', depth)
+                part.set_input('Length', shelf_w)
+                part.set_input('Width', adj_depth)
                 part.set_input('Thickness', st)
 
         # ----- Slanted shoe shelves (tilted, front metal fence) -----
@@ -1329,10 +1344,13 @@ class ClosetStarter(GeoNodeCage):
                 opening.hb_closet_opening.slant_color)
             for i, child in enumerate(slants):
                 z = spacing * i + rise
-                child.location = (0.0, 0.0, z)
+                # These rest on clips too, so they take the opening's
+                # clip gap. Their setback is the fence's, not the
+                # room's, which is why it is worked out above.
+                child.location = (clip, 0.0, z)
                 child.rotation_euler = (angle, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', width)
+                part.set_input('Length', shelf_w)
                 part.set_input('Width', shelf_depth)
                 part.set_input('Thickness', st)
                 fence = next(
@@ -1343,8 +1361,10 @@ class ClosetStarter(GeoNodeCage):
                     fence.location = (const.SHOE_FENCE_INSET,
                                       y_front + const.SHOE_FENCE_DEPTH, st)
                     fpart = GeoNodeCutpart(fence)
-                    fpart.set_input('Length',
-                                    width - 2 * const.SHOE_FENCE_INSET)
+                    fpart.set_input(
+                        'Length',
+                        max(shelf_w - 2 * const.SHOE_FENCE_INSET,
+                            inch(1.0)))
                     fpart.set_input('Width', const.SHOE_FENCE_DEPTH)
                     fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
                     if fence_mat is not None:
@@ -3368,6 +3388,13 @@ def serialize_opening(opening):
         # original did.
         'grain': [int(opening.hb_closet_opening.unlock_grain),
                   opening.hb_closet_opening.grain_direction],
+        # How the shelves here are cut, so a copy drops into its
+        # clips the way the original did.
+        'shelf_gaps': [
+            int(opening.hb_closet_opening.unlock_shelf_clip_gap),
+            float(opening.hb_closet_opening.shelf_clip_gap),
+            int(opening.hb_closet_opening.unlock_shelf_setback),
+            float(opening.hb_closet_opening.shelf_setback)],
         # How this opening hardwares its fronts, so a copy is pulled
         # the way the original was.
         'pulls': [
@@ -3426,6 +3453,13 @@ def apply_opening_data(opening, data, recalc=True):
     if grain:
         opening.hb_closet_opening.unlock_grain = bool(grain[0])
         opening.hb_closet_opening.grain_direction = grain[1]
+    gaps = data.get('shelf_gaps')
+    if gaps:
+        _gp = opening.hb_closet_opening
+        _gp.unlock_shelf_clip_gap = bool(gaps[0])
+        _gp.shelf_clip_gap = gaps[1]
+        _gp.unlock_shelf_setback = bool(gaps[2])
+        _gp.shelf_setback = gaps[3]
     pulls = data.get('pulls')
     if pulls:
         _op = opening.hb_closet_opening

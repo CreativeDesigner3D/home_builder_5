@@ -295,6 +295,12 @@ L_CORNER_RADIUS_SEGMENTS = 15
 # rod is added from the menu (modal placement types an exact height).
 ROD_TOP_OFFSET = inch(2.145)
 ADJ_SHELF_DEFAULT_QTY = 3
+# A shelf that sits on clips is cut a touch narrower than the opening
+# so it drops in, and it can be held back from the front edge. The
+# prior library carried both figures at zero, which is a shelf filling
+# the opening; a job that wants a drop-in clearance sets them.
+SHELF_CLIP_GAP = inch(0.0)
+SHELF_SETBACK = inch(0.0)
 # Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
 # opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side
 # clearance for the slides is ROLLOUT_SLIDE_GAP per side.
