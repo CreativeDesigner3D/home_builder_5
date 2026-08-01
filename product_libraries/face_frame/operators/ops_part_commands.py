@@ -1907,8 +1907,76 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
                             text="Side Return")
                 layout.prop(cab, f'{key}_side_return_stile_type',
                             text="Return Stile")
+        # Symmetric finished ends are common (both ends of an island /
+        # run get the same extend-back + return build), so offer a
+        # one-click copy to the opposite side. Runs immediately; the
+        # dialog stays open.
+        other = 'RIGHT' if self.side == 'LEFT' else 'LEFT'
+        layout.separator()
+        props = layout.operator(
+            'hb_face_frame.apply_finished_end_to_other_side',
+            text=f"Apply to {other.title()} Side", icon='DUPLICATE')
+        props.cabinet_name = root.name
+        props.side = self.side
 
     def execute(self, context):
+        return {'FINISHED'}
+
+
+# Everything the Set Finished End Condition dialog can edit for a side,
+# minus the side prefix. Copied verbatim by Apply to Other Side.
+_FIN_END_SIDE_PROPS = (
+    'finished_end_condition',
+    'flush_x_amount',
+    'side_finished_extend_back',
+    'side_return_width',
+    'side_return_panel_type',
+    'side_return_stile_type',
+)
+
+
+class hb_face_frame_OT_apply_finished_end_to_other_side(bpy.types.Operator):
+    """Copy one side's finished-end settings to the opposite side.
+
+    Drawn as a button inside the Set Finished End Condition dialog.
+    Copies every field that dialog can edit (see _FIN_END_SIDE_PROPS)
+    from the clicked side to the other, so a symmetric extend-back /
+    return-panel build only has to be entered once. Writing the enum
+    fires its user-set callback, which flips the target side's
+    finish-end auto flag off - the copy is pinned exactly like a manual
+    edit would be.
+    """
+    bl_idname = "hb_face_frame.apply_finished_end_to_other_side"
+    bl_label = "Apply to Other Side"
+    bl_description = (
+        "Copy this side's finished-end settings (type, flush amount, "
+        "extend back, return width and return member types) to the "
+        "opposite side"
+    )
+    bl_options = {'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(name="Cabinet", default="")  # type: ignore
+    side: bpy.props.EnumProperty(
+        name="Source Side",
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='LEFT',
+    )  # type: ignore
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.cabinet_name)
+        root = types_face_frame.find_cabinet_root(obj) if obj else None
+        if root is None:
+            self.report({'WARNING'}, "No face frame cabinet found")
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        src = self.side.lower()
+        dst = 'right' if src == 'left' else 'left'
+        with types_face_frame.suspend_recalc():
+            for prop in _FIN_END_SIDE_PROPS:
+                setattr(cab, f'{dst}_{prop}', getattr(cab, f'{src}_{prop}'))
+        self.report(
+            {'INFO'},
+            f"Copied {src} finished end settings to {dst} side")
         return {'FINISHED'}
 
 
@@ -2426,6 +2494,7 @@ classes = (
     hb_face_frame_OT_apply_finished_bottom_to_room,
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_finished_end_condition,
+    hb_face_frame_OT_apply_finished_end_to_other_side,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,
