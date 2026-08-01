@@ -1145,6 +1145,39 @@ class Closet_Opening_Props(PropertyGroup):
         items=materials_closets.GRAIN_ITEMS,
         default='VERTICAL')  # type: ignore
 
+    # ----- Captured back -----
+    # A back that closes this opening on its own, held between the
+    # panels and shelves around it. Independent of the interior: an
+    # opening can be backed whatever is standing in front of it.
+    add_back: BoolProperty(
+        name="Add Back",
+        description="Close this opening with a back held between the "
+                    "panels and shelves around it",
+        default=False)  # type: ignore
+    back_inset: FloatProperty(
+        name="Inset",
+        description="How far forward of the back of the opening the "
+                    "back sits",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    back_notch_left: BoolProperty(
+        name="Left",
+        description="Relieve the top left corner of the back",
+        default=False)  # type: ignore
+    back_notch_right: BoolProperty(
+        name="Right",
+        description="Relieve the top right corner of the back",
+        default=False)  # type: ignore
+    back_notch_width: FloatProperty(
+        name="Notch Width",
+        description="How far in from the side each corner relief cuts",
+        default=const.CAPTURED_BACK_NOTCH_WIDTH, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    back_notch_height: FloatProperty(
+        name="Notch Height",
+        description="How far down from the top each corner relief cuts",
+        default=const.CAPTURED_BACK_NOTCH_HEIGHT, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+
     # Every field on this group is contents, so stripping an opening
     # clears the lot. Kept as an explicit list so a field added later has
     # to be considered rather than silently surviving a clear.
@@ -1157,6 +1190,9 @@ class Closet_Opening_Props(PropertyGroup):
         'door_swing', 'is_hamper',
         'rod_set_from_front', 'rod_from_front', 'rod_from_rear',
         'rod_width_deduction', 'remove_hangers',
+        'add_back', 'back_inset',
+        'back_notch_left', 'back_notch_right',
+        'back_notch_width', 'back_notch_height',
     )
 
     def clear_contents(self):

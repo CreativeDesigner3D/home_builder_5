@@ -76,6 +76,9 @@ PART_ROLE_SLANTED_SHELF = 'CLOSET_SLANTED_SHELF'
 PART_ROLE_SHOE_FENCE = 'CLOSET_SHOE_FENCE'
 # Double-sided island structure.
 PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
+# A back held in one opening, captured between the panels and shelves
+# around it, rather than applied across the outside of the bay.
+PART_ROLE_CAPTURED_BACK = 'CLOSET_CAPTURED_BACK'
 # Corner-clearance bridge parts (starter-root children, lazily created
 # by _layout_bridge_parts). Driven by starter-root idprops so the types
 # module stays hot-reloadable:
@@ -1227,6 +1230,7 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_doors(opening, side)
         self._reconcile_drawers(opening, side)
         self._reconcile_rollouts(opening)
+        self._reconcile_captured_back(opening)
         self._reconcile_cubbies(opening)
 
         sp = self.obj.hb_closet_starter
@@ -1306,6 +1310,49 @@ class ClosetStarter(GeoNodeCage):
         adj_setback = max(0.0, float(
             _shp.shelf_setback if _shp.unlock_shelf_setback
             else scene_props.shelf_setback))
+
+        # ----- Captured back: held in the opening, not applied -----
+        # It stands against the structural rear of the opening and the
+        # inset holds it forward of that. On a double island's back side
+        # the rear is the far end of the opening rather than y=0, so the
+        # part is placed there and extrudes the other way (Mirror Z).
+        cap_back = groups.get(PART_ROLE_CAPTURED_BACK, [])
+        if cap_back:
+            child = cap_back[0]
+            b_inset = max(0.0, min(float(_shp.back_inset),
+                                   max(depth - st, 0.0)))
+            child.location = (
+                0.0,
+                -(depth - b_inset) if side == 'BACK' else -b_inset,
+                0.0)
+            part = GeoNodeCutpart(child)
+            part.set_input('Mirror Z', side == 'BACK')
+            part.set_input('Length', width)
+            part.set_input('Width', interior_h)
+            part.set_input('Thickness', st)
+            # Corner reliefs. On the part X runs in from the side and Y
+            # down from the top edge. Flip Y True picks the top edge and
+            # Flip X picks the right-hand side: the cut lands on the
+            # corner at the part origin with both False (probed on the
+            # L shelf, which is cut the same way).
+            n_w = max(min(float(_shp.back_notch_width), width), 0.001)
+            n_h = max(min(float(_shp.back_notch_height), interior_h),
+                      0.001)
+            for mod_name, flip_x, cuts in (
+                    ('Notch Left', False, _shp.back_notch_left),
+                    ('Notch Right', True, _shp.back_notch_right)):
+                mod = child.modifiers.get(mod_name)
+                if mod is None:
+                    continue
+                cpm = CabinetPartModifier(child)
+                cpm.mod = mod
+                cpm.set_input('X', n_w)
+                cpm.set_input('Y', n_h)
+                cpm.set_input('Route Depth', st + 0.001)
+                cpm.set_input('Flip X', flip_x)
+                cpm.set_input('Flip Y', True)
+                mod.show_viewport = bool(cuts)
+                mod.show_render = bool(cuts)
 
         # ----- Adjustable shelves: even spacing bottom-up -----
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
@@ -1957,6 +2004,39 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_rollout'] = 1
             box.obj['hb_rollout_index'] = len(boxes)
             boxes.append(box.obj)
+
+    def _reconcile_captured_back(self, opening):
+        """One captured back per opening, carrying a corner relief at
+        each top corner. The reliefs are always on the part and always
+        sized; whether either one cuts is a setting, so toggling one
+        costs a modifier switch rather than a rebuild."""
+        want = bool(opening.hb_closet_opening.add_back)
+        back = None
+        for c in list(opening.children):
+            if c.get('hb_part_role') != PART_ROLE_CAPTURED_BACK:
+                continue
+            if want and back is None:
+                back = c
+            else:
+                _remove_part_tree(c)
+        if want and back is None:
+            part = CabinetPart()
+            part.create('Captured Back')
+            part.obj.parent = opening
+            part.obj['hb_part_role'] = PART_ROLE_CAPTURED_BACK
+            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            part.obj.rotation_euler.x = math.radians(90)
+            part.add_part_modifier('CPM_CORNERNOTCH', 'Notch Left')
+            part.add_part_modifier('CPM_CORNERNOTCH', 'Notch Right')
+            back = part.obj
+        # Older files: a back built before the reliefs landed is missing
+        # them, so they are put on as we go past.
+        if back is not None:
+            for name in ('Notch Left', 'Notch Right'):
+                if back.modifiers.get(name) is None:
+                    GeoNodeCutpart(back).add_part_modifier(
+                        'CPM_CORNERNOTCH', name)
+        return back
 
     def _reconcile_cubbies(self, opening):
         cols = max(1, int(opening.hb_closet_opening.cubby_cols))
@@ -3455,6 +3535,14 @@ def serialize_opening(opening):
             float(opening.hb_closet_opening.drawer_pull_vertical_location),
             int(opening.hb_closet_opening.double_pull_on_front),
             float(opening.hb_closet_opening.distance_between_pulls)],
+        # Whether this opening is closed at the back, and how, so a
+        # copy is backed the way the original was.
+        'back': [int(opening.hb_closet_opening.add_back),
+                 float(opening.hb_closet_opening.back_inset),
+                 int(opening.hb_closet_opening.back_notch_left),
+                 int(opening.hb_closet_opening.back_notch_right),
+                 float(opening.hb_closet_opening.back_notch_width),
+                 float(opening.hb_closet_opening.back_notch_height)],
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
@@ -3536,6 +3624,15 @@ def apply_opening_data(opening, data, recalc=True):
         op.rod_width_deduction = data.get('rod_deduct',
                                           const.ROD_WIDTH_DEDUCTION)
         op.remove_hangers = bool(data.get('remove_hangers', 0))
+    back = data.get('back')
+    if back and back[0]:
+        _bk = opening.hb_closet_opening
+        _bk.add_back = True
+        _bk.back_inset = float(back[1])
+        _bk.back_notch_left = bool(back[2])
+        _bk.back_notch_right = bool(back[3])
+        _bk.back_notch_width = float(back[4])
+        _bk.back_notch_height = float(back[5])
     for z in data.get('rods', ()):
         add_rod(opening, z)
     if recalc and root is not None:

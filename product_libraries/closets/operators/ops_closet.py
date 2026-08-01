@@ -3797,6 +3797,35 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "opening",
         default=False)  # type: ignore
 
+    add_back: bpy.props.BoolProperty(
+        name="Add Back",
+        description="Close this opening with a back held between the "
+                    "panels and shelves around it",
+        default=False)  # type: ignore
+    back_inset: bpy.props.FloatProperty(
+        name="Inset",
+        description="How far forward of the back of the opening the "
+                    "back sits",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    back_notch_left: bpy.props.BoolProperty(
+        name="Left",
+        description="Relieve the top left corner of the back",
+        default=False)  # type: ignore
+    back_notch_right: bpy.props.BoolProperty(
+        name="Right",
+        description="Relieve the top right corner of the back",
+        default=False)  # type: ignore
+    back_notch_width: bpy.props.FloatProperty(
+        name="Notch Width",
+        description="How far in from the side each corner relief cuts",
+        default=const.CAPTURED_BACK_NOTCH_WIDTH, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    back_notch_height: bpy.props.FloatProperty(
+        name="Notch Height",
+        description="How far down from the top each corner relief cuts",
+        default=const.CAPTURED_BACK_NOTCH_HEIGHT, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+
     # Per-side overrides of what the run works out. Unlocking a side
     # lets this opening's front reach further over, or hold further back
     # from, whatever it meets there - the opening against a finished
@@ -3948,6 +3977,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.rod_from_rear = float(op.rod_from_rear)
         self.rod_width_deduction = float(op.rod_width_deduction)
         self.remove_hangers = bool(op.remove_hangers)
+        self.add_back = bool(op.add_back)
+        self.back_inset = float(op.back_inset)
+        self.back_notch_left = bool(op.back_notch_left)
+        self.back_notch_right = bool(op.back_notch_right)
+        self.back_notch_width = float(op.back_notch_width)
+        self.back_notch_height = float(op.back_notch_height)
         rod = _single_top_rod(opening)
         self.rod_top_offset = float(
             rod.get('hb_z_offset', const.ROD_TOP_OFFSET)
@@ -4104,6 +4139,25 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub.enabled = self.double_pull_on_front
         sub.prop(self, 'distance_between_pulls', text="")
 
+        # A back closes the opening whatever is standing in front of
+        # it, so it gets its own section rather than being one of the
+        # interiors to choose between.
+        box = layout.box()
+        box.label(text="Back", icon='MESH_PLANE')
+        col = box.column(align=True)
+        col.prop(self, 'add_back')
+        sub = col.column(align=True)
+        sub.enabled = self.add_back
+        sub.prop(self, 'back_inset')
+        row = sub.row(align=True)
+        row.label(text="Notch")
+        row.prop(self, 'back_notch_left', toggle=True)
+        row.prop(self, 'back_notch_right', toggle=True)
+        sizes = sub.column(align=True)
+        sizes.enabled = self.back_notch_left or self.back_notch_right
+        sizes.prop(self, 'back_notch_width')
+        sizes.prop(self, 'back_notch_height')
+
         # Only worth showing once something is hanging in here. The rod
         # itself is added from the opening's menu or by the bay's
         # configuration; this is where it is dimensioned afterwards.
@@ -4192,6 +4246,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         _op.distance_between_pulls = self.distance_between_pulls
         _op.unlock_grain = self.unlock_grain
         _op.grain_direction = self.grain_direction
+        _op.add_back = self.add_back
+        _op.back_inset = self.back_inset
+        _op.back_notch_left = self.back_notch_left
+        _op.back_notch_right = self.back_notch_right
+        _op.back_notch_width = self.back_notch_width
+        _op.back_notch_height = self.back_notch_height
 
         if _opening_rods(opening):
             op = opening.hb_closet_opening

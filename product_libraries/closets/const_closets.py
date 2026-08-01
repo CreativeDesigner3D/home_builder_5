@@ -17,6 +17,13 @@ APPLIED_BACK_THICKNESS = inch(0.75)
 # How far an applied back laps onto the panels and shelves around the
 # bay it closes.
 APPLIED_BACK_OVERLAY = inch(0.3125)
+# A captured back is held inside one opening, between the panels and
+# shelves around it, instead of being applied across the outside of the
+# bay. It is cut from the run's shelf thickness, so it has no thickness
+# of its own. Both corner reliefs are optional and sized the way the
+# prior library sized them: 3" down the side, 1-1/2" in from it.
+CAPTURED_BACK_NOTCH_WIDTH = inch(1.5)
+CAPTURED_BACK_NOTCH_HEIGHT = inch(3.0)
 CLEAT_WIDTH = inch(4.0)
 # End-panel batten: a cosmetic scribe strip against the
 # inner face of an end panel at the front edge.
