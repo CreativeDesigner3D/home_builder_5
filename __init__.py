@@ -16,6 +16,7 @@ from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
 from .operators import viewport_hud
+from .operators import room_dim_overlay
 from .operators import ops_general
 from .product_libraries import closets
 from .product_libraries import face_frame
@@ -273,6 +274,7 @@ def register():
     ops_stairs.register()
     scene_navigator.register()
     viewport_hud.register()
+    room_dim_overlay.register()
     ops_general.register()
     ops.register()
     view3d_sidebar.register()
@@ -312,6 +314,7 @@ def unregister():
     export.unregister()
     scene_navigator.unregister()
     viewport_hud.unregister()
+    room_dim_overlay.unregister()
     ops_stairs.unregister()
     ops_general.unregister()
     ops.unregister()

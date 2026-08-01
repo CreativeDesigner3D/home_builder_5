@@ -1195,6 +1195,11 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
     threshold_height: bpy.props.FloatProperty(name="Threshold Height", unit='LENGTH', precision=5)  # type: ignore
     include_knob: bpy.props.BoolProperty(name="Knob")  # type: ignore
+    open_angle: bpy.props.FloatProperty(
+        name="Open Angle", min=0.0, max=135.0, subtype='FACTOR',
+        description="Swing the door leaf open by this many degrees "
+                    "(0 = closed); direction follows the swing and "
+                    "hand")  # type: ignore
     sidelite_left: bpy.props.FloatProperty(name="Left Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
     sidelite_right: bpy.props.FloatProperty(name="Right Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
     transom_height: bpy.props.FloatProperty(name="Transom Height", unit='LENGTH', precision=5, min=0)  # type: ignore
@@ -1273,6 +1278,9 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
                 and self.door_style != 'FLUSH':
             row = box.row()
             row.prop(self, 'panel_raise')
+        row = box.row()
+        row.label(text="Open Angle:")
+        row.prop(self, 'open_angle', text="")
 
         box = layout.box()
         box.label(text="Construction")

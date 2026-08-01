@@ -29,6 +29,7 @@ import os
 import zipfile
 
 import bpy
+from mathutils import Euler, Matrix, Vector
 
 from ... import hb_types
 from ...units import inch
@@ -97,6 +98,7 @@ DOOR_DEFAULTS = {
     'casing_thickness': inch(0.75),
     'threshold_height': inch(0.75),
     'include_knob': True,
+    'open_angle': 0.0,
     'sidelite_left': 0.0,
     'sidelite_right': 0.0,
     'transom_height': 0.0,
@@ -423,20 +425,21 @@ def _box(verts, faces, slots, x0, x1, y0, y1, z0, z1, slot=0):
     slots.extend([slot] * 6)
 
 
-def _cylinder_y(verts, faces, slots, cx, cz, y0, y1, radius, slot=0,
+def _cylinder_z(verts, faces, slots, cx, cy, z0, z1, radius, slot=0,
                 segs=16):
-    """Closed cylinder along the Y axis (door knobs)."""
-    if y1 - y0 <= 1e-9 or radius <= 1e-9:
+    """Closed cylinder along the Z axis (door knobs, authored in the
+    door mesh's local space so they ride the slab's transform)."""
+    if z1 - z0 <= 1e-9 or radius <= 1e-9:
         return
     b = len(verts)
-    for y in (y0, y1):
+    for z in (z0, z1):
         for i in range(segs):
             a = 2.0 * math.pi * i / segs
-            verts.append((cx + radius * math.cos(a), y,
-                          cz + radius * math.sin(a)))
+            verts.append((cx + radius * math.cos(a),
+                          cy + radius * math.sin(a), z))
     for i in range(segs):
         j = (i + 1) % segs
-        faces.append((b + i, b + segs + i, b + segs + j, b + j))
+        faces.append((b + i, b + j, b + segs + j, b + segs + i))
         slots.append(slot)
     faces.append(tuple(b + i for i in reversed(range(segs))))
     slots.append(slot)
@@ -601,20 +604,45 @@ def _swing_child(cage_obj):
 
 
 def _swing_state(cage_obj):
-    """(is_double, hinge_left) read off the swing annotation; single /
-    hinge-left when there is none (open doorways)."""
+    """(is_double, hinge_left, swing_inside) read off the swing
+    annotation; single / hinge-left / inswing when there is none (open
+    doorways)."""
     child = _swing_child(cage_obj)
     if child is None:
-        return False, True
+        return False, True, True
     swing = hb_types.GeoNodeObject(child)
     try:
-        return bool(swing.get_input('Is Double')), \
-            bool(swing.get_input('Is Left'))
+        return (bool(swing.get_input('Is Double')),
+                bool(swing.get_input('Is Left')),
+                bool(swing.get_input('Swing Inside')))
     except Exception:
-        return False, True
+        return False, True, True
 
 
-def _build_slab(cage_obj, name, opts, width, height, x, y_front):
+def _slab_matrix(x, y_front, z, thickness, width, hinge, swing_inside,
+                 open_deg):
+    """Cage-local matrix for a door leaf: the standard door-mesh
+    reorientation, optionally rotated open about the hinge edge's
+    vertical axis. Interior is -Y; an inswing leaf rotates toward it."""
+    base = (Matrix.Translation((x, y_front + thickness, z))
+            @ Euler((0.0, math.radians(-90.0),
+                     math.radians(90.0))).to_matrix().to_4x4())
+    a = math.radians(min(max(open_deg, 0.0), 135.0))
+    if a <= 1e-4:
+        return base
+    hinge_x = x if hinge == 'L' else x + width
+    pivot_y = y_front if swing_inside else y_front + thickness
+    if swing_inside:
+        delta = -a if hinge == 'L' else a
+    else:
+        delta = a if hinge == 'L' else -a
+    pivot = Vector((hinge_x, pivot_y, 0.0))
+    return (Matrix.Translation(pivot) @ Matrix.Rotation(delta, 4, 'Z')
+            @ Matrix.Translation(-pivot) @ base)
+
+
+def _build_slab(cage_obj, name, opts, width, height, x, y_front,
+                hinge='L', swing_inside=True, open_deg=0.0):
     info, kwargs, glass = _slab_spec(opts)
     min_w, min_h = door_builder.layout_min_size(info)
     if width <= min_w or height <= min_h:
@@ -622,14 +650,29 @@ def _build_slab(cage_obj, name, opts, width, height, x, y_front):
         glass = 'NONE'
     door_mat = _door_material()
     panel_mat = _glass_material() if glass == 'ALL' else door_mat
+    st = max(opts['slab_thickness'], inch(0.75))
+    z0 = max(opts['threshold_height'], 0.0)
     obj = _door_mesh_child(
-        cage_obj, name, info, kwargs, width, height,
-        opts['slab_thickness'], (door_mat, door_mat, panel_mat),
-        x, y_front, max(opts['threshold_height'], 0.0))
+        cage_obj, name, info, kwargs, width, height, st,
+        (door_mat, door_mat, panel_mat), x, y_front, z0)
     if glass == 'TOP':
         frac = _LITE_FRACTION[opts['door_style']]
         mrw = max(opts['lock_rail_width'], inch(0.5))
         _glassify_above(obj, (1.0 - frac) * height + mrw / 2.0 - 0.001)
+    matrix = _slab_matrix(x, y_front, z0, st, width, hinge, swing_inside,
+                          open_deg)
+    obj.matrix_basis = matrix
+    # Knob on the latch edge, authored in the leaf's mesh space and
+    # carrying the leaf's matrix so it swings with the door.
+    if opts['include_knob']:
+        knob = _new_child(cage_obj, name + " Knob")
+        verts, faces, slots = [], [], []
+        latch_my = (-(width - inch(2.5)) if hinge == 'L' else -inch(2.5))
+        knob_mx = min(inch(36.0), height * 0.45)
+        _cylinder_z(verts, faces, slots, knob_mx, latch_my,
+                    -inch(2.25), st + inch(2.25), inch(1.0))
+        _finish_mesh(knob, verts, faces, slots, [_trim_material()])
+        knob.matrix_basis = matrix
     return obj
 
 
@@ -728,32 +771,21 @@ def build_door_geometry(cage_obj):
 
     slab_h = z_top - th_h
     slab_zone_w = door_x1 - door_x0
-    is_double, hinge_left = _swing_state(cage_obj)
-    slab_edges = []
+    is_double, hinge_left, swing_inside = _swing_state(cage_obj)
+    open_deg = max(float(opts['open_angle']), 0.0)
     if is_double and slab_zone_w > inch(24):
         half = slab_zone_w / 2.0
         _build_slab(cage_obj, "Door Slab Left", opts, half, slab_h,
-                    door_x0, y_center_front)
+                    door_x0, y_center_front, hinge='L',
+                    swing_inside=swing_inside, open_deg=open_deg)
         _build_slab(cage_obj, "Door Slab Right", opts, half, slab_h,
-                    door_x0 + half, y_center_front)
-        # Double doors latch at the middle astragal.
-        slab_edges = [door_x0 + half - inch(2.5),
-                      door_x0 + half + inch(2.5)]
+                    door_x0 + half, y_center_front, hinge='R',
+                    swing_inside=swing_inside, open_deg=open_deg)
     else:
         _build_slab(cage_obj, "Door Slab", opts, slab_zone_w, slab_h,
-                    door_x0, y_center_front)
-        slab_edges = [door_x1 - inch(2.5) if hinge_left
-                      else door_x0 + inch(2.5)]
-
-    if opts['include_knob']:
-        kz = th_h + min(inch(36.0), slab_h * 0.45)
-        for kx in slab_edges:
-            _cylinder_y(verts, faces, slots, kx, kz,
-                        y_center_front - inch(2.25), y_center_front,
-                        inch(1.0))
-            _cylinder_y(verts, faces, slots, kx, kz,
-                        y_center_front + st,
-                        y_center_front + st + inch(2.25), inch(1.0))
+                    door_x0, y_center_front,
+                    hinge='L' if hinge_left else 'R',
+                    swing_inside=swing_inside, open_deg=open_deg)
 
     frame = _new_child(cage_obj, "Door Frame")
     _finish_mesh(frame, verts, faces, slots, [trim_mat])
