@@ -8517,6 +8517,16 @@ class Face_Frame_Scene_Props(PropertyGroup):
         col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front', text="Center Drawer Pulls")
 
+        # Installed pull packs merge into the dropdowns above; the
+        # folder button is the manual route (drop category folders of
+        # .blend pulls straight in).
+        col.separator()
+        row = col.row(align=True)
+        row.operator('hb_face_frame.install_pull_library',
+                     text="Install Pull Library...", icon='IMPORT')
+        row.operator('hb_face_frame.open_pull_library_folder',
+                     text="", icon='FILE_FOLDER')
+
     # =====================================================================
     # UI: cabinet styles (Options tab, placeholder for Phase 4)
     # =====================================================================

@@ -240,6 +240,14 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         col.operator("home_builder.remove_asset_library", text="", icon='REMOVE')
         col.separator()
         col.operator("home_builder.refresh_asset_libraries", text="", icon='FILE_REFRESH')
+
+        box = layout.box()
+        box.label(text="Cabinet Pull Libraries", icon='TOOL_SETTINGS')
+        row = box.row(align=True)
+        row.operator("hb_face_frame.install_pull_library",
+                     text="Install Pull Library...", icon='IMPORT')
+        row.operator("hb_face_frame.open_pull_library_folder",
+                     text="", icon='FILE_FOLDER')
         layout.prop(self, "wall_color")
         layout.prop(self, "cabinet_color")
         layout.prop(self, "door_window_color")
