@@ -306,6 +306,21 @@ ROLLOUT_MIN_GAP = inch(1.0)
 # Cubbies: a grid of divisions and shelves filling an opening. Both are
 # held back from the front edge by the setback.
 CUBBY_SETBACK = inch(0.25)
+# A grid can take a band at the bottom or the top of an opening instead
+# of the whole of it, capped by a shelf, which leaves the rest of the
+# opening free for something else. This is how tall that band stands
+# when it is first built.
+CUBBY_HEIGHT = millimeter(556.95)
+CUBBY_PLACEMENT_ITEMS = [
+    ('BOTTOM', "Bottom",
+     "Cubbies in a band at the bottom of the opening, shelf over them"),
+    ('TOP', "Top",
+     "Cubbies in a band at the top of the opening, shelf under them"),
+    ('FILL', "Fill", "Cubbies filling the whole opening"),
+]
+# Smallest opening worth leaving behind a band. Asking for a band that
+# would not leave this much fills the opening instead.
+CUBBY_MIN_REMAINDER = inch(6.0)
 # Slanted shoe shelves: angled shelves stacked bottom-up, each with a
 # metal shoe fence across the front. Sizes ported from the prior library.
 SLANT_SHELF_DEFAULT_QTY = 4

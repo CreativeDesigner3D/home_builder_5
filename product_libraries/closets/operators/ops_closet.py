@@ -2422,13 +2422,31 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
 
 
 class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
-    """Set the cubby grid for the active opening (1x1 removes it)."""
+    """Set the cubby grid for the active opening (1x1 removes it). The
+    grid can take a band at the bottom or the top of the opening rather
+    than the whole of it, which leaves the rest of the opening free."""
     bl_idname = "hb_closets.add_cubbies"
     bl_label = "Cubbies"
     bl_options = {'UNDO'}
 
     cols: bpy.props.IntProperty(name="Columns", default=3, min=1, max=12)  # type: ignore
     rows: bpy.props.IntProperty(name="Rows", default=3, min=1, max=12)  # type: ignore
+    setback: bpy.props.FloatProperty(
+        name="Setback",
+        description="How far the cubby divisions and shelves sit back "
+                    "from the front edge of the opening",
+        default=const.CUBBY_SETBACK, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    placement: bpy.props.EnumProperty(
+        name="Placement",
+        description="Whether the grid takes a band of the opening or "
+                    "the whole of it",
+        items=const.CUBBY_PLACEMENT_ITEMS, default='BOTTOM')  # type: ignore
+    cubby_height: bpy.props.FloatProperty(
+        name="Cubby Height",
+        description="How tall the band of cubbies stands",
+        default=const.CUBBY_HEIGHT, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     def invoke(self, context, event):
         opening = _active_opening_for_insert(context)
@@ -2439,16 +2457,84 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
             if op.cubby_cols > 1 or op.cubby_rows > 1:
                 self.cols = int(op.cubby_cols)
                 self.rows = int(op.cubby_rows)
+                # An opening already holding a grid is full of it, so
+                # that is what reads back. Asking for a band from here
+                # moves the grid into the band.
+                self.placement = 'FILL'
             else:
                 self.cols = 3
                 self.rows = 3
+                self.placement = 'BOTTOM'
+            self.setback = float(op.cubby_setback)
         return context.window_manager.invoke_props_dialog(self, width=250)
 
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'cols')
+        col.prop(self, 'rows')
+        col.prop(self, 'setback')
+        col = self.layout.column(align=True)
+        col.prop(self, 'placement')
+        if self.placement != 'FILL':
+            col.prop(self, 'cubby_height')
+
     def execute(self, context):
-        return self._commit(context, {
-            'cubby_cols': self.cols,
-            'cubby_rows': self.rows,
-        })
+        values = {'cubby_cols': self.cols,
+                  'cubby_rows': self.rows,
+                  'cubby_setback': self.setback}
+        if self.placement == 'FILL':
+            return self._commit(context, values)
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        bay = types_closets.find_bay_cage(opening)
+        root = types_closets.find_starter_root(opening)
+        try:
+            seg_h = float(hb_types.GeoNodeCage(opening).get_input('Dim Z'))
+        except Exception:
+            seg_h = 0.0
+        st = context.scene.hb_closets.shelf_thickness
+        band = float(self.cubby_height)
+        # A band is only worth having while it leaves a usable opening
+        # behind it. Anything tighter than that is a filled opening,
+        # which is what it becomes.
+        if (bay is None or root is None
+                or band + st + const.CUBBY_MIN_REMAINDER > seg_h):
+            return self._commit(context, values)
+        side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+        index = int(opening.get('hb_opening_index', 0))
+        # The shelf caps the band: measured up from the bottom of the
+        # opening for a bottom band, down from its top for a top one.
+        # It splits the opening in two the same way a shelf dropped in
+        # by hand does, so the leftover is an opening like any other.
+        z = band if self.placement == 'BOTTOM' else seg_h - band - st
+        types_closets.add_fixed_shelf(opening, z)
+        types_closets.recalculate_closet_starter(root)
+        openings = sorted(
+            [c for c in bay.children
+             if c.get(types_closets.TAG_OPENING_CAGE)
+             and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side],
+            key=lambda o: o.get('hb_opening_index', 0))
+        # The grid belongs where the opening was for a bottom band, and
+        # in the segment above it for a top one.
+        k = index if self.placement == 'BOTTOM' else index + 1
+        if k >= len(openings):
+            return {'CANCELLED'}
+        target = openings[k]
+        for name, value in values.items():
+            setattr(target.hb_closet_opening, name, value)
+        if target is not opening:
+            # The grid moved up into the band, so it does not stay
+            # behind in the segment underneath as well.
+            try:
+                opening.hb_closet_opening.cubby_cols = 1
+                opening.hb_closet_opening.cubby_rows = 1
+            except ReferenceError:
+                pass
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
+        return {'FINISHED'}
 
 
 class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
