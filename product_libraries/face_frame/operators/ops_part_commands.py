@@ -2313,8 +2313,103 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
+    """Set the finished bottom condition on the clicked upper cabinet.
+    Live-bound to the cabinet's props (the finish panel, LED route,
+    and optional render light rebuild as options change); the room
+    button copies this cabinet's condition to every standard upper in
+    the scene."""
+    bl_idname = "hb_face_frame.set_finished_bottom"
+    bl_label = "Set Finished Bottom"
+    bl_description = ("Set this upper cabinet's finished bottom "
+                      "condition (finish panel + LED route)")
+    bl_options = {'UNDO'}
+
+    cabinet_name: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        root = types_face_frame.find_cabinet_root(obj)
+        return (root is not None
+                and root.get('CABINET_TYPE') == 'UPPER'
+                and root.face_frame_cabinet.corner_type == 'NONE')
+
+    def invoke(self, context, event):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        self.cabinet_name = root.name
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        root = bpy.data.objects.get(self.cabinet_name)
+        if root is None:
+            layout.label(text="Cabinet not found", icon='INFO')
+            return
+        cab = root.face_frame_cabinet
+        col = layout.column(align=True)
+        col.prop(cab, 'finished_bottom_type', text="Condition")
+        sub = col.column(align=True)
+        sub.enabled = cab.finished_bottom_type != 'NONE'
+        sub.prop(cab, 'finished_bottom_light', text="LED Light (Render)")
+        col.separator()
+        col.operator("hb_face_frame.apply_finished_bottom_to_room",
+                     text="Apply to All Uppers in Room",
+                     icon='DUPLICATE').cabinet_name = self.cabinet_name
+
+    def execute(self, context):
+        # Live-bound via the cabinet props' update callbacks.
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
+    """Copy the named cabinet's finished bottom condition to every
+    standard upper cabinet in the scene."""
+    bl_idname = "hb_face_frame.apply_finished_bottom_to_room"
+    bl_label = "Apply Finished Bottom to Room"
+    bl_description = ("Copy this finished bottom condition to every "
+                      "upper cabinet in the room")
+    bl_options = {'UNDO'}
+
+    cabinet_name: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    def execute(self, context):
+        source = bpy.data.objects.get(self.cabinet_name)
+        if source is None:
+            source = types_face_frame.find_cabinet_root(
+                context.active_object)
+        if source is None:
+            self.report({'WARNING'}, "No source cabinet")
+            return {'CANCELLED'}
+        src_cab = source.face_frame_cabinet
+        count = 0
+        with types_face_frame.suspend_recalc():
+            for obj in context.scene.objects:
+                if not obj.get(types_face_frame.TAG_CABINET_CAGE):
+                    continue
+                if obj.get('CABINET_TYPE') != 'UPPER':
+                    continue
+                cab = obj.face_frame_cabinet
+                if cab.corner_type != 'NONE':
+                    continue
+                cab.finished_bottom_type = src_cab.finished_bottom_type
+                cab.finished_bottom_light = src_cab.finished_bottom_light
+                count += 1
+        self.report({'INFO'},
+                    f"Finished bottom applied to {count} upper(s)")
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_set_front_pull,
+    hb_face_frame_OT_set_finished_bottom,
+    hb_face_frame_OT_apply_finished_bottom_to_room,
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_finished_end_condition,
     hb_face_frame_OT_set_part_scribe,

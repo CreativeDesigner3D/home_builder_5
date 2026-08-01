@@ -6323,6 +6323,35 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # ---- Finished bottom (uppers) ----
+    # Finished bottom condition, matching the upper-bottom detail
+    # card's options. Any non-NONE choice builds the finish panel with
+    # an LED route cut near its front edge; the light toggle adds a
+    # Blender area light in the route for renders.
+    finished_bottom_type: EnumProperty(
+        name="Finished Bottom",
+        description="Finished bottom condition for this upper cabinet",
+        items=[
+            ('NONE', "None", "No finished bottom panel"),
+            ('QUARTER', "1/4\"",
+             "1/4\" finished bottom under the cabinet bottom"),
+            ('THREE_QUARTER', "3/4\"",
+             "3/4\" finished bottom under the cabinet bottom"),
+            ('QUARTER_FLUSH', "1/4\" Flush",
+             "1/4\" finished bottom, flush at the rail bottom"),
+            ('THREE_QUARTER_FLUSH', "3/4\" Flush",
+             "3/4\" finished bottom, flush at the rail bottom"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_light: BoolProperty(
+        name="LED Light",
+        description="Add an area light in the LED route for renders",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Sink apron height for the diagonal SINK_DOORS config: a fixed
     # face-frame-depth panel across the top of the door opening, behind
     # the full-height doors. The corner counterpart of the per-opening

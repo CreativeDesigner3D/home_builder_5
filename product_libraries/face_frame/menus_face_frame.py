@@ -302,6 +302,19 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Toggle Stile to Floor",
                             icon='TRIA_DOWN_BAR')
 
+        # Finished bottom - on the carcass bottom (or the finished
+        # bottom panel itself) of a standard upper. The dialog binds
+        # the cabinet's condition and offers a room-wide apply.
+        _fb_root = types_face_frame.find_cabinet_root(obj)
+        if (role in (types_face_frame.PART_ROLE_BOTTOM,
+                     types_face_frame.PART_ROLE_FINISHED_BOTTOM)
+                and _fb_root is not None
+                and _fb_root.get('CABINET_TYPE') == 'UPPER'
+                and _fb_root.face_frame_cabinet.corner_type == 'NONE'):
+            layout.operator("hb_face_frame.set_finished_bottom",
+                            text="Set Finished Bottom...",
+                            icon='MOD_SOLIDIFY')
+
         # Finished-end condition is per-side: shown on the left / right
         # carcass side panels. The operator derives the side from the
         # clicked part's role and shows only that side's enum.

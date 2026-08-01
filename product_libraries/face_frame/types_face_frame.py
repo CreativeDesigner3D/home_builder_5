@@ -117,6 +117,13 @@ PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
+# Finished bottom (uppers): an applied finish panel under the carcass
+# bottom with an LED route cut near its front edge, plus an optional
+# area light in the route for renders. Managed parts (built / cleaned
+# by _apply_finished_bottom each recalc), not part of any wipe set.
+PART_ROLE_FINISHED_BOTTOM = 'FINISHED_BOTTOM'
+PART_ROLE_FB_LED_CUTTER = 'FINISHED_BOTTOM_LED_CUTTER'
+PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
 PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
@@ -2623,6 +2630,11 @@ class FaceFrameCabinet(GeoNodeCage):
         if self._has_carcass() and layout.cabinet_type == 'UPPER':
             self._apply_bottom_extension(layout)
 
+        # Finished bottom (uppers): applied finish panel + LED route +
+        # optional render light. Unconditional so a cleared condition
+        # cleans up its parts.
+        self._apply_finished_bottom(layout)
+
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
         # Unconditional so stale annotations are wiped even when the
@@ -3706,6 +3718,159 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._cleanup_furniture_top_legs()
         else:
             self._cleanup_furniture_top()
+
+    # =====================================================================
+    # Finished bottom (uppers)
+    # =====================================================================
+    # (thickness, flush) per finished_bottom_type. Non-flush panels hang
+    # with their top against the carcass bottom's underside; flush panels
+    # sit with their underside at the bottom-rail bottom (cabinet z=0) -
+    # the same placement rule the upper-bottom detail card draws.
+    _FINISHED_BOTTOM_SPECS = {
+        'QUARTER': (inch(0.25), False),
+        'THREE_QUARTER': (inch(0.75), False),
+        'QUARTER_FLUSH': (inch(0.25), True),
+        'THREE_QUARTER_FLUSH': (inch(0.75), True),
+    }
+    _FB_ROUTE_WIDTH = inch(0.875)
+    _FB_ROUTE_FRONT_INSET = inch(1.5)
+    _FB_CUT_MOD_NAME = 'FB LED Route'
+
+    def _find_fb_child(self, role):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        return None
+
+    def _cleanup_finished_bottom(self):
+        for role in (PART_ROLE_FB_LED_CUTTER, PART_ROLE_FINISHED_BOTTOM,
+                     PART_ROLE_FB_LIGHT):
+            child = self._find_fb_child(role)
+            if child is not None:
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    @staticmethod
+    def _rebuild_box_mesh(obj, x0, x1, y0, y1, z0, z1):
+        """Regenerate obj's mesh as an axis-aligned box (boolean cutter)."""
+        import bmesh
+        verts = [
+            (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+            (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1),
+        ]
+        faces = [
+            (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+            (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7),
+        ]
+        mesh = obj.data
+        mesh.clear_geometry()
+        mesh.from_pydata(verts, [], faces)
+        mesh.validate()
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
+    def _apply_finished_bottom(self, layout):
+        """Build / position the finished bottom assembly per the
+        cabinet's finished_bottom_type; ensure it's gone when NONE (or
+        not an upper). The panel is an applied finish part spanning the
+        cabinet footprint back to the face frame's back face, with an
+        LED route cut into its underside near the front edge and an
+        optional area light sitting in the route. Positioned from the
+        live carcass-bottom part so bay drops / rail edits track.
+        """
+        cab = self.obj.face_frame_cabinet
+        spec = self._FINISHED_BOTTOM_SPECS.get(
+            getattr(cab, 'finished_bottom_type', 'NONE'))
+        if (spec is None or layout.cabinet_type != 'UPPER'
+                or not self._has_carcass()):
+            self._cleanup_finished_bottom()
+            return
+        carcass_bottom = self._find_fb_child(PART_ROLE_BOTTOM)
+        if carcass_bottom is None:
+            self._cleanup_finished_bottom()
+            return
+        t_fin, flush = spec
+        underside_z = carcass_bottom.location.z
+        z_fin = 0.0 if flush else underside_z - t_fin
+        width = cab.width
+        depth_span = cab.depth - layout.fft
+
+        panel = self._find_fb_child(PART_ROLE_FINISHED_BOTTOM)
+        if panel is None:
+            part = CabinetPart()
+            part.create('Finished Bottom')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_FINISHED_BOTTOM
+            part.obj['CABINET_PART'] = True
+            part.set_input('Mirror Y', True)
+            panel = part.obj
+        if not panel.get('IS_MANUAL_PART'):
+            panel.location = (0.0, 0.0, z_fin)
+            part = GeoNodeCutpart(panel)
+            part.set_input('Length', width)
+            part.set_input('Width', depth_span)
+            part.set_input('Thickness', t_fin)
+
+        # LED route: a groove across the full width, cut up into the
+        # panel's underside just behind its front edge. Depth scales
+        # with the panel so a 1/4" bottom still keeps material above
+        # the route.
+        route_depth = min(inch(0.375), t_fin * 0.75)
+        route_y_front = -depth_span + self._FB_ROUTE_FRONT_INSET
+        cutter = self._find_fb_child(PART_ROLE_FB_LED_CUTTER)
+        if cutter is None:
+            mesh = bpy.data.meshes.new('FB LED Route Cutter')
+            cutter = bpy.data.objects.new('FB LED Route Cutter', mesh)
+            for coll in self.obj.users_collection:
+                coll.objects.link(cutter)
+            cutter.parent = self.obj
+            cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
+            cutter['IS_CUTTING_OBJ'] = True
+            cutter.hide_viewport = True
+            cutter.hide_render = True
+        self._rebuild_box_mesh(
+            cutter,
+            -0.005, width + 0.005,
+            route_y_front, route_y_front + self._FB_ROUTE_WIDTH,
+            z_fin - 0.003, z_fin + route_depth)
+        mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+        if mod is None and not panel.get('IS_MANUAL_PART'):
+            mod = panel.modifiers.new(
+                name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+            mod.solver = 'EXACT'
+        if mod is not None and mod.object is not cutter:
+            mod.object = cutter
+
+        # Optional area light in the route for renders. Points down
+        # (default -Z), sized just inside the route.
+        if getattr(cab, 'finished_bottom_light', False):
+            light_obj = self._find_fb_child(PART_ROLE_FB_LIGHT)
+            if light_obj is None or light_obj.type != 'LIGHT':
+                light_data = bpy.data.lights.new('FB LED Light', 'AREA')
+                light_obj = bpy.data.objects.new(
+                    'FB LED Light', light_data)
+                for coll in self.obj.users_collection:
+                    coll.objects.link(light_obj)
+                light_obj.parent = self.obj
+                light_obj['hb_part_role'] = PART_ROLE_FB_LIGHT
+                light_obj['IS_2D_ANNOTATION'] = True
+                light_obj.data.energy = 10.0
+            light = light_obj.data
+            light.shape = 'RECTANGLE'
+            light.size = max(width - inch(2.0), inch(1.0))
+            light.size_y = self._FB_ROUTE_WIDTH * 0.8
+            light_obj.location = (
+                width / 2.0,
+                route_y_front + self._FB_ROUTE_WIDTH / 2.0,
+                z_fin - 0.002)
+        else:
+            light_obj = self._find_fb_child(PART_ROLE_FB_LIGHT)
+            if light_obj is not None:
+                bpy.data.objects.remove(light_obj, do_unlink=True)
 
     # =====================================================================
     # Hutch finished back (uppers with ends extended down)
