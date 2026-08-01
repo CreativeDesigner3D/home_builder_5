@@ -7002,6 +7002,20 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    # ---- Pull override ----
+    # Per-opening pull override (right-click a door / drawer front ->
+    # Set Pull...). Stored as the pull's filename + category folder on
+    # the persistent opening cage so it survives recalcs; empty = the
+    # scene-wide selection for the front's kind, 'NONE' = no pull on
+    # this front.
+    pull_override: StringProperty(
+        name="Pull Override", default="",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    pull_override_category: StringProperty(
+        name="Pull Override Category", default="",
+    )  # type: ignore
+
     # ---- Drawer box size overrides ----
     # Per-axis overrides for the drawer box behind this opening's drawer
     # / pullout front (right-click the box -> Drawer Box Size...). The
@@ -7459,6 +7473,12 @@ def _pull_category_enum_items(self, context):
     return pulls.get_pull_categories()
 
 
+def _pull_finish_enum_items(self, context):
+    # Same deferred-import reasoning as the category items.
+    from . import pulls
+    return pulls.PULL_FINISHES
+
+
 def _pull_enum_items(self, context):
     """Items for door/drawer pull selection. Filtered to the currently
     chosen category. Real pulls come first (so the EnumProperty defaults
@@ -7864,6 +7884,17 @@ class Face_Frame_Scene_Props(PropertyGroup):
     drawer_pull_selection: EnumProperty(
         name="Drawer Pull",
         items=_pull_enum_items,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+
+    # Finish material swapped onto every pull mesh (scene-wide,
+    # including per-opening overridden pulls). Dynamic items so the
+    # list lives in pulls.py; AS_MODELED is first, making it the
+    # default - the asset's own materials, the pre-finish behavior.
+    pull_finish: EnumProperty(
+        name="Pull Finish",
+        description="Finish material applied to every cabinet pull",
+        items=_pull_finish_enum_items,
         update=_update_pulls_on_selection_change,
     )  # type: ignore
 
@@ -8486,6 +8517,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(self, 'door_pull_category', text="Category")
+        col.prop(self, 'pull_finish', text="Finish")
 
         # Door pull row + thumbnail beneath
         col.label(text="Door Pull:")

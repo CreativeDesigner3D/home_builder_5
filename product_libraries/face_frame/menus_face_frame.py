@@ -268,6 +268,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_door_frame",
                             text="Set Door Frame...", icon='MOD_BEVEL')
 
+        # Door / drawer / pullout / tilt-out fronts: per-opening pull
+        # override (applies to every selected front).
+        if role in ops_part_commands._ROLES_WITH_PULL:
+            layout.operator("hb_face_frame.set_front_pull",
+                            text="Set Pull...", icon='TOOL_SETTINGS')
+
         # Face frame members (stiles / rails / splitters) keep their role-aware
         # Set Width. Every other cabinet part adjusts its size via Make
         # Editable (below) - there is no direct Set Size command.

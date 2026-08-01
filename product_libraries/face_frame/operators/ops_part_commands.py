@@ -17,6 +17,8 @@ dispatches by the active part's hb_part_role to the appropriate prop:
 Width writes also flip the matching unlock flag so a later style apply
 doesn't reset the user's value.
 """
+import os
+
 import bpy
 from bpy.props import BoolProperty, FloatProperty, StringProperty
 
@@ -2157,7 +2159,162 @@ class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Front roles that carry a pull - the roles the Set Pull command
+# surfaces on.
+_ROLES_WITH_PULL = frozenset({
+    types_face_frame.PART_ROLE_DOOR,
+    types_face_frame.PART_ROLE_DRAWER_FRONT,
+    types_face_frame.PART_ROLE_PULLOUT_FRONT,
+    types_face_frame.PART_ROLE_TILT_OUT,
+})
+
+
+def _set_pull_category_items(self, context):
+    """DEFAULT (scene selection) + the real pull categories + NO_PULL."""
+    from .. import pulls
+    items = [('DEFAULT', "Scene Default",
+              "Use the scene-wide pull selection for this front kind")]
+    for cat_id, label, desc in pulls.get_pull_categories():
+        if cat_id == 'NONE':
+            continue
+        items.append((cat_id, label, desc))
+    items.append(('NO_PULL', "No Pull", "Remove the pull from the front"))
+    return items
+
+
+def _set_pull_items(self, context):
+    """Pulls in the operator's chosen category; a placeholder when the
+    choice needs no pull file (scene default / no pull)."""
+    from .. import pulls
+    if self.category in ('DEFAULT', 'NO_PULL'):
+        return [('NONE', "-", "")]
+    real_cat = None
+    for cat_id, label, _d in pulls.get_pull_categories():
+        if cat_id == self.category:
+            real_cat = label
+            break
+    items = pulls.get_pulls_in_category(real_cat) if real_cat else []
+    return items or [('NONE', "-", "No pulls in this category")]
+
+
+class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
+    """Set the pull on the selected door / drawer fronts. The choice is
+    stored on each front's owning opening (fronts are rebuilt every
+    recalc), so it sticks: Scene Default returns the front to the
+    scene-wide selection, No Pull removes the pull from the front, and
+    a specific pull overrides just these fronts."""
+    bl_idname = "hb_face_frame.set_front_pull"
+    bl_label = "Set Pull"
+    bl_description = ("Set the pull used by the selected fronts "
+                      "(stored per opening)")
+    bl_options = {'UNDO'}
+
+    category: bpy.props.EnumProperty(
+        name="Category", items=_set_pull_category_items)  # type: ignore
+    pull: bpy.props.EnumProperty(
+        name="Pull", items=_set_pull_items)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') in _ROLES_WITH_PULL)
+
+    def _target_openings(self, context):
+        """Owning opening cages of every selected front part. Corner
+        cabinet doors have no opening cage and drop out (reported)."""
+        from . import ops_cabinet
+        openings = {}
+        skipped = 0
+        for obj in context.selected_objects:
+            if obj.get('hb_part_role') not in _ROLES_WITH_PULL:
+                continue
+            opening = ops_cabinet._find_owning_opening(obj)
+            if opening is None:
+                skipped += 1
+                continue
+            openings[opening.name] = opening
+        return list(openings.values()), skipped
+
+    def invoke(self, context, event):
+        # Seed from the active front's current override so reopening
+        # the dialog shows the standing choice.
+        from . import ops_cabinet
+        opening = ops_cabinet._find_owning_opening(context.active_object)
+        if opening is not None:
+            current = opening.face_frame_opening.pull_override
+            if current == 'NONE':
+                self.category = 'NO_PULL'
+            elif current:
+                from .. import pulls
+                cat = opening.face_frame_opening.pull_override_category
+                for cat_id, label, _d in pulls.get_pull_categories():
+                    if label == cat:
+                        self.category = cat_id
+                        break
+                for item_id, _l, _d in _set_pull_items(self, context):
+                    if item_id == current:
+                        self.pull = item_id
+                        break
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        from .. import pulls
+        col = self.layout.column(align=True)
+        col.prop(self, 'category', text="Category")
+        if self.category not in ('DEFAULT', 'NO_PULL'):
+            col.prop(self, 'pull', text="Pull")
+            if self.pull not in ('NONE', ''):
+                real_cat = None
+                for cat_id, label, _d in pulls.get_pull_categories():
+                    if cat_id == self.category:
+                        real_cat = label
+                        break
+                icon_id = pulls.load_pull_thumbnail_icon(
+                    self.pull, real_cat)
+                if icon_id:
+                    col.template_icon(icon_value=icon_id, scale=4.0)
+
+    def execute(self, context):
+        from .. import pulls
+        openings, skipped = self._target_openings(context)
+        if not openings:
+            self.report({'WARNING'},
+                        "No fronts with openings selected"
+                        + (" (corner cabinet doors use the scene pull)"
+                           if skipped else ""))
+            return {'CANCELLED'}
+        if self.category == 'DEFAULT':
+            override, override_cat = '', ''
+        elif self.category == 'NO_PULL':
+            override, override_cat = 'NONE', ''
+        else:
+            if self.pull in ('NONE', ''):
+                self.report({'WARNING'}, "Pick a pull from the category")
+                return {'CANCELLED'}
+            override = self.pull
+            override_cat = ''
+            for cat_id, label, _d in pulls.get_pull_categories():
+                if cat_id == self.category:
+                    override_cat = label
+                    break
+        with types_face_frame.suspend_recalc():
+            for opening in openings:
+                op_props = opening.face_frame_opening
+                op_props.pull_override_category = override_cat
+                op_props.pull_override = override
+        msg = (f"{len(openings)} opening(s) set to "
+               + ("scene default" if self.category == 'DEFAULT'
+                  else "no pull" if self.category == 'NO_PULL'
+                  else os.path.splitext(override)[0]))
+        if skipped:
+            msg += f"; {skipped} corner front(s) skipped"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 classes = (
+    hb_face_frame_OT_set_front_pull,
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_finished_end_condition,
     hb_face_frame_OT_set_part_scribe,

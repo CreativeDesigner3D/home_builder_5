@@ -18,6 +18,61 @@ import bpy
 from . import props_hb_face_frame  # for the existing thumbnail preview collection
 
 
+# Pull finish materials come from the shared accessory-finishes
+# library (the same materials the closets library swaps onto its
+# handles). AS_MODELED is first so it's the dynamic-enum default:
+# leave the pull's own materials alone, which is the pre-finish
+# behavior.
+FINISHES_BLEND = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), 'closets', 'assets',
+    'materials', 'accessory_finishes.blend')
+
+PULL_FINISHES = [
+    ('AS_MODELED', "As Modeled", "Keep the pull asset's own materials"),
+    ('Black', "Black", ""),
+    ('Matte Aluminum', "Matte Aluminum", ""),
+    ('Matte Gold', "Matte Gold", ""),
+    ('Matte Nickel', "Matte Nickel", ""),
+    ('Polished Chrome', "Polished Chrome", ""),
+    ('Slate', "Slate", ""),
+]
+
+
+def load_finish_material(name):
+    """Existing-or-appended finish material by name; None if missing."""
+    if not name:
+        return None
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    try:
+        with bpy.data.libraries.load(FINISHES_BLEND) as (src, dst):
+            if name in src.materials:
+                dst.materials = [name]
+    except Exception:
+        return None
+    return bpy.data.materials.get(name)
+
+
+def apply_finish_to_pull(pull_obj, finish):
+    """Swap the shared pull mesh's material to the selected finish.
+    Pull instances link this mesh data, so every placed pull follows.
+    AS_MODELED leaves the asset's own materials untouched.
+    """
+    if not finish or finish == 'AS_MODELED':
+        return
+    if pull_obj is None or pull_obj.data is None:
+        return
+    mat = load_finish_material(finish)
+    if mat is None:
+        return
+    mats = pull_obj.data.materials
+    if len(mats) == 1 and mats[0] is mat:
+        return
+    mats.clear()
+    mats.append(mat)
+
+
 def get_pulls_root():
     """Absolute path to the shipped cabinet_pulls assets folder."""
     return os.path.join(
@@ -190,17 +245,55 @@ def resolve_pull_object(scene_props, kind):
     if cached is not None and cached.name and (
         cached.name == sel_stem or cached.name.startswith(sel_stem + '.')
     ):
+        apply_finish_to_pull(cached, scene_props.pull_finish)
         return cached
 
     real_cat = _resolve_real_category(scene_props.door_pull_category)
     pull_obj = load_pull_object(selection, real_cat)
     if pull_obj is None:
         return None
+    apply_finish_to_pull(pull_obj, scene_props.pull_finish)
 
     if kind == 'door':
         scene_props.current_door_pull_object = pull_obj
     else:
         scene_props.current_drawer_pull_object = pull_obj
+    return pull_obj
+
+
+# Loaded source objects for per-opening pull overrides, keyed by
+# (category, filename). Several can be live at once (each overridden
+# opening may use a different pull); instances share each source's
+# mesh data. Dead references (file reload / purge) are detected and
+# reloaded on demand.
+_override_cache = {}
+
+
+def resolve_pull_override(category, filename, scene_props):
+    """Loaded pull object for a per-opening override, with the scene
+    finish applied. Falls back to an any-category search when the
+    stored category no longer exists (e.g. a pack was removed and
+    reinstalled under a different folder). Returns None when the file
+    can't be found - callers then use the scene-wide selection.
+    """
+    if not filename or filename == 'NONE':
+        return None
+    key = (category or '', filename)
+    cached = _override_cache.get(key)
+    if cached is not None:
+        try:
+            cached.name  # dead-reference check
+            apply_finish_to_pull(cached, scene_props.pull_finish)
+            return cached
+        except ReferenceError:
+            pass
+    pull_obj = load_pull_object(filename, category or None)
+    if pull_obj is None and category:
+        pull_obj = load_pull_object(filename, None)
+    if pull_obj is None:
+        return None
+    _override_cache[key] = pull_obj
+    apply_finish_to_pull(pull_obj, scene_props.pull_finish)
     return pull_obj
 
 

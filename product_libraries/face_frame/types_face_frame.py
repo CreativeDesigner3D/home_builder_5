@@ -7469,7 +7469,8 @@ class FaceFrameCabinet(GeoNodeCage):
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             if not drawer_look and not no_pulls:
-                self._create_pull_for_front(front, leaf['role'], leaf)
+                self._create_pull_for_front(front, leaf['role'], leaf,
+                                            op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
@@ -7739,12 +7740,18 @@ class FaceFrameCabinet(GeoNodeCage):
             cur = cur.parent
         return z
 
-    def _create_pull_for_front(self, front_part, role, leaf):
+    def _create_pull_for_front(self, front_part, role, leaf,
+                               op_props=None):
         """Attach a pull instance to `front_part` based on the cabinet's
         type and the front's role (DOOR / DRAWER_FRONT / PULLOUT_FRONT).
         FALSE_FRONT and INSET_PANEL skip - both are decorative
         and don't carry a pull. Returns the pull Object (or None if no
         pull is selected or the asset can't be loaded).
+
+        op_props (the owning opening's props, when the caller has one)
+        carries the per-opening pull override: a stored pull file wins
+        over the scene-wide selection, and the 'NONE' sentinel drops
+        the pull from this front entirely.
 
         The pull is parented to `front_part` so it inherits the swing /
         slide animation. Position is computed in front-part local space
@@ -7767,7 +7774,17 @@ class FaceFrameCabinet(GeoNodeCage):
         # like a swing door. hinge is threaded in via the leaf descriptor.
         hinge = leaf.get('hinge')
         is_flip = (kind == 'door' and hinge in ('TOP', 'BOTTOM'))
-        pull_obj = pulls.resolve_pull_object(scene_props, kind)
+        pull_obj = None
+        override = (getattr(op_props, 'pull_override', '')
+                    if op_props is not None else '')
+        if override == 'NONE':
+            return None
+        if override:
+            pull_obj = pulls.resolve_pull_override(
+                getattr(op_props, 'pull_override_category', ''),
+                override, scene_props)
+        if pull_obj is None:
+            pull_obj = pulls.resolve_pull_object(scene_props, kind)
         if pull_obj is None:
             return None
 
