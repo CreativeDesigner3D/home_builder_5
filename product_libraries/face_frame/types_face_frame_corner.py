@@ -1014,6 +1014,24 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         else:  # CORNER
             pull.location.y = width_sign * (width - h_offset)
 
+    def _refresh_flip_pull(self, door_obj, length, width, thickness):
+        """Clear and re-attach a flip-up-style pull on a corner door:
+        the door pull asset rotated flat, horizontally centered near
+        the door BOTTOM - the standard Flip Up Door (hinge TOP)
+        placement. Used by the lift-style garage door options
+        (swing-up / top mounted retracting). Passing hinge TOP in the
+        leaf descriptor routes _create_pull_for_front through its
+        is_flip branch, which handles both the bottom-edge vertical
+        formula and the centered flat bar - no position override
+        needed here.
+        """
+        self._clear_door_pull(door_obj)
+        self._create_pull_for_front(
+            SimpleNamespace(obj=door_obj),
+            ff.PART_ROLE_DOOR,
+            {'part_dims': (length, width, thickness), 'hinge': 'TOP'},
+        )
+
     def _refresh_drawer_pull(self, front_obj, length, width, thickness, side):
         """Clear and re-attach a CENTERED drawer-style pull on a corner drawer
         front. Unlike a door pair (where only the active leaf carries an
@@ -2869,12 +2887,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                                 ('Thickness', dt),
                             ))
                         if sec_gdt in ('RETRACTING', 'SWING_UP'):
-                            # Closed lift-door look: a centered
-                            # drawer-style bar pull instead of the
-                            # hinged edge pull.
-                            self._refresh_drawer_pull(
-                                d_left, door_length, sec_leaf_width, dt,
-                                side='LEFT')
+                            # Lift doors read like a Flip Up Door:
+                            # flat bar pull centered at the door
+                            # BOTTOM, not a hinged edge pull.
+                            self._refresh_flip_pull(
+                                d_left, door_length, sec_leaf_width, dt)
                         else:
                             self._refresh_door_pull(
                                 d_left, door_length, sec_leaf_width, dt,
