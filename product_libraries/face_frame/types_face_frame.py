@@ -7819,16 +7819,22 @@ class FaceFrameCabinet(GeoNodeCage):
             # AND its length:
             #   - High door (bottom above the tall threshold) -> UPPER:
             #     small offset from door bottom, like an upper cabinet.
-            #   - Door long enough to fit the tall offset -> TALL:
-            #     offset from door bottom (~36" reach height).
-            #   - Short door (offset would land past the door top) ->
-            #     BASE: offset from door TOP, so the pull stays on the
-            #     door regardless of how short it is.
+            #   - Door long enough to fit the tall offset AND the full
+            #     pull bar above it -> TALL: offset from door bottom
+            #     (~36" reach height). The placement below centers the
+            #     bar at tall_offset + vert_half, so the bar's TOP
+            #     lands at tall_offset + 2 * vert_half - comparing the
+            #     length against the offset alone let doors barely
+            #     past the threshold (e.g. a 36-1/4" door with a 36"
+            #     offset) keep the tall placement with the bar hanging
+            #     off the door top.
+            #   - Otherwise -> BASE: offset from door TOP, so the pull
+            #     stays on the door regardless of how short it is.
             door_bottom_z = self._z_in_cabinet(front_part.obj)
             tall_offset = scene_props.pull_vertical_location_tall
             if door_bottom_z >= tall_offset:
                 x = scene_props.pull_vertical_location_upper + vert_half
-            elif length >= tall_offset:
+            elif length >= tall_offset + 2.0 * vert_half:
                 x = tall_offset + vert_half
             else:
                 x = length - scene_props.pull_vertical_location_base - vert_half
