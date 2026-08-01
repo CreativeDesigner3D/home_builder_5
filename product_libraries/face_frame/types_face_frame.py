@@ -4033,23 +4033,44 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _position_wing(self, wing_obj, layout, side, extend):
         """Stand the wing on the angled end line: full side height, the
-        hypotenuse as its Width, pivoted to phi at the back-outer corner.
-        Reuses _back_ext_line (shared with the carcass splay) and the solver's
-        square side position / dims, so the wing tracks height / depth and
-        sits at the side's base Z."""
+        hypotenuse as its Width, pivoted to phi. Reuses _back_ext_line
+        (shared with the carcass splay) and the solver's square side
+        position / dims, so the wing tracks height / depth and sits at the
+        side's base Z.
+
+        The front end of the line is carried to the FACE FRAME front plane
+        (side width + fft), not the carcass front, so the wing's front edge
+        lands flush with the front of the cabinet. A non-zero per-end wing
+        width overrides the automatic run: the panel keeps the same line
+        but stops that far from the front corner - the front edge stays
+        anchored on the cabinet, the back end pulls in (for wings that
+        would otherwise run past the end of a wall)."""
         if side == 'LEFT':
             pos = solver.left_side_position(layout)
             length, width, thickness = solver.left_side_dims(layout)
         else:
             pos = solver.right_side_position(layout)
             length, width, thickness = solver.right_side_dims(layout)
-        _front, back_target, phi, w_new = self._back_ext_line(side, extend, width)
+        front_target, back_target, phi, w_new = self._back_ext_line(
+            side, extend, width + layout.fft)
+        cab = self.obj.face_frame_cabinet
+        override = (cab.wing_width_left if side == 'LEFT'
+                    else cab.wing_width_right)
+        if override > 0.0:
+            w_eff = min(override, w_new)
+            # Origin sits w_eff along the line from the front corner, so
+            # the panel (which runs from its origin toward the front)
+            # always ends exactly on the front corner.
+            origin = front_target + (back_target - front_target).normalized() * w_eff
+        else:
+            w_eff = w_new
+            origin = back_target
         part = GeoNodeCutpart(wing_obj)
         part.set_input('Length', length)       # full cabinet (side) height
-        part.set_input('Width', w_new)         # hypotenuse along the end line
+        part.set_input('Width', w_eff)         # run along the end line
         part.set_input('Thickness', thickness)
         wing_obj.rotation_euler.z = phi
-        wing_obj.location = (back_target.x, back_target.y, pos[2])
+        wing_obj.location = (origin.x, origin.y, pos[2])
 
     def _cleanup_wing(self, side):
         """Remove one end's wing (checkbox off or extend back to 0)."""

@@ -5947,6 +5947,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "is 0.",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Optional manual wing size: the run of the wing panel measured from
+    # the cabinet's front corner along the extension line. 0 = automatic
+    # (the full line, front corner to the extended back corner). Lets the
+    # wing stop short when the automatic reach would run past the end of
+    # a wall. The front edge stays anchored on the cabinet regardless.
+    wing_width_left: FloatProperty(
+        name="Left Wing Width", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Width of the LEFT wing panel from the cabinet front "
+                    "corner along the extension line. 0 = size automatically "
+                    "from the extension.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wing_width_right: FloatProperty(
+        name="Right Wing Width", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Width of the RIGHT wing panel from the cabinet front "
+                    "corner along the extension line. 0 = size automatically "
+                    "from the extension.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Extend Bottom (uppers): push the carcass bottom panel laterally past
     # the side(s) to cover the void left in a corner where two uppers meet.
     # Outward only (min 0); only the bottom panel overhangs - the face frame,
