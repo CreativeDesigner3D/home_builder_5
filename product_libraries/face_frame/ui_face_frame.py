@@ -217,6 +217,8 @@ def draw_corner_sections(layout, cab_props):
         field.prop(section, 'height', text="Height")
         lock_icon = 'UNLOCKED' if section.unlock_height else 'LOCKED'
         row.prop(section, 'unlock_height', text="", icon=lock_icon)
+        if section.content == 'GARAGE':
+            col.prop(section, 'garage_door_type', text="Garage Door")
         if section.content == 'OPEN':
             col.prop(section, 'shelf_qty', text="Shelves")
         elif (section.content == 'DOORS'
@@ -232,7 +234,7 @@ def draw_corner_sections(layout, cab_props):
                          else 'LOCKED')
             qty_row.prop(section, 'unlock_shelf_qty', text="",
                          icon=lock_icon)
-        if section.content in ('DOORS', 'FALSE_FRONT'):
+        if section.content in ('DOORS', 'FALSE_FRONT', 'GARAGE'):
             # Per-section overlay overrides (locked = cabinet default,
             # unlocked = this section's own value) -- e.g. extra bottom
             # overlay so an upper corner door covers a light rail.

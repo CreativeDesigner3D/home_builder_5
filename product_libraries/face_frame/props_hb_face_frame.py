@@ -4790,6 +4790,33 @@ class Face_Frame_Corner_Section(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # GARAGE sections: which appliance-garage door option fills the
+    # opening (per the diagonal-corner appliance garage catalog page).
+    # Hinged singles / doubles are the base options; tambour /
+    # retracting / swing-up and the side doors are adders. SIDE_HINGED
+    # leaves the diagonal open and puts a hinged door on each arm end
+    # face instead.
+    garage_door_type: EnumProperty(
+        name="Garage Door",
+        items=[
+            ('DOUBLE', "Double Hinged Door",
+             "Hinged door pair on the diagonal opening"),
+            ('SINGLE_LEFT', "Single Hinged Door (Hinge Left)",
+             "One full-width door hinged on the left"),
+            ('SINGLE_RIGHT', "Single Hinged Door (Hinge Right)",
+             "One full-width door hinged on the right"),
+            ('TAMBOUR', "Tambour Door",
+             "Slatted roll-up door inside the opening"),
+            ('RETRACTING', "Top Mounted Retracting Door",
+             "Full-width door that retracts up into the cabinet"),
+            ('SWING_UP', "Swing-Up Door",
+             "Full-width door that swings up on lift hardware"),
+            ('SIDE_HINGED', "Hinged Doors on Sides",
+             "Open diagonal; a hinged door on each side face"),
+        ],
+        default='DOUBLE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 # exterior_config items vary by cabinet type. Module-level lists keep the
