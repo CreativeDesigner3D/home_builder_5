@@ -528,7 +528,7 @@ class ClosetStarter(GeoNodeCage):
         self.obj.display_type = 'WIRE'
         self.set_input('Mirror Y', True)
 
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = run_sizes(self.obj)
         cabinet_id = id(self.obj)
         _RECALCULATING.add(cabinet_id)
         _DISTRIBUTING_WIDTHS.add(cabinet_id)
@@ -786,7 +786,7 @@ class ClosetStarter(GeoNodeCage):
             return
         _RECALCULATING.add(cabinet_id)
         try:
-            scene_props = bpy.context.scene.hb_closets
+            scene_props = run_sizes(self.obj)
             sp = self.obj.hb_closet_starter
 
             # The run height and depth carry down to the bays. A bay
@@ -901,11 +901,12 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Thickness', pt)
 
     def _layout_battens(self, layout, scene_props, sp):
-        """A 0.25 x 1.125 in scribe strip laid flat on the FRONT face of
-        an end panel, running that panel's full height. It covers the
-        panel's 0.75 in edge and projects the remaining 0.375 in past the
-        outside of the run, so it can be scribed to the wall. Cosmetic
-        part.
+        """A scribe strip laid flat on the FRONT face of an end panel,
+        running that panel's full height. It covers the panel edge and
+        carries whatever is left of its width past the outside of the
+        run, so there is something to scribe to the wall. How thick and
+        how wide is the room's, or this run's where it has taken either
+        figure over. Cosmetic part.
 
         The strip lies in the face plane: Length runs up Z, Width runs
         across X (outward, away from the run) and Thickness stands proud
@@ -946,8 +947,8 @@ class ClosetStarter(GeoNodeCage):
             # extend-to-countertop drop, so the strip tracks the panel.
             c.location = (x, -bay['depth'], panel['z'])
             part.set_input('Length', panel['length'])
-            part.set_input('Width', const.BATTEN_WIDTH)
-            part.set_input('Thickness', const.BATTEN_THICKNESS)
+            part.set_input('Width', scene_props.batten_width)
+            part.set_input('Thickness', scene_props.batten_thickness)
             _set_part_hidden(c, not include)
 
     def _layout_fillers(self, layout, scene_props, sp):
@@ -1559,18 +1560,23 @@ class ClosetStarter(GeoNodeCage):
         # panels.
         cub_setback = float(opening.hb_closet_opening.cubby_setback)
         cub_depth = max(depth - cub_setback, inch(1.0))
+        # The uprights are cut from the divider thickness and the
+        # shelves from the shelf thickness, which is how the prior
+        # library had it: a grid can be divided in something other than
+        # what its shelves are made of.
+        dt = scene_props.divider_thickness
         divs = groups.get(PART_ROLE_CUBBY_DIVISION, [])
         if divs:
             divs.sort(key=lambda o: o.get('hb_cubby_index', 0))
             cols = len(divs) + 1
-            cell_w = (width - len(divs) * st) / cols
+            cell_w = (width - len(divs) * dt) / cols
             for j, child in enumerate(divs):
-                x = cell_w * (j + 1) + st * j
+                x = cell_w * (j + 1) + dt * j
                 child.location = (x, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', interior_h)
                 part.set_input('Width', cub_depth)
-                part.set_input('Thickness', st)
+                part.set_input('Thickness', dt)
         cub_shelves = groups.get(PART_ROLE_CUBBY_SHELF, [])
         if cub_shelves:
             cub_shelves.sort(key=lambda o: o.get('hb_cubby_index', 0))
@@ -2513,7 +2519,7 @@ class LShelfClosetStarter(GeoNodeCage):
         self.obj.display_type = 'WIRE'
         self.set_input('Mirror Y', True)
 
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = run_sizes(self.obj)
         cabinet_id = id(self.obj)
         _RECALCULATING.add(cabinet_id)
         try:
@@ -2641,7 +2647,7 @@ class LShelfClosetStarter(GeoNodeCage):
             return
         _RECALCULATING.add(cabinet_id)
         try:
-            scene_props = bpy.context.scene.hb_closets
+            scene_props = run_sizes(self.obj)
             sp = self.obj.hb_closet_starter
             # One-time migration: pre-prompt idprops -> product prompts
             # (updates are no-ops here; we're inside _RECALCULATING).
@@ -3108,6 +3114,50 @@ def find_starter_root(obj):
             return current
         current = current.parent
     return None
+
+
+class _RunSizes:
+    """The room's settings seen through one run's own.
+
+    A run that has taken a part thickness over answers with its own
+    figure; everything else falls straight through to the room. Built
+    once at the top of a pass and handed down in place of the room, so
+    every figure a pass reads is already the run's and nothing has to
+    be kept in step. Read only - nothing writes back through it."""
+
+    __slots__ = ('_room', '_own')
+
+    def __init__(self, room, own):
+        object.__setattr__(self, '_room', room)
+        object.__setattr__(self, '_own', own)
+
+    def __getattr__(self, name):
+        own = object.__getattribute__(self, '_own')
+        if name in own:
+            return own[name]
+        return getattr(object.__getattribute__(self, '_room'), name)
+
+
+def run_sizes(obj, room=None):
+    """The room's settings as the run holding `obj` sees them.
+
+    Hands back the room itself when there is no run or the run has
+    taken nothing over, which is the usual case, so reading a size
+    through here costs nothing until someone sets an override."""
+    room = room if room is not None else bpy.context.scene.hb_closets
+    if obj is None:
+        return room
+    root = obj if obj.get(TAG_STARTER_CAGE) else find_starter_root(obj)
+    if root is None:
+        return room
+    sp = root.hb_closet_starter
+    own = {}
+    for attr in const.RUN_THICKNESSES:
+        if getattr(sp, 'unlock_' + attr, False):
+            own[attr] = float(getattr(sp, attr))
+    if not own:
+        return room
+    return _RunSizes(room, own)
 
 
 def _wrap_starter(obj):
@@ -3623,7 +3673,7 @@ def apply_bay_config(bay_obj, config):
     root = find_starter_root(bay_obj)
     if root is None:
         return False
-    scene_props = bpy.context.scene.hb_closets
+    scene_props = run_sizes(root)
     st = scene_props.shelf_thickness
     clear_bay_contents(bay_obj)
     recalculate_closet_starter(root)   # merge back to one opening/side

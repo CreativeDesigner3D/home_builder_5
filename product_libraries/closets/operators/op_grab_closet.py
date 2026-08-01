@@ -154,7 +154,7 @@ def _corner_boundaries(root, mw, mode):
     if mode != 'Starters':
         return []
     sp = root.hb_closet_starter
-    scene_props = bpy.context.scene.hb_closets
+    scene_props = types_closets.run_sizes(root)
     st = scene_props.shelf_thickness
     pt = scene_props.panel_thickness
     W, D, H = sp.width, sp.depth, sp.height
@@ -656,7 +656,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         its absolute (off-the-floor) position holds. Drawer stacks keep
         riding the bottom (they sit on the base) and rods keep their
         top anchor - only splitter shelves hold."""
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick_v = root.hb_closet_starter.toe_kick_height
         bp = bay.hb_closet_bay
@@ -800,7 +800,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         dragging can never ask for a wing the unit cannot hold.
         """
         sp = root.hb_closet_starter
-        pt = bpy.context.scene.hb_closets.panel_thickness
+        pt = types_closets.run_sizes(root).panel_thickness
         if kind == 'L_END_R':
             new = max(MIN_STARTER_WIDTH, sp.l_left_depth + pt, value)
             sp.width = new
@@ -816,7 +816,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         return new
 
     def _min_bay_height(self, root, bay):
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick = (root.hb_closet_starter.toe_kick_height
                 if bay.hb_closet_bay.floor_mounted else 0.0)
@@ -1008,7 +1008,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         types_closets.recalculate_closet_starter(root)
 
     def _clamp_shelf(self, bay, sh, new_z):
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         st = scene_props.shelf_thickness
         side = sh.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
         shelves = [c for c in bay.children
@@ -1039,7 +1039,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
 
     def _shelf_gaps(self, bay, sh):
         """(clear below, clear above) for the drag readout."""
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         st = scene_props.shelf_thickness
         side = sh.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
         z = sh.get('hb_z_offset', 0.0)

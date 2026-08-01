@@ -2175,7 +2175,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         # back into the opening. If this segment is already capped, MOVE
         # the cap to match the new stack instead of stacking another.
         if self.qty > 0 and bay is not None:
-            st = context.scene.hb_closets.shelf_thickness
+            st = types_closets.run_sizes(opening).shelf_thickness
             cap_z_local = (sum(self._heights())
                            + self.qty * _run_vertical_gap(context, opening)
                            - st)
@@ -2544,7 +2544,7 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
             seg_h = float(hb_types.GeoNodeCage(opening).get_input('Dim Z'))
         except Exception:
             seg_h = 0.0
-        st = context.scene.hb_closets.shelf_thickness
+        st = types_closets.run_sizes(opening).shelf_thickness
         band = float(self.cubby_height)
         # A band is only worth having while it leaves a usable opening
         # behind it. Anything tighter than that is a filled opening,
@@ -3261,6 +3261,29 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             row.enabled = sp.extend_panels_to_countertop
             row.prop(sp, 'extend_panel_amount')
 
+        # What this run's parts are cut from. Each figure follows the
+        # room while its padlock is closed, which is why a closed one
+        # reads back the room's figure: there is something to measure
+        # against before taking it over.
+        box = _section(layout, sp, 'show_thicknesses', "Thicknesses")
+        if box is not None:
+            room = bpy.context.scene.hb_closets
+            col = box.column(align=True)
+            for attr, label in (('panel_thickness', "Panel"),
+                                ('shelf_thickness', "Shelf"),
+                                ('divider_thickness', "Cubby Divider"),
+                                ('batten_thickness', "Batten"),
+                                ('batten_width', "Batten Width")):
+                unlocked = getattr(sp, 'unlock_' + attr)
+                row = col.row(align=True)
+                row.label(text=label)
+                cell = row.row(align=True)
+                field = cell.row(align=True)
+                field.enabled = unlocked
+                field.prop(sp if unlocked else room, attr, text="")
+                cell.prop(sp, 'unlock_' + attr, text="",
+                          icon='UNLOCKED' if unlocked else 'LOCKED')
+
         # How every door and drawer front on the run sits against what it
         # meets. A half overlay splits what the front shares with its
         # neighbour, so the two meet over the middle of the panel or
@@ -3550,7 +3573,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             shelf = shelves[-1]
             below = (float(shelves[-2].get('hb_z_offset', 0.0))
                      if len(shelves) > 1 else 0.0)
-            st = context.scene.hb_closets.shelf_thickness
+            st = types_closets.run_sizes(bay).shelf_thickness
             floor = below + (st if len(shelves) > 1 else 0.0) + units.inch(1.0)
             z = float(shelf.get('hb_z_offset', 0.0)) + (current - target)
             shelf['hb_z_offset'] = float(max(floor, z))
@@ -4026,7 +4049,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         run = types_closets.find_starter_root(opening)
         if run is not None:
             resolved = types_closets.front_overlays(
-                run.hb_closet_starter, context.scene.hb_closets)
+                run.hb_closet_starter, types_closets.run_sizes(run))
             box = layout.box()
             box.label(text="Overlays", icon='MOD_EDGESPLIT')
             col = box.column(align=True)

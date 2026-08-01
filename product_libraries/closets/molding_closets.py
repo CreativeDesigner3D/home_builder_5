@@ -127,9 +127,8 @@ def _bay_specs(root):
     the outer faces of the bay's panels). `top`/`bottom` are the edges
     the two molding kinds run along; `floor` says whether the bay sits
     on the floor at all."""
-    scene_props = bpy.context.scene.hb_closets
-    pt = scene_props.panel_thickness
     from . import types_closets
+    pt = types_closets.run_sizes(root).panel_thickness
     bays = sorted([c for c in root.children
                    if c.get(types_closets.TAG_BAY_CAGE)],
                   key=lambda o: o.get('hb_bay_index', 0))
@@ -215,9 +214,9 @@ def _add_molding(root, profile, kind):
     End returns are gated on the starter's Left/Right Finished End: a
     run that dies into a wall has nothing to return to. Idempotent -
     clears this starter's previous run of the same kind first."""
+    from . import types_closets
     clear_starter_molding(root, kind)
-    scene_props = bpy.context.scene.hb_closets
-    pt = scene_props.panel_thickness
+    pt = types_closets.run_sizes(root).panel_thickness
     sp = root.hb_closet_starter
     specs = _bay_specs(root)
     tol = inch(0.05)

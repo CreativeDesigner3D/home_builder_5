@@ -664,7 +664,7 @@ def _commit(obj, kind, value):
             above['hb_z_offset'] = float(max(0.0, value - base_world))
             types_closets.recalculate_closet_starter(root)
             return True
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         bp = bay.hb_closet_bay
         kick = (root.hb_closet_starter.toe_kick_height
                 if bp.floor_mounted else 0.0)
@@ -680,7 +680,7 @@ def _commit(obj, kind, value):
         if root is None:
             return False
         bp = obj.hb_closet_bay
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(obj)
         st = scene_props.shelf_thickness
         kick = (root.hb_closet_starter.toe_kick_height
                 if bp.floor_mounted else 0.0)

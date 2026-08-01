@@ -22,6 +22,22 @@ CLEAT_WIDTH = inch(4.0)
 # inner face of an end panel at the front edge.
 BATTEN_WIDTH = inch(1.125)
 BATTEN_THICKNESS = inch(0.25)
+# What the uprights in a cubby grid are cut from. Kept apart from the
+# shelf thickness because the prior library carried its own figure for
+# it, so a grid can be divided in something other than what its
+# shelves are made of.
+DIVIDER_THICKNESS = inch(0.75)
+# The part thicknesses a run can take over from the room. The room and
+# the starter carry the same field names, which is what lets a run be
+# read through the room's settings without anything downstream having
+# to know which figures were taken over.
+RUN_THICKNESSES = (
+    'panel_thickness',
+    'shelf_thickness',
+    'divider_thickness',
+    'batten_thickness',
+    'batten_width',
+)
 # Wall hang rail (the strip the closet hangs from / anchors to). The
 # prior library's profile: 1.125 in tall x 0.25 in thick, rail bottom
 # 3.3125 in below the section top.

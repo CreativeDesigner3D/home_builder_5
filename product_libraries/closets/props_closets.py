@@ -77,6 +77,23 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _thickness_lock_update(attr):
+    """The padlock beside one of the run's part thicknesses. Opening it
+    hands the run the room's figure as it stands, so the field opens on
+    what the run is already built to rather than on something left over
+    from when the file was made; closing it puts the run back on the
+    room's. Either way it is held to one solve."""
+    def _update(self, context):
+        from . import types_closets
+        with types_closets.suspend_recalc():
+            if getattr(self, 'unlock_' + attr):
+                scene = getattr(context, 'scene', None) or bpy.context.scene
+                setattr(self, attr,
+                        float(getattr(scene.hb_closets, attr)))
+            _update_starter_prop(self, context)
+    return _update
+
+
 def _update_kick_preset(self, context):
     """Toe-kick height dropdown changed: set the distance to the chosen
     standard height (the key is millimetres), then recalc. 'CUSTOM'
@@ -239,6 +256,8 @@ class Closet_Starter_Props(PropertyGroup):
         name="Show Insets", default=False)  # type: ignore
     show_panels: BoolProperty(
         name="Show Panels", default=False)  # type: ignore
+    show_thicknesses: BoolProperty(
+        name="Show Thicknesses", default=False)  # type: ignore
     show_fronts: BoolProperty(
         name="Show Fronts", default=False)  # type: ignore
     show_per_bay: BoolProperty(
@@ -301,6 +320,69 @@ class Closet_Starter_Props(PropertyGroup):
         name="Include Countertop",
         description="Lay a countertop across the top of the run",
         default=False, update=_update_starter_prop)  # type: ignore
+
+    # What this run's parts are cut from. Every figure follows the
+    # room until the padlock hands this run its own, the same way a bay
+    # takes a size over from the run. Held here rather than on the
+    # parts so nothing is driven: the run is read once at the top of a
+    # pass and the figures go straight into the part sizes.
+    unlock_panel_thickness: BoolProperty(
+        name="Panel Thickness",
+        description="Give this run its own panel thickness instead of "
+                    "following the room",
+        default=False,
+        update=_thickness_lock_update('panel_thickness'))  # type: ignore
+    panel_thickness: FloatProperty(
+        name="Panel", description="What this run's panels are cut from",
+        default=const.PANEL_THICKNESS, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+    unlock_shelf_thickness: BoolProperty(
+        name="Shelf Thickness",
+        description="Give this run its own shelf thickness instead of "
+                    "following the room",
+        default=False,
+        update=_thickness_lock_update('shelf_thickness'))  # type: ignore
+    shelf_thickness: FloatProperty(
+        name="Shelf", description="What this run's shelves are cut from",
+        default=const.SHELF_THICKNESS, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+    unlock_divider_thickness: BoolProperty(
+        name="Cubby Divider Thickness",
+        description="Give this run its own cubby divider thickness "
+                    "instead of following the room",
+        default=False,
+        update=_thickness_lock_update('divider_thickness'))  # type: ignore
+    divider_thickness: FloatProperty(
+        name="Cubby Divider",
+        description="What the uprights in this run's cubby grids are "
+                    "cut from",
+        default=const.DIVIDER_THICKNESS, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+    unlock_batten_thickness: BoolProperty(
+        name="Batten Thickness",
+        description="Give this run its own batten thickness instead of "
+                    "following the room",
+        default=False,
+        update=_thickness_lock_update('batten_thickness'))  # type: ignore
+    batten_thickness: FloatProperty(
+        name="Batten",
+        description="How thick the scribe strip on the end of this run "
+                    "is",
+        default=const.BATTEN_THICKNESS, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+    unlock_batten_width: BoolProperty(
+        name="Batten Width",
+        description="Give this run its own batten width instead of "
+                    "following the room",
+        default=False,
+        update=_thickness_lock_update('batten_width'))  # type: ignore
+    batten_width: FloatProperty(
+        name="Batten Width",
+        description="How wide the scribe strip on the end of this run "
+                    "is. Whatever it carries past the panel edge is "
+                    "what there is to scribe to the wall",
+        default=const.BATTEN_WIDTH, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
 
     # Countertop shaping. The overhangs are measured past the carcass on
     # each side; finished ends and the radius option are edge treatments
@@ -1131,6 +1213,25 @@ class Closets_Scene_Props(PropertyGroup):
     shelf_thickness: FloatProperty(
         name="Shelf Thickness", default=const.SHELF_THICKNESS,
         unit='LENGTH', precision=4)  # type: ignore
+    divider_thickness: FloatProperty(
+        name="Cubby Divider Thickness",
+        description="What the uprights in a cubby grid are cut from. "
+                    "The shelves across the grid follow the shelf "
+                    "thickness",
+        default=const.DIVIDER_THICKNESS,
+        unit='LENGTH', precision=4)  # type: ignore
+    batten_thickness: FloatProperty(
+        name="Batten Thickness",
+        description="How thick the scribe strip on the end of a run is",
+        default=const.BATTEN_THICKNESS,
+        unit='LENGTH', precision=4)  # type: ignore
+    batten_width: FloatProperty(
+        name="Batten Width",
+        description="How wide the scribe strip on the end of a run is. "
+                    "Whatever it carries past the panel edge is what "
+                    "there is to scribe to the wall",
+        default=const.BATTEN_WIDTH,
+        unit='LENGTH', precision=4)  # type: ignore
     # The room's standard for how a shelf on clips is cut. An opening
     # can take either figure over for itself.
     shelf_clip_gap: FloatProperty(
@@ -1418,6 +1519,9 @@ class Closets_Scene_Props(PropertyGroup):
             sub = box.column(align=True)
             sub.prop(self, 'panel_thickness', text="Panel")
             sub.prop(self, 'shelf_thickness', text="Shelf")
+            sub.prop(self, 'divider_thickness', text="Cubby Divider")
+            sub.prop(self, 'batten_thickness', text="Batten")
+            sub.prop(self, 'batten_width', text="Batten Width")
 
         box = layout.box()
         box.prop(self, 'show_shelf_sizes', text="Adjustable Shelves",
