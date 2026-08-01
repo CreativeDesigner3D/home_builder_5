@@ -8170,11 +8170,6 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ("Base", "Diagonal Base"), ("Tall", "Diagonal Tall"),
             ("Upper", "Diagonal Upper"),
         ])
-        # Voided recessed corner sink: standard sink base at 45 degrees
-        # across the corner, returns close the recess to each wall.
-        self._draw_catalog_labeled_row(layout, "Corner Sink", [
-            ("Voided 45\u00b0", "Corner Sink Base"),
-        ])
 
     # =====================================================================
     # UI: appliance products library

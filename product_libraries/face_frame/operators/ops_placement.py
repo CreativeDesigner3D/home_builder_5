@@ -1996,6 +1996,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Fresh free-placement rotation each session.
         self._free_rotation_z = 0.0
 
+        # Corner-sink snap state (Sink product near a wall end).
+        self._corner_sink_snap = None
+        self._fill_mode_before_corner_sink = False
+
         # True while the cage is in peninsula position (side flush
         # against a wall, run projecting into the room). Recomputed by
         # every _position_from_hit pass; read by the header.
@@ -2638,6 +2642,55 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._reposition_with_offsets(context)
             return
 
+        # Corner-sink snap: placing the standard Sink with the cursor
+        # near a wall END (and the gap actually reaching that end) snaps
+        # the preview to a 45-degree voided corner sink across the
+        # corner. Same engage/release hysteresis idea as the other
+        # snaps; while snapped the width is fixed (fill restored on
+        # release, mirroring the center-on-window snap).
+        if self.cabinet_name == 'Sink' and self._place_on_front:
+            try:
+                wall_len = wall_geo.get_input('Length')
+            except Exception:
+                wall_len = None
+            if wall_len is not None:
+                engage = units.inch(6.0)
+                release = engage + units.inch(2.0)
+                near_l = (cursor_x - gap_start) < (
+                    release if self._corner_sink_snap == 'LEFT' else engage)
+                near_r = (gap_end - cursor_x) < (
+                    release if self._corner_sink_snap == 'RIGHT' else engage)
+                cs_end = None
+                if near_l and gap_start <= 1e-6:
+                    cs_end = 'LEFT'
+                elif near_r and gap_end >= wall_len - 1e-6:
+                    cs_end = 'RIGHT'
+                if cs_end is not None:
+                    if self._fill_mode:
+                        self._fill_mode_before_corner_sink = True
+                        scene_props = context.scene.hb_face_frame
+                        self._apply_width(scene_props.default_cabinet_width,
+                                          fill_mode=False)
+                    self._corner_sink_snap = cs_end
+                    cs_depth = self._preview_cage.get_input('Dim Y')
+                    (csx, csy), cs_rot, _ra, _rb = _corner_sink_layout(
+                        wall_len, self._cabinet_width, cs_depth, 0.0, cs_end)
+                    cage_obj.location.x = csx
+                    cage_obj.location.y = csy
+                    cage_obj.rotation_euler = (0.0, 0.0, cs_rot)
+                    self._placement_dim_specs = None
+                    if context.area is not None:
+                        context.area.tag_redraw()
+                    return
+                if self._corner_sink_snap is not None:
+                    self._corner_sink_snap = None
+                    cage_obj.rotation_euler = (0.0, 0.0, 0.0)
+                    if self._fill_mode_before_corner_sink:
+                        self._fill_mode_before_corner_sink = False
+                        self._apply_width(
+                            max(gap_end - gap_start, units.inch(1.0)),
+                            fill_mode=True)
+
         # Apply the hold-off to the live (cursor-following) span.
         gap_start += self._left_holdoff
         gap_end -= self._right_holdoff
@@ -3173,6 +3226,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         """Drop the cage at the world hit point, snapping flush to an
         existing off-wall cabinet's edge if the cursor is over one.
         """
+        # Off-wall also releases the corner-sink snap.
+        if getattr(self, '_corner_sink_snap', None) is not None:
+            self._corner_sink_snap = None
+            self._preview_cage.obj.rotation_euler = (0.0, 0.0, 0.0)
         # Going off-wall releases any offset lock - the gap reference
         # is gone, so the cabinet returns to cursor-following.
         if self._gap_wall is not None or self._position_locked:
@@ -3711,7 +3768,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Auto-merge with an abutting compatible neighbor on the wall.
         # When a merge happens, cab_obj is absorbed and deleted; the
         # neighbor is the survivor that selection should target.
-        merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
+        # A corner-sink commit never merges - the 45-degree cabinet is
+        # not collinear with its neighbors; it stamps markers and builds
+        # the recess returns instead.
+        if (getattr(self, '_corner_sink_snap', None) is not None
+                and captured_parent is not None
+                and 'IS_WALL_BP' in captured_parent):
+            merged_into = None
+            _commit_corner_sink(context, cab_obj, captured_parent,
+                                self._corner_sink_snap)
+        else:
+            merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
         selection_target = merged_into if merged_into is not None else cab_obj
 
         # Refresh side-exposure on the survivor and its immediate L/R
@@ -6144,139 +6211,39 @@ def _corner_sink_layout(wall_len, width, depth, pull_out, wall_end):
     return (ox, oy), rot, ret_a, ret_b
 
 
-class hb_face_frame_OT_place_corner_sink_base(bpy.types.Operator):
-    """Place a voided recessed corner sink base: a standard sink base
-    at 45 degrees across a wall corner, with return panels closing the
-    recess to each wall"""
-    bl_idname = "hb_face_frame.place_corner_sink_base"
-    bl_label = "Place Corner Sink Base"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    wall_name: bpy.props.StringProperty(default="")  # type: ignore
-    wall_end: bpy.props.EnumProperty(
-        name="Corner",
-        items=[('LEFT', "Left End of Wall", ""),
-               ('RIGHT', "Right End of Wall", "")],
-        default='RIGHT',
-    )  # type: ignore
-    width: bpy.props.FloatProperty(
-        name="Cabinet Width", default=units.inch(36.0),
-        unit='LENGTH', precision=4, min=units.inch(24.0),
-        description="Width of the sink base across the corner",
-    )  # type: ignore
-    pull_out: bpy.props.FloatProperty(
-        name="Pull From Corner", default=0.0,
-        unit='LENGTH', precision=4, min=0.0,
-        description="Slide the cabinet out of the corner along the "
-                    "bisector; the returns grow to match",
-    )  # type: ignore
-    include_returns: bpy.props.BoolProperty(
-        name="Build Returns", default=True,
-        description="Build the two vertical return panels closing the "
-                    "recess from the front corners back to the walls",
-    )  # type: ignore
-
-    def invoke(self, context, event):
-        wall = None
-        cur = context.active_object
-        while cur is not None:
-            if 'IS_WALL_BP' in cur:
-                wall = cur
-                break
-            cur = cur.parent
-        if wall is None:
-            cursor = context.scene.cursor.location
-            best_d = None
-            for o in context.scene.objects:
-                if 'IS_WALL_BP' in o:
-                    d = (o.matrix_world.translation - cursor).length
-                    if best_d is None or d < best_d:
-                        wall, best_d = o, d
-        if wall is None:
-            self.report({'WARNING'}, "No wall found - select a wall first")
-            return {'CANCELLED'}
-        self.wall_name = wall.name
-        try:
-            wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
-            local = wall.matrix_world.inverted() @ context.scene.cursor.location
-            self.wall_end = 'RIGHT' if local.x > wall_len / 2.0 else 'LEFT'
-        except Exception:
-            pass
-        return context.window_manager.invoke_props_dialog(self)
-
-    def execute(self, context):
-        wall = bpy.data.objects.get(self.wall_name)
-        if wall is None or 'IS_WALL_BP' not in wall:
-            self.report({'WARNING'}, "Wall not found")
-            return {'CANCELLED'}
-        try:
-            wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
-        except Exception:
-            self.report({'WARNING'}, "Couldn't read the wall's length")
-            return {'CANCELLED'}
-
-        cls = types_face_frame.get_cabinet_class('Sink')
-        cabinet = cls()
-        cabinet.create('Corner Sink Base', bay_qty=1)
-        cab_obj = cabinet.obj
-        cab_obj.parent = wall
-        cab_obj.matrix_parent_inverse.identity()
-        cab_props = cab_obj.face_frame_cabinet
-        with types_face_frame.suspend_recalc():
-            cab_props.width = self.width
-        depth = cab_props.depth
-
-        (ox, oy), rot, ret_a, ret_b = _corner_sink_layout(
-            wall_len, self.width, depth, self.pull_out, self.wall_end)
-        cab_obj.location = (ox, oy, 0.0)
-        cab_obj.rotation_euler = (0.0, 0.0, rot)
-
-        # Sink front (false front over doors) like the standard Sink
-        # product, sized by width.
-        cfg = bay_presets.default_bay_config('Sink', self.width)
-        if cfg:
-            for bay in [c for c in cab_obj.children
-                        if c.get(types_face_frame.TAG_BAY_CAGE)]:
-                ops_cabinet.apply_bay_preset(bay, cfg)
-
-        # Product markers: the drawings / pricing side keys off these.
-        cab_obj['HB_CORNER_SINK_45'] = True
-        cab_obj['HB_CS_PULL_OUT'] = float(self.pull_out)
-        cab_obj['HB_CS_WALL_END'] = self.wall_end
-
-        if self.include_returns:
-            from ...frameless.types_frameless import CabinetPart
-            for tag, ((rx, ry), phi, run) in (('LEFT', ret_a),
-                                              ('RIGHT', ret_b)):
-                if run <= 1e-6:
-                    continue
-                part = CabinetPart()
-                part.create(f'Corner Sink Return {tag.title()}')
-                part.obj.parent = wall
-                part.obj['hb_part_role'] = 'CORNER_SINK_RETURN'
-                part.obj['CABINET_PART'] = True
-                part.obj['HB_CS_OWNER'] = cab_obj.name
-                part.obj.rotation_euler.y = math.radians(-90)
-                part.obj.rotation_euler.z = phi
-                part.obj.location = (rx, ry, 0.0)
-                part.set_input('Length', cab_props.height)
-                part.set_input('Width', run)
-                part.set_input('Thickness', units.inch(0.75))
-
-        # Active cabinet style, matching the other placement commits.
-        props_hb_face_frame.ensure_default_styles(context)
-        scene_props = props_hb_face_frame.get_style_props(context)
-        idx = scene_props.active_cabinet_style_index
-        if 0 <= idx < len(scene_props.cabinet_styles):
-            scene_props.cabinet_styles[idx].assign_style_to_cabinet(cab_obj)
-
-        types_face_frame.recalculate_face_frame_cabinet(cab_obj)
-        for o in context.selected_objects:
-            o.select_set(False)
-        cab_obj.select_set(True)
-        context.view_layer.objects.active = cab_obj
-        self.report({'INFO'}, "Placed corner sink base at 45 degrees")
-        return {'FINISHED'}
+def _commit_corner_sink(context, cab_obj, wall, wall_end):
+    """Stamp a committed 45-degree corner-sink placement and build its
+    return panels (the recess sides, front corners back to each wall).
+    Runs after the normal Sink finalize - the cabinet is a standard sink
+    base; only the transform, markers and returns are corner-specific."""
+    try:
+        wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
+    except Exception:
+        return
+    cab_props = cab_obj.face_frame_cabinet
+    (ox, oy), rot, ret_a, ret_b = _corner_sink_layout(
+        wall_len, cab_props.width, cab_props.depth, 0.0, wall_end)
+    cab_obj.location = (ox, oy, 0.0)
+    cab_obj.rotation_euler = (0.0, 0.0, rot)
+    cab_obj['HB_CORNER_SINK_45'] = True
+    cab_obj['HB_CS_PULL_OUT'] = 0.0
+    cab_obj['HB_CS_WALL_END'] = wall_end
+    from ...frameless.types_frameless import CabinetPart
+    for tag, ((rx, ry), phi, run) in (('Left', ret_a), ('Right', ret_b)):
+        if run <= 1e-6:
+            continue
+        part = CabinetPart()
+        part.create(f'Corner Sink Return {tag}')
+        part.obj.parent = wall
+        part.obj['hb_part_role'] = 'CORNER_SINK_RETURN'
+        part.obj['CABINET_PART'] = True
+        part.obj['HB_CS_OWNER'] = cab_obj.name
+        part.obj.rotation_euler.y = math.radians(-90)
+        part.obj.rotation_euler.z = phi
+        part.obj.location = (rx, ry, 0.0)
+        part.set_input('Length', cab_props.height)
+        part.set_input('Width', run)
+        part.set_input('Thickness', units.inch(0.75))
 
 
 classes = (
@@ -6286,7 +6253,6 @@ classes = (
     hb_face_frame_OT_set_blind_corner_void_amount,
     hb_face_frame_OT_edit_blind_corner,
     hb_face_frame_OT_set_angled_corner_void_amount,
-    hb_face_frame_OT_place_corner_sink_base,
 )
 
 

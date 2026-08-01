@@ -50,11 +50,6 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
                 appliance_name=self.cabinet_name,
             )
             return {'FINISHED'}
-        # Voided recessed corner sink: a standard base at 45 degrees
-        # across a corner - its own dialog-driven placement.
-        if self.cabinet_name == 'Corner Sink Base':
-            bpy.ops.hb_face_frame.place_corner_sink_base('INVOKE_DEFAULT')
-            return {'FINISHED'}
         # Corner cabinets get a dedicated placement modal - same
         # cursor-follow / GPU-dim feedback as regular cabinets, but
         # snaps to wall corners instead of gap edges and skips the
