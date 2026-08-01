@@ -6099,6 +6099,186 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+# ---------------------------------------------------------------------------
+# Operator: voided recessed corner sink base. A STANDARD sink base set at
+# 45 degrees across a wall corner (per the product spec: "standard 24 inch
+# sink base positioned at a 45 degree angle"), with vertical return panels
+# closing the recess from each front corner back to its wall. The voids
+# behind the angled back are left open - that is the product.
+# ---------------------------------------------------------------------------
+def _corner_sink_layout(wall_len, width, depth, pull_out, wall_end):
+    """Pure layout math for the 45-degree corner sink placement, in
+    wall-local XY (wall runs +X, interior at -Y, corner at x=0 for
+    LEFT / x=wall_len for RIGHT).
+
+    Returns (origin, rot_z, ret_a, ret_b) where origin is the cabinet
+    back-origin location, rot_z its rotation, and each ret is
+    ((x, y), phi, run) for a return panel: location, Z rotation (the
+    part's local -Y axis runs from the wall toward the cabinet's front
+    corner), and run length. With pull_out 0 the cabinet's back corners
+    touch both walls; pulling out slides it along the corner bisector
+    and the returns grow to match.
+    """
+    r2 = math.sqrt(2.0)
+    w2 = width / r2
+    d2 = depth / r2
+    p2 = pull_out / r2
+    if wall_end == 'RIGHT':
+        ox = wall_len - w2 - p2
+        oy = -p2
+        rot = -math.pi / 4.0
+        flx, fly = ox - d2, oy - d2               # front-left corner
+        frx, fry = flx + w2, fly - w2             # front-right corner
+        ret_a = ((flx, 0.0), 0.0, -fly)           # to wall A (y = 0)
+        ret_b = ((wall_len, fry), -math.pi / 2.0,
+                 wall_len - frx)                  # to wall B (x = L)
+    else:
+        ox = p2
+        oy = -w2 - p2
+        rot = math.pi / 4.0
+        flx, fly = ox + d2, oy - d2               # front-left corner
+        frx, fry = flx + w2, fly + w2             # front-right corner
+        ret_a = ((0.0, fly), math.pi / 2.0, flx)  # to wall B (x = 0)
+        ret_b = ((frx, 0.0), 0.0, -fry)           # to wall A (y = 0)
+    return (ox, oy), rot, ret_a, ret_b
+
+
+class hb_face_frame_OT_place_corner_sink_base(bpy.types.Operator):
+    """Place a voided recessed corner sink base: a standard sink base
+    at 45 degrees across a wall corner, with return panels closing the
+    recess to each wall"""
+    bl_idname = "hb_face_frame.place_corner_sink_base"
+    bl_label = "Place Corner Sink Base"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    wall_name: bpy.props.StringProperty(default="")  # type: ignore
+    wall_end: bpy.props.EnumProperty(
+        name="Corner",
+        items=[('LEFT', "Left End of Wall", ""),
+               ('RIGHT', "Right End of Wall", "")],
+        default='RIGHT',
+    )  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Cabinet Width", default=units.inch(36.0),
+        unit='LENGTH', precision=4, min=units.inch(24.0),
+        description="Width of the sink base across the corner",
+    )  # type: ignore
+    pull_out: bpy.props.FloatProperty(
+        name="Pull From Corner", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Slide the cabinet out of the corner along the "
+                    "bisector; the returns grow to match",
+    )  # type: ignore
+    include_returns: bpy.props.BoolProperty(
+        name="Build Returns", default=True,
+        description="Build the two vertical return panels closing the "
+                    "recess from the front corners back to the walls",
+    )  # type: ignore
+
+    def invoke(self, context, event):
+        wall = None
+        cur = context.active_object
+        while cur is not None:
+            if 'IS_WALL_BP' in cur:
+                wall = cur
+                break
+            cur = cur.parent
+        if wall is None:
+            cursor = context.scene.cursor.location
+            best_d = None
+            for o in context.scene.objects:
+                if 'IS_WALL_BP' in o:
+                    d = (o.matrix_world.translation - cursor).length
+                    if best_d is None or d < best_d:
+                        wall, best_d = o, d
+        if wall is None:
+            self.report({'WARNING'}, "No wall found - select a wall first")
+            return {'CANCELLED'}
+        self.wall_name = wall.name
+        try:
+            wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
+            local = wall.matrix_world.inverted() @ context.scene.cursor.location
+            self.wall_end = 'RIGHT' if local.x > wall_len / 2.0 else 'LEFT'
+        except Exception:
+            pass
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        wall = bpy.data.objects.get(self.wall_name)
+        if wall is None or 'IS_WALL_BP' not in wall:
+            self.report({'WARNING'}, "Wall not found")
+            return {'CANCELLED'}
+        try:
+            wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
+        except Exception:
+            self.report({'WARNING'}, "Couldn't read the wall's length")
+            return {'CANCELLED'}
+
+        cls = types_face_frame.get_cabinet_class('Sink')
+        cabinet = cls()
+        cabinet.create('Corner Sink Base', bay_qty=1)
+        cab_obj = cabinet.obj
+        cab_obj.parent = wall
+        cab_obj.matrix_parent_inverse.identity()
+        cab_props = cab_obj.face_frame_cabinet
+        with types_face_frame.suspend_recalc():
+            cab_props.width = self.width
+        depth = cab_props.depth
+
+        (ox, oy), rot, ret_a, ret_b = _corner_sink_layout(
+            wall_len, self.width, depth, self.pull_out, self.wall_end)
+        cab_obj.location = (ox, oy, 0.0)
+        cab_obj.rotation_euler = (0.0, 0.0, rot)
+
+        # Sink front (false front over doors) like the standard Sink
+        # product, sized by width.
+        cfg = bay_presets.default_bay_config('Sink', self.width)
+        if cfg:
+            for bay in [c for c in cab_obj.children
+                        if c.get(types_face_frame.TAG_BAY_CAGE)]:
+                ops_cabinet.apply_bay_preset(bay, cfg)
+
+        # Product markers: the drawings / pricing side keys off these.
+        cab_obj['HB_CORNER_SINK_45'] = True
+        cab_obj['HB_CS_PULL_OUT'] = float(self.pull_out)
+        cab_obj['HB_CS_WALL_END'] = self.wall_end
+
+        if self.include_returns:
+            from ...frameless.types_frameless import CabinetPart
+            for tag, ((rx, ry), phi, run) in (('LEFT', ret_a),
+                                              ('RIGHT', ret_b)):
+                if run <= 1e-6:
+                    continue
+                part = CabinetPart()
+                part.create(f'Corner Sink Return {tag.title()}')
+                part.obj.parent = wall
+                part.obj['hb_part_role'] = 'CORNER_SINK_RETURN'
+                part.obj['CABINET_PART'] = True
+                part.obj['HB_CS_OWNER'] = cab_obj.name
+                part.obj.rotation_euler.y = math.radians(-90)
+                part.obj.rotation_euler.z = phi
+                part.obj.location = (rx, ry, 0.0)
+                part.set_input('Length', cab_props.height)
+                part.set_input('Width', run)
+                part.set_input('Thickness', units.inch(0.75))
+
+        # Active cabinet style, matching the other placement commits.
+        props_hb_face_frame.ensure_default_styles(context)
+        scene_props = props_hb_face_frame.get_style_props(context)
+        idx = scene_props.active_cabinet_style_index
+        if 0 <= idx < len(scene_props.cabinet_styles):
+            scene_props.cabinet_styles[idx].assign_style_to_cabinet(cab_obj)
+
+        types_face_frame.recalculate_face_frame_cabinet(cab_obj)
+        for o in context.selected_objects:
+            o.select_set(False)
+        cab_obj.select_set(True)
+        context.view_layer.objects.active = cab_obj
+        self.report({'INFO'}, "Placed corner sink base at 45 degrees")
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_place_cabinet,
     hb_face_frame_OT_place_appliance,
@@ -6106,6 +6286,7 @@ classes = (
     hb_face_frame_OT_set_blind_corner_void_amount,
     hb_face_frame_OT_edit_blind_corner,
     hb_face_frame_OT_set_angled_corner_void_amount,
+    hb_face_frame_OT_place_corner_sink_base,
 )
 
 

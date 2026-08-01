@@ -113,6 +113,10 @@ CATALOG = [
     _e('corner', 'Diagonal',
        'Diagonal corner cabinet.',
        _todo('Diagonal corner'), tags=['diagonal', 'corner']),
+    _e('corner', 'Corner Sink Base - Voided 45',
+       'Voided recessed corner sink: standard sink base at 45 degrees '
+       'across the corner with returns closing the recess.',
+       _ff('Corner Sink Base'), tags=['corner', 'sink', 'voided', '45']),
     _e('corner', 'Diagonal Sink - Full Height Doors',
        'Diagonal sink corner with full-height doors.',
        _todo('Diagonal Sink (Full Height Doors)'), tags=['diagonal', 'sink']),
