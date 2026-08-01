@@ -2543,6 +2543,13 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         ffro = self._corner_panel_reserve(cab_props, 'RIGHT')
 
         z_back_floor = (kick_height + brw) if has_kick else brw
+        if open_base:
+            # Remove Bottom: with no bottom panel to sit on, the wall
+            # backs (and the clip-back angled back, which positions
+            # from the same datum) drop to the carcass floor, and the
+            # lowest opening follows via z_open_bot below - matching a
+            # standard upper bay's remove_bottom behavior.
+            z_back_floor = kick_height if has_kick else 0.0
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
         z_top = height - t
 
@@ -2801,8 +2808,21 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # so the lowest opening starts at the carcass floor instead.
         z_open_bot = z_back_floor if open_base else z_ff_floor + brw_eff
         z_open_top = height - trw
+        # Remove Bottom reclaims the bottom-rail band for the BOTTOM
+        # section specifically: solve the stack over the standard span
+        # and hand the reclaimed height to the lowest section
+        # afterwards. Solving over the full span instead would
+        # redistribute it to the unlocked sections - on a garage config
+        # (bottom section height-pinned) that grows the DOORS above and
+        # drops the mid rail, when it's the garage opening that should
+        # run down to the floor.
+        reclaimed = 0.0
+        if open_base:
+            reclaimed = max((z_ff_floor + brw_eff) - z_open_bot, 0.0)
         sec_heights = _solve_section_heights(
-            sections, z_open_top - z_open_bot, n_sec - 1, mrw)
+            sections, z_open_top - z_open_bot - reclaimed, n_sec - 1, mrw)
+        if reclaimed > 0.0 and sec_heights:
+            sec_heights[n_sec - 1] += reclaimed
         # Upper corner cabinets get adjustable shelves behind their doors
         # (auto by section height), reusing the Top/Bottom boolean cutters.
         is_upper = self.default_cabinet_type == 'UPPER'
@@ -2834,6 +2854,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                           if _sec.unlock_top_overlay else top_ov)
             sec_bot_ov = (_sec.bottom_overlay
                           if _sec.unlock_bottom_overlay else bot_ov)
+            # Remove Bottom: the lowest section has no bottom rail to
+            # overlay, so its front stops flush with the carcass floor
+            # instead of hanging an overlay's worth below the cabinet.
+            if open_base and i == n_sec - 1:
+                sec_bot_ov = 0.0
             if sections[i].content in ('DOORS', 'GARAGE'):
                 # Doors filling this section. Same horizontal layout as
                 # a single-opening pair; Length and Z come from the
