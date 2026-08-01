@@ -4781,10 +4781,6 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         else:
             size = scene_props.base_inside_corner_size
             height = scene_props.base_cabinet_height
-        # Counter-sitting products (appliance garages) size themselves
-        # from the scene rather than the full upper height.
-        if hasattr(cls, 'placement_height'):
-            height = cls.placement_height(scene_props)
         self._cabinet_width = size
         self._cabinet_depth = size
         self._cabinet_height = height

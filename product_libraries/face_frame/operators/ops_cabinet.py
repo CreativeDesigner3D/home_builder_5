@@ -2077,6 +2077,17 @@ def _build_recipe_into(recipe, parent_obj, child_index,
             # door zone above flexes with the cabinet height.
             props.unlock_size = True
             props.size = bpy.context.scene.hb_face_frame.refrigerator_height
+        elif size_role == 'GARAGE_BOTTOM':
+            # Pins a garage opening to the cabinet's stored counter
+            # extension (written by the Appliance Garage toggle) minus
+            # the mid rail, so the doors above keep their opening.
+            root = types_face_frame.find_cabinet_root(props.id_data)
+            ext = float(root.get('hb_garage_extension', 0.0)) if root else 0.0
+            if ext > 0.0:
+                props.unlock_size = True
+                props.size = max(
+                    ext - root.face_frame_cabinet.bay_mid_rail_width,
+                    inch(4.0))
         elif size_role == 'VANITY_SINK_WIDTH':
             # Pins a vanity sink false front to a fixed 20" width so the
             # flanking drawers absorb the bay's width changes. A constant

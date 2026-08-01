@@ -361,6 +361,13 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_bottom_left', text="Extend Bottom Left X")
             col.prop(cab_props, 'extend_bottom_right', text="Extend Bottom Right X")
 
+            # Appliance garage: extend the cabinet down to the countertop
+            # with a garage opening below each bay (straight and
+            # blind-corner uppers; corner cabinets use their exterior
+            # config instead).
+            box = uex.box()
+            box.prop(cab_props, 'appliance_garage', text="Appliance Garage")
+
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.
     box = layout.box()

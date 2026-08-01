@@ -4956,6 +4956,55 @@ def _sync_corner_garage_extension(cab_props):
         del obj['hb_garage_extension']
 
 
+def _update_appliance_garage(self, context):
+    """Appliance Garage toggle on a straight (incl. blind-corner) upper:
+    ON extends the cabinet down to the countertop plane and rebuilds each
+    bay as a stacked pair whose BOTTOM opening pins to the added extent
+    (size_role GARAGE_BOTTOM); OFF reverts the stored extension and
+    restores each bay's width-based door preset. The extent is stored on
+    the object so the revert is exact."""
+    obj = self.id_data
+    from . import types_face_frame
+    from . import bay_presets
+    ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+    if ff_scene is None:
+        return
+    stored = obj.get('hb_garage_extension', 0.0)
+    if self.appliance_garage and not stored:
+        counter_z = (ff_scene.base_cabinet_height
+                     + ff_scene.countertop_thickness)
+        ext = obj.location.z - counter_z
+        if ext <= 0.0:
+            return
+        with types_face_frame.suspend_recalc():
+            self.height = self.height + ext
+            obj.location.z = counter_z
+        obj['hb_garage_extension'] = ext
+        configs = ('DOUBLE_DOOR_GARAGE', 'LEFT_DOOR_GARAGE')
+    elif not self.appliance_garage and stored:
+        with types_face_frame.suspend_recalc():
+            self.height = self.height - stored
+            obj.location.z = obj.location.z + stored
+        del obj['hb_garage_extension']
+        configs = ('DOUBLE_DOOR', 'LEFT_SWING_DOOR')
+    else:
+        return
+    from .operators import ops_cabinet
+    from ... import hb_types
+    bays = [c for c in obj.children
+            if c.get(types_face_frame.TAG_BAY_CAGE)]
+    for bay in bays:
+        try:
+            w = hb_types.GeoNodeCage(bay).get_input('Dim X')
+        except Exception:
+            w = self.width / max(len(bays), 1)
+        cfg = (configs[0]
+               if (w or 0.0) > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
+               else configs[1])
+        ops_cabinet.apply_bay_preset(bay, cfg)
+    types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
 def _update_exterior_config(self, context):
     """exterior_config changed: repopulate the section collection from the
     new preset, sync the garage extension, then recalc."""
@@ -6038,6 +6087,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # the side(s) to cover the void left in a corner where two uppers meet.
     # Outward only (min 0); only the bottom panel overhangs - the face frame,
     # sides, and doors stay square. Applied in _apply_bottom_extension.
+    # Appliance garage (straight / blind-corner uppers): see
+    # _update_appliance_garage. Corner cabinets use the DOORS_GARAGE
+    # exterior config instead.
+    appliance_garage: BoolProperty(
+        name="Appliance Garage",
+        default=False,
+        description="Extend this upper down to the countertop with a "
+                    "garage opening below each bay. The garage doors pin "
+                    "to the added zone; turning it off restores the "
+                    "standard door layout",
+        update=_update_appliance_garage,
+    )  # type: ignore
     extend_bottom_left: FloatProperty(
         name="Extend Bottom Left X", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
