@@ -261,12 +261,39 @@ def resolve_pull_object(scene_props, kind):
     return pull_obj
 
 
-# Loaded source objects for per-opening pull overrides, keyed by
-# (category, filename). Several can be live at once (each overridden
-# opening may use a different pull); instances share each source's
-# mesh data. Dead references (file reload / purge) are detected and
-# reloaded on demand.
+# Loaded source objects for assignment- and override-resolved pulls,
+# keyed by (category, filename). Several can be live at once (each
+# zone / overridden opening may use a different pull); instances share
+# each source's mesh data. Dead references (file reload / purge) are
+# detected and reloaded on demand.
 _override_cache = {}
+
+# Door zones by cabinet type. Anything unlisted (LAP_DRAWER, panels)
+# reads the Base assignment.
+_ZONE_BY_CABINET_TYPE = {'BASE': 'base', 'TALL': 'tall', 'UPPER': 'upper'}
+
+
+def resolve_pull_for(scene_props, kind, cabinet_type):
+    """Zone-assignment pull resolution: drawer-kind fronts (drawers,
+    pullouts, tilt-outs) read the Drawers assignment; doors read the
+    assignment for their cabinet type (Base / Tall / Upper). A zone
+    assigned NONE drops the pull; an UNASSIGNED zone falls back to the
+    legacy scene-wide selection, so scenes saved before zone
+    assignment (and fresh scenes before the first Assign) keep their
+    pulls.
+    """
+    zone = ('drawers' if kind == 'drawer'
+            else _ZONE_BY_CABINET_TYPE.get(cabinet_type, 'base'))
+    selection = getattr(scene_props, 'pull_assign_' + zone, '')
+    if selection == 'NONE':
+        return None
+    if selection:
+        category = getattr(
+            scene_props, 'pull_assign_' + zone + '_category', '')
+        pull_obj = resolve_pull_override(category, selection, scene_props)
+        if pull_obj is not None:
+            return pull_obj
+    return resolve_pull_object(scene_props, kind)
 
 
 def resolve_pull_override(category, filename, scene_props):

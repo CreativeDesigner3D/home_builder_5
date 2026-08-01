@@ -7887,6 +7887,29 @@ class Face_Frame_Scene_Props(PropertyGroup):
         update=_update_pulls_on_selection_change,
     )  # type: ignore
 
+    # Pull library browser: an inert selection (no update callback) the
+    # Assign buttons read. Assignment state lives in the pull_assign_*
+    # strings below - browsing never changes placed pulls.
+    pull_browser_selection: EnumProperty(
+        name="Pull",
+        description="Pull to assign (pick a zone button below to apply)",
+        items=_pull_enum_items,
+    )  # type: ignore
+
+    # Per-zone pull assignments (filename + category folder), written
+    # by hb_face_frame.assign_pull. Empty = unassigned, which falls
+    # back to the legacy scene-wide selections (door_pull_selection /
+    # drawer_pull_selection) so pre-assignment scenes keep their pulls;
+    # 'NONE' = no pull for that zone.
+    pull_assign_base: StringProperty(default="")  # type: ignore
+    pull_assign_base_category: StringProperty(default="")  # type: ignore
+    pull_assign_tall: StringProperty(default="")  # type: ignore
+    pull_assign_tall_category: StringProperty(default="")  # type: ignore
+    pull_assign_upper: StringProperty(default="")  # type: ignore
+    pull_assign_upper_category: StringProperty(default="")  # type: ignore
+    pull_assign_drawers: StringProperty(default="")  # type: ignore
+    pull_assign_drawers_category: StringProperty(default="")  # type: ignore
+
     # Finish material swapped onto every pull mesh (scene-wide,
     # including per-opening overridden pulls). Dynamic items so the
     # list lives in pulls.py; AS_MODELED is first, making it the
@@ -8515,31 +8538,45 @@ class Face_Frame_Scene_Props(PropertyGroup):
     def draw_pulls_ui(self, layout, context):
         from . import pulls
 
+        # Library browser (inert - the Assign buttons apply it).
         col = layout.column(align=True)
+        col.label(text="Pull Library:")
         col.prop(self, 'door_pull_category', text="Category")
+        col.prop(self, 'pull_browser_selection', text="")
+        if self.pull_browser_selection not in ('NONE', ''):
+            icon_id = pulls.load_pull_thumbnail_icon(
+                self.pull_browser_selection,
+                pulls._resolve_real_category(self.door_pull_category),
+            )
+            if icon_id:
+                col.template_icon(icon_value=icon_id, scale=4.0)
         col.prop(self, 'pull_finish', text="Finish")
 
-        # Door pull row + thumbnail beneath
-        col.label(text="Door Pull:")
-        col.prop(self, 'door_pull_selection', text="")
-        if self.door_pull_selection not in ('NONE', ''):
-            icon_id = pulls.load_pull_thumbnail_icon(
-                self.door_pull_selection,
-                pulls._resolve_real_category(self.door_pull_category),
-            )
-            if icon_id:
-                col.template_icon(icon_value=icon_id, scale=4.0)
-
         col.separator()
-        col.label(text="Drawer Pull:")
-        col.prop(self, 'drawer_pull_selection', text="")
-        if self.drawer_pull_selection not in ('NONE', ''):
-            icon_id = pulls.load_pull_thumbnail_icon(
-                self.drawer_pull_selection,
-                pulls._resolve_real_category(self.door_pull_category),
-            )
-            if icon_id:
-                col.template_icon(icon_value=icon_id, scale=4.0)
+        col.label(text="Assign to:")
+        row = col.row(align=True)
+        for target, label in (('BASE', "Base"), ('TALL', "Tall"),
+                              ('UPPER', "Upper"), ('DRAWERS', "Drawers")):
+            row.operator('hb_face_frame.assign_pull',
+                         text=label).target = target
+        col.operator('hb_face_frame.assign_pull',
+                     text="Assign to Selected Fronts",
+                     icon='RESTRICT_SELECT_OFF').target = 'SELECTED'
+
+        # Current assignments. Unassigned zones ride the legacy
+        # scene-wide selections, so show the effective pull.
+        box = col.box()
+        bcol = box.column(align=True)
+        for zone_prop, label, legacy in (
+                ('pull_assign_base', "Base", self.door_pull_selection),
+                ('pull_assign_tall', "Tall", self.door_pull_selection),
+                ('pull_assign_upper', "Upper", self.door_pull_selection),
+                ('pull_assign_drawers', "Drawers",
+                 self.drawer_pull_selection)):
+            sel = getattr(self, zone_prop) or legacy
+            stem = ("None" if sel in ('NONE', '')
+                    else os.path.splitext(sel)[0])
+            bcol.label(text=f"{label}: {stem}")
 
         col.separator()
         col.label(text="Position:")

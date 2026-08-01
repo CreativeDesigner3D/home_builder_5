@@ -7784,7 +7784,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 getattr(op_props, 'pull_override_category', ''),
                 override, scene_props)
         if pull_obj is None:
-            pull_obj = pulls.resolve_pull_object(scene_props, kind)
+            pull_obj = pulls.resolve_pull_for(
+                scene_props, kind,
+                self.obj.face_frame_cabinet.cabinet_type)
         if pull_obj is None:
             return None
 

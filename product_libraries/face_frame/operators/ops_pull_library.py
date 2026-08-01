@@ -132,6 +132,90 @@ class hb_face_frame_OT_install_pull_library(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_assign_pull(bpy.types.Operator):
+    """Assign the browsed pull (library dropdowns above the buttons)
+    to a zone - Base / Tall / Upper doors, Drawers - or to the
+    openings of the selected fronts. Zone assignments live on the
+    scene; Selected writes per-opening overrides that win over the
+    zone."""
+    bl_idname = "hb_face_frame.assign_pull"
+    bl_label = "Assign Pull"
+    bl_description = ("Assign the browsed pull to a cabinet zone or "
+                      "to the selected fronts")
+    bl_options = {'UNDO'}
+
+    target: bpy.props.EnumProperty(
+        name="Assign To",
+        items=[
+            ('BASE', "Base", "Doors on base cabinets"),
+            ('TALL', "Tall", "Doors on tall cabinets"),
+            ('UPPER', "Upper", "Doors on upper cabinets"),
+            ('DRAWERS', "Drawers",
+             "Drawer, pullout, and tilt-out fronts"),
+            ('SELECTED', "Selected",
+             "The selected fronts only (stored per opening)"),
+        ],
+    )  # type: ignore
+
+    def execute(self, context):
+        from .. import types_face_frame
+        scene_props = context.scene.hb_face_frame
+        selection = scene_props.pull_browser_selection
+        if not selection:
+            self.report({'WARNING'}, "Pick a pull in the library first")
+            return {'CANCELLED'}
+        category = pulls._resolve_real_category(
+            scene_props.door_pull_category) or ''
+        stem = ("No Pull" if selection == 'NONE'
+                else os.path.splitext(selection)[0])
+
+        if self.target == 'SELECTED':
+            from . import ops_cabinet
+            from . import ops_part_commands
+            openings = {}
+            skipped = 0
+            for obj in context.selected_objects:
+                if (obj.get('hb_part_role')
+                        not in ops_part_commands._ROLES_WITH_PULL):
+                    continue
+                opening = ops_cabinet._find_owning_opening(obj)
+                if opening is None:
+                    skipped += 1
+                    continue
+                openings[opening.name] = opening
+            if not openings:
+                self.report(
+                    {'WARNING'},
+                    "Select door or drawer fronts first"
+                    + (" (corner doors follow the zone assignment)"
+                       if skipped else ""))
+                return {'CANCELLED'}
+            with types_face_frame.suspend_recalc():
+                for opening in openings.values():
+                    op_props = opening.face_frame_opening
+                    op_props.pull_override_category = (
+                        '' if selection == 'NONE' else category)
+                    op_props.pull_override = selection
+            msg = f"{stem} assigned to {len(openings)} opening(s)"
+            if skipped:
+                msg += f"; {skipped} corner front(s) skipped"
+            self.report({'INFO'}, msg)
+            return {'FINISHED'}
+
+        zone = self.target.lower()
+        setattr(scene_props, 'pull_assign_' + zone, selection)
+        setattr(scene_props, 'pull_assign_' + zone + '_category',
+                '' if selection == 'NONE' else category)
+        # Zone strings carry no update callback - rebuild the room here.
+        with types_face_frame.suspend_recalc():
+            for obj in context.scene.objects:
+                if obj.get(types_face_frame.TAG_CABINET_CAGE):
+                    types_face_frame.recalculate_face_frame_cabinet(obj)
+        self.report({'INFO'},
+                    f"{stem} assigned to {self.target.title()}")
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_open_pull_library_folder(bpy.types.Operator):
     """Open the user pulls folder in the system file browser (drop
     category folders of .blend pulls here to install by hand)."""
@@ -149,6 +233,7 @@ class hb_face_frame_OT_open_pull_library_folder(bpy.types.Operator):
 
 classes = (
     hb_face_frame_OT_install_pull_library,
+    hb_face_frame_OT_assign_pull,
     hb_face_frame_OT_open_pull_library_folder,
 )
 
