@@ -412,6 +412,10 @@ def default_bay_config(cabinet_name, bay_width):
         return 'ONE_DRAWER'
     if cabinet_name == 'Upper':
         return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
+    if cabinet_name == 'Appliance Garage':
+        # Straight appliance garage: a standard door front on the
+        # counter-height body (hardware variants are ordering options).
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Hutch Upper':
         # Hutch upper: a standard upper front (width-based door); the
         # dropped ends come from the cabinet class, not the bay preset.

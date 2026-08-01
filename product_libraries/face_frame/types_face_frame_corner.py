@@ -2139,7 +2139,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         else:
             door_sides = ('DIAGONAL_LEFT', 'DIAGONAL_RIGHT')
         for i, sec in enumerate(sections):
-            if sec.content != 'DOORS':
+            # GARAGE sections carry doors like DOORS (no shelves; the
+            # shelf pass in the recalc is DOORS-only).
+            if sec.content not in ('DOORS', 'GARAGE'):
                 continue
             for door_side in door_sides:
                 leaf = 'Left' if door_side.endswith('LEFT') else 'Right'
@@ -2651,7 +2653,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                           if _sec.unlock_top_overlay else top_ov)
             sec_bot_ov = (_sec.bottom_overlay
                           if _sec.unlock_bottom_overlay else bot_ov)
-            if sections[i].content == 'DOORS':
+            if sections[i].content in ('DOORS', 'GARAGE'):
                 # Double-door pair filling this section. Same horizontal
                 # layout as a single-opening pair; Length and Z come from
                 # the section.
@@ -2689,8 +2691,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     self._refresh_door_pull(
                         d_right, door_length, leaf_width, dt,
                         width_sign=-1.0, edge='OUTER')
-                if is_upper:
-                    # Adjustable shelves behind the doors. Auto by section
+                if is_upper and sections[i].content == 'DOORS':
+                    # Adjustable shelves behind the doors (GARAGE keeps
+                    # its opening clear for countertop appliances). Auto by section
                     # height while the section's qty is locked (synced into
                     # shelf_qty so the UI shows the live count); unlock to
                     # override. (FALSE_FRONT = sink apron, no shelves; OPEN
@@ -3217,6 +3220,56 @@ class BasePieCutDrawerCabinet(CornerFaceFrameCabinet):
         props_hb.populate_pie_drawer_sections(self.obj.face_frame_cabinet)
 
 
+class DiagonalApplianceGarage(CornerFaceFrameCabinet):
+    """Separate diagonal appliance garage: a short diagonal corner
+    cabinet standing on the countertop under a corner upper. Height
+    spans counter to the standard wall-cabinet location so it meets the
+    upper above; placement mounts it at the counter plane via
+    default_z_location / placement_height."""
+
+    default_corner_type = 'DIAGONAL'
+    default_cabinet_type = 'UPPER'
+    default_z_location = inch(36.0)
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = inch(24)
+        self.default_depth = inch(24)
+        self.default_left_depth = inch(12)
+        self.default_right_depth = inch(12)
+        self.default_height = inch(18.0)
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            props = scene.hb_face_frame
+            self.default_width = props.upper_inside_corner_size
+            self.default_depth = props.upper_inside_corner_size
+            self.default_height = max(
+                props.default_wall_cabinet_location
+                - self.default_z_location, inch(12.0))
+
+    @classmethod
+    def placement_height(cls, scene_props):
+        """Counter plane up to the standard wall-cabinet location."""
+        return max(scene_props.default_wall_cabinet_location
+                   - cls.default_z_location, inch(12.0))
+
+    def create(self, name="Diagonal Appliance Garage", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj.location.z = self.default_z_location
+
+
+class PieCutApplianceGarage(DiagonalApplianceGarage):
+    """Separate pie-cut appliance garage: as DiagonalApplianceGarage but
+    with the pie-cut (L-shaped) front - two arms meeting at the corner.
+    Works under a pie-cut upper or a blind corner wall cabinet; bi-fold
+    doors come from the pie-cut exterior swing options."""
+
+    default_corner_type = 'PIE_CUT'
+
+    def create(self, name="Pie Cut Appliance Garage", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch (mutates registries in types_face_frame at import)
 # ---------------------------------------------------------------------------
@@ -3228,6 +3281,8 @@ ff.CABINET_NAME_DISPATCH.update({
     "Diagonal Upper": UpperDiagonalCabinet,
     "Diagonal Tall": TallDiagonalCabinet,
     "Pie Cut Drawer": BasePieCutDrawerCabinet,
+    "Diagonal Appliance Garage": DiagonalApplianceGarage,
+    "Pie Cut Appliance Garage": PieCutApplianceGarage,
 })
 
 # WRAP_CLASS_REGISTRY: CLASS_NAME -> subclass for the prop-update wrap.
@@ -3242,4 +3297,6 @@ ff.WRAP_CLASS_REGISTRY.update({
     'UpperDiagonalCabinet': UpperDiagonalCabinet,
     'TallDiagonalCabinet': TallDiagonalCabinet,
     'BasePieCutDrawerCabinet': BasePieCutDrawerCabinet,
+    'DiagonalApplianceGarage': DiagonalApplianceGarage,
+    'PieCutApplianceGarage': PieCutApplianceGarage,
 })

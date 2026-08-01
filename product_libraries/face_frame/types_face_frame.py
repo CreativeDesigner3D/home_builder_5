@@ -9092,6 +9092,36 @@ class LapDrawerFaceFrameCabinet(FaceFrameCabinet):
 # ---------------------------------------------------------------------------
 # Helpers - cabinet lookup and recalc-from-prop-update
 # ---------------------------------------------------------------------------
+class ApplianceGarageCabinet(UpperFaceFrameCabinet):
+    """Separate straight appliance garage: a wall-cabinet body standing
+    on the countertop, spanning counter to the standard wall-cabinet
+    location so it meets the upper above. Placement mounts it at the
+    counter plane (default_z_location); works under any upper, including
+    beside blind corners."""
+
+    default_z_location = inch(36.0)
+
+    def __init__(self):
+        super().__init__()
+        self.default_height = inch(18.0)
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            props = scene.hb_face_frame
+            self.default_height = max(
+                props.default_wall_cabinet_location
+                - self.default_z_location, inch(12.0))
+
+    @classmethod
+    def placement_height(cls, scene_props):
+        """Counter plane up to the standard wall-cabinet location."""
+        return max(scene_props.default_wall_cabinet_location
+                   - cls.default_z_location, inch(12.0))
+
+    def create(self, name="Appliance Garage", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj.location.z = self.default_z_location
+
+
 class PanelFaceFrameCabinet(FaceFrameCabinet):
     """Standalone face frame panel: no carcass, just rails / stiles /
     bays / openings. Same machinery as a cabinet, with carcass parts
@@ -10219,6 +10249,7 @@ class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
 
 
 CABINET_NAME_DISPATCH = {
+    "Appliance Garage": ApplianceGarageCabinet,
     "Base Door": BaseFaceFrameCabinet,
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,

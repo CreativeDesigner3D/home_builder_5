@@ -4726,6 +4726,9 @@ class Face_Frame_Corner_Section(PropertyGroup):
             ('DOORS',       "Doors",       "Double-door pair"),
             ('FALSE_FRONT', "False Front", "Fixed false front panel"),
             ('OPEN',        "Open",        "Open section with shelves"),
+            ('GARAGE',      "Appliance Garage",
+             "Appliance garage section reaching the countertop (doors, "
+             "no shelves)"),
         ],
         default='DOORS',
     )  # type: ignore
@@ -4802,6 +4805,9 @@ _EXTERIOR_CONFIG_ITEMS = {
         ('STACKED_DOORS', "Stacked Doors",     "Two stacked door pairs"),
         ('HUTCH',         "Hutch",             "Doors on top, open below"),
         ('OPEN_SHELVES',  "Open with Shelves", "Open shelf section"),
+        ('DOORS_GARAGE',  "Doors + Appliance Garage",
+         "Door pair above an appliance garage; the cabinet extends down "
+         "to the countertop"),
     ],
     'TALL': [
         ('HUTCH',    "Hutch",    "Upper doors, open middle, base doors"),
@@ -4820,6 +4826,9 @@ _PIE_CUT_CONFIG_ITEMS = {
     'UPPER': [
         ('DOORS',         "Full Height Doors", "One full-height door per arm"),
         ('STACKED_DOORS', "Stacked Doors",     "Two stacked doors per arm"),
+        ('DOORS_GARAGE',  "Doors + Appliance Garage",
+         "Doors above an appliance garage; the cabinet extends down to "
+         "the countertop"),
     ],
 }
 
@@ -4842,6 +4851,7 @@ _CORNER_SECTION_PRESETS = {
     ('BASE',  'FALSE_FRONT_DOORS'): ('FALSE_FRONT', 'DOORS'),
     ('UPPER', 'DOORS'):             ('DOORS',),
     ('UPPER', 'STACKED_DOORS'):     ('DOORS', 'DOORS'),
+    ('UPPER', 'DOORS_GARAGE'):      ('DOORS', 'GARAGE'),
     ('UPPER', 'HUTCH'):             ('DOORS', 'OPEN'),
     ('UPPER', 'OPEN_SHELVES'):      ('OPEN',),
     ('TALL',  'HUTCH'):             ('DOORS', 'OPEN', 'DOORS'),
@@ -4907,10 +4917,50 @@ def populate_corner_sections(cab_props):
             sec.unlock_height = False
 
 
+def _sync_corner_garage_extension(cab_props):
+    """Grow / shrink the cabinet for a GARAGE section. Entering a garage
+    config extends the cabinet down to the countertop plane (base cabinet
+    height + countertop thickness) and pins the garage section to the
+    added extent (minus the new mid rail) so the section above keeps its
+    opening; leaving the config reverts the stored extension. The extent
+    is stored on the object so the revert is exact even if scene
+    defaults changed in between."""
+    obj = cab_props.id_data
+    from . import types_face_frame
+    has_garage = any(
+        s.content == 'GARAGE' for s in cab_props.corner_sections)
+    stored = obj.get('hb_garage_extension', 0.0)
+    if has_garage and not stored:
+        ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+        if ff_scene is None:
+            return
+        counter_z = (ff_scene.base_cabinet_height
+                     + ff_scene.countertop_thickness)
+        ext = obj.location.z - counter_z
+        if ext <= 0.0:
+            return
+        with types_face_frame.suspend_recalc():
+            cab_props.height = cab_props.height + ext
+            obj.location.z = counter_z
+            for s in cab_props.corner_sections:
+                if s.content == 'GARAGE':
+                    s.unlock_height = True
+                    s.height = max(
+                        ext - cab_props.bay_mid_rail_width,
+                        units.inch(4.0))
+        obj['hb_garage_extension'] = ext
+    elif not has_garage and stored:
+        with types_face_frame.suspend_recalc():
+            cab_props.height = cab_props.height - stored
+            obj.location.z = obj.location.z + stored
+        del obj['hb_garage_extension']
+
+
 def _update_exterior_config(self, context):
     """exterior_config changed: repopulate the section collection from the
-    new preset, then recalc."""
+    new preset, sync the garage extension, then recalc."""
     populate_corner_sections(self)
+    _sync_corner_garage_extension(self)
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
