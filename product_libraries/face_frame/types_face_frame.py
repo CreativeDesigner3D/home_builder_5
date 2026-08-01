@@ -6780,6 +6780,13 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         cab_props = self.obj.face_frame_cabinet
         z_origin = cab_props.toe_kick_height if self._has_toe_kick() else 0.0
+        # Appliance-garage extension with the blind section opted OPEN
+        # below: the panel starts above the garage zone so the garage
+        # interior stays accessible into the corner.
+        garage_ext = float(self.obj.get('hb_garage_extension', 0.0))
+        if garage_ext > 0.0 and getattr(cab_props, 'garage_blind_opening',
+                                        False):
+            z_origin += garage_ext
         z_height = max(cab_props.height - z_origin, 0.0)
         return (z_origin, z_height)
 

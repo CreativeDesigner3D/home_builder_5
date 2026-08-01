@@ -4956,53 +4956,85 @@ def _sync_corner_garage_extension(cab_props):
         del obj['hb_garage_extension']
 
 
-def _update_appliance_garage(self, context):
-    """Appliance Garage toggle on a straight (incl. blind-corner) upper:
-    ON extends the cabinet down to the countertop plane and rebuilds each
-    bay as a stacked pair whose BOTTOM opening pins to the added extent
-    (size_role GARAGE_BOTTOM); OFF reverts the stored extension and
-    restores each bay's width-based door preset. The extent is stored on
-    the object so the revert is exact."""
+def _update_bay_appliance_garage(self, context):
+    """Per-bay Appliance Garage toggle (uppers, incl. blind corners).
+
+    ON: the CABINET extends down to the countertop plane (once, stored
+    as hb_garage_extension on the root); every non-garage bay is locked
+    at its pre-extension height so its bottom stays at the old mount,
+    while this bay syncs to the full height and rebuilds as a stacked
+    pair whose bottom opening pins to the extension (GARAGE_BOTTOM size
+    role). OFF: the bay goes back to a raised standard bay; when the
+    last garage bay turns off, the extension reverts exactly and every
+    bay re-syncs to the cabinet height.
+    """
     obj = self.id_data
     from . import types_face_frame
     from . import bay_presets
-    ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
-    if ff_scene is None:
-        return
-    stored = obj.get('hb_garage_extension', 0.0)
-    if self.appliance_garage and not stored:
-        counter_z = (ff_scene.base_cabinet_height
-                     + ff_scene.countertop_thickness)
-        ext = obj.location.z - counter_z
-        if ext <= 0.0:
-            return
-        with types_face_frame.suspend_recalc():
-            self.height = self.height + ext
-            obj.location.z = counter_z
-        obj['hb_garage_extension'] = ext
-        configs = ('DOUBLE_DOOR_GARAGE', 'LEFT_DOOR_GARAGE')
-    elif not self.appliance_garage and stored:
-        with types_face_frame.suspend_recalc():
-            self.height = self.height - stored
-            obj.location.z = obj.location.z + stored
-        del obj['hb_garage_extension']
-        configs = ('DOUBLE_DOOR', 'LEFT_SWING_DOOR')
-    else:
-        return
     from .operators import ops_cabinet
-    from ... import hb_types
-    bays = [c for c in obj.children
+    root = types_face_frame.find_cabinet_root(obj)
+    ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+    if root is None or ff_scene is None:
+        return
+    cab = root.face_frame_cabinet
+    bays = [c for c in root.children
             if c.get(types_face_frame.TAG_BAY_CAGE)]
-    for bay in bays:
-        try:
-            w = hb_types.GeoNodeCage(bay).get_input('Dim X')
-        except Exception:
-            w = self.width / max(len(bays), 1)
-        cfg = (configs[0]
-               if (w or 0.0) > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
-               else configs[1])
-        ops_cabinet.apply_bay_preset(bay, cfg)
-    types_face_frame.recalculate_face_frame_cabinet(obj)
+    stored = root.get('hb_garage_extension', 0.0)
+
+    if self.appliance_garage:
+        if not stored:
+            counter_z = (ff_scene.base_cabinet_height
+                         + ff_scene.countertop_thickness)
+            ext = root.location.z - counter_z
+            if ext <= 0.0:
+                return
+            old_height = cab.height
+            with types_face_frame.suspend_recalc():
+                # Non-garage bays keep their bottom at the old mount:
+                # lock each at the pre-extension height BEFORE the
+                # cabinet grows (already-unlocked custom heights hold
+                # on their own).
+                for b in bays:
+                    bp = b.face_frame_bay
+                    if b is not obj and not bp.unlock_height:
+                        bp.unlock_height = True
+                        bp.height = old_height
+                cab.height = cab.height + ext
+                root.location.z = counter_z
+            root['hb_garage_extension'] = ext
+        # The garage bay itself spans the full (extended) height.
+        with types_face_frame.suspend_recalc():
+            self.unlock_height = False
+            self.top_offset = 0.0
+        cfg = ('DOUBLE_DOOR_GARAGE'
+               if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
+               else 'LEFT_DOOR_GARAGE')
+        ops_cabinet.apply_bay_preset(obj, cfg)
+    else:
+        remaining = [b for b in bays
+                     if b is not obj and b.face_frame_bay.appliance_garage]
+        if stored and not remaining:
+            # Last garage bay off: revert the extension and re-sync
+            # every bay to the cabinet height (per-bay height
+            # customizations reset).
+            with types_face_frame.suspend_recalc():
+                cab.height = cab.height - stored
+                root.location.z = root.location.z + stored
+                for b in bays:
+                    b.face_frame_bay.unlock_height = False
+            del root['hb_garage_extension']
+        elif stored:
+            # Other garage bays remain: this bay becomes a raised
+            # standard bay at the pre-extension height.
+            with types_face_frame.suspend_recalc():
+                self.unlock_height = True
+                self.height = max(cab.height - stored, units.inch(6.0))
+                self.top_offset = 0.0
+        cfg = ('DOUBLE_DOOR'
+               if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
+               else 'LEFT_SWING_DOOR')
+        ops_cabinet.apply_bay_preset(obj, cfg)
+    types_face_frame.recalculate_face_frame_cabinet(root)
 
 
 def _update_exterior_config(self, context):
@@ -5476,6 +5508,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     blind_amount_right: FloatProperty(
         name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # With a garage extension active and a blind side set, opens the
+    # blind section BELOW (garage level): the blind panel stops at the
+    # top of the garage zone instead of running to the countertop, so
+    # the garage interior stays accessible into the corner.
+    garage_blind_opening: BoolProperty(
+        name="Open Blind Section Below",
+        default=False,
+        description="Leave the blind section open at appliance-garage "
+                    "level: the blind panel stops above the garage zone "
+                    "instead of running down to the countertop",
         update=_update_cabinet_dim,
     )  # type: ignore
     blind_reveal: FloatProperty(
@@ -6087,18 +6131,6 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # the side(s) to cover the void left in a corner where two uppers meet.
     # Outward only (min 0); only the bottom panel overhangs - the face frame,
     # sides, and doors stay square. Applied in _apply_bottom_extension.
-    # Appliance garage (straight / blind-corner uppers): see
-    # _update_appliance_garage. Corner cabinets use the DOORS_GARAGE
-    # exterior config instead.
-    appliance_garage: BoolProperty(
-        name="Appliance Garage",
-        default=False,
-        description="Extend this upper down to the countertop with a "
-                    "garage opening below each bay. The garage doors pin "
-                    "to the added zone; turning it off restores the "
-                    "standard door layout",
-        update=_update_appliance_garage,
-    )  # type: ignore
     extend_bottom_left: FloatProperty(
         name="Extend Bottom Left X", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
@@ -6435,6 +6467,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
     floating_bay: BoolProperty(
         name="Floating", default=False,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # Appliance garage (uppers): this bay extends down to the countertop
+    # with a garage opening pinned to the added zone; the rest of the
+    # cabinet keeps its mount height. See _update_bay_appliance_garage.
+    appliance_garage: BoolProperty(
+        name="Appliance Garage", default=False,
+        description="Extend THIS bay down to the countertop with a "
+                    "garage opening below its doors; other bays keep "
+                    "their height",
+        update=_update_bay_appliance_garage,
     )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
     # Finished interior: the exterior finish material reads inside this

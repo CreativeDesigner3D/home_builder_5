@@ -361,13 +361,6 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_bottom_left', text="Extend Bottom Left X")
             col.prop(cab_props, 'extend_bottom_right', text="Extend Bottom Right X")
 
-            # Appliance garage: extend the cabinet down to the countertop
-            # with a garage opening below each bay (straight and
-            # blind-corner uppers; corner cabinets use their exterior
-            # config instead).
-            box = uex.box()
-            box.prop(cab_props, 'appliance_garage', text="Appliance Garage")
-
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.
     box = layout.box()
@@ -754,6 +747,9 @@ def draw_bay_properties(layout, bay_obj):
         kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
+        # Per-bay appliance garage: this bay drops to the countertop
+        # with a garage opening; the rest of the cabinet stays put.
+        col.prop(bp, 'appliance_garage', text="Appliance Garage")
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:
@@ -1340,6 +1336,11 @@ def draw_blind_corners(layout, cab_props):
             row.prop(cab_props, f'blind_{side}', text="")
             if getattr(cab_props, f'blind_{side}'):
                 row.prop(cab_props, f'blind_amount_{side}', text="")
+                # Garage-level blind opening: only meaningful while a
+                # bay's appliance garage has extended this cabinet.
+                if cab_props.id_data.get('hb_garage_extension', 0.0):
+                    layout.prop(cab_props, 'garage_blind_opening',
+                                text="Open Blind Section Below")
 
 
 def draw_finished_ends(layout, cab_props):
@@ -1481,6 +1482,9 @@ def draw_bay_in_prompts(layout, bay_obj):
         kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
+        # Per-bay appliance garage: this bay drops to the countertop
+        # with a garage opening; the rest of the cabinet stays put.
+        col.prop(bp, 'appliance_garage', text="Appliance Garage")
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:
