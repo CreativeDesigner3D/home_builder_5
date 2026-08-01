@@ -1828,18 +1828,28 @@ _SIDE_PANEL_ROLES = frozenset({
     # so it works for corners once the side panel is reachable here.
     types_face_frame_corner.PART_ROLE_CORNER_LEFT_SIDE,
     types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE,
+    # The carcass back and its finished replacement both resolve to the
+    # BACK side of the dialog. Corner backs are excluded - their back
+    # conditions are no-ops (against walls).
+    types_face_frame.PART_ROLE_BACK,
+    types_face_frame.PART_ROLE_FINISHED_BACK,
+})
+
+_BACK_PANEL_ROLES = frozenset({
+    types_face_frame.PART_ROLE_BACK,
+    types_face_frame.PART_ROLE_FINISHED_BACK,
 })
 
 
 class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
-    """Set the finished-end condition for the clicked side panel.
+    """Set the finished-end condition for the clicked side or back panel.
 
-    Launched from a left / right carcass side's right-click menu. Resolves
-    the side from the clicked part's role and shows only that side's
-    finished-end type enum (plus the flush-X amount when FLUSH_X is chosen).
-    Editing the enum fires its existing update callback, which flips that
-    side's finish-end auto flag off so exposure detection won't clobber the
-    user's choice.
+    Launched from a left / right carcass side's (or the back's) right-click
+    menu. Resolves the side from the clicked part's role and shows only that
+    side's finished-end type enum (plus the flush-X amount when FLUSH_X is
+    chosen; the back shows its Extend L / R pair instead). Editing the enum
+    fires its existing update callback, which flips that side's finish-end
+    auto flag off so exposure detection won't clobber the user's choice.
     """
     bl_idname = "hb_face_frame.set_finished_end_condition"
     bl_label = "Set Finished End Condition"
@@ -1848,7 +1858,8 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
 
     side: bpy.props.EnumProperty(
         name="Side",
-        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", ""),
+               ('BACK', "Back", "")],
         default='LEFT',
     )  # type: ignore
 
@@ -1860,13 +1871,14 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         return obj.get('hb_part_role') in _SIDE_PANEL_ROLES
 
     def invoke(self, context, event):
-        # The clicked side panel is the active object; derive the side from
+        # The clicked panel is the active object; derive the side from
         # its role so the dialog edits the matching cabinet prop.
         obj = context.active_object
-        if (obj is not None
-                and obj.get('hb_part_role') in (
-                    types_face_frame.PART_ROLE_RIGHT_SIDE,
-                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE)):
+        role = obj.get('hb_part_role') if obj is not None else None
+        if role in _BACK_PANEL_ROLES:
+            self.side = 'BACK'
+        elif role in (types_face_frame.PART_ROLE_RIGHT_SIDE,
+                      types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE):
             self.side = 'RIGHT'
         else:
             self.side = 'LEFT'
@@ -1881,6 +1893,17 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         cab = root.face_frame_cabinet
         key = self.side.lower()
         fin_type = getattr(cab, f'{key}_finished_end_condition')
+        if self.side == 'BACK':
+            # Mirror the Finished Ends panel's back row: no flush-X
+            # amount, no scribe, no return build - just the type plus
+            # its two extends past the cabinet ends once finished.
+            layout.prop(cab, 'back_finished_end_condition',
+                        text="Back Finished End")
+            if fin_type != 'UNFINISHED':
+                row = layout.row(align=True)
+                row.prop(cab, 'back_finished_extend_left', text="Extend L")
+                row.prop(cab, 'back_finished_extend_right', text="Extend R")
+            return
         layout.prop(cab, f'{key}_finished_end_condition',
                     text=f"{self.side.title()} Finished End")
         # FLUSH_X needs its strip width to be meaningful.

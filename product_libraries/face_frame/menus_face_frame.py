@@ -316,12 +316,15 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             icon='MOD_SOLIDIFY')
 
         # Finished-end condition is per-side: shown on the left / right
-        # carcass side panels. The operator derives the side from the
-        # clicked part's role and shows only that side's enum.
+        # carcass side panels and on the back (plain or finished). The
+        # operator derives the side from the clicked part's role and
+        # shows only that side's props.
         if role in (types_face_frame.PART_ROLE_LEFT_SIDE,
                     types_face_frame.PART_ROLE_RIGHT_SIDE,
                     types_face_frame_corner.PART_ROLE_CORNER_LEFT_SIDE,
-                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE):
+                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE,
+                    types_face_frame.PART_ROLE_BACK,
+                    types_face_frame.PART_ROLE_FINISHED_BACK):
             layout.operator("hb_face_frame.set_finished_end_condition",
                             text="Set Finished End Condition...",
                             icon='MOD_SOLIDIFY')
