@@ -543,6 +543,14 @@ def _selection_mode_matches(obj, mode):
     """Return True if obj should be highlighted in the given mode."""
     if mode == 'Face Frame':
         return obj.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES
+    # Drawer boxes join Interiors mode BY ROLE, not by carrying
+    # IS_FACE_FRAME_INTERIOR_PART: that tag also routes objects into
+    # the dashed hidden-line pass on 2D layout views, where drawer
+    # boxes must not draw.
+    if (mode == 'Interiors'
+            and obj.get('hb_part_role')
+            == types_face_frame.PART_ROLE_DRAWER_BOX):
+        return True
     if mode == 'Parts':
         if not obj.get('CABINET_PART'):
             return False
@@ -1082,6 +1090,92 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
             self.layout.label(text="No opening selected", icon='INFO')
             return
         ui_face_frame.draw_opening_properties(self.layout, opening_obj)
+
+
+class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
+    """Edit the size of the drawer box behind a drawer / pullout front.
+
+    Right-click entry on a drawer box (Interiors selection mode). The
+    size lives on the owning opening's props - drawer boxes are wiped
+    and rebuilt every recalc, so nothing durable can sit on the box
+    object itself. One row per axis: an override toggle plus the size;
+    un-overridden axes keep the auto fit (opening hole minus the scene
+    clearances). The props live-bind, so edits rebuild the box as the
+    user types; the dialog resolves the opening by cached name because
+    the clicked box object dies on the first rebuild.
+    """
+    bl_idname = "hb_face_frame.drawer_box_prompts"
+    bl_label = "Drawer Box Size"
+    bl_description = "Edit this drawer box's size (stored on the owning opening)"
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    _AXES = (
+        ("Width",  'drawer_box_override_width',  'drawer_box_width'),
+        ("Height", 'drawer_box_override_height', 'drawer_box_height'),
+        ("Depth",  'drawer_box_override_depth',  'drawer_box_depth'),
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or not obj.get('IS_DRAWER_BOX'):
+            return False
+        return _find_owning_opening(obj) is not None
+
+    def invoke(self, context, event):
+        box_obj = context.active_object
+        opening_obj = _find_owning_opening(box_obj)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No owning opening found")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        op_props = opening_obj.face_frame_opening
+        # Seed un-overridden axes from the box's current (auto) size so
+        # switching an override on starts from what's already there
+        # instead of jumping to a stale value. ID-property writes on
+        # purpose: they skip the update callbacks, so seeding triggers
+        # no rebuild.
+        try:
+            geo = hb_types.GeoNodeObject(box_obj)
+            dim_x = geo.get_input('Dim X')
+            dim_y = geo.get_input('Dim Y')
+            dim_z = geo.get_input('Dim Z')
+        except Exception:
+            dim_x = dim_y = dim_z = None
+        if dim_x is not None:
+            if not op_props.drawer_box_override_width:
+                op_props['drawer_box_width'] = dim_x
+            if not op_props.drawer_box_override_depth:
+                op_props['drawer_box_depth'] = dim_y
+            if not op_props.drawer_box_override_height:
+                op_props['drawer_box_height'] = dim_z
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        opening_obj = bpy.data.objects.get(self.opening_name)
+        if opening_obj is None:
+            layout.label(text="Opening not found", icon='INFO')
+            return
+        op_props = opening_obj.face_frame_opening
+        col = layout.column(align=True)
+        for label, ov_prop, val_prop in self._AXES:
+            row = col.row(align=True)
+            row.prop(op_props, ov_prop, text="")
+            sub = row.row(align=True)
+            sub.enabled = getattr(op_props, ov_prop)
+            sub.prop(op_props, val_prop, text=label)
+        col.separator()
+        col.label(text="Unchecked sizes stay automatic", icon='INFO')
+
+    def execute(self, context):
+        # Live-bound via the opening props' update callbacks; OK needs
+        # no extra work.
+        return {'FINISHED'}
 
 
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
@@ -4765,6 +4859,7 @@ classes = (
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
+    hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,

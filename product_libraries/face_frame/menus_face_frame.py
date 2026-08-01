@@ -391,6 +391,22 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                         text="Opening Properties...", icon='WINDOW')
 
 
+class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
+    """Right-click menu for a drawer box (reachable in Interiors
+    selection mode). Size edits store on the owning opening - the box
+    itself is rebuilt every recalc - and Opening Properties walks up
+    from the box the same way interior parts do.
+    """
+    bl_label = "Drawer Box Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.drawer_box_prompts",
+                        text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
+        layout.operator("hb_face_frame.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
+
+
 class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
     """Right-click menu for a face frame opening cage."""
     bl_label = "Face Frame Opening Commands"
@@ -698,6 +714,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
+    HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,

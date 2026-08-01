@@ -6944,6 +6944,46 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    # ---- Drawer box size overrides ----
+    # Per-axis overrides for the drawer box behind this opening's drawer
+    # / pullout front (right-click the box -> Drawer Box Size...). The
+    # box itself is wiped and rebuilt every recalc, so the user's size
+    # lives here on the persistent opening cage. An un-overridden axis
+    # keeps the auto fit (opening hole minus the scene clearances).
+    drawer_box_override_width: BoolProperty(
+        name="Override Width",
+        description="Use the entered drawer box width instead of the auto fit (opening minus side clearances)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_width: FloatProperty(
+        name="Drawer Box Width",
+        description="Drawer box width; centered in the opening",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_override_height: BoolProperty(
+        name="Override Height",
+        description="Use the entered drawer box height instead of the auto fit (opening minus top/bottom clearances)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_height: FloatProperty(
+        name="Drawer Box Height",
+        description="Drawer box height; the bottom clearance anchor is kept",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_override_depth: BoolProperty(
+        name="Override Depth",
+        description="Use the entered drawer box depth instead of the auto fit (cavity depth minus rear clearance)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_depth: FloatProperty(
+        name="Drawer Box Depth",
+        description="Drawer box depth from the back of the front rearward",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Drawer-look door: a single working DOOR leaf whose face carries N
     # applied drawer-front panels (reveal gaps between them read as mid
     # rails) so it looks like a stack of drawers but opens as one door.

@@ -7948,11 +7948,28 @@ class FaceFrameCabinet(GeoNodeCage):
         box_dx = cage_x - rl - rr - 2.0 * side_clr
         box_dy = (cage_y - rear_clr) - front_back_y
         box_dz = cage_z - rt - rb - top_clr - bottom_clr
+
+        # Per-opening size overrides (right-click the box -> Drawer Box
+        # Size...). Overridden axes replace the clearance-derived size,
+        # clamped so the box can't exceed the opening hole or run past
+        # the carcass back. Height keeps the bottom-clearance anchor;
+        # depth grows rearward from the front anchor.
+        if op_props is not None:
+            if getattr(op_props, 'drawer_box_override_width', False):
+                box_dx = min(op_props.drawer_box_width, cage_x - rl - rr)
+            if getattr(op_props, 'drawer_box_override_height', False):
+                box_dz = min(op_props.drawer_box_height,
+                             cage_z - rt - rb - bottom_clr)
+            if getattr(op_props, 'drawer_box_override_depth', False):
+                box_dy = min(op_props.drawer_box_depth,
+                             cage_y - front_back_y)
         if box_dx <= 0.0 or box_dy <= 0.0 or box_dz <= 0.0:
             return None
 
         # Box origin (front-left-bottom corner) in opening-local coords.
-        op_x = rl + side_clr
+        # The centered-width form reduces to rl + side_clr at the auto
+        # width and keeps an overridden width centered in the hole.
+        op_x = rl + ((cage_x - rl - rr) - box_dx) / 2.0
         op_y = front_back_y
         op_z = rb + bottom_clr
 
@@ -8001,6 +8018,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.set_input('Dim Z', box_dz)
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
+        box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
         if chase_notch:
             # _iter_pipe_chase_cut_targets picks this up and booleans
             # the chase cutter into the box. The notch does NOT change
@@ -10583,6 +10601,12 @@ def _reapply_selection_mode_highlights(root):
     def matches(obj):
         if mode == 'Face Frame':
             return obj.get('hb_part_role') in FACE_FRAME_PART_ROLES
+        # Drawer boxes join Interiors mode by role - deliberately NOT
+        # tagged IS_FACE_FRAME_INTERIOR_PART, which would also send
+        # them to the dashed hidden-line pass on 2D layout views.
+        if (mode == 'Interiors'
+                and obj.get('hb_part_role') == PART_ROLE_DRAWER_BOX):
+            return True
         if mode == 'Cabinets':
             if obj.get('IS_APPLIANCE'):
                 return True
