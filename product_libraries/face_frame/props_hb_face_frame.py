@@ -6345,6 +6345,36 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    # LED route: opt-in groove across the finish panel's underside,
+    # with adjustable size and location. The render light rides the
+    # route (no route, no light).
+    finished_bottom_led_route: BoolProperty(
+        name="LED Route",
+        description="Cut an LED route into the finished bottom's underside",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_width: FloatProperty(
+        name="Route Width",
+        description="Front-to-back width of the LED route",
+        default=units.inch(0.875), min=units.inch(0.125),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_depth: FloatProperty(
+        name="Route Depth",
+        description="How deep the route cuts into the panel (clamped to leave material above)",
+        default=units.inch(0.375), min=units.inch(0.0625),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_inset: FloatProperty(
+        name="Route Inset",
+        description="Distance from the panel's front edge to the front of the route",
+        default=units.inch(1.5), min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     finished_bottom_light: BoolProperty(
         name="LED Light",
         description="Add an area light in the LED route for renders",

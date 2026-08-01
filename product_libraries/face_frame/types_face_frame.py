@@ -3811,8 +3811,17 @@ class FaceFrameCabinet(GeoNodeCage):
         t_fin, flush = spec
         brw = cab.bottom_rail_width
         t = cab.material_thickness
-        want_light = getattr(cab, 'finished_bottom_light', False)
-        route_depth = min(inch(0.375), t_fin * 0.75)
+        want_route = getattr(cab, 'finished_bottom_led_route', False)
+        want_light = want_route and getattr(
+            cab, 'finished_bottom_light', False)
+        route_width = getattr(cab, 'finished_bottom_route_width',
+                              self._FB_ROUTE_WIDTH)
+        route_inset = getattr(cab, 'finished_bottom_route_inset',
+                              self._FB_ROUTE_FRONT_INSET)
+        # Clamp the cut so at least 1/16" of material stays above it.
+        route_depth = min(
+            getattr(cab, 'finished_bottom_route_depth', inch(0.375)),
+            max(t_fin - inch(0.0625), inch(0.03125)))
 
         live_keys = set()
         for src in bottoms:
@@ -3852,36 +3861,43 @@ class FaceFrameCabinet(GeoNodeCage):
                 gn.set_input('Width', seg_w)
                 gn.set_input('Thickness', t_fin)
 
-            # LED route across this segment's width, just behind the
-            # panel's front edge (Width grows -Y from y0). Depth scales
-            # with the panel so a 1/4" bottom keeps material above it.
+            # LED route across this segment's width, behind the panel's
+            # front edge by the route inset (Width grows -Y from y0).
+            # Opt-in; size and location come from the cabinet props.
             front_y = y0 - seg_w
-            route_y0 = front_y + self._FB_ROUTE_FRONT_INSET
-            cutter = self._fb_child_for_key(PART_ROLE_FB_LED_CUTTER, key)
-            if cutter is None:
-                mesh = bpy.data.meshes.new('FB LED Route Cutter')
-                cutter = bpy.data.objects.new('FB LED Route Cutter', mesh)
-                for coll in self.obj.users_collection:
-                    coll.objects.link(cutter)
-                cutter.parent = self.obj
-                cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
-                cutter['hb_fb_key'] = key
-                cutter['IS_CUTTING_OBJ'] = True
-                cutter.hide_viewport = True
-                cutter.hide_render = True
-            self._rebuild_box_mesh(
-                cutter,
-                x0 - 0.005, x0 + seg_len + 0.005,
-                route_y0, route_y0 + self._FB_ROUTE_WIDTH,
-                z_fin - 0.003, z_fin + route_depth)
-            mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
-            if mod is None and not panel.get('IS_MANUAL_PART'):
-                mod = panel.modifiers.new(
-                    name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
-                mod.operation = 'DIFFERENCE'
-                mod.solver = 'EXACT'
-            if mod is not None and mod.object is not cutter:
-                mod.object = cutter
+            route_y0 = front_y + route_inset
+            if want_route:
+                cutter = self._fb_child_for_key(
+                    PART_ROLE_FB_LED_CUTTER, key)
+                if cutter is None:
+                    mesh = bpy.data.meshes.new('FB LED Route Cutter')
+                    cutter = bpy.data.objects.new(
+                        'FB LED Route Cutter', mesh)
+                    for coll in self.obj.users_collection:
+                        coll.objects.link(cutter)
+                    cutter.parent = self.obj
+                    cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
+                    cutter['hb_fb_key'] = key
+                    cutter['IS_CUTTING_OBJ'] = True
+                    cutter.hide_viewport = True
+                    cutter.hide_render = True
+                self._rebuild_box_mesh(
+                    cutter,
+                    x0 - 0.005, x0 + seg_len + 0.005,
+                    route_y0, route_y0 + route_width,
+                    z_fin - 0.003, z_fin + route_depth)
+                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+                if mod is None and not panel.get('IS_MANUAL_PART'):
+                    mod = panel.modifiers.new(
+                        name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                    mod.solver = 'EXACT'
+                if mod is not None and mod.object is not cutter:
+                    mod.object = cutter
+            else:
+                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+                if mod is not None:
+                    panel.modifiers.remove(mod)
 
             # Optional area light in this segment's route for renders.
             if want_light:
@@ -3900,15 +3916,18 @@ class FaceFrameCabinet(GeoNodeCage):
                 light = light_obj.data
                 light.shape = 'RECTANGLE'
                 light.size = max(seg_len - inch(2.0), inch(1.0))
-                light.size_y = self._FB_ROUTE_WIDTH * 0.8
+                light.size_y = route_width * 0.8
                 light_obj.location = (
                     x0 + seg_len / 2.0,
-                    route_y0 + self._FB_ROUTE_WIDTH / 2.0,
+                    route_y0 + route_width / 2.0,
                     z_fin - 0.002)
 
-        # Stale segments (bay merged away, bottom newly removed) and -
-        # when the light is off - every light.
+        # Stale segments (bay merged away, bottom newly removed); with
+        # the route off every cutter goes, and with the light off (or
+        # the route off) every light.
         self._cleanup_finished_bottom(keep_keys=live_keys)
+        if not want_route:
+            self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LED_CUTTER,))
         if not want_light:
             self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LIGHT,))
 

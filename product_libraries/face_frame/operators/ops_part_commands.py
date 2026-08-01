@@ -2356,7 +2356,13 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         col.prop(cab, 'finished_bottom_type', text="Condition")
         sub = col.column(align=True)
         sub.enabled = cab.finished_bottom_type != 'NONE'
-        sub.prop(cab, 'finished_bottom_light', text="LED Light (Render)")
+        sub.prop(cab, 'finished_bottom_led_route', text="LED Route")
+        route = sub.column(align=True)
+        route.enabled = cab.finished_bottom_led_route
+        route.prop(cab, 'finished_bottom_route_width', text="Route Width")
+        route.prop(cab, 'finished_bottom_route_depth', text="Route Depth")
+        route.prop(cab, 'finished_bottom_route_inset', text="Route Inset")
+        route.prop(cab, 'finished_bottom_light', text="LED Light (Render)")
         col.separator()
         col.operator("hb_face_frame.apply_finished_bottom_to_room",
                      text="Apply to All Uppers in Room",
@@ -2399,6 +2405,14 @@ class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
                 if cab.corner_type != 'NONE':
                     continue
                 cab.finished_bottom_type = src_cab.finished_bottom_type
+                cab.finished_bottom_led_route = \
+                    src_cab.finished_bottom_led_route
+                cab.finished_bottom_route_width = \
+                    src_cab.finished_bottom_route_width
+                cab.finished_bottom_route_depth = \
+                    src_cab.finished_bottom_route_depth
+                cab.finished_bottom_route_inset = \
+                    src_cab.finished_bottom_route_inset
                 cab.finished_bottom_light = src_cab.finished_bottom_light
                 count += 1
         self.report({'INFO'},
