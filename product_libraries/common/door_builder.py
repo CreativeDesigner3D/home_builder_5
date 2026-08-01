@@ -766,6 +766,20 @@ def _mullion_layout(pattern, w, h, bw):
     Returns [] when the opening is too small for the pattern."""
     hb = bw / 2.0
     polys = []
+    if pattern == 'FRAME':
+        # Inner trim frame: a border of bars around the opening perimeter
+        # (Glass / Speaker Cloth on shape-width series like Konza). Bars
+        # sit flush against the opening edges; verticals run through,
+        # horizontals butt between them, like the straight patterns.
+        if w <= 2.0 * bw + inch(1.0) or h <= 2.0 * bw + inch(1.0):
+            return []
+        for xa in (0.0, w - bw):
+            polys.append([(xa, 0.0), (xa + bw, 0.0),
+                          (xa + bw, h), (xa, h)])
+        for za in (0.0, h - bw):
+            polys.append([(bw, za), (w - bw, za),
+                          (w - bw, za + bw), (bw, za + bw)])
+        return polys
     if pattern == 'GRID':
         rows = (2 if h <= inch(24.0) else 3 if h <= inch(36.0)
                 else 4 if h <= inch(48.0) else 5)

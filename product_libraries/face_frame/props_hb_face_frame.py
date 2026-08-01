@@ -423,7 +423,8 @@ def _apply_series_frame_to_door_style(self):
     geometry path (assign_style_to_front) and the applied-panel sizing engine
     keep reading stile_width / rail_width / door_type unchanged. Widths in the
     baked spec are inches -> converted with units.inch()."""
-    spec = style_options.frame_for_series(self.front_series)
+    spec = style_options.frame_for_series(self.front_series,
+                                          getattr(self, 'front_shape', None))
     if spec.get('is_slab'):
         self.door_type = 'SLAB'
         return
@@ -462,6 +463,9 @@ def update_front_shape(self, context):
     items = table.get((self.front_series, self.front_shape), [])
     if items:
         _set_enum_safe(self, "front_panel", items[0][0])
+    # Shape-width series (Konza): the shape IS the member width, so the
+    # construction fields must re-derive on a shape change too.
+    _apply_series_frame_to_door_style(self)
     # The shape drives geometry (arched tops); the panel reset above
     # only propagates when the panel value actually changes, so push
     # explicitly -- shape-only changes must rebuild fronts too.
@@ -3539,6 +3543,18 @@ class Face_Frame_Door_Style(PropertyGroup):
                 pattern=pkind['mullion'],
                 bar_width=units.inch(pkind.get('bar_width', 0.875)),
                 depth=eff_panel_inset)
+        # Shape-width series (Konza): Glass / Speaker Cloth adds an inner
+        # hardwood trim frame inside the opening (catalog total width
+        # minus the outer member) - rendered as a FRAME border of bars
+        # from the door face back to the panel plane.
+        if mull is None:
+            _ifw = style_options.glass_inner_frame_width(
+                self.front_series, getattr(self, 'front_shape', ''),
+                self.front_panel)
+            if _ifw:
+                mull = dict(pattern='FRAME',
+                            bar_width=units.inch(_ifw),
+                            depth=eff_panel_inset)
         return dict(outer_section=outer_sec, inner_section=inner_sec,
                     panel_section=panel_sec, inner_rail_section=rail_sec,
                     inner_stile_section=stile_sec,
