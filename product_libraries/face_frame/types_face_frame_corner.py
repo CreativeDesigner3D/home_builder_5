@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from ... import hb_utils
 from ...units import inch
-from ...hb_types import CabinetPartModifier, GeoNodeCage
+from ...hb_types import CabinetPartModifier, GeoNodeCage, GeoNodeRectangle
 from ..frameless.types_frameless import CabinetPart
 from . import types_face_frame as ff
 from . import solver_face_frame as solver
@@ -1051,6 +1051,61 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if pull is None:
             return
         pull.location.y = -width / 2.0 if side == 'LEFT' else width / 2.0
+
+    def _apply_corner_sink_annotation(self, cab_props):
+        """SINK plan annotation for the diagonal sink configs: the same
+        square + word rectangle a standard sink bay gets, rotated with
+        the diagonal and parented to the cabinet root (corner cabinets
+        have no bay cages). Wipe-and-recreate each recalc so it tracks
+        size edits; carries the same tags as the standard sink bay
+        annotation.
+        """
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role')
+                    == ff.PART_ROLE_APPLIANCE_ANNOTATION):
+                bpy.data.objects.remove(child, do_unlink=True)
+        if self.obj.get('CABINET_TYPE', 'BASE') != 'BASE':
+            return
+        if cab_props.exterior_config not in ('SINK', 'SINK_DOORS'):
+            return
+        width = cab_props.width
+        depth = cab_props.depth
+        ld = cab_props.left_depth
+        rd = cab_props.right_depth
+        ax, ay = ld, -depth
+        bx, by = width, -rd
+        dx, dy = bx - ax, by - ay
+        diag_len = math.sqrt(dx * dx + dy * dy)
+        if diag_len < 1e-6:
+            return
+        ux, uy = dx / diag_len, dy / diag_len
+        theta = math.atan2(dy, dx)
+        margin = min(ff.APPLIANCE_ANNO_SIDE_MARGIN, diag_len * 0.25)
+        anno_w = diag_len - margin * 2.0
+        # Depth into the corner: roughly half the distance from the
+        # diagonal face to the wall corner, so the square reads over
+        # the basin area. Local +Y at rot_z = theta points inward.
+        mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+        anno_d = max(math.sqrt(mx * mx + my * my) * 0.5, inch(6.0))
+        if anno_w <= 0.0:
+            return
+        rect = GeoNodeRectangle()
+        rect.create('Sink Annotation')
+        rect.obj.parent = self.obj
+        rect.obj.location = (
+            ax + margin * ux, ay + margin * uy,
+            cab_props.height + ff.APPLIANCE_ANNO_Z_LIFT)
+        rect.obj.rotation_euler = (0.0, 0.0, theta)
+        rect.set_input('Dim X', anno_w)
+        rect.set_input('Dim Y', anno_d)
+        rect.set_input('Line Thickness', ff.APPLIANCE_ANNO_LINE_THICKNESS)
+        rect.set_input('Text', 'SINK')
+        rect.set_input('Text Size', ff.APPLIANCE_ANNO_TEXT_SIZE)
+        rect.set_input('Text Y Offset', ff.APPLIANCE_ANNO_TEXT_Y_OFFSET)
+        rect.obj['hb_part_role'] = ff.PART_ROLE_APPLIANCE_ANNOTATION
+        rect.obj['IS_2D_ANNOTATION'] = True
+        rect.obj['APPLIANCE_ANNOTATION'] = True
+        rect.obj['IS_SINK_ANNOTATION'] = True
 
     def _position_garage_side_doors(self, i, width, depth, ld, rd,
                                     z_door, door_length, dt, standoff):
@@ -2216,14 +2271,18 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # double pair and a single leaf changes the door part set. So is
         # each GARAGE section's door option - the part set differs per
         # option (leaf count, tambour mesh, side doors).
-        sig = cab_props.diag_door_swing + '|' + '|'.join(
-            '%s:%d:%s%s' % (
-                s.content,
-                s.shelf_qty if s.content == 'OPEN' else 0,
-                s.garage_door_type if s.content == 'GARAGE' else '',
-                '+S' if (s.content == 'GARAGE'
-                         and s.garage_side_doors) else '')
-            for s in sections)
+        # exterior_config is in the signature because the SINK_DOORS
+        # config adds an apron part to an otherwise-identical DOORS
+        # section set.
+        sig = (cab_props.diag_door_swing + '|' + cab_props.exterior_config
+               + '|' + '|'.join(
+                   '%s:%d:%s%s' % (
+                       s.content,
+                       s.shelf_qty if s.content == 'OPEN' else 0,
+                       s.garage_door_type if s.content == 'GARAGE' else '',
+                       '+S' if (s.content == 'GARAGE'
+                                and s.garage_side_doors) else '')
+                   for s in sections))
         if self.obj.get('hb_diag_section_sig') == sig:
             return
         # Layout changed - wipe the section parts and rebuild from scratch.
@@ -2236,6 +2295,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 or role == PART_ROLE_CORNER_SHELF
                 or role == PART_ROLE_CORNER_FIXED_SHELF
                 or role == PART_ROLE_CORNER_TAMBOUR
+                or (role == ff.PART_ROLE_APRON and side == 'DIAGONAL')
                 or (role == ff.PART_ROLE_DOOR
                     and side in ('DIAGONAL_LEFT', 'DIAGONAL_RIGHT',
                                  'SIDE_LEFT', 'SIDE_RIGHT')))
@@ -2319,6 +2379,28 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 door.obj['CABINET_PART'] = True
                 door.obj.rotation_euler.y = math.radians(-90)
                 door.set_input('Mirror Y', True)
+        # SINK_DOORS config (base diagonal sink): a sink apron panel
+        # across the top of the DOORS opening, behind the full-height
+        # doors - same construction as the standard opening's add_apron
+        # part. Built like the false front (door-part convention); the
+        # recalc sizes and places it in the face-frame band.
+        if (self.obj.get('CABINET_TYPE', 'BASE') == 'BASE'
+                and cab_props.exterior_config == 'SINK_DOORS'):
+            for i, sec in enumerate(sections):
+                if sec.content != 'DOORS':
+                    continue
+                apron = CabinetPart()
+                apron.create('Diagonal Apron %d' % (i + 1))
+                apron.obj.parent = self.obj
+                apron.obj['hb_part_role'] = ff.PART_ROLE_APRON
+                apron.obj['hb_face_frame_side'] = 'DIAGONAL'
+                apron.obj['hb_corner_section_index'] = i
+                apron.obj['CABINET_PART'] = True
+                apron.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+                apron.obj.rotation_euler.y = math.radians(-90)
+                apron.obj.rotation_euler.z = math.radians(90)
+                apron.set_input('Mirror Y', True)
+                break
         # TAMBOUR garage: one static slat-stack mesh object filling the
         # opening. The mesh data is regenerated to the live opening
         # size every recalc (_rebuild_tambour_mesh); only the object's
@@ -2945,6 +3027,28 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         self._refresh_door_pull(
                             d_right, door_length, sec_leaf_width, dt,
                             width_sign=-1.0, edge='OUTER')
+                # SINK_DOORS apron: face-frame-band panel across the
+                # top of the door opening, behind the full doors.
+                # Exists only on the DOORS section of that config
+                # (created in the reconcile), so the find is None
+                # everywhere else.
+                apron = _find_corner_part(
+                    self.obj, ff.PART_ROLE_APRON, 'DIAGONAL', i)
+                if apron is not None:
+                    apron_h = min(cab_props.corner_apron_height, sec_h)
+                    if apron_h > 0.0:
+                        apron.location = (
+                            rail_origin_x - fft * uy,
+                            rail_origin_y + fft * ux,
+                            sec_z0 + sec_h - apron_h,
+                        )
+                        apron.rotation_euler.z = math.radians(90) + theta
+                        _set_mod_inputs(
+                            apron, apron.home_builder.mod_name, (
+                                ('Length', apron_h),
+                                ('Width', rail_length),
+                                ('Thickness', fft),
+                            ))
                 if is_upper and sections[i].content == 'DOORS':
                     # Adjustable shelves behind the doors (GARAGE keeps
                     # its opening clear for countertop appliances). Auto by section
@@ -3102,6 +3206,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             ))
 
         self._recalculate_clip_back(cab_props, z_back_floor)
+        self._apply_corner_sink_annotation(cab_props)
 
     # -----------------------------------------------------------------
     # Pie cut DRAWER corner: build (slice 1 - carcass only)

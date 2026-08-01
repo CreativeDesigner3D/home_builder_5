@@ -4836,6 +4836,14 @@ _EXTERIOR_CONFIG_ITEMS = {
     'BASE': [
         ('DOORS',             "Full Height Doors",      "One full-height door pair"),
         ('FALSE_FRONT_DOORS', "False Front with Doors", "False front above a door pair"),
+        # Corner sink configs. Geometry matches the two plain configs;
+        # the config choice drives the SINK plan annotation and the
+        # apron (SINK_DOORS builds a real apron panel behind the
+        # full-height doors).
+        ('SINK', "Sink (False Front with Doors)",
+         "Corner sink: false front above the doors"),
+        ('SINK_DOORS', "Sink with Full Height Doors",
+         "Corner sink: full-height doors with a sink apron behind"),
     ],
     'UPPER': [
         ('DOORS',         "Doors",             "One door pair"),
@@ -4886,6 +4894,8 @@ def _exterior_config_items(self, context):
 _CORNER_SECTION_PRESETS = {
     ('BASE',  'DOORS'):             ('DOORS',),
     ('BASE',  'FALSE_FRONT_DOORS'): ('FALSE_FRONT', 'DOORS'),
+    ('BASE',  'SINK'):              ('FALSE_FRONT', 'DOORS'),
+    ('BASE',  'SINK_DOORS'):        ('DOORS',),
     ('UPPER', 'DOORS'):             ('DOORS',),
     ('UPPER', 'STACKED_DOORS'):     ('DOORS', 'DOORS'),
     ('UPPER', 'DOORS_GARAGE'):      ('DOORS', 'GARAGE'),
@@ -4908,6 +4918,7 @@ _CORNER_SECTION_PRESETS = {
 _CORNER_SECTION_DEFAULT_HEIGHTS = {
     ('TALL', 'BOOKCASE'): (None, units.inch(24.0)),
     ('BASE', 'FALSE_FRONT_DOORS'): ('TOP_DRAWER', None),
+    ('BASE', 'SINK'): ('TOP_DRAWER', None),
 }
 
 
@@ -6310,6 +6321,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Remove Bottom",
         description="Remove the carcass bottom and the bottom rail; the lowest opening runs to the carcass floor",
         default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Sink apron height for the diagonal SINK_DOORS config: a fixed
+    # face-frame-depth panel across the top of the door opening, behind
+    # the full-height doors. The corner counterpart of the per-opening
+    # apron_height (corner cabinets have no opening cages).
+    corner_apron_height: FloatProperty(
+        name="Apron Height",
+        description="Height of the sink apron panel behind the full-height doors",
+        default=units.inch(7.0), unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_compartment: EnumProperty(

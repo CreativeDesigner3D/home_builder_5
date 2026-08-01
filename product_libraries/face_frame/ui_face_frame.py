@@ -138,6 +138,9 @@ def draw_dimensions(layout, root):
         elif cab_props.corner_type == 'DIAGONAL':
             col.label(text="Exterior Configuration")
             col.prop(cab_props, 'exterior_config', text="Config")
+            if cab_props.exterior_config == 'SINK_DOORS':
+                col.prop(cab_props, 'corner_apron_height',
+                         text="Apron Height")
             col.prop(cab_props, 'diag_door_swing', text="Door Swing")
             col.prop(cab_props, 'interior_option', text="Interior")
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
