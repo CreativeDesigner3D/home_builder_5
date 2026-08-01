@@ -1002,7 +1002,27 @@ class PlacementMixin:
             is_rot_neg90 = (abs(rot_z - math.radians(-90)) < 0.1 or
                             abs(rot_z - math.radians(270)) < 0.1)
 
-            if is_rot_neg90:
+            # 45-degree corner placements (corner sink): the axis-
+            # aligned branches below mis-measure a rotated footprint,
+            # so project its plan corners instead - the along-wall
+            # span then runs from the near front corner to the wall
+            # end, and neighbors butt up to it correctly.
+            is_rot_45 = abs(abs(rot_z) - math.pi / 4.0) < 0.1
+            if is_rot_45:
+                try:
+                    child_depth = hb_types.GeoNodeObject(child).get_input('Dim Y')
+                except Exception:
+                    child_depth = child_width
+                ca = math.cos(rot_z)
+                sa = math.sin(rot_z)
+                xs = [child.location.x + lx * ca - ly * sa
+                      for lx, ly in ((0.0, 0.0),
+                                     (child_width, 0.0),
+                                     (0.0, -child_depth),
+                                     (child_width, -child_depth))]
+                x_start = min(xs)
+                x_end = max(xs)
+            elif is_rot_neg90:
                 try:
                     child_depth = hb_types.GeoNodeObject(child).get_input('Dim Y')
                 except Exception:

@@ -6212,38 +6212,24 @@ def _corner_sink_layout(wall_len, width, depth, pull_out, wall_end):
 
 
 def _commit_corner_sink(context, cab_obj, wall, wall_end):
-    """Stamp a committed 45-degree corner-sink placement and build its
-    return panels (the recess sides, front corners back to each wall).
-    Runs after the normal Sink finalize - the cabinet is a standard sink
-    base; only the transform, markers and returns are corner-specific."""
+    """Stamp a committed 45-degree corner-sink placement. Runs after the
+    normal Sink finalize - the cabinet is a standard sink base; only the
+    transform and markers are corner-specific. (Return panels were tried
+    and removed: adjacent cabinets now butt straight up to the angled
+    cabinet's corners, so the recess closes itself; revisit if a job
+    needs the catalog's attached returns modeled.)"""
     try:
         wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
     except Exception:
         return
     cab_props = cab_obj.face_frame_cabinet
-    (ox, oy), rot, ret_a, ret_b = _corner_sink_layout(
+    (ox, oy), rot, _ret_a, _ret_b = _corner_sink_layout(
         wall_len, cab_props.width, cab_props.depth, 0.0, wall_end)
     cab_obj.location = (ox, oy, 0.0)
     cab_obj.rotation_euler = (0.0, 0.0, rot)
     cab_obj['HB_CORNER_SINK_45'] = True
     cab_obj['HB_CS_PULL_OUT'] = 0.0
     cab_obj['HB_CS_WALL_END'] = wall_end
-    from ...frameless.types_frameless import CabinetPart
-    for tag, ((rx, ry), phi, run) in (('Left', ret_a), ('Right', ret_b)):
-        if run <= 1e-6:
-            continue
-        part = CabinetPart()
-        part.create(f'Corner Sink Return {tag}')
-        part.obj.parent = wall
-        part.obj['hb_part_role'] = 'CORNER_SINK_RETURN'
-        part.obj['CABINET_PART'] = True
-        part.obj['HB_CS_OWNER'] = cab_obj.name
-        part.obj.rotation_euler.y = math.radians(-90)
-        part.obj.rotation_euler.z = phi
-        part.obj.location = (rx, ry, 0.0)
-        part.set_input('Length', cab_props.height)
-        part.set_input('Width', run)
-        part.set_input('Thickness', units.inch(0.75))
 
 
 classes = (
