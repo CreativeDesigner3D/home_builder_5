@@ -168,9 +168,29 @@ def _wall_label_targets(wall_obj):
     ]
 
 
+def _resolve_overlap(rect, existing, gap):
+    """Shift ``rect`` downward until it clears every already-placed
+    label rect. In head-on views (plan view of a wall, elevation of a
+    tall stack) several anchors project to the same screen point; the
+    labels stack below each other instead of piling up. Applied inside
+    compute_labels so drawing and click hit-testing stay identical."""
+    x, y, w, h = rect
+    for _ in range(16):
+        hit = None
+        for _name, _kind, (ex, ey, ew, eh), _text in existing:
+            if x < ex + ew and ex < x + w and y < ey + eh and ey < y + h:
+                hit = (ex, ey, ew, eh)
+                break
+        if hit is None:
+            break
+        y = hit[1] - h - gap
+    return (x, y, w, h)
+
+
 def compute_labels(context, region, rv3d):
     """[(obj_name, kind, rect, text)] for every label currently on
-    screen; rect is (x, y, w, h) region-local. Shared by the draw
+    screen; rect is (x, y, w, h) region-local. Overlapping labels are
+    stacked vertically (see _resolve_overlap). Shared by the draw
     handler and the click operator so hits can't drift from pixels."""
     if rv3d is None:
         return []
@@ -204,6 +224,7 @@ def compute_labels(context, region, rv3d):
                 continue
             if rect[1] + h < 0 or rect[1] > region.height:
                 continue
+            rect = _resolve_overlap(rect, labels, 2.0 * s)
             labels.append((name, kind, rect, text))
     return labels
 
