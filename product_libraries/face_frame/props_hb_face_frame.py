@@ -4791,11 +4791,12 @@ class Face_Frame_Corner_Section(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     # GARAGE sections: which appliance-garage door option fills the
-    # opening (per the diagonal-corner appliance garage catalog page).
-    # Hinged singles / doubles are the base options; tambour /
-    # retracting / swing-up and the side doors are adders. SIDE_HINGED
-    # leaves the diagonal open and puts a hinged door on each arm end
-    # face instead.
+    # diagonal opening (per the diagonal-corner appliance garage
+    # catalog page). Hinged singles / doubles are the base options;
+    # tambour / retracting / swing-up are adders. The side doors are a
+    # separate adder (garage_side_doors below) that combines with any
+    # of these - including OPEN, which leaves the diagonal as a
+    # finished opening.
     garage_door_type: EnumProperty(
         name="Garage Door",
         items=[
@@ -4811,10 +4812,19 @@ class Face_Frame_Corner_Section(PropertyGroup):
              "Full-width door that retracts up into the cabinet"),
             ('SWING_UP', "Swing-Up Door",
              "Full-width door that swings up on lift hardware"),
-            ('SIDE_HINGED', "Hinged Doors on Sides",
-             "Open diagonal; a hinged door on each side face"),
+            ('OPEN', "Open (No Door)",
+             "Leave the diagonal garage opening open"),
         ],
         default='DOUBLE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Hinged Doors on Sides adder: a hinged door on each arm end face,
+    # independent of what fills the diagonal opening.
+    garage_side_doors: BoolProperty(
+        name="Hinged Doors on Sides",
+        description="Add a hinged door on each side face of the "
+                    "garage, in addition to the garage door option",
+        default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
 

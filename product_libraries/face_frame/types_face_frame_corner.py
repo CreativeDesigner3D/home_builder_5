@@ -2217,10 +2217,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # each GARAGE section's door option - the part set differs per
         # option (leaf count, tambour mesh, side doors).
         sig = cab_props.diag_door_swing + '|' + '|'.join(
-            '%s:%d:%s' % (
+            '%s:%d:%s%s' % (
                 s.content,
                 s.shelf_qty if s.content == 'OPEN' else 0,
-                s.garage_door_type if s.content == 'GARAGE' else '')
+                s.garage_door_type if s.content == 'GARAGE' else '',
+                '+S' if (s.content == 'GARAGE'
+                         and s.garage_side_doors) else '')
             for s in sections)
         if self.obj.get('hb_diag_section_sig') == sig:
             return
@@ -2270,8 +2272,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # shelf pass in the recalc is DOORS-only) - but their leaf
             # set follows the section's garage door option rather than
             # the cabinet swing. RETRACTING / SWING_UP read as a single
-            # full-span leaf (closed position); TAMBOUR and SIDE_HINGED
-            # have no diagonal leaf at all.
+            # full-span leaf (closed position); TAMBOUR and OPEN have
+            # no diagonal leaf at all.
             if sec.content not in ('DOORS', 'GARAGE'):
                 continue
             if sec.content == 'GARAGE':
@@ -2282,7 +2284,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     door_sides = ('DIAGONAL_LEFT',)
                 elif gdt == 'SINGLE_RIGHT':
                     door_sides = ('DIAGONAL_RIGHT',)
-                else:  # TAMBOUR / SIDE_HINGED
+                else:  # TAMBOUR / OPEN
                     door_sides = ()
             else:
                 door_sides = base_door_sides
@@ -2298,14 +2300,13 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 door.obj.rotation_euler.y = math.radians(-90)
                 door.obj.rotation_euler.z = math.radians(90)
                 door.set_input('Mirror Y', True)
-        # SIDE_HINGED garage: a hinged door leaf on each arm end face
-        # (the diagonal stays open). Same part construction as the
-        # diagonal leaves - PART_ROLE_DOOR so the style pass dresses
-        # them - with their own side tags; the recalc sets each face's
-        # rotation and size.
+        # Side-doors adder: a hinged door leaf on each arm end face, in
+        # addition to whatever fills the diagonal opening. Same part
+        # construction as the diagonal leaves - PART_ROLE_DOOR so the
+        # style pass dresses them - with their own side tags; the
+        # recalc sets each face's rotation and size.
         for i, sec in enumerate(sections):
-            if (sec.content != 'GARAGE'
-                    or sec.garage_door_type != 'SIDE_HINGED'):
+            if sec.content != 'GARAGE' or not sec.garage_side_doors:
                 continue
             for side_tag, leaf in (('SIDE_LEFT', 'Left'),
                                    ('SIDE_RIGHT', 'Right')):
@@ -2858,6 +2859,13 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 z_door = sec_z0 - sec_bot_ov
                 left_door_x = rail_origin_x - left_ov * ux + standoff * uy
                 left_door_y = rail_origin_y - left_ov * uy - standoff * ux
+                # Side-doors adder rides along with any diagonal
+                # option (including OPEN).
+                if (sections[i].content == 'GARAGE'
+                        and sections[i].garage_side_doors):
+                    self._position_garage_side_doors(
+                        i, width, depth, ld, rd, z_door, door_length,
+                        dt, standoff)
                 if sec_gdt == 'TAMBOUR':
                     # Slat-stack mesh inside the opening, just behind
                     # the FF; regenerated to the live opening size.
@@ -2869,11 +2877,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         tam.rotation_euler = (0.0, 0.0, theta)
                         _rebuild_tambour_slats(
                             tam, rail_length, sec_h, fft + TAMBOUR_INSET)
-                elif sec_gdt == 'SIDE_HINGED':
-                    self._position_garage_side_doors(
-                        i, width, depth, ld, rd, z_door, door_length,
-                        dt, standoff)
                 else:
+                    # OPEN builds no diagonal leaves - the part finds
+                    # below return None and the opening stays empty.
                     d_left = _find_corner_part(
                         self.obj, ff.PART_ROLE_DOOR, 'DIAGONAL_LEFT', i)
                     if d_left is not None:

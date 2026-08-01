@@ -219,6 +219,8 @@ def draw_corner_sections(layout, cab_props):
         row.prop(section, 'unlock_height', text="", icon=lock_icon)
         if section.content == 'GARAGE':
             col.prop(section, 'garage_door_type', text="Garage Door")
+            col.prop(section, 'garage_side_doors',
+                     text="Hinged Doors on Sides")
         if section.content == 'OPEN':
             col.prop(section, 'shelf_qty', text="Shelves")
         elif (section.content == 'DOORS'
