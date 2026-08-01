@@ -6540,6 +6540,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # PULLOUT_SHELF-only.
     rollout_boxes: CollectionProperty(type=Face_Frame_Rollout_Box)  # type: ignore
     rollout_boxes_index: IntProperty(default=0)  # type: ignore
+    # Omit the four slide-mount spacer parts for this ROLLOUT. A single
+    # rollout fixed at the floor mounts straight to the cabinet, so no
+    # spacer/ladder assembly is wanted (or manufactured) for it.
+    hide_rollout_spacers: BoolProperty(
+        name="Hide Rollout Spacers",
+        description="Don't build the side spacer parts the slides mount "
+                    "to (ROLLOUT only) - e.g. a single rollout fixed at "
+                    "the floor that needs no spacer assembly",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked

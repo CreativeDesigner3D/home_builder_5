@@ -4434,11 +4434,12 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'dims':         (box_dx, box_dy, item_height),
         })
         z += item_height + distance_between
-    out.extend(_assembly_spacers(
-        rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
-        'Rollout Spacer',
-        left_thickness=spacer_l, right_thickness=spacer_r,
-    ))
+    if not getattr(item, 'hide_rollout_spacers', False):
+        out.extend(_assembly_spacers(
+            rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
+            'Rollout Spacer',
+            left_thickness=spacer_l, right_thickness=spacer_r,
+        ))
     return out
 
 
