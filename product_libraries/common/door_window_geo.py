@@ -22,10 +22,13 @@ instead: door handle models install as .blend files into a per-user
 folder (zip installer, user files shadow shipped ones of the same
 name -- the same dual-root pattern as the cabinet pull libraries).
 
-Handle asset convention: each .blend contributes its first mesh
-object. Author the handle with its origin at the mounting point on
-the door face, +Y pointing away from the face, +Z up, and +X toward
-the door center (the direction a lever arm points). Placed handles
+Handle asset convention -- the SAME convention as the cabinet pull
+library: each .blend contributes its first mesh object, authored with
+its origin at the center of the mounting face, the body extending -Y
+(away from the surface it mounts on), and the long axis along X. On a
+door that puts the long axis vertical, the body proud of the face,
+and +Z toward the door center; right-hand doors and back faces get
+mirrored placement bases, like real handed hardware. Placed handles
 link the source mesh, so every door updates if the asset is swapped.
 """
 
@@ -804,15 +807,18 @@ def _build_slab(cage_obj, name, opts, width, height, x, y_front,
 
 def _handle_basis(mx, my, mz, away, cdir):
     """Door-mesh-space placement matrix for a handle asset at mount
-    point (mx, my, mz): asset +Y maps to ``away`` along the mesh Z
-    axis (out of the door face), asset +Z to the mesh X axis (up),
-    asset +X to ``cdir`` along the mesh Y axis (toward the door
-    center). The back-face basis is left-handed on purpose -- the two
-    handles of a set are mirror images, like real handed hardware."""
+    point (mx, my, mz), using the cabinet-pull asset convention:
+    asset X (the bar / long axis) maps to the mesh X axis (vertical on
+    the door), asset -Y (the body, modeled behind the mounting face)
+    maps to ``away`` along the mesh Z axis (out of the door face), and
+    asset Z lands along ``cdir`` on the mesh Y axis (toward the door
+    center). Back faces and right-hand doors get left-handed bases on
+    purpose -- the handles of a set are mirror images, like real
+    handed hardware."""
     m = Matrix.Identity(4)
-    m.col[0] = (0.0, cdir, 0.0, 0.0)
-    m.col[1] = (0.0, 0.0, away, 0.0)
-    m.col[2] = (1.0, 0.0, 0.0, 0.0)
+    m.col[0] = (1.0, 0.0, 0.0, 0.0)
+    m.col[1] = (0.0, 0.0, -away, 0.0)
+    m.col[2] = (0.0, cdir, 0.0, 0.0)
     m.col[3] = (mx, my, mz, 1.0)
     return m
 
