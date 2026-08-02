@@ -15,15 +15,20 @@ and the duplicate operators. A cage without the property builds
 nothing -- legacy files and open doorways stay cage-only until a style
 is assigned from the prompts.
 
-Styles are JSON presets on disk (lengths in inches). Two roots are
-searched -- the shipped door_window_styles folder next to this module
-and a per-user folder installed style packs land in -- and user files
-shadow shipped ones of the same name, so the defaults can be both
-extended and overridden without touching the addon. Same dual-root
-pattern as the cabinet pull libraries.
+Styles are built-in preset tables (DOOR_STYLE_PRESETS /
+WINDOW_STYLE_PRESETS) feeding the scene-default dropdowns and the
+prompts dialogs. Extensibility comes through GEOMETRY asset packs
+instead: door handle models install as .blend files into a per-user
+folder (zip installer, user files shadow shipped ones of the same
+name -- the same dual-root pattern as the cabinet pull libraries).
+
+Handle asset convention: each .blend contributes its first mesh
+object. Author the handle with its origin at the mounting point on
+the door face, +Y pointing away from the face, +Z up, and +X toward
+the door center (the direction a lever arm points). Placed handles
+link the source mesh, so every door updates if the asset is swapped.
 """
 
-import json
 import math
 import os
 import zipfile
@@ -98,6 +103,7 @@ DOOR_DEFAULTS = {
     'casing_thickness': inch(0.75),
     'threshold_height': inch(0.75),
     'include_knob': True,
+    'handle': 'DEFAULT',
     'open_angle': 0.0,
     'sidelite_left': 0.0,
     'sidelite_right': 0.0,
@@ -128,22 +134,6 @@ WINDOW_DEFAULTS = {
     'sill_horn': inch(1.0),
     'include_stool': True,
 }
-
-# Preset JSON stores lengths in inches for readability; these keys are
-# converted to meters on load (per category).
-DOOR_LENGTH_KEYS = {
-    'grille_bar_width', 'slab_thickness', 'stile_width', 'top_rail_width',
-    'bottom_rail_width', 'lock_rail_width', 'jamb_width', 'casing_width',
-    'casing_thickness', 'threshold_height', 'sidelite_left',
-    'sidelite_right', 'transom_height',
-}
-
-WINDOW_LENGTH_KEYS = {
-    'frame_width', 'sash_face_width', 'check_rail_width', 'sash_thickness',
-    'glass_thickness', 'grille_bar_width', 'casing_width',
-    'casing_thickness', 'sill_height', 'sill_projection', 'sill_horn',
-}
-
 
 def _category_for(cage_obj):
     if cage_obj.get('IS_WINDOW_BP'):
@@ -211,94 +201,184 @@ def clear_opts(cage_obj):
 
 
 # ---------------------------------------------------------------------------
-# Style presets (dual-root JSON discovery, user shadows shipped)
+# Style presets (built-in tables; tuple order is display order)
 # ---------------------------------------------------------------------------
 
-def get_styles_root():
-    """Absolute path to the shipped door_window_styles folder."""
-    return os.path.join(os.path.dirname(__file__), 'door_window_styles')
+DOOR_STYLE_PRESETS = (
+    ('6 Panel', "6 Panel",
+     dict(door_style='PANEL_6', panel_raise=True)),
+    ('2 Panel Shaker', "2 Panel Shaker",
+     dict(door_style='PANEL_2', panel_raise=False)),
+    ('Craftsman 3 Panel', "Craftsman 3 Panel",
+     dict(door_style='PANEL_3', panel_raise=False,
+          top_rail_width=inch(6.0))),
+    ('Flush', "Flush", dict(door_style='FLUSH')),
+    ('Quarter Lite', "Quarter Lite",
+     dict(door_style='LITE_QUARTER', panel_raise=False)),
+    ('Half Lite', "Half Lite",
+     dict(door_style='LITE_HALF', panel_raise=False)),
+    ('Three Quarter Lite', "Three Quarter Lite",
+     dict(door_style='LITE_34', panel_raise=False)),
+    ('Full Lite', "Full Lite", dict(door_style='LITE_FULL')),
+    ('Full Lite 15 Grid', "Full Lite 15 Grid",
+     dict(door_style='LITE_FULL', glass_grid_cols=3, glass_grid_rows=5)),
+    ('6 Panel with Sidelites', "6 Panel with Sidelites",
+     dict(door_style='PANEL_6', panel_raise=True,
+          sidelite_left=inch(14.0), sidelite_right=inch(14.0))),
+    ('Half Lite with Transom', "Half Lite with Transom",
+     dict(door_style='LITE_HALF', panel_raise=False,
+          transom_height=inch(14.0))),
+)
+
+WINDOW_STYLE_PRESETS = (
+    ('Double Hung', "Double Hung", dict(window_type='HUNG')),
+    ('Double Hung 6 Lite', "Double Hung 6 Lite",
+     dict(window_type='HUNG', grille_pattern='COLONIAL',
+          grille_cols=3, grille_rows=2)),
+    ('Cottage Hung', "Cottage Hung",
+     dict(window_type='HUNG', sash_split=0.6)),
+    ('Casement', "Casement", dict(window_type='CASEMENT', panes=1)),
+    ('Casement Pair', "Casement Pair",
+     dict(window_type='CASEMENT', panes=2)),
+    ('Slider XO', "Slider XO", dict(window_type='SLIDER', panes=2)),
+    ('Slider XOX', "Slider XOX", dict(window_type='SLIDER', panes=3)),
+    ('Awning', "Awning", dict(window_type='AWNING')),
+    ('Picture', "Picture", dict(window_type='PICTURE')),
+    ('Picture Prairie', "Picture Prairie",
+     dict(window_type='PICTURE', grille_pattern='PRAIRIE')),
+)
 
 
-def get_user_styles_root(create=False):
-    """Per-user styles folder installed packs land in. Prefers Blender's
-    per-extension user directory (survives addon updates); falls back to
-    the user datafiles resource when not running as an extension."""
+def _presets_for(category):
+    return (WINDOW_STYLE_PRESETS if category == WINDOW_CATEGORY
+            else DOOR_STYLE_PRESETS)
+
+
+def list_styles(category):
+    """[(name, label), ...] for the category's presets, in display
+    order."""
+    return [(name, label) for name, label, _opts in _presets_for(category)]
+
+
+def load_style(category, name):
+    """The preset's option dict (values already in meters), or None."""
+    for pname, _label, opts in _presets_for(category):
+        if pname == name:
+            return dict(opts)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Door handle asset library (dual-root .blend discovery, user shadows
+# shipped -- the cabinet-pull pattern)
+# ---------------------------------------------------------------------------
+
+def get_handles_root():
+    """Absolute path to the shipped door handle assets folder (may not
+    exist -- shipping handles is optional)."""
+    return os.path.join(os.path.dirname(__file__), 'door_handle_assets')
+
+
+def get_user_handles_root(create=False):
+    """Per-user handle folder installed packs land in. Prefers
+    Blender's per-extension user directory (survives addon updates);
+    falls back to the user datafiles resource when not running as an
+    extension."""
     addon_pkg = __package__.split('.product_libraries')[0]
     try:
         return bpy.utils.extension_path_user(
-            addon_pkg, path='door_window_styles', create=create)
+            addon_pkg, path='door_handles', create=create)
     except Exception:
         base = bpy.utils.user_resource(
             'DATAFILES', path='home_builder_5', create=create)
-        path = os.path.join(base, 'door_window_styles')
+        path = os.path.join(base, 'door_handles')
         if create:
             os.makedirs(path, exist_ok=True)
         return path
 
 
-def get_styles_roots():
-    """Existing style roots in search order: user first so an installed
-    style overrides a shipped one of the same name."""
-    return [r for r in (get_user_styles_root(), get_styles_root())
+def get_handles_roots():
+    """Existing handle roots in search order: user first so an
+    installed handle overrides a shipped one of the same name."""
+    return [r for r in (get_user_handles_root(), get_handles_root())
             if os.path.isdir(r)]
 
 
-def list_styles(category):
-    """[(name, label, path, sort), ...] for every .json preset in the
-    category folder across every root, sorted by the preset's optional
-    'sort' number then label. A same-named file in the user root
-    shadows the shipped one."""
+def list_handles():
+    """[(filename, label), ...] for every .blend handle across every
+    root (subfolders included), label = filename stem, sorted by label.
+    A same-named file in the user root shadows the shipped one."""
     seen = {}
-    for root in get_styles_roots():
-        folder = os.path.join(root, category)
-        if not os.path.isdir(folder):
-            continue
-        for fname in os.listdir(folder):
-            if not fname.lower().endswith('.json'):
-                continue
-            stem = os.path.splitext(fname)[0]
-            if stem.lower() in seen:
-                continue
-            path = os.path.join(folder, fname)
-            label, sort = stem, 100
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                label = str(data.get('label', stem))
-                sort = int(data.get('sort', 100))
-            except Exception:
-                pass
-            seen[stem.lower()] = (stem, label, path, sort)
-    return sorted(seen.values(), key=lambda it: (it[3], it[1].lower()))
-
-
-def load_style(category, name):
-    """The preset's option dict with lengths converted from inches to
-    meters, or None when the preset can't be found / read."""
-    length_keys = (WINDOW_LENGTH_KEYS if category == WINDOW_CATEGORY
-                   else DOOR_LENGTH_KEYS)
-    for stem, _label, path, _sort in list_styles(category):
-        if stem != name:
-            continue
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            return None
-        raw = data.get('options', {})
-        defaults = _defaults_for(category)
-        opts = {}
-        for key, val in raw.items():
-            if key not in defaults:
-                continue
-            if key in length_keys:
-                try:
-                    val = inch(float(val))
-                except (TypeError, ValueError):
+    for root in get_handles_roots():
+        for folder, _dirs, files in os.walk(root):
+            for fname in files:
+                if not fname.lower().endswith('.blend'):
                     continue
-            opts[key] = val
-        return opts
+                if fname.lower() in seen:
+                    continue
+                seen[fname.lower()] = (fname, os.path.splitext(fname)[0])
+    return sorted(seen.values(), key=lambda it: it[1].lower())
+
+
+def find_handle_file(filename):
+    """Absolute path for a handle .blend, searching every root in
+    order; None when not found."""
+    for root in get_handles_roots():
+        for folder, _dirs, files in os.walk(root):
+            if filename in files:
+                return os.path.join(folder, filename)
     return None
+
+
+# Loaded handle source objects keyed by filename; instances link each
+# source's mesh data, so swapping the source updates every door. Dead
+# references (file reload / purge) are detected and reloaded.
+_handle_cache = {}
+
+
+def load_handle_object(filename):
+    """The first mesh object out of a handle .blend (cached), or None.
+    The object is loaded into bpy.data but not linked to any scene --
+    placed handles link its MESH into their own child objects."""
+    cached = _handle_cache.get(filename)
+    if cached is not None:
+        try:
+            cached.name  # dead-reference check
+            return cached
+        except ReferenceError:
+            pass
+    path = find_handle_file(filename)
+    if path is None:
+        return None
+    try:
+        with bpy.data.libraries.load(path) as (data_from, data_to):
+            data_to.objects = list(data_from.objects)
+    except Exception:
+        return None
+    for obj in data_to.objects:
+        if obj is not None and obj.type == 'MESH':
+            _handle_cache[filename] = obj
+            return obj
+    return None
+
+
+_handle_enum_cache = {}
+
+
+def handle_enum_items():
+    """Enum items for the door handle picker: the built-in default
+    knob plus every installed handle asset. Cached so the strings stay
+    alive for Blender's dynamic-enum requirement."""
+    handles = list_handles()
+    key = tuple(h[0] for h in handles)
+    cached = _handle_enum_cache.get(key)
+    if cached is not None:
+        return cached
+    items = [('DEFAULT', "Default Knob", "Built-in door knob")]
+    items += [(fname, label, "Installed handle asset %s" % label)
+              for fname, label in handles]
+    _handle_enum_cache[key] = items
+    return items
 
 
 # Enum item lists are cached so the strings stay alive for as long as
@@ -316,8 +396,8 @@ def style_enum_items(category, include_custom=False, include_none=False):
     cached = _style_enum_cache.get(key)
     if cached is not None:
         return cached
-    items = [(stem, label, "Apply the %s style preset" % label)
-             for stem, label, _path, _sort in styles]
+    items = [(name, label, "Apply the %s style preset" % label)
+             for name, label in styles]
     if include_custom:
         items.append(('CUSTOM', "Custom", "Keep the current option values"))
     if include_none:
@@ -380,6 +460,21 @@ def _door_material():
     return _material('Entry Door Slab', (0.87, 0.85, 0.80))
 
 
+def _handle_material():
+    """Brushed-metal material for the built-in knob (handle assets
+    keep their own materials)."""
+    name = 'Door Handle Metal'
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = _material(name, (0.62, 0.62, 0.64), roughness=0.35)
+    bsdf = next((n for n in mat.node_tree.nodes
+                 if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None and 'Metallic' in bsdf.inputs:
+        bsdf.inputs['Metallic'].default_value = 1.0
+    return mat
+
+
 def _glass_material():
     name = 'Door Window Glass'
     mat = bpy.data.materials.get(name)
@@ -425,33 +520,67 @@ def _box(verts, faces, slots, x0, x1, y0, y1, z0, z1, slot=0):
     slots.extend([slot] * 6)
 
 
-def _cylinder_z(verts, faces, slots, cx, cy, z0, z1, radius, slot=0,
-                segs=16):
-    """Closed cylinder along the Z axis (door knobs, authored in the
-    door mesh's local space so they ride the slab's transform)."""
-    if z1 - z0 <= 1e-9 or radius <= 1e-9:
-        return
-    b = len(verts)
-    for z in (z0, z1):
+def _lathe_z(verts, faces, slots, cx, cy, z_base, profile, slot=0,
+             segs=16, flip=False):
+    """Surface of revolution around the Z axis at (cx, cy): ``profile``
+    is [(radius, offset)] walked base-outward, offsets measured along
+    +Z from ``z_base`` (negated when ``flip`` -- the back-face handle).
+    Rings are quad-stitched; a near-zero radius closes at a pole, and a
+    nonzero first ring is capped flat. Used for the built-in door knob,
+    authored in the door mesh's local space so it rides the slab's
+    transform."""
+    sgn = -1.0 if flip else 1.0
+    b0 = len(faces)
+    ring_of = []
+    for radius, offset in profile:
+        z = z_base + sgn * offset
+        if radius <= 1e-6:
+            ring_of.append((len(verts), True))
+            verts.append((cx, cy, z))
+            continue
+        ring_of.append((len(verts), False))
         for i in range(segs):
             a = 2.0 * math.pi * i / segs
             verts.append((cx + radius * math.cos(a),
                           cy + radius * math.sin(a), z))
-    for i in range(segs):
-        j = (i + 1) % segs
-        faces.append((b + i, b + j, b + segs + j, b + segs + i))
+    first, first_pole = ring_of[0]
+    if not first_pole:
+        faces.append(tuple(first + i for i in reversed(range(segs))))
         slots.append(slot)
-    faces.append(tuple(b + i for i in reversed(range(segs))))
-    slots.append(slot)
-    faces.append(tuple(b + segs + i for i in range(segs)))
-    slots.append(slot)
+    for k in range(len(ring_of) - 1):
+        (a, a_pole), (b, b_pole) = ring_of[k], ring_of[k + 1]
+        for i in range(segs):
+            j = (i + 1) % segs
+            if a_pole and b_pole:
+                continue
+            if a_pole:
+                faces.append((a, b + j, b + i))
+            elif b_pole:
+                faces.append((a + i, a + j, b))
+            else:
+                faces.append((a + i, a + j, b + j, b + i))
+            slots.append(slot)
+    if flip:
+        # Mirrored along Z: reverse windings so normals stay outward.
+        for k in range(b0, len(faces)):
+            faces[k] = tuple(reversed(faces[k]))
 
 
-def _new_child(cage_obj, name):
-    """A fresh mesh child of the cage: tagged as generated geometry,
-    routed to the cage's right-click menu, linked wherever the cage is
-    linked."""
-    me = bpy.data.meshes.new(name)
+# Built-in default knob: rose plate, tapered stem, ball. (radius,
+# projection-from-door-face) pairs in inches, lathed around the knob
+# axis.
+_KNOB_PROFILE = (
+    (1.35, 0.00), (1.35, 0.28), (0.55, 0.40), (0.50, 1.05),
+    (0.90, 1.40), (1.10, 1.85), (0.95, 2.35), (0.50, 2.62), (0.0, 2.72),
+)
+
+
+def _new_child(cage_obj, name, mesh=None):
+    """A mesh child of the cage: tagged as generated geometry, routed
+    to the cage's right-click menu, linked wherever the cage is linked.
+    ``mesh`` links existing mesh data (handle assets) instead of
+    creating a fresh empty mesh."""
+    me = mesh if mesh is not None else bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, me)
     obj.parent = cage_obj
     obj[GEO_CHILD_FLAG] = True
@@ -662,18 +791,56 @@ def _build_slab(cage_obj, name, opts, width, height, x, y_front,
     matrix = _slab_matrix(x, y_front, z0, st, width, hinge, swing_inside,
                           open_deg)
     obj.matrix_basis = matrix
-    # Knob on the latch edge, authored in the leaf's mesh space and
-    # carrying the leaf's matrix so it swings with the door.
+    # Handle on the latch edge, one per face, authored in the leaf's
+    # mesh space and carrying the leaf's matrix so it swings with the
+    # door.
     if opts['include_knob']:
-        knob = _new_child(cage_obj, name + " Knob")
-        verts, faces, slots = [], [], []
         latch_my = (-(width - inch(2.5)) if hinge == 'L' else -inch(2.5))
-        knob_mx = min(inch(36.0), height * 0.45)
-        _cylinder_z(verts, faces, slots, knob_mx, latch_my,
-                    -inch(2.25), st + inch(2.25), inch(1.0))
-        _finish_mesh(knob, verts, faces, slots, [_trim_material()])
-        knob.matrix_basis = matrix
+        handle_mx = min(inch(36.0), height * 0.45)
+        _place_handles(cage_obj, name, opts, matrix, handle_mx, latch_my,
+                       st, hinge)
     return obj
+
+
+def _handle_basis(mx, my, mz, away, cdir):
+    """Door-mesh-space placement matrix for a handle asset at mount
+    point (mx, my, mz): asset +Y maps to ``away`` along the mesh Z
+    axis (out of the door face), asset +Z to the mesh X axis (up),
+    asset +X to ``cdir`` along the mesh Y axis (toward the door
+    center). The back-face basis is left-handed on purpose -- the two
+    handles of a set are mirror images, like real handed hardware."""
+    m = Matrix.Identity(4)
+    m.col[0] = (0.0, cdir, 0.0, 0.0)
+    m.col[1] = (0.0, 0.0, away, 0.0)
+    m.col[2] = (1.0, 0.0, 0.0, 0.0)
+    m.col[3] = (mx, my, mz, 1.0)
+    return m
+
+
+def _place_handles(cage_obj, name, opts, leaf_matrix, handle_mx, latch_my,
+                   thickness, hinge):
+    """Both faces' handles for one leaf: an installed handle asset
+    (mesh linked from its .blend) when selected and resolvable, else
+    the built-in lathed knob."""
+    selection = str(opts.get('handle', 'DEFAULT'))
+    src = (load_handle_object(selection)
+           if selection not in ('', 'DEFAULT') else None)
+    if src is not None:
+        cdir = 1.0 if hinge == 'L' else -1.0
+        for side, mz, away in (("Front", thickness, 1.0), ("Back", 0.0, -1.0)):
+            obj = _new_child(cage_obj, "%s %s Handle" % (name, side),
+                             mesh=src.data)
+            obj.matrix_basis = leaf_matrix @ _handle_basis(
+                handle_mx, latch_my, mz, away, cdir)
+        return
+    knob = _new_child(cage_obj, name + " Knob")
+    verts, faces, slots = [], [], []
+    profile = [(inch(r), inch(p)) for r, p in _KNOB_PROFILE]
+    _lathe_z(verts, faces, slots, handle_mx, latch_my, thickness, profile)
+    _lathe_z(verts, faces, slots, handle_mx, latch_my, 0.0, profile,
+             flip=True)
+    _finish_mesh(knob, verts, faces, slots, [_handle_material()])
+    knob.matrix_basis = leaf_matrix
 
 
 def build_door_geometry(cage_obj):
@@ -956,46 +1123,14 @@ def build_geometry(cage_obj):
 
 
 # ---------------------------------------------------------------------------
-# Style pack install / open operators
+# Handle pack install / open operators
 # ---------------------------------------------------------------------------
 
-_CATEGORY_FOLDERS = {
-    DOOR_CATEGORY.lower(): DOOR_CATEGORY,
-    WINDOW_CATEGORY.lower(): WINDOW_CATEGORY,
-}
-
-
-def _zip_style_entries(zf):
-    """Yield (category, filename, member) for every .json preset in the
-    zip. Category comes from a path segment matching a known category
-    folder, else from the preset's own 'category' field."""
-    for member in zf.namelist():
-        if member.endswith('/') or not member.lower().endswith('.json'):
-            continue
-        parts = [p for p in member.replace('\\', '/').split('/') if p]
-        fname = parts[-1]
-        category = None
-        for seg in parts[:-1]:
-            category = _CATEGORY_FOLDERS.get(seg.lower())
-            if category:
-                break
-        if category is None:
-            try:
-                data = json.loads(zf.read(member).decode('utf-8'))
-                category = _CATEGORY_FOLDERS.get(
-                    str(data.get('category', '')).lower())
-            except Exception:
-                category = None
-        if category is None:
-            continue
-        yield category, fname, member
-
-
-class HOME_BUILDER_OT_install_door_window_styles(bpy.types.Operator):
-    bl_idname = "home_builder_doors_windows.install_style_pack"
-    bl_label = "Install Door & Window Style Pack"
-    bl_description = ("Install a zip of door / window style presets into "
-                      "the user styles folder")
+class HOME_BUILDER_OT_install_door_handle_pack(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.install_handle_pack"
+    bl_label = "Install Door Handle Pack"
+    bl_description = ("Install a zip of door handle .blend models into "
+                      "the user handle folder")
     bl_options = {'REGISTER'}
 
     filepath: bpy.props.StringProperty(subtype='FILE_PATH')  # type: ignore
@@ -1008,43 +1143,48 @@ class HOME_BUILDER_OT_install_door_window_styles(bpy.types.Operator):
 
     def execute(self, context):
         if not self.filepath or not os.path.isfile(self.filepath):
-            self.report({'ERROR'}, "Select a style pack zip file")
+            self.report({'ERROR'}, "Select a handle pack zip file")
             return {'CANCELLED'}
-        root = get_user_styles_root(create=True)
+        root = get_user_handles_root(create=True)
         installed = 0
         try:
             with zipfile.ZipFile(self.filepath) as zf:
-                for category, fname, member in _zip_style_entries(zf):
-                    folder = os.path.join(root, category)
-                    os.makedirs(folder, exist_ok=True)
+                for member in zf.namelist():
+                    if member.endswith('/'):
+                        continue
+                    lower = member.lower()
+                    if not lower.endswith(('.blend', '.png')):
+                        continue
                     # Only the basename is used, so a hostile zip path
-                    # cannot escape the styles folder.
-                    target = os.path.join(folder, os.path.basename(fname))
-                    with open(target, 'wb') as f:
+                    # cannot escape the handle folder.
+                    fname = os.path.basename(member.replace('\\', '/'))
+                    if not fname:
+                        continue
+                    with open(os.path.join(root, fname), 'wb') as f:
                         f.write(zf.read(member))
-                    installed += 1
+                    if lower.endswith('.blend'):
+                        installed += 1
         except zipfile.BadZipFile:
             self.report({'ERROR'}, "Not a valid zip file")
             return {'CANCELLED'}
         if installed == 0:
-            self.report({'WARNING'},
-                        "No style presets found in the zip")
+            self.report({'WARNING'}, "No handle .blend files in the zip")
             return {'CANCELLED'}
-        # No cache invalidation needed: the enum cache is keyed by the
-        # style-name set, so new presets produce a fresh entry.
-        self.report({'INFO'}, "Installed %d style preset%s" %
+        # Stale cached source objects would shadow reinstalled files.
+        _handle_cache.clear()
+        self.report({'INFO'}, "Installed %d handle model%s" %
                     (installed, "" if installed == 1 else "s"))
         return {'FINISHED'}
 
 
-class HOME_BUILDER_OT_open_door_window_styles_folder(bpy.types.Operator):
-    bl_idname = "home_builder_doors_windows.open_styles_folder"
-    bl_label = "Open Styles Folder"
-    bl_description = ("Open the user door / window styles folder in the "
-                      "file browser")
+class HOME_BUILDER_OT_open_door_handle_folder(bpy.types.Operator):
+    bl_idname = "home_builder_doors_windows.open_handle_folder"
+    bl_label = "Open Handle Folder"
+    bl_description = ("Open the user door handle folder in the file "
+                      "browser")
 
     def execute(self, context):
-        path = get_user_styles_root(create=True)
+        path = get_user_handles_root(create=True)
         try:
             os.startfile(path)
         except AttributeError:
@@ -1054,8 +1194,8 @@ class HOME_BUILDER_OT_open_door_window_styles_folder(bpy.types.Operator):
 
 
 classes = (
-    HOME_BUILDER_OT_install_door_window_styles,
-    HOME_BUILDER_OT_open_door_window_styles_folder,
+    HOME_BUILDER_OT_install_door_handle_pack,
+    HOME_BUILDER_OT_open_door_handle_folder,
 )
 
 

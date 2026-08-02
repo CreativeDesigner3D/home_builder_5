@@ -1,8 +1,0 @@
-{
-  "label": "Picture",
-  "category": "Windows",
-  "sort": 60,
-  "options": {
-    "window_type": "PICTURE"
-  }
-}

@@ -1,9 +1,0 @@
-{
-  "label": "Casement",
-  "category": "Windows",
-  "sort": 30,
-  "options": {
-    "window_type": "CASEMENT",
-    "panes": 1
-  }
-}

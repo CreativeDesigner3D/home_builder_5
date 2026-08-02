@@ -1,9 +1,0 @@
-{
-  "label": "2 Panel Shaker",
-  "category": "Entry Doors",
-  "sort": 20,
-  "options": {
-    "door_style": "PANEL_2",
-    "panel_raise": false
-  }
-}

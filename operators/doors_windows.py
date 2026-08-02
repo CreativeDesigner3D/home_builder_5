@@ -1118,6 +1118,10 @@ def _window_style_preset_items(self, context):
         include_none=True)
 
 
+def _door_handle_items(self, context):
+    return door_window_geo.handle_enum_items()
+
+
 def _apply_preset_to_operator(op, category):
     """Style dropdown update: load the preset and push its option values
     onto the dialog's matching properties. Skipped while invoke() is
@@ -1131,7 +1135,10 @@ def _apply_preset_to_operator(op, category):
         return
     for key, val in opts.items():
         if hasattr(op, key):
-            setattr(op, key, val)
+            try:
+                setattr(op, key, val)
+            except (TypeError, ValueError):
+                pass
 
 
 def _collect_operator_opts(op, defaults):
@@ -1163,7 +1170,12 @@ def _seed_operator_from_opts(op, cage_obj, defaults, items_fn, context):
             style = 'CUSTOM'
     for key, val in opts.items():
         if key != 'style' and hasattr(op, key):
-            setattr(op, key, val)
+            try:
+                setattr(op, key, val)
+            except (TypeError, ValueError):
+                # A stored enum id that no longer resolves (e.g. an
+                # uninstalled handle asset) keeps the property default.
+                pass
     return style
 
 
@@ -1194,7 +1206,10 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     include_exterior_casing: bpy.props.BoolProperty(name="Exterior Casing")  # type: ignore
     casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
     threshold_height: bpy.props.FloatProperty(name="Threshold Height", unit='LENGTH', precision=5)  # type: ignore
-    include_knob: bpy.props.BoolProperty(name="Knob")  # type: ignore
+    include_knob: bpy.props.BoolProperty(name="Handle")  # type: ignore
+    handle: bpy.props.EnumProperty(
+        name="Handle Model", items=_door_handle_items,
+        description="Built-in knob or an installed handle asset")  # type: ignore
     open_angle: bpy.props.FloatProperty(
         name="Open Angle", min=0.0, max=135.0, subtype='FACTOR',
         description="Swing the door leaf open by this many degrees "
@@ -1319,6 +1334,8 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         row.prop(self, 'threshold_height', text="")
         row = box.row()
         row.prop(self, 'include_knob')
+        if self.include_knob:
+            row.prop(self, 'handle', text="")
 
 
 class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):

@@ -1,9 +1,0 @@
-{
-  "label": "Quarter Lite",
-  "category": "Entry Doors",
-  "sort": 50,
-  "options": {
-    "door_style": "LITE_QUARTER",
-    "panel_raise": false
-  }
-}

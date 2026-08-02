@@ -474,9 +474,9 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.prop(hb_scene, 'window_style', text="")
 
         row = col.row(align=True)
-        row.operator('home_builder_doors_windows.install_style_pack',
-                     text="Install Style Pack", icon='IMPORT')
-        row.operator('home_builder_doors_windows.open_styles_folder',
+        row.operator('home_builder_doors_windows.install_handle_pack',
+                     text="Install Handle Pack", icon='IMPORT')
+        row.operator('home_builder_doors_windows.open_handle_folder',
                      text="", icon='FILE_FOLDER')
 
 

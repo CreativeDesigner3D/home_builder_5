@@ -1,9 +1,0 @@
-{
-  "label": "Casement Pair",
-  "category": "Windows",
-  "sort": 35,
-  "options": {
-    "window_type": "CASEMENT",
-    "panes": 2
-  }
-}

@@ -1,9 +1,0 @@
-{
-  "label": "Slider XOX",
-  "category": "Windows",
-  "sort": 45,
-  "options": {
-    "window_type": "SLIDER",
-    "panes": 3
-  }
-}
