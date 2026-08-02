@@ -23,12 +23,13 @@ folder (zip installer, user files shadow shipped ones of the same
 name -- the same dual-root pattern as the cabinet pull libraries).
 
 Handle asset convention: each .blend contributes its first mesh
-object, authored exactly as it should sit on the FRONT of a closed
-door -- origin at the latch mount point on the door face, Z up. The
-front handle places with zero rotation; the back handle is the same
-asset rotated 180 degrees about Y at the opposite face. Both ride the
-leaf's open-swing transform. Placed handles link the source mesh, so
-every door updates if the asset is swapped.
+object, with its origin at the latch mount point on the door face.
+Each face's handle places at its mount point rotated by the per-door
+Front / Back rotation options (XYZ degrees, defaults (0, 180, 0) and
+(180, 180, 0)) -- handle models are not all authored in one
+orientation, so the angles are editable in the door prompts rather
+than fixed. Both ride the leaf's open-swing transform. Placed handles
+link the source mesh, so every door updates if the asset is swapped.
 """
 
 import math
@@ -106,6 +107,15 @@ DOOR_DEFAULTS = {
     'threshold_height': inch(0.75),
     'include_knob': True,
     'handle': 'DEFAULT',
+    # Handle asset orientation, XYZ euler degrees applied at the mount
+    # point of each face. Editable per door in the prompts because
+    # handle models are not all authored in one orientation.
+    'handle_rot_front_x': 0.0,
+    'handle_rot_front_y': 180.0,
+    'handle_rot_front_z': 0.0,
+    'handle_rot_back_x': 180.0,
+    'handle_rot_back_y': 180.0,
+    'handle_rot_back_z': 0.0,
     'open_angle': 0.0,
     'sidelite_left': 0.0,
     'sidelite_right': 0.0,
@@ -820,26 +830,37 @@ def _place_handles(cage_obj, name, opts, leaf_matrix, open_t, x, y_front,
     the built-in lathed knob.
 
     Asset handles place in plain cage space at the latch mount point
-    of each door face: the FRONT (interior-side) handle with zero
-    rotation, the BACK handle rotated 180 degrees about Y -- author
-    the asset exactly as it should sit on the front of a closed door.
-    Both compose with the leaf's open-swing transform."""
+    of each door face, rotated by the per-door handle_rot_front /
+    handle_rot_back eulers (degrees) -- handle models are not all
+    authored in one orientation, so the angles are options rather than
+    constants. Both compose with the leaf's open-swing transform."""
     selection = str(opts.get('handle', 'DEFAULT'))
     src = (load_handle_object(selection)
            if selection not in ('', 'DEFAULT') else None)
     latch_x = (x + width - inch(2.5) if hinge == 'L' else x + inch(2.5))
     handle_z = z0 + min(inch(36.0), height * 0.45)
     if src is not None:
+        def rot_euler(prefix):
+            return Euler(
+                (math.radians(float(opts['handle_rot_%s_x' % prefix])),
+                 math.radians(float(opts['handle_rot_%s_y' % prefix])),
+                 math.radians(float(opts['handle_rot_%s_z' % prefix]))),
+                'XYZ')
+        closed = open_t == Matrix.Identity(4)
         placements = (
-            ("Front", Matrix.Translation((latch_x, y_front, handle_z))),
-            ("Back", Matrix.Translation(
-                (latch_x, y_front + thickness, handle_z))
-             @ Matrix.Rotation(math.pi, 4, 'Y')),
+            ("Front", (latch_x, y_front, handle_z), rot_euler('front')),
+            ("Back", (latch_x, y_front + thickness, handle_z),
+             rot_euler('back')),
         )
-        for side, m in placements:
+        for side, mount, euler in placements:
             obj = _new_child(cage_obj, "%s %s Handle" % (name, side),
                              mesh=src.data)
-            obj.matrix_basis = open_t @ m
+            obj.matrix_basis = (open_t @ Matrix.Translation(mount)
+                                @ euler.to_matrix().to_4x4())
+            if closed:
+                # Same orientation, but shown with the user's literal
+                # angles instead of a re-decomposed equivalent.
+                obj.rotation_euler = euler
         return
     knob = _new_child(cage_obj, name + " Knob")
     verts, faces, slots = [], [], []

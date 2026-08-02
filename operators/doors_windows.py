@@ -1210,6 +1210,14 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     handle: bpy.props.EnumProperty(
         name="Handle Model", items=_door_handle_items,
         description="Built-in knob or an installed handle asset")  # type: ignore
+    handle_rot_front: bpy.props.FloatVectorProperty(
+        name="Front Rotation", size=3, default=(0.0, 180.0, 0.0),
+        description="Handle asset rotation on the front face "
+                    "(XYZ degrees)")  # type: ignore
+    handle_rot_back: bpy.props.FloatVectorProperty(
+        name="Back Rotation", size=3, default=(180.0, 180.0, 0.0),
+        description="Handle asset rotation on the back face "
+                    "(XYZ degrees)")  # type: ignore
     open_angle: bpy.props.FloatProperty(
         name="Open Angle", min=0.0, max=135.0, subtype='FACTOR',
         description="Swing the door leaf open by this many degrees "
@@ -1233,8 +1241,14 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
             door_window_geo.remove_geometry(self.door.obj)
             door_window_geo.clear_opts(self.door.obj)
         else:
-            door_window_geo.set_opts(self.door.obj, _collect_operator_opts(
-                self, door_window_geo.DOOR_DEFAULTS))
+            opts = _collect_operator_opts(
+                self, door_window_geo.DOOR_DEFAULTS)
+            # The two rotation vectors fan out to the six stored keys.
+            for prefix, vec in (('front', self.handle_rot_front),
+                                ('back', self.handle_rot_back)):
+                for axis, val in zip('xyz', vec):
+                    opts['handle_rot_%s_%s' % (prefix, axis)] = val
+            door_window_geo.set_opts(self.door.obj, opts)
             door_window_geo.build_geometry(self.door.obj)
         return True
 
@@ -1250,6 +1264,12 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
                 _door_style_preset_items, context)
         finally:
             self._loading = False
+        opts = (door_window_geo.merged_opts(bp)
+                or dict(door_window_geo.DOOR_DEFAULTS))
+        self.handle_rot_front = tuple(
+            opts['handle_rot_front_%s' % axis] for axis in 'xyz')
+        self.handle_rot_back = tuple(
+            opts['handle_rot_back_%s' % axis] for axis in 'xyz')
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
 
@@ -1336,6 +1356,13 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         row.prop(self, 'include_knob')
         if self.include_knob:
             row.prop(self, 'handle', text="")
+        if self.include_knob and self.handle != 'DEFAULT':
+            row = box.row()
+            row.label(text="Front Rotation:")
+            row.prop(self, 'handle_rot_front', text="")
+            row = box.row()
+            row.label(text="Back Rotation:")
+            row.prop(self, 'handle_rot_back', text="")
 
 
 class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
