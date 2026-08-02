@@ -22,14 +22,13 @@ instead: door handle models install as .blend files into a per-user
 folder (zip installer, user files shadow shipped ones of the same
 name -- the same dual-root pattern as the cabinet pull libraries).
 
-Handle asset convention -- the SAME convention as the cabinet pull
-library: each .blend contributes its first mesh object, authored with
-its origin at the center of the mounting face, the body extending -Y
-(away from the surface it mounts on), and the long axis along X. On a
-door that puts the long axis vertical, the body proud of the face,
-and +Z toward the door center; right-hand doors and back faces get
-mirrored placement bases, like real handed hardware. Placed handles
-link the source mesh, so every door updates if the asset is swapped.
+Handle asset convention: each .blend contributes its first mesh
+object, authored exactly as it should sit on the FRONT of a closed
+door -- origin at the latch mount point on the door face, Z up. The
+front handle places with zero rotation; the back handle is the same
+asset rotated 180 degrees about Y at the opposite face. Both ride the
+leaf's open-swing transform. Placed handles link the source mesh, so
+every door updates if the asset is swapped.
 """
 
 import math
@@ -751,17 +750,16 @@ def _swing_state(cage_obj):
         return False, True, True
 
 
-def _slab_matrix(x, y_front, z, thickness, width, hinge, swing_inside,
-                 open_deg):
-    """Cage-local matrix for a door leaf: the standard door-mesh
-    reorientation, optionally rotated open about the hinge edge's
-    vertical axis. Interior is -Y; an inswing leaf rotates toward it."""
-    base = (Matrix.Translation((x, y_front + thickness, z))
-            @ Euler((0.0, math.radians(-90.0),
-                     math.radians(90.0))).to_matrix().to_4x4())
+def _leaf_open_transform(x, y_front, thickness, width, hinge,
+                         swing_inside, open_deg):
+    """Cage-local open-swing transform for a door leaf: a rotation
+    about the hinge edge's vertical axis, identity when closed.
+    Interior is -Y; an inswing leaf rotates toward it. Applied to the
+    slab AND to everything mounted on it (knob, handle assets) so the
+    hardware swings with the door."""
     a = math.radians(min(max(open_deg, 0.0), 135.0))
     if a <= 1e-4:
-        return base
+        return Matrix.Identity(4)
     hinge_x = x if hinge == 'L' else x + width
     pivot_y = y_front if swing_inside else y_front + thickness
     if swing_inside:
@@ -770,7 +768,18 @@ def _slab_matrix(x, y_front, z, thickness, width, hinge, swing_inside,
         delta = a if hinge == 'L' else -a
     pivot = Vector((hinge_x, pivot_y, 0.0))
     return (Matrix.Translation(pivot) @ Matrix.Rotation(delta, 4, 'Z')
-            @ Matrix.Translation(-pivot) @ base)
+            @ Matrix.Translation(-pivot))
+
+
+def _slab_matrix(x, y_front, z, thickness, width, hinge, swing_inside,
+                 open_deg):
+    """Cage-local matrix for a door leaf: the standard door-mesh
+    reorientation composed with the open-swing transform."""
+    base = (Matrix.Translation((x, y_front + thickness, z))
+            @ Euler((0.0, math.radians(-90.0),
+                     math.radians(90.0))).to_matrix().to_4x4())
+    return _leaf_open_transform(x, y_front, thickness, width, hinge,
+                                swing_inside, open_deg) @ base
 
 
 def _build_slab(cage_obj, name, opts, width, height, x, y_front,
@@ -794,53 +803,48 @@ def _build_slab(cage_obj, name, opts, width, height, x, y_front,
     matrix = _slab_matrix(x, y_front, z0, st, width, hinge, swing_inside,
                           open_deg)
     obj.matrix_basis = matrix
-    # Handle on the latch edge, one per face, authored in the leaf's
-    # mesh space and carrying the leaf's matrix so it swings with the
-    # door.
+    # Handle on the latch edge, one per face, carrying the leaf's
+    # open-swing transform so it swings with the door.
     if opts['include_knob']:
-        latch_my = (-(width - inch(2.5)) if hinge == 'L' else -inch(2.5))
-        handle_mx = min(inch(36.0), height * 0.45)
-        _place_handles(cage_obj, name, opts, matrix, handle_mx, latch_my,
-                       st, hinge)
+        open_t = _leaf_open_transform(x, y_front, st, width, hinge,
+                                      swing_inside, open_deg)
+        _place_handles(cage_obj, name, opts, matrix, open_t, x, y_front,
+                       width, st, z0, height, hinge)
     return obj
 
 
-def _handle_basis(mx, my, mz, away, cdir):
-    """Door-mesh-space placement matrix for a handle asset at mount
-    point (mx, my, mz), using the cabinet-pull asset convention:
-    asset X (the bar / long axis) maps to the mesh X axis (vertical on
-    the door), asset -Y (the body, modeled behind the mounting face)
-    maps to ``away`` along the mesh Z axis (out of the door face), and
-    asset Z lands along ``cdir`` on the mesh Y axis (toward the door
-    center). Back faces and right-hand doors get left-handed bases on
-    purpose -- the handles of a set are mirror images, like real
-    handed hardware."""
-    m = Matrix.Identity(4)
-    m.col[0] = (1.0, 0.0, 0.0, 0.0)
-    m.col[1] = (0.0, 0.0, -away, 0.0)
-    m.col[2] = (0.0, cdir, 0.0, 0.0)
-    m.col[3] = (mx, my, mz, 1.0)
-    return m
-
-
-def _place_handles(cage_obj, name, opts, leaf_matrix, handle_mx, latch_my,
-                   thickness, hinge):
+def _place_handles(cage_obj, name, opts, leaf_matrix, open_t, x, y_front,
+                   width, thickness, z0, height, hinge):
     """Both faces' handles for one leaf: an installed handle asset
     (mesh linked from its .blend) when selected and resolvable, else
-    the built-in lathed knob."""
+    the built-in lathed knob.
+
+    Asset handles place in plain cage space at the latch mount point
+    of each door face: the FRONT (interior-side) handle with zero
+    rotation, the BACK handle rotated 180 degrees about Y -- author
+    the asset exactly as it should sit on the front of a closed door.
+    Both compose with the leaf's open-swing transform."""
     selection = str(opts.get('handle', 'DEFAULT'))
     src = (load_handle_object(selection)
            if selection not in ('', 'DEFAULT') else None)
+    latch_x = (x + width - inch(2.5) if hinge == 'L' else x + inch(2.5))
+    handle_z = z0 + min(inch(36.0), height * 0.45)
     if src is not None:
-        cdir = 1.0 if hinge == 'L' else -1.0
-        for side, mz, away in (("Front", thickness, 1.0), ("Back", 0.0, -1.0)):
+        placements = (
+            ("Front", Matrix.Translation((latch_x, y_front, handle_z))),
+            ("Back", Matrix.Translation(
+                (latch_x, y_front + thickness, handle_z))
+             @ Matrix.Rotation(math.pi, 4, 'Y')),
+        )
+        for side, m in placements:
             obj = _new_child(cage_obj, "%s %s Handle" % (name, side),
                              mesh=src.data)
-            obj.matrix_basis = leaf_matrix @ _handle_basis(
-                handle_mx, latch_my, mz, away, cdir)
+            obj.matrix_basis = open_t @ m
         return
     knob = _new_child(cage_obj, name + " Knob")
     verts, faces, slots = [], [], []
+    latch_my = (-(width - inch(2.5)) if hinge == 'L' else -inch(2.5))
+    handle_mx = min(inch(36.0), height * 0.45)
     profile = [(inch(r), inch(p)) for r, p in _KNOB_PROFILE]
     _lathe_z(verts, faces, slots, handle_mx, latch_my, thickness, profile)
     _lathe_z(verts, faces, slots, handle_mx, latch_my, 0.0, profile,
