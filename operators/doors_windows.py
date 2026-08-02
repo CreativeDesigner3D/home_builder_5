@@ -1122,14 +1122,18 @@ def _door_handle_items(self, context):
     return door_window_geo.handle_enum_items()
 
 
-def _apply_preset_to_operator(op, category):
-    """Style dropdown update: load the preset and push its option values
-    onto the dialog's matching properties. Skipped while invoke() is
-    seeding the dialog from the stored options."""
-    if getattr(op, '_loading', False):
-        return
+def _apply_preset_if_changed(op, category):
+    """Apply the selected style preset's values onto the dialog's
+    matching properties when the selection changed since the last
+    apply. Called from check() rather than an enum update callback --
+    the dialog runs check() against the property values as they were
+    BEFORE an update callback's writes, which left the preset one
+    click behind the rebuild."""
     if op.style in ('CUSTOM', 'NONE'):
         return
+    if op.style == getattr(op, '_applied_style', None):
+        return
+    op._applied_style = op.style
     opts = door_window_geo.load_style(category, op.style)
     if not opts:
         return
@@ -1189,9 +1193,7 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     door_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
 
     style: bpy.props.EnumProperty(
-        name="Style", items=_door_style_preset_items,
-        update=lambda self, context: _apply_preset_to_operator(
-            self, door_window_geo.DOOR_CATEGORY))  # type: ignore
+        name="Style", items=_door_style_preset_items)  # type: ignore
     door_style: bpy.props.EnumProperty(
         name="Door Style", items=door_window_geo.DOOR_STYLE_ITEMS)  # type: ignore
     panel_raise: bpy.props.BoolProperty(name="Raised Panels")  # type: ignore
@@ -1241,6 +1243,7 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
             door_window_geo.remove_geometry(self.door.obj)
             door_window_geo.clear_opts(self.door.obj)
         else:
+            _apply_preset_if_changed(self, door_window_geo.DOOR_CATEGORY)
             opts = _collect_operator_opts(
                 self, door_window_geo.DOOR_DEFAULTS)
             # The two rotation vectors fan out to the six stored keys.
@@ -1257,13 +1260,12 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         self.door = hb_types.GeoNodeCage(bp)
         self.door_width = self.door.get_input('Dim X')
         self.door_height = self.door.get_input('Dim Z')
-        self._loading = True
-        try:
-            self.style = _seed_operator_from_opts(
-                self, bp, door_window_geo.DOOR_DEFAULTS,
-                _door_style_preset_items, context)
-        finally:
-            self._loading = False
+        self.style = _seed_operator_from_opts(
+            self, bp, door_window_geo.DOOR_DEFAULTS,
+            _door_style_preset_items, context)
+        # The stored style is already reflected in the seeded fields --
+        # only a NEW dropdown pick should re-apply preset values.
+        self._applied_style = self.style
         opts = (door_window_geo.merged_opts(bp)
                 or dict(door_window_geo.DOOR_DEFAULTS))
         self.handle_rot_front = tuple(
@@ -1376,9 +1378,7 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     height_from_floor: bpy.props.FloatProperty(name="Height From Floor", unit='LENGTH', precision=5)  # type: ignore
 
     style: bpy.props.EnumProperty(
-        name="Style", items=_window_style_preset_items,
-        update=lambda self, context: _apply_preset_to_operator(
-            self, door_window_geo.WINDOW_CATEGORY))  # type: ignore
+        name="Style", items=_window_style_preset_items)  # type: ignore
     window_type: bpy.props.EnumProperty(
         name="Window Type", items=door_window_geo.WINDOW_TYPE_ITEMS)  # type: ignore
     panes: bpy.props.IntProperty(name="Panes", min=1, max=3)  # type: ignore
@@ -1415,6 +1415,7 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
             door_window_geo.remove_geometry(self.window.obj)
             door_window_geo.clear_opts(self.window.obj)
         else:
+            _apply_preset_if_changed(self, door_window_geo.WINDOW_CATEGORY)
             door_window_geo.set_opts(
                 self.window.obj, _collect_operator_opts(
                     self, door_window_geo.WINDOW_DEFAULTS))
@@ -1427,13 +1428,10 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         self.window_width = self.window.get_input('Dim X')
         self.window_height = self.window.get_input('Dim Z')
         self.height_from_floor = self.window.obj.location.z
-        self._loading = True
-        try:
-            self.style = _seed_operator_from_opts(
-                self, bp, door_window_geo.WINDOW_DEFAULTS,
-                _window_style_preset_items, context)
-        finally:
-            self._loading = False
+        self.style = _seed_operator_from_opts(
+            self, bp, door_window_geo.WINDOW_DEFAULTS,
+            _window_style_preset_items, context)
+        self._applied_style = self.style
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
 
