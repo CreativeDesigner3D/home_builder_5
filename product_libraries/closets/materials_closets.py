@@ -48,8 +48,8 @@ COUNTERTOP_ORDER = (
 # material selection instead of picking an explicit one.
 MATCH = 'MATCH'
 
-# Door panel types: Vertical Grain = the front material (oriented by
-# the door grain setting); the rest are glass materials that live in
+# Door panel types: Vertical Grain = the front material (doors always
+# run vertical grain); the rest are glass materials that live in
 # the library blend (not asset-marked - they only make sense as door
 # panels, never as a carcass pick).
 PANEL_TYPES = [
@@ -203,37 +203,38 @@ def vertical_variant(mat):
     return _mapping_variant(mat, " GRAIN V", rot_z=math.radians(90.0))
 
 
-# Which way the grain runs on a front. The room sets doors and
-# drawer fronts apart; an opening can take the setting over for its own
-# fronts, which is how one bank runs vertical while the rest of the run
-# stays horizontal.
-GRAIN_ITEMS = [
+# Which way the grain runs on a drawer front. Doors always run
+# vertical, so the only choice to make is the drawer fronts', and a
+# single drawer can be turned the other way on its own.
+GRAIN_OVERRIDE_ITEMS = [
+    ('DEFAULT', "Use Default", "Follow the room's Vertical Grain setting"),
     ('VERTICAL', "Vertical", "Grain runs up the front"),
     ('HORIZONTAL', "Horizontal", "Grain runs across the front"),
 ]
 
 
 def front_grain(front_obj, is_drawer):
-    """Grain direction for one front: its opening's own setting where
-    the opening has taken it over, the room's otherwise. Plain lookup
+    """Grain direction for one front.
+
+    Doors always run vertical - the way a tall front is built - so
+    there is nothing to look up for them. A drawer front runs the way
+    the room's Vertical Grain setting says, unless that one drawer has
+    been given a direction of its own in Drawer Options. Plain lookup
     on the way to picking a material, so a whole run re-grains in one
     pass with nothing driven."""
-    props = bpy.context.scene.hb_closets
-    room = getattr(props,
-                   'closet_drawer_grain' if is_drawer
-                   else 'closet_door_grain',
-                   'HORIZONTAL' if is_drawer else 'VERTICAL')
+    if not is_drawer:
+        return 'VERTICAL'
     try:
         from . import types_closets
-        opening = types_closets.find_opening_cage(front_obj)
+        own = front_obj.get(types_closets.PROP_FRONT_GRAIN, '')
     except Exception:
-        opening = None
-    if opening is None:
-        return room
-    op = opening.hb_closet_opening
-    if not op.unlock_grain:
-        return room
-    return op.grain_direction
+        own = ''
+    if own in ('VERTICAL', 'HORIZONTAL'):
+        return own
+    props = bpy.context.scene.hb_closets
+    return ('VERTICAL'
+            if getattr(props, 'closet_drawer_vertical_grain', False)
+            else 'HORIZONTAL')
 
 
 def _set_modifier_material(mod, socket_name, mat):
@@ -356,10 +357,11 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     """Assign the selected materials to every cutpart under a starter:
     fronts (door/drawer/hamper) get the fronts material (Match Closet
     follows the closet material) oriented by the grain the front
-    resolves to - its opening's setting where the opening has taken it
-    over, the room's door/drawer setting otherwise. The library
-    textures read horizontal as authored, so VERTICAL is the rotated
-    in-plane variant. Tops and their upstands
+    resolves to - vertical on doors, and on drawer fronts whatever the
+    room's Vertical Grain setting says unless that drawer carries a
+    direction of its own. The library textures read horizontal as
+    authored, so VERTICAL is the rotated in-plane variant.
+    Tops and their upstands
     get the countertop selection. Everything else gets the closet
     material. Edge slots take the edgebanding selections (Match
     = the surface material) as their X-rotated variant so grain reads
@@ -404,8 +406,8 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         role = child.get('hb_part_role')
         if role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
-            # run, so an opening that has taken the setting over gets
-            # the rotated material while its neighbours do not.
+            # run, so a drawer turned the other way gets the rotated
+            # material while its neighbours do not.
             mat = (front_v
                    if front_grain(child, role == role_drawer) == 'VERTICAL'
                    else front)

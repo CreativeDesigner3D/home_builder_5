@@ -2265,6 +2265,12 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         name="Height", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
         description="Force the box height (0 = system size)")  # type: ignore
+    grain: bpy.props.EnumProperty(
+        name="Grain",
+        description="Which way the grain runs on this drawer front, "
+                    "instead of following the room",
+        items=materials_closets.GRAIN_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
     jewelry_tray: bpy.props.EnumProperty(
         name="Jewelry Tray",
         items=types_closets.JEWELRY_TRAY_COLOR_ITEMS,
@@ -2299,6 +2305,8 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
                 front.get(types_closets.PROP_BOX_HEIGHT_OVERRIDE, 0.0))
             self.jewelry_tray = (
                 front.get(types_closets.PROP_JEWELRY_TRAY, '') or 'NONE')
+            self.grain = (
+                front.get(types_closets.PROP_FRONT_GRAIN, '') or 'DEFAULT')
         return context.window_manager.invoke_props_dialog(self, width=320)
 
     def draw(self, context):
@@ -2334,6 +2342,20 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             row.label(text="Opening Height:")
             row.label(text=str(open_h_mm) + " mm")
 
+        # Left on Use Default this front runs the way the room does,
+        # with the room's setting read back so there is something to
+        # compare against before turning this one drawer.
+        room = context.scene.hb_closets
+        row = box.row(align=True)
+        row.label(text="Grain:")
+        row.prop(self, 'grain', text="")
+        if self.grain == 'DEFAULT':
+            row = box.row()
+            row.label(text="")
+            row.label(text="Room: %s" % (
+                "Vertical" if room.closet_drawer_vertical_grain
+                else "Horizontal"))
+
         box = layout.box()
         row = box.row()
         row.label(text="Jewelry Tray:")
@@ -2367,6 +2389,11 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             front[types_closets.PROP_BOX_HEIGHT_OVERRIDE] = self.override_height
         elif types_closets.PROP_BOX_HEIGHT_OVERRIDE in front:
             del front[types_closets.PROP_BOX_HEIGHT_OVERRIDE]
+        # Grain (Use Default clears it back to the room's setting).
+        if self.grain and self.grain != 'DEFAULT':
+            front[types_closets.PROP_FRONT_GRAIN] = self.grain
+        elif types_closets.PROP_FRONT_GRAIN in front:
+            del front[types_closets.PROP_FRONT_GRAIN]
         # Jewelry tray.
         if self.jewelry_tray and self.jewelry_tray != 'NONE':
             front[types_closets.PROP_JEWELRY_TRAY] = self.jewelry_tray
@@ -2383,6 +2410,10 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         root = types_closets.find_starter_root(front)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+            # Grain is a material choice, so the run has to be
+            # re-finished for the change to show while the dialog is
+            # still open.
+            _apply_finish(root)
         return True
 
     def execute(self, context):
@@ -4123,19 +4154,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default=const.DISTANCE_BETWEEN_PULLS,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
-    # Grain on this opening's fronts. Left locked it follows the room,
-    # which keeps doors and drawer fronts on separate settings.
-    unlock_grain: bpy.props.BoolProperty(
-        name="Grain",
-        description="Set which way the grain runs on this opening's "
-                    "fronts, instead of following the room",
-        default=False)  # type: ignore
-    grain_direction: bpy.props.EnumProperty(
-        name="Grain Direction",
-        description="Which way the grain runs on this opening's fronts",
-        items=materials_closets.GRAIN_ITEMS,
-        default='VERTICAL')  # type: ignore
-
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(
@@ -4214,8 +4232,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.drawer_pull_vertical_location = float(
             op.drawer_pull_vertical_location)
         self.distance_between_pulls = float(op.distance_between_pulls)
-        self.unlock_grain = bool(op.unlock_grain)
-        self.grain_direction = op.grain_direction
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
@@ -4283,21 +4299,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub.enabled = self.door_swing != 'NONE'
         sub.prop(self, 'is_hamper')
         sub.prop(self, 'open_door')
-        # Which way the grain runs here. Locked, it reads back what the
-        # room does with doors and with drawer fronts, so there is
-        # something to compare against before unlocking it; unlocked,
-        # everything on this opening runs the one way.
-        room = context.scene.hb_closets
-        row = box.row(align=True)
-        row.prop(self, 'unlock_grain')
-        sub = row.row(align=True)
-        if self.unlock_grain:
-            sub.prop(self, 'grain_direction', text="")
-        else:
-            sub.label(text="Doors %s, Drawers %s"
-                           % (room.closet_door_grain.capitalize(),
-                              room.closet_drawer_grain.capitalize()))
-
         # What the run works out for a front, and any side this opening
         # has taken over. A locked side reads back the run's figure, so
         # there is something to measure against before unlocking it.
@@ -4470,8 +4471,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.drawer_pull_vertical_location
         _op.double_pull_on_front = self.double_pull_on_front
         _op.distance_between_pulls = self.distance_between_pulls
-        _op.unlock_grain = self.unlock_grain
-        _op.grain_direction = self.grain_direction
         _op.add_back = self.add_back
         _op.back_inset = self.back_inset
         _op.back_notch_left = self.back_notch_left

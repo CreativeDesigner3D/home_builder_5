@@ -126,6 +126,9 @@ PROP_JEWELRY_TRAY_NAME = 'hb_jewelry_tray_name'
 # (0 = use the system-calculated size). The layout also stamps the
 # resolved box type, size tag, and opening height back on the front so
 # the dialog can report the current drawer.
+# Which way the grain runs on this one drawer front, set in Drawer
+# Options. '' / 'DEFAULT' follows the room's Vertical Grain setting.
+PROP_FRONT_GRAIN = 'hb_front_grain'
 PROP_FRONT_BOX_OVERRIDE = 'hb_front_box_override'
 PROP_BOX_DEPTH_OVERRIDE = 'hb_box_depth_override'
 PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
@@ -3717,10 +3720,6 @@ def serialize_opening(opening):
             [int(getattr(opening.hb_closet_opening, 'unlock_%s_overlay' % s)),
              float(getattr(opening.hb_closet_opening, '%s_overlay' % s))]
             for s in ('left', 'right', 'top', 'bottom')],
-        # Which way the grain runs, so a copy reads the way the
-        # original did.
-        'grain': [int(opening.hb_closet_opening.unlock_grain),
-                  opening.hb_closet_opening.grain_direction],
         # How the shelves here are cut, so a copy drops into its
         # clips the way the original did.
         'shelf_gaps': [
@@ -3796,10 +3795,6 @@ def apply_opening_data(opening, data, recalc=True):
                     float(value))
             setattr(opening.hb_closet_opening,
                     'unlock_%s_overlay' % s, True)
-    grain = data.get('grain')
-    if grain:
-        opening.hb_closet_opening.unlock_grain = bool(grain[0])
-        opening.hb_closet_opening.grain_direction = grain[1]
     gaps = data.get('shelf_gaps')
     if gaps:
         _gp = opening.hb_closet_opening

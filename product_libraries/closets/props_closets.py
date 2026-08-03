@@ -1171,23 +1171,6 @@ class Closet_Opening_Props(PropertyGroup):
         default=const.DISTANCE_BETWEEN_PULLS,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
-    # Which way the grain runs on this opening's fronts. Locked,
-    # they follow the room's settings for doors and for drawer fronts;
-    # unlocked, everything on this opening runs the way it is set here.
-    # Left out of the contents list below on purpose, same as the
-    # overlays and the pulls: stripping an opening empties it, it does
-    # not re-finish it.
-    unlock_grain: BoolProperty(
-        name="Grain",
-        description="Set which way the grain runs on this opening's "
-                    "fronts, instead of following the room",
-        default=False)  # type: ignore
-    grain_direction: EnumProperty(
-        name="Grain Direction",
-        description="Which way the grain runs on this opening's fronts",
-        items=materials_closets.GRAIN_ITEMS,
-        default='VERTICAL')  # type: ignore
-
     # ----- Captured back -----
     # A back that closes this opening on its own, held between the
     # panels and shelves around it. Independent of the interior: an
@@ -1422,19 +1405,14 @@ class Closets_Scene_Props(PropertyGroup):
         items=materials_closets.PANEL_TYPES,
         default='Vertical Grain',
         update=materials_closets.update_room)  # type: ignore
-    closet_door_grain: EnumProperty(
-        name="Door Grain",
-        description="Grain direction on closet doors",
-        items=[('VERTICAL', "Vertical", ""),
-               ('HORIZONTAL', "Horizontal", "")],
-        default='VERTICAL',
-        update=materials_closets.update_room)  # type: ignore
-    closet_drawer_grain: EnumProperty(
-        name="Drawer Front Grain",
-        description="Grain direction on closet drawer fronts",
-        items=[('VERTICAL', "Vertical", ""),
-               ('HORIZONTAL', "Horizontal", "")],
-        default='HORIZONTAL',
+    # Grain on the drawer fronts. Doors always run vertical, so this
+    # is the only grain choice the room makes; a single drawer can
+    # still be turned the other way in its own Drawer Options.
+    closet_drawer_vertical_grain: BoolProperty(
+        name="Vertical Grain",
+        description="Run the grain up the drawer fronts instead of "
+                    "across them",
+        default=False,
         update=materials_closets.update_room)  # type: ignore
 
     closet_pull: EnumProperty(
@@ -1675,11 +1653,6 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'closet_edge_material', text="Closet Edge")
         col.prop(self, 'closet_front_edge_material', text="Front Edge")
 
-        col.separator()
-        col.label(text="Grain Direction:")
-        col.prop(self, 'closet_door_grain', text="Doors")
-        col.prop(self, 'closet_drawer_grain', text="Drawer Fronts")
-
     # =====================================================================
     # UI: door and drawer front styles (Options tab)
     # =====================================================================
@@ -1710,11 +1683,14 @@ class Closets_Scene_Props(PropertyGroup):
                  text="Drawer Vertical")
 
     # =====================================================================
-    # UI: drawer boxes (Options tab)
+    # UI: drawers (Options tab)
     # =====================================================================
     def draw_drawer_box_options_ui(self, layout, context):
         col = layout.column(align=True)
         col.prop(self, 'closet_drawer_box', text="Drawer Box")
+
+        col.separator()
+        col.prop(self, 'closet_drawer_vertical_grain')
 
     # =====================================================================
     # UI: rods and hangers (Options tab)
@@ -1807,7 +1783,7 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_front_options_ui),
                 ('show_pull_options', "Pulls",
                  self.draw_pull_options_ui),
-                ('show_drawer_box_options', "Drawer Boxes",
+                ('show_drawer_box_options', "Drawers",
                  self.draw_drawer_box_options_ui),
                 ('show_rod_options', "Rods & Hangers",
                  self.draw_rod_options_ui),
