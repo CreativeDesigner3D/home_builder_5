@@ -10,6 +10,7 @@ import bpy
 import mathutils
 
 from . import adapters, engine, packages
+from .. import hb_types, hb_utils, units
 
 MOLDING_TAG = 'IS_HB_MOLDING_SWEEP'
 MOLDING_TYPE = 'HB_MOLDING_TYPE'
@@ -47,29 +48,81 @@ def _resolve_stack(stack, opts):
     """Resolve a stack against the room settings, in order:
 
     - per-category profile overrides swap each preset's profile
-    - the STACK_OFFSET dy sentinel becomes the room's stack offset
+    - Spacer-category entries carry the room's spacer height (their
+      profile is scaled to it); other entries have no height override
+    - the STACK_OFFSET dy sentinel becomes the spacer height, so a
+      stacked crown rides on top of the room-sized spacer
     - the STACK_FRONT dx sentinel becomes the running front of the
       PRECEDING entries (max of their dx + measured profile
       thickness), so an entry mounts on the face of what's below it -
       the crown on its spacer, the shoe on its base molding.
 
-    Returns a list of concrete (ref, fallback, dx, dy) tuples.
+    Returns a list of concrete (ref, fallback, dx, dy, height) tuples.
     """
     resolved = []
     front = 0.0
     for profile_ref, fallback_key, dx, dy in stack:
         if dy == 'STACK_OFFSET':
-            dy = opts['stack_offset']
+            dy = opts['spacer_height']
         category = profile_ref.replace("\\", "/").split("/")[0]
         override = opts['overrides'].get(category)
         if override:
             profile_ref = f"{category}/{override}"
+        height = opts['spacer_height'] if category == 'Spacer' else None
         if dx == 'STACK_FRONT':
             dx = front
-        resolved.append((profile_ref, fallback_key, dx, dy))
+        resolved.append((profile_ref, fallback_key, dx, dy, height))
         front = max(front, dx + packages.profile_front_depth(
             profile_ref, fallback_key))
     return resolved
+
+
+def _run_ceiling_local(first, opts):
+    """Ceiling Z in the run's first-member local frame: the top of the
+    wall the run hangs on when there is one, else the room's ceiling
+    height (measured from the world floor)."""
+    ceiling = None
+    wall = hb_utils.get_wall_bp(first)
+    if wall is not None:
+        try:
+            h = hb_types.GeoNodeObject(wall).get_input('Height')
+        except Exception:
+            h = None
+        if h:
+            ceiling = wall.matrix_world.translation.z + h
+    if ceiling is None:
+        ceiling = opts['ceiling_height']
+    return ceiling - first.matrix_world.translation.z
+
+
+def _ceiling_stack(first, facts, resolved_stack, opts):
+    """Re-aim a resolved crown stack at this run's ceiling: the crown
+    tops out at the ceiling line and spacer entries stretch to fill
+    from the crown datum up to the crown bottom (all the way to the
+    ceiling when the stack has no crown). Entries keep their dx."""
+
+    def _category(ref):
+        return ref.replace("\\", "/").split("/")[0]
+
+    datum = _crown_datum(first, facts, opts)
+    ceiling = _run_ceiling_local(first, opts)
+    crown_h = 0.0
+    for ref, fb, _dx, _dy, _height in resolved_stack:
+        if _category(ref) == 'Crown Molding':
+            crown_h = max(crown_h, packages.profile_top_height(ref, fb))
+    fill = max(ceiling - datum - crown_h, 0.0)
+    out = []
+    for ref, fb, dx, dy, height in resolved_stack:
+        category = _category(ref)
+        if category == 'Crown Molding':
+            dy = fill
+        elif category == 'Spacer':
+            if fill < units.inch(0.25):
+                # No usable gap under the crown - drop the spacer.
+                continue
+            dy, height = 0.0, fill
+        out.append((ref, fb, dx, dy, height))
+    return out
 
 
 def _crown_datum(first, facts, opts):
@@ -88,16 +141,21 @@ def _crown_datum(first, facts, opts):
 def _crown_stack_top(first, facts, opts):
     """Local Z of the TOP of the room's crown stack on this run: the
     crown datum plus the tallest resolved entry (its vertical offset
-    plus its measured profile height). None when no crown package is
+    plus its profile height). With the to-ceiling option the stack
+    tops out at the ceiling line. None when no crown package is
     active - the furniture cap then defaults to the cabinet top."""
     stack = opts.get('crown_stack')
     if not stack:
         return None
+    if opts.get('to_ceiling'):
+        return _run_ceiling_local(first, opts)
     base = _crown_datum(first, facts, opts)
     top = None
-    for profile_ref, fallback_key, _dx, dy in _resolve_stack(stack, opts):
-        t = base + dy + packages.profile_top_height(profile_ref,
-                                                    fallback_key)
+    for profile_ref, fallback_key, _dx, dy, height in _resolve_stack(
+            stack, opts):
+        if height is None:
+            height = packages.profile_top_height(profile_ref, fallback_key)
+        t = base + dy + height
         if top is None or t > top:
             top = t
     return top
@@ -124,13 +182,13 @@ def _sweep_z(molding_type, first, dy, facts, opts):
 
 
 def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
-                 fallback_key, dy, facts, opts):
+                 fallback_key, dy, facts, opts, height=None):
     """Create one sweep object: hidden profile + curve through the
     world-space segments, localized to (and parented on) chain[0]."""
     first = chain[0]
     profile = packages.make_profile_object(
         profile_ref, fallback_key,
-        f"Molding_Profile_{fallback_key}", scene.collection)
+        f"Molding_Profile_{fallback_key}", scene.collection, height=height)
     if profile is None:
         return None
     curve = bpy.data.curves.new("MoldingSweep", type='CURVE')
@@ -203,12 +261,25 @@ def _apply_type(scene, molding_type, align, stack, opts):
         if not any(m in targets for m in component):
             continue
         chain = engine.order_chain(component, align=align)
-        for profile_ref, fallback_key, dx, dy in resolved_stack:
+        run_stack = resolved_stack
+        if molding_type == 'CROWN' and opts['to_ceiling']:
+            # Ceiling-relative sizing is per run: the datum and the
+            # ceiling line live in the (winding-normalized) first
+            # member's local frame.
+            result = engine.chain_sweep_points(chain, facts, 0.0, 0.0)
+            if result is None:
+                continue
+            _pts, norm_chain = result
+            run_stack = _ceiling_stack(norm_chain[0], facts,
+                                       resolved_stack, opts)
+        for profile_ref, fallback_key, dx, dy, height in run_stack:
             if molding_type == 'BASE':
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, opts['include_recessed'])
                 sweep_chain = chain
             else:
+                if molding_type == 'CAP':
+                    dx += opts['cap_overhang']
                 result = engine.chain_sweep_points(chain, facts, dx, dx)
                 if result is None:
                     continue
@@ -218,7 +289,7 @@ def _apply_type(scene, molding_type, align, stack, opts):
                 continue
             if _spawn_sweep(scene, molding_type, sweep_chain, segments,
                             profile_ref, fallback_key, dy, facts,
-                            opts) is not None:
+                            opts, height=height) is not None:
                 made += 1
     return made
 
@@ -262,8 +333,12 @@ def apply_scene_packages(scene):
         'include_recessed': getattr(hb, 'molding_base_include_recessed',
                                     False),
         'crown_reveal': getattr(hb, 'molding_crown_reveal', 0.0),
-        'stack_offset': getattr(hb, 'molding_crown_stack_offset', 0.0),
+        'spacer_height': getattr(hb, 'molding_spacer_height',
+                                 units.inch(3.5)),
+        'to_ceiling': getattr(hb, 'molding_crown_to_ceiling', False),
+        'ceiling_height': getattr(hb, 'ceiling_height', units.inch(96.0)),
         'cap_offset': getattr(hb, 'molding_cap_offset', 0.0),
+        'cap_overhang': getattr(hb, 'molding_cap_overhang', 0.0),
         # The active crown stack, kept for the furniture cap's default
         # position (on top of the tallest crown-stack molding).
         'crown_stack': (packages.package_stack('CROWN', crown_ident)

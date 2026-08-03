@@ -268,6 +268,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_door_frame",
                             text="Set Door Frame...", icon='MOD_BEVEL')
 
+        # Door / drawer / pullout / tilt-out fronts: per-opening pull
+        # override (applies to every selected front).
+        if role in ops_part_commands._ROLES_WITH_PULL:
+            layout.operator("hb_face_frame.set_front_pull",
+                            text="Set Pull...", icon='TOOL_SETTINGS')
+
         # Face frame members (stiles / rails / splitters) keep their role-aware
         # Set Width. Every other cabinet part adjusts its size via Make
         # Editable (below) - there is no direct Set Size command.
@@ -296,13 +302,29 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Toggle Stile to Floor",
                             icon='TRIA_DOWN_BAR')
 
+        # Finished bottom - on the carcass bottom (or the finished
+        # bottom panel itself) of a standard upper. The dialog binds
+        # the cabinet's condition and offers a room-wide apply.
+        _fb_root = types_face_frame.find_cabinet_root(obj)
+        if (role in (types_face_frame.PART_ROLE_BOTTOM,
+                     types_face_frame.PART_ROLE_FINISHED_BOTTOM)
+                and _fb_root is not None
+                and _fb_root.get('CABINET_TYPE') == 'UPPER'
+                and _fb_root.face_frame_cabinet.corner_type == 'NONE'):
+            layout.operator("hb_face_frame.set_finished_bottom",
+                            text="Set Finished Bottom...",
+                            icon='MOD_SOLIDIFY')
+
         # Finished-end condition is per-side: shown on the left / right
-        # carcass side panels. The operator derives the side from the
-        # clicked part's role and shows only that side's enum.
+        # carcass side panels and on the back (plain or finished). The
+        # operator derives the side from the clicked part's role and
+        # shows only that side's props.
         if role in (types_face_frame.PART_ROLE_LEFT_SIDE,
                     types_face_frame.PART_ROLE_RIGHT_SIDE,
                     types_face_frame_corner.PART_ROLE_CORNER_LEFT_SIDE,
-                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE):
+                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE,
+                    types_face_frame.PART_ROLE_BACK,
+                    types_face_frame.PART_ROLE_FINISHED_BACK):
             layout.operator("hb_face_frame.set_finished_end_condition",
                             text="Set Finished End Condition...",
                             icon='MOD_SOLIDIFY')
@@ -387,6 +409,22 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
+
+
+class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
+    """Right-click menu for a drawer box (reachable in Interiors
+    selection mode). Size edits store on the owning opening - the box
+    itself is rebuilt every recalc - and Opening Properties walks up
+    from the box the same way interior parts do.
+    """
+    bl_label = "Drawer Box Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.drawer_box_prompts",
+                        text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -698,6 +736,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
+    HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,

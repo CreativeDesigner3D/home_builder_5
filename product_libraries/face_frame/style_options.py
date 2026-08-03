@@ -2859,7 +2859,7 @@ OVERLAY_TO_HINGES = {'*Standard Overlay': [['HCB', 'COMPACT BLUMOTION Hinge', Fa
                          ['H030', 'Knife - Antique Brass', False],
                          ['NONE', 'None', False]],
  'Classic Overlay': [['HCB', 'COMPACT BLUMOTION Hinge', False],
-                     ['HCTB', 'CLIPtop BLUMOTION Hinge', False],
+                     ['HCTB', 'CLIPtop BLUMOTION Hinge', True],
                      ['H005', 'Demountable - Burnished Brass', False],
                      ['H006', 'Demountable - Oil Rubbed Bronze', False],
                      ['H007', 'Demountable - Satin Nickel', False],
@@ -4924,7 +4924,10 @@ OVERLAY_TO_FF_BUCKET = {'*Standard Overlay': 'CLASSIC',
  'Partial Inset, Beaded Edge': 'PARTIAL_INSET',
  'Partial Inset, Chamfer': 'PARTIAL_INSET',
  'Partial Inset, Metro': 'PARTIAL_INSET',
- '3/8" Inset (Lipped)': 'PARTIAL_INSET',
+ # Lipped 3/8 inset reads as an overlay on the face plane (face = opening
+ # + 1/4 per side); the inset buckets now carry a negative face reveal, so
+ # it sizes through the overlay bucket until real lip geometry exists.
+ '3/8" Inset (Lipped)': 'CLASSIC',
  'Full Inset, Square Edge': 'FULL_INSET',
  'Full Inset, Beaded Edge': 'FULL_INSET',
  'Full Inset, Chamfer': 'FULL_INSET',
@@ -5014,7 +5017,7 @@ _WOOD_HIDE = _WOOD_HIDE_BASE | {w for w in WOOD_SPECIES if not colors_for_wood_u
 
 # ===========================================================================
 # Door / drawer-front FRAME SPEC per series (baked from the reference
-# cwp_door_styles.py). Series sets stile + rail widths; drawer fronts use
+# door-style spec). Series sets stile + rail widths; drawer fronts use
 # drw_rail for the rail. panel_inset / panel_thickness override the GN
 # default when present. is_slab series have no 5-piece frame. Series not
 # listed use DEFAULT_FRAME (the reference's 2.5 / 3 / 2 fallback).
@@ -5058,6 +5061,7 @@ SERIES_FRAME = {'Beckony': {'stile': 3.5, 'rail': 3.5, 'drw_rail': 3.0},
             'panel_inset': 0.0,
             'panel_thickness': 0.75},
  'Kelli': {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0},
+ 'Konza': {'stile': 0.75, 'rail': 0.75, 'drw_rail': 0.75},
  'Marketplace': {'stile': 3.0, 'rail': 3.0, 'drw_rail': 2.0},
  'Metro': {'stile': 3.0, 'rail': 3.0, 'drw_rail': 2.0},
  'Shaker': {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0},
@@ -5077,13 +5081,56 @@ SERIES_FRAME = {'Beckony': {'stile': 3.5, 'rail': 3.5, 'drw_rail': 3.0},
 
 DEFAULT_FRAME = {'stile': 2.5, 'rail': 3.0, 'drw_rail': 2.0}
 
-def frame_for_series(series):
+# Shape-dependent frames: for these series the catalog SHAPE choice names
+# the stile/rail width (mitered flat-frame doors -- same width on every
+# member, doors and drawer faces alike; catalog p104-105 for Konza).
+SERIES_SHAPE_FRAME = {
+    'Konza': {
+        '1/2':   {'stile': 0.5,  'rail': 0.5,  'drw_rail': 0.5},
+        '3/4':   {'stile': 0.75, 'rail': 0.75, 'drw_rail': 0.75},
+        '1 1/4': {'stile': 1.25, 'rail': 1.25, 'drw_rail': 1.25},
+        '2':     {'stile': 2.0,  'rail': 2.0,  'drw_rail': 2.0},
+    },
+}
+
+# Glass / Speaker Cloth enhanced panels on shape-width series add an inner
+# hardwood trim frame inside the opening; the catalog specs the TOTAL
+# frame width (outer member + trim): 2-1/4" for the narrow Konza shapes,
+# 3" for Konza 2 (catalog p104 Detail A-A).
+_SERIES_GLASS_FRAME_TOTAL = {
+    'Konza': {'1/2': 2.25, '3/4': 2.25, '1 1/4': 2.25, '2': 3.0},
+}
+
+
+def frame_for_series(series, shape=None):
     """Frame spec dict for a series: {stile, rail, drw_rail, [panel_inset],
     [panel_thickness], [is_slab]}. Falls back to DEFAULT_FRAME. Widths in
-    inches."""
+    inches. For shape-width series (SERIES_SHAPE_FRAME, e.g. Konza) the
+    catalog shape picks the member widths, so pass the style's shape."""
     spec = dict(DEFAULT_FRAME)
     spec.update(SERIES_FRAME.get(series, {}))
+    by_shape = SERIES_SHAPE_FRAME.get(series)
+    if by_shape and shape:
+        spec.update(by_shape.get((shape or '').strip(), {}))
     return spec
+
+
+def glass_inner_frame_width(series, shape, panel):
+    """Inner trim-frame bar width (inches) for a Glass / Speaker Cloth
+    panel on a shape-width series, or None when the choice adds no inner
+    frame. Total frame width comes from the catalog; the bar is the total
+    minus the outer member the shape already provides."""
+    totals = _SERIES_GLASS_FRAME_TOTAL.get(series)
+    if not totals:
+        return None
+    name = (panel or '').strip()
+    if panel_kind(name)['kind'] != 'GLASS' and 'Speaker Cloth' not in name:
+        return None
+    total = totals.get((shape or '').strip())
+    if total is None:
+        return None
+    outer = frame_for_series(series, shape)['stile']
+    return max(total - outer, 0.0) or None
 
 
 def series_is_slab(series):
@@ -5160,7 +5207,9 @@ def profiles_for_series(series):
 # 1/4" panel held 1/8" off the BACK of the door (catalog standard).
 # SERIES_RECESSED overrides per series when one deviates. Inches.
 RECESSED_PANEL = {'thickness': 0.25, 'back_inset': 0.125}
-SERIES_RECESSED = {}
+# Konza: 5/8" veneered-MDF core panel flush with the door back (1/8"
+# face reveal on the 3/4" mitered frame -- catalog p104 section).
+SERIES_RECESSED = {'Konza': {'thickness': 0.625, 'back_inset': 0.0}}
 
 
 def recessed_panel_spec(series):
@@ -5192,7 +5241,10 @@ def recessed_panel_spec(series):
 PANEL_KINDS = {
     'Solid Wood Raised': {'kind': 'RAISED'},
     'MDF Raised': {'kind': 'RAISED'},
-    'Prep for Glass': {'kind': 'GLASS'},
+    # Explicit thickness: matches the default recessed spec, and keeps
+    # series with a thick recessed-panel override (Konza) from fattening
+    # the glass pane itself.
+    'Prep for Glass': {'kind': 'GLASS', 'thickness': 0.25},
     'Bezel Glass Panel': {'kind': 'GLASS'},
     'Brink Glass Panel': {'kind': 'GLASS'},
     'Notable Glass Panel': {'kind': 'GLASS'},

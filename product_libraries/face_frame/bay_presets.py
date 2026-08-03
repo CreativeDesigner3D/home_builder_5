@@ -213,6 +213,16 @@ UPPER_PRESETS = {
                                  L('RIGHT_DOOR')),
     'DOUBLE_STACKED_DOOR':     H(L('DOUBLE_DOOR', size_role='UPPER_STACKED_TOP'),
                                  L('DOUBLE_DOOR')),
+    # Appliance-garage stacks (applied by the cabinet-level Appliance
+    # Garage toggle, not the Change Bay menu): the BOTTOM leaf pins to
+    # the cabinet's stored counter extension (size_role GARAGE_BOTTOM)
+    # so the garage doors match the added zone and the top flexes.
+    'LEFT_DOOR_GARAGE':        H(L('LEFT_DOOR'),
+                                 L('LEFT_DOOR', size_role='GARAGE_BOTTOM')),
+    'RIGHT_DOOR_GARAGE':       H(L('RIGHT_DOOR'),
+                                 L('RIGHT_DOOR', size_role='GARAGE_BOTTOM')),
+    'DOUBLE_DOOR_GARAGE':      H(L('DOUBLE_DOOR'),
+                                 L('DOUBLE_DOOR', size_role='GARAGE_BOTTOM')),
     'DOORS_WITH_DRAWER':       H(L('DOUBLE_DOOR'), L('DRAWER')),
     'DOORS_WITH_2_DRAWERS':    H(L('DOUBLE_DOOR'), L('DRAWER'), L('DRAWER')),
     'DOORS_WITH_3_DRAWERS':    H(L('DOUBLE_DOOR'), L('DRAWER'), L('DRAWER'), L('DRAWER')),

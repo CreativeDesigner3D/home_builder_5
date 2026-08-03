@@ -1514,9 +1514,13 @@ def _align_base_tall_toe_kick(cab_obj):
         cab_props.toe_kick_setback = cab_target_setback
 
 
+# A pie-cut arm joint is coplanar with its neighbor, so both meeting
+# stiles are plain BUTT joints (the spec's butt width is the COMBINED
+# pair). INSIDE_90 is reserved for blind-stile conditions where two runs
+# meet at an open 90-degree inside corner.
 _CORNER_TYPE_TO_STILE = {
-    'PIE_CUT': 'INSIDE_90',
-    'PIE_CUT_DRAWER': 'INSIDE_90',
+    'PIE_CUT': 'BUTT',
+    'PIE_CUT_DRAWER': 'BUTT',
     'DIAGONAL': 'ANGLE',
 }
 
@@ -1524,7 +1528,7 @@ _CORNER_TYPE_TO_STILE = {
 def _abutting_corner_stile(cab_obj, side, wall):
     """Stile type implied by a corner cabinet on the SAME wall meeting
     cab_obj's `side` end (its arm-end at the placed cabinet's edge, in the
-    same height band): INSIDE_90 for a pie cut, ANGLE for a diagonal, else
+    same height band): BUTT for a pie cut, ANGLE for a diagonal, else
     None. The corner's right arm runs along the wall by its Dim X, so the
     abutment edge is location.x (its left) or location.x + Dim X (its
     right). Returns (stile_type, corner_obj, corner_side) so the caller can
@@ -1602,7 +1606,7 @@ def _cross_wall_corner_stile(cab_obj, side):
 
 def _auto_detect_stile_types(cab_obj):
     """Set end stile types from placement context, per end with precedence:
-    a corner cabinet abutting that end (pie cut -> INSIDE_90, diagonal ->
+    a corner cabinet abutting that end (pie cut -> BUTT, diagonal ->
     ANGLE) wins - same-wall first, then a corner reaching over from the
     perpendicular wall; else WALL when the end reaches the end of its
     wall run; else STANDARD. Corner cabinets manage their own ends and
@@ -1642,7 +1646,7 @@ def _auto_detect_stile_types(cab_obj):
         if props.right_stile_type != want['RIGHT']:
             props.right_stile_type = want['RIGHT']
     # Mirror the joint onto the abutting corner cabinet so both meeting
-    # stiles take the joint's stile width (pie cut -> INSIDE_90, diagonal
+    # stiles take the joint's stile width (pie cut -> BUTT, diagonal
     # -> ANGLE). Setting the corner's meeting-side stile type fires its
     # own width derivation + recalc; done outside the suspend so that
     # recalc runs.
@@ -1991,6 +1995,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         # Fresh free-placement rotation each session.
         self._free_rotation_z = 0.0
+
+        # Corner-sink snap state (Sink product near a wall end).
+        self._corner_sink_snap = None
+        self._fill_mode_before_corner_sink = False
 
         # True while the cage is in peninsula position (side flush
         # against a wall, run projecting into the room). Recomputed by
@@ -2634,6 +2642,57 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._reposition_with_offsets(context)
             return
 
+        # Corner-sink snap: placing the standard Sink with the cursor
+        # near a wall END (and the gap actually reaching that end) snaps
+        # the preview to a 45-degree voided corner sink across the
+        # corner. Same engage/release hysteresis idea as the other
+        # snaps; while snapped the width is fixed (fill restored on
+        # release, mirroring the center-on-window snap).
+        if self.cabinet_name == 'Sink' and self._place_on_front:
+            try:
+                wall_len = wall_geo.get_input('Length')
+            except Exception:
+                wall_len = None
+            if wall_len is not None:
+                engage = units.inch(6.0)
+                release = engage + units.inch(2.0)
+                near_l = (cursor_x - gap_start) < (
+                    release if self._corner_sink_snap == 'LEFT' else engage)
+                near_r = (gap_end - cursor_x) < (
+                    release if self._corner_sink_snap == 'RIGHT' else engage)
+                cs_end = None
+                if near_l and gap_start <= 1e-6:
+                    cs_end = 'LEFT'
+                elif near_r and gap_end >= wall_len - 1e-6:
+                    cs_end = 'RIGHT'
+                if cs_end is not None:
+                    scene_props = context.scene.hb_face_frame
+                    if self._fill_mode:
+                        self._fill_mode_before_corner_sink = True
+                        self._apply_width(scene_props.default_cabinet_width,
+                                          fill_mode=False)
+                    self._corner_sink_snap = cs_end
+                    cs_depth = self._preview_cage.get_input('Dim Y')
+                    (csx, csy), cs_rot, _ra, _rb = _corner_sink_layout(
+                        wall_len, self._cabinet_width, cs_depth,
+                        _corner_sink_pull_out(scene_props, cs_depth),
+                        cs_end)
+                    cage_obj.location.x = csx
+                    cage_obj.location.y = csy
+                    cage_obj.rotation_euler = (0.0, 0.0, cs_rot)
+                    self._placement_dim_specs = None
+                    if context.area is not None:
+                        context.area.tag_redraw()
+                    return
+                if self._corner_sink_snap is not None:
+                    self._corner_sink_snap = None
+                    cage_obj.rotation_euler = (0.0, 0.0, 0.0)
+                    if self._fill_mode_before_corner_sink:
+                        self._fill_mode_before_corner_sink = False
+                        self._apply_width(
+                            max(gap_end - gap_start, units.inch(1.0)),
+                            fill_mode=True)
+
         # Apply the hold-off to the live (cursor-following) span.
         gap_start += self._left_holdoff
         gap_end -= self._right_holdoff
@@ -3169,6 +3228,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         """Drop the cage at the world hit point, snapping flush to an
         existing off-wall cabinet's edge if the cursor is over one.
         """
+        # Off-wall also releases the corner-sink snap.
+        if getattr(self, '_corner_sink_snap', None) is not None:
+            self._corner_sink_snap = None
+            self._preview_cage.obj.rotation_euler = (0.0, 0.0, 0.0)
         # Going off-wall releases any offset lock - the gap reference
         # is gone, so the cabinet returns to cursor-following.
         if self._gap_wall is not None or self._position_locked:
@@ -3707,7 +3770,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Auto-merge with an abutting compatible neighbor on the wall.
         # When a merge happens, cab_obj is absorbed and deleted; the
         # neighbor is the survivor that selection should target.
-        merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
+        # A corner-sink commit never merges - the 45-degree cabinet is
+        # not collinear with its neighbors; it stamps markers and builds
+        # the recess returns instead.
+        if (getattr(self, '_corner_sink_snap', None) is not None
+                and captured_parent is not None
+                and 'IS_WALL_BP' in captured_parent):
+            merged_into = None
+            _commit_corner_sink(context, cab_obj, captured_parent,
+                                self._corner_sink_snap)
+        else:
+            merged_into = _try_auto_merge_with_neighbor(context, cab_obj)
         selection_target = merged_into if merged_into is not None else cab_obj
 
         # Refresh side-exposure on the survivor and its immediate L/R
@@ -6093,6 +6166,85 @@ class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
         types_face_frame.recalculate_face_frame_cabinet(placed)
         types_face_frame.recalculate_face_frame_cabinet(angled)
         return {'FINISHED'}
+
+
+
+# ---------------------------------------------------------------------------
+# Operator: voided recessed corner sink base. A STANDARD sink base set at
+# 45 degrees across a wall corner (per the product spec: "standard 24 inch
+# sink base positioned at a 45 degree angle"), with vertical return panels
+# closing the recess from each front corner back to its wall. The voids
+# behind the angled back are left open - that is the product.
+# ---------------------------------------------------------------------------
+def _corner_sink_pull_out(scene_props, depth):
+    """Pull-out along the corner bisector that lands each front corner
+    of the 45-degree sink exactly base_cabinet_depth off its wall, so
+    a standard-depth neighbor's face frame meets the angled front at
+    the corner. Clamped at 0 for cabinets deep enough to reach that
+    plane from the walls on their own.
+    """
+    return max(0.0,
+               math.sqrt(2.0) * scene_props.base_cabinet_depth - depth)
+
+
+def _corner_sink_layout(wall_len, width, depth, pull_out, wall_end):
+    """Pure layout math for the 45-degree corner sink placement, in
+    wall-local XY (wall runs +X, interior at -Y, corner at x=0 for
+    LEFT / x=wall_len for RIGHT).
+
+    Returns (origin, rot_z, ret_a, ret_b) where origin is the cabinet
+    back-origin location, rot_z its rotation, and each ret is
+    ((x, y), phi, run) for a return panel: location, Z rotation (the
+    part's local -Y axis runs from the wall toward the cabinet's front
+    corner), and run length. With pull_out 0 the cabinet's back corners
+    touch both walls; pulling out slides it along the corner bisector
+    and the returns grow to match.
+    """
+    r2 = math.sqrt(2.0)
+    w2 = width / r2
+    d2 = depth / r2
+    p2 = pull_out / r2
+    if wall_end == 'RIGHT':
+        ox = wall_len - w2 - p2
+        oy = -p2
+        rot = -math.pi / 4.0
+        flx, fly = ox - d2, oy - d2               # front-left corner
+        frx, fry = flx + w2, fly - w2             # front-right corner
+        ret_a = ((flx, 0.0), 0.0, -fly)           # to wall A (y = 0)
+        ret_b = ((wall_len, fry), -math.pi / 2.0,
+                 wall_len - frx)                  # to wall B (x = L)
+    else:
+        ox = p2
+        oy = -w2 - p2
+        rot = math.pi / 4.0
+        flx, fly = ox + d2, oy - d2               # front-left corner
+        frx, fry = flx + w2, fly + w2             # front-right corner
+        ret_a = ((0.0, fly), math.pi / 2.0, flx)  # to wall B (x = 0)
+        ret_b = ((frx, 0.0), 0.0, -fry)           # to wall A (y = 0)
+    return (ox, oy), rot, ret_a, ret_b
+
+
+def _commit_corner_sink(context, cab_obj, wall, wall_end):
+    """Stamp a committed 45-degree corner-sink placement. Runs after the
+    normal Sink finalize - the cabinet is a standard sink base; only the
+    transform and markers are corner-specific. (Return panels were tried
+    and removed: adjacent cabinets now butt straight up to the angled
+    cabinet's corners, so the recess closes itself; revisit if a job
+    needs the catalog's attached returns modeled.)"""
+    try:
+        wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
+    except Exception:
+        return
+    cab_props = cab_obj.face_frame_cabinet
+    pull_out = _corner_sink_pull_out(context.scene.hb_face_frame,
+                                     cab_props.depth)
+    (ox, oy), rot, _ret_a, _ret_b = _corner_sink_layout(
+        wall_len, cab_props.width, cab_props.depth, pull_out, wall_end)
+    cab_obj.location = (ox, oy, 0.0)
+    cab_obj.rotation_euler = (0.0, 0.0, rot)
+    cab_obj['HB_CORNER_SINK_45'] = True
+    cab_obj['HB_CS_PULL_OUT'] = pull_out
+    cab_obj['HB_CS_WALL_END'] = wall_end
 
 
 classes = (

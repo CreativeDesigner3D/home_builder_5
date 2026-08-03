@@ -215,6 +215,97 @@ def _end_abuts_wall(cab_obj, side):
     return False
 
 
+# 45-degree corner sink abutment. The sink meets a straight run only
+# along its front-corner edge (the recess closes itself there), so
+# adjacency is a point-on-end-face test rather than the face-to-face /
+# edge-coincidence checks used elsewhere.
+_CS_GAP_TOL = units.inch(0.125)
+
+
+def _zspans_overlap(obj_a, obj_b):
+    a0 = obj_a.matrix_world.translation.z
+    a1 = a0 + obj_a.face_frame_cabinet.height
+    b0 = obj_b.matrix_world.translation.z
+    b1 = b0 + obj_b.face_frame_cabinet.height
+    return a0 < b1 - EPS and b0 < a1 - EPS
+
+
+def _sink_front_corner(sink_obj, side):
+    """World-space XY front corner of a corner sink's plan footprint on
+    the given side (local (0, -depth) for left, (width, -depth) for
+    right). This is the edge a closing neighbor's end face meets.
+    """
+    sp = sink_obj.face_frame_cabinet
+    lx = 0.0 if side == 'left' else sp.width
+    w = sink_obj.matrix_world @ Vector((lx, -sp.depth, 0.0))
+    return Vector((w.x, w.y))
+
+
+def _end_face_hits_point(cab_obj, side, pt):
+    """True when world-XY point pt lies on cab_obj's left/right end
+    face (back corner to front corner in plan) within tolerance.
+    """
+    cp = cab_obj.face_frame_cabinet
+    mw = cab_obj.matrix_world
+    end_x = 0.0 if side == 'left' else cp.width
+    p0w = mw @ Vector((end_x, 0.0, 0.0))
+    p1w = mw @ Vector((end_x, -cp.depth, 0.0))
+    p0 = Vector((p0w.x, p0w.y))
+    p1 = Vector((p1w.x, p1w.y))
+    axis = p1 - p0
+    length = axis.length
+    if length < 1e-6:
+        return False
+    axis_n = axis / length
+    d = pt - p0
+    lateral = d.dot(axis_n)
+    if lateral < -_CS_GAP_TOL or lateral > length + _CS_GAP_TOL:
+        return False
+    perp = abs(d.x * -axis_n.y + d.y * axis_n.x)
+    return perp <= _CS_GAP_TOL
+
+
+def _abutting_corner_sink(cab_obj, side):
+    """The committed 45-degree corner sink whose front corner lies on
+    cab_obj's side end face, or None. Covers both walls of the corner -
+    the sink is only parented to one of them, so the sibling scan in
+    _side_exposure never sees it from the other.
+    """
+    for obj in bpy.context.scene.objects:
+        if not obj.get('HB_CORNER_SINK_45') or obj is cab_obj:
+            continue
+        if not _is_face_frame_carcass(obj):
+            continue
+        if not _zspans_overlap(cab_obj, obj):
+            continue
+        for sink_side in ('left', 'right'):
+            if _end_face_hits_point(
+                    cab_obj, side, _sink_front_corner(obj, sink_side)):
+                return obj
+    return None
+
+
+def _corner_sink_closing_neighbors(sink_obj, side):
+    """Carcass cabinets whose end face passes through the given side's
+    front corner of a 45-degree corner sink - the runs that close the
+    recess on that side.
+    """
+    corner = _sink_front_corner(sink_obj, side)
+    hits = []
+    for obj in bpy.context.scene.objects:
+        if obj is sink_obj or obj.get('HB_CORNER_SINK_45'):
+            continue
+        if not _is_face_frame_carcass(obj):
+            continue
+        if not _zspans_overlap(sink_obj, obj):
+            continue
+        for cab_side in ('left', 'right'):
+            if _end_face_hits_point(obj, cab_side, corner):
+                hits.append(obj)
+                break
+    return hits
+
+
 def _side_exposure(cab_obj, side):
     """Returns (exposure_state, dishwasher_adjacent, wall_edge).
 
@@ -230,6 +321,16 @@ def _side_exposure(cab_obj, side):
         # wall face is the peninsula anchor - covered, wall scribe.
         if _end_abuts_wall(cab_obj, side):
             return ('UNEXPOSED', False, True)
+        return ('EXPOSED', False, False)
+
+    # Committed 45-degree corner sink: the axis-aligned checks below
+    # can't reason about its rotated footprint. A side reads covered
+    # (unfinished) when a neighbor's end face meets that side's front
+    # corner - the run that closes the recess; open to the room until
+    # then.
+    if cab_obj.get('HB_CORNER_SINK_45'):
+        if _corner_sink_closing_neighbors(cab_obj, side):
+            return ('UNEXPOSED', False, False)
         return ('EXPOSED', False, False)
 
     cab = cab_obj.face_frame_cabinet
@@ -266,6 +367,12 @@ def _side_exposure(cab_obj, side):
             dishwasher_seen = True
 
     if not bands:
+        # No collinear sibling: a 45-degree corner sink whose front
+        # corner meets this end face still covers the side (the side
+        # faces the closed corner recess) - unfinished, neighbor
+        # scribe.
+        if _abutting_corner_sink(cab_obj, side) is not None:
+            return ('UNEXPOSED', False, False)
         return ('EXPOSED', False, False)
 
     coverage = _union_zcoverage(bands, cab_z, cab_z + cab_h)
@@ -593,6 +700,19 @@ def recalc_with_neighbors(cab_obj):
             recalc_cabinet_exposure(right)
         for back_neighbor in _find_back_abutting_cabinets(cab_obj):
             recalc_cabinet_exposure(back_neighbor)
+        # 45-degree corner sink adjacency runs outside the sibling
+        # scan: refresh the sink a just-placed run now closes, or -
+        # when cab_obj IS the sink - the runs its front corners meet.
+        if cab_obj.get('HB_CORNER_SINK_45'):
+            for side in ('left', 'right'):
+                for neighbor in _corner_sink_closing_neighbors(
+                        cab_obj, side):
+                    recalc_cabinet_exposure(neighbor)
+        else:
+            for side in ('left', 'right'):
+                sink = _abutting_corner_sink(cab_obj, side)
+                if sink is not None:
+                    recalc_cabinet_exposure(sink)
 
 
 def recalc_after_appliance_placement(app_obj):

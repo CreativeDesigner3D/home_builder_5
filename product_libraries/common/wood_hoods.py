@@ -162,14 +162,17 @@ def _mantle_parts(hood_obj, band, depth):
 
 def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
                     include_front=True, include_left_side=True,
-                    include_right_side=True):
+                    include_right_side=True, top_scribe=0.0):
     """Core box carcass: full left/right sides, a top cap inset between
     them, and an applied front -- full width, in front of the sides and
     top, which stop 3/4" short of the face. Optional projecting bands at
     the bottom (mantle / shelf base) and top (crown). All driven off the
     cage Dim X/Y/Z and butted on 3/4" material. The include_* flags skip
     a plain part when something else fills its layer (the CUSTOM paneled
-    face frame / paneled ends)."""
+    face frame / paneled ends). ``top_scribe`` drops the top cap that far
+    below the sides / front tops, so the full-height skin can be scribed
+    to an uneven ceiling on site (same convention as the cabinet
+    top_scribe: the carcass drops, the visible faces get trimmed)."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -192,10 +195,12 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
         s.set_input("Mirror Y", True)
         s.set_input("Mirror Z", not at_right)
 
-    # Top cap, inset between the sides, stopping behind the applied front.
+    # Top cap, inset between the sides, stopping behind the applied front
+    # (dropped by the scribe allowance when one is set).
+    scribe = max(top_scribe, 0.0)
     top = _panel(hood_obj, "Hood Top")
     top.obj.location.x = mt
-    top.driver_location('z', 'dim_z', [dim_z])
+    top.driver_location('z', 'dim_z - %f' % scribe, [dim_z])
     top.driver_input("Length", 'dim_x - %f' % two_mt, [dim_x])
     top.driver_input("Width", 'dim_y - %f' % mt, [dim_y])
     top.set_input("Thickness", mt)
@@ -381,6 +386,8 @@ _CUSTOM_DEFAULTS = {
     'top_width': inch(24.0),
     'top_height': 0.0,              # straight section at the top of an
     #                                 angled hood; 0 = angle runs to the top
+    'top_scribe': 0.0,              # drop the top cap below the sides/front,
+    #                                 leaving a trimmable scribe at the ceiling
     'include_mantle': False,        # projecting band at the bottom
     'mantle_height': inch(6.0),
     'mantle_depth': inch(2.75),     # front-to-back depth of the mantle part
@@ -681,12 +688,14 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     shelf.set_input("Thickness", mt)
     shelf.set_input("Mirror Z", False)
 
-    # Interior depth available to the opening (a front-inset board has
-    # less; a mantle-extended board still keeps the opening over the
-    # hood interior proper). The opening may use the full interior --
-    # rim widths are the dealer's call (liners can need a 3/8" front
-    # rim), so no extra reserve beyond the hood sides/front material.
-    interior = (D - mt) + min(ext, 0.0)
+    # Depth available to the opening: the full board -- including the
+    # forward extension under a projecting mantle (the cut-out must be
+    # able to reference the mantle depth too, not just the hood body);
+    # a front-inset board (angled hood) has less. The
+    # opening may use all of it -- rim widths are the dealer's call
+    # (liners can need a 3/8" front rim), so no extra reserve beyond the
+    # hood sides/front material.
+    interior = (D - mt) + ext
     cw = max(0.0, min(cutout_w, W - 2.0 * mt))
     cd = max(0.0, min(cutout_d, interior))
     if cw <= 0.0 or cd <= 0.0:
@@ -696,15 +705,17 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     cpm = shelf.add_part_modifier('CPM_CUTOUT', 'Cutout')
     cpm.mod.show_render = True
     # Cutout coords are in the part's Length/Width space (Length =
-    # dim_x - 2mt, Width = dim_y - mt + ext): centered over the hood
-    # interior, which starts ``ext`` up the extended board, then
-    # shifted forward by ``off``.
+    # dim_x - 2mt, Width = dim_y - mt + ext, origin at the board's front
+    # edge): centered over the full board when it extends under a mantle,
+    # over the hood-body interior (which starts ``ext`` up the board) when
+    # inset; then shifted forward by ``off``.
+    ctr = ext if ext > 0.0 else 2.0 * ext
     cpm.driver_input('X', '(dim_x - %f) * 0.5' % (2.0 * mt + cw), [dim_x])
     cpm.driver_input('End X', '(dim_x - %f) * 0.5' % (2.0 * mt - cw), [dim_x])
     cpm.driver_input('Y', '(dim_y - %f) * 0.5'
-                     % (mt + cd - 2.0 * ext + 2.0 * off), [dim_y])
+                     % (mt + cd - ctr + 2.0 * off), [dim_y])
     cpm.driver_input('End Y', '(dim_y - %f) * 0.5'
-                     % (mt - cd - 2.0 * ext + 2.0 * off), [dim_y])
+                     % (mt - cd - ctr + 2.0 * off), [dim_y])
     cpm.set_input('Route Depth', mt)
 
 
@@ -1565,9 +1576,20 @@ def _build_custom_angled(hood_obj, opts):
     if zb < H:
         _mesh_box(hood_obj, "Hood Front Upper", side_in, W - side_in,
                   -td, -td + mt, zb, H)
+    # Top cap, dropped by the scribe allowance so the full-height skin can
+    # be trimmed to the ceiling. In the straight top section the interior
+    # is constant; a cap dropped into the slope re-derives its front / side
+    # bounds from the profile at its height.
+    scribe = max(opts.get('top_scribe', 0.0), 0.0)
+    z_cap = max(H - scribe, fz + mt)
+    if z_cap >= zb:
+        cap_x, cap_y = mt + side_in, -td + mt
+    else:
+        cap_x = prof.x_in_at(z_cap) + mt
+        cap_y = prof.y_at(z_cap) + setback
     _mesh_part(hood_obj, "Hood Top",
-               [(mt + side_in, -td + mt, H), (W - mt - side_in, -td + mt, H),
-                (W - mt - side_in, 0.0, H), (mt + side_in, 0.0, H)],
+               [(cap_x, cap_y, z_cap), (W - cap_x, cap_y, z_cap),
+                (W - cap_x, 0.0, z_cap), (cap_x, 0.0, z_cap)],
                [(0, 1, 2, 3)])
     if has_mantle_assy:
         # Mantle assembly: front board, full-depth sides running back to
@@ -1629,7 +1651,8 @@ def _build_custom(hood_obj):
                     if band > 0.0 else 0.0,
                     include_front=not opts['include_front_panel'],
                     include_left_side=not left_pe,
-                    include_right_side=not right_pe)
+                    include_right_side=not right_pe,
+                    top_scribe=opts.get('top_scribe', 0.0))
     if band > 0.0 and opts['include_mantle_molding']:
         w2 = _HoodWrap(hood_obj)
         W = w2.get_input('Dim X')
@@ -2067,6 +2090,13 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         description="Height of the straight section at the top of an angled "
                     "hood; the angle stops there and the hood continues "
                     "straight to the top (0 = angle runs all the way up)")  # type: ignore
+    top_scribe: FloatProperty(
+        name="Top Scribe", unit='LENGTH', precision=5, min=0.0,
+        default=_CUSTOM_DEFAULTS['top_scribe'],
+        description="Scribe allowance at the top of the hood: the top cap "
+                    "drops this far below the sides / front, so the "
+                    "full-height faces can be trimmed to an uneven "
+                    "ceiling on site (0 = none)")  # type: ignore
     include_mantle: BoolProperty(
         name="Include Mantle",
         description="Projecting mantle band at the bottom of the hood")  # type: ignore
@@ -2223,6 +2253,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.angle_sides = bool(opts['angle_sides'])
         self.top_width = opts['top_width']
         self.top_height = opts['top_height']
+        self.top_scribe = max(float(opts.get('top_scribe', 0.0)), 0.0)
         self.include_mantle = bool(opts['include_mantle'])
         self.mantle_height = opts['mantle_height']
         self.mantle_depth = opts['mantle_depth']
@@ -2275,6 +2306,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'angle_sides': self.angle_sides,
                 'top_width': self.top_width,
                 'top_height': self.top_height,
+                'top_scribe': self.top_scribe,
                 'include_mantle': self.include_mantle,
                 'mantle_height': self.mantle_height,
                 'mantle_depth': self.mantle_depth,
@@ -2388,6 +2420,10 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row.active = self.angle_front or self.angle_sides
         row.label(text="Top Height:")
         row.prop(self, 'top_height', text="")
+
+        row = col.row(align=True)
+        row.label(text="Top Scribe:")
+        row.prop(self, 'top_scribe', text="")
 
         col.separator()
         row = col.row(align=True)

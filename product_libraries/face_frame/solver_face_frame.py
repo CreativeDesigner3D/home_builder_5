@@ -2408,6 +2408,12 @@ def carcass_back_segments(layout):
                 z_origin = 0.0
         else:
             z_origin = bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt
+        # Over-stool: the back runs FULL HEIGHT, following the extended
+        # sides down to the leg bottoms so the open area below the box
+        # is closed at the back.
+        overstool_drop = side_extend_down(layout)
+        if overstool_drop > 0.0:
+            z_origin = bay_bottom_z(layout, start) - overstool_drop
         # Cabinet-level override: raise the back's bottom edge above
         # the default origin (refrigerator cabinet, etc.). Honored
         # only when it raises the panel - never lowers it. The > 0.0
@@ -3625,7 +3631,7 @@ def resolved_overlay(cab_props, opening_props, side):
 # Side overlay a front takes against a FULL-overlay blind corner stile:
 # pulled back from the style's full side overlay so the applied overlay
 # stile fits in front of the frame stile with a 1/4" reveal to the door
-# (CWP corner detail: 3.5" frame stiles, mitered overlay stiles, 1/4"
+# (corner detail: 3.5" frame stiles, mitered overlay stiles, 1/4"
 # reveal). See bay_openings for the corner_left/right rect stamps.
 FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
@@ -3646,6 +3652,8 @@ def front_overlay(rect, cab_props, opening_props, side):
 # residential hinge / slide hardware.
 DOOR_MAX_SWING_ANGLE = math.radians(100.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
+# Inset doors butt closer than overlay doors where a pair meets.
+INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)   # 1/16"
 # Front-to-front reveal left when a mid rail is removed between two
 # (typically drawer) openings. The split is kept but the face-frame
 # member + its backing are dropped; the solver collapses the splitter
@@ -3798,11 +3806,15 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
 def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     """Two leaves for a DOUBLE door: left half hinged on its outer-left
     edge, right half hinged on its outer-right edge, with a small
-    DOUBLE_DOOR_REVEAL gap where they meet in the middle.
+    reveal gap where they meet in the middle (1/16" for inset doors,
+    1/8" for overlay).
     """
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
-    leaf_width = (width - DOUBLE_DOOR_REVEAL) / 2.0
+    reveal = (INSET_DOUBLE_DOOR_REVEAL
+              if cab_props.default_door_inset_amount > 0
+              else DOUBLE_DOOR_REVEAL)
+    leaf_width = (width - reveal) / 2.0
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
     bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
 
@@ -4422,11 +4434,12 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'dims':         (box_dx, box_dy, item_height),
         })
         z += item_height + distance_between
-    out.extend(_assembly_spacers(
-        rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
-        'Rollout Spacer',
-        left_thickness=spacer_l, right_thickness=spacer_r,
-    ))
+    if not getattr(item, 'hide_rollout_spacers', False):
+        out.extend(_assembly_spacers(
+            rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
+            'Rollout Spacer',
+            left_thickness=spacer_l, right_thickness=spacer_r,
+        ))
     return out
 
 
@@ -4586,6 +4599,35 @@ def _bar_storage_descriptor(rect, cage_dim_y, item):
     }
 
 
+# ---------------------------------------------------------------------------
+# Closet rod
+# ---------------------------------------------------------------------------
+# Rod sizing follows the closets library conventions: 1" profile radius,
+# centerline 12" out from the cavity back (clamped for shallow cabinets),
+# and a drop measured from the opening top so the hang height rides the
+# top on height changes.
+CLOSET_ROD_RADIUS = inch(1.0)
+CLOSET_ROD_FROM_REAR = inch(12.0)
+
+
+def _closet_rod_descriptor(rect, cage_dim_y, item):
+    dim_z = rect['cage_dim_z']
+    z = dim_z - getattr(item, 'rod_distance_from_top', inch(3.0))
+    z = max(CLOSET_ROD_RADIUS, min(z, dim_z - CLOSET_ROD_RADIUS))
+    # Opening-local Y runs front (0) -> back (cage_dim_y): centerline
+    # 12" forward of the back, clamped inside a shallow cavity.
+    y = max(CLOSET_ROD_RADIUS,
+            cage_dim_y - min(CLOSET_ROD_FROM_REAR,
+                             cage_dim_y - CLOSET_ROD_RADIUS))
+    return {
+        'kind':     'CLOSET_ROD',
+        'role':     'CLOSET_ROD',
+        'name':     'Closet Rod',
+        'position': (0.0, y, z),
+        'dims':     (rect['cage_dim_x'], 0.0, 0.0),
+    }
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
@@ -4627,6 +4669,8 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
             out.append(_accessory_label_descriptor(
                 rect, cage_dim_y, item.accessory_label
             ))
+        elif item.kind == 'CLOSET_ROD':
+            out.append(_closet_rod_descriptor(rect, cage_dim_y, item))
         elif item.kind in bar_storage.KINDS:
             desc = _bar_storage_descriptor(rect, cage_dim_y, item)
             if desc is not None:

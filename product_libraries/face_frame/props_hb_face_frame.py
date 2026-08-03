@@ -358,6 +358,7 @@ def update_finish_overlay(self, context):
     default = style_options.default_hinge_for_overlay(self.finish_overlay)
     if default:
         _set_enum_safe(self, "finish_hinge", default)
+        self.finish_hinge_seeded = True
     bucket = style_options.ff_overlay_bucket(self.finish_overlay)
     if bucket:
         _set_enum_safe(self, "door_overlay_type", bucket)
@@ -423,7 +424,8 @@ def _apply_series_frame_to_door_style(self):
     geometry path (assign_style_to_front) and the applied-panel sizing engine
     keep reading stile_width / rail_width / door_type unchanged. Widths in the
     baked spec are inches -> converted with units.inch()."""
-    spec = style_options.frame_for_series(self.front_series)
+    spec = style_options.frame_for_series(self.front_series,
+                                          getattr(self, 'front_shape', None))
     if spec.get('is_slab'):
         self.door_type = 'SLAB'
         return
@@ -462,6 +464,9 @@ def update_front_shape(self, context):
     items = table.get((self.front_series, self.front_shape), [])
     if items:
         _set_enum_safe(self, "front_panel", items[0][0])
+    # Shape-width series (Konza): the shape IS the member width, so the
+    # construction fields must re-derive on a shape change too.
+    _apply_series_frame_to_door_style(self)
     # The shape drives geometry (arched tops); the panel reset above
     # only propagates when the panel value actually changes, so push
     # explicitly -- shape-only changes must rebuild fronts too.
@@ -740,6 +745,15 @@ def ensure_default_styles(context):
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
         ff.active_cabinet_style_index = 0
+    # One-time hinge seeding: styles whose hinge was never explicitly set
+    # otherwise read the number-0 catalog row (Compact) instead of the
+    # overlay's default hinge (CLIPtop for the standard overlays).
+    for cs in ff.cabinet_styles:
+        if not cs.finish_hinge_seeded:
+            default = style_options.default_hinge_for_overlay(cs.finish_overlay)
+            if default:
+                _set_enum_safe(cs, "finish_hinge", default)
+            cs.finish_hinge_seeded = True
     if len(ff.door_styles) == 0:
         ds = ff.door_styles.add()
         ds.name = "Craftsman Square Recessed Panel"
@@ -1039,6 +1053,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         description="Hinge available for the chosen overlay",
         items=get_finish_hinge_items,
     )  # type: ignore
+    # A never-touched dynamic enum reads as its number-0 item, which for the
+    # standard overlays is NOT the catalog default hinge. Styles are seeded
+    # with the overlay's default hinge exactly once (ensure_default_styles);
+    # this flag keeps the seeding from clobbering a later explicit pick.
+    finish_hinge_seeded: BoolProperty(default=False)  # type: ignore
 
     # ---- Interior material ----
     interior_material_type: EnumProperty(
@@ -1715,8 +1734,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CLASSIC':       (0.5,    0.5,    0.5,    0.5),
         'TRANSITIONAL':  (0.625,  0.625,  0.875,  0.875),
         'FULL':          (1.0,    1.0,    0.875,  0.875),
-        'PARTIAL_INSET': (0.5,    0.5,    0.5,    0.5),
-        'FULL_INSET':    (-0.125, -0.125, -0.125, -0.125),
+        # Both inset modes size the face INSIDE the opening with a 3/32"
+        # reveal all around (face = opening - 3/16" per axis); partial
+        # inset differs from full inset only in depth, which
+        # assign_style_to_cabinet handles via the inset amount.
+        'PARTIAL_INSET': (-0.09375, -0.09375, -0.09375, -0.09375),
+        'FULL_INSET':    (-0.09375, -0.09375, -0.09375, -0.09375),
     }
 
     def assign_style_to_cabinet(self, cabinet_obj):
@@ -2193,7 +2216,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # the bar storage units are "finished to match
                 # exterior" per the catalog.
                 if (child.get('hb_part_role') in ('SHELF_NOSING',
-                                                  'BAR_STORAGE')
+                                                  'BAR_STORAGE',
+                                                  'LEG_CURVED_PANEL')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
@@ -3147,6 +3171,26 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=update_grain_direction,
     )  # type: ignore
 
+    # ---- Hardware / machining callouts ----
+    # Documentation flags with no 3D geometry: downstream drawing
+    # consumers letter-mark fronts using this style (RC / TL / FR) and
+    # list the option beside the style name.
+    include_restrictor_clips: BoolProperty(
+        name="Include Restrictor Clips (RC)",
+        description="Fronts using this style get an RC callout on drawings",
+        default=False,
+    )  # type: ignore
+    include_touch_latches: BoolProperty(
+        name="Include Touch Latches (TL)",
+        description="Fronts using this style get a TL callout on drawings",
+        default=False,
+    )  # type: ignore
+    include_finger_rout: BoolProperty(
+        name="Include Finger Rout (FR)",
+        description="Fronts using this style get an FR callout on drawings",
+        default=False,
+    )  # type: ignore
+
     # ---- Profile references ----
     # Named picks from the shipped face_frame_assets/door_profiles
     # library (see _profile_enum_items); the Object pointers below are
@@ -3515,6 +3559,18 @@ class Face_Frame_Door_Style(PropertyGroup):
                 pattern=pkind['mullion'],
                 bar_width=units.inch(pkind.get('bar_width', 0.875)),
                 depth=eff_panel_inset)
+        # Shape-width series (Konza): Glass / Speaker Cloth adds an inner
+        # hardwood trim frame inside the opening (catalog total width
+        # minus the outer member) - rendered as a FRAME border of bars
+        # from the door face back to the panel plane.
+        if mull is None:
+            _ifw = style_options.glass_inner_frame_width(
+                self.front_series, getattr(self, 'front_shape', ''),
+                self.front_panel)
+            if _ifw:
+                mull = dict(pattern='FRAME',
+                            bar_width=units.inch(_ifw),
+                            depth=eff_panel_inset)
         return dict(outer_section=outer_sec, inner_section=inner_sec,
                     panel_section=panel_sec, inner_rail_section=rail_sec,
                     inner_stile_section=stile_sec,
@@ -3981,6 +4037,17 @@ class Face_Frame_Door_Style(PropertyGroup):
             secs = self.resolve_mesh_sections(
                 front_thickness, eff_panel_inset, _pkind, member_sec,
                 edge_name=self._cabinet_edge_profile(front_obj))
+            # Locked-frame mullion override: the Set Door Frame dialog
+            # can pin the Wood Mullion grid's lite counts per front
+            # (0 / absent = the pattern's standard counts).
+            if (frame_locked and secs.get('mullion') is not None
+                    and secs['mullion'].get('pattern') == 'GRID'):
+                _mrows = int(frame_store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
+                _mcols = int(frame_store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
+                if _mrows > 0:
+                    secs['mullion']['rows'] = _mrows
+                if _mcols > 0:
+                    secs['mullion']['cols'] = _mcols
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
@@ -4085,6 +4152,11 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         box.prop(self, "grain_direction", text="Grain Direction")
 
+        hw = box.column(align=True)
+        hw.prop(self, "include_restrictor_clips")
+        hw.prop(self, "include_touch_latches")
+        hw.prop(self, "include_finger_rout")
+
         # Frame widths derive from the catalog series by default (read-only).
         # Stile and rail each have an independent unlock toggle to override
         # them; the mid rail always follows the rail width. Re-locking a field
@@ -4162,6 +4234,23 @@ def _update_cabinet_dim(self, context):
     """
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+def _update_overstool_accessory(self, context):
+    """Accessory change on an over-stool cabinet: sync the leg drop to the
+    product spec (face frame 7" less than overall height, 13" with shelf
+    AND towel bar) before the recalc. Only moves the drop when it still
+    sits at one of the presets - a hand-edited amount is left alone."""
+    presets = (units.inch(7.0), units.inch(13.0))
+    if self.extend_sides_down and any(
+            abs(self.extend_sides_down_amount - p) < 0.0001 for p in presets):
+        want = (units.inch(13.0)
+                if self.overstool_accessory == 'SHELF_AND_TOWEL_BAR'
+                else units.inch(7.0))
+        if abs(self.extend_sides_down_amount - want) > 0.0001:
+            self.extend_sides_down_amount = want
+            return  # its own update already ran the recalc
+    _update_cabinet_dim(self, context)
 
 
 def _update_cabinet_width(self, context):
@@ -4274,6 +4363,17 @@ ROLLOUT_HEIGHT_PRESET_ITEMS = [
     ('IN_11_125', '11 1/8"', 'Standard 11 1/8" rollout box height', 14),
     ('CUSTOM',    'Custom',  'Type an exact box height in the field beside it', 4),
 ]
+
+
+def rollout_height_preset_for(height):
+    """Return the preset id whose standard height matches `height` within
+    half a millimeter, or 'CUSTOM' when no standard size matches. Lets
+    boxes seeded from a stored plain height land on the matching preset
+    instead of always reading as Custom."""
+    for key, inches in _ROLLOUT_HEIGHT_PRESETS_IN.items():
+        if abs(height - units.inch(inches)) < 0.0005:
+            return key
+    return 'CUSTOM'
 
 
 def _update_rollout_box_preset(self, context):
@@ -4653,6 +4753,9 @@ class Face_Frame_Corner_Section(PropertyGroup):
             ('DOORS',       "Doors",       "Double-door pair"),
             ('FALSE_FRONT', "False Front", "Fixed false front panel"),
             ('OPEN',        "Open",        "Open section with shelves"),
+            ('GARAGE',      "Appliance Garage",
+             "Appliance garage section reaching the countertop (doors, "
+             "no shelves)"),
         ],
         default='DOORS',
     )  # type: ignore
@@ -4714,6 +4817,43 @@ class Face_Frame_Corner_Section(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # GARAGE sections: which appliance-garage door option fills the
+    # diagonal opening (per the diagonal-corner appliance garage
+    # catalog page). Hinged singles / doubles are the base options;
+    # tambour / retracting / swing-up are adders. The side doors are a
+    # separate adder (garage_side_doors below) that combines with any
+    # of these - including OPEN, which leaves the diagonal as a
+    # finished opening.
+    garage_door_type: EnumProperty(
+        name="Garage Door",
+        items=[
+            ('DOUBLE', "Double Hinged Door",
+             "Hinged door pair on the diagonal opening"),
+            ('SINGLE_LEFT', "Single Hinged Door (Hinge Left)",
+             "One full-width door hinged on the left"),
+            ('SINGLE_RIGHT', "Single Hinged Door (Hinge Right)",
+             "One full-width door hinged on the right"),
+            ('TAMBOUR', "Tambour Door",
+             "Slatted roll-up door inside the opening"),
+            ('RETRACTING', "Top Mounted Retracting Door",
+             "Full-width door that retracts up into the cabinet"),
+            ('SWING_UP', "Swing-Up Door",
+             "Full-width door that swings up on lift hardware"),
+            ('OPEN', "Open (No Door)",
+             "Leave the diagonal garage opening open"),
+        ],
+        default='DOUBLE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Hinged Doors on Sides adder: a hinged door on each arm end face,
+    # independent of what fills the diagonal opening.
+    garage_side_doors: BoolProperty(
+        name="Hinged Doors on Sides",
+        description="Add a hinged door on each side face of the "
+                    "garage, in addition to the garage door option",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 # exterior_config items vary by cabinet type. Module-level lists keep the
@@ -4723,12 +4863,23 @@ _EXTERIOR_CONFIG_ITEMS = {
     'BASE': [
         ('DOORS',             "Full Height Doors",      "One full-height door pair"),
         ('FALSE_FRONT_DOORS', "False Front with Doors", "False front above a door pair"),
+        # Corner sink configs. Geometry matches the two plain configs;
+        # the config choice drives the SINK plan annotation and the
+        # apron (SINK_DOORS builds a real apron panel behind the
+        # full-height doors).
+        ('SINK', "Sink (False Front with Doors)",
+         "Corner sink: false front above the doors"),
+        ('SINK_DOORS', "Sink with Full Height Doors",
+         "Corner sink: full-height doors with a sink apron behind"),
     ],
     'UPPER': [
         ('DOORS',         "Doors",             "One door pair"),
         ('STACKED_DOORS', "Stacked Doors",     "Two stacked door pairs"),
         ('HUTCH',         "Hutch",             "Doors on top, open below"),
         ('OPEN_SHELVES',  "Open with Shelves", "Open shelf section"),
+        ('DOORS_GARAGE',  "Doors + Appliance Garage",
+         "Door pair above an appliance garage; the cabinet extends down "
+         "to the countertop"),
     ],
     'TALL': [
         ('HUTCH',    "Hutch",    "Upper doors, open middle, base doors"),
@@ -4747,6 +4898,9 @@ _PIE_CUT_CONFIG_ITEMS = {
     'UPPER': [
         ('DOORS',         "Full Height Doors", "One full-height door per arm"),
         ('STACKED_DOORS', "Stacked Doors",     "Two stacked doors per arm"),
+        ('DOORS_GARAGE',  "Doors + Appliance Garage",
+         "Doors above an appliance garage; the cabinet extends down to "
+         "the countertop"),
     ],
 }
 
@@ -4767,8 +4921,11 @@ def _exterior_config_items(self, context):
 _CORNER_SECTION_PRESETS = {
     ('BASE',  'DOORS'):             ('DOORS',),
     ('BASE',  'FALSE_FRONT_DOORS'): ('FALSE_FRONT', 'DOORS'),
+    ('BASE',  'SINK'):              ('FALSE_FRONT', 'DOORS'),
+    ('BASE',  'SINK_DOORS'):        ('DOORS',),
     ('UPPER', 'DOORS'):             ('DOORS',),
     ('UPPER', 'STACKED_DOORS'):     ('DOORS', 'DOORS'),
+    ('UPPER', 'DOORS_GARAGE'):      ('DOORS', 'GARAGE'),
     ('UPPER', 'HUTCH'):             ('DOORS', 'OPEN'),
     ('UPPER', 'OPEN_SHELVES'):      ('OPEN',),
     ('TALL',  'HUTCH'):             ('DOORS', 'OPEN', 'DOORS'),
@@ -4788,6 +4945,7 @@ _CORNER_SECTION_PRESETS = {
 _CORNER_SECTION_DEFAULT_HEIGHTS = {
     ('TALL', 'BOOKCASE'): (None, units.inch(24.0)),
     ('BASE', 'FALSE_FRONT_DOORS'): ('TOP_DRAWER', None),
+    ('BASE', 'SINK'): ('TOP_DRAWER', None),
 }
 
 
@@ -4834,10 +4992,131 @@ def populate_corner_sections(cab_props):
             sec.unlock_height = False
 
 
+def _sync_corner_garage_extension(cab_props):
+    """Grow / shrink the cabinet for a GARAGE section. Entering a garage
+    config extends the cabinet down to the countertop plane (base cabinet
+    height + countertop thickness) and pins the garage section to the
+    added extent (minus the new mid rail) so the section above keeps its
+    opening; leaving the config reverts the stored extension. The extent
+    is stored on the object so the revert is exact even if scene
+    defaults changed in between."""
+    obj = cab_props.id_data
+    from . import types_face_frame
+    has_garage = any(
+        s.content == 'GARAGE' for s in cab_props.corner_sections)
+    stored = obj.get('hb_garage_extension', 0.0)
+    if has_garage and not stored:
+        ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+        if ff_scene is None:
+            return
+        counter_z = (ff_scene.base_cabinet_height
+                     + ff_scene.countertop_thickness)
+        ext = obj.location.z - counter_z
+        if ext <= 0.0:
+            return
+        with types_face_frame.suspend_recalc():
+            cab_props.height = cab_props.height + ext
+            obj.location.z = counter_z
+            for s in cab_props.corner_sections:
+                if s.content == 'GARAGE':
+                    s.unlock_height = True
+                    s.height = max(
+                        ext - cab_props.bay_mid_rail_width,
+                        units.inch(4.0))
+        obj['hb_garage_extension'] = ext
+    elif not has_garage and stored:
+        with types_face_frame.suspend_recalc():
+            cab_props.height = cab_props.height - stored
+            obj.location.z = obj.location.z + stored
+        del obj['hb_garage_extension']
+
+
+def _update_bay_appliance_garage(self, context):
+    """Per-bay Appliance Garage toggle (uppers, incl. blind corners).
+
+    ON: the CABINET extends down to the countertop plane (once, stored
+    as hb_garage_extension on the root); every non-garage bay is locked
+    at its pre-extension height so its bottom stays at the old mount,
+    while this bay syncs to the full height and rebuilds as a stacked
+    pair whose bottom opening pins to the extension (GARAGE_BOTTOM size
+    role). OFF: the bay goes back to a raised standard bay; when the
+    last garage bay turns off, the extension reverts exactly and every
+    bay re-syncs to the cabinet height.
+    """
+    obj = self.id_data
+    from . import types_face_frame
+    from . import bay_presets
+    from .operators import ops_cabinet
+    root = types_face_frame.find_cabinet_root(obj)
+    ff_scene = getattr(bpy.context.scene, 'hb_face_frame', None)
+    if root is None or ff_scene is None:
+        return
+    cab = root.face_frame_cabinet
+    bays = [c for c in root.children
+            if c.get(types_face_frame.TAG_BAY_CAGE)]
+    stored = root.get('hb_garage_extension', 0.0)
+
+    if self.appliance_garage:
+        if not stored:
+            counter_z = (ff_scene.base_cabinet_height
+                         + ff_scene.countertop_thickness)
+            ext = root.location.z - counter_z
+            if ext <= 0.0:
+                return
+            old_height = cab.height
+            with types_face_frame.suspend_recalc():
+                # Non-garage bays keep their bottom at the old mount:
+                # lock each at the pre-extension height BEFORE the
+                # cabinet grows (already-unlocked custom heights hold
+                # on their own).
+                for b in bays:
+                    bp = b.face_frame_bay
+                    if b is not obj and not bp.unlock_height:
+                        bp.unlock_height = True
+                        bp.height = old_height
+                cab.height = cab.height + ext
+                root.location.z = counter_z
+            root['hb_garage_extension'] = ext
+        # The garage bay itself spans the full (extended) height.
+        with types_face_frame.suspend_recalc():
+            self.unlock_height = False
+            self.top_offset = 0.0
+        cfg = ('DOUBLE_DOOR_GARAGE'
+               if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
+               else 'LEFT_DOOR_GARAGE')
+        ops_cabinet.apply_bay_preset(obj, cfg)
+    else:
+        remaining = [b for b in bays
+                     if b is not obj and b.face_frame_bay.appliance_garage]
+        if stored and not remaining:
+            # Last garage bay off: revert the extension and re-sync
+            # every bay to the cabinet height (per-bay height
+            # customizations reset).
+            with types_face_frame.suspend_recalc():
+                cab.height = cab.height - stored
+                root.location.z = root.location.z + stored
+                for b in bays:
+                    b.face_frame_bay.unlock_height = False
+            del root['hb_garage_extension']
+        elif stored:
+            # Other garage bays remain: this bay becomes a raised
+            # standard bay at the pre-extension height.
+            with types_face_frame.suspend_recalc():
+                self.unlock_height = True
+                self.height = max(cab.height - stored, units.inch(6.0))
+                self.top_offset = 0.0
+        cfg = ('DOUBLE_DOOR'
+               if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
+               else 'LEFT_SWING_DOOR')
+        ops_cabinet.apply_bay_preset(obj, cfg)
+    types_face_frame.recalculate_face_frame_cabinet(root)
+
+
 def _update_exterior_config(self, context):
     """exterior_config changed: repopulate the section collection from the
-    new preset, then recalc."""
+    new preset, sync the garage extension, then recalc."""
     populate_corner_sections(self)
+    _sync_corner_garage_extension(self)
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
@@ -5306,6 +5585,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # With a garage extension active and a blind side set, opens the
+    # blind section BELOW (garage level): the blind panel stops at the
+    # top of the garage zone instead of running to the countertop, so
+    # the garage interior stays accessible into the corner.
+    garage_blind_opening: BoolProperty(
+        name="Open Blind Section Below",
+        default=False,
+        description="Leave the blind section open at appliance-garage "
+                    "level: the blind panel stops above the garage zone "
+                    "instead of running down to the countertop",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     blind_reveal: FloatProperty(
         name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -5329,7 +5620,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ('WALL', "Wall", "Wall stile (extends past carcass)"),
         ('BLIND', "Blind", "Blind corner stile"),
         ('BUTT', "Butt", "Butt joint against an adjacent cabinet"),
-        ('INSIDE_90', "Inside 90", "Against an inside 90 (pie cut) corner"),
+        ('INSIDE_90', "Inside 90", "Blind-stile condition: two runs meeting at an open 90-degree inside corner"),
         ('ANGLE', "Angle", "Against a diagonal / angled cabinet"),
     ]
     left_stile_type: EnumProperty(
@@ -5845,7 +6136,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ],
         default='SHELF',
         description="What hangs between the extended sides (over-stool legs)",
-        update=_update_cabinet_dim,
+        update=_update_overstool_accessory,
     )  # type: ignore
     hutch_finished_back: BoolProperty(
         name="Finished Back in Recess",
@@ -5888,6 +6179,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "wing: keep the carcass square and add a flat angled panel "
                     "along the extension line. No effect when Extend Back Right "
                     "is 0.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Optional manual wing size: the run of the wing panel measured from
+    # the cabinet's front corner along the extension line. 0 = automatic
+    # (the full line, front corner to the extended back corner). Lets the
+    # wing stop short when the automatic reach would run past the end of
+    # a wall. The front edge stays anchored on the cabinet regardless.
+    wing_width_left: FloatProperty(
+        name="Left Wing Width", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Width of the LEFT wing panel from the cabinet front "
+                    "corner along the extension line. 0 = size automatically "
+                    "from the extension.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wing_width_right: FloatProperty(
+        name="Right Wing Width", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Width of the RIGHT wing panel from the cabinet front "
+                    "corner along the extension line. 0 = size automatically "
+                    "from the extension.",
         update=_update_cabinet_dim,
     )  # type: ignore
     # Extend Bottom (uppers): push the carcass bottom panel laterally past
@@ -6036,6 +6348,75 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Remove Bottom",
         description="Remove the carcass bottom and the bottom rail; the lowest opening runs to the carcass floor",
         default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # ---- Finished bottom (uppers) ----
+    # Finished bottom condition, matching the upper-bottom detail
+    # card's options. Any non-NONE choice builds the finish panel with
+    # an LED route cut near its front edge; the light toggle adds a
+    # Blender area light in the route for renders.
+    finished_bottom_type: EnumProperty(
+        name="Finished Bottom",
+        description="Finished bottom condition for this upper cabinet",
+        items=[
+            ('NONE', "None", "No finished bottom panel"),
+            ('QUARTER', "1/4\"",
+             "1/4\" finished bottom under the cabinet bottom"),
+            ('THREE_QUARTER', "3/4\"",
+             "3/4\" finished bottom under the cabinet bottom"),
+            ('QUARTER_FLUSH', "1/4\" Flush",
+             "1/4\" finished bottom, flush at the rail bottom"),
+            ('THREE_QUARTER_FLUSH', "3/4\" Flush",
+             "3/4\" finished bottom, flush at the rail bottom"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # LED route: opt-in groove across the finish panel's underside,
+    # with adjustable size and location. The render light rides the
+    # route (no route, no light).
+    finished_bottom_led_route: BoolProperty(
+        name="LED Route",
+        description="Cut an LED route into the finished bottom's underside",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_width: FloatProperty(
+        name="Route Width",
+        description="Front-to-back width of the LED route",
+        default=units.inch(0.875), min=units.inch(0.125),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_depth: FloatProperty(
+        name="Route Depth",
+        description="How deep the route cuts into the panel (clamped to leave material above)",
+        default=units.inch(0.375), min=units.inch(0.0625),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_route_inset: FloatProperty(
+        name="Route Inset",
+        description="Distance from the panel's front edge to the front of the route",
+        default=units.inch(1.5), min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finished_bottom_light: BoolProperty(
+        name="LED Light",
+        description="Add an area light in the LED route for renders",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Sink apron height for the diagonal SINK_DOORS config: a fixed
+    # face-frame-depth panel across the top of the door opening, behind
+    # the full-height doors. The corner counterpart of the per-opening
+    # apron_height (corner cabinets have no opening cages).
+    corner_apron_height: FloatProperty(
+        name="Apron Height",
+        description="Height of the sink apron panel behind the full-height doors",
+        default=units.inch(7.0), unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_compartment: EnumProperty(
@@ -6231,6 +6612,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Floating", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Appliance garage (uppers): this bay extends down to the countertop
+    # with a garage opening pinned to the added zone; the rest of the
+    # cabinet keeps its mount height. See _update_bay_appliance_garage.
+    appliance_garage: BoolProperty(
+        name="Appliance Garage", default=False,
+        description="Extend THIS bay down to the countertop with a "
+                    "garage opening below its doors; other bays keep "
+                    "their height",
+        update=_update_bay_appliance_garage,
+    )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
     # Finished interior: the exterior finish material reads inside this
     # bay's opening, realized by adding finish-material liner panels on
@@ -6351,6 +6742,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('WINE_HALF_CIRCLE', "Half Circle Wine Rack",  "WRHC: scalloped rails, bottles 5\" on center"),
         ('STEMWARE_RACK',    "Stemware Rack",      "SR: slotted hardwood slats at the top of the opening, slots 4\" on center"),
         ('PLATE_RACK',       "Plate Rack",         "PR: 3/8\" birch dowels 2\" on center"),
+        ('CLOSET_ROD',       "Closet Rod",         "CR: hang rod across the opening, set down from the opening top"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
@@ -6462,6 +6854,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # PULLOUT_SHELF-only.
     rollout_boxes: CollectionProperty(type=Face_Frame_Rollout_Box)  # type: ignore
     rollout_boxes_index: IntProperty(default=0)  # type: ignore
+    # Omit the four slide-mount spacer parts for this ROLLOUT. A single
+    # rollout fixed at the floor mounts straight to the cabinet, so no
+    # spacer/ladder assembly is wanted (or manufactured) for it.
+    hide_rollout_spacers: BoolProperty(
+        name="Hide Rollout Spacers",
+        description="Don't build the side spacer parts the slides mount "
+                    "to (ROLLOUT only) - e.g. a single rollout fixed at "
+                    "the floor that needs no spacer assembly",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked
@@ -6478,7 +6880,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     tray_opening_height: FloatProperty(
         name="Tray Opening Height",
         description="Z position of the locked shelf above the tray dividers (only when Remove Locked Shelf is off)",
-        default=units.inch(20.0), unit='LENGTH', precision=4,
+        default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     tray_divider_thickness: FloatProperty(
@@ -6506,6 +6908,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Shelf Length",
         description="Length of each side shelf (mirrored L and R)",
         default=units.inch(7.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # CLOSET_ROD
+    # Rod centerline measured DOWN from the opening (or region) top, so
+    # a rod under a fixed shelf keeps its drop when the cabinet grows.
+    rod_distance_from_top: FloatProperty(
+        name="Distance From Top",
+        description="Rod centerline distance down from the top of the opening (a rod under a fixed shelf keeps this drop)",
+        default=units.inch(3.0), min=units.inch(1.0),
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -6685,6 +7098,60 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Tilt-Out",
         description="Label this false front as a tilt-out on 2D drawings",
         default=False,
+    )  # type: ignore
+
+    # ---- Pull override ----
+    # Per-opening pull override (right-click a door / drawer front ->
+    # Set Pull...). Stored as the pull's filename + category folder on
+    # the persistent opening cage so it survives recalcs; empty = the
+    # scene-wide selection for the front's kind, 'NONE' = no pull on
+    # this front.
+    pull_override: StringProperty(
+        name="Pull Override", default="",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    pull_override_category: StringProperty(
+        name="Pull Override Category", default="",
+    )  # type: ignore
+
+    # ---- Drawer box size overrides ----
+    # Per-axis overrides for the drawer box behind this opening's drawer
+    # / pullout front (right-click the box -> Drawer Box Size...). The
+    # box itself is wiped and rebuilt every recalc, so the user's size
+    # lives here on the persistent opening cage. An un-overridden axis
+    # keeps the auto fit (opening hole minus the scene clearances).
+    drawer_box_override_width: BoolProperty(
+        name="Override Width",
+        description="Use the entered drawer box width instead of the auto fit (opening minus side clearances)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_width: FloatProperty(
+        name="Drawer Box Width",
+        description="Drawer box width; centered in the opening",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_override_height: BoolProperty(
+        name="Override Height",
+        description="Use the entered drawer box height instead of the auto fit (opening minus top/bottom clearances)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_height: FloatProperty(
+        name="Drawer Box Height",
+        description="Drawer box height; the bottom clearance anchor is kept",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_override_depth: BoolProperty(
+        name="Override Depth",
+        description="Use the entered drawer box depth instead of the auto fit (cavity depth minus rear clearance)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_depth: FloatProperty(
+        name="Drawer Box Depth",
+        description="Drawer box depth from the back of the front rearward",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # Drawer-look door: a single working DOOR leaf whose face carries N
@@ -7104,6 +7571,12 @@ def _pull_category_enum_items(self, context):
     return pulls.get_pull_categories()
 
 
+def _pull_finish_enum_items(self, context):
+    # Same deferred-import reasoning as the category items.
+    from . import pulls
+    return pulls.PULL_FINISHES
+
+
 def _pull_enum_items(self, context):
     """Items for door/drawer pull selection. Filtered to the currently
     chosen category. Real pulls come first (so the EnumProperty defaults
@@ -7509,6 +7982,40 @@ class Face_Frame_Scene_Props(PropertyGroup):
     drawer_pull_selection: EnumProperty(
         name="Drawer Pull",
         items=_pull_enum_items,
+        update=_update_pulls_on_selection_change,
+    )  # type: ignore
+
+    # Pull library browser: an inert selection (no update callback) the
+    # Assign buttons read. Assignment state lives in the pull_assign_*
+    # strings below - browsing never changes placed pulls.
+    pull_browser_selection: EnumProperty(
+        name="Pull",
+        description="Pull to assign (pick a zone button below to apply)",
+        items=_pull_enum_items,
+    )  # type: ignore
+
+    # Per-zone pull assignments (filename + category folder), written
+    # by hb_face_frame.assign_pull. Empty = unassigned, which falls
+    # back to the legacy scene-wide selections (door_pull_selection /
+    # drawer_pull_selection) so pre-assignment scenes keep their pulls;
+    # 'NONE' = no pull for that zone.
+    pull_assign_base: StringProperty(default="")  # type: ignore
+    pull_assign_base_category: StringProperty(default="")  # type: ignore
+    pull_assign_tall: StringProperty(default="")  # type: ignore
+    pull_assign_tall_category: StringProperty(default="")  # type: ignore
+    pull_assign_upper: StringProperty(default="")  # type: ignore
+    pull_assign_upper_category: StringProperty(default="")  # type: ignore
+    pull_assign_drawers: StringProperty(default="")  # type: ignore
+    pull_assign_drawers_category: StringProperty(default="")  # type: ignore
+
+    # Finish material swapped onto every pull mesh (scene-wide,
+    # including per-opening overridden pulls). Dynamic items so the
+    # list lives in pulls.py; AS_MODELED is first, making it the
+    # default - the asset's own materials, the pre-finish behavior.
+    pull_finish: EnumProperty(
+        name="Pull Finish",
+        description="Finish material applied to every cabinet pull",
+        items=_pull_finish_enum_items,
         update=_update_pulls_on_selection_change,
     )  # type: ignore
 
@@ -8129,30 +8636,45 @@ class Face_Frame_Scene_Props(PropertyGroup):
     def draw_pulls_ui(self, layout, context):
         from . import pulls
 
+        # Library browser (inert - the Assign buttons apply it).
         col = layout.column(align=True)
+        col.label(text="Pull Library:")
         col.prop(self, 'door_pull_category', text="Category")
-
-        # Door pull row + thumbnail beneath
-        col.label(text="Door Pull:")
-        col.prop(self, 'door_pull_selection', text="")
-        if self.door_pull_selection not in ('NONE', ''):
+        col.prop(self, 'pull_browser_selection', text="")
+        if self.pull_browser_selection not in ('NONE', ''):
             icon_id = pulls.load_pull_thumbnail_icon(
-                self.door_pull_selection,
+                self.pull_browser_selection,
                 pulls._resolve_real_category(self.door_pull_category),
             )
             if icon_id:
                 col.template_icon(icon_value=icon_id, scale=4.0)
+        col.prop(self, 'pull_finish', text="Finish")
 
         col.separator()
-        col.label(text="Drawer Pull:")
-        col.prop(self, 'drawer_pull_selection', text="")
-        if self.drawer_pull_selection not in ('NONE', ''):
-            icon_id = pulls.load_pull_thumbnail_icon(
-                self.drawer_pull_selection,
-                pulls._resolve_real_category(self.door_pull_category),
-            )
-            if icon_id:
-                col.template_icon(icon_value=icon_id, scale=4.0)
+        col.label(text="Assign to:")
+        row = col.row(align=True)
+        for target, label in (('BASE', "Base"), ('TALL', "Tall"),
+                              ('UPPER', "Upper"), ('DRAWERS', "Drawers")):
+            row.operator('hb_face_frame.assign_pull',
+                         text=label).target = target
+        col.operator('hb_face_frame.assign_pull',
+                     text="Assign to Selected Fronts",
+                     icon='RESTRICT_SELECT_OFF').target = 'SELECTED'
+
+        # Current assignments. Unassigned zones ride the legacy
+        # scene-wide selections, so show the effective pull.
+        box = col.box()
+        bcol = box.column(align=True)
+        for zone_prop, label, legacy in (
+                ('pull_assign_base', "Base", self.door_pull_selection),
+                ('pull_assign_tall', "Tall", self.door_pull_selection),
+                ('pull_assign_upper', "Upper", self.door_pull_selection),
+                ('pull_assign_drawers', "Drawers",
+                 self.drawer_pull_selection)):
+            sel = getattr(self, zone_prop) or legacy
+            stem = ("None" if sel in ('NONE', '')
+                    else os.path.splitext(sel)[0])
+            bcol.label(text=f"{label}: {stem}")
 
         col.separator()
         col.label(text="Position:")
@@ -8161,6 +8683,16 @@ class Face_Frame_Scene_Props(PropertyGroup):
         col.prop(self, 'pull_vertical_location_tall', text="Tall Vertical")
         col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front', text="Center Drawer Pulls")
+
+        # Installed pull packs merge into the dropdowns above; the
+        # folder button is the manual route (drop category folders of
+        # .blend pulls straight in).
+        col.separator()
+        row = col.row(align=True)
+        row.operator('hb_face_frame.install_pull_library',
+                     text="Install Pull Library...", icon='IMPORT')
+        row.operator('hb_face_frame.open_pull_library_folder',
+                     text="", icon='FILE_FOLDER')
 
     # =====================================================================
     # UI: cabinet styles (Options tab, placeholder for Phase 4)
@@ -8393,9 +8925,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
         sub.enabled = crown_pkg != 'NONE'
         sub.prop(hb_scene, "molding_crown_reveal", text="Reveal")
         sub = col.row()
-        sub.enabled = molding_packages.stack_has_adjustable_offset(
-            'CROWN', crown_pkg)
-        sub.prop(hb_scene, "molding_crown_stack_offset", text="Stack Offset")
+        sub.enabled = crown_pkg != 'NONE'
+        sub.prop(hb_scene, "molding_crown_to_ceiling")
+        sub = col.row()
+        sub.enabled = (molding_packages.stack_uses_category(
+                           'CROWN', crown_pkg, 'Spacer')
+                       and not hb_scene.molding_crown_to_ceiling)
+        sub.prop(hb_scene, "molding_spacer_height", text="Spacer Height")
         if has_pack:
             sub = col.row()
             sub.enabled = molding_packages.stack_uses_category(
@@ -8409,7 +8945,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
         col.prop(hb_scene, "molding_crown_furniture_cap")
         sub = col.row()
         sub.enabled = hb_scene.molding_crown_furniture_cap
-        sub.prop(hb_scene, "molding_cap_offset", text="Cap Offset")
+        sub.prop(hb_scene, "molding_cap_offset", text="Height Offset")
+        sub = col.row()
+        sub.enabled = hb_scene.molding_crown_furniture_cap
+        sub.prop(hb_scene, "molding_cap_overhang", text="Overhang")
         if has_pack:
             sub = col.row()
             sub.enabled = hb_scene.molding_crown_furniture_cap
@@ -8552,6 +9091,39 @@ class Face_Frame_Leg_Props(PropertyGroup):
         description="Drop the side panels and toe-kick filler; keep just "
                     "the face-frame stile",
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # Curved support leg: the whole leg becomes ONE finished plywood
+    # panel. The straight full-height edge and narrow foot post sit at
+    # the BACK (against the wall); a full-depth arm crosses the top and
+    # an S-curve sweeps from the arm's front underside back onto the
+    # post, leaving the knee-clearance void at the FRONT (used under
+    # vanity lap drawers / seating). The cage WIDTH is the panel
+    # thickness (typically 3/4" or 1-1/2").
+    curved: BoolProperty(
+        name="Curved Support Leg", default=False,
+        description="Build the leg as a single curved support panel: "
+                    "full height at the wall, arm across the top, curve "
+                    "sweeping back to a narrow post -- knee clearance at "
+                    "the front. The leg width is the panel thickness",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_foot_depth: FloatProperty(
+        name="Foot Depth", default=units.inch(3.0), min=units.inch(1.0),
+        description="Depth of the post at the floor, measured out from "
+                    "the back (wall) edge",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_top_band_height: FloatProperty(
+        name="Top Band Height", default=units.inch(4.0), min=units.inch(1.0),
+        description="Thickness of the full-depth arm at the top of the "
+                    "leg, above the start of the curve",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_sweep_height: FloatProperty(
+        name="Curve Height", default=units.inch(12.0), min=units.inch(1.0),
+        description="Vertical span of the S-curve between the arm's "
+                    "underside and the top of the straight post",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     is_column: BoolProperty(
         name="Column", default=False,

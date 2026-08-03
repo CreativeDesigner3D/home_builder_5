@@ -138,6 +138,9 @@ def draw_dimensions(layout, root):
         elif cab_props.corner_type == 'DIAGONAL':
             col.label(text="Exterior Configuration")
             col.prop(cab_props, 'exterior_config', text="Config")
+            if cab_props.exterior_config == 'SINK_DOORS':
+                col.prop(cab_props, 'corner_apron_height',
+                         text="Apron Height")
             col.prop(cab_props, 'diag_door_swing', text="Door Swing")
             col.prop(cab_props, 'interior_option', text="Interior")
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
@@ -217,6 +220,10 @@ def draw_corner_sections(layout, cab_props):
         field.prop(section, 'height', text="Height")
         lock_icon = 'UNLOCKED' if section.unlock_height else 'LOCKED'
         row.prop(section, 'unlock_height', text="", icon=lock_icon)
+        if section.content == 'GARAGE':
+            col.prop(section, 'garage_door_type', text="Garage Door")
+            col.prop(section, 'garage_side_doors',
+                     text="Hinged Doors on Sides")
         if section.content == 'OPEN':
             col.prop(section, 'shelf_qty', text="Shelves")
         elif (section.content == 'DOORS'
@@ -232,7 +239,7 @@ def draw_corner_sections(layout, cab_props):
                          else 'LOCKED')
             qty_row.prop(section, 'unlock_shelf_qty', text="",
                          icon=lock_icon)
-        if section.content in ('DOORS', 'FALSE_FRONT'):
+        if section.content in ('DOORS', 'FALSE_FRONT', 'GARAGE'):
             # Per-section overlay overrides (locked = cabinet default,
             # unlocked = this section's own value) -- e.g. extra bottom
             # overlay so an upper corner door covers a light rail.
@@ -306,11 +313,17 @@ def draw_construction(layout, cab_props):
         row = col.row()
         row.enabled = cab_props.extend_back_left != 0.0
         row.prop(cab_props, 'wing_attached_left', text="Attach as Wing")
+        if cab_props.wing_attached_left and cab_props.extend_back_left != 0.0:
+            # Manual run for the wing panel (0 = automatic, the full
+            # extension line). Front edge stays anchored on the cabinet.
+            col.prop(cab_props, 'wing_width_left', text="Wing Width")
         col.separator()
         col.prop(cab_props, 'extend_back_right', text="Extend Back Right X")
         row = col.row()
         row.enabled = cab_props.extend_back_right != 0.0
         row.prop(cab_props, 'wing_attached_right', text="Attach as Wing")
+        if cab_props.wing_attached_right and cab_props.extend_back_right != 0.0:
+            col.prop(cab_props, 'wing_width_right', text="Wing Width")
 
     # Uppers only: hutch / over-stool / corner-cover extensions, grouped
     # under one collapsible category (rarely used).
@@ -549,6 +562,19 @@ def draw_leg_product(layout, root):
     vrow.prop(leg, 'is_appliance_leg', text="Appliance", toggle=True)
     vrow.prop(leg, 'is_island_leg', text="Island", toggle=True)
 
+    # Curved support leg: one profiled panel replaces the whole post.
+    # Width becomes the panel thickness, so the standard-part options
+    # above are inert while it's on.
+    cbox = box.box()
+    cbox.prop(leg, 'curved', text="Curved Support Leg", toggle=True)
+    if leg.curved:
+        ccol = cbox.column(align=True)
+        ccol.prop(leg, 'curved_foot_depth', text="Foot Depth")
+        ccol.prop(leg, 'curved_top_band_height', text="Top Band Height")
+        ccol.prop(leg, 'curved_sweep_height', text="Curve Height")
+        cbox.label(text="Width = panel thickness (3/4\" or 1-1/2\")",
+                   icon='INFO')
+
     # Material Thickness / Face Frame Thickness are intentionally not
     # exposed here - users never change them (recalc still reads the
     # propgroup defaults).
@@ -741,6 +767,9 @@ def draw_bay_properties(layout, bay_obj):
         kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
+        # Per-bay appliance garage: this bay drops to the countertop
+        # with a garage opening; the rest of the cabinet stays put.
+        col.prop(bp, 'appliance_garage', text="Appliance Garage")
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:
@@ -1027,12 +1056,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         elif item.kind == 'ROLLOUT':
             # One row per box: each box picks its own standard height (or
             # Custom to type one). The box count is the number of rows.
-            for j, box in enumerate(item.rollout_boxes):
+            for j, rollout_box in enumerate(item.rollout_boxes):
                 brow = sub.row(align=True)
                 brow.label(text=f"Box {j + 1}")
-                brow.prop(box, 'height_preset', text="")
-                if box.height_preset == 'CUSTOM':
-                    brow.prop(box, 'height', text="")
+                brow.prop(rollout_box, 'height_preset', text="")
+                if rollout_box.height_preset == 'CUSTOM':
+                    brow.prop(rollout_box, 'height', text="")
                 rm_box = brow.operator(
                     "hb_face_frame.remove_rollout_box", text="", icon='X',
                 )
@@ -1047,6 +1076,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
+            sub.prop(item, 'hide_rollout_spacers',
+                     text="Hide Rollout Spacers")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
             # solver), so no spacer_height row -- same as pullouts.
         elif item.kind == 'TRAY_DIVIDERS':
@@ -1062,6 +1093,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+        elif item.kind == 'CLOSET_ROD':
+            sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:
             # Bar storage inserts are fully auto-fit from the opening
             # per the catalog charts - no per-item knobs in v1.
@@ -1325,6 +1358,11 @@ def draw_blind_corners(layout, cab_props):
             row.prop(cab_props, f'blind_{side}', text="")
             if getattr(cab_props, f'blind_{side}'):
                 row.prop(cab_props, f'blind_amount_{side}', text="")
+                # Garage-level blind opening: only meaningful while a
+                # bay's appliance garage has extended this cabinet.
+                if cab_props.id_data.get('hb_garage_extension', 0.0):
+                    layout.prop(cab_props, 'garage_blind_opening',
+                                text="Open Blind Section Below")
 
 
 def draw_finished_ends(layout, cab_props):
@@ -1466,6 +1504,9 @@ def draw_bay_in_prompts(layout, bay_obj):
         kick_row.prop(bp, 'unlock_kick_height', text="", icon=lock_icon)
     if cab_type == 'UPPER':
         col.prop(bp, 'top_offset', text="Top Offset")
+        # Per-bay appliance garage: this bay drops to the countertop
+        # with a garage opening; the rest of the cabinet stays put.
+        col.prop(bp, 'appliance_garage', text="Appliance Garage")
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:

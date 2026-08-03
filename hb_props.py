@@ -167,6 +167,18 @@ def update_show_entry_door_and_window_cages(self, context):
             obj.show_in_front = True if self.show_entry_door_and_window_cages else False
 
 
+def _entry_door_style_items(self, context):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.style_enum_items(
+        door_window_geo.DOOR_CATEGORY, include_none=True)
+
+
+def _window_style_items(self, context):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.style_enum_items(
+        door_window_geo.WINDOW_CATEGORY, include_none=True)
+
+
 def update_molding_package(self, context):
     """Re-apply the room's molding packages whenever a package dropdown
     (or the recessed-kick toggle) changes - the dropdown IS the UI."""
@@ -485,6 +497,15 @@ class Home_Builder_Scene_Props(PropertyGroup):
     window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
     window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
 
+    entry_door_style: EnumProperty(
+        name="Entry Door Style",
+        description="3D style applied to newly placed entry doors",
+        items=_entry_door_style_items)  # type: ignore
+    window_style: EnumProperty(
+        name="Window Style",
+        description="3D style applied to newly placed windows",
+        items=_window_style_items)  # type: ignore
+
     wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
 
     show_entry_doors_and_windows: BoolProperty(name="Show Entry Doors and Windows", default=False)
@@ -530,11 +551,17 @@ class Home_Builder_Scene_Props(PropertyGroup):
         unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore
-    molding_crown_stack_offset: FloatProperty(
-        name="Stack Offset",
-        description="For stacked crown packages: how far up the spacer the crown molding sits, measured from the spacer's bottom",
-        default=inch(3.5), min=0.0,
+    molding_spacer_height: FloatProperty(
+        name="Spacer Height",
+        description="Height of the flat-stock spacer in crown packages that use one - the profile is sized to this and the crown rides on top (ignored when Molding to Ceiling is on)",
+        default=inch(3.5), min=inch(0.25),
         unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_to_ceiling: BoolProperty(
+        name="Molding to Ceiling",
+        description="Run the crown stack to the ceiling: the crown molding tops out at the ceiling line and the spacer stretches to fill down to the reveal",
+        default=False,
         update=update_molding_package,
     )  # type: ignore
     molding_crown_furniture_cap: BoolProperty(
@@ -544,10 +571,18 @@ class Home_Builder_Scene_Props(PropertyGroup):
         update=update_molding_package,
     )  # type: ignore
     molding_cap_offset: FloatProperty(
-        name="Cap Offset",
+        name="Cap Height Offset",
         description="Adjust the furniture cap from its default position sitting on top of the tallest molding (negative lowers it)",
         default=0.0,
         soft_min=-inch(6.0), soft_max=inch(6.0),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_cap_overhang: FloatProperty(
+        name="Cap Overhang",
+        description="Push the furniture cap forward to increase how far it overhangs the cabinet face (negative pulls it back)",
+        default=0.0,
+        soft_min=-inch(2.0), soft_max=inch(6.0),
         unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore

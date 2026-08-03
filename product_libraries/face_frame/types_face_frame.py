@@ -117,6 +117,17 @@ PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
+# Finished bottom (uppers): an applied finish panel under the carcass
+# bottom with an LED route cut near its front edge, plus an optional
+# area light in the route for renders. Managed parts (built / cleaned
+# by _apply_finished_bottom each recalc), not part of any wipe set.
+PART_ROLE_FINISHED_BOTTOM = 'FINISHED_BOTTOM'
+PART_ROLE_FB_LED_CUTTER = 'FINISHED_BOTTOM_LED_CUTTER'
+PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
+# Visible LED diffuser: a thin emissive strip mesh up inside the route,
+# so the glow has a visible source when looking up at the cabinet (the
+# area light itself renders as nothing).
+PART_ROLE_FB_LED_STRIP = 'FINISHED_BOTTOM_LED_STRIP'
 PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
@@ -147,6 +158,8 @@ PART_ROLE_LEG_FINISH_X_RIGHT = 'LEG_FINISH_X_RIGHT'
 PART_ROLE_LEG_BACK = 'LEG_BACK'
 PART_ROLE_LEG_NAILER_LEFT = 'LEG_NAILER_LEFT'
 PART_ROLE_LEG_NAILER_RIGHT = 'LEG_NAILER_RIGHT'
+# Curved support leg: the whole leg as one profiled plywood panel.
+PART_ROLE_LEG_CURVED_PANEL = 'LEG_CURVED_PANEL'
 
 # Floating shelf (wall-mounted hollow slab). Built by a dedicated
 # product class that bypasses the bay/solver pipeline; finished boards.
@@ -466,6 +479,9 @@ PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
 # each insert is a single derived mesh built in bar_storage.py; the
 # specific product is read from the interior item's kind.
 PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
+# Hang rod across an opening (same role string the closets library uses,
+# so downstream consumers treat both the same way).
+PART_ROLE_CLOSET_ROD = 'CLOSET_ROD'
 # Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
 # top of an appliance bay so plan views read like a dealer drawing.
 # Wiped + recreated every recalc (sized from the live bay cage); the
@@ -500,6 +516,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_ACCESSORY_LABEL,
     PART_ROLE_BAR_STORAGE,
+    PART_ROLE_CLOSET_ROD,
     PART_ROLE_INTERIOR_DIVISION,
     PART_ROLE_INTERIOR_FIXED_SHELF,
     PART_ROLE_INTERIOR_FF_RAIL,
@@ -530,6 +547,7 @@ INTERIOR_KIND_TO_ROLE = {
     'WINE_HALF_CIRCLE':      PART_ROLE_BAR_STORAGE,
     'STEMWARE_RACK':         PART_ROLE_BAR_STORAGE,
     'PLATE_RACK':            PART_ROLE_BAR_STORAGE,
+    'CLOSET_ROD':            PART_ROLE_CLOSET_ROD,
 }
 
 # Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
@@ -630,19 +648,19 @@ PART_ROLE_SIDE_PROFILE_CUTTER = 'SIDE_PROFILE_CUTTER'
 SIDE_PROFILE_CUT_MOD_NAME = 'Side Profile Cut'
 PART_ROLE_OVERSTOOL_SHELF = 'OVERSTOOL_SHELF'
 PART_ROLE_OVERSTOOL_TOWEL_BAR = 'OVERSTOOL_TOWEL_BAR'
-# Leg-accessory sizing (effective real-world). Shelf is front-aligned (front
-# edge flush with the leg front, extending back); towel bar is a round rod.
-# Z positions are measured UP from the dropped leg bottom.
+# Leg-accessory sizing (effective real-world: 6" deep shelf with 6" clear
+# opening height, 3/4" round towel bar). The shelf is back-aligned against
+# the full-height back and hangs so the clear opening between the box
+# bottom and the shelf top is exactly the spec opening.
 OVERSTOOL_SHELF_DEPTH = inch(6.0)
 OVERSTOOL_SHELF_THICKNESS = inch(0.75)
-OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM = inch(0.0)  # flush with leg bottom
+OVERSTOOL_CLEAR_OPENING = inch(6.0)  # box bottom down to shelf top
 OVERSTOOL_TOWEL_BAR_DIAMETER = inch(0.75)
 OVERSTOOL_TOWEL_BAR_Z_ABOVE_LEG_BOTTOM = inch(4.0)
 OVERSTOOL_TOWEL_BAR_Y_FROM_FRONT = inch(1.0)
 OVERSTOOL_TOWEL_BAR_SEGMENTS = 16
-# When BOTH accessories are present they rearrange: the shelf raises and the
-# towel bar drops below it + moves back, so the bar tucks under the raised shelf.
-OVERSTOOL_SHELF_Z_COMBO_RAISE = inch(3.0)
+# The towel bar always sits low + back between the legs (the spot it takes
+# in the shelf-and-towel-bar layout, where the legs drop 13").
 OVERSTOOL_TOWEL_BAR_COMBO_Z_DROP = inch(3.5)
 OVERSTOOL_TOWEL_BAR_COMBO_Y_BACK = inch(2.0)
 _OVERSTOOL_PROFILE_BLEND = ('face_frame_assets', 'profiles', 'Over Stool Profile.blend')
@@ -1820,8 +1838,16 @@ class FaceFrameCabinet(GeoNodeCage):
             # _bay_root_reveals; without it the children sum to a total
             # that's too large by kick_height and the bottom child
             # overflows when laid out against cage_dim_z.
+            # remove_bottom mirrors solver.effective_bottom_rail_width:
+            # with the rail removed the opening grows down into its
+            # band, so no rail width is reserved -- otherwise stored
+            # sizes run one rail short of the built openings (seen as
+            # wrong opening heights on refrigerator cabinets, whose
+            # bays all carry remove_bottom).
+            eff_bottom = (0.0 if getattr(bp, 'remove_bottom', False)
+                          else bp.bottom_rail_width)
             ff_height = (bp.height - bp.top_rail_width
-                         - bp.bottom_rail_width - bp.kick_height)
+                         - eff_bottom - bp.kick_height)
             ff_width = bp.width
             self._redistribute_split_node(root, ff_width, ff_height, cab_props)
 
@@ -2622,6 +2648,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # loop / back extension so it reshapes the positioned bottom in place.
         if self._has_carcass() and layout.cabinet_type == 'UPPER':
             self._apply_bottom_extension(layout)
+
+        # Finished bottom (uppers): applied finish panel + LED route +
+        # optional render light. Unconditional so a cleared condition
+        # cleans up its parts.
+        self._apply_finished_bottom(layout)
 
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
@@ -3708,6 +3739,271 @@ class FaceFrameCabinet(GeoNodeCage):
             self._cleanup_furniture_top()
 
     # =====================================================================
+    # Finished bottom (uppers)
+    # =====================================================================
+    # (thickness, flush) per finished_bottom_type. Non-flush panels hang
+    # with their top against the carcass bottom's underside; flush panels
+    # sit with their underside at the bottom-rail bottom (cabinet z=0) -
+    # the same placement rule the upper-bottom detail card draws.
+    _FINISHED_BOTTOM_SPECS = {
+        'QUARTER': (inch(0.25), False),
+        'THREE_QUARTER': (inch(0.75), False),
+        'QUARTER_FLUSH': (inch(0.25), True),
+        'THREE_QUARTER_FLUSH': (inch(0.75), True),
+    }
+    _FB_ROUTE_WIDTH = inch(0.875)
+    _FB_ROUTE_FRONT_INSET = inch(1.5)
+    _FB_CUT_MOD_NAME = 'FB LED Route'
+
+    _FB_ROLES = (PART_ROLE_FB_LED_CUTTER, PART_ROLE_FINISHED_BOTTOM,
+                 PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP)
+
+    @staticmethod
+    def _led_strip_material():
+        """Shared emissive LED-strip material, created on first use.
+        The viewport display color makes the strip read as a light
+        band in Solid shading too."""
+        mat = bpy.data.materials.get('HB LED Strip')
+        if mat is not None:
+            return mat
+        mat = bpy.data.materials.new('HB LED Strip')
+        mat.use_nodes = True
+        nt = mat.node_tree
+        nt.nodes.clear()
+        out = nt.nodes.new('ShaderNodeOutputMaterial')
+        em = nt.nodes.new('ShaderNodeEmission')
+        em.inputs['Color'].default_value = (1.0, 0.956, 0.839, 1.0)
+        em.inputs['Strength'].default_value = 5.0
+        nt.links.new(em.outputs['Emission'], out.inputs['Surface'])
+        mat.diffuse_color = (1.0, 0.956, 0.839, 1.0)
+        return mat
+
+    def _fb_children(self, role):
+        return [c for c in self.obj.children
+                if c.get('hb_part_role') == role]
+
+    def _fb_child_for_key(self, role, key):
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get('hb_fb_key') == key):
+                return child
+        return None
+
+    def _cleanup_finished_bottom(self, keep_keys=None, roles=None):
+        """Remove finished-bottom objects. With keep_keys, only stale
+        segment keys go; with roles, only those roles are touched."""
+        for role in (roles or self._FB_ROLES):
+            for child in self._fb_children(role):
+                if keep_keys is not None and (
+                        child.get('hb_fb_key') in keep_keys):
+                    continue
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    @staticmethod
+    def _rebuild_box_mesh(obj, x0, x1, y0, y1, z0, z1):
+        """Regenerate obj's mesh as an axis-aligned box (boolean cutter)."""
+        import bmesh
+        verts = [
+            (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+            (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1),
+        ]
+        faces = [
+            (0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+            (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7),
+        ]
+        mesh = obj.data
+        mesh.clear_geometry()
+        mesh.from_pydata(verts, [], faces)
+        mesh.validate()
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
+    def _apply_finished_bottom(self, layout):
+        """Build / position the finished bottom assembly per the
+        cabinet's finished_bottom_type; ensure it's gone when NONE (or
+        not an upper). ONE finish panel per live carcass-bottom
+        segment, mirroring that segment's span and height - so the
+        finish stops inside finished ends exactly like the carcass
+        bottom does, follows a raised / dropped bay's own bottom, and
+        skips bays whose bottom is removed (no segment there). Each
+        panel gets an LED route cut into its underside near the front
+        edge and an optional area light in the route.
+        """
+        cab = self.obj.face_frame_cabinet
+        spec = self._FINISHED_BOTTOM_SPECS.get(
+            getattr(cab, 'finished_bottom_type', 'NONE'))
+        if (spec is None or layout.cabinet_type != 'UPPER'
+                or not self._has_carcass()):
+            self._cleanup_finished_bottom()
+            return
+        bottoms = [c for c in self.obj.children
+                   if c.get('hb_part_role') == PART_ROLE_BOTTOM
+                   and not c.hide_viewport
+                   and not c.get('IS_MANUAL_PART')]
+        if not bottoms:
+            self._cleanup_finished_bottom()
+            return
+        t_fin, flush = spec
+        brw = cab.bottom_rail_width
+        t = cab.material_thickness
+        want_route = getattr(cab, 'finished_bottom_led_route', False)
+        want_light = want_route and getattr(
+            cab, 'finished_bottom_light', False)
+        route_width = getattr(cab, 'finished_bottom_route_width',
+                              self._FB_ROUTE_WIDTH)
+        route_inset = getattr(cab, 'finished_bottom_route_inset',
+                              self._FB_ROUTE_FRONT_INSET)
+        # Clamp the cut so at least 1/16" of material stays above it.
+        route_depth = min(
+            getattr(cab, 'finished_bottom_route_depth', inch(0.375)),
+            max(t_fin - inch(0.0625), inch(0.03125)))
+
+        live_keys = set()
+        for src in bottoms:
+            key = str(src.get('hb_segment_start_bay', 0))
+            live_keys.add(key)
+            try:
+                seg_len = self._part_input(src, 'Length')
+                seg_w = self._part_input(src, 'Width')
+            except Exception:
+                continue
+            if not seg_len or not seg_w:
+                continue
+            x0 = src.location.x
+            y0 = src.location.y
+            underside_z = src.location.z
+            # Non-flush: panel top against this segment's carcass
+            # underside. Flush: panel underside at this segment's
+            # bottom-rail bottom (carcass bottom top sits at the rail
+            # top, so the rail bottom is underside - (rail - t)).
+            z_fin = (underside_z - (brw - t) if flush
+                     else underside_z - t_fin)
+
+            panel = self._fb_child_for_key(PART_ROLE_FINISHED_BOTTOM, key)
+            if panel is None:
+                part = CabinetPart()
+                part.create('Finished Bottom')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = PART_ROLE_FINISHED_BOTTOM
+                part.obj['hb_fb_key'] = key
+                part.obj['CABINET_PART'] = True
+                part.set_input('Mirror Y', True)
+                panel = part.obj
+            if not panel.get('IS_MANUAL_PART'):
+                panel.location = (x0, y0, z_fin)
+                gn = GeoNodeCutpart(panel)
+                gn.set_input('Length', seg_len)
+                gn.set_input('Width', seg_w)
+                gn.set_input('Thickness', t_fin)
+
+            # LED route across this segment's width, behind the panel's
+            # front edge by the route inset (Width grows -Y from y0).
+            # Opt-in; size and location come from the cabinet props.
+            front_y = y0 - seg_w
+            route_y0 = front_y + route_inset
+            if want_route:
+                cutter = self._fb_child_for_key(
+                    PART_ROLE_FB_LED_CUTTER, key)
+                if cutter is None:
+                    mesh = bpy.data.meshes.new('FB LED Route Cutter')
+                    cutter = bpy.data.objects.new(
+                        'FB LED Route Cutter', mesh)
+                    for coll in self.obj.users_collection:
+                        coll.objects.link(cutter)
+                    cutter.parent = self.obj
+                    cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
+                    cutter['hb_fb_key'] = key
+                    cutter['IS_CUTTING_OBJ'] = True
+                    cutter.hide_viewport = True
+                    cutter.hide_render = True
+                self._rebuild_box_mesh(
+                    cutter,
+                    x0 - 0.005, x0 + seg_len + 0.005,
+                    route_y0, route_y0 + route_width,
+                    z_fin - 0.003, z_fin + route_depth)
+                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+                if mod is None and not panel.get('IS_MANUAL_PART'):
+                    mod = panel.modifiers.new(
+                        name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                    mod.solver = 'EXACT'
+                if mod is not None and mod.object is not cutter:
+                    mod.object = cutter
+            else:
+                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+                if mod is not None:
+                    panel.modifiers.remove(mod)
+
+            # Optional area light in this segment's route for renders.
+            if want_light:
+                light_obj = self._fb_child_for_key(PART_ROLE_FB_LIGHT, key)
+                if light_obj is None or light_obj.type != 'LIGHT':
+                    light_data = bpy.data.lights.new('FB LED Light', 'AREA')
+                    light_obj = bpy.data.objects.new(
+                        'FB LED Light', light_data)
+                    for coll in self.obj.users_collection:
+                        coll.objects.link(light_obj)
+                    light_obj.parent = self.obj
+                    light_obj['hb_part_role'] = PART_ROLE_FB_LIGHT
+                    light_obj['hb_fb_key'] = key
+                    light_obj['IS_2D_ANNOTATION'] = True
+                    light_obj.data.energy = 10.0
+                light = light_obj.data
+                light.shape = 'RECTANGLE'
+                light.size = max(seg_len - inch(2.0), inch(1.0))
+                light.size_y = route_width * 0.8
+                light_obj.location = (
+                    x0 + seg_len / 2.0,
+                    route_y0 + route_width / 2.0,
+                    z_fin - 0.002)
+
+                # Visible diffuser: a thin emissive strip up inside the
+                # route (the area light renders as nothing, so this is
+                # what reads as the light source from below). Sits in
+                # the top half of the groove, held a hair off the route
+                # ceiling and side walls.
+                strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
+                if strip is None:
+                    mesh = bpy.data.meshes.new('FB LED Strip')
+                    strip = bpy.data.objects.new('FB LED Strip', mesh)
+                    for coll in self.obj.users_collection:
+                        coll.objects.link(strip)
+                    strip.parent = self.obj
+                    strip['hb_part_role'] = PART_ROLE_FB_LED_STRIP
+                    strip['hb_fb_key'] = key
+                    strip['IS_2D_ANNOTATION'] = True
+                end_margin = (inch(1.0) if seg_len > inch(3.0)
+                              else seg_len * 0.1)
+                strip_top = z_fin + route_depth - 0.0005
+                strip_bottom = max(strip_top - inch(0.0625),
+                                   z_fin + 0.001)
+                self._rebuild_box_mesh(
+                    strip,
+                    x0 + end_margin, x0 + seg_len - end_margin,
+                    route_y0 + route_width * 0.1,
+                    route_y0 + route_width * 0.9,
+                    strip_bottom, strip_top)
+                mat = self._led_strip_material()
+                if strip.data.materials:
+                    strip.data.materials[0] = mat
+                else:
+                    strip.data.materials.append(mat)
+
+        # Stale segments (bay merged away, bottom newly removed); with
+        # the route off every cutter goes, and with the light off (or
+        # the route off) every light.
+        self._cleanup_finished_bottom(keep_keys=live_keys)
+        if not want_route:
+            self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LED_CUTTER,))
+        if not want_light:
+            self._cleanup_finished_bottom(
+                roles=(PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP))
+
+    # =====================================================================
     # Hutch finished back (uppers with ends extended down)
     # =====================================================================
     def _ensure_hutch_back(self):
@@ -4033,23 +4329,44 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _position_wing(self, wing_obj, layout, side, extend):
         """Stand the wing on the angled end line: full side height, the
-        hypotenuse as its Width, pivoted to phi at the back-outer corner.
-        Reuses _back_ext_line (shared with the carcass splay) and the solver's
-        square side position / dims, so the wing tracks height / depth and
-        sits at the side's base Z."""
+        hypotenuse as its Width, pivoted to phi. Reuses _back_ext_line
+        (shared with the carcass splay) and the solver's square side
+        position / dims, so the wing tracks height / depth and sits at the
+        side's base Z.
+
+        The front end of the line is carried to the FACE FRAME front plane
+        (side width + fft), not the carcass front, so the wing's front edge
+        lands flush with the front of the cabinet. A non-zero per-end wing
+        width overrides the automatic run: the panel keeps the same line
+        but stops that far from the front corner - the front edge stays
+        anchored on the cabinet, the back end pulls in (for wings that
+        would otherwise run past the end of a wall)."""
         if side == 'LEFT':
             pos = solver.left_side_position(layout)
             length, width, thickness = solver.left_side_dims(layout)
         else:
             pos = solver.right_side_position(layout)
             length, width, thickness = solver.right_side_dims(layout)
-        _front, back_target, phi, w_new = self._back_ext_line(side, extend, width)
+        front_target, back_target, phi, w_new = self._back_ext_line(
+            side, extend, width + layout.fft)
+        cab = self.obj.face_frame_cabinet
+        override = (cab.wing_width_left if side == 'LEFT'
+                    else cab.wing_width_right)
+        if override > 0.0:
+            w_eff = min(override, w_new)
+            # Origin sits w_eff along the line from the front corner, so
+            # the panel (which runs from its origin toward the front)
+            # always ends exactly on the front corner.
+            origin = front_target + (back_target - front_target).normalized() * w_eff
+        else:
+            w_eff = w_new
+            origin = back_target
         part = GeoNodeCutpart(wing_obj)
         part.set_input('Length', length)       # full cabinet (side) height
-        part.set_input('Width', w_new)         # hypotenuse along the end line
+        part.set_input('Width', w_eff)         # run along the end line
         part.set_input('Thickness', thickness)
         wing_obj.rotation_euler.z = phi
-        wing_obj.location = (back_target.x, back_target.y, pos[2])
+        wing_obj.location = (origin.x, origin.y, pos[2])
 
     def _cleanup_wing(self, side):
         """Remove one end's wing (checkbox off or extend back to 0)."""
@@ -4579,18 +4896,22 @@ class FaceFrameCabinet(GeoNodeCage):
         return shelf.obj
 
     def _position_overstool_shelf(self, shelf_obj, layout):
-        """Span the shelf between the leg inner faces, back-aligned (origin at
-        y=0, Mirror Y runs it forward), 6" deep, its bottom flush with the
-        leg bottom (OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM up from it)."""
+        """Span the shelf between the leg inner faces, seated against the
+        full-height back (Mirror Y runs its 6" depth forward), hung so the
+        clear opening from the box bottom down to the shelf top is exactly
+        OVERSTOOL_CLEAR_OPENING (6"). Clamped to the leg bottom if the
+        drop is too small to fit opening + shelf."""
         left_inner, right_inner, _front_y, leg_bottom = self._overstool_interior(layout)
         part = GeoNodeCutpart(shelf_obj)
         part.set_input('Length', right_inner - left_inner)
         part.set_input('Width', OVERSTOOL_SHELF_DEPTH)
         part.set_input('Thickness', OVERSTOOL_SHELF_THICKNESS)
-        z = leg_bottom + OVERSTOOL_SHELF_Z_ABOVE_LEG_BOTTOM
-        if layout.overstool_accessory == 'SHELF_AND_TOWEL_BAR':
-            z += OVERSTOOL_SHELF_Z_COMBO_RAISE   # tuck the bar below the shelf
-        shelf_obj.location = Vector((left_inner, 0.0, z))
+        drop = solver.side_extend_down(layout)
+        z = max(leg_bottom + drop - OVERSTOOL_CLEAR_OPENING
+                - OVERSTOOL_SHELF_THICKNESS, leg_bottom)
+        back_y = (solver.left_side_position(layout)[1]
+                  - solver.back_thickness(layout))
+        shelf_obj.location = Vector((left_inner, back_y, z))
         shelf_obj.rotation_euler = (0.0, 0.0, 0.0)
 
     def _ensure_overstool_towel_bar(self):
@@ -5530,7 +5851,7 @@ class FaceFrameCabinet(GeoNodeCage):
         / remove per side. Mirrors the end-stile build (rotation + mirror
         flags) shifted one face-frame thickness forward.
 
-        BLIND corner sides get the same applied part sized to the CWP
+        BLIND corner sides get the same applied part sized to the
         corner detail instead: inner edge a 1/4" reveal off the door
         front (which pulls back to a 1/4" overlay on that side - see
         solver.front_overlay), outer end running past the FF end to the
@@ -6755,6 +7076,13 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         cab_props = self.obj.face_frame_cabinet
         z_origin = cab_props.toe_kick_height if self._has_toe_kick() else 0.0
+        # Appliance-garage extension with the blind section opted OPEN
+        # below: the panel starts above the garage zone so the garage
+        # interior stays accessible into the corner.
+        garage_ext = float(self.obj.get('hb_garage_extension', 0.0))
+        if garage_ext > 0.0 and getattr(cab_props, 'garage_blind_opening',
+                                        False):
+            z_origin += garage_ext
         z_height = max(cab_props.height - z_origin, 0.0)
         return (z_origin, z_height)
 
@@ -7437,7 +7765,8 @@ class FaceFrameCabinet(GeoNodeCage):
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             if not drawer_look and not no_pulls:
-                self._create_pull_for_front(front, leaf['role'], leaf)
+                self._create_pull_for_front(front, leaf['role'], leaf,
+                                            op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
@@ -7707,12 +8036,18 @@ class FaceFrameCabinet(GeoNodeCage):
             cur = cur.parent
         return z
 
-    def _create_pull_for_front(self, front_part, role, leaf):
+    def _create_pull_for_front(self, front_part, role, leaf,
+                               op_props=None):
         """Attach a pull instance to `front_part` based on the cabinet's
         type and the front's role (DOOR / DRAWER_FRONT / PULLOUT_FRONT).
         FALSE_FRONT and INSET_PANEL skip - both are decorative
         and don't carry a pull. Returns the pull Object (or None if no
         pull is selected or the asset can't be loaded).
+
+        op_props (the owning opening's props, when the caller has one)
+        carries the per-opening pull override: a stored pull file wins
+        over the scene-wide selection, and the 'NONE' sentinel drops
+        the pull from this front entirely.
 
         The pull is parented to `front_part` so it inherits the swing /
         slide animation. Position is computed in front-part local space
@@ -7735,7 +8070,19 @@ class FaceFrameCabinet(GeoNodeCage):
         # like a swing door. hinge is threaded in via the leaf descriptor.
         hinge = leaf.get('hinge')
         is_flip = (kind == 'door' and hinge in ('TOP', 'BOTTOM'))
-        pull_obj = pulls.resolve_pull_object(scene_props, kind)
+        pull_obj = None
+        override = (getattr(op_props, 'pull_override', '')
+                    if op_props is not None else '')
+        if override == 'NONE':
+            return None
+        if override:
+            pull_obj = pulls.resolve_pull_override(
+                getattr(op_props, 'pull_override_category', ''),
+                override, scene_props)
+        if pull_obj is None:
+            pull_obj = pulls.resolve_pull_for(
+                scene_props, kind,
+                self.obj.face_frame_cabinet.cabinet_type)
         if pull_obj is None:
             return None
 
@@ -7787,16 +8134,22 @@ class FaceFrameCabinet(GeoNodeCage):
             # AND its length:
             #   - High door (bottom above the tall threshold) -> UPPER:
             #     small offset from door bottom, like an upper cabinet.
-            #   - Door long enough to fit the tall offset -> TALL:
-            #     offset from door bottom (~36" reach height).
-            #   - Short door (offset would land past the door top) ->
-            #     BASE: offset from door TOP, so the pull stays on the
-            #     door regardless of how short it is.
+            #   - Door long enough to fit the tall offset AND the full
+            #     pull bar above it -> TALL: offset from door bottom
+            #     (~36" reach height). The placement below centers the
+            #     bar at tall_offset + vert_half, so the bar's TOP
+            #     lands at tall_offset + 2 * vert_half - comparing the
+            #     length against the offset alone let doors barely
+            #     past the threshold (e.g. a 36-1/4" door with a 36"
+            #     offset) keep the tall placement with the bar hanging
+            #     off the door top.
+            #   - Otherwise -> BASE: offset from door TOP, so the pull
+            #     stays on the door regardless of how short it is.
             door_bottom_z = self._z_in_cabinet(front_part.obj)
             tall_offset = scene_props.pull_vertical_location_tall
             if door_bottom_z >= tall_offset:
                 x = scene_props.pull_vertical_location_upper + vert_half
-            elif length >= tall_offset:
+            elif length >= tall_offset + 2.0 * vert_half:
                 x = tall_offset + vert_half
             else:
                 x = length - scene_props.pull_vertical_location_base - vert_half
@@ -7916,11 +8269,28 @@ class FaceFrameCabinet(GeoNodeCage):
         box_dx = cage_x - rl - rr - 2.0 * side_clr
         box_dy = (cage_y - rear_clr) - front_back_y
         box_dz = cage_z - rt - rb - top_clr - bottom_clr
+
+        # Per-opening size overrides (right-click the box -> Drawer Box
+        # Size...). Overridden axes replace the clearance-derived size,
+        # clamped so the box can't exceed the opening hole or run past
+        # the carcass back. Height keeps the bottom-clearance anchor;
+        # depth grows rearward from the front anchor.
+        if op_props is not None:
+            if getattr(op_props, 'drawer_box_override_width', False):
+                box_dx = min(op_props.drawer_box_width, cage_x - rl - rr)
+            if getattr(op_props, 'drawer_box_override_height', False):
+                box_dz = min(op_props.drawer_box_height,
+                             cage_z - rt - rb - bottom_clr)
+            if getattr(op_props, 'drawer_box_override_depth', False):
+                box_dy = min(op_props.drawer_box_depth,
+                             cage_y - front_back_y)
         if box_dx <= 0.0 or box_dy <= 0.0 or box_dz <= 0.0:
             return None
 
         # Box origin (front-left-bottom corner) in opening-local coords.
-        op_x = rl + side_clr
+        # The centered-width form reduces to rl + side_clr at the auto
+        # width and keeps an overridden width centered in the hole.
+        op_x = rl + ((cage_x - rl - rr) - box_dx) / 2.0
         op_y = front_back_y
         op_z = rb + bottom_clr
 
@@ -7969,6 +8339,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.set_input('Dim Z', box_dz)
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
+        box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
         if chase_notch:
             # _iter_pipe_chase_cut_targets picks this up and booleans
             # the chase cutter into the box. The notch does NOT change
@@ -8050,10 +8421,14 @@ class FaceFrameCabinet(GeoNodeCage):
                     # height. Guarded on an empty collection so it runs once;
                     # the writes re-enter recalc but the _RECALCULATING guard
                     # absorbs that.
+                    from . import props_hb_face_frame
+                    preset = props_hb_face_frame.rollout_height_preset_for(
+                        item.rollout_height)
                     for _ in range(item.qty):
                         box = item.rollout_boxes.add()
-                        box.height_preset = 'CUSTOM'
-                        box.height = item.rollout_height
+                        box.height_preset = preset
+                        if preset == 'CUSTOM':
+                            box.height = item.rollout_height
 
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
@@ -8067,6 +8442,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind == 'CLOSET_ROD':
+                self._create_closet_rod_part(opening_obj, desc)
             elif kind in bar_storage.KINDS:
                 self._create_bar_storage_part(opening_obj, desc)
             elif kind in ('INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE'):
@@ -8440,6 +8817,40 @@ class FaceFrameCabinet(GeoNodeCage):
         obj['IS_FACE_FRAME_INTERIOR_PART'] = True
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         return obj
+
+    def _create_closet_rod_part(self, opening_obj, desc):
+        """Hang rod across the opening. Reuses the closets library's rod
+        node group (round/oval profile with end cups) and the scene rod
+        options for profile + finish, so rods look the same regardless of
+        which library the cabinet came from. Like bar storage it is NOT
+        tagged CABINET_PART: it is hardware, not a sheet-stock cutpart.
+        """
+        from ...hb_types import GeoNodeObject
+        from ..closets import const_closets as closet_const
+        rod = GeoNodeObject()
+        rod.create('GeoNodeClosetRod', desc['name'])
+        rod.obj.parent = opening_obj
+        rod.obj['hb_part_role'] = desc['role']
+        rod.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        rod.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        rod.obj.location = desc['position']
+        rod.set_input('Dim X', desc['dims'][0])
+        rod.set_input('Radius', closet_const.ROD_RADIUS)
+        rod.set_input('Cup Depth', closet_const.ROD_CUP_DEPTH)
+        rod.set_input('Cup Depth 2', closet_const.ROD_CUP_DEPTH_2)
+        props = getattr(bpy.context.scene, 'hb_closets', None)
+        rod.set_input(
+            'Is Oval',
+            getattr(props, 'closet_rod_type', 'OVAL') == 'OVAL')
+        try:
+            from ..closets import pulls_closets
+            rod_mat = pulls_closets.load_finish_material(
+                getattr(props, 'closet_rod_finish', 'Polished Chrome'))
+            if rod_mat is not None:
+                rod.set_input('Material', rod_mat)
+        except Exception:
+            pass
+        return rod
 
     def _create_rollout_box(self, opening_obj, desc):
         """Drawer box for ROLLOUT items. Uses GeoNodeDrawerBox parented
@@ -9273,6 +9684,91 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         mod.show_viewport = active
         mod.show_render = active
 
+    def _build_curved_leg_panel(self, width, height, depth, leg):
+        """(Re)build the curved support-leg panel mesh in place.
+
+        Profile in the leg's Y/Z plane (front at y = -depth, back at
+        y = 0): the straight full-height edge and the narrow foot post
+        sit at the BACK (against the wall), the full-depth arm crosses
+        the top, and an S-curve (vertical tangents both ends) sweeps
+        from the arm's front underside back onto the post -- so the
+        knee-clearance void faces the ROOM at the front-bottom. The
+        profile is extruded to the full cage width along X -- the leg's
+        WIDTH is the panel thickness. Mesh data is regenerated every
+        recalc so prop edits reshape the existing object (idempotent;
+        parenting, role and tags survive)."""
+        foot = min(max(leg.curved_foot_depth, inch(1.0)), depth)
+        band = min(max(leg.curved_top_band_height, inch(1.0)), height)
+        sweep = min(max(getattr(leg, 'curved_sweep_height', inch(12.0)),
+                        inch(1.0)),
+                    max(height - band - inch(1.0), inch(1.0)))
+        obj = None
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_LEG_CURVED_PANEL:
+                obj = child
+                break
+        if obj is None:
+            mesh = bpy.data.meshes.new('Curved Leg Panel')
+            obj = bpy.data.objects.new('Curved Leg Panel', mesh)
+            bpy.context.scene.collection.objects.link(obj)
+            obj.parent = self.obj
+            obj['hb_part_role'] = PART_ROLE_LEG_CURVED_PANEL
+            obj['IS_FINISHED'] = True
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_leg_product_commands'
+        obj.hide_viewport = False
+        obj.hide_render = False
+        obj.location = (0.0, 0.0, 0.0)
+
+        # Profile outline: back-bottom (foot at the wall), up the back
+        # edge, across the top arm to the front, down the arm's front
+        # face, then the S-curve back onto the post and straight down
+        # to the floor. The S is a cubic with VERTICAL tangents at both
+        # ends: it leaves the arm tip dropping, sweeps toward the wall,
+        # and lands on the post dropping -- the catalog bracket shape.
+        segs = 24
+        zb = height - band            # arm underside
+        zp = zb - sweep               # post top (curve lands here)
+        prof = [(0.0, 0.0), (0.0, height), (-depth, height),
+                (-depth, zb)]
+        k = 0.45 * sweep              # vertical handle length
+        p1y, p1z = -depth, zb
+        c1y, c1z = -depth, zb - k
+        c2y, c2z = -foot, zp + k
+        p2y, p2z = -foot, zp
+        for i in range(1, segs + 1):
+            t = i / segs
+            u = 1.0 - t
+            prof.append((
+                u * u * u * p1y + 3 * u * u * t * c1y
+                + 3 * u * t * t * c2y + t * t * t * p2y,
+                u * u * u * p1z + 3 * u * u * t * c1z
+                + 3 * u * t * t * c2z + t * t * t * p2z,
+            ))
+        # Straight post edge from the curve landing down to the floor;
+        # the face closes back to the back-bottom corner along the floor.
+        prof.append((-foot, 0.0))
+
+        verts = [(0.0, y, z) for y, z in prof]
+        verts += [(width, y, z) for y, z in prof]
+        n = len(prof)
+        faces = [list(range(n - 1, -1, -1)),           # left cap
+                 list(range(n, 2 * n))]                # right cap
+        for i in range(n):
+            j = (i + 1) % n
+            faces.append([i, j, n + j, n + i])
+        me = obj.data
+        me.clear_geometry()
+        me.from_pydata(verts, [], faces)
+        # from_pydata face winding is mixed (profile is authored CW);
+        # recalc so all normals point outward.
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+        return obj
+
     # ------------------------------------------------------------------
     # Recalc (bespoke; bypasses the bay solver)
     # ------------------------------------------------------------------
@@ -9287,6 +9783,29 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         self.set_input('Dim X', width)
         self.set_input('Dim Y', depth)
         self.set_input('Dim Z', height)
+
+        # Curved support leg: the whole leg is ONE profiled panel; every
+        # standard part is hidden and the bespoke mesh is (re)built.
+        if getattr(leg, 'curved', False):
+            for child in self.obj.children:
+                role = child.get('hb_part_role')
+                if role and str(role).startswith('LEG_') \
+                        and role != PART_ROLE_LEG_CURVED_PANEL:
+                    child.hide_viewport = True
+                    child.hide_render = True
+            self._build_curved_leg_panel(width, height, depth, leg)
+            return
+        # Toggled back off: hide the curved panel if one was built, and
+        # restore the stile (the only standard part whose visibility the
+        # layout below does not manage).
+        for child in self.obj.children:
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_LEG_CURVED_PANEL:
+                child.hide_viewport = True
+                child.hide_render = True
+            elif role == PART_ROLE_LEG_STILE:
+                child.hide_viewport = False
+                child.hide_render = False
 
         mt = leg.material_thickness
         fft = leg.face_frame_thickness
@@ -10547,6 +11066,12 @@ def _reapply_selection_mode_highlights(root):
     def matches(obj):
         if mode == 'Face Frame':
             return obj.get('hb_part_role') in FACE_FRAME_PART_ROLES
+        # Drawer boxes join Interiors mode by role - deliberately NOT
+        # tagged IS_FACE_FRAME_INTERIOR_PART, which would also send
+        # them to the dashed hidden-line pass on 2D layout views.
+        if (mode == 'Interiors'
+                and obj.get('hb_part_role') == PART_ROLE_DRAWER_BOX):
+            return True
         if mode == 'Cabinets':
             if obj.get('IS_APPLIANCE'):
                 return True

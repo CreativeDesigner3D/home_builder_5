@@ -17,6 +17,8 @@ dispatches by the active part's hb_part_role to the appropriate prop:
 Width writes also flip the matching unlock flag so a later style apply
 doesn't reset the user's value.
 """
+import os
+
 import bpy
 from bpy.props import BoolProperty, FloatProperty, StringProperty
 
@@ -1200,6 +1202,41 @@ def _on_df_grid(self, context):
         _reapply_frame_store(store, front)
 
 
+def _front_has_grid_mullion(front_obj):
+    """True when the front's door style renders a Wood Mullion (GRID)
+    panel -- the only panel kind whose lite counts are overridable.
+    Resolves the style the same way _reapply_front_style does."""
+    if front_obj is None:
+        return False
+    name = front_obj.get('DOOR_STYLE_NAME')
+    if not name:
+        return False
+    from .. import props_hb_face_frame as _props
+    from .. import style_options
+    ff = _props.get_style_props()
+    if ff is None:
+        return False
+    role = front_obj.get('hb_part_role')
+    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
+            else ff.door_styles)
+    for ds in pool:
+        if ds.name == name:
+            pkind = style_options.panel_kind(getattr(ds, 'front_panel', ''))
+            return (pkind.get('kind') == 'GLASS'
+                    and pkind.get('mullion') == 'GRID')
+    return False
+
+
+def _on_df_mullion(self, context):
+    """Shared update for the Wood Mullion lite-count overrides."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_MULLION_COLS'] = self.mullion_lites_wide
+        store['HB_FRAME_OVR_MULLION_ROWS'] = self.mullion_lites_high
+        _reapply_frame_store(store, front)
+
+
 def _on_df_lock(self, context):
     """Lock pins the whole interface: snapshot the shown values onto the
     OPENING-cage store and flag it locked so the solver honors them on every
@@ -1220,6 +1257,8 @@ def _on_df_lock(self, context):
         store['HB_FRAME_OVR_MID_STILE_COUNT'] = self.mid_stiles
         store['HB_FRAME_OVR_ROW_RATIOS'] = self.row_ratios
         store['HB_FRAME_OVR_COL_RATIOS'] = self.col_ratios
+        store['HB_FRAME_OVR_MULLION_COLS'] = self.mullion_lites_wide
+        store['HB_FRAME_OVR_MULLION_ROWS'] = self.mullion_lites_high
         store['HB_FRAME_FRAME_LOCKED'] = True
     else:
         store['HB_FRAME_FRAME_LOCKED'] = False
@@ -1302,6 +1341,18 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
                     "(blank = equal columns)",
         default='', update=_on_df_grid)  # type: ignore
 
+    # Wood Mullion lite-count overrides (GRID pattern only). 0 = the
+    # pattern's standard counts (2 across, rows from the height chart).
+    mullion_lites_wide: bpy.props.IntProperty(
+        name="Lites Wide", min=0, max=12, default=0,
+        description="Wood Mullion lites across (0 = standard 2)",
+        update=_on_df_mullion)  # type: ignore
+    mullion_lites_high: bpy.props.IntProperty(
+        name="Lites High", min=0, max=12, default=0,
+        description="Wood Mullion lites high (0 = automatic from the "
+                    "opening-height chart)",
+        update=_on_df_mullion)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return has_door_style_modifier(context.active_object)
@@ -1339,11 +1390,15 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             self.mid_stiles = int(store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0)
             self.row_ratios = str(store.get('HB_FRAME_OVR_ROW_RATIOS', '') or '')
             self.col_ratios = str(store.get('HB_FRAME_OVR_COL_RATIOS', '') or '')
+            self.mullion_lites_wide = int(store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
+            self.mullion_lites_high = int(store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
         else:
             self.mid_rails = 0
             self.mid_stiles = 0
             self.row_ratios = ''
             self.col_ratios = ''
+            self.mullion_lites_wide = 0
+            self.mullion_lites_high = 0
         self.lock_frame = locked
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
@@ -1383,6 +1438,15 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         row = grid.row()
         row.enabled = self.mid_stiles > 0
         row.prop(self, 'col_ratios', text="Col Widths")
+
+        # Wood Mullion lite counts -- only shown when the front's style
+        # actually renders a GRID mullion panel.
+        if _front_has_grid_mullion(_door_frame_for_dialog(self)):
+            body.separator()
+            mrow = body.row(align=True)
+            mrow.label(text="Mullion:")
+            mrow.prop(self, 'mullion_lites_wide', text="Wide")
+            mrow.prop(self, 'mullion_lites_high', text="High")
 
         # Read-only readout of the resulting interior-panel heights. Lives in
         # the always-enabled column (not the lock-greyed body) so it's visible
@@ -1826,18 +1890,28 @@ _SIDE_PANEL_ROLES = frozenset({
     # so it works for corners once the side panel is reachable here.
     types_face_frame_corner.PART_ROLE_CORNER_LEFT_SIDE,
     types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE,
+    # The carcass back and its finished replacement both resolve to the
+    # BACK side of the dialog. Corner backs are excluded - their back
+    # conditions are no-ops (against walls).
+    types_face_frame.PART_ROLE_BACK,
+    types_face_frame.PART_ROLE_FINISHED_BACK,
+})
+
+_BACK_PANEL_ROLES = frozenset({
+    types_face_frame.PART_ROLE_BACK,
+    types_face_frame.PART_ROLE_FINISHED_BACK,
 })
 
 
 class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
-    """Set the finished-end condition for the clicked side panel.
+    """Set the finished-end condition for the clicked side or back panel.
 
-    Launched from a left / right carcass side's right-click menu. Resolves
-    the side from the clicked part's role and shows only that side's
-    finished-end type enum (plus the flush-X amount when FLUSH_X is chosen).
-    Editing the enum fires its existing update callback, which flips that
-    side's finish-end auto flag off so exposure detection won't clobber the
-    user's choice.
+    Launched from a left / right carcass side's (or the back's) right-click
+    menu. Resolves the side from the clicked part's role and shows only that
+    side's finished-end type enum (plus the flush-X amount when FLUSH_X is
+    chosen; the back shows its Extend L / R pair instead). Editing the enum
+    fires its existing update callback, which flips that side's finish-end
+    auto flag off so exposure detection won't clobber the user's choice.
     """
     bl_idname = "hb_face_frame.set_finished_end_condition"
     bl_label = "Set Finished End Condition"
@@ -1846,7 +1920,8 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
 
     side: bpy.props.EnumProperty(
         name="Side",
-        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", ""),
+               ('BACK', "Back", "")],
         default='LEFT',
     )  # type: ignore
 
@@ -1858,13 +1933,14 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         return obj.get('hb_part_role') in _SIDE_PANEL_ROLES
 
     def invoke(self, context, event):
-        # The clicked side panel is the active object; derive the side from
+        # The clicked panel is the active object; derive the side from
         # its role so the dialog edits the matching cabinet prop.
         obj = context.active_object
-        if (obj is not None
-                and obj.get('hb_part_role') in (
-                    types_face_frame.PART_ROLE_RIGHT_SIDE,
-                    types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE)):
+        role = obj.get('hb_part_role') if obj is not None else None
+        if role in _BACK_PANEL_ROLES:
+            self.side = 'BACK'
+        elif role in (types_face_frame.PART_ROLE_RIGHT_SIDE,
+                      types_face_frame_corner.PART_ROLE_CORNER_RIGHT_SIDE):
             self.side = 'RIGHT'
         else:
             self.side = 'LEFT'
@@ -1879,6 +1955,17 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         cab = root.face_frame_cabinet
         key = self.side.lower()
         fin_type = getattr(cab, f'{key}_finished_end_condition')
+        if self.side == 'BACK':
+            # Mirror the Finished Ends panel's back row: no flush-X
+            # amount, no scribe, no return build - just the type plus
+            # its two extends past the cabinet ends once finished.
+            layout.prop(cab, 'back_finished_end_condition',
+                        text="Back Finished End")
+            if fin_type != 'UNFINISHED':
+                row = layout.row(align=True)
+                row.prop(cab, 'back_finished_extend_left', text="Extend L")
+                row.prop(cab, 'back_finished_extend_right', text="Extend R")
+            return
         layout.prop(cab, f'{key}_finished_end_condition',
                     text=f"{self.side.title()} Finished End")
         # FLUSH_X needs its strip width to be meaningful.
@@ -1905,8 +1992,76 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
                             text="Side Return")
                 layout.prop(cab, f'{key}_side_return_stile_type',
                             text="Return Stile")
+        # Symmetric finished ends are common (both ends of an island /
+        # run get the same extend-back + return build), so offer a
+        # one-click copy to the opposite side. Runs immediately; the
+        # dialog stays open.
+        other = 'RIGHT' if self.side == 'LEFT' else 'LEFT'
+        layout.separator()
+        props = layout.operator(
+            'hb_face_frame.apply_finished_end_to_other_side',
+            text=f"Apply to {other.title()} Side", icon='DUPLICATE')
+        props.cabinet_name = root.name
+        props.side = self.side
 
     def execute(self, context):
+        return {'FINISHED'}
+
+
+# Everything the Set Finished End Condition dialog can edit for a side,
+# minus the side prefix. Copied verbatim by Apply to Other Side.
+_FIN_END_SIDE_PROPS = (
+    'finished_end_condition',
+    'flush_x_amount',
+    'side_finished_extend_back',
+    'side_return_width',
+    'side_return_panel_type',
+    'side_return_stile_type',
+)
+
+
+class hb_face_frame_OT_apply_finished_end_to_other_side(bpy.types.Operator):
+    """Copy one side's finished-end settings to the opposite side.
+
+    Drawn as a button inside the Set Finished End Condition dialog.
+    Copies every field that dialog can edit (see _FIN_END_SIDE_PROPS)
+    from the clicked side to the other, so a symmetric extend-back /
+    return-panel build only has to be entered once. Writing the enum
+    fires its user-set callback, which flips the target side's
+    finish-end auto flag off - the copy is pinned exactly like a manual
+    edit would be.
+    """
+    bl_idname = "hb_face_frame.apply_finished_end_to_other_side"
+    bl_label = "Apply to Other Side"
+    bl_description = (
+        "Copy this side's finished-end settings (type, flush amount, "
+        "extend back, return width and return member types) to the "
+        "opposite side"
+    )
+    bl_options = {'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(name="Cabinet", default="")  # type: ignore
+    side: bpy.props.EnumProperty(
+        name="Source Side",
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='LEFT',
+    )  # type: ignore
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.cabinet_name)
+        root = types_face_frame.find_cabinet_root(obj) if obj else None
+        if root is None:
+            self.report({'WARNING'}, "No face frame cabinet found")
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        src = self.side.lower()
+        dst = 'right' if src == 'left' else 'left'
+        with types_face_frame.suspend_recalc():
+            for prop in _FIN_END_SIDE_PROPS:
+                setattr(cab, f'{dst}_{prop}', getattr(cab, f'{src}_{prop}'))
+        self.report(
+            {'INFO'},
+            f"Copied {src} finished end settings to {dst} side")
         return {'FINISHED'}
 
 
@@ -2157,9 +2312,274 @@ class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Front roles that carry a pull - the roles the Set Pull command
+# surfaces on.
+_ROLES_WITH_PULL = frozenset({
+    types_face_frame.PART_ROLE_DOOR,
+    types_face_frame.PART_ROLE_DRAWER_FRONT,
+    types_face_frame.PART_ROLE_PULLOUT_FRONT,
+    types_face_frame.PART_ROLE_TILT_OUT,
+})
+
+
+def _set_pull_category_items(self, context):
+    """DEFAULT (scene selection) + the real pull categories + NO_PULL."""
+    from .. import pulls
+    items = [('DEFAULT', "Scene Default",
+              "Use the scene-wide pull selection for this front kind")]
+    for cat_id, label, desc in pulls.get_pull_categories():
+        if cat_id == 'NONE':
+            continue
+        items.append((cat_id, label, desc))
+    items.append(('NO_PULL', "No Pull", "Remove the pull from the front"))
+    return items
+
+
+def _set_pull_items(self, context):
+    """Pulls in the operator's chosen category; a placeholder when the
+    choice needs no pull file (scene default / no pull)."""
+    from .. import pulls
+    if self.category in ('DEFAULT', 'NO_PULL'):
+        return [('NONE', "-", "")]
+    real_cat = None
+    for cat_id, label, _d in pulls.get_pull_categories():
+        if cat_id == self.category:
+            real_cat = label
+            break
+    items = pulls.get_pulls_in_category(real_cat) if real_cat else []
+    return items or [('NONE', "-", "No pulls in this category")]
+
+
+class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
+    """Set the pull on the selected door / drawer fronts. The choice is
+    stored on each front's owning opening (fronts are rebuilt every
+    recalc), so it sticks: Scene Default returns the front to the
+    scene-wide selection, No Pull removes the pull from the front, and
+    a specific pull overrides just these fronts."""
+    bl_idname = "hb_face_frame.set_front_pull"
+    bl_label = "Set Pull"
+    bl_description = ("Set the pull used by the selected fronts "
+                      "(stored per opening)")
+    bl_options = {'UNDO'}
+
+    category: bpy.props.EnumProperty(
+        name="Category", items=_set_pull_category_items)  # type: ignore
+    pull: bpy.props.EnumProperty(
+        name="Pull", items=_set_pull_items)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') in _ROLES_WITH_PULL)
+
+    def _target_openings(self, context):
+        """Owning opening cages of every selected front part. Corner
+        cabinet doors have no opening cage and drop out (reported)."""
+        from . import ops_cabinet
+        openings = {}
+        skipped = 0
+        for obj in context.selected_objects:
+            if obj.get('hb_part_role') not in _ROLES_WITH_PULL:
+                continue
+            opening = ops_cabinet._find_owning_opening(obj)
+            if opening is None:
+                skipped += 1
+                continue
+            openings[opening.name] = opening
+        return list(openings.values()), skipped
+
+    def invoke(self, context, event):
+        # Seed from the active front's current override so reopening
+        # the dialog shows the standing choice.
+        from . import ops_cabinet
+        opening = ops_cabinet._find_owning_opening(context.active_object)
+        if opening is not None:
+            current = opening.face_frame_opening.pull_override
+            if current == 'NONE':
+                self.category = 'NO_PULL'
+            elif current:
+                from .. import pulls
+                cat = opening.face_frame_opening.pull_override_category
+                for cat_id, label, _d in pulls.get_pull_categories():
+                    if label == cat:
+                        self.category = cat_id
+                        break
+                for item_id, _l, _d in _set_pull_items(self, context):
+                    if item_id == current:
+                        self.pull = item_id
+                        break
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        from .. import pulls
+        col = self.layout.column(align=True)
+        col.prop(self, 'category', text="Category")
+        if self.category not in ('DEFAULT', 'NO_PULL'):
+            col.prop(self, 'pull', text="Pull")
+            if self.pull not in ('NONE', ''):
+                real_cat = None
+                for cat_id, label, _d in pulls.get_pull_categories():
+                    if cat_id == self.category:
+                        real_cat = label
+                        break
+                icon_id = pulls.load_pull_thumbnail_icon(
+                    self.pull, real_cat)
+                if icon_id:
+                    col.template_icon(icon_value=icon_id, scale=4.0)
+
+    def execute(self, context):
+        from .. import pulls
+        openings, skipped = self._target_openings(context)
+        if not openings:
+            self.report({'WARNING'},
+                        "No fronts with openings selected"
+                        + (" (corner cabinet doors use the scene pull)"
+                           if skipped else ""))
+            return {'CANCELLED'}
+        if self.category == 'DEFAULT':
+            override, override_cat = '', ''
+        elif self.category == 'NO_PULL':
+            override, override_cat = 'NONE', ''
+        else:
+            if self.pull in ('NONE', ''):
+                self.report({'WARNING'}, "Pick a pull from the category")
+                return {'CANCELLED'}
+            override = self.pull
+            override_cat = ''
+            for cat_id, label, _d in pulls.get_pull_categories():
+                if cat_id == self.category:
+                    override_cat = label
+                    break
+        with types_face_frame.suspend_recalc():
+            for opening in openings:
+                op_props = opening.face_frame_opening
+                op_props.pull_override_category = override_cat
+                op_props.pull_override = override
+        msg = (f"{len(openings)} opening(s) set to "
+               + ("scene default" if self.category == 'DEFAULT'
+                  else "no pull" if self.category == 'NO_PULL'
+                  else os.path.splitext(override)[0]))
+        if skipped:
+            msg += f"; {skipped} corner front(s) skipped"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
+    """Set the finished bottom condition on the clicked upper cabinet.
+    Live-bound to the cabinet's props (the finish panel, LED route,
+    and optional render light rebuild as options change); the room
+    button copies this cabinet's condition to every standard upper in
+    the scene."""
+    bl_idname = "hb_face_frame.set_finished_bottom"
+    bl_label = "Set Finished Bottom"
+    bl_description = ("Set this upper cabinet's finished bottom "
+                      "condition (finish panel + LED route)")
+    bl_options = {'UNDO'}
+
+    cabinet_name: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        root = types_face_frame.find_cabinet_root(obj)
+        return (root is not None
+                and root.get('CABINET_TYPE') == 'UPPER'
+                and root.face_frame_cabinet.corner_type == 'NONE')
+
+    def invoke(self, context, event):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        self.cabinet_name = root.name
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        root = bpy.data.objects.get(self.cabinet_name)
+        if root is None:
+            layout.label(text="Cabinet not found", icon='INFO')
+            return
+        cab = root.face_frame_cabinet
+        col = layout.column(align=True)
+        col.prop(cab, 'finished_bottom_type', text="Condition")
+        sub = col.column(align=True)
+        sub.enabled = cab.finished_bottom_type != 'NONE'
+        sub.prop(cab, 'finished_bottom_led_route', text="LED Route")
+        route = sub.column(align=True)
+        route.enabled = cab.finished_bottom_led_route
+        route.prop(cab, 'finished_bottom_route_width', text="Route Width")
+        route.prop(cab, 'finished_bottom_route_depth', text="Route Depth")
+        route.prop(cab, 'finished_bottom_route_inset', text="Route Inset")
+        route.prop(cab, 'finished_bottom_light', text="LED Light (Render)")
+        col.separator()
+        col.operator("hb_face_frame.apply_finished_bottom_to_room",
+                     text="Apply to All Uppers in Room",
+                     icon='DUPLICATE').cabinet_name = self.cabinet_name
+
+    def execute(self, context):
+        # Live-bound via the cabinet props' update callbacks.
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
+    """Copy the named cabinet's finished bottom condition to every
+    standard upper cabinet in the scene."""
+    bl_idname = "hb_face_frame.apply_finished_bottom_to_room"
+    bl_label = "Apply Finished Bottom to Room"
+    bl_description = ("Copy this finished bottom condition to every "
+                      "upper cabinet in the room")
+    bl_options = {'UNDO'}
+
+    cabinet_name: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    def execute(self, context):
+        source = bpy.data.objects.get(self.cabinet_name)
+        if source is None:
+            source = types_face_frame.find_cabinet_root(
+                context.active_object)
+        if source is None:
+            self.report({'WARNING'}, "No source cabinet")
+            return {'CANCELLED'}
+        src_cab = source.face_frame_cabinet
+        count = 0
+        with types_face_frame.suspend_recalc():
+            for obj in context.scene.objects:
+                if not obj.get(types_face_frame.TAG_CABINET_CAGE):
+                    continue
+                if obj.get('CABINET_TYPE') != 'UPPER':
+                    continue
+                cab = obj.face_frame_cabinet
+                if cab.corner_type != 'NONE':
+                    continue
+                cab.finished_bottom_type = src_cab.finished_bottom_type
+                cab.finished_bottom_led_route = \
+                    src_cab.finished_bottom_led_route
+                cab.finished_bottom_route_width = \
+                    src_cab.finished_bottom_route_width
+                cab.finished_bottom_route_depth = \
+                    src_cab.finished_bottom_route_depth
+                cab.finished_bottom_route_inset = \
+                    src_cab.finished_bottom_route_inset
+                cab.finished_bottom_light = src_cab.finished_bottom_light
+                count += 1
+        self.report({'INFO'},
+                    f"Finished bottom applied to {count} upper(s)")
+        return {'FINISHED'}
+
+
 classes = (
+    hb_face_frame_OT_set_front_pull,
+    hb_face_frame_OT_set_finished_bottom,
+    hb_face_frame_OT_apply_finished_bottom_to_room,
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_finished_end_condition,
+    hb_face_frame_OT_apply_finished_end_to_other_side,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,

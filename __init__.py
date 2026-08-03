@@ -16,11 +16,13 @@ from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
 from .operators import viewport_hud
+from .operators import room_dim_overlay
 from .operators import ops_general
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
+from .product_libraries.common import door_window_geo
 from . import molding
 # Catalog browser - intentionally disabled. The package lives at
 # home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
@@ -34,7 +36,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 1, 39),
+    "version": (5, 1, 42),
     "blender": (5, 0, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -240,6 +242,14 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         col.operator("home_builder.remove_asset_library", text="", icon='REMOVE')
         col.separator()
         col.operator("home_builder.refresh_asset_libraries", text="", icon='FILE_REFRESH')
+
+        box = layout.box()
+        box.label(text="Cabinet Pull Libraries", icon='TOOL_SETTINGS')
+        row = box.row(align=True)
+        row.operator("hb_face_frame.install_pull_library",
+                     text="Install Pull Library...", icon='IMPORT')
+        row.operator("hb_face_frame.open_pull_library_folder",
+                     text="", icon='FILE_FOLDER')
         layout.prop(self, "wall_color")
         layout.prop(self, "cabinet_color")
         layout.prop(self, "door_window_color")
@@ -264,6 +274,7 @@ def register():
     ops_stairs.register()
     scene_navigator.register()
     viewport_hud.register()
+    room_dim_overlay.register()
     ops_general.register()
     ops.register()
     view3d_sidebar.register()
@@ -273,6 +284,7 @@ def register():
     face_frame.register()
     frameless.register()
     wood_hoods.register()
+    door_window_geo.register()
     molding.register()
     # catalog.register()
 
@@ -302,6 +314,7 @@ def unregister():
     export.unregister()
     scene_navigator.unregister()
     viewport_hud.unregister()
+    room_dim_overlay.unregister()
     ops_stairs.unregister()
     ops_general.unregister()
     ops.unregister()
@@ -311,6 +324,7 @@ def unregister():
     # catalog.unregister()
     closets.unregister()
     molding.unregister()
+    door_window_geo.unregister()
     wood_hoods.unregister()
     face_frame.unregister()
     frameless.unregister()
