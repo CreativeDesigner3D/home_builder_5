@@ -14,6 +14,8 @@ set:
                     the hang height.
 - Fixed SHELVES     drag Z: the shelf slides between its neighbors;
                     the two openings trade height.
+- DIVISIONS         drag X: the division slides between its neighbors
+                    in its own segment; the two columns trade width.
 
 All writes go through the same props/idprops the overlay labels commit,
 so locking, propagation, and the split reconciler behave identically.
@@ -94,7 +96,7 @@ def _bkey(b):
     if b is None:
         return None
     return (b['kind'], b['root'], b.get('bay'), b.get('shelf'),
-            b.get('left'), b.get('side'))
+            b.get('div'), b.get('left'), b.get('side'))
 
 
 def _pick_boundary(context, event, boundaries):
@@ -375,6 +377,30 @@ def _collect_boundaries(scene, mode=None):
                     out.append(dict(kind='SHELF', root=root.name,
                                     bay=bay.name, shelf=sh.name, side=side,
                                     p0=p0, p1=p1, axis=z_axis))
+                # Divisions: verticals standing inside one segment,
+                # handled on the same face as that segment's shelves.
+                # The handle runs the height of the part, so a division
+                # in an upper segment is grabbed where it actually is.
+                x_axis = (b_mw.to_3x3()
+                          @ Vector((1.0, 0.0, 0.0))).normalized()
+                for dv in [c for c in bay.children
+                           if c.get('hb_part_role')
+                           == types_closets.PART_ROLE_DIVISION
+                           and c.get(types_closets.PROP_OPENING_SIDE,
+                                     'FRONT') == side]:
+                    try:
+                        d_len = GeoNodeCutpart(dv).get_input('Length')
+                        d_th = GeoNodeCutpart(dv).get_input('Thickness')
+                    except Exception:
+                        continue
+                    x = dv.location.x + d_th / 2.0
+                    z0 = dv.location.z
+                    y_face = -b_d if side != 'BACK' else 0.0
+                    p0 = b_mw @ Vector((x, y_face, z0))
+                    p1 = b_mw @ Vector((x, y_face, z0 + d_len))
+                    out.append(dict(kind='DIVISION', root=root.name,
+                                    bay=bay.name, div=dv.name, side=side,
+                                    p0=p0, p1=p1, axis=x_axis))
     return out
 
 
@@ -633,6 +659,9 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             snap['z'] = sh.get('hb_z_offset', 0.0)
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            snap['x'] = dv.get('hb_x_offset', 0.0)
         elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
             bay = bpy.data.objects.get(b['bay'])
             snap['bh'] = bay.hb_closet_bay.height
@@ -952,6 +981,19 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             self._drag_text = "%s below | %s above" % (
                 units.unit_to_string(us, below),
                 units.unit_to_string(us, above))
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            bay = bpy.data.objects.get(b['bay'])
+            if dv is None or bay is None:
+                return
+            new_x = self._clamp_division(
+                bay, dv, self._snap_value(snap['x'] + delta, event))
+            dv['hb_x_offset'] = float(new_x)
+            types_closets.recalculate_closet_starter(root)
+            left, right = self._division_gaps(bay, dv)
+            self._drag_text = "%s | %s" % (
+                units.unit_to_string(us, left),
+                units.unit_to_string(us, right))
         elif b['kind'] == 'BAY_TOP':
             bay = bpy.data.objects.get(b['bay'])
             if bay is None:
@@ -1063,6 +1105,69 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 above_bound = min(above_bound, oz)
         return z - below_bound, above_bound - (z + st)
 
+    def _division_row(self, bay, dv):
+        """The other divisions standing in this one's segment, left to
+        right. A division only has to keep clear of the ones sharing
+        its row - one in the segment above or below is nothing to it,
+        since a shelf runs between them."""
+        side = dv.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+        row = int(dv.get('hb_row', 0))
+        others = [c for c in bay.children
+                  if c.get('hb_part_role')
+                  == types_closets.PART_ROLE_DIVISION
+                  and c.get(types_closets.PROP_OPENING_SIDE,
+                            'FRONT') == side
+                  and int(c.get('hb_row', 0)) == row and c is not dv]
+        others.sort(key=lambda o: o.get('hb_x_offset', 0.0))
+        return others
+
+    def _division_bounds(self, bay, dv):
+        """(low, high) the division's left face is allowed between, so
+        neither column either side of it comes out too narrow to
+        build."""
+        from .. import const_closets as const
+        pt = types_closets.run_sizes(bay).panel_thickness
+        b_w, _bh = split_preview._cage_dims(bay)
+        lo = const.DIVISION_MIN_WIDTH
+        hi = b_w - pt - const.DIVISION_MIN_WIDTH
+        x = dv.get('hb_x_offset', 0.0)
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox < x:
+                lo = max(lo, ox + pt + const.DIVISION_MIN_WIDTH)
+            else:
+                hi = min(hi, ox - pt - const.DIVISION_MIN_WIDTH)
+        return lo, hi
+
+    def _clamp_division(self, bay, dv, new_x):
+        lo, hi = self._division_bounds(bay, dv)
+        if hi < lo:
+            return lo
+        return max(lo, min(new_x, hi))
+
+    def _division_left_edge(self, bay, dv):
+        """Where the column to the left of this division starts."""
+        pt = types_closets.run_sizes(bay).panel_thickness
+        x = dv.get('hb_x_offset', 0.0)
+        base = 0.0
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox < x:
+                base = max(base, ox + pt)
+        return base
+
+    def _division_gaps(self, bay, dv):
+        """(column left, column right) for the drag readout."""
+        pt = types_closets.run_sizes(bay).panel_thickness
+        b_w, _bh = split_preview._cage_dims(bay)
+        x = dv.get('hb_x_offset', 0.0)
+        right_bound = b_w
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox >= x:
+                right_bound = min(right_bound, ox)
+        return x - self._division_left_edge(bay, dv), right_bound - (x + pt)
+
     def _end_drag(self, context, commit):
         if not self._drag_active:
             return
@@ -1123,6 +1228,11 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     sh = bpy.data.objects.get(b['shelf'])
                     if sh is not None:
                         sh['hb_z_offset'] = float(snap['z'])
+                        types_closets.recalculate_closet_starter(root)
+                elif b['kind'] == 'DIVISION':
+                    dv = bpy.data.objects.get(b['div'])
+                    if dv is not None:
+                        dv['hb_x_offset'] = float(snap['x'])
                         types_closets.recalculate_closet_starter(root)
                 elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
                     bay = bpy.data.objects.get(b['bay'])
@@ -1200,6 +1310,17 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             bay = bpy.data.objects.get(b['bay'])
             if sh is not None and bay is not None:
                 sh['hb_z_offset'] = float(self._clamp_shelf(bay, sh, value))
+                types_closets.recalculate_closet_starter(root)
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            bay = bpy.data.objects.get(b['bay'])
+            if dv is not None and bay is not None:
+                # A typed number is the width of the column to the LEFT
+                # of the division, the way typing on a panel is the
+                # width of the bay to its left.
+                base = self._division_left_edge(bay, dv)
+                dv['hb_x_offset'] = float(
+                    self._clamp_division(bay, dv, base + value))
                 types_closets.recalculate_closet_starter(root)
         elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
             bay = bpy.data.objects.get(b['bay'])
