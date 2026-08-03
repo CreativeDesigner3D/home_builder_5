@@ -4037,6 +4037,17 @@ class Face_Frame_Door_Style(PropertyGroup):
             secs = self.resolve_mesh_sections(
                 front_thickness, eff_panel_inset, _pkind, member_sec,
                 edge_name=self._cabinet_edge_profile(front_obj))
+            # Locked-frame mullion override: the Set Door Frame dialog
+            # can pin the Wood Mullion grid's lite counts per front
+            # (0 / absent = the pattern's standard counts).
+            if (frame_locked and secs.get('mullion') is not None
+                    and secs['mullion'].get('pattern') == 'GRID'):
+                _mrows = int(frame_store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
+                _mcols = int(frame_store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
+                if _mrows > 0:
+                    secs['mullion']['rows'] = _mrows
+                if _mcols > 0:
+                    secs['mullion']['cols'] = _mcols
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,

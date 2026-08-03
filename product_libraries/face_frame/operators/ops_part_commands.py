@@ -1202,6 +1202,41 @@ def _on_df_grid(self, context):
         _reapply_frame_store(store, front)
 
 
+def _front_has_grid_mullion(front_obj):
+    """True when the front's door style renders a Wood Mullion (GRID)
+    panel -- the only panel kind whose lite counts are overridable.
+    Resolves the style the same way _reapply_front_style does."""
+    if front_obj is None:
+        return False
+    name = front_obj.get('DOOR_STYLE_NAME')
+    if not name:
+        return False
+    from .. import props_hb_face_frame as _props
+    from .. import style_options
+    ff = _props.get_style_props()
+    if ff is None:
+        return False
+    role = front_obj.get('hb_part_role')
+    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
+            else ff.door_styles)
+    for ds in pool:
+        if ds.name == name:
+            pkind = style_options.panel_kind(getattr(ds, 'front_panel', ''))
+            return (pkind.get('kind') == 'GLASS'
+                    and pkind.get('mullion') == 'GRID')
+    return False
+
+
+def _on_df_mullion(self, context):
+    """Shared update for the Wood Mullion lite-count overrides."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_MULLION_COLS'] = self.mullion_lites_wide
+        store['HB_FRAME_OVR_MULLION_ROWS'] = self.mullion_lites_high
+        _reapply_frame_store(store, front)
+
+
 def _on_df_lock(self, context):
     """Lock pins the whole interface: snapshot the shown values onto the
     OPENING-cage store and flag it locked so the solver honors them on every
@@ -1222,6 +1257,8 @@ def _on_df_lock(self, context):
         store['HB_FRAME_OVR_MID_STILE_COUNT'] = self.mid_stiles
         store['HB_FRAME_OVR_ROW_RATIOS'] = self.row_ratios
         store['HB_FRAME_OVR_COL_RATIOS'] = self.col_ratios
+        store['HB_FRAME_OVR_MULLION_COLS'] = self.mullion_lites_wide
+        store['HB_FRAME_OVR_MULLION_ROWS'] = self.mullion_lites_high
         store['HB_FRAME_FRAME_LOCKED'] = True
     else:
         store['HB_FRAME_FRAME_LOCKED'] = False
@@ -1304,6 +1341,18 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
                     "(blank = equal columns)",
         default='', update=_on_df_grid)  # type: ignore
 
+    # Wood Mullion lite-count overrides (GRID pattern only). 0 = the
+    # pattern's standard counts (2 across, rows from the height chart).
+    mullion_lites_wide: bpy.props.IntProperty(
+        name="Lites Wide", min=0, max=12, default=0,
+        description="Wood Mullion lites across (0 = standard 2)",
+        update=_on_df_mullion)  # type: ignore
+    mullion_lites_high: bpy.props.IntProperty(
+        name="Lites High", min=0, max=12, default=0,
+        description="Wood Mullion lites high (0 = automatic from the "
+                    "opening-height chart)",
+        update=_on_df_mullion)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return has_door_style_modifier(context.active_object)
@@ -1341,11 +1390,15 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             self.mid_stiles = int(store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0)
             self.row_ratios = str(store.get('HB_FRAME_OVR_ROW_RATIOS', '') or '')
             self.col_ratios = str(store.get('HB_FRAME_OVR_COL_RATIOS', '') or '')
+            self.mullion_lites_wide = int(store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
+            self.mullion_lites_high = int(store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
         else:
             self.mid_rails = 0
             self.mid_stiles = 0
             self.row_ratios = ''
             self.col_ratios = ''
+            self.mullion_lites_wide = 0
+            self.mullion_lites_high = 0
         self.lock_frame = locked
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
@@ -1385,6 +1438,15 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         row = grid.row()
         row.enabled = self.mid_stiles > 0
         row.prop(self, 'col_ratios', text="Col Widths")
+
+        # Wood Mullion lite counts -- only shown when the front's style
+        # actually renders a GRID mullion panel.
+        if _front_has_grid_mullion(_door_frame_for_dialog(self)):
+            body.separator()
+            mrow = body.row(align=True)
+            mrow.label(text="Mullion:")
+            mrow.prop(self, 'mullion_lites_wide', text="Wide")
+            mrow.prop(self, 'mullion_lites_high', text="High")
 
         # Read-only readout of the resulting interior-panel heights. Lives in
         # the always-enabled column (not the lock-greyed body) so it's visible

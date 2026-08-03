@@ -748,7 +748,7 @@ def _clip_half(poly, a, b, c):
     return out
 
 
-def _mullion_layout(pattern, w, h, bw):
+def _mullion_layout(pattern, w, h, bw, rows=0, cols=0):
     """Bar footprints for a straight-bar mullion pattern over a w x h
     opening: a list of convex polygons [(x, z), ...] in opening-local
     coords. Muntin construction: verticals run through, horizontals
@@ -757,7 +757,9 @@ def _mullion_layout(pattern, w, h, bw):
     Options specs (catalog pdf 143-144):
 
     GRID    -- Wood Mullion: 2 lites across, rows by the height chart
-               (24/36/48 -> 2/3/4 lites high, else 5).
+               (24/36/48 -> 2/3/4 lites high, else 5). ``rows`` /
+               ``cols`` override the lites-high / lites-across counts
+               when > 0 (per-front user override).
     MISSION -- (3) equal-width lites at the top, 1/3 of the opening
                height; plain glass below.
     PRAIRIE -- border bars leaving a 2 x 2 lite in each corner.
@@ -781,15 +783,27 @@ def _mullion_layout(pattern, w, h, bw):
                           (w - bw, za + bw), (bw, za + bw)])
         return polys
     if pattern == 'GRID':
-        rows = (2 if h <= inch(24.0) else 3 if h <= inch(36.0)
-                else 4 if h <= inch(48.0) else 5)
-        cx = w / 2.0
-        if w > bw + inch(2.0):
-            polys.append([(cx - hb, 0.0), (cx + hb, 0.0),
-                          (cx + hb, h), (cx - hb, h)])
-            spans = [(0.0, cx - hb), (cx + hb, w)]
-        else:
-            spans = [(0.0, w)]
+        if rows <= 0:
+            rows = (2 if h <= inch(24.0) else 3 if h <= inch(36.0)
+                    else 4 if h <= inch(48.0) else 5)
+        if cols <= 0:
+            cols = 2
+        # Vertical bars: cols lites across -> cols - 1 through bars at
+        # equal spacing. Skipped entirely (single span) when the lites
+        # would fall under ~1" wide, matching the old center-bar guard.
+        vbars = []
+        if cols > 1 and w > (cols - 1) * bw + cols * inch(1.0):
+            for i in range(1, cols):
+                cx = w * i / cols
+                vbars.append((cx - hb, cx + hb))
+        for (xa, xb) in vbars:
+            polys.append([(xa, 0.0), (xb, 0.0), (xb, h), (xa, h)])
+        spans = []
+        prev = 0.0
+        for (xa, xb) in vbars:
+            spans.append((prev, xa))
+            prev = xb
+        spans.append((prev, w))
         for j in range(1, rows):
             zc = h * j / rows
             if zc - hb <= inch(1.0) or zc + hb >= h - inch(1.0):
@@ -1112,7 +1126,9 @@ def _emit_mullion_bars(verts, faces, slots, part, thickness, spec,
     pattern = spec.get('pattern', 'GRID')
     curved = pattern in _CURVED_MULLION_BARS
     polys = (_curved_bar_polys(pattern, w, h, bw) if curved
-             else _mullion_layout(pattern, w, h, bw))
+             else _mullion_layout(pattern, w, h, bw,
+                                  rows=int(spec.get('rows', 0) or 0),
+                                  cols=int(spec.get('cols', 0) or 0)))
     if not polys:
         return False
     planes = []
