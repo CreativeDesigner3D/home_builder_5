@@ -2807,6 +2807,7 @@ class LShelfClosetStarter(GeoNodeCage):
     has_toe_kick = True
     floor_mounted = True
     is_corner = True
+    has_hang_rail = True
     # Placement flags read by the place modal.
     default_depth = const.L_SHELF_SIZE
 
@@ -2912,6 +2913,23 @@ class LShelfClosetStarter(GeoNodeCage):
         if part is None:
             part = self._make_back_partition().obj
         return part
+
+    def _corner_wall_part(self, key, name, role, rot_z):
+        """One of the strips that stand against the two walls - the
+        cleats the unit is fixed with and the rails it hangs from.
+        Made on demand, so a corner built before these landed gains
+        them on its next recalculation."""
+        for c in self.obj.children:
+            if c.get('hb_l_wall_part') == key:
+                return c
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['hb_l_wall_part'] = key
+        part.obj.rotation_euler.x = math.radians(90)
+        part.obj.rotation_euler.z = math.radians(rot_z)
+        return part.obj
 
     def _reconcile_l_shelves(self):
         want = max(0, int(self.obj.hb_closet_starter.l_shelf_qty)) + 2
@@ -3028,6 +3046,72 @@ class LShelfClosetStarter(GeoNodeCage):
             # rot_z 0 + Mirror Z True extends +X (side wall).
             gp.set_input('Mirror Z', bool(flip))
 
+            # ----- Wall cleats -----
+            # A cleat against each wall for the unit to be fixed with,
+            # off by default the way the prior library had it. Each one
+            # sits on the bottom shelf, is held off its wall by the
+            # wall offset, and stops clear of the back partition - so
+            # the cleat on the partition's wall is the short one.
+            cleat_z = kick + st + (sp.inset_cleat if floor else 0.0)
+            show_cleat = bool(sp.l_add_cleat)
+            part = self._corner_wall_part(
+                'Back Cleat', 'Back Cleat', PART_ROLE_CLEAT, 0.0)
+            part.location = ((wo + pt) if flip else bw, -wo, cleat_z)
+            gp = GeoNodeCutpart(part)
+            gp.set_input('Length', max(
+                (W - 2.0 * pt - wo) if flip else (W - bw - pt), 0.001))
+            gp.set_input('Width', const.CLEAT_WIDTH)
+            gp.set_input('Thickness', pt)
+            _set_part_hidden(part, not show_cleat)
+
+            part = self._corner_wall_part(
+                'Side Cleat', 'Side Cleat', PART_ROLE_CLEAT, -90.0)
+            part.location = (wo + pt,
+                             -bw if flip else -(wo + pt), cleat_z)
+            gp = GeoNodeCutpart(part)
+            gp.set_input('Length', max(
+                (D - pt - bw) if flip else (D - wo - 2.0 * pt), 0.001))
+            gp.set_input('Width', const.CLEAT_WIDTH)
+            gp.set_input('Thickness', pt)
+            _set_part_hidden(part, not show_cleat)
+
+            # ----- Hang rails -----
+            # A rail on each wall, dropped from the top of the unit the
+            # same distance a run drops its own, or held at the one
+            # height when the run is set to use it. The rail on the
+            # partition's wall starts clear of it. Each rail is
+            # lengthened at its outer end only - the two meet at the
+            # corner, so there is nowhere for the inner ends to go.
+            rail_z = (sp.hang_rail_height_location
+                      if sp.use_one_hang_rail_height
+                      else H - const.HANG_RAIL_DROP)
+            hide_rail = bool(sp.remove_hang_rail)
+            ext_l = max(float(sp.extend_hang_rail_left), 0.0)
+            ext_r = max(float(sp.extend_hang_rail_right), 0.0)
+            x0 = pt if flip else bw
+            part = self._corner_wall_part(
+                'Back Rail', 'Hang Rail Back', PART_ROLE_HANG_RAIL, 0.0)
+            part.location = (x0, 0.0, rail_z)
+            gp = GeoNodeCutpart(part)
+            gp.set_input('Length', max(W - pt - x0 + ext_r, 0.001))
+            gp.set_input('Width', const.HANG_RAIL_WIDTH)
+            gp.set_input('Thickness', const.HANG_RAIL_THICKNESS)
+            _set_part_hidden(part, hide_rail)
+
+            y0 = bw if flip else pt
+            part = self._corner_wall_part(
+                'Side Rail', 'Hang Rail Side', PART_ROLE_HANG_RAIL,
+                -90.0)
+            part.location = (0.0, -y0, rail_z)
+            gp = GeoNodeCutpart(part)
+            gp.set_input('Length', max(D - pt - y0 + ext_l, 0.001))
+            gp.set_input('Width', const.HANG_RAIL_WIDTH)
+            gp.set_input('Thickness', const.HANG_RAIL_THICKNESS)
+            # The side wall stands at x = 0, so this one's thickness
+            # has to come back into the room rather than through it.
+            gp.set_input('Mirror Z', True)
+            _set_part_hidden(part, hide_rail)
+
             for c in self.obj.children:
                 if c.get('hb_l_kick'):
                     # corner kick pair (receiver/mate butt
@@ -3078,10 +3162,18 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Width', max(D - pt - wo, 0.001))
                 gp.set_input('Thickness', st)
                 # The front corner comes away either square or
-                # rounded. Both cuts are on the shelf and both take the
-                # same extents; only the chosen one is shown. Wing
+                # rounded, and which of the two a shelf takes is set
+                # for the top, the bottom and the shelves between them
+                # separately. Both cuts are on the shelf and both take
+                # the same extents; only the chosen one is shown. Wing
                 # depths are measured from the walls, so the wall
                 # offset cancels out of those extents.
+                if i == 0:
+                    round_it = use_radius and bool(sp.l_radius_bottom)
+                elif i == len(shelves) - 1:
+                    round_it = use_radius and bool(sp.l_radius_top)
+                else:
+                    round_it = use_radius and bool(sp.l_radius_shelves)
                 cut_x = max(W - pt - LD, 0.001)
                 cut_y = max(D - pt - RD, 0.001)
                 notch = shelf.modifiers.get('L Notch')
@@ -3095,8 +3187,8 @@ class LShelfClosetStarter(GeoNodeCage):
                     # inner corner, leaving the two wings.
                     cpm.set_input('Flip X', True)
                     cpm.set_input('Flip Y', True)
-                    notch.show_viewport = not use_radius
-                    notch.show_render = not use_radius
+                    notch.show_viewport = not round_it
+                    notch.show_render = not round_it
                 lrad = shelf.modifiers.get('L Radius')
                 if lrad is not None:
                     cpm = CabinetPartModifier(shelf)
@@ -3117,8 +3209,8 @@ class LShelfClosetStarter(GeoNodeCage):
                     # where the square cut takes True (probed).
                     cpm.set_input('Flip X', True)
                     cpm.set_input('Flip Y', False)
-                    lrad.show_viewport = use_radius
-                    lrad.show_render = use_radius
+                    lrad.show_viewport = round_it
+                    lrad.show_render = round_it
                 # Back Notch: clears the Back Partition at the rear
                 # corner (the shelf's back-support notch: pt deep,
                 # back-width less the wall offset plus the router tool

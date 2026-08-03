@@ -267,6 +267,8 @@ class Closet_Starter_Props(PropertyGroup):
         name="Show Applied Back", default=False)  # type: ignore
     show_insets: BoolProperty(
         name="Show Insets", default=False)  # type: ignore
+    show_corner: BoolProperty(
+        name="Show Corner", default=False)  # type: ignore
     show_panels: BoolProperty(
         name="Show Panels", default=False)  # type: ignore
     show_thicknesses: BoolProperty(
@@ -752,6 +754,31 @@ class Closet_Starter_Props(PropertyGroup):
         description="Radius of the rounded inside front corner",
         default=const.L_CORNER_RADIUS, min=0.0, unit='LENGTH',
         precision=4,
+        update=_update_starter_prop)  # type: ignore
+    # Which shelves take the rounded corner. All three on is the way
+    # the prior library had it; turning one off cuts that shelf square
+    # instead.
+    l_radius_top: BoolProperty(
+        name="Radius Top",
+        description="Round the front corner of the top shelf",
+        default=True,
+        update=_update_starter_prop)  # type: ignore
+    l_radius_shelves: BoolProperty(
+        name="Radius Shelves",
+        description="Round the front corner of the shelves between the "
+                    "top and the bottom",
+        default=True,
+        update=_update_starter_prop)  # type: ignore
+    l_radius_bottom: BoolProperty(
+        name="Radius Bottom",
+        description="Round the front corner of the bottom shelf",
+        default=True,
+        update=_update_starter_prop)  # type: ignore
+    l_add_cleat: BoolProperty(
+        name="Add Cleat",
+        description="Stand a cleat against each of the two walls for "
+                    "the unit to be fixed with",
+        default=False,
         update=_update_starter_prop)  # type: ignore
 
 

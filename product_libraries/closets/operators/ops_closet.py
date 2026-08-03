@@ -3518,6 +3518,10 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             sub = col.column(align=True)
             sub.enabled = sp.l_use_radius
             sub.prop(sp, 'l_corner_radius')
+            row = sub.row(align=True)
+            row.prop(sp, 'l_radius_top', text="Top")
+            row.prop(sp, 'l_radius_shelves', text="Shelves")
+            row.prop(sp, 'l_radius_bottom', text="Bottom")
         if not bays:
             return
         box = layout.box()
@@ -3555,6 +3559,28 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 col.prop(sp, 'toe_kick_height')
             col.prop(sp, 'toe_kick_setback')
 
+        if is_corner:
+            box = _section(layout, sp, 'show_corner', "Corner")
+            if box is not None:
+                col = box.column(align=True)
+                col.prop(sp, 'l_add_cleat')
+
+        if getattr(cls, 'has_hang_rail', False):
+            box = _section(layout, sp, 'show_hang_rail', "Hang Rail")
+            if box is not None:
+                col = box.column(align=True)
+                col.prop(sp, 'remove_hang_rail')
+                sub = col.column(align=True)
+                sub.enabled = not sp.remove_hang_rail
+                row = sub.row(align=True)
+                row.prop(sp, 'extend_hang_rail_left', text="Extend Left")
+                row.prop(sp, 'extend_hang_rail_right',
+                         text="Extend Right")
+                sub.prop(sp, 'use_one_hang_rail_height')
+                row = sub.row(align=True)
+                row.enabled = sp.use_one_hang_rail_height
+                row.prop(sp, 'hang_rail_height_location')
+
         if not is_corner:
             box = _section(layout, sp, 'show_ends', "Ends")
             if box is not None:
@@ -3586,22 +3612,6 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 sub = col.column(align=True)
                 sub.enabled = sp.add_top_accent_shelf
                 sub.prop(sp, 'top_accent_overhang')
-
-            if getattr(cls, 'has_hang_rail', False):
-                box = _section(layout, sp, 'show_hang_rail', "Hang Rail")
-                if box is not None:
-                    col = box.column(align=True)
-                    col.prop(sp, 'remove_hang_rail')
-                    sub = col.column(align=True)
-                    sub.enabled = not sp.remove_hang_rail
-                    row = sub.row(align=True)
-                    row.prop(sp, 'extend_hang_rail_left', text="Extend Left")
-                    row.prop(sp, 'extend_hang_rail_right',
-                             text="Extend Right")
-                    sub.prop(sp, 'use_one_hang_rail_height')
-                    row = sub.row(align=True)
-                    row.enabled = sp.use_one_hang_rail_height
-                    row.prop(sp, 'hang_rail_height_location')
 
         if getattr(cls, 'has_applied_back', False):
             box = _section(layout, sp, 'show_applied_back', "Applied Back")
