@@ -4152,10 +4152,18 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         box.prop(self, "grain_direction", text="Grain Direction")
 
+        # Hardware callouts: the checkbox DECLARES the option for the
+        # job (style-page legend line); the brush button paints which
+        # doors actually carry the letter mark on drawings.
         hw = box.column(align=True)
-        hw.prop(self, "include_restrictor_clips")
-        hw.prop(self, "include_touch_latches")
-        hw.prop(self, "include_finger_rout")
+        for prop_id, code in (("include_restrictor_clips", 'RC'),
+                              ("include_touch_latches", 'TL'),
+                              ("include_finger_rout", 'FR')):
+            hrow = hw.row(align=True)
+            hrow.prop(self, prop_id)
+            op = hrow.operator("hb_face_frame.paint_door_hardware",
+                               text="", icon='BRUSH_DATA')
+            op.callout = code
 
         # Frame widths derive from the catalog series by default (read-only).
         # Stile and rail each have an independent unlock toggle to override

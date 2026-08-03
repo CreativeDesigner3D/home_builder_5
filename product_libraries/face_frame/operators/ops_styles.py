@@ -833,6 +833,93 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+class hb_face_frame_OT_paint_door_hardware(hb_face_frame_OT_paint_assign_front_style):
+    """Modal paint for hardware callouts: click DOOR fronts to add one
+    callout (RC / TL / FR) to that door's opening, Ctrl+Click to remove
+    it. The door style's checkboxes only DECLARE the callout for the
+    job (the style-page legend line); which doors actually carry the
+    letter mark on the drawings is painted here -- hardware lives on
+    specific doors, not every door of a style. Esc / right-click
+    finishes. Stamps persist on the opening cage (fronts are rebuilt
+    every recalc; a double door's leaves share their opening's stamp)
+    and are read by downstream 2D consumers."""
+    bl_idname = "hb_face_frame.paint_door_hardware"
+    bl_label = "Assign Doors"
+    bl_description = ("Click doors in the viewport to add this hardware "
+                      "callout per door; Ctrl+Click removes it")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    callout: bpy.props.EnumProperty(
+        items=[('RC', "Restrictor Clips", ""),
+               ('TL', "Touch Latches", ""),
+               ('FR', "Finger Rout", "")],
+        default='TL', options={'HIDDEN'},
+    )  # type: ignore
+
+    _KEYS = {'RC': 'HB_DOOR_HW_RC', 'TL': 'HB_DOOR_HW_TL',
+             'FR': 'HB_DOOR_HW_FR'}
+
+    def _allowed_roles(self):
+        return {'DOOR'}
+
+    def _paint(self, context, event):
+        front = self._front_under_cursor(context, event)
+        if front is None:
+            return
+        if front.get('hb_part_role') != 'DOOR':
+            context.workspace.status_text_set(
+                "Skipped: not a door  |  Esc / RMB to finish")
+            return
+        from . import ops_part_commands
+        store = ops_part_commands._frame_store(front)
+        key = self._KEYS[self.callout]
+        # Click APPLIES, Ctrl+Click removes -- never a blind toggle: a
+        # double door's two leaves share one opening store, and toggling
+        # would undo the first leaf's stamp when the user paints its
+        # partner (observed as "painted both doors, nothing lettered").
+        state = not event.ctrl
+        if (store.get('HB_DOOR_HW_SET')
+                and bool(store.get(key, False)) == state):
+            context.workspace.status_text_set(
+                f"{self.callout} already {'ON' if state else 'OFF'}: "
+                f"{front.name}  |  Esc / RMB to finish")
+            return
+        store[key] = state
+        store['HB_DOOR_HW_SET'] = True
+        self._count += 1
+        context.workspace.status_text_set(
+            f"{self.callout} {'ON' if state else 'OFF'}: {front.name}  |  "
+            f"{self._count} change(s)  |  Click = add, Ctrl+Click = "
+            "remove, Esc / RMB to finish")
+
+    def _finish(self, context):
+        self._set_hover(context, None)
+        self._restore_selection(context)
+        context.window.cursor_modal_restore()
+        context.workspace.status_text_set(None)
+        if context.area is not None:
+            context.area.tag_redraw()
+        self.report({'INFO'},
+                    f"Toggled {self.callout} on {self._count} door(s)")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Run from the 3D viewport")
+            return {'CANCELLED'}
+        self._count = 0
+        self._hovered = None
+        self._orig_sel = [o.name for o in context.selected_objects]
+        active = context.view_layer.objects.active
+        self._orig_active = active.name if active else None
+        context.window.cursor_modal_set('PAINT_BRUSH')
+        context.workspace.status_text_set(
+            f"Paint {self.callout} callouts: Click a door = add, "
+            "Ctrl+Click = remove  |  Esc / RMB to finish")
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+
 class hb_face_frame_OT_update_fronts_from_style(bpy.types.Operator):
     """Re-apply the active door OR drawer-front style (per kind) to every
     matching-role front already tagged with that style name. Pool-aware
@@ -1306,6 +1393,7 @@ classes = (
     hb_face_frame_OT_assign_door_style_to_selected_fronts,
     hb_face_frame_OT_update_fronts_from_door_style,
     hb_face_frame_OT_paint_assign_front_style,
+    hb_face_frame_OT_paint_door_hardware,
     hb_face_frame_OT_update_fronts_from_style,
 )
 

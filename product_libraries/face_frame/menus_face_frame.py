@@ -268,6 +268,13 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_door_frame",
                             text="Set Door Frame...", icon='MOD_BEVEL')
 
+        # Doors: per-door hardware callout override (restrictor clips /
+        # touch latches / finger rout on THIS door instead of every door
+        # of the style).
+        if role == 'DOOR':
+            layout.operator("hb_face_frame.set_door_hardware",
+                            text="Set Door Hardware...", icon='TOOL_SETTINGS')
+
         # Door / drawer / pullout / tilt-out fronts: per-opening pull
         # override (applies to every selected front).
         if role in ops_part_commands._ROLES_WITH_PULL:

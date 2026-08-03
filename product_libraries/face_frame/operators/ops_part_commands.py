@@ -1471,6 +1471,76 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Set Door Hardware (per-door hardware callouts)
+# ---------------------------------------------------------------------------
+# Hardware callouts (restrictor clips / touch latches / finger rout)
+# live on specific doors, not every door of a style: the door style's
+# checkboxes only declare the option for the job, and each door that
+# carries the letter mark is stamped individually -- painted with the
+# style editor's brush buttons (ops_styles.paint_door_hardware) or
+# edited here per door. Stamps live on the front's opening-cage store
+# (fronts are rebuilt every recalc); downstream 2D consumers read them
+# for the letter marks.
+
+def _on_hw_field(self, context):
+    front = _door_frame_for_dialog(self)
+    if front is None:
+        return
+    store = _frame_store(front)
+    store['HB_DOOR_HW_SET'] = True
+    store['HB_DOOR_HW_RC'] = self.restrictor_clips
+    store['HB_DOOR_HW_TL'] = self.touch_latches
+    store['HB_DOOR_HW_FR'] = self.finger_rout
+
+
+class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
+    """Hardware callouts for THIS door: exactly the checked boxes mark
+    the door on drawings (all-off = no callouts). Live-bound like the
+    other Set-* dialogs; the style editor's brush buttons paint the
+    same stamps across many doors."""
+    bl_idname = "hb_face_frame.set_door_hardware"
+    bl_label = "Set Door Hardware"
+    bl_description = ("Set this door's hardware callouts (restrictor "
+                      "clips / touch latches / finger rout)")
+    bl_options = {'UNDO'}
+
+    source_obj_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    restrictor_clips: bpy.props.BoolProperty(
+        name="Restrictor Clips (RC)", default=False, update=_on_hw_field)  # type: ignore
+    touch_latches: bpy.props.BoolProperty(
+        name="Touch Latches (TL)", default=False, update=_on_hw_field)  # type: ignore
+    finger_rout: bpy.props.BoolProperty(
+        name="Finger Rout (FR)", default=False, update=_on_hw_field)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.get('hb_part_role') == 'DOOR'
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        store = _frame_store(obj)
+        # Seed BEFORE source_obj_name is set so the callbacks bail and
+        # the seed writes don't fan back (same as Set Door Frame).
+        self.restrictor_clips = bool(store.get('HB_DOOR_HW_RC', False))
+        self.touch_latches = bool(store.get('HB_DOOR_HW_TL', False))
+        self.finger_rout = bool(store.get('HB_DOOR_HW_FR', False))
+        self.source_obj_name = obj.name
+        return context.window_manager.invoke_props_dialog(self, width=240)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'restrictor_clips')
+        col.prop(self, 'touch_latches')
+        col.prop(self, 'finger_rout')
+
+    def execute(self, context):
+        # Live-bound via the prop update callbacks; nothing to do on OK.
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Set Size  (any cabinet cutpart: direct GeoNode Length / Width / Thickness).
 # Transient for solver-driven parts - overwritten on the next recalc. A
 # durable override path will come later.
@@ -2591,6 +2661,7 @@ classes = (
     hb_face_frame_OT_switch_door_part_pull_side,
     hb_face_frame_OT_toggle_door_part_front_kind,
     hb_face_frame_OT_set_door_frame,
+    hb_face_frame_OT_set_door_hardware,
     hb_face_frame_OT_set_cabinet_part_size,
     hb_face_frame_OT_make_part_editable,
     hb_face_frame_OT_revert_part_to_parametric,
