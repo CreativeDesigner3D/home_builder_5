@@ -1441,8 +1441,7 @@ class ClosetStarter(GeoNodeCage):
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
                     side, opening)
-                apply_door_open(
-                    child, 1.0 if child.get('hb_door_open') else 0.0)
+                apply_door_open(child, current_open_frac(child))
 
         # ----- Drawer stack (bottom-up fronts + boxes) -----
         # The stack FILLS the opening: fronts span the full front extent
@@ -1558,8 +1557,7 @@ class ClosetStarter(GeoNodeCage):
                 # the persistent open state (Open Door mode toggles it).
                 travel = min(box_d, inch(12.0))
                 _stash_drawer_closed(child, box, travel, side)
-                apply_drawer_open(
-                    child, 1.0 if child.get('hb_drawer_open') else 0.0)
+                apply_drawer_open(child, current_open_frac(child))
                 z += dh + v_gap
 
         # ----- Rollout trays -----
@@ -1909,8 +1907,7 @@ class ClosetStarter(GeoNodeCage):
             self._position_front_pull(
                 child, 'hamper' if child.get('hb_is_hamper') else 'door',
                 side)
-            apply_door_open(
-                child, 1.0 if child.get('hb_door_open') else 0.0)
+            apply_door_open(child, current_open_frac(child))
 
     def _reconcile_doors(self, opening, side):
         # A bay-wide door supersedes opening doors on its side.
@@ -3124,6 +3121,30 @@ def _distribute_front_heights(avail, fronts):
     return out
 
 
+def current_open_frac(part):
+    """How far one front is standing open right now, 0 closed .. 1 fully
+    open. A front carries its own answer only once someone has clicked it
+    in Open Door mode; until then it follows the Open Door / Open Drawer
+    percentage set on the opening it fills, or on the bay when the front
+    spans the whole bay."""
+    key = ('hb_door_open' if part.get('hb_part_role') == PART_ROLE_DOOR
+           else 'hb_drawer_open')
+    own = part.get(key)
+    if own is not None:
+        return min(max(float(own), 0.0), 1.0)
+    parent = part.parent
+    if parent is None:
+        return 0.0
+    if parent.get(TAG_OPENING_CAGE):
+        _op = parent.hb_closet_opening
+        pct = _op.open_door if key == 'hb_door_open' else _op.open_drawer
+    elif parent.get(TAG_BAY_CAGE):
+        pct = parent.hb_closet_bay.open_door
+    else:
+        return 0.0
+    return min(max(float(pct) / 100.0, 0.0), 1.0)
+
+
 def apply_drawer_open(front, frac):
     """Slide a drawer front (and its matching box) out of the carcass by
     an open fraction. Front-face drawers slide toward -Y (into the room);
@@ -3462,6 +3483,7 @@ def clear_bay_contents(bay_obj):
     # its own; the caller recalculates once when the strip is done.
     bay_obj.hb_closet_bay.property_unset('door_swing')
     bay_obj.hb_closet_bay.property_unset('is_hamper')
+    bay_obj.hb_closet_bay.property_unset('open_door')
     for child in list(bay_obj.children):
         if child.get('hb_part_role') == PART_ROLE_FIXED_SHELF:
             bpy.data.objects.remove(child, do_unlink=True)
@@ -3498,6 +3520,10 @@ def serialize_opening(opening):
                 key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
         'is_hamper': int(opening.hb_closet_opening.is_hamper),
+        # How far the fronts here are drawn standing open, so a copy
+        # reads the way the original did.
+        'open_door': float(opening.hb_closet_opening.open_door),
+        'open_drawer': float(opening.hb_closet_opening.open_drawer),
         'cubby_cols': int(opening.hb_closet_opening.cubby_cols),
         'cubby_rows': int(opening.hb_closet_opening.cubby_rows),
         'cubby_setback': float(opening.hb_closet_opening.cubby_setback),
@@ -3633,6 +3659,9 @@ def apply_opening_data(opening, data, recalc=True):
         _bk.back_notch_right = bool(back[3])
         _bk.back_notch_width = float(back[4])
         _bk.back_notch_height = float(back[5])
+    opening.hb_closet_opening.open_door = float(data.get('open_door', 0.0))
+    opening.hb_closet_opening.open_drawer = float(
+        data.get('open_drawer', 0.0))
     for z in data.get('rods', ()):
         add_rod(opening, z)
     if recalc and root is not None:
@@ -3661,6 +3690,7 @@ def serialize_bay(bay_obj):
         'remove_cleat': bool(bp.remove_cleat),
         'bay_door_swing': bp.door_swing,
         'bay_is_hamper': int(bp.is_hamper),
+        'bay_open_door': float(bp.open_door),
         'shelves': list(shelves),
         'openings': [serialize_opening(o) for o in _front_openings(bay_obj)],
     }
@@ -3691,6 +3721,7 @@ def apply_bay_data(bay_obj, data):
         bp = bay_obj.hb_closet_bay
         bp.remove_bottom = data.get('remove_bottom', False)
         bp.remove_cleat = data.get('remove_cleat', False)
+        bp.open_door = float(data.get('bay_open_door', 0.0))
         if data.get('bay_door_swing'):
             bp.door_swing = data['bay_door_swing']
             bp.is_hamper = bool(data.get('bay_is_hamper', 0))

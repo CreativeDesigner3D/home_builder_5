@@ -110,8 +110,12 @@ class hb_closets_OT_open_door_mode(bpy.types.Operator):
             types_closets.apply_drawer_open(part, frac)
 
     def _commit(self, part, kind, target):
+        # Held as a fraction so a click and the Open Door / Open Drawer
+        # percentage speak the same language. Whatever lands here is
+        # this one front's own answer and outranks the percentage until
+        # the percentage is set again.
         key = 'hb_door_open' if kind == 'DOOR' else 'hb_drawer_open'
-        part[key] = 1 if target >= 0.5 else 0
+        part[key] = 1.0 if target >= 0.5 else 0.0
 
     def _exit(self, context):
         global _active
@@ -138,7 +142,6 @@ class hb_closets_OT_open_door_mode(bpy.types.Operator):
         kind = ('DOOR'
                 if part.get('hb_part_role') == types_closets.PART_ROLE_DOOR
                 else 'DRAWER')
-        state_key = 'hb_door_open' if kind == 'DOOR' else 'hb_drawer_open'
         now = time.perf_counter()
         existing = next((tw for tw in self._tweens if tw['part'] is part),
                         None)
@@ -152,7 +155,10 @@ class hb_closets_OT_open_door_mode(bpy.types.Operator):
             existing['target'] = 1.0 - existing['target']
             existing['t0'] = now
             return
-        current = 1.0 if part.get(state_key) else 0.0
+        # Where this front is standing at the moment, which is the
+        # opening's percentage when it has never been clicked, so a
+        # part-open front swings on from where it is rather than jumping.
+        current = types_closets.current_open_frac(part)
         self._tweens.append({
             'part': part,
             'kind': kind,

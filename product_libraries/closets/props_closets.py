@@ -118,6 +118,19 @@ def _update_height_preset(self, context):
         _update_starter_prop(self, context)
 
 
+def _update_bay_open_door(self, context):
+    """The bay's open percentage speaks for every front across it, so a
+    front someone had clicked open hands its own answer back and follows
+    the number again."""
+    from . import types_closets
+    bay = self.id_data
+    for child in bay.children:
+        if (child.get('hb_part_role') == types_closets.PART_ROLE_DOOR
+                and 'hb_door_open' in child):
+            del child['hb_door_open']
+    types_closets.recalculate_closet_starter(bay)
+
+
 def _update_bay_prop(self, context):
     """Bay-level prop changed - a size the bay owns, one of the padlocks
     that hands it a size, or a construction flag. Recalcs the run; the
@@ -850,6 +863,15 @@ class Closet_Bay_Props(PropertyGroup):
         description="Hang the bay-wide front on a tilt-out hamper with a "
                     "wire basket behind it instead of a plain door",
         default=False, update=_update_bay_prop)  # type: ignore
+    # How far a bay-wide front is drawn standing open. Purely a drawing
+    # setting: it moves the front and nothing else.
+    open_door: FloatProperty(
+        name="Open Door",
+        description="How far the front across this bay is drawn standing "
+                    "open. For the drawing only",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0,
+        update=_update_bay_open_door)  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -1178,6 +1200,25 @@ class Closet_Opening_Props(PropertyGroup):
         default=const.CAPTURED_BACK_NOTCH_HEIGHT, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
 
+    # ----- Drawn standing open -----
+    # How far the fronts here are drawn open, so a drawing can show what
+    # is inside. They move the fronts and nothing else - sizes, parts
+    # and hardware read the same open or closed. Clicking one front in
+    # Open Door mode says the same thing about that one front, and what
+    # it says outranks these until the number here is changed again.
+    open_door: FloatProperty(
+        name="Open Door",
+        description="How far the doors on this opening are drawn standing "
+                    "open. For the drawing only",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0)  # type: ignore
+    open_drawer: FloatProperty(
+        name="Open Drawer",
+        description="How far the drawers in this opening are drawn "
+                    "standing open. For the drawing only",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0)  # type: ignore
+
     # Every field on this group is contents, so stripping an opening
     # clears the lot. Kept as an explicit list so a field added later has
     # to be considered rather than silently surviving a clear.
@@ -1193,6 +1234,7 @@ class Closet_Opening_Props(PropertyGroup):
         'add_back', 'back_inset',
         'back_notch_left', 'back_notch_right',
         'back_notch_width', 'back_notch_height',
+        'open_door', 'open_drawer',
     )
 
     def clear_contents(self):

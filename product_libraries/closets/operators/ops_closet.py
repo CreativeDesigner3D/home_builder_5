@@ -376,6 +376,16 @@ def _flip_bay_swing(bay):
         bp.door_swing = 'LEFT'
 
 
+def _clear_front_open_state(opening, role):
+    """Hand a front back to the opening's open percentage by dropping the
+    answer a click in Open Door mode left on it."""
+    key = ('hb_door_open' if role == types_closets.PART_ROLE_DOOR
+           else 'hb_drawer_open')
+    for child in opening.children:
+        if child.get('hb_part_role') == role and key in child:
+            del child[key]
+
+
 def _flip_opening_swing(opening):
     """LEFT<->RIGHT flip of an opening's door swing; DOUBLE and no-door
     openings pass through unchanged."""
@@ -3537,6 +3547,13 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             if self.top_opening_preset == 'CUSTOM':
                 box.prop(self, 'top_opening_height')
 
+        # A front across a whole bay has no opening dialog of its own,
+        # so how far it is drawn standing open belongs here.
+        if bp.door_swing:
+            box = layout.box()
+            box.label(text="Front", icon='MOD_SOLIDIFY')
+            box.prop(bp, 'open_door')
+
         # The center back divides a double-sided island's two faces, so
         # it is only meaningful there.
         cls = types_closets.WRAP_CLASS_REGISTRY.get(
@@ -3761,6 +3778,20 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="Hang the front on a tilt-out hamper with a wire "
                     "basket behind it instead of a plain door",
         default=False)  # type: ignore
+    open_door: bpy.props.FloatProperty(
+        name="Open Door",
+        description="How far the doors on this opening are drawn standing "
+                    "open. For the drawing only - it moves the doors and "
+                    "nothing else",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0)  # type: ignore
+    open_drawer: bpy.props.FloatProperty(
+        name="Open Drawer",
+        description="How far the drawers in this opening are drawn "
+                    "standing open. For the drawing only - it moves the "
+                    "drawers and nothing else",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0)  # type: ignore
 
     rod_top_offset: bpy.props.FloatProperty(
         name="Rod Distance From Top",
@@ -3972,6 +4003,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             op.slant_color)
         self.door_swing = op.door_swing or 'NONE'
         self.is_hamper = bool(op.is_hamper)
+        self.open_door = float(op.open_door)
+        self.open_drawer = float(op.open_drawer)
         self.rod_set_from_front = bool(op.rod_set_from_front)
         self.rod_from_front = float(op.rod_from_front)
         self.rod_from_rear = float(op.rod_from_rear)
@@ -4040,6 +4073,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'drawer_qty')
             col.prop(self, 'drawer_front_height')
             col.prop(self, 'drawer_box')
+            col.prop(self, 'open_drawer')
         elif self.fill == 'CUBBIES':
             col.prop(self, 'cubby_cols')
             col.prop(self, 'cubby_rows')
@@ -4060,9 +4094,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         box = layout.box()
         box.label(text="Front", icon='MOD_SOLIDIFY')
         box.prop(self, 'door_swing', text="")
-        sub = box.row()
+        sub = box.column(align=True)
         sub.enabled = self.door_swing != 'NONE'
         sub.prop(self, 'is_hamper')
+        sub.prop(self, 'open_door')
         # Which way the grain runs here. Locked, it reads back what the
         # room does with doors and with drawer fronts, so there is
         # something to compare against before unlocking it; unlocked,
@@ -4252,6 +4287,16 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         _op.back_notch_right = self.back_notch_right
         _op.back_notch_width = self.back_notch_width
         _op.back_notch_height = self.back_notch_height
+        # The percentages speak for the whole opening, so a front
+        # someone had clicked open only goes back to following them once
+        # the number here has actually been changed.
+        if abs(self.open_door - _op.open_door) > 1e-4:
+            _clear_front_open_state(opening, types_closets.PART_ROLE_DOOR)
+        if abs(self.open_drawer - _op.open_drawer) > 1e-4:
+            _clear_front_open_state(
+                opening, types_closets.PART_ROLE_DRAWER_FRONT)
+        _op.open_door = self.open_door
+        _op.open_drawer = self.open_drawer
 
         if _opening_rods(opening):
             op = opening.hb_closet_opening
