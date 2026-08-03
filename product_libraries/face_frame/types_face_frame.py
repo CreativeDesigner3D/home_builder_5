@@ -158,6 +158,8 @@ PART_ROLE_LEG_FINISH_X_RIGHT = 'LEG_FINISH_X_RIGHT'
 PART_ROLE_LEG_BACK = 'LEG_BACK'
 PART_ROLE_LEG_NAILER_LEFT = 'LEG_NAILER_LEFT'
 PART_ROLE_LEG_NAILER_RIGHT = 'LEG_NAILER_RIGHT'
+# Curved support leg: the whole leg as one profiled plywood panel.
+PART_ROLE_LEG_CURVED_PANEL = 'LEG_CURVED_PANEL'
 
 # Floating shelf (wall-mounted hollow slab). Built by a dedicated
 # product class that bypasses the bay/solver pipeline; finished boards.
@@ -477,6 +479,9 @@ PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
 # each insert is a single derived mesh built in bar_storage.py; the
 # specific product is read from the interior item's kind.
 PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
+# Hang rod across an opening (same role string the closets library uses,
+# so downstream consumers treat both the same way).
+PART_ROLE_CLOSET_ROD = 'CLOSET_ROD'
 # Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
 # top of an appliance bay so plan views read like a dealer drawing.
 # Wiped + recreated every recalc (sized from the live bay cage); the
@@ -511,6 +516,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_ACCESSORY_LABEL,
     PART_ROLE_BAR_STORAGE,
+    PART_ROLE_CLOSET_ROD,
     PART_ROLE_INTERIOR_DIVISION,
     PART_ROLE_INTERIOR_FIXED_SHELF,
     PART_ROLE_INTERIOR_FF_RAIL,
@@ -541,6 +547,7 @@ INTERIOR_KIND_TO_ROLE = {
     'WINE_HALF_CIRCLE':      PART_ROLE_BAR_STORAGE,
     'STEMWARE_RACK':         PART_ROLE_BAR_STORAGE,
     'PLATE_RACK':            PART_ROLE_BAR_STORAGE,
+    'CLOSET_ROD':            PART_ROLE_CLOSET_ROD,
 }
 
 # Angled standard cabinet machinery. The cutter is a hidden GeoNodeCage
@@ -1831,8 +1838,16 @@ class FaceFrameCabinet(GeoNodeCage):
             # _bay_root_reveals; without it the children sum to a total
             # that's too large by kick_height and the bottom child
             # overflows when laid out against cage_dim_z.
+            # remove_bottom mirrors solver.effective_bottom_rail_width:
+            # with the rail removed the opening grows down into its
+            # band, so no rail width is reserved -- otherwise stored
+            # sizes run one rail short of the built openings (seen as
+            # wrong opening heights on refrigerator cabinets, whose
+            # bays all carry remove_bottom).
+            eff_bottom = (0.0 if getattr(bp, 'remove_bottom', False)
+                          else bp.bottom_rail_width)
             ff_height = (bp.height - bp.top_rail_width
-                         - bp.bottom_rail_width - bp.kick_height)
+                         - eff_bottom - bp.kick_height)
             ff_width = bp.width
             self._redistribute_split_node(root, ff_width, ff_height, cab_props)
 
@@ -8427,6 +8442,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind == 'CLOSET_ROD':
+                self._create_closet_rod_part(opening_obj, desc)
             elif kind in bar_storage.KINDS:
                 self._create_bar_storage_part(opening_obj, desc)
             elif kind in ('INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE'):
@@ -8800,6 +8817,40 @@ class FaceFrameCabinet(GeoNodeCage):
         obj['IS_FACE_FRAME_INTERIOR_PART'] = True
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         return obj
+
+    def _create_closet_rod_part(self, opening_obj, desc):
+        """Hang rod across the opening. Reuses the closets library's rod
+        node group (round/oval profile with end cups) and the scene rod
+        options for profile + finish, so rods look the same regardless of
+        which library the cabinet came from. Like bar storage it is NOT
+        tagged CABINET_PART: it is hardware, not a sheet-stock cutpart.
+        """
+        from ...hb_types import GeoNodeObject
+        from ..closets import const_closets as closet_const
+        rod = GeoNodeObject()
+        rod.create('GeoNodeClosetRod', desc['name'])
+        rod.obj.parent = opening_obj
+        rod.obj['hb_part_role'] = desc['role']
+        rod.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        rod.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        rod.obj.location = desc['position']
+        rod.set_input('Dim X', desc['dims'][0])
+        rod.set_input('Radius', closet_const.ROD_RADIUS)
+        rod.set_input('Cup Depth', closet_const.ROD_CUP_DEPTH)
+        rod.set_input('Cup Depth 2', closet_const.ROD_CUP_DEPTH_2)
+        props = getattr(bpy.context.scene, 'hb_closets', None)
+        rod.set_input(
+            'Is Oval',
+            getattr(props, 'closet_rod_type', 'OVAL') == 'OVAL')
+        try:
+            from ..closets import pulls_closets
+            rod_mat = pulls_closets.load_finish_material(
+                getattr(props, 'closet_rod_finish', 'Polished Chrome'))
+            if rod_mat is not None:
+                rod.set_input('Material', rod_mat)
+        except Exception:
+            pass
+        return rod
 
     def _create_rollout_box(self, opening_obj, desc):
         """Drawer box for ROLLOUT items. Uses GeoNodeDrawerBox parented
@@ -9633,6 +9684,91 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         mod.show_viewport = active
         mod.show_render = active
 
+    def _build_curved_leg_panel(self, width, height, depth, leg):
+        """(Re)build the curved support-leg panel mesh in place.
+
+        Profile in the leg's Y/Z plane (front at y = -depth, back at
+        y = 0): the straight full-height edge and the narrow foot post
+        sit at the BACK (against the wall), the full-depth arm crosses
+        the top, and an S-curve (vertical tangents both ends) sweeps
+        from the arm's front underside back onto the post -- so the
+        knee-clearance void faces the ROOM at the front-bottom. The
+        profile is extruded to the full cage width along X -- the leg's
+        WIDTH is the panel thickness. Mesh data is regenerated every
+        recalc so prop edits reshape the existing object (idempotent;
+        parenting, role and tags survive)."""
+        foot = min(max(leg.curved_foot_depth, inch(1.0)), depth)
+        band = min(max(leg.curved_top_band_height, inch(1.0)), height)
+        sweep = min(max(getattr(leg, 'curved_sweep_height', inch(12.0)),
+                        inch(1.0)),
+                    max(height - band - inch(1.0), inch(1.0)))
+        obj = None
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_LEG_CURVED_PANEL:
+                obj = child
+                break
+        if obj is None:
+            mesh = bpy.data.meshes.new('Curved Leg Panel')
+            obj = bpy.data.objects.new('Curved Leg Panel', mesh)
+            bpy.context.scene.collection.objects.link(obj)
+            obj.parent = self.obj
+            obj['hb_part_role'] = PART_ROLE_LEG_CURVED_PANEL
+            obj['IS_FINISHED'] = True
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_leg_product_commands'
+        obj.hide_viewport = False
+        obj.hide_render = False
+        obj.location = (0.0, 0.0, 0.0)
+
+        # Profile outline: back-bottom (foot at the wall), up the back
+        # edge, across the top arm to the front, down the arm's front
+        # face, then the S-curve back onto the post and straight down
+        # to the floor. The S is a cubic with VERTICAL tangents at both
+        # ends: it leaves the arm tip dropping, sweeps toward the wall,
+        # and lands on the post dropping -- the catalog bracket shape.
+        segs = 24
+        zb = height - band            # arm underside
+        zp = zb - sweep               # post top (curve lands here)
+        prof = [(0.0, 0.0), (0.0, height), (-depth, height),
+                (-depth, zb)]
+        k = 0.45 * sweep              # vertical handle length
+        p1y, p1z = -depth, zb
+        c1y, c1z = -depth, zb - k
+        c2y, c2z = -foot, zp + k
+        p2y, p2z = -foot, zp
+        for i in range(1, segs + 1):
+            t = i / segs
+            u = 1.0 - t
+            prof.append((
+                u * u * u * p1y + 3 * u * u * t * c1y
+                + 3 * u * t * t * c2y + t * t * t * p2y,
+                u * u * u * p1z + 3 * u * u * t * c1z
+                + 3 * u * t * t * c2z + t * t * t * p2z,
+            ))
+        # Straight post edge from the curve landing down to the floor;
+        # the face closes back to the back-bottom corner along the floor.
+        prof.append((-foot, 0.0))
+
+        verts = [(0.0, y, z) for y, z in prof]
+        verts += [(width, y, z) for y, z in prof]
+        n = len(prof)
+        faces = [list(range(n - 1, -1, -1)),           # left cap
+                 list(range(n, 2 * n))]                # right cap
+        for i in range(n):
+            j = (i + 1) % n
+            faces.append([i, j, n + j, n + i])
+        me = obj.data
+        me.clear_geometry()
+        me.from_pydata(verts, [], faces)
+        # from_pydata face winding is mixed (profile is authored CW);
+        # recalc so all normals point outward.
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+        return obj
+
     # ------------------------------------------------------------------
     # Recalc (bespoke; bypasses the bay solver)
     # ------------------------------------------------------------------
@@ -9647,6 +9783,29 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         self.set_input('Dim X', width)
         self.set_input('Dim Y', depth)
         self.set_input('Dim Z', height)
+
+        # Curved support leg: the whole leg is ONE profiled panel; every
+        # standard part is hidden and the bespoke mesh is (re)built.
+        if getattr(leg, 'curved', False):
+            for child in self.obj.children:
+                role = child.get('hb_part_role')
+                if role and str(role).startswith('LEG_') \
+                        and role != PART_ROLE_LEG_CURVED_PANEL:
+                    child.hide_viewport = True
+                    child.hide_render = True
+            self._build_curved_leg_panel(width, height, depth, leg)
+            return
+        # Toggled back off: hide the curved panel if one was built, and
+        # restore the stile (the only standard part whose visibility the
+        # layout below does not manage).
+        for child in self.obj.children:
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_LEG_CURVED_PANEL:
+                child.hide_viewport = True
+                child.hide_render = True
+            elif role == PART_ROLE_LEG_STILE:
+                child.hide_viewport = False
+                child.hide_render = False
 
         mt = leg.material_thickness
         fft = leg.face_frame_thickness

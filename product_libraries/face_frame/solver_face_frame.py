@@ -4599,6 +4599,35 @@ def _bar_storage_descriptor(rect, cage_dim_y, item):
     }
 
 
+# ---------------------------------------------------------------------------
+# Closet rod
+# ---------------------------------------------------------------------------
+# Rod sizing follows the closets library conventions: 1" profile radius,
+# centerline 12" out from the cavity back (clamped for shallow cabinets),
+# and a drop measured from the opening top so the hang height rides the
+# top on height changes.
+CLOSET_ROD_RADIUS = inch(1.0)
+CLOSET_ROD_FROM_REAR = inch(12.0)
+
+
+def _closet_rod_descriptor(rect, cage_dim_y, item):
+    dim_z = rect['cage_dim_z']
+    z = dim_z - getattr(item, 'rod_distance_from_top', inch(3.0))
+    z = max(CLOSET_ROD_RADIUS, min(z, dim_z - CLOSET_ROD_RADIUS))
+    # Opening-local Y runs front (0) -> back (cage_dim_y): centerline
+    # 12" forward of the back, clamped inside a shallow cavity.
+    y = max(CLOSET_ROD_RADIUS,
+            cage_dim_y - min(CLOSET_ROD_FROM_REAR,
+                             cage_dim_y - CLOSET_ROD_RADIUS))
+    return {
+        'kind':     'CLOSET_ROD',
+        'role':     'CLOSET_ROD',
+        'name':     'Closet Rod',
+        'position': (0.0, y, z),
+        'dims':     (rect['cage_dim_x'], 0.0, 0.0),
+    }
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
@@ -4640,6 +4669,8 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
             out.append(_accessory_label_descriptor(
                 rect, cage_dim_y, item.accessory_label
             ))
+        elif item.kind == 'CLOSET_ROD':
+            out.append(_closet_rod_descriptor(rect, cage_dim_y, item))
         elif item.kind in bar_storage.KINDS:
             desc = _bar_storage_descriptor(rect, cage_dim_y, item)
             if desc is not None:

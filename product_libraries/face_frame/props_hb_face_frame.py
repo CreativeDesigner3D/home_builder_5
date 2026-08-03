@@ -358,6 +358,7 @@ def update_finish_overlay(self, context):
     default = style_options.default_hinge_for_overlay(self.finish_overlay)
     if default:
         _set_enum_safe(self, "finish_hinge", default)
+        self.finish_hinge_seeded = True
     bucket = style_options.ff_overlay_bucket(self.finish_overlay)
     if bucket:
         _set_enum_safe(self, "door_overlay_type", bucket)
@@ -744,6 +745,15 @@ def ensure_default_styles(context):
         cs = ff.cabinet_styles.add()
         cs.name = "Default"
         ff.active_cabinet_style_index = 0
+    # One-time hinge seeding: styles whose hinge was never explicitly set
+    # otherwise read the number-0 catalog row (Compact) instead of the
+    # overlay's default hinge (CLIPtop for the standard overlays).
+    for cs in ff.cabinet_styles:
+        if not cs.finish_hinge_seeded:
+            default = style_options.default_hinge_for_overlay(cs.finish_overlay)
+            if default:
+                _set_enum_safe(cs, "finish_hinge", default)
+            cs.finish_hinge_seeded = True
     if len(ff.door_styles) == 0:
         ds = ff.door_styles.add()
         ds.name = "Craftsman Square Recessed Panel"
@@ -1043,6 +1053,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         description="Hinge available for the chosen overlay",
         items=get_finish_hinge_items,
     )  # type: ignore
+    # A never-touched dynamic enum reads as its number-0 item, which for the
+    # standard overlays is NOT the catalog default hinge. Styles are seeded
+    # with the overlay's default hinge exactly once (ensure_default_styles);
+    # this flag keeps the seeding from clobbering a later explicit pick.
+    finish_hinge_seeded: BoolProperty(default=False)  # type: ignore
 
     # ---- Interior material ----
     interior_material_type: EnumProperty(
@@ -2201,7 +2216,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # the bar storage units are "finished to match
                 # exterior" per the catalog.
                 if (child.get('hb_part_role') in ('SHELF_NOSING',
-                                                  'BAR_STORAGE')
+                                                  'BAR_STORAGE',
+                                                  'LEG_CURVED_PANEL')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
@@ -6715,6 +6731,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('WINE_HALF_CIRCLE', "Half Circle Wine Rack",  "WRHC: scalloped rails, bottles 5\" on center"),
         ('STEMWARE_RACK',    "Stemware Rack",      "SR: slotted hardwood slats at the top of the opening, slots 4\" on center"),
         ('PLATE_RACK',       "Plate Rack",         "PR: 3/8\" birch dowels 2\" on center"),
+        ('CLOSET_ROD',       "Closet Rod",         "CR: hang rod across the opening, set down from the opening top"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
@@ -6880,6 +6897,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Shelf Length",
         description="Length of each side shelf (mirrored L and R)",
         default=units.inch(7.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # CLOSET_ROD
+    # Rod centerline measured DOWN from the opening (or region) top, so
+    # a rod under a fixed shelf keeps its drop when the cabinet grows.
+    rod_distance_from_top: FloatProperty(
+        name="Distance From Top",
+        description="Rod centerline distance down from the top of the opening (a rod under a fixed shelf keeps this drop)",
+        default=units.inch(3.0), min=units.inch(1.0),
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -9052,6 +9080,39 @@ class Face_Frame_Leg_Props(PropertyGroup):
         description="Drop the side panels and toe-kick filler; keep just "
                     "the face-frame stile",
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # Curved support leg: the whole leg becomes ONE finished plywood
+    # panel. The straight full-height edge and narrow foot post sit at
+    # the BACK (against the wall); a full-depth arm crosses the top and
+    # an S-curve sweeps from the arm's front underside back onto the
+    # post, leaving the knee-clearance void at the FRONT (used under
+    # vanity lap drawers / seating). The cage WIDTH is the panel
+    # thickness (typically 3/4" or 1-1/2").
+    curved: BoolProperty(
+        name="Curved Support Leg", default=False,
+        description="Build the leg as a single curved support panel: "
+                    "full height at the wall, arm across the top, curve "
+                    "sweeping back to a narrow post -- knee clearance at "
+                    "the front. The leg width is the panel thickness",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_foot_depth: FloatProperty(
+        name="Foot Depth", default=units.inch(3.0), min=units.inch(1.0),
+        description="Depth of the post at the floor, measured out from "
+                    "the back (wall) edge",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_top_band_height: FloatProperty(
+        name="Top Band Height", default=units.inch(4.0), min=units.inch(1.0),
+        description="Thickness of the full-depth arm at the top of the "
+                    "leg, above the start of the curve",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    curved_sweep_height: FloatProperty(
+        name="Curve Height", default=units.inch(12.0), min=units.inch(1.0),
+        description="Vertical span of the S-curve between the arm's "
+                    "underside and the top of the straight post",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     is_column: BoolProperty(
         name="Column", default=False,

@@ -2058,6 +2058,13 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.half_depth = False
             op.target_name = target_name
 
+            op = layout.operator(
+                "hb_face_frame.add_interior_item", text="Closet Rod",
+            )
+            op.kind = 'CLOSET_ROD'
+            op.half_depth = False
+            op.target_name = target_name
+
             layout.separator()
 
             # Tableware & Bar Storage Solutions - auto-sized from
@@ -4569,6 +4576,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             # square + word from this stamp every pass.
             bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
                                     else 'SINK')
+            # The annotation pass only needs SINK vs COOKTOP, but 2D
+            # consumers distinguish kitchen from vanity sinks (e.g.
+            # depth callout rules), so keep the specific kind too.
+            bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
             bp = bay.face_frame_bay
             # Width setter auto-locks unlock_width.
             bp.width = self.width

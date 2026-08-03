@@ -562,6 +562,19 @@ def draw_leg_product(layout, root):
     vrow.prop(leg, 'is_appliance_leg', text="Appliance", toggle=True)
     vrow.prop(leg, 'is_island_leg', text="Island", toggle=True)
 
+    # Curved support leg: one profiled panel replaces the whole post.
+    # Width becomes the panel thickness, so the standard-part options
+    # above are inert while it's on.
+    cbox = box.box()
+    cbox.prop(leg, 'curved', text="Curved Support Leg", toggle=True)
+    if leg.curved:
+        ccol = cbox.column(align=True)
+        ccol.prop(leg, 'curved_foot_depth', text="Foot Depth")
+        ccol.prop(leg, 'curved_top_band_height', text="Top Band Height")
+        ccol.prop(leg, 'curved_sweep_height', text="Curve Height")
+        cbox.label(text="Width = panel thickness (3/4\" or 1-1/2\")",
+                   icon='INFO')
+
     # Material Thickness / Face Frame Thickness are intentionally not
     # exposed here - users never change them (recalc still reads the
     # propgroup defaults).
@@ -1080,6 +1093,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+        elif item.kind == 'CLOSET_ROD':
+            sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:
             # Bar storage inserts are fully auto-fit from the opening
             # per the catalog charts - no per-item knobs in v1.
