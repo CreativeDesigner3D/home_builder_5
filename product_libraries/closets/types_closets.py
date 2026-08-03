@@ -4074,6 +4074,60 @@ def clear_hamper_shelves(root):
         op.adj_shelf_qty = 0
 
 
+# What each interior writes on an opening, and what an empty one of it
+# reads back as. One opening holds one interior - the opening dialog's
+# fill list has always worked that way - so the list lives here and the
+# individual insert commands land on the same rule.
+INTERIOR_FIELDS = {
+    'ADJ_SHELVES': {'adj_shelf_qty': 0},
+    'DRAWERS': {'drawer_qty': 0},
+    'ROLLOUTS': {'rollout_qty': 0},
+    'SLANTED_SHELVES': {'slant_qty': 0},
+    'CUBBIES': {'cubby_cols': 1, 'cubby_rows': 1},
+}
+
+
+def clear_other_interiors(opening, keep):
+    """Empty every interior but `keep` out of an opening.
+
+    Called straight after an insert command has written its own
+    settings, so asking for cubbies in an opening that is holding shoe
+    shelves replaces them rather than building both in the one space.
+    A quantity of nothing is a removal rather than a choice, so an
+    interior that was emptied leaves the rest of the opening alone."""
+    fields = INTERIOR_FIELDS.get(keep)
+    if not fields:
+        return
+    op = opening.hb_closet_opening
+    if all(getattr(op, n) == empty for n, empty in fields.items()):
+        return
+    for kind, others in INTERIOR_FIELDS.items():
+        if kind == keep:
+            continue
+        for name, empty in others.items():
+            if getattr(op, name) != empty:
+                setattr(op, name, empty)
+
+
+def segment_columns(opening):
+    """How many columns the segment this opening stands in is divided
+    into - 1 when the opening is a whole segment.
+
+    A shelf runs the width of the bay, so a command that caps part of
+    an opening with one has to know whether the opening is a column of
+    a divided segment: capping the column would cut the columns beside
+    it in two as well."""
+    bay = find_bay_cage(opening)
+    if bay is None:
+        return 1
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    row = int(opening.get('hb_opening_index', 0))
+    return len([c for c in bay.children
+                if c.get(TAG_OPENING_CAGE)
+                and c.get(PROP_OPENING_SIDE, 'FRONT') == side
+                and int(c.get('hb_opening_index', 0)) == row]) or 1
+
+
 def _cfg_rod(opening):
     add_rod(opening, const.ROD_TOP_OFFSET)
 

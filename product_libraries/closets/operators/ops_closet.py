@@ -1896,6 +1896,7 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         op.shelf_clip_gap = self.clip_gap
         op.unlock_shelf_setback = self.unlock_setback
         op.shelf_setback = self.setback
+        types_closets.clear_other_interiors(opening, 'ADJ_SHELVES')
         root = types_closets.find_starter_root(opening)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -1978,6 +1979,11 @@ def _reselect_cages(context, cages):
 class _ClosetInsertDialog:
     """Shared plumbing for the opening-config insert dialogs."""
 
+    # Which interior this dialog stands in the opening, if any. Naming
+    # one is what makes the command replace whatever the opening was
+    # already holding instead of building on top of it.
+    interior_kind = None
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_opening_cage(context.active_object) is not None
@@ -1996,6 +2002,7 @@ class _ClosetInsertDialog:
             return {'CANCELLED'}
         for name, value in values.items():
             setattr(opening.hb_closet_opening, name, value)
+        types_closets.clear_other_interiors(opening, self.interior_kind)
         root = types_closets.find_starter_root(opening)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -2067,6 +2074,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     bl_idname = "hb_closets.add_drawers"
     bl_label = "Drawers"
     bl_options = {'UNDO'}
+    interior_kind = 'DRAWERS'
 
     qty: bpy.props.IntProperty(name="Drawer Quantity", default=3,
                                min=0, max=10)  # type: ignore
@@ -2179,6 +2187,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             opening.hb_closet_opening.drawer_box_override = self.drawer_box
         else:
             opening.hb_closet_opening.property_unset('drawer_box_override')
+        types_closets.clear_other_interiors(opening, self.interior_kind)
         root = types_closets.find_starter_root(opening)
         bay = types_closets.find_bay_cage(opening)
 
@@ -2197,7 +2206,11 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         # opening grows to the bank instead of the bank being squeezed
         # back into the opening. If this segment is already capped, MOVE
         # the cap to match the new stack instead of stacking another.
-        if self.qty > 0 and bay is not None:
+        # A cap runs the width of the bay, so a bank standing in one
+        # column of a divided segment goes uncapped rather than cutting
+        # the columns beside it in two.
+        if (self.qty > 0 and bay is not None
+                and types_closets.segment_columns(opening) == 1):
             st = types_closets.run_sizes(opening).shelf_thickness
             cap_z_local = (sum(self._heights())
                            + self.qty * _run_vertical_gap(context, opening)
@@ -2542,6 +2555,7 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
     bl_idname = "hb_closets.add_cubbies"
     bl_label = "Cubbies"
     bl_options = {'UNDO'}
+    interior_kind = 'CUBBIES'
 
     cols: bpy.props.IntProperty(name="Columns", default=3, min=1, max=12)  # type: ignore
     rows: bpy.props.IntProperty(name="Rows", default=3, min=1, max=12)  # type: ignore
@@ -2580,6 +2594,11 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
                 self.rows = 3
                 self.placement = 'BOTTOM'
             self.setback = float(op.cubby_setback)
+            # A band is capped by a shelf and a shelf runs the width of
+            # the bay, so a column of a divided segment takes the grid
+            # whole rather than a band of it.
+            if types_closets.segment_columns(opening) > 1:
+                self.placement = 'FILL'
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def draw(self, context):
@@ -2587,10 +2606,16 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'cols')
         col.prop(self, 'rows')
         col.prop(self, 'setback')
+        opening = _active_opening_for_insert(context)
         col = self.layout.column(align=True)
-        col.prop(self, 'placement')
-        if self.placement != 'FILL':
-            col.prop(self, 'cubby_height')
+        if (opening is not None
+                and types_closets.segment_columns(opening) > 1):
+            # Nothing to choose: the column takes the whole grid.
+            col.label(text="Column takes the whole grid", icon='INFO')
+        else:
+            col.prop(self, 'placement')
+            if self.placement != 'FILL':
+                col.prop(self, 'cubby_height')
 
     def execute(self, context):
         values = {'cubby_cols': self.cols,
@@ -2615,8 +2640,15 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         if (bay is None or root is None
                 or band + st + const.CUBBY_MIN_REMAINDER > seg_h):
             return self._commit(context, values)
+        # The shelf that caps a band runs the width of the bay, so a
+        # column of a divided segment cannot be banded without cutting
+        # the columns beside it in two. The column takes the grid whole
+        # instead, which is the one thing that stays inside it.
+        if types_closets.segment_columns(opening) > 1:
+            self.report({'INFO'},
+                        "Divided opening: the grid fills the column")
+            return self._commit(context, values)
         side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-        index = int(opening.get('hb_opening_index', 0))
         # The shelf caps the band: measured up from the bottom of the
         # opening for a bottom band, down from its top for a top one.
         # It splits the opening in two the same way a shelf dropped in
@@ -2624,27 +2656,28 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         z = band if self.placement == 'BOTTOM' else seg_h - band - st
         types_closets.add_fixed_shelf(opening, z)
         types_closets.recalculate_closet_starter(root)
-        openings = sorted(
-            [c for c in bay.children
-             if c.get(types_closets.TAG_OPENING_CAGE)
-             and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side],
-            key=lambda o: o.get('hb_opening_index', 0))
-        # The grid belongs where the opening was for a bottom band, and
-        # in the segment above it for a top one.
-        k = index if self.placement == 'BOTTOM' else index + 1
-        if k >= len(openings):
-            return {'CANCELLED'}
-        target = openings[k]
+        # A split leaves the opening standing as the lower of the two
+        # segments, holding what was already in it - so a bottom band
+        # is the opening itself and a top band is the new segment above
+        # it. Reading it that way keeps the grid in the column it was
+        # asked for; counting openings across the bay does not, because
+        # a segment divided elsewhere puts more than one of them on a
+        # row.
+        row = int(opening.get('hb_opening_index', 0))
+        if self.placement == 'BOTTOM':
+            target = opening
+        else:
+            above = [c for c in bay.children
+                     if c.get(types_closets.TAG_OPENING_CAGE)
+                     and c.get(types_closets.PROP_OPENING_SIDE,
+                               'FRONT') == side
+                     and int(c.get('hb_opening_index', -1)) == row + 1]
+            if len(above) != 1:
+                return {'CANCELLED'}
+            target = above[0]
         for name, value in values.items():
             setattr(target.hb_closet_opening, name, value)
-        if target is not opening:
-            # The grid moved up into the band, so it does not stay
-            # behind in the segment underneath as well.
-            try:
-                opening.hb_closet_opening.cubby_cols = 1
-                opening.hb_closet_opening.cubby_rows = 1
-            except ReferenceError:
-                pass
+        types_closets.clear_other_interiors(target, self.interior_kind)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
         _apply_selection_shading(context, root)
@@ -2799,6 +2832,7 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
     bl_idname = "hb_closets.add_rollouts"
     bl_label = "Rollout Trays"
     bl_options = {'UNDO'}
+    interior_kind = 'ROLLOUTS'
 
     qty: bpy.props.IntProperty(name="Quantity", default=3,
                                min=0, max=12)  # type: ignore
@@ -2830,6 +2864,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
     bl_idname = "hb_closets.add_slanted_shelves"
     bl_label = "Slanted Shoe Shelves"
     bl_options = {'UNDO'}
+    interior_kind = 'SLANTED_SHELVES'
 
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=4,
                                min=0, max=10)  # type: ignore
