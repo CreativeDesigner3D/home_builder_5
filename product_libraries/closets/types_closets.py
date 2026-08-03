@@ -69,6 +69,7 @@ PART_ROLE_ROD = 'CLOSET_ROD'
 PART_ROLE_DOOR = 'CLOSET_DOOR_FRONT'
 PART_ROLE_DRAWER_FRONT = 'CLOSET_DRAWER_FRONT'
 PART_ROLE_DRAWER_BOX = 'CLOSET_DRAWER_BOX'
+PART_ROLE_DRAWER_STRETCHER = 'CLOSET_DRAWER_STRETCHER'
 PART_ROLE_CUBBY_DIVISION = 'CLOSET_CUBBY_DIVISION'
 PART_ROLE_CUBBY_SHELF = 'CLOSET_CUBBY_SHELF'
 # Slanted shoe shelves: a tilted shelf plus a purchased metal shoe fence.
@@ -1477,6 +1478,18 @@ class ClosetStarter(GeoNodeCage):
                                 else dbx.current_type())
             box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
+            # A stretcher stands in the gap between one drawer and
+            # the next, running back from the face by its own width
+            # rather than the whole depth. What is typed is held to
+            # what the opening has, so an oversized figure leaves a
+            # stretcher the depth of the opening rather than one
+            # hanging out past the back.
+            strchs = groups.get(PART_ROLE_DRAWER_STRETCHER, [])
+            strchs.sort(key=lambda o: o.get('hb_stretcher_index', 0))
+            s_w = min(max(float(_shp.drawer_stretcher_width),
+                          inch(0.5)),
+                      max(depth, inch(0.5)))
+            s_y = 0.0 if side == 'BACK' else -depth + s_w
             z = -bo
             for i, child in enumerate(fronts):
                 dh = heights[i]
@@ -1566,6 +1579,19 @@ class ClosetStarter(GeoNodeCage):
                 travel = min(box_d, inch(12.0))
                 _stash_drawer_closed(child, box, travel, side)
                 apply_drawer_open(child, current_open_frac(child))
+                # The stretcher belonging to this drawer sits in the
+                # gap above it, the two fronts lapping it by half of
+                # what the gap leaves. The top drawer of a stack has
+                # the shelf above it instead, and there is one fewer
+                # stretcher than drawers, so it is passed over.
+                if i < len(strchs):
+                    s_obj = strchs[i]
+                    s_obj.location = (0.0, s_y,
+                                      z + dh - (st - v_gap) / 2.0)
+                    s_part = GeoNodeCutpart(s_obj)
+                    s_part.set_input('Length', width)
+                    s_part.set_input('Width', s_w)
+                    s_part.set_input('Thickness', st)
                 z += dh + v_gap
 
         # ----- Rollout trays -----
@@ -1989,6 +2015,24 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
             box.obj['hb_drawer_index'] = len(boxes)
             boxes.append(box.obj)
+        # One stretcher between each drawer and the next, so a stack
+        # of n carries n-1 of them: the shelf above the stack caps
+        # the top and the opening carries the bottom drawer.
+        want_s = max(qty - 1, 0)
+        strchs = [c for c in opening.children
+                  if c.get('hb_part_role') == PART_ROLE_DRAWER_STRETCHER]
+        strchs.sort(key=lambda o: o.get('hb_stretcher_index', 0))
+        while len(strchs) > want_s:
+            bpy.data.objects.remove(strchs.pop(), do_unlink=True)
+        while len(strchs) < want_s:
+            part = CabinetPart()
+            part.create('Drawer Stretcher')
+            part.obj.parent = opening
+            part.obj['hb_part_role'] = PART_ROLE_DRAWER_STRETCHER
+            part.obj['hb_stretcher_index'] = len(strchs)
+            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            part.set_input('Mirror Y', True)
+            strchs.append(part.obj)
 
     def _reconcile_rollouts(self, opening):
         """Pullout trays: drawer boxes with no fronts. Same box part and
@@ -3521,6 +3565,8 @@ def serialize_opening(opening):
             opening.hb_closet_opening.slant_back_inset),
         'drawer_fh': float(opening.hb_closet_opening.drawer_front_height),
         'drawer_box': opening.hb_closet_opening.drawer_box_override,
+        'drawer_stretcher_w': float(
+            opening.hb_closet_opening.drawer_stretcher_width),
         # Per-drawer heights, bottom drawer first, with the flag saying
         # whether that drawer was holding the height or sharing.
         'drawer_fronts': [
@@ -3599,6 +3645,8 @@ def apply_opening_data(opening, data, recalc=True):
         if data.get('drawer_box'):
             opening.hb_closet_opening.drawer_box_override = \
                 data['drawer_box']
+        opening.hb_closet_opening.drawer_stretcher_width = data.get(
+            'drawer_stretcher_w', const.DRAWER_STRETCHER_WIDTH)
         # The fronts are not built yet, so the heights the copied bank
         # was holding wait on the opening for them.
         pins = data.get('drawer_fronts') or ()

@@ -2077,6 +2077,12 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         name="Drawer Box",
         items=_DRAWER_BOX_OVERRIDE_ITEMS,
         default='DEFAULT')  # type: ignore
+    stretcher_width: bpy.props.FloatProperty(
+        name="Drawer Stretcher Width",
+        description="How far back from the front the stretcher "
+                    "between one drawer and the next runs",
+        default=const.DRAWER_STRETCHER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
     # Per-drawer sizes (front_1..front_10; the first `qty` are shown
     # and used). A drawer left equal takes its share of the bank;
     # unticking it holds that drawer at a standard size and lets the
@@ -2100,6 +2106,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             self.qty = int(op.drawer_qty) or 3
             self.front_height = float(op.drawer_front_height)
             self.drawer_box = op.drawer_box_override or 'DEFAULT'
+            self.stretcher_width = float(op.drawer_stretcher_width)
             for i, (equal, key) in enumerate(
                     _read_drawer_front_heights(opening, self.qty), 1):
                 setattr(self, 'front_%d_equal' % i, equal)
@@ -2128,6 +2135,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'qty')
         col.prop(self, 'front_height')
         col.prop(self, 'drawer_box')
+        col.prop(self, 'stretcher_width')
 
         # A row per drawer, bottom drawer first, the order the bank is
         # built in. A drawer sharing the bank reads back the height it
@@ -2160,6 +2168,8 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             return {'CANCELLED'}
         opening.hb_closet_opening.drawer_qty = self.qty
         opening.hb_closet_opening.drawer_front_height = self.front_height
+        opening.hb_closet_opening.drawer_stretcher_width = \
+            self.stretcher_width
         # 'Use Default' clears the per-opening override so the box system
         # follows the project setting again.
         if self.drawer_box and self.drawer_box != 'DEFAULT':
@@ -3720,6 +3730,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "opening size would pick on its own",
         items=_DRAWER_BOX_OVERRIDE_ITEMS,
         default='DEFAULT')  # type: ignore
+    drawer_stretcher_width: bpy.props.FloatProperty(
+        name="Drawer Stretcher Width",
+        description="How far back from the front the stretcher "
+                    "between one drawer and the next runs",
+        default=const.DRAWER_STRETCHER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     cubby_cols: bpy.props.IntProperty(
         name="Columns", description="How many cubbies across the opening",
@@ -3999,6 +4015,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.drawer_qty = int(op.drawer_qty) or 3
         self.drawer_front_height = float(op.drawer_front_height)
         self.drawer_box = op.drawer_box_override or 'DEFAULT'
+        self.drawer_stretcher_width = float(op.drawer_stretcher_width)
         if op.cubby_cols > 1 or op.cubby_rows > 1:
             self.cubby_cols = int(op.cubby_cols)
             self.cubby_rows = int(op.cubby_rows)
@@ -4087,6 +4104,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'drawer_qty')
             col.prop(self, 'drawer_front_height')
             col.prop(self, 'drawer_box')
+            col.prop(self, 'drawer_stretcher_width')
             col.prop(self, 'open_drawer')
         elif self.fill == 'CUBBIES':
             col.prop(self, 'cubby_cols')
@@ -4269,6 +4287,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             else:
                 opening.hb_closet_opening.property_unset(
                     'drawer_box_override')
+            opening.hb_closet_opening.drawer_stretcher_width = \
+                self.drawer_stretcher_width
         elif self.fill == 'ROLLOUTS':
             opening.hb_closet_opening.rollout_height = self.rollout_height
         elif self.fill == 'SLANTED_SHELVES':

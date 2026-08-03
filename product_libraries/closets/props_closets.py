@@ -953,6 +953,12 @@ class Closet_Opening_Props(PropertyGroup):
                     "opening size would pick on its own. Empty or DEFAULT "
                     "defers to the scene setting",
         default='')  # type: ignore
+    drawer_stretcher_width: FloatProperty(
+        name="Drawer Stretcher Width",
+        description="How far back from the front the stretcher "
+                    "between one drawer and the next runs",
+        default=const.DRAWER_STRETCHER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Pull-out trays -----
     rollout_qty: IntProperty(
@@ -1239,6 +1245,7 @@ class Closet_Opening_Props(PropertyGroup):
     CONTENTS_FIELDS = (
         'adj_shelf_qty',
         'drawer_qty', 'drawer_front_height', 'drawer_box_override',
+        'drawer_stretcher_width',
         'rollout_qty', 'rollout_height',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'slant_fence_inset', 'slant_back_inset',

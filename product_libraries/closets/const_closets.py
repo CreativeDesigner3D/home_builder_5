@@ -262,6 +262,9 @@ DRAWER_SLIDE_GAP = inch(0.5)        # per side, drawer box to panel
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
 DRAWER_BOX_DEPTH_DEDUCT = inch(0.5)
 DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
+# How far back from the face the stretcher between one drawer and
+# the next runs. The prior library's figure.
+DRAWER_STRETCHER_WIDTH = inch(6.0)
 
 # Standard drawer front heights: the 32mm ladder the prior closet
 # library ordered fronts from, 124.82mm and a 32mm step from there.
