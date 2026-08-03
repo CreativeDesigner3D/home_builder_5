@@ -79,14 +79,30 @@ def parse_distance(text):
 
 # ---- Gating / target collection ------------------------------------------
 
+# Product roots that sit on (are parented to) walls. A selection inside
+# one of these belongs to the product, not the wall -- without this
+# check, selecting any cabinet placed on a wall walked up to the wall
+# BP and painted the wall's length/height labels.
+_PRODUCT_ROOT_TAGS = (
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_CLOSET_STARTER_CAGE',
+    'IS_APPLIANCE',
+)
+
+
 def _resolve_target(obj):
     """('CAGE'|'WALL', bp_object) for ``obj`` or its nearest tagged
     ancestor, else None. A door/window cage resolves before its wall,
-    so selecting an opening (or its geometry) never labels the wall."""
+    so selecting an opening (or its geometry) never labels the wall;
+    a placed product resolves to nothing, so the wall labels only
+    show when the wall's own geometry is selected."""
     node = obj
     while node is not None:
         if node.get('IS_ENTRY_DOOR_BP') or node.get('IS_WINDOW_BP'):
             return ('CAGE', node)
+        if any(node.get(tag) for tag in _PRODUCT_ROOT_TAGS):
+            return None
         if node.get('IS_WALL_BP'):
             return ('WALL', node)
         node = node.parent
