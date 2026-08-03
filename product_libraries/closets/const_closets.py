@@ -359,6 +359,10 @@ SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
 SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
 SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
 SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
+# How far back from the shelf's front edge the fence stands. The prior
+# library carried this as its own setting and shipped it at zero, the
+# fence flush with the front, so that is where it starts here too.
+SHOE_FENCE_BACK_INSET = inch(0.0)
 # Modal add-part height snapping increment (fallback only; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)

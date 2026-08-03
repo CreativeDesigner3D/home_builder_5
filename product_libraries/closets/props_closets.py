@@ -989,6 +989,20 @@ class Closet_Opening_Props(PropertyGroup):
         description="Finish of the metal shoe fence across the front of "
                     "each shelf",
         default='')  # type: ignore
+    # The fence is a bought rail, so it is cut shorter than the shelf and
+    # held off each end. Both figures are the prior library's.
+    slant_fence_inset: FloatProperty(
+        name="Metal Lip Width Inset",
+        description="How far in from each end of the shelf the metal "
+                    "fence starts. The fence is cut to suit",
+        default=const.SHOE_FENCE_INSET, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    slant_back_inset: FloatProperty(
+        name="Back Inset",
+        description="How far back from the front edge of the shelf the "
+                    "metal fence stands",
+        default=const.SHOE_FENCE_BACK_INSET, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Cubbies -----
     # One column by one row is "no cubbies"; the regenerator only builds
@@ -1227,6 +1241,7 @@ class Closet_Opening_Props(PropertyGroup):
         'drawer_qty', 'drawer_front_height', 'drawer_box_override',
         'rollout_qty', 'rollout_height',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
+        'slant_fence_inset', 'slant_back_inset',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
         'door_swing', 'is_hamper',
         'rod_set_from_front', 'rod_from_front', 'rod_from_rear',

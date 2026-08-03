@@ -3764,6 +3764,18 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "each shelf",
         items=types_closets.SHOE_FENCE_COLOR_ITEMS,
         default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
+    slant_fence_inset: bpy.props.FloatProperty(
+        name="Metal Lip Width Inset",
+        description="How far in from each end of the shelf the metal "
+                    "fence starts. The fence is cut to suit",
+        default=const.SHOE_FENCE_INSET, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    slant_back_inset: bpy.props.FloatProperty(
+        name="Back Inset",
+        description="How far back from the front edge of the shelf the "
+                    "metal fence stands",
+        default=const.SHOE_FENCE_BACK_INSET, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     door_swing: bpy.props.EnumProperty(
         name="Door",
@@ -4001,6 +4013,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.slant_angle = float(op.slant_angle)
         self.slant_color = types_closets.shoe_fence_color(
             op.slant_color)
+        self.slant_fence_inset = float(op.slant_fence_inset)
+        self.slant_back_inset = float(op.slant_back_inset)
         self.door_swing = op.door_swing or 'NONE'
         self.is_hamper = bool(op.is_hamper)
         self.open_door = float(op.open_door)
@@ -4086,6 +4100,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'slant_spacing')
             col.prop(self, 'slant_angle')
             col.prop(self, 'slant_color')
+            col.prop(self, 'slant_fence_inset')
+            col.prop(self, 'slant_back_inset')
             # These sit on clips as well, so the gap reaches them.
             # Their setback is the fence's, so it is not offered.
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
@@ -4259,6 +4275,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             opening.hb_closet_opening.slant_spacing = self.slant_spacing
             opening.hb_closet_opening.slant_angle = self.slant_angle
             opening.hb_closet_opening.slant_color = self.slant_color
+            opening.hb_closet_opening.slant_fence_inset = \
+                self.slant_fence_inset
+            opening.hb_closet_opening.slant_back_inset = \
+                self.slant_back_inset
 
         swing = '' if self.door_swing == 'NONE' else self.door_swing
         opening.hb_closet_opening.door_swing = swing

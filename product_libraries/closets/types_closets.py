@@ -1390,6 +1390,14 @@ class ClosetStarter(GeoNodeCage):
             rise = shelf_depth * math.sin(angle)
             fence_mat = shoe_fence_material(
                 opening.hb_closet_opening.slant_color)
+            # The fence is held in from each end of the shelf and can
+            # stand back from its front edge. Both are clamped to what
+            # the shelf can actually carry, so a typed figure that is
+            # too big leaves a fence rather than nothing.
+            f_inset = min(max(float(_shp.slant_fence_inset), 0.0),
+                          max((shelf_w - inch(1.0)) / 2.0, 0.0))
+            f_back = min(max(float(_shp.slant_back_inset), 0.0),
+                         max(shelf_depth - const.SHOE_FENCE_DEPTH, 0.0))
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 # These rest on clips too, so they take the opening's
@@ -1406,13 +1414,13 @@ class ClosetStarter(GeoNodeCage):
                      if c.get('hb_part_role') == PART_ROLE_SHOE_FENCE), None)
                 if fence is not None:
                     # Sit on the shelf top, frontmost strip, inset each side.
-                    fence.location = (const.SHOE_FENCE_INSET,
-                                      y_front + const.SHOE_FENCE_DEPTH, st)
+                    fence.location = (
+                        f_inset,
+                        y_front + const.SHOE_FENCE_DEPTH + f_back, st)
                     fpart = GeoNodeCutpart(fence)
                     fpart.set_input(
                         'Length',
-                        max(shelf_w - 2 * const.SHOE_FENCE_INSET,
-                            inch(1.0)))
+                        max(shelf_w - 2 * f_inset, inch(1.0)))
                     fpart.set_input('Width', const.SHOE_FENCE_DEPTH)
                     fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
                     if fence_mat is not None:
@@ -3507,6 +3515,10 @@ def serialize_opening(opening):
         'slant_spacing': float(opening.hb_closet_opening.slant_spacing),
         'slant_angle': float(opening.hb_closet_opening.slant_angle),
         'slant_color': opening.hb_closet_opening.slant_color,
+        'slant_fence_inset': float(
+            opening.hb_closet_opening.slant_fence_inset),
+        'slant_back_inset': float(
+            opening.hb_closet_opening.slant_back_inset),
         'drawer_fh': float(opening.hb_closet_opening.drawer_front_height),
         'drawer_box': opening.hb_closet_opening.drawer_box_override,
         # Per-drawer heights, bottom drawer first, with the flag saying
@@ -3605,6 +3617,10 @@ def apply_opening_data(opening, data, recalc=True):
             'slant_angle', math.radians(const.SLANT_SHELF_ANGLE_DEG))
         if data.get('slant_color'):
             opening.hb_closet_opening.slant_color = data['slant_color']
+        opening.hb_closet_opening.slant_fence_inset = data.get(
+            'slant_fence_inset', const.SHOE_FENCE_INSET)
+        opening.hb_closet_opening.slant_back_inset = data.get(
+            'slant_back_inset', const.SHOE_FENCE_BACK_INSET)
     for s, pair in zip(('left', 'right', 'top', 'bottom'),
                        data.get('overlays') or ()):
         unlocked, value = pair
