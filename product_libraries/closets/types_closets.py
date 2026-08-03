@@ -157,8 +157,16 @@ PROP_PASTED_FRONT_PINS = 'hb_pasted_front_pins'
 # read one way across the library. Same meaning, so it carries straight
 # across. See carry_over_front_locks().
 OLD_PROP_FRONT_LOCKED = 'hb_front_locked'
-PROP_DOOR_SWING = 'hb_door_swing'        # ''|'LEFT'|'RIGHT'|'DOUBLE'|'LIFT_UP'
+# ''|'LEFT'|'RIGHT'|'DOUBLE'|'LIFT_UP'|'TILT_OUT'
+PROP_DOOR_SWING = 'hb_door_swing'
+# The flag a tilt-out hamper was held under before it became one of the
+# fronts a swing can name. Kept so a file saved before the change can be
+# carried over on open. See carry_over_hampers().
 PROP_IS_HAMPER = 'hb_is_hamper'
+# How many fronts each swing hangs. A tilt-out hamper is a single
+# bottom-hinged front, so it counts the same as any other single.
+FRONT_QTY_BY_SWING = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2,
+                      'LIFT_UP': 1, 'TILT_OUT': 1}
 # Bay-level doors span the WHOLE bay (all segments), parented to the bay
 # cage; set from the bay menu. Mutually exclusive with opening doors on
 # the same side (setting one clears the other). These live on the bay's
@@ -1944,12 +1952,12 @@ class ClosetStarter(GeoNodeCage):
         follow-up)."""
         swing = (bay_obj.hb_closet_bay.door_swing
                  if side == 'FRONT' else '')
-        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
+        qty = FRONT_QTY_BY_SWING.get(swing, 0)
         existing = [c for c in bay_obj.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR
                     and c.get('hb_bay_door')]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
-        hamper = 1 if bay_obj.hb_closet_bay.is_hamper else 0
+        hamper = 1 if swing == 'TILT_OUT' else 0
         name = 'Hamper Front' if hamper else 'Door'
         while len(existing) > qty:
             _remove_part_tree(existing.pop())  # front + its pull
@@ -2025,25 +2033,33 @@ class ClosetStarter(GeoNodeCage):
             swing = ''
         else:
             swing = opening.hb_closet_opening.door_swing
-        qty = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2, 'LIFT_UP': 1}.get(swing, 0)
+        qty = FRONT_QTY_BY_SWING.get(swing, 0)
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
+        hamper = 1 if swing == 'TILT_OUT' else 0
+        name = 'Hamper Front' if hamper else 'Door'
         while len(existing) > qty:
             _remove_part_tree(existing.pop())  # front + its pull
         while len(existing) < qty:
-            name = ('Hamper Front'
-                    if opening.hb_closet_opening.is_hamper else 'Door')
             obj = self._make_front(opening, name, PART_ROLE_DOOR, side)
             obj['hb_door_index'] = len(existing)
-            obj['hb_is_hamper'] = (
-                1 if opening.hb_closet_opening.is_hamper else 0)
+            obj['hb_is_hamper'] = hamper
             existing.append(obj)
         # Hinge side per leaf (drives pull placement + open swing): a
         # tilt-out hamper hinges at the BOTTOM; a DOUBLE pair hinges
         # outward so the pulls meet at the center; a lift-up door hinges
         # at the TOP; singles hinge on their swing side.
         for i, obj in enumerate(existing):
+            # Turning a front that is already hanging from a door into
+            # a tilt-out has to reach that front: the pull it carries
+            # and the edge it hinges on both read this. Renamed with it
+            # so the outliner says what the part is, and only when it
+            # actually changes, to keep Blender from walking the
+            # numeric suffix every solve.
+            if obj.get('hb_is_hamper', 0) != hamper:
+                obj['hb_is_hamper'] = hamper
+                obj.name = name
             if obj.get('hb_is_hamper'):
                 obj['hb_hinge'] = 'BOTTOM'
             elif swing == 'DOUBLE':
@@ -3502,6 +3518,39 @@ def carry_over_bay_fronts(root):
         _RECALCULATING.discard(root_id)
 
 
+def carry_over_hampers(root):
+    """Move a bay or an opening that was set to a tilt-out hamper with a
+    flag of its own onto the front setting itself. One way and
+    self-clearing, the same as the bay fronts above.
+
+    A tilt-out hamper is one of the fronts a run can be given now rather
+    than a flag hung beside them, so anything drawn before that reads
+    its flag once and puts it back as the front it stood for."""
+    stale = []
+    for bay in root.children:
+        if not bay.get(TAG_BAY_CAGE):
+            continue
+        if bay.hb_closet_bay.is_hamper:
+            stale.append(bay.hb_closet_bay)
+        for opening in bay.children:
+            if (opening.get(TAG_OPENING_CAGE)
+                    and opening.hb_closet_opening.is_hamper):
+                stale.append(opening.hb_closet_opening)
+    if not stale:
+        return
+    root_id = id(root)
+    _RECALCULATING.add(root_id)
+    try:
+        for props in stale:
+            # A flag with no front under it never stood for anything, so
+            # it is dropped rather than made to hang one.
+            if props.door_swing:
+                props.door_swing = 'TILT_OUT'
+            props.is_hamper = False
+    finally:
+        _RECALCULATING.discard(root_id)
+
+
 def carry_over_front_locks(root):
     """Rename a drawer front's pinned-height flag on a run saved before
     the padlocks were made to read one way across the library.
@@ -3631,6 +3680,7 @@ def recalculate_closet_starter(obj):
     carry_over_lock_flags(root)
     carry_over_opening_settings(root)
     carry_over_bay_fronts(root)
+    carry_over_hampers(root)
     carry_over_front_locks(root)
     _wrap_starter(root).recalculate()
 
@@ -3699,7 +3749,6 @@ def serialize_opening(opening):
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT),
                 key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
-        'is_hamper': int(opening.hb_closet_opening.is_hamper),
         # How far the fronts here are drawn standing open, so a copy
         # reads the way the original did.
         'open_door': float(opening.hb_closet_opening.open_door),
@@ -3819,8 +3868,10 @@ def apply_opening_data(opening, data, recalc=True):
         _op.double_pull_on_front = bool(pulls[5])
         _op.distance_between_pulls = float(pulls[6])
     if data.get('door_swing'):
-        opening.hb_closet_opening.door_swing = data['door_swing']
-        opening.hb_closet_opening.is_hamper = data.get('is_hamper', 0)
+        # A copy taken before the tilt-out hamper became a front of its
+        # own carries the old flag, so it reads back as that front.
+        opening.hb_closet_opening.door_swing = (
+            'TILT_OUT' if data.get('is_hamper') else data['door_swing'])
     if data.get('cubby_cols', 1) > 1 or data.get('cubby_rows', 1) > 1:
         opening.hb_closet_opening.cubby_cols = data.get('cubby_cols', 1)
         opening.hb_closet_opening.cubby_rows = data.get('cubby_rows', 1)
@@ -3874,7 +3925,6 @@ def serialize_bay(bay_obj):
         'remove_bottom': bool(bp.remove_bottom),
         'remove_cleat': bool(bp.remove_cleat),
         'bay_door_swing': bp.door_swing,
-        'bay_is_hamper': int(bp.is_hamper),
         'bay_open_door': float(bp.open_door),
         'shelves': list(shelves),
         # A division travels as the segment it is in and how far across
@@ -3928,8 +3978,8 @@ def apply_bay_data(bay_obj, data):
         bp.remove_cleat = data.get('remove_cleat', False)
         bp.open_door = float(data.get('bay_open_door', 0.0))
         if data.get('bay_door_swing'):
-            bp.door_swing = data['bay_door_swing']
-            bp.is_hamper = bool(data.get('bay_is_hamper', 0))
+            bp.door_swing = ('TILT_OUT' if data.get('bay_is_hamper')
+                             else data['bay_door_swing'])
 
         for op_obj, od in zip(_front_openings(bay_obj),
                               data.get('openings', ())):
@@ -3992,13 +4042,12 @@ def _cfg_rod(opening):
 
 def _cfg_doors(opening):
     opening.hb_closet_opening.door_swing = 'DOUBLE'
-    opening.hb_closet_opening.is_hamper = 0
     seed_door_shelves(opening)
 
 
 def _cfg_hamper(opening):
-    opening.hb_closet_opening.door_swing = 'LEFT'
-    opening.hb_closet_opening.is_hamper = 1
+    # No shelves behind a tilt-out - the basket takes the opening.
+    opening.hb_closet_opening.door_swing = 'TILT_OUT'
 
 
 def apply_bay_config(bay_obj, config):
@@ -4117,7 +4166,6 @@ def apply_bay_config(bay_obj, config):
         if bay_door:
             bp = bay_obj.hb_closet_bay
             bp.door_swing = bay_door
-            bp.is_hamper = False
             seed_door_shelves(opening)
         recalculate_closet_starter(root)
     return True
@@ -4131,7 +4179,8 @@ OPENING_CONFIG_GROUPS = [
     [('DOOR_LEFT', "Left Swing Door"),
      ('DOOR_RIGHT', "Right Swing Door"),
      ('DOOR_DOUBLE', "Double Door"),
-     ('DOOR_LIFT_UP', "Lift Up Door")],
+     ('DOOR_LIFT_UP', "Lift Up Door"),
+     ('DOOR_TILT_OUT', "Tilt Out Hamper")],
     [('DRAWERS_1', "1 Drawer"), ('DRAWERS_2', "2 Drawer"),
      ('DRAWERS_3', "3 Drawer"), ('DRAWERS_4', "4 Drawer"),
      ('DRAWERS_5', "5 Drawer"), ('DRAWERS_6', "6 Drawer"),
@@ -4164,6 +4213,9 @@ def apply_opening_config(opening, config):
     elif config == 'DOOR_LIFT_UP':
         opening.hb_closet_opening.door_swing = 'LIFT_UP'
         seed_door_shelves(opening)
+    elif config == 'DOOR_TILT_OUT':
+        # No shelves behind a tilt-out - the basket takes the opening.
+        opening.hb_closet_opening.door_swing = 'TILT_OUT'
     elif config == 'CUBBIES':
         opening.hb_closet_opening.cubby_cols = 3
         opening.hb_closet_opening.cubby_rows = 3

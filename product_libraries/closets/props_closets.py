@@ -855,14 +855,16 @@ class Closet_Bay_Props(PropertyGroup):
     # front at all.
     door_swing: bpy.props.StringProperty(
         name="Door",
-        description="Front spanning the whole bay: LEFT, RIGHT, DOUBLE "
-                    "or LIFT_UP. Empty leaves the bay's openings to "
-                    "carry their own fronts",
+        description="Front spanning the whole bay: LEFT, RIGHT, DOUBLE, "
+                    "LIFT_UP or TILT_OUT. Empty leaves the bay's "
+                    "openings to carry their own fronts",
         default='', update=_update_bay_prop)  # type: ignore
+    # A tilt-out hamper is one of the fronts the bay can carry now, so
+    # it is read off door_swing rather than held beside it. This is kept
+    # only so a bay drawn before the change still comes back a hamper:
+    # it is read once and put back. See carry_over_hampers().
     is_hamper: BoolProperty(
         name="Tilt Out Hamper",
-        description="Hang the bay-wide front on a tilt-out hamper with a "
-                    "wire basket behind it instead of a plain door",
         default=False, update=_update_bay_prop)  # type: ignore
     # How far a bay-wide front is drawn standing open. Purely a drawing
     # setting: it moves the front and nothing else.
@@ -1032,13 +1034,14 @@ class Closet_Opening_Props(PropertyGroup):
     # box override: an empty value has to be distinguishable from a choice.
     door_swing: bpy.props.StringProperty(
         name="Door",
-        description="Front on this opening: LEFT, RIGHT, DOUBLE or "
-                    "LIFT_UP. Empty leaves the opening open",
+        description="Front on this opening: LEFT, RIGHT, DOUBLE, "
+                    "LIFT_UP or TILT_OUT. Empty leaves the opening open",
         default='')  # type: ignore
+    # Read off door_swing now, the same as the bay's. Kept only so an
+    # opening drawn before the change still comes back a hamper; read
+    # once and put back. See carry_over_hampers().
     is_hamper: BoolProperty(
         name="Tilt Out Hamper",
-        description="Hang the front on a tilt-out hamper with a wire "
-                    "basket behind it instead of a plain door",
         default=False)  # type: ignore
 
     # ----- Hang rod -----

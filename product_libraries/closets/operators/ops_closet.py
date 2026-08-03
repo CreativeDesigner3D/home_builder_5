@@ -2472,9 +2472,9 @@ class hb_closets_OT_resize_drawer_for_tray(bpy.types.Operator):
 
 class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
     """Add a door front to the active opening. No dialog - the menu
-    entries bake the swing (left / right / double) and the hamper flag;
-    picking a different entry replaces the existing fronts. Delete Part
-    on a door removes it."""
+    entries bake the swing in, the tilt-out hamper among them; picking a
+    different entry replaces the existing fronts. Delete Part on a door
+    removes it."""
     bl_idname = "hb_closets.add_doors"
     bl_label = "Add Door"
     bl_options = {'UNDO'}
@@ -2485,10 +2485,11 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
                ('LEFT', "Left", "Single door hinged left"),
                ('RIGHT', "Right", "Single door hinged right"),
                ('DOUBLE', "Double", "Pair of doors"),
-               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door")],
+               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door"),
+               ('TILT_OUT', "Tilt Out Hamper",
+                "Single bottom-hinged front that tilts out, with a wire "
+                "basket behind it")],
         default='LEFT')  # type: ignore
-    is_hamper: bpy.props.BoolProperty(
-        name="Hamper (tilt-out)", default=False)  # type: ignore
 
     def invoke(self, context, event):
         # Direct action, no dialog (menu entries carry the props).
@@ -2509,7 +2510,6 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             with types_closets.suspend_recalc():
                 bp = bay.hb_closet_bay
                 bp.door_swing = swing
-                bp.is_hamper = bool(self.is_hamper)
                 # Bay-wide doors supersede opening doors on the front
                 # side; door openings get default adjustable shelves
                 # behind them (seed_door_shelves skips occupied ones).
@@ -2518,7 +2518,7 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
                             and op.get(types_closets.PROP_OPENING_SIDE,
                                        'FRONT') == 'FRONT'):
                         op.hb_closet_opening.door_swing = ''
-                        if swing and not self.is_hamper:
+                        if swing and swing != 'TILT_OUT':
                             types_closets.seed_door_shelves(op)
                 types_closets.recalculate_closet_starter(root)
             _apply_finish(root)
@@ -2526,13 +2526,12 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             return {'FINISHED'}
         # Door openings get default adjustable shelves behind them
         # (skipped for hampers and occupied openings).
-        if swing and not self.is_hamper:
+        if swing and swing != 'TILT_OUT':
             opening = _active_opening_for_insert(context)
             if opening is not None:
                 types_closets.seed_door_shelves(opening)
         return self._commit(context, {
             'door_swing': swing,
-            'is_hamper': self.is_hamper,
         })
 
 
@@ -3997,13 +3996,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                ('LEFT', "Left Swing", "Single door hinged left"),
                ('RIGHT', "Right Swing", "Single door hinged right"),
                ('DOUBLE', "Double Door", "Pair of doors"),
-               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door")],
+               ('LIFT_UP', "Lift Up", "Single top-hinged lift-up door"),
+               ('TILT_OUT', "Tilt Out Hamper",
+                "Single bottom-hinged front that tilts out, with a wire "
+                "basket behind it")],
         default='NONE')  # type: ignore
-    is_hamper: bpy.props.BoolProperty(
-        name="Tilt Out Hamper",
-        description="Hang the front on a tilt-out hamper with a wire "
-                    "basket behind it instead of a plain door",
-        default=False)  # type: ignore
     open_door: bpy.props.FloatProperty(
         name="Open Door",
         description="How far the doors on this opening are drawn standing "
@@ -4219,7 +4216,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.slant_fence_inset = float(op.slant_fence_inset)
         self.slant_back_inset = float(op.slant_back_inset)
         self.door_swing = op.door_swing or 'NONE'
-        self.is_hamper = bool(op.is_hamper)
         self.open_door = float(op.open_door)
         self.open_drawer = float(op.open_drawer)
         self.rod_set_from_front = bool(op.rod_set_from_front)
@@ -4333,7 +4329,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             box.prop(self, 'door_swing', text="")
             sub = box.column(align=True)
             sub.enabled = self.door_swing != 'NONE'
-            sub.prop(self, 'is_hamper')
             sub.prop(self, 'open_door')
         # What the run works out for a front, and any side this opening
         # has taken over. A locked side reads back the run's figure, so
@@ -4495,7 +4490,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         swing = ('' if self.door_swing == 'NONE' or self.fill == 'DRAWERS'
                  else self.door_swing)
         opening.hb_closet_opening.door_swing = swing
-        opening.hb_closet_opening.is_hamper = bool(swing and self.is_hamper)
 
         for side in ('top', 'bottom', 'left', 'right'):
             setattr(opening.hb_closet_opening, '%s_overlay' % side,
