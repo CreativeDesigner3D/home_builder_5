@@ -455,7 +455,7 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.label(text="Height:")
         row.prop(hb_scene, 'door_height', text="")
         row = box.row(align=True)
-        row.label(text="Style:")
+        row.label(text="Preset:")
         row.prop(hb_scene, 'entry_door_style', text="")
 
         box = col.box()
@@ -470,7 +470,7 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.label(text="Height From Floor:")
         row.prop(hb_scene, 'window_height_from_floor', text="")
         row = box.row(align=True)
-        row.label(text="Style:")
+        row.label(text="Preset:")
         row.prop(hb_scene, 'window_style', text="")
 
         row = col.row(align=True)

@@ -689,8 +689,9 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
     WIDTH_PROP_NAME = ""             # 'door_single_width' / 'window_width' / etc.
     HEIGHT_PROP_NAME = ""            # 'door_height' / 'window_height'
     Z_OFFSET_PROP_NAME = None        # None = floor-anchored, else home_builder prop name
-    TEXT_KIND = "DOOR"               # GeoNodeText kind: 'DOOR' or 'WINDOW'
+    TEXT_KIND = "DOOR"               # GeoNodeText label: 'DOOR' / 'WINDOW' / None = no label
     TEXT_NAME = "Object Text"        # GeoNodeText object name
+    IS_OPEN_DOORWAY = False          # True = plain opening (never labeled)
     HAS_SWING = False                # True for single/double door
     SWING_LIST = None                # SINGLE_DOOR_SWINGS / DOUBLE_DOOR_SWINGS / None
     INITIAL_SWING_INPUTS = None      # dict of initial inputs to set on the swing object
@@ -784,15 +785,21 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 for k, v in self.INITIAL_SWING_INPUTS.items():
                     self.swing_obj.set_input(k, v)
 
-        # Text annotation
-        text = GeoNodeText()
-        text.create(self.TEXT_NAME, self.TEXT_KIND, props.annotation_text_size)
-        text.obj.parent = self.placed_obj.obj
-        text.obj.rotation_euler.x = math.radians(90)
-        text.driver_location("x", 'dim_x/2', [dim_x])
-        text.driver_location("y", 'dim_y/2', [dim_y])
-        text.driver_location("z", 'dim_z/2', [dim_z])
-        text.set_alignment('CENTER', 'CENTER')
+        if self.IS_OPEN_DOORWAY:
+            self.placed_obj.obj['IS_OPEN_DOORWAY'] = True
+
+        # Text annotation (open doorways carry no label -- they are
+        # just an opening, not a door)
+        if self.TEXT_KIND:
+            text = GeoNodeText()
+            text.create(self.TEXT_NAME, self.TEXT_KIND,
+                        props.annotation_text_size)
+            text.obj.parent = self.placed_obj.obj
+            text.obj.rotation_euler.x = math.radians(90)
+            text.driver_location("x", 'dim_x/2', [dim_x])
+            text.driver_location("y", 'dim_y/2', [dim_y])
+            text.driver_location("z", 'dim_z/2', [dim_z])
+            text.set_alignment('CENTER', 'CENTER')
 
         self.register_placement_object(self.placed_obj.obj)
         self.create_placement_dimensions()
@@ -1084,9 +1091,10 @@ class home_builder_doors_windows_OT_place_open_door(_PlaceWallObjectBase):
     MENU_ID = "HOME_BUILDER_MT_door_commands"
     WIDTH_PROP_NAME = "door_single_width"
     HEIGHT_PROP_NAME = "door_height"
-    TEXT_KIND = "DOOR"
+    TEXT_KIND = None
     TEXT_NAME = "Door Text"
     BUILD_GEO = False
+    IS_OPEN_DOORWAY = True
 
 
 class home_builder_doors_windows_OT_place_window(_PlaceWallObjectBase):
@@ -1132,17 +1140,18 @@ def _apply_preset_if_changed(op, category):
     if op.style in ('CUSTOM', 'NONE'):
         return
     if op.style == getattr(op, '_applied_style', None):
-        return
+        return None
     op._applied_style = op.style
     opts = door_window_geo.load_style(category, op.style)
     if not opts:
-        return
+        return None
     for key, val in opts.items():
         if hasattr(op, key):
             try:
                 setattr(op, key, val)
             except (TypeError, ValueError):
                 pass
+    return opts
 
 
 def _collect_operator_opts(op, defaults):
@@ -1193,9 +1202,12 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     door_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
 
     style: bpy.props.EnumProperty(
-        name="Style", items=_door_style_preset_items)  # type: ignore
+        name="Preset", items=_door_style_preset_items,
+        description="Starting point that fills in the fields below; "
+                    "edit any field afterwards without losing your "
+                    "changes")  # type: ignore
     door_style: bpy.props.EnumProperty(
-        name="Door Style", items=door_window_geo.DOOR_STYLE_ITEMS)  # type: ignore
+        name="Panel Layout", items=door_window_geo.DOOR_STYLE_ITEMS)  # type: ignore
     panel_raise: bpy.props.BoolProperty(name="Raised Panels")  # type: ignore
     stile_width: bpy.props.FloatProperty(name="Stile Width", unit='LENGTH', precision=5)  # type: ignore
     top_rail_width: bpy.props.FloatProperty(name="Top Rail", unit='LENGTH', precision=5)  # type: ignore
@@ -1236,14 +1248,37 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         return _resolve_door_window_bp(context.object,
                                        'IS_ENTRY_DOOR_BP') is not None
 
+    def _unit_extras(self):
+        return door_window_geo.door_unit_extras({
+            'sidelite_left': self.sidelite_left,
+            'sidelite_right': self.sidelite_right,
+            'transom_height': self.transom_height,
+        })
+
     def check(self, context):
-        self.door.set_input('Dim X', self.door_width)
-        self.door.set_input('Dim Z', self.door_height)
         if self.style == 'NONE':
-            door_window_geo.remove_geometry(self.door.obj)
+            self.door.set_input('Dim X', self.door_width)
+            self.door.set_input('Dim Z', self.door_height)
+            door_window_geo.remove_geometry(self.door.obj,
+                                            restore_annotations=True)
             door_window_geo.clear_opts(self.door.obj)
         else:
-            _apply_preset_if_changed(self, door_window_geo.DOOR_CATEGORY)
+            # A preset that adds or removes sidelites / a transom
+            # resizes the OPENING by the difference, so the door slab
+            # keeps its size instead of shrinking to make room.
+            old_w, old_h = self._unit_extras()
+            applied = _apply_preset_if_changed(
+                self, door_window_geo.DOOR_CATEGORY)
+            if applied is not None:
+                new_w, new_h = self._unit_extras()
+                if abs(new_w - old_w) > 1e-9:
+                    self.door_width = max(
+                        self.door_width + new_w - old_w, units.inch(20))
+                if abs(new_h - old_h) > 1e-9:
+                    self.door_height = max(
+                        self.door_height + new_h - old_h, units.inch(30))
+            self.door.set_input('Dim X', self.door_width)
+            self.door.set_input('Dim Z', self.door_height)
             opts = _collect_operator_opts(
                 self, door_window_geo.DOOR_DEFAULTS)
             # The two rotation vectors fan out to the six stored keys.
@@ -1293,12 +1328,12 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
 
         box = layout.box()
         row = box.row()
-        row.label(text="3D Style:")
+        row.label(text="Preset:")
         row.prop(self, 'style', text="")
         if self.style == 'NONE':
             return
         row = box.row()
-        row.label(text="Door Style:")
+        row.label(text="Panel Layout:")
         row.prop(self, 'door_style', text="")
         if self.door_style == 'LITE_FULL':
             row = box.row(align=True)
@@ -1378,7 +1413,10 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     height_from_floor: bpy.props.FloatProperty(name="Height From Floor", unit='LENGTH', precision=5)  # type: ignore
 
     style: bpy.props.EnumProperty(
-        name="Style", items=_window_style_preset_items)  # type: ignore
+        name="Preset", items=_window_style_preset_items,
+        description="Starting point that fills in the fields below; "
+                    "edit any field afterwards without losing your "
+                    "changes")  # type: ignore
     window_type: bpy.props.EnumProperty(
         name="Window Type", items=door_window_geo.WINDOW_TYPE_ITEMS)  # type: ignore
     panes: bpy.props.IntProperty(name="Panes", min=1, max=3)  # type: ignore
@@ -1412,7 +1450,8 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         self.window.set_input('Dim Z', self.window_height)
         self.window.obj.location.z = self.height_from_floor
         if self.style == 'NONE':
-            door_window_geo.remove_geometry(self.window.obj)
+            door_window_geo.remove_geometry(self.window.obj,
+                                            restore_annotations=True)
             door_window_geo.clear_opts(self.window.obj)
         else:
             _apply_preset_if_changed(self, door_window_geo.WINDOW_CATEGORY)
@@ -1456,7 +1495,7 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
 
         box = layout.box()
         row = box.row()
-        row.label(text="3D Style:")
+        row.label(text="Preset:")
         row.prop(self, 'style', text="")
         if self.style == 'NONE':
             return
@@ -1692,15 +1731,21 @@ class _DuplicateWallObjectBase(_PlaceWallObjectBase):
         self._source = hb_types.GeoNodeCage(source)
         self._source_z = source.location.z
         self._source_has_swing = _find_door_swing_child(source) is not None
+        self._source_has_text = any(c.type == 'FONT'
+                                    for c in source.children)
         # The copy mirrors the source: a cage-only source stays cage
         # only rather than picking up the scene's default style.
         self.BUILD_GEO = door_window_geo.stored_opts(source) is not None
         return super().execute(context)
 
     def create_placed_object(self, context):
-        # Match the source's swing presence (open-door copy gets no swing) before
-        # the fresh object is built, then clone the source's parametric state.
+        # Match the source's swing and label presence (an open-door or
+        # geometry-carrying copy gets no text) before the fresh object
+        # is built, then clone the source's parametric state.
         self.HAS_SWING = self._source_has_swing
+        if not self._source_has_text:
+            self.TEXT_KIND = None
+        self.IS_OPEN_DOORWAY = bool(self._source.obj.get('IS_OPEN_DOORWAY'))
         super().create_placed_object(context)
         _copy_geo_value_inputs(self._source, self.placed_obj)
         if self.HAS_SWING and self.swing_obj is not None:
@@ -1763,41 +1808,6 @@ class home_builder_doors_windows_OT_duplicate_door(_DuplicateWallObjectBase):
 
 
 
-class home_builder_doors_windows_OT_rebuild_geometry(bpy.types.Operator):
-    bl_idname = "home_builder_doors_windows.rebuild_geometry"
-    bl_label = "Rebuild 3D Geometry"
-    bl_description = ("Rebuild the selected door/window's 3D geometry "
-                      "from its stored style options")
-    bl_options = {'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return _resolve_door_window_bp(context.object) is not None
-
-    def execute(self, context):
-        bp = _resolve_door_window_bp(context.object)
-        door_window_geo.build_geometry(bp)
-        return {'FINISHED'}
-
-
-class home_builder_doors_windows_OT_remove_geometry(bpy.types.Operator):
-    bl_idname = "home_builder_doors_windows.remove_geometry"
-    bl_label = "Remove 3D Geometry"
-    bl_description = ("Remove the selected door/window's 3D geometry and "
-                      "return it to a cage-only opening")
-    bl_options = {'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return _resolve_door_window_bp(context.object) is not None
-
-    def execute(self, context):
-        bp = _resolve_door_window_bp(context.object)
-        door_window_geo.remove_geometry(bp)
-        door_window_geo.clear_opts(bp)
-        return {'FINISHED'}
-
-
 classes = (
     home_builder_doors_windows_OT_place_door,
     home_builder_doors_windows_OT_place_double_door,
@@ -1811,8 +1821,6 @@ classes = (
     home_builder_doors_windows_OT_flip_door_hand,
     home_builder_doors_windows_OT_toggle_double_door,
     home_builder_doors_windows_OT_delete_door_window,
-    home_builder_doors_windows_OT_rebuild_geometry,
-    home_builder_doors_windows_OT_remove_geometry,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

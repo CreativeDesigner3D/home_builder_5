@@ -40,6 +40,7 @@ import bpy
 from mathutils import Euler, Matrix, Vector
 
 from ... import hb_types
+from ...hb_details import GeoNodeText
 from ...units import inch
 from . import door_builder
 
@@ -411,13 +412,39 @@ def style_enum_items(category, include_custom=False, include_none=False):
     items = [(name, label, "Apply the %s style preset" % label)
              for name, label in styles]
     if include_custom:
-        items.append(('CUSTOM', "Custom", "Keep the current option values"))
+        items.append(('CUSTOM', "Custom (No Preset)",
+                      "Keep the current option values"))
     if include_none:
-        items.append(('NONE', "None (Cage Only)", "No 3D geometry"))
+        items.append(('NONE', "No 3D Geometry (Cage Only)",
+                      "Remove the 3D geometry and show only the "
+                      "wireframe cage"))
     if not items:
-        items = [('NONE', "None (Cage Only)", "No 3D geometry")]
+        items = [('NONE', "No 3D Geometry (Cage Only)",
+                  "Remove the 3D geometry and show only the "
+                  "wireframe cage")]
     _style_enum_cache[key] = items
     return items
+
+
+def door_unit_extras(opts):
+    """(extra_width, extra_height) a door unit needs beyond the slab
+    for its sidelites / transom, mull posts included. Used to grow the
+    cage when a preset introduces them, so the door slab keeps its
+    size instead of shrinking to make room."""
+    extra_w = 0.0
+    for key in ('sidelite_left', 'sidelite_right'):
+        try:
+            val = float(opts.get(key, 0.0))
+        except (TypeError, ValueError):
+            val = 0.0
+        if val > 0.0:
+            extra_w += val + MULL_WIDTH
+    try:
+        transom = float(opts.get('transom_height', 0.0))
+    except (TypeError, ValueError):
+        transom = 0.0
+    extra_h = transom + MULL_WIDTH if transom > 0.0 else 0.0
+    return extra_w, extra_h
 
 
 def apply_scene_style_and_build(cage_obj, context):
@@ -441,6 +468,19 @@ def apply_scene_style_and_build(cage_obj, context):
     full = dict(_defaults_for(category))
     full.update(opts)
     full['style'] = name
+    if category == DOOR_CATEGORY:
+        # A preset with sidelites / a transom describes a wider / taller
+        # UNIT: grow the opening so the door slab keeps the placed size.
+        extra_w, extra_h = door_unit_extras(full)
+        if extra_w > 0.0 or extra_h > 0.0:
+            cage = hb_types.GeoNodeCage(cage_obj)
+            if cage.has_modifier():
+                if extra_w > 0.0:
+                    cage.set_input('Dim X',
+                                   cage.get_input('Dim X') + extra_w)
+                if extra_h > 0.0:
+                    cage.set_input('Dim Z',
+                                   cage.get_input('Dim Z') + extra_h)
     set_opts(cage_obj, full)
     build_geometry(cage_obj)
 
@@ -645,9 +685,11 @@ def _glassify_above(obj, x_cut):
             poly.material_index = glass_idx
 
 
-def remove_geometry(cage_obj):
-    """Delete every generated geometry child (annotations and the swing
-    stay)."""
+def remove_geometry(cage_obj, restore_annotations=False):
+    """Delete every generated geometry child (the swing annotation
+    stays). ``restore_annotations`` brings back the DOOR / WINDOW text
+    label a geometry build removed -- used when the user returns an
+    opening to cage-only display, not by the rebuild path."""
     for child in list(cage_obj.children):
         if not child.get(GEO_CHILD_FLAG):
             continue
@@ -655,6 +697,52 @@ def remove_geometry(cage_obj):
         bpy.data.objects.remove(child, do_unlink=True)
         if me is not None and me.users == 0:
             bpy.data.meshes.remove(me)
+    if restore_annotations:
+        _ensure_annotation_text(cage_obj, True)
+
+
+def _text_children(cage_obj):
+    return [c for c in cage_obj.children if c.type == 'FONT']
+
+
+def _ensure_annotation_text(cage_obj, want):
+    """The cage's centered DOOR / WINDOW text label exists only while
+    the opening is cage-only -- built 3D geometry says what it is. The
+    recreation mirrors the placement operator's setup (dim-driven
+    centering)."""
+    texts = _text_children(cage_obj)
+    if not want:
+        for child in texts:
+            data = child.data
+            bpy.data.objects.remove(child, do_unlink=True)
+            if data is not None and data.users == 0:
+                bpy.data.curves.remove(data)
+        return
+    if texts:
+        return
+    # Open doorways are never labeled -- they're just an opening. The
+    # name check covers doorways placed before the flag existed.
+    if cage_obj.get('IS_OPEN_DOORWAY') \
+            or cage_obj.name.startswith('Open Door'):
+        return
+    cage = hb_types.GeoNodeCage(cage_obj)
+    if not cage.has_modifier():
+        return
+    props = bpy.context.scene.home_builder
+    is_window = bool(cage_obj.get('IS_WINDOW_BP'))
+    text = GeoNodeText()
+    text.create("Window Text" if is_window else "Door Text",
+                'WINDOW' if is_window else 'DOOR',
+                props.annotation_text_size)
+    text.obj.parent = cage_obj
+    text.obj.rotation_euler.x = math.radians(90)
+    dim_x = cage.var_input('Dim X', 'dim_x')
+    dim_y = cage.var_input('Dim Y', 'dim_y')
+    dim_z = cage.var_input('Dim Z', 'dim_z')
+    text.driver_location("x", 'dim_x/2', [dim_x])
+    text.driver_location("y", 'dim_y/2', [dim_y])
+    text.driver_location("z", 'dim_z/2', [dim_z])
+    text.set_alignment('CENTER', 'CENTER')
 
 
 # ---------------------------------------------------------------------------
@@ -900,33 +988,66 @@ def build_door_geometry(cage_obj):
 
     verts, faces, slots = [], [], []
 
-    # Jamb lining the rough opening, full wall depth.
-    _box(verts, faces, slots, 0.0, jw, 0.0, T, 0.0, H)
-    _box(verts, faces, slots, W - jw, W, 0.0, T, 0.0, H)
-    _box(verts, faces, slots, jw, W - jw, 0.0, T, H - jw, H)
-    if th_h > 0.0:
-        _box(verts, faces, slots, jw, W - jw, 0.0, T, 0.0, th_h)
+    # The cage's Dim X / Dim Z are the OVERALL unit including casing:
+    # the casing band sits inside the footprint and the opening
+    # shrinks inward by it. Full-depth filler boxes close the wall cut
+    # behind the band (the cage still cuts its full rectangle).
+    any_casing = (opts['include_exterior_casing']
+                  or opts['include_interior_casing'])
+    band = min(cw, W / 4.0, H / 4.0) if any_casing else 0.0
+    ox0, ox1, oz1 = band, W - band, H - band
 
-    # Casing rings (sides + head, no bottom) proud of each wall face.
-    for on, y0, y1 in ((opts['include_exterior_casing'], T, T + ct),
-                       (opts['include_interior_casing'], -ct, 0.0)):
-        if not on:
-            continue
-        _box(verts, faces, slots, -cw, 0.0, y0, y1, 0.0, H)
-        _box(verts, faces, slots, W, W + cw, y0, y1, 0.0, H)
-        _box(verts, faces, slots, -cw, W + cw, y0, y1, H, H + cw)
+    if band > 0.0:
+        _box(verts, faces, slots, 0.0, band, 0.0, T, 0.0, H)
+        _box(verts, faces, slots, W - band, W, 0.0, T, 0.0, H)
+        _box(verts, faces, slots, band, W - band, 0.0, T, oz1, H)
+
+    # Jamb lining the opening, full wall depth.
+    _box(verts, faces, slots, ox0, ox0 + jw, 0.0, T, 0.0, oz1)
+    _box(verts, faces, slots, ox1 - jw, ox1, 0.0, T, 0.0, oz1)
+    _box(verts, faces, slots, ox0 + jw, ox1 - jw, 0.0, T,
+         oz1 - jw, oz1)
+    if th_h > 0.0:
+        _box(verts, faces, slots, ox0 + jw, ox1 - jw, 0.0, T, 0.0, th_h)
+
+    # Casing (sides + head, butt joints, no bottom) proud of each
+    # wall face, within the reserved band.
+    if band > 0.0:
+        for on, y0, y1 in ((opts['include_exterior_casing'], T, T + ct),
+                           (opts['include_interior_casing'], -ct, 0.0)):
+            if not on:
+                continue
+            _box(verts, faces, slots, 0.0, band, y0, y1, 0.0, oz1)
+            _box(verts, faces, slots, W - band, W, y0, y1, 0.0, oz1)
+            _box(verts, faces, slots, 0.0, W, y0, y1, oz1, H)
 
     # Interior layout: sidelites and a transom subdivide the opening
     # with mull posts; the slab(s) take what remains.
-    x0, x1 = jw, W - jw
-    z_top = H - jw
+    x0, x1 = ox0 + jw, ox1 - jw
+    z_top = oz1 - jw
+    # Sidelites / transom that don't fit the opening shrink to fit
+    # (dropping entirely only below a usable minimum) rather than
+    # silently vanishing -- the door zone keeps at least 18" / 24".
     transom_h = max(opts['transom_height'], 0.0)
-    if transom_h > z_top - th_h - inch(24):
-        transom_h = 0.0
+    if transom_h > 0.0:
+        transom_h = min(transom_h,
+                        max(z_top - th_h - inch(24.0) - MULL_WIDTH, 0.0))
+        if transom_h < inch(4.0):
+            transom_h = 0.0
     sl_l = max(opts['sidelite_left'], 0.0)
     sl_r = max(opts['sidelite_right'], 0.0)
-    if sl_l + sl_r > (x1 - x0) - inch(18):
-        sl_l = sl_r = 0.0
+    if sl_l > 0.0 or sl_r > 0.0:
+        mulls = MULL_WIDTH * ((sl_l > 0.0) + (sl_r > 0.0))
+        avail = (x1 - x0) - inch(18.0) - mulls
+        total = sl_l + sl_r
+        if total > avail:
+            scale = max(avail / total, 0.0) if total > 0.0 else 0.0
+            sl_l *= scale
+            sl_r *= scale
+        if sl_l < inch(3.0):
+            sl_l = 0.0
+        if sl_r < inch(3.0):
+            sl_r = 0.0
 
     y_center_front = (T - st) / 2.0
 
@@ -987,6 +1108,7 @@ def build_door_geometry(cage_obj):
 
     frame = _new_child(cage_obj, "Door Frame")
     _finish_mesh(frame, verts, faces, slots, [trim_mat])
+    _ensure_annotation_text(cage_obj, False)
 
 
 # ---------------------------------------------------------------------------
@@ -1050,14 +1172,39 @@ def build_window_geometry(cage_obj):
 
     verts, faces, slots = [], [], []
 
-    # Frame lining the rough opening, full wall depth.
-    _box(verts, faces, slots, 0.0, fw, 0.0, T, 0.0, H)
-    _box(verts, faces, slots, W - fw, W, 0.0, T, 0.0, H)
-    _box(verts, faces, slots, fw, W - fw, 0.0, T, 0.0, fw)
-    _box(verts, faces, slots, fw, W - fw, 0.0, T, H - fw, H)
+    # The cage's Dim X / Dim Z are the OVERALL unit including casing,
+    # sill and stool: the trim sits inside the footprint and the frame
+    # shrinks inward by the reserved bands. Full-depth filler boxes
+    # close the wall cut behind the bands.
+    any_casing = (opts['include_exterior_casing']
+                  or opts['include_interior_casing'])
+    sill_on = bool(opts['include_sill'])
+    stool_on = bool(opts['include_stool'])
+    sh = max(opts['sill_height'], inch(0.5)) if sill_on else 0.0
+    side_b = min(cw, W / 4.0) if any_casing else 0.0
+    top_b = min(cw, H / 4.0) if any_casing else 0.0
+    bot_b = max(sh,
+                min(cw, H / 4.0) if any_casing else 0.0,
+                inch(1.0) if stool_on else 0.0)
+    fx0, fx1 = side_b, W - side_b
+    fz0, fz1 = bot_b, H - top_b
 
-    ox0, ox1 = fw, W - fw
-    oz0, oz1 = fw, H - fw
+    if side_b > 0.0:
+        _box(verts, faces, slots, 0.0, side_b, 0.0, T, 0.0, H)
+        _box(verts, faces, slots, W - side_b, W, 0.0, T, 0.0, H)
+    if top_b > 0.0:
+        _box(verts, faces, slots, fx0, fx1, 0.0, T, fz1, H)
+    if bot_b > 0.0:
+        _box(verts, faces, slots, fx0, fx1, 0.0, T, 0.0, fz0)
+
+    # Frame lining the opening, full wall depth.
+    _box(verts, faces, slots, fx0, fx0 + fw, 0.0, T, fz0, fz1)
+    _box(verts, faces, slots, fx1 - fw, fx1, 0.0, T, fz0, fz1)
+    _box(verts, faces, slots, fx0 + fw, fx1 - fw, 0.0, T, fz0, fz0 + fw)
+    _box(verts, faces, slots, fx0 + fw, fx1 - fw, 0.0, T, fz1 - fw, fz1)
+
+    ox0, ox1 = fx0 + fw, fx1 - fw
+    oz0, oz1 = fz0 + fw, fz1 - fw
     ow, oh = ox1 - ox0, oz1 - oz0
 
     # Sash depth planes: exterior sashes sit behind the wall middle,
@@ -1101,42 +1248,39 @@ def build_window_geometry(cage_obj):
         sash("Sash", ow, oh, ox0, y_center_front, oz0)
 
     # Exterior sill: a projecting board under the frame (rectangular
-    # stand-in for the sloped sill), with horns past the casing.
-    sill_on = bool(opts['include_sill'])
+    # stand-in for the sloped sill), full unit width.
     if sill_on:
-        sh = max(opts['sill_height'], inch(0.5))
         sp = max(opts['sill_projection'], 0.0)
-        horn = max(opts['sill_horn'], 0.0)
-        ext_cw = cw if opts['include_exterior_casing'] else 0.0
-        _box(verts, faces, slots, -ext_cw - horn, W + ext_cw + horn,
-             T, T + ct + sp, -sh, 0.0)
+        _box(verts, faces, slots, 0.0, W, T, T + ct + sp,
+             fz0 - sh, fz0)
 
-    # Casing rings proud of each wall face; the exterior ring skips its
-    # bottom leg when the sill is on, the interior when the stool is.
+    # Casing per face (sides + head + bottom leg, butt joints) within
+    # the reserved bands; the exterior skips its bottom leg for the
+    # sill, the interior for the stool.
     for on, y0, y1, skip_bottom in (
             (opts['include_exterior_casing'], T, T + ct, sill_on),
-            (opts['include_interior_casing'], -ct, 0.0,
-             bool(opts['include_stool']))):
-        if not on:
+            (opts['include_interior_casing'], -ct, 0.0, stool_on)):
+        if not on or side_b <= 0.0:
             continue
-        _box(verts, faces, slots, -cw, 0.0, y0, y1, 0.0, H)
-        _box(verts, faces, slots, W, W + cw, y0, y1, 0.0, H)
-        _box(verts, faces, slots, -cw, W + cw, y0, y1, H, H + cw)
+        z_side0 = fz0 if skip_bottom else max(fz0 - side_b, 0.0)
+        _box(verts, faces, slots, 0.0, side_b, y0, y1, z_side0, fz1)
+        _box(verts, faces, slots, W - side_b, W, y0, y1, z_side0, fz1)
+        _box(verts, faces, slots, 0.0, W, y0, y1, fz1, H)
         if not skip_bottom:
-            _box(verts, faces, slots, -cw, W + cw, y0, y1, -cw, 0.0)
+            _box(verts, faces, slots, side_b, W - side_b, y0, y1,
+                 max(fz0 - side_b, 0.0), fz0)
 
-    # Interior stool: top flush with the opening bottom, projecting
-    # into the room past the casing, with an apron strip below.
-    if opts['include_stool']:
-        int_cw = cw if opts['include_interior_casing'] else 0.0
-        _box(verts, faces, slots, -int_cw - inch(0.5),
-             W + int_cw + inch(0.5), -ct - inch(1.0), 0.0,
-             -inch(0.75), 0.0)
-        _box(verts, faces, slots, -int_cw, W + int_cw, -ct, 0.0,
-             -inch(0.75) - cw, -inch(0.75))
+    # Interior stool: top flush with the frame bottom, projecting into
+    # the room, with an apron strip below.
+    if stool_on:
+        _box(verts, faces, slots, 0.0, W, -ct - inch(1.0), 0.0,
+             fz0 - inch(0.75), fz0)
+        _box(verts, faces, slots, 0.0, W, -ct, 0.0,
+             max(fz0 - inch(0.75) - cw, 0.0), fz0 - inch(0.75))
 
     frame = _new_child(cage_obj, "Window Frame")
     _finish_mesh(frame, verts, faces, slots, [trim_mat])
+    _ensure_annotation_text(cage_obj, False)
 
 
 # ---------------------------------------------------------------------------
