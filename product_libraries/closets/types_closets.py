@@ -65,6 +65,13 @@ PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 PART_ROLE_FIXED_SHELF = 'CLOSET_FIXED_SHELF'
 PART_ROLE_ADJ_SHELF = 'CLOSET_ADJ_SHELF'
 PART_ROLE_ROD = 'CLOSET_ROD'
+# A fixed shelf splits a bay top and bottom; a division splits one of
+# those segments left and right. Both are bay structure rather than
+# contents, so both live on the bay cage. A division carries the bottom
+# of the segment it stands in ('hb_seg_bottom') and how far across the
+# bay it stands ('hb_x_offset'), which is what lets a shelf put in or
+# taken out underneath carry the divisions above it along with it.
+PART_ROLE_DIVISION = 'CLOSET_DIVISION'
 # Inserts. Fronts follow the prior library's half-overlay convention.
 PART_ROLE_DOOR = 'CLOSET_DOOR_FRONT'
 PART_ROLE_DRAWER_FRONT = 'CLOSET_DRAWER_FRONT'
@@ -465,6 +472,34 @@ def add_rod(opening_obj, z_offset):
     rod.obj['hb_z_offset'] = float(z_offset)
     rod.obj['hb_anchor_top'] = 1
     return rod.obj
+
+
+def add_division(opening_obj, x_offset):
+    """Create a vertical division splitting one opening left and right.
+
+    Takes how far across the bay the division stands, measured to its
+    left face in bay-interior X - the same datum an opening's own
+    'hb_seg_left' is in, so a division put inside an opening that is
+    already a column reads the same as one in a whole segment. It
+    parents to the bay rather than to the opening, because what it
+    divides stops existing the moment it is there. Position and size
+    are written by the next recalculate().
+    """
+    bay_obj = find_bay_cage(opening_obj)
+    if bay_obj is None:
+        return None
+    div = CabinetPart()
+    div.create('Division')
+    div.obj.parent = bay_obj
+    div.obj['hb_part_role'] = PART_ROLE_DIVISION
+    div.obj['hb_x_offset'] = float(x_offset)
+    div.obj['hb_seg_bottom'] = float(opening_obj.get('hb_seg_bottom', 0.0))
+    div.obj[PROP_OPENING_SIDE] = opening_obj.get(PROP_OPENING_SIDE, 'FRONT')
+    div.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    div.obj.rotation_euler.y = math.radians(-90)
+    div.set_input('Mirror Y', True)
+    div.set_input('Mirror Z', True)
+    return div.obj
 
 
 # ---------------------------------------------------------------------------
@@ -1182,23 +1217,59 @@ class ClosetStarter(GeoNodeCage):
                     _set_part_hidden(sh, False)
                     boundaries.append(z_off)
 
+                bottoms = [0.0] + [b + st for b in boundaries]
+                tops = boundaries + [bay['interior_h']]
+
+                # Divisions: a vertical splitter inside one segment. Cut
+                # from the panel thickness rather than the shelf's,
+                # because what it is is a panel standing inside a bay.
+                pt = scene_props.panel_thickness
+                row_x = [[] for _ in bottoms]
+                for div in self._bay_divisions(bay_obj, side):
+                    k = min(max(int(div.get('hb_row', 0)), 0),
+                            len(bottoms) - 1)
+                    row_h = max(tops[k] - bottoms[k], 0.01)
+                    x_off = max(0.0, min(float(div.get('hb_x_offset', 0.0)),
+                                         bay['width'] - pt))
+                    div['hb_x_offset'] = float(x_off)
+                    div['hb_seg_bottom'] = float(bottoms[k])
+                    div.location = (x_off, base_y,
+                                    bay['interior_z'] + bottoms[k])
+                    part = GeoNodeCutpart(div)
+                    part.set_input('Length', row_h)
+                    part.set_input('Width', o_depth)
+                    part.set_input('Thickness', pt)
+                    _set_part_hidden(div, False)
+                    row_x[k].append(x_off)
+                for xs in row_x:
+                    xs.sort()
+
                 openings = sorted(
                     [c for c in bay_obj.children
                      if c.get(TAG_OPENING_CAGE)
                      and c.get(PROP_OPENING_SIDE, 'FRONT') == side],
-                    key=lambda o: o.get('hb_opening_index', 0))
-                bottoms = [0.0] + [b + st for b in boundaries]
-                tops = boundaries + [bay['interior_h']]
-                for op_obj, b0, t0 in zip(openings, bottoms, tops):
-                    seg_h = max(t0 - b0, 0.01)
+                    key=lambda o: (o.get('hb_opening_index', 0),
+                                   o.get('hb_col_index', 0)))
+                for op_obj in openings:
+                    k = min(max(int(op_obj.get('hb_opening_index', 0)), 0),
+                            len(bottoms) - 1)
+                    xs = row_x[k]
+                    j = min(max(int(op_obj.get('hb_col_index', 0)), 0),
+                            len(xs))
+                    b0 = bottoms[k]
+                    seg_h = max(tops[k] - b0, 0.01)
+                    x0 = 0.0 if j == 0 else xs[j - 1] + pt
+                    x1 = bay['width'] if j >= len(xs) else xs[j]
+                    seg_w = max(x1 - x0, 0.01)
                     op_obj['hb_seg_bottom'] = float(b0)
-                    op_obj.location = (0.0, base_y,
+                    op_obj['hb_seg_left'] = float(x0)
+                    op_obj.location = (x0, base_y,
                                        bay['interior_z'] + b0)
                     op_cage = GeoNodeCage(op_obj)
-                    op_cage.set_input('Dim X', bay['width'])
+                    op_cage.set_input('Dim X', seg_w)
                     op_cage.set_input('Dim Y', o_depth)
                     op_cage.set_input('Dim Z', seg_h)
-                    self._layout_opening_parts(op_obj, bay['width'],
+                    self._layout_opening_parts(op_obj, seg_w,
                                                o_depth, seg_h, scene_props)
 
                 # Bay-wide doors span the full interior (all segments).
@@ -2127,13 +2198,26 @@ class ClosetStarter(GeoNodeCage):
         shelves.sort(key=lambda o: o.get('hb_z_offset', 0.0))
         return shelves
 
+    def _bay_divisions(self, bay_obj, side):
+        """Divisions of one side, left to right."""
+        divs = [c for c in bay_obj.children
+                if c.get('hb_part_role') == PART_ROLE_DIVISION
+                and c.get(PROP_OPENING_SIDE, 'FRONT') == side]
+        divs.sort(key=lambda o: o.get('hb_x_offset', 0.0))
+        return divs
+
     def _reconcile_bay_openings(self, bay_obj):
         """Adopt committed fixed shelves up to bay level (they arrive as
         opening children from the add-part modal / older files) and keep
-        exactly one opening cage per interior segment on each side.
-        Removing a shelf merges the segments it was between, and the
-        openings that merge keep their contents at the height they were
-        put at."""
+        exactly one opening cage per cell on each side.
+
+        A shelf splits a bay into segments across its whole width; a
+        division splits one of those segments into columns. So the cells
+        are the segments crossed with the columns of the segment they
+        are in, and each one holds one opening. Removing a shelf merges
+        the segments it was between and removing a division merges the
+        columns either side of it; either way the openings that merge
+        keep their contents at the height they were put at."""
         for opening in [c for c in bay_obj.children
                         if c.get(TAG_OPENING_CAGE)]:
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
@@ -2159,53 +2243,80 @@ class ClosetStarter(GeoNodeCage):
         for side in sides:
             cuts = [float(sh.get('hb_z_offset', 0.0))
                     for sh in self._bay_split_shelves(bay_obj, side)]
-            want = len(cuts) + 1
+            rows = len(cuts) + 1
+            # A division stands in one segment rather than across the
+            # whole bay, so it is placed the way an opening is: by
+            # counting the shelves underneath it. A shelf put in or
+            # taken out below therefore carries the divisions above it
+            # into their new segment instead of stranding them.
+            row_cuts = [[] for _ in range(rows)]
+            for div in self._bay_divisions(bay_obj, side):
+                k = min(sum(1 for c in cuts
+                            if c < float(div.get('hb_seg_bottom', 0.0))),
+                        rows - 1)
+                div['hb_row'] = k
+                row_cuts[k].append(float(div.get('hb_x_offset', 0.0)))
+            for xs in row_cuts:
+                xs.sort()
+            cells = [(k, j) for k in range(rows)
+                     for j in range(len(row_cuts[k]) + 1)]
             openings = sorted(
                 [c for c in bay_obj.children
                  if c.get(TAG_OPENING_CAGE)
                  and c.get(PROP_OPENING_SIDE, 'FRONT') == side],
-                key=lambda o: o.get('hb_opening_index', 0))
+                key=lambda o: (o.get('hb_opening_index', 0),
+                               o.get('hb_col_index', 0)))
 
-            # Put every opening back in the segment it is standing in.
-            # An opening's bottom and height are the last solve's and the
-            # cuts are this one's, so counting the cuts underneath an
-            # opening says which segment it is in now. Taking a shelf out
-            # of the middle of a bay merges the two segments it was
-            # between, and this is what leaves the openings above it
-            # holding what the user put in them instead of sliding
-            # everything down a segment. Adding one reads the same way
-            # from the other side: the new segment opens where the shelf
-            # went in and the openings around it stay as they are.
-            slots = [[] for _ in range(want)]
+            # Put every opening back in the cell it is standing in. An
+            # opening's bottom, height and left edge are the last
+            # solve's and the cuts are this one's, so counting the cuts
+            # underneath an opening and to the left of it says which
+            # cell it is in now. Taking a shelf out of the middle of a
+            # bay merges the two segments it was between, and this is
+            # what leaves the openings above it holding what the user
+            # put in them instead of sliding everything down a segment.
+            # Adding one reads the same way from the other side: the
+            # new segment opens where the shelf went in and the
+            # openings around it stay as they are. A division reads
+            # across instead of up and merges the same way when it goes.
+            slots = {cell: [] for cell in cells}
             for op_obj in openings:
                 bottom = float(op_obj.get('hb_seg_bottom', 0.0))
+                left = float(op_obj.get('hb_seg_left', 0.0))
                 try:
                     seg_h = float(GeoNodeCage(op_obj).get_input('Dim Z'))
                 except Exception:
                     seg_h = 0.0
-                k = min(sum(1 for c in cuts if c < bottom), want - 1)
-                slots[k].append((bottom, seg_h, op_obj))
+                k = min(sum(1 for c in cuts if c < bottom), rows - 1)
+                j = min(sum(1 for x in row_cuts[k] if x < left),
+                        len(row_cuts[k]))
+                slots[(k, j)].append((bottom, left, seg_h, op_obj))
 
-            for k, members in enumerate(slots):
+            for k, j in cells:
+                members = slots[(k, j)]
                 if not members:
                     op = ClosetOpening()
-                    op.create(f'Opening {k + 1}')
+                    op.create(f'Opening {k + 1}' if not row_cuts[k]
+                              else f'Opening {k + 1}.{j + 1}')
                     op.obj.parent = bay_obj
                     if side == 'BACK':
                         op.obj[PROP_OPENING_SIDE] = 'BACK'
                     op.obj['hb_opening_index'] = k
+                    op.obj['hb_col_index'] = j
                     continue
-                members.sort(key=lambda m: m[0])
-                keeper = members[0][2]
+                members.sort(key=lambda m: (m[0], m[1]))
+                keeper = members[0][3]
                 # A merged segment runs from the bottom of the lowest
                 # opening in it to the top of the highest, so a part
                 # measured from a bottom moves by the difference in
                 # bottoms and one measured from a top by the difference
                 # in tops. Either way it comes out at the height it was
-                # already hanging at.
+                # already hanging at. Nothing in an opening is measured
+                # across it, so a merge sideways only has to gather the
+                # parts up.
                 base = members[0][0]
-                cap = max(b + h for b, h, _ in members)
-                for bottom, seg_h, op_obj in members:
+                cap = max(b + h for b, _l, h, _o in members)
+                for bottom, _left, seg_h, op_obj in members:
                     d_top = cap - (bottom + seg_h)
                     d_bot = bottom - base
                     for child in list(op_obj.children):
@@ -2219,6 +2330,7 @@ class ClosetStarter(GeoNodeCage):
                     if op_obj is not keeper:
                         bpy.data.objects.remove(op_obj, do_unlink=True)
                 keeper['hb_opening_index'] = k
+                keeper['hb_col_index'] = j
 
     def _layout_starter_parts(self, layout, scene_props, sp):
         # Only a unit with a top to cap takes a countertop - a base run
@@ -3533,9 +3645,9 @@ def clear_opening_contents(opening):
 
 
 def clear_bay_contents(bay_obj):
-    """Strip a whole bay: every splitting shelf goes (the reconciler
-    merges back to one opening per side), the bay-wide door config is
-    cleared, and every opening's contents are cleared."""
+    """Strip a whole bay: every splitting shelf and division goes (the
+    reconciler merges back to one opening per side), the bay-wide door
+    config is cleared, and every opening's contents are cleared."""
     # property_unset puts a field back to its default without running
     # the update callback, so clearing the front here costs no solve of
     # its own; the caller recalculates once when the strip is done.
@@ -3543,7 +3655,8 @@ def clear_bay_contents(bay_obj):
     bay_obj.hb_closet_bay.property_unset('is_hamper')
     bay_obj.hb_closet_bay.property_unset('open_door')
     for child in list(bay_obj.children):
-        if child.get('hb_part_role') == PART_ROLE_FIXED_SHELF:
+        if child.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
+                                         PART_ROLE_DIVISION):
             bpy.data.objects.remove(child, do_unlink=True)
     for opening in [c for c in bay_obj.children if c.get(TAG_OPENING_CAGE)]:
         clear_opening_contents(opening)
@@ -3743,7 +3856,8 @@ def _front_openings(bay_obj):
         [c for c in bay_obj.children
          if c.get(TAG_OPENING_CAGE)
          and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'],
-        key=lambda o: o.get('hb_opening_index', 0))
+        key=lambda o: (o.get('hb_opening_index', 0),
+                       o.get('hb_col_index', 0)))
 
 
 def serialize_bay(bay_obj):
@@ -3762,6 +3876,14 @@ def serialize_bay(bay_obj):
         'bay_is_hamper': int(bp.is_hamper),
         'bay_open_door': float(bp.open_door),
         'shelves': list(shelves),
+        # A division travels as the segment it is in and how far across
+        # the bay it stands, which is what puts it back where it was in
+        # a bay of the same width.
+        'divisions': sorted(
+            [int(c.get('hb_row', 0)), float(c.get('hb_x_offset', 0.0))]
+            for c in bay_obj.children
+            if c.get('hb_part_role') == PART_ROLE_DIVISION
+            and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
         'openings': [serialize_opening(o) for o in _front_openings(bay_obj)],
     }
 
@@ -3783,6 +3905,18 @@ def apply_bay_data(bay_obj, data):
     for z in data.get('shelves', ()):
         add_fixed_shelf(front, z)
     recalculate_closet_starter(root)   # adopt shelves -> segments
+
+    # Divisions go in against the segments the shelves have just made,
+    # so they are put back one pass later than the shelves are.
+    divisions = data.get('divisions', ())
+    if divisions:
+        segments = _front_openings(bay_obj)
+        for row, x in divisions:
+            target = next(
+                (o for o in segments
+                 if int(o.get('hb_opening_index', 0)) == int(row)), front)
+            add_division(target, float(x))
+        recalculate_closet_starter(root)   # adopt divisions -> columns
 
     # The construction flags each carry a solve of their own; holding
     # them means the openings and the flags land together on the one

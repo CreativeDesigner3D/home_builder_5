@@ -107,6 +107,8 @@ def _draw_add_part_entries(layout):
     op.part_type = 'ROD'
     layout.operator("hb_closets.add_adj_shelves",
                     text="Adjustable Shelves...", icon='ALIGN_JUSTIFY')
+    layout.operator("hb_closets.divide_opening",
+                    text="Divide Opening...", icon='MOD_ARRAY')
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')

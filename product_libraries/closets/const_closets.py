@@ -335,6 +335,9 @@ ROLLOUT_HEIGHT = inch(4.0)
 ROLLOUT_SLIDE_GAP = inch(0.327)
 # Smallest gap left between stacked trays / above and below the stack.
 ROLLOUT_MIN_GAP = inch(1.0)
+# Dividing an opening left and right. A column narrower than this is
+# not worth building, so a division that would leave one is refused.
+DIVISION_MIN_WIDTH = inch(3.0)
 # Cubbies: a grid of divisions and shelves filling an opening. Both are
 # held back from the front edge by the setback.
 CUBBY_SETBACK = inch(0.25)

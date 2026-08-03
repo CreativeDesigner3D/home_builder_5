@@ -34,6 +34,9 @@ _DRAWER_BOX_OVERRIDE_ITEMS = [
 
 _BAY_QTY_MIN = const.MIN_BAY_QTY
 _BAY_QTY_MAX = const.MAX_BAY_QTY
+# How many divisions one opening can be split by. The prior library
+# drew up to nine openings across a splitter, which is eight divisions.
+_MAX_DIVISIONS = 8
 # Cursor must cross the wall centerline by this much before the
 # placement side flips (mirrors face_frame's hysteresis).
 _FRONT_BACK_HYSTERESIS = 0.05
@@ -2608,6 +2611,147 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_divide_opening(bpy.types.Operator):
+    """Split the active opening left and right into columns. Each column
+    is an opening of its own and takes its own contents; deleting a
+    division merges the columns either side of it back together."""
+    bl_idname = "hb_closets.divide_opening"
+    bl_label = "Divide Opening"
+    bl_options = {'UNDO'}
+
+    qty: bpy.props.IntProperty(
+        name="Divisions",
+        description="How many divisions to stand in the opening. One "
+                    "more column than that comes out of it",
+        default=1, min=1, max=_MAX_DIVISIONS)  # type: ignore
+    # One entry per column. A column that is sharing takes an equal cut
+    # of whatever the columns holding a width leave behind, which is the
+    # way the prior library had it - and for the same reason the last
+    # sharing column cannot be turned off: something has to take up the
+    # slack when the run is resized.
+    widths: bpy.props.FloatVectorProperty(
+        name="Width",
+        description="Width of a column that is holding its own size",
+        size=_MAX_DIVISIONS + 1, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    share: bpy.props.BoolVectorProperty(
+        name="Share",
+        description="Let this column take an equal cut of what is left "
+                    "over instead of holding a width of its own",
+        size=_MAX_DIVISIONS + 1,
+        default=(True,) * (_MAX_DIVISIONS + 1))  # type: ignore
+
+    # Read once on invoke so the dialog can show what the sharing
+    # columns work out to. Never read by execute, which measures the
+    # opening again - the operator has to work run from a script too.
+    _span = 0.0
+    _pt = 0.0
+
+    @classmethod
+    def poll(cls, context):
+        return _active_opening_for_insert(context) is not None
+
+    def _solve(self, span, pt):
+        """Width of every column, left to right."""
+        n = int(self.qty) + 1
+        sharing = [bool(self.share[i]) for i in range(n)]
+        if not any(sharing):
+            sharing[n - 1] = True
+        out = [0.0] * n
+        held = 0.0
+        for i in range(n):
+            if not sharing[i]:
+                out[i] = max(float(self.widths[i]), 0.0)
+                held += out[i]
+        rest = [i for i in range(n) if sharing[i]]
+        each = (span - int(self.qty) * pt - held) / len(rest)
+        for i in rest:
+            out[i] = each
+        return out
+
+    def _length_text(self, context, value):
+        try:
+            return bpy.utils.units.to_string(
+                context.scene.unit_settings.system, 'LENGTH', value,
+                precision=4)
+        except Exception:
+            return "%.4f" % value
+
+    def invoke(self, context, event):
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        try:
+            self._span = float(
+                hb_types.GeoNodeCage(opening).get_input('Dim X'))
+        except Exception:
+            self._span = 0.0
+        self._pt = float(types_closets.run_sizes(opening).panel_thickness)
+        # Everything starts sharing, so the dialog opens on an even
+        # split. A column only shows a field once it is taken off
+        # sharing, and it starts from the even split so the number in
+        # front of the user is the one already on the screen.
+        even = self._solve(self._span, self._pt)
+        for i in range(_MAX_DIVISIONS + 1):
+            self.share[i] = True
+            self.widths[i] = even[0]
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def check(self, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'qty')
+        widths = self._solve(self._span, self._pt)
+        sharing = sum(1 for i in range(int(self.qty) + 1) if self.share[i])
+        col = layout.column(align=True)
+        for i in range(int(self.qty) + 1):
+            row = col.row(align=True)
+            if self.share[i] and sharing == 1:
+                row.label(text="", icon='BLANK1')
+            else:
+                row.prop(self, 'share', index=i, text="")
+            row.label(text="Column %d Width:" % (i + 1))
+            if self.share[i]:
+                row.label(text=self._length_text(context, widths[i]))
+            else:
+                row.prop(self, 'widths', index=i, text="")
+        if min(widths) < const.DIVISION_MIN_WIDTH:
+            layout.label(text="That leaves a column too narrow to build",
+                         icon='ERROR')
+
+    def execute(self, context):
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(opening)
+        if root is None:
+            return {'CANCELLED'}
+        try:
+            span = float(hb_types.GeoNodeCage(opening).get_input('Dim X'))
+        except Exception:
+            span = 0.0
+        pt = float(types_closets.run_sizes(opening).panel_thickness)
+        widths = self._solve(span, pt)
+        if min(widths) < const.DIVISION_MIN_WIDTH:
+            self.report({'WARNING'},
+                        "The opening is too narrow to divide that far")
+            return {'CANCELLED'}
+        # Divisions are placed against the bay, so they are measured
+        # from the left edge of the opening rather than from zero - an
+        # opening that is already a column does not start at the panel.
+        x = float(opening.get('hb_seg_left', 0.0))
+        for i in range(int(self.qty)):
+            x += widths[i]
+            types_closets.add_division(opening, x)
+            x += pt
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
     """Set the pull-out (rollout) trays for the active opening. Each tray
     stands the given Rollout Height; the trays are spaced evenly (0
@@ -2952,7 +3096,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                   types_closets.PART_ROLE_DOOR,
                   types_closets.PART_ROLE_DRAWER_FRONT,
                   types_closets.PART_ROLE_CUBBY_DIVISION,
-                  types_closets.PART_ROLE_CUBBY_SHELF}
+                  types_closets.PART_ROLE_CUBBY_SHELF,
+                  types_closets.PART_ROLE_DIVISION}
 
     @classmethod
     def poll(cls, context):
@@ -4768,6 +4913,7 @@ classes = (
     hb_closets_OT_resize_drawer_for_tray,
     hb_closets_OT_add_doors,
     hb_closets_OT_add_cubbies,
+    hb_closets_OT_divide_opening,
     hb_closets_OT_add_rollouts,
     hb_closets_OT_add_slanted_shelves,
     hb_closets_OT_change_bay,
