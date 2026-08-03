@@ -217,20 +217,29 @@ def front_grain(front_obj, is_drawer):
     """Grain direction for one front.
 
     Doors always run vertical - the way a tall front is built - so
-    there is nothing to look up for them. A drawer front runs the way
-    the room's Vertical Grain setting says, unless that one drawer has
-    been given a direction of its own in Drawer Options. Plain lookup
-    on the way to picking a material, so a whole run re-grains in one
-    pass with nothing driven."""
+    there is nothing to look up for them. A drawer front reads the
+    nearest thing that has an opinion: its own setting from Drawer
+    Options first, then its opening's, then the room's Vertical Grain
+    setting. Plain lookup on the way to picking a material, so a
+    whole run re-grains in one pass with nothing driven."""
     if not is_drawer:
         return 'VERTICAL'
     try:
         from . import types_closets
-        own = front_obj.get(types_closets.PROP_FRONT_GRAIN, '')
     except Exception:
-        own = ''
-    if own in ('VERTICAL', 'HORIZONTAL'):
-        return own
+        types_closets = None
+    if types_closets is not None:
+        own = front_obj.get(types_closets.PROP_FRONT_GRAIN, '')
+        if own in ('VERTICAL', 'HORIZONTAL'):
+            return own
+        try:
+            opening = types_closets.find_opening_cage(front_obj)
+        except Exception:
+            opening = None
+        if opening is not None:
+            shared = opening.hb_closet_opening.drawer_grain
+            if shared in ('VERTICAL', 'HORIZONTAL'):
+                return shared
     props = bpy.context.scene.hb_closets
     return ('VERTICAL'
             if getattr(props, 'closet_drawer_vertical_grain', False)

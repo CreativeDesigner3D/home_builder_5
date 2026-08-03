@@ -3720,6 +3720,9 @@ def serialize_opening(opening):
             [int(getattr(opening.hb_closet_opening, 'unlock_%s_overlay' % s)),
              float(getattr(opening.hb_closet_opening, '%s_overlay' % s))]
             for s in ('left', 'right', 'top', 'bottom')],
+        # Which way the grain runs on the drawer fronts here, so a
+        # copy reads the way the original did.
+        'drawer_grain': opening.hb_closet_opening.drawer_grain,
         # How the shelves here are cut, so a copy drops into its
         # clips the way the original did.
         'shelf_gaps': [
@@ -3795,6 +3798,9 @@ def apply_opening_data(opening, data, recalc=True):
                     float(value))
             setattr(opening.hb_closet_opening,
                     'unlock_%s_overlay' % s, True)
+    dgrain = data.get('drawer_grain')
+    if dgrain:
+        opening.hb_closet_opening.drawer_grain = dgrain
     gaps = data.get('shelf_gaps')
     if gaps:
         _gp = opening.hb_closet_opening

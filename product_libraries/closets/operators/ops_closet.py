@@ -2342,19 +2342,29 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             row.label(text="Opening Height:")
             row.label(text=str(open_h_mm) + " mm")
 
-        # Left on Use Default this front runs the way the room does,
-        # with the room's setting read back so there is something to
-        # compare against before turning this one drawer.
+        # Left on Use Default this front runs the way its opening
+        # does, and the opening's own default is the room's, so the
+        # readout names whichever of the two is speaking for it.
         room = context.scene.hb_closets
         row = box.row(align=True)
         row.label(text="Grain:")
         row.prop(self, 'grain', text="")
         if self.grain == 'DEFAULT':
+            shared = ''
+            if front is not None:
+                opening = types_closets.find_opening_cage(front)
+                if opening is not None:
+                    shared = opening.hb_closet_opening.drawer_grain
+            if shared in ('VERTICAL', 'HORIZONTAL'):
+                source, value = "Opening", shared.capitalize()
+            else:
+                source = "Room"
+                value = ("Vertical"
+                         if room.closet_drawer_vertical_grain
+                         else "Horizontal")
             row = box.row()
             row.label(text="")
-            row.label(text="Room: %s" % (
-                "Vertical" if room.closet_drawer_vertical_grain
-                else "Horizontal"))
+            row.label(text="%s: %s" % (source, value))
 
         box = layout.box()
         row = box.row()
@@ -3896,6 +3906,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default=const.SHELF_SETBACK, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
 
+    drawer_grain: bpy.props.EnumProperty(
+        name="Grain",
+        description="Which way the grain runs on this opening's "
+                    "drawer fronts, instead of following the room",
+        items=materials_closets.GRAIN_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
     drawer_qty: bpy.props.IntProperty(
         name="Drawer Quantity",
         description="How many drawers to stack in the opening",
@@ -4182,6 +4198,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             op.shelf_setback if op.unlock_shelf_setback
             else _room.shelf_setback)
         self.drawer_qty = int(op.drawer_qty) or 3
+        self.drawer_grain = op.drawer_grain or 'DEFAULT'
         self.drawer_front_height = float(op.drawer_front_height)
         self.drawer_box = op.drawer_box_override or 'DEFAULT'
         self.drawer_stretcher_width = float(op.drawer_stretcher_width)
@@ -4273,6 +4290,21 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'drawer_box')
             col.prop(self, 'drawer_stretcher_width')
             col.prop(self, 'open_drawer')
+            # Which way the grain runs on every drawer front in
+            # here. Left on Use Default they follow the room, with
+            # its setting read back so there is something to compare
+            # against; a single drawer can still be turned the other
+            # way in its own Drawer Options.
+            row = col.row(align=True)
+            row.label(text="Grain:")
+            row.prop(self, 'drawer_grain', text="")
+            if self.drawer_grain == 'DEFAULT':
+                row = col.row()
+                row.label(text="")
+                row.label(text="Room: %s" % (
+                    "Vertical"
+                    if context.scene.hb_closets.closet_drawer_vertical_grain
+                    else "Horizontal"))
         elif self.fill == 'CUBBIES':
             col.prop(self, 'cubby_cols')
             col.prop(self, 'cubby_rows')
@@ -4292,13 +4324,17 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                           text="Clip Gap")
 
-        box = layout.box()
-        box.label(text="Front", icon='MOD_SOLIDIFY')
-        box.prop(self, 'door_swing', text="")
-        sub = box.column(align=True)
-        sub.enabled = self.door_swing != 'NONE'
-        sub.prop(self, 'is_hamper')
-        sub.prop(self, 'open_door')
+        # Drawers are their own front, so an opening filled with them
+        # has no door to set and the section is left out rather than
+        # offered greyed out.
+        if self.fill != 'DRAWERS':
+            box = layout.box()
+            box.label(text="Front", icon='MOD_SOLIDIFY')
+            box.prop(self, 'door_swing', text="")
+            sub = box.column(align=True)
+            sub.enabled = self.door_swing != 'NONE'
+            sub.prop(self, 'is_hamper')
+            sub.prop(self, 'open_door')
         # What the run works out for a front, and any side this opening
         # has taken over. A locked side reads back the run's figure, so
         # there is something to measure against before unlocking it.
@@ -4441,6 +4477,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     'drawer_box_override')
             opening.hb_closet_opening.drawer_stretcher_width = \
                 self.drawer_stretcher_width
+            opening.hb_closet_opening.drawer_grain = self.drawer_grain
         elif self.fill == 'ROLLOUTS':
             opening.hb_closet_opening.rollout_height = self.rollout_height
         elif self.fill == 'SLANTED_SHELVES':
@@ -4452,7 +4489,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             opening.hb_closet_opening.slant_back_inset = \
                 self.slant_back_inset
 
-        swing = '' if self.door_swing == 'NONE' else self.door_swing
+        # Drawers are their own front, so picking them clears any door
+        # that had been set here rather than leaving one built over
+        # them from a previous choice.
+        swing = ('' if self.door_swing == 'NONE' or self.fill == 'DRAWERS'
+                 else self.door_swing)
         opening.hb_closet_opening.door_swing = swing
         opening.hb_closet_opening.is_hamper = bool(swing and self.is_hamper)
 

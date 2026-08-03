@@ -1171,6 +1171,19 @@ class Closet_Opening_Props(PropertyGroup):
         default=const.DISTANCE_BETWEEN_PULLS,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
+    # Which way the grain runs on this opening's drawer fronts. Left
+    # on Use Default they follow the room's Vertical Grain setting; a
+    # single drawer can still be turned the other way in its own
+    # Drawer Options. Left out of the contents list below on purpose,
+    # same as the overlays and the pulls: stripping an opening empties
+    # it, it does not re-finish it.
+    drawer_grain: EnumProperty(
+        name="Grain",
+        description="Which way the grain runs on this opening's "
+                    "drawer fronts, instead of following the room",
+        items=materials_closets.GRAIN_OVERRIDE_ITEMS,
+        default='DEFAULT')  # type: ignore
+
     # ----- Captured back -----
     # A back that closes this opening on its own, held between the
     # panels and shelves around it. Independent of the interior: an
