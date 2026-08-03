@@ -2263,9 +2263,15 @@ class ClosetStarter(GeoNodeCage):
                 1 if sp.countertop_left_finished_end else 0)
             ctop['hb_ctop_right_finished'] = (
                 1 if sp.countertop_right_finished_end else 0)
+            # Only an exposed end has corners to round, so the
+            # figure is recorded only where one of the two flags above
+            # it is set. It is carried rather than cut into the top.
             ctop['hb_ctop_corner_radius'] = (
                 const.COUNTERTOP_END_RADIUS
-                if sp.countertop_radius_finished_ends else 0.0)
+                if (sp.countertop_radius_finished_ends
+                    and (sp.countertop_left_finished_end
+                         or sp.countertop_right_finished_end))
+                else 0.0)
             _set_part_hidden(ctop, not want_ctop)
 
         self._layout_backsplashes(scene_props, sp)

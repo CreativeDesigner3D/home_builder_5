@@ -433,13 +433,14 @@ class Closet_Starter_Props(PropertyGroup):
         description="The countertop's right end is exposed, so it gets an "
                     "edge treatment and no side backsplash",
         default=False, update=_update_starter_prop)  # type: ignore
-    # Not drawn in the dialog yet - rounding an exposed countertop
-    # corner needs a node group the library does not have. The
-    # property stays defined so putting the row back is one line.
+    # The rounding is not drawn on the top. The prior library carried
+    # it the same way - a choice recorded against the part for whoever
+    # cuts it - so it rides along on hb_ctop_corner_radius beside the
+    # two finished-end flags, which say which corners it applies to.
     countertop_radius_finished_ends: BoolProperty(
         name="Radius Finished Ends",
-        description="Round the exposed countertop corners instead of "
-                    "leaving them square",
+        description="Round the exposed corners of a finished end "
+                    "instead of leaving them square",
         default=False, update=_update_starter_prop)  # type: ignore
     include_backsplash: BoolProperty(
         name="Include Backsplash",

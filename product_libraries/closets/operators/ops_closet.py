@@ -3361,6 +3361,12 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.prop(sp, 'countertop_left_finished_end', text="Left Finished End")
         row.prop(sp, 'countertop_right_finished_end',
                  text="Right Finished End")
+        # Only an exposed end has corners to round, so the option sits
+        # under the two ends rather than on its own.
+        row = sub.row(align=True)
+        row.enabled = (sp.countertop_left_finished_end
+                       or sp.countertop_right_finished_end)
+        row.prop(sp, 'countertop_radius_finished_ends', text="Radius")
 
         box = col.box()
         box.label(text="Backsplash")
