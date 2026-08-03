@@ -3682,6 +3682,7 @@ def recalculate_closet_starter(obj):
     carry_over_bay_fronts(root)
     carry_over_hampers(root)
     carry_over_front_locks(root)
+    clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
 
 
@@ -4022,8 +4023,9 @@ def seed_door_shelves(opening):
     default. Seeds the opening's shelf count unless something else
     already occupies it (an existing shelf count, drawers, cubbies, or
     a rod) - adding doors over an existing interior never overwrites
-    it. Hampers are the callers' business (a tilt-out basket leaves no
-    room for shelves)."""
+    it. Callers skip this for a tilt-out hamper, whose basket stands
+    in the whole opening; clear_hamper_shelves below takes the shelves
+    back out of one whose front is changed to a hamper."""
     op = opening.hb_closet_opening
     # One column by one row is the empty state, not a cubby grid, so it
     # does not count as an interior.
@@ -4034,6 +4036,42 @@ def seed_door_shelves(opening):
         if c.get('hb_part_role') == PART_ROLE_ROD:
             return
     opening.hb_closet_opening.adj_shelf_qty = default_adj_shelf_qty(opening)
+
+
+def clear_hamper_shelves(root):
+    """Take the adjustable shelves out of any opening whose front is a
+    tilt-out hamper. The basket stands in the whole opening, so nothing
+    fits behind it: an opening that was carrying shelves loses them the
+    moment its front is changed to a hamper, whichever way the change
+    was made. This runs from the recalc entry point so every route in -
+    the opening's dropdown, the Add Doors menu, a bay-wide front, a run
+    pasted or carried over - lands on the one rule.
+
+    The count is cleared rather than ignored, so the opening reads back
+    as the empty one it is drawn as."""
+    stale = []
+    for bay in root.children:
+        if not bay.get(TAG_BAY_CAGE):
+            continue
+        bay_swing = bay.hb_closet_bay.door_swing
+        for opening in bay.children:
+            if not opening.get(TAG_OPENING_CAGE):
+                continue
+            op = opening.hb_closet_opening
+            if not op.adj_shelf_qty:
+                continue
+            swing = op.door_swing
+            # A bay-wide front spans the openings on the front side of
+            # the bay, so that is the front they stand behind.
+            if not swing and opening.get(
+                    PROP_OPENING_SIDE, 'FRONT') == 'FRONT':
+                swing = bay_swing
+            if swing == 'TILT_OUT':
+                stale.append(op)
+    # Nothing here has an update callback behind it, so the writes cost
+    # no solve of their own - the recalc they run inside picks them up.
+    for op in stale:
+        op.adj_shelf_qty = 0
 
 
 def _cfg_rod(opening):

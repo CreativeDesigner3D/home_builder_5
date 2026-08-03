@@ -4247,31 +4247,9 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.distance_between_pulls = float(op.distance_between_pulls)
         return context.window_manager.invoke_props_dialog(self, width=380)
 
-    def draw(self, context):
-        layout = self.layout
-        opening = _active_opening_for_insert(context)
-        if opening is None:
-            return
-        width, depth, height = _opening_dims(opening)
-
-        # Size readout. An opening is the space between fixed shelves, so
-        # its size is a result of the bay - move a shelf to change it.
-        box = layout.box()
-        box.label(text="Opening %d"
-                       % (int(opening.get('hb_opening_index', 0)) + 1),
-                  icon='MESH_PLANE')
-        row = box.row(align=True)
-        for label, value in (("Width", width), ("Height", height),
-                             ("Depth", depth)):
-            col = row.column(align=True)
-            col.label(text=label)
-            col.label(text=units.unit_to_string(
-                context.scene.unit_settings, value))
-        box.label(text="Sized by the bay and the shelves around it",
-                  icon='INFO')
-
-        box = layout.box()
-        box.label(text="Interior", icon='SNAP_VOLUME')
+    def _draw_interior(self, box, context):
+        """What is standing in the opening and the settings that
+        come with it, drawn into the Interior box."""
         box.prop(self, 'fill', text="")
         col = box.column(align=True)
         if self.fill == 'ADJ_SHELVES':
@@ -4319,6 +4297,40 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             # Their setback is the fence's, so it is not offered.
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                           text="Clip Gap")
+
+    def draw(self, context):
+        layout = self.layout
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return
+        width, depth, height = _opening_dims(opening)
+
+        # Size readout. An opening is the space between fixed shelves, so
+        # its size is a result of the bay - move a shelf to change it.
+        box = layout.box()
+        box.label(text="Opening %d"
+                       % (int(opening.get('hb_opening_index', 0)) + 1),
+                  icon='MESH_PLANE')
+        row = box.row(align=True)
+        for label, value in (("Width", width), ("Height", height),
+                             ("Depth", depth)):
+            col = row.column(align=True)
+            col.label(text=label)
+            col.label(text=units.unit_to_string(
+                context.scene.unit_settings, value))
+        box.label(text="Sized by the bay and the shelves around it",
+                  icon='INFO')
+
+        box = layout.box()
+        box.label(text="Interior", icon='SNAP_VOLUME')
+        # A tilt-out hamper is its own interior - the basket stands
+        # in the whole opening - so the section says so rather than
+        # offering a fill that accepting would only clear.
+        if self.door_swing == 'TILT_OUT':
+            box.label(text="Hamper basket fills the opening",
+                      icon='INFO')
+        else:
+            self._draw_interior(box, context)
 
         # Drawers are their own front, so an opening filled with them
         # has no door to set and the section is left out rather than
@@ -4435,20 +4447,30 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         if root is None:
             return {'CANCELLED'}
 
+        # Drawers are their own front, so picking them clears any door
+        # that had been set here rather than leaving one built over
+        # them from a previous choice. A tilt-out hamper reads the
+        # other way round: its basket stands in the whole opening, so
+        # picking one clears the interior rather than leaving shelves
+        # behind a front they do not fit behind.
+        swing = ('' if self.door_swing == 'NONE' or self.fill == 'DRAWERS'
+                 else self.door_swing)
+        fill = 'NONE' if swing == 'TILT_OUT' else self.fill
+
         # One interior at a time: zero out the fills that were not
         # picked, then write the picked one's settings.
         opening.hb_closet_opening.adj_shelf_qty = (
-            self.shelf_qty if self.fill == 'ADJ_SHELVES' else 0)
+            self.shelf_qty if fill == 'ADJ_SHELVES' else 0)
         opening.hb_closet_opening.drawer_qty = (
-            self.drawer_qty if self.fill == 'DRAWERS' else 0)
+            self.drawer_qty if fill == 'DRAWERS' else 0)
         opening.hb_closet_opening.rollout_qty = (
-            self.rollout_qty if self.fill == 'ROLLOUTS' else 0)
+            self.rollout_qty if fill == 'ROLLOUTS' else 0)
         opening.hb_closet_opening.slant_qty = (
-            self.slant_qty if self.fill == 'SLANTED_SHELVES' else 0)
+            self.slant_qty if fill == 'SLANTED_SHELVES' else 0)
         opening.hb_closet_opening.cubby_cols = (
-            self.cubby_cols if self.fill == 'CUBBIES' else 1)
+            self.cubby_cols if fill == 'CUBBIES' else 1)
         opening.hb_closet_opening.cubby_rows = (
-            self.cubby_rows if self.fill == 'CUBBIES' else 1)
+            self.cubby_rows if fill == 'CUBBIES' else 1)
 
         # How a shelf is cut says nothing about what is in the
         # opening, so it is written whichever interior was picked.
@@ -4459,9 +4481,9 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.unlock_setback
         opening.hb_closet_opening.shelf_setback = self.setback
 
-        if self.fill == 'CUBBIES':
+        if fill == 'CUBBIES':
             opening.hb_closet_opening.cubby_setback = self.cubby_setback
-        elif self.fill == 'DRAWERS':
+        elif fill == 'DRAWERS':
             opening.hb_closet_opening.drawer_front_height = \
                 self.drawer_front_height
             if self.drawer_box and self.drawer_box != 'DEFAULT':
@@ -4473,9 +4495,9 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             opening.hb_closet_opening.drawer_stretcher_width = \
                 self.drawer_stretcher_width
             opening.hb_closet_opening.drawer_grain = self.drawer_grain
-        elif self.fill == 'ROLLOUTS':
+        elif fill == 'ROLLOUTS':
             opening.hb_closet_opening.rollout_height = self.rollout_height
-        elif self.fill == 'SLANTED_SHELVES':
+        elif fill == 'SLANTED_SHELVES':
             opening.hb_closet_opening.slant_spacing = self.slant_spacing
             opening.hb_closet_opening.slant_angle = self.slant_angle
             opening.hb_closet_opening.slant_color = self.slant_color
@@ -4484,11 +4506,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             opening.hb_closet_opening.slant_back_inset = \
                 self.slant_back_inset
 
-        # Drawers are their own front, so picking them clears any door
-        # that had been set here rather than leaving one built over
-        # them from a previous choice.
-        swing = ('' if self.door_swing == 'NONE' or self.fill == 'DRAWERS'
-                 else self.door_swing)
         opening.hb_closet_opening.door_swing = swing
 
         for side in ('top', 'bottom', 'left', 'right'):
