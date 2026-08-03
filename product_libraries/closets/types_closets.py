@@ -103,6 +103,15 @@ PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
 PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
+# Written on a tray rather than on the opening: a tray can hold a
+# height and a vertical location of its own while the rest of the stack
+# keeps the height the opening sets and the spacing the stack works
+# out. The resolved figures are written back on every recalculation, so
+# a dialog opens on what is on screen rather than on a default.
+PROP_TRAY_HEIGHT = 'hb_tray_height'
+PROP_UNLOCK_TRAY_HEIGHT = 'hb_unlock_tray_height'
+PROP_TRAY_Z = 'hb_tray_z'
+PROP_UNLOCK_TRAY_Z = 'hb_unlock_tray_z'
 # Slanted shoe shelves: quantity, vertical spacing, tilt angle (radians),
 # and the metal fence color.
 PROP_SLANT_QTY = 'hb_slant_qty'
@@ -1677,11 +1686,13 @@ class ClosetStarter(GeoNodeCage):
                 z += dh + v_gap
 
         # ----- Rollout trays -----
-        # Each tray stands a fixed Rollout Height (default 4"), the trays
-        # spaced with equal gaps above, below, and between (sizing from
-        # the prior library: 4" tray, 0.327" side clearance for the
-        # slides, full opening depth). If the stack can't fit the trays
-        # shrink to keep the minimum gap.
+        # A tray stands the opening's Rollout Height (default 4") and
+        # the stack is spaced with equal gaps above, below and between
+        # (sizing from the prior library: 4" tray, 0.327" side clearance
+        # for the slides, full opening depth). A tray can be given a
+        # height of its own, or a location of its own, in which case it
+        # is held at what it was given and the rest of the stack carries
+        # on sharing.
         rollouts = [c for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                     if c.get('hb_rollout')]
         if rollouts:
@@ -1692,28 +1703,57 @@ class ClosetStarter(GeoNodeCage):
             box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
             box_d = max(depth, inch(2.0))
             n = len(rollouts)
-            tray_h = float(opening.hb_closet_opening.rollout_height)
-            gap = (interior_h - n * tray_h) / (n + 1)
+            stack_h = float(opening.hb_closet_opening.rollout_height)
+            heights = [tray_height(b, stack_h) for b in rollouts]
+            shared = [i for i, b in enumerate(rollouts)
+                      if not b.get(PROP_UNLOCK_TRAY_HEIGHT, 0)]
+            gap = (interior_h - sum(heights)) / (n + 1)
             if gap < const.ROLLOUT_MIN_GAP:
                 # Won't fit at the full height: hold the minimum gap and
-                # shrink the trays to share the remainder.
+                # shrink to the remainder. The trays sharing the stack
+                # give the room up first, since a tray holding a height
+                # was asked for that height; they all give room up only
+                # when the sharing ones have none left to give.
                 gap = const.ROLLOUT_MIN_GAP
-                tray_h = max((interior_h - (n + 1) * gap) / n, inch(2.0))
+                room = interior_h - (n + 1) * gap
+                held = sum(h for i, h in enumerate(heights)
+                           if i not in shared)
+                share = ((room - held) / len(shared)) if shared else 0.0
+                if shared and share >= const.ROLLOUT_MIN_HEIGHT:
+                    for i in shared:
+                        heights[i] = share
+                else:
+                    scale = room / (sum(heights) or 1.0)
+                    heights = [max(h * scale, const.ROLLOUT_MIN_HEIGHT)
+                               for h in heights]
             y_box = (-box_d if side == 'BACK' else -depth)
+            z = gap
             for i, box in enumerate(rollouts):
+                h = heights[i]
+                # A tray that was given a location stands at it, held
+                # inside the opening; the rest keep the even spacing.
+                if box.get(PROP_UNLOCK_TRAY_Z, 0):
+                    z_tray = min(max(float(box.get(PROP_TRAY_Z, z)), 0.0),
+                                 max(interior_h - h, 0.0))
+                else:
+                    z_tray = z
                 box['hb_drawer_box_type'] = box_type
                 box['hb_drawer_box_size'] = 'ROLLOUT'
                 _set_part_hidden(box, False)
-                z = gap + i * (tray_h + gap)
-                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z)
+                # Persist what the tray resolved to, so a dialog opens
+                # on what is on screen rather than on a default.
+                box[PROP_TRAY_HEIGHT] = h
+                box[PROP_TRAY_Z] = z_tray
+                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z_tray)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
-                gb.set_input('Dim Z', tray_h)
+                gb.set_input('Dim Z', h)
                 try:
                     gb.set_input('Material', box_mat)
                 except Exception:
                     pass
+                z += h + gap
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
         # Both are held back from the front edge by the setback, so the
@@ -3287,6 +3327,15 @@ def front_overlays(sp, scene_props, opening=None):
         if op.unlock_bottom_overlay:
             bo = op.bottom_overlay
     return lo, ro, to, bo
+
+
+def tray_height(tray, stack_h):
+    """How tall one pull-out tray stands: the height it was given, or
+    the height the stack sets when it is still sharing."""
+    if not tray.get(PROP_UNLOCK_TRAY_HEIGHT, 0):
+        return stack_h
+    return max(float(tray.get(PROP_TRAY_HEIGHT, stack_h)),
+               const.ROLLOUT_MIN_HEIGHT)
 
 
 def _distribute_front_heights(avail, fronts):

@@ -2052,6 +2052,53 @@ def _pin_drawer_front_heights(opening, sizes):
             front[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 1
 
 
+def _rollout_trays(opening):
+    """A stack's pull-out trays, bottom tray first."""
+    return sorted(
+        [c for c in opening.children
+         if c.get('hb_part_role') == types_closets.PART_ROLE_DRAWER_BOX
+         and c.get('hb_rollout')],
+        key=lambda o: o.get('hb_rollout_index', 0))
+
+
+def _read_rollout_trays(opening, qty):
+    """What the trays in a stack are holding, bottom tray first, as
+    (equal, height, placed, location) rows. A tray nobody has sized is
+    equal and reads back the height it was given; one nobody has placed
+    reads back where the spacing put it. Either way a box unticked here
+    starts from what is on screen rather than from a default."""
+    out = []
+    for tray in _rollout_trays(opening)[:qty]:
+        out.append((
+            not tray.get(types_closets.PROP_UNLOCK_TRAY_HEIGHT, 0),
+            float(tray.get(types_closets.PROP_TRAY_HEIGHT,
+                           const.ROLLOUT_HEIGHT)),
+            bool(tray.get(types_closets.PROP_UNLOCK_TRAY_Z, 0)),
+            float(tray.get(types_closets.PROP_TRAY_Z, 0.0))))
+    return out
+
+
+def _pin_rollout_trays(opening, rows):
+    """Hand each tray in a stack the height and the location it was
+    given, or put it back on what the stack works out for itself.
+
+    A tray holding a height is held at it and the trays still sharing
+    absorb the difference; a tray holding a location stands there and
+    the rest keep their even spacing."""
+    for tray, row in zip(_rollout_trays(opening), rows):
+        equal, height, placed, z = row
+        if equal:
+            tray[types_closets.PROP_UNLOCK_TRAY_HEIGHT] = 0
+        else:
+            tray[types_closets.PROP_TRAY_HEIGHT] = height
+            tray[types_closets.PROP_UNLOCK_TRAY_HEIGHT] = 1
+        if placed:
+            tray[types_closets.PROP_TRAY_Z] = z
+            tray[types_closets.PROP_UNLOCK_TRAY_Z] = 1
+        else:
+            tray[types_closets.PROP_UNLOCK_TRAY_Z] = 0
+
+
 def _run_vertical_gap(context, opening=None):
     """The gap this run stacks its fronts with.
 
@@ -2826,9 +2873,10 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
 
 
 class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
-    """Set the pull-out (rollout) trays for the active opening. Each tray
-    stands the given Rollout Height; the trays are spaced evenly (0
-    quantity removes them)."""
+    """Set the pull-out (rollout) trays for the active opening. A tray
+    stands the given Rollout Height and the stack is spaced evenly (0
+    quantity removes them); a tray can hold a height and a location of
+    its own while the rest of the stack carries on sharing."""
     bl_idname = "hb_closets.add_rollouts"
     bl_label = "Rollout Trays"
     bl_options = {'UNDO'}
@@ -2837,23 +2885,105 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
     qty: bpy.props.IntProperty(name="Quantity", default=3,
                                min=0, max=12)  # type: ignore
     rollout_height: bpy.props.FloatProperty(
-        name="Rollout Height", default=0.1016,  # 4"
+        name="Rollout Height",
+        description="Height of a tray that is sharing the stack "
+                    "rather than holding a height of its own",
+        default=const.ROLLOUT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
+    # Per-tray height and location (tray_1..tray_12; the first `qty` are
+    # shown and used). A tray left equal stands the stack's height and
+    # takes the spacing the stack works out; unticking either box holds
+    # that tray and lets the rest carry on sharing.
+    for _i in range(1, 13):
+        __annotations__['tray_%d_equal' % _i] = bpy.props.BoolProperty(
+            name="Equal", default=True,
+            description="Let tray %d stand the stack's height instead "
+                        "of holding a height of its own" % _i)
+        __annotations__['tray_%d_height' % _i] = bpy.props.FloatProperty(
+            name="Tray %d Height" % _i,
+            description="Height tray %d is held at" % _i,
+            default=const.ROLLOUT_HEIGHT, min=0.0,
+            unit='LENGTH', precision=4)
+        __annotations__['tray_%d_placed' % _i] = bpy.props.BoolProperty(
+            name="Set Location", default=False,
+            description="Stand tray %d at a location of its own "
+                        "instead of at the spacing the stack works "
+                        "out" % _i)
+        __annotations__['tray_%d_z' % _i] = bpy.props.FloatProperty(
+            name="Tray %d Location" % _i,
+            description="How far tray %d stands above the bottom of "
+                        "the opening" % _i,
+            default=0.0, min=0.0, unit='LENGTH', precision=4)
+    del _i
 
     def invoke(self, context, event):
-        from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is not None:
             op = opening.hb_closet_opening
             self.qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
             self.rollout_height = float(op.rollout_height)
-        return context.window_manager.invoke_props_dialog(self, width=250)
+            for i, row in enumerate(
+                    _read_rollout_trays(opening, self.qty), 1):
+                equal, height, placed, z = row
+                setattr(self, 'tray_%d_equal' % i, equal)
+                setattr(self, 'tray_%d_height' % i, height)
+                setattr(self, 'tray_%d_placed' % i, placed)
+                setattr(self, 'tray_%d_z' % i, z)
+        return context.window_manager.invoke_props_dialog(self, width=330)
+
+    def _rows(self):
+        """The stack as the dialog has it, bottom tray first."""
+        return [(bool(getattr(self, 'tray_%d_equal' % i)),
+                 float(getattr(self, 'tray_%d_height' % i)),
+                 bool(getattr(self, 'tray_%d_placed' % i)),
+                 float(getattr(self, 'tray_%d_z' % i)))
+                for i in range(1, self.qty + 1)]
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Rollout Trays", icon='SNAP_VOLUME')
+        col = box.column(align=True)
+        col.prop(self, 'qty')
+        col.prop(self, 'rollout_height')
+        if self.qty <= 0:
+            return
+        # A row per tray, bottom tray first, the order the stack is
+        # built in. A tray sharing the stack reads back the height it
+        # is getting; one holding a height shows that instead.
+        box = layout.box()
+        box.label(text="Tray Heights and Locations", icon='MESH_GRID')
+        col = box.column(align=True)
+        for i in range(1, self.qty + 1):
+            row = col.row(align=True)
+            row.label(text="Tray %d" % i)
+            row.prop(self, 'tray_%d_equal' % i, text="")
+            if getattr(self, 'tray_%d_equal' % i):
+                row.label(text=units.unit_to_string(
+                    context.scene.unit_settings, self.rollout_height))
+            else:
+                row.prop(self, 'tray_%d_height' % i, text="")
+            row.prop(self, 'tray_%d_placed' % i, text="", icon='PINNED')
+            if getattr(self, 'tray_%d_placed' % i):
+                row.prop(self, 'tray_%d_z' % i, text="")
 
     def execute(self, context):
-        return self._commit(context, {
-            'rollout_qty': self.qty,
-            'rollout_height': self.rollout_height,
-        })
+        opening = _active_opening_for_insert(context)
+        if opening is None:
+            return {'CANCELLED'}
+        opening.hb_closet_opening.rollout_qty = self.qty
+        opening.hb_closet_opening.rollout_height = self.rollout_height
+        types_closets.clear_other_interiors(opening, self.interior_kind)
+        root = types_closets.find_starter_root(opening)
+        # The trays have to be standing there before they can be told
+        # what to hold, and the quantity just set is what decides how
+        # many of them there are. Build the stack, then size it.
+        types_closets.recalculate_closet_starter(root)
+        _pin_rollout_trays(opening, self._rows())
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
+        return {'FINISHED'}
 
 
 class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
