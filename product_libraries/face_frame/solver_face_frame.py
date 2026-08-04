@@ -158,6 +158,11 @@ class FaceFrameLayout:
         self.right_stile_type = cab.right_stile_type
         is_full_overlay = (
             types_face_frame._resolve_style_overlay(cabinet_obj) == 'FULL')
+        # Kept on the layout: the mid-stile step notches (and the flush
+        # finished division that goes with them) are FULL-overlay
+        # construction only -- standard overlays keep the plain stile +
+        # partition-skin build.
+        self.full_overlay = is_full_overlay
         self.corner_overlay_left = (
             is_full_overlay and cab.left_stile_type == 'BLIND')
         self.corner_overlay_right = (
@@ -2082,9 +2087,13 @@ def mid_stile_notches(layout, gap_index):
     Returns a list of notch dicts: end ('BOTTOM' / 'TOP'), side
     ('LEFT' / 'RIGHT' -- which adjacent bay's half is removed), span
     (extent along the stile from that end) and width (the removed
-    width). Empty when the bays align or the gap sits on a bend (the
-    mitered halves handle their own geometry).
+    width). Empty for standard overlays (FULL-overlay construction
+    only -- others keep the plain stile + partition skins), when the
+    bays align, or when the gap sits on a bend (the mitered halves
+    handle their own geometry).
     """
+    if not getattr(layout, 'full_overlay', False):
+        return []
     if gap_index >= len(layout.mid_stiles):
         return []
     if layout.angled_multi and mid_stile_bend_thetas(layout, gap_index):
@@ -2263,6 +2272,16 @@ def _mid_div_offset(layout, gap_index):
     not.
     """
     ms = layout.mid_stiles[gap_index]
+    # Bay-height STEP (full overlay): the whole division setup shifts
+    # so its void-side face lands on the stile's notch plane (the
+    # stile centerline) -- and every face-keyed consumer (carcass
+    # bottom / back segments, kick, skins) follows through the shared
+    # _mid_div_* helpers instead of poking through the moved panel.
+    step = mid_stile_notches(layout, gap_index)
+    if step and _epsilon_eq(layout.bays[gap_index]['depth'],
+                            layout.bays[gap_index + 1]['depth']):
+        dt = layout.division_thickness
+        return (-dt / 2.0 if step[0]['side'] == 'RIGHT' else dt / 2.0)
     loc = ms.get('division_location', 'CENTERED')
     if loc == 'CENTERED':
         return 0.0
@@ -2334,17 +2353,34 @@ def _carcass_meeting_x(layout, gap_index):
     return _mid_div_right_outer_x(layout, gap_index)
 
 
+def _step_gap(layout, gap_index):
+    """True when gap_index carries a same-depth bay-height STEP (the
+    full-overlay notched-stile + flush-division construction). The
+    dropped full-height division blocks the usual pass-under, so
+    carcass segments must stop at THEIR side's division face."""
+    return bool(
+        _epsilon_eq(layout.bays[gap_index]['depth'],
+                    layout.bays[gap_index + 1]['depth'])
+        and mid_stile_notches(layout, gap_index))
+
+
 def _segment_x_bounds(layout, start, end):
     """Left and right X for a segment that should fill from cabinet inner
     side wall to cabinet inner side wall, meeting adjacent segments at
-    the mid division on internal gaps.
+    the mid division on internal gaps. On a step gap the division runs
+    the full height flush with the stile notch plane, so nothing passes
+    under it -- each segment stops at its own side's division face.
     """
     if start == 0:
         left_x = carcass_inner_left_x(layout)
+    elif _step_gap(layout, start - 1):
+        left_x = _mid_div_right_outer_x(layout, start - 1)
     else:
         left_x = _carcass_meeting_x(layout, start - 1)
     if end == layout.bay_count - 1:
         right_x = carcass_inner_right_x(layout)
+    elif _step_gap(layout, end):
+        right_x = _mid_div_left_outer_x(layout, end)
     else:
         right_x = _carcass_meeting_x(layout, end)
     return left_x, right_x
@@ -2799,13 +2835,12 @@ def mid_division_panels(layout, gap_index):
         # Mirror Z=True extends in +X from origin, so origin x = panel's
         # left face = center - dt/2.
         #
-        # Bay-height STEP at this gap (mid_stile_notches): the division
-        # becomes the void's finished surface. It extends to the face
-        # frame's own extent on the stepped end (no bottom-rail inset;
-        # the stile and panel bottoms align) and shifts over so its
-        # void-side face is flush with the stile's notch plane -- the
-        # cut stile edge and the panel face read as one plane.
-        panel_x = center_x - dt / 2.0
+        # Bay-height STEP at this gap (mid_stile_notches, full overlay
+        # only): the division becomes the void's finished surface. It
+        # extends to the face frame's own extent on the stepped end (no
+        # bottom-rail inset; the stile and panel bottoms align). The
+        # flush-with-the-notch-plane shift lives in _mid_div_offset so
+        # every face-keyed consumer follows; center_x already carries it.
         step_flush = None
         step_notches = mid_stile_notches(layout, gap_index)
         if step_notches:
@@ -2820,12 +2855,10 @@ def mid_division_panels(layout, gap_index):
                     top_z = (max(bay_top_z(layout, gap_index),
                                  bay_top_z(layout, gap_index + 1))
                              + ms['extend_up_amount'])
-            panel_x = (center_x - dt if step_flush == 'RIGHT'
-                       else center_x)
         return [{
             'slot':      0,
             'bay_side':  'CENTER',
-            'x':         panel_x,
+            'x':         center_x - dt / 2.0,
             'y':         _panel_y(bay_a['depth']),
             'z':         bottom_z,
             'length':    top_z - bottom_z,
