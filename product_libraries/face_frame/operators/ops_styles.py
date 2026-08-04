@@ -1259,6 +1259,10 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
 
     _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT',
                     'FALSE_FRONT', 'TILT_OUT'}
+    # Shelf roles are wiped + rebuilt every recalc (like fronts), so
+    # their paint stamp also lives on a stable cage, not the part.
+    _SHELF_ROLES = {'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF',
+                    'VANITY_SHELF', 'CORNER_SHELF', 'CORNER_FIXED_SHELF'}
 
     @staticmethod
     def _opening_for(obj):
@@ -1269,6 +1273,22 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 return node
             node = node.parent
         return None
+
+    @staticmethod
+    def _shelf_cage_for(obj):
+        """Walk up to the stable cage a shelf stamp lives on: the opening
+        cage when the shelf sits under one, else the bay cage. None for
+        shelves outside both (the stamp then falls back to the part and
+        lasts until the next recalc)."""
+        node = obj.parent
+        bay = None
+        while node is not None:
+            if node.get('IS_FACE_FRAME_OPENING_CAGE'):
+                return node
+            if bay is None and node.get('IS_FACE_FRAME_BAY_CAGE'):
+                bay = node
+            node = node.parent
+        return bay
 
     def _paint(self, context, event):
         ff = get_style_props(context)
@@ -1283,6 +1303,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
             return
         is_part = bool(obj.get('CABINET_PART'))
         is_front = is_part and obj.get('hb_part_role') in self._FRONT_ROLES
+        is_shelf = is_part and obj.get('hb_part_role') in self._SHELF_ROLES
 
         if self.brush == 'RESET':
             if is_front:
@@ -1291,6 +1312,17 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 for k in ('hb_front_material_override', 'hb_front_material_style'):
                     if k in tgt:
                         del tgt[k]
+            elif is_shelf:
+                tgt = self._shelf_cage_for(obj)
+                for t in (tgt, obj):
+                    if t is None:
+                        continue
+                    for k in ('hb_shelf_material_override',
+                              'hb_shelf_material_style',
+                              'hb_part_material_override',
+                              'hb_part_material_style'):
+                        if k in t:
+                            del t[k]
             elif is_part:
                 for k in ('hb_part_material_override', 'hb_part_material_style'):
                     if k in obj:
@@ -1321,6 +1353,17 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 else:
                     style._set_part_surfaces(obj, mat, edge)
                     style._set_door_modifier_materials(obj, mat, edge)
+            elif is_shelf:
+                # Shelves are wiped + rebuilt each recalc, so the stamp
+                # lives on the stable opening / bay cage; the material
+                # walk re-applies it to the respawned shelves.
+                cage = self._shelf_cage_for(obj)
+                tgt = cage if cage is not None else obj
+                key = ('hb_shelf_material' if cage is not None
+                       else 'hb_part_material')
+                tgt[key + '_override'] = self.brush
+                tgt[key + '_style'] = style.name
+                style._set_part_surfaces(obj, mat, edge)
             elif is_part:
                 obj['hb_part_material_override'] = self.brush
                 obj['hb_part_material_style'] = style.name

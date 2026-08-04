@@ -1874,10 +1874,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # visible through the opening, so they take the exterior finish
         # material, not the interior material.
         'PARTITION_SKIN',
-        # Per-bay finish liner panels (left / right / top / back) added
-        # when a bay is finished - their whole purpose is to show the
-        # exterior finish inside the opening.
-        'BAY_FINISH',
+        # NOTE: 'BAY_FINISH' liner panels are NOT in this set -- they get
+        # a dedicated branch in _apply_materials_to_cabinet honoring the
+        # owning bay/opening's finish_*_material pick (exterior finish by
+        # default, or the style's interior material).
     }
 
     # Hidden surfaces (interior material on top + bottom + edges).
@@ -2369,9 +2369,38 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         and role in ('CORNER_SHELF', 'CORNER_FIXED_SHELF'))
                 )
                 if finish_mat is not None and finished:
-                    self._set_part_surfaces(child, finish_mat, finish_mat_rotated)
+                    # The finished region picks which style material its
+                    # shelving shows (finish_*_material; FINISH default).
+                    if self._region_material_mode(bay_cage,
+                                                  opening_cage) == 'INTERIOR':
+                        base_mat, base_edge = interior_mat, interior_mat_rotated
+                    else:
+                        base_mat, base_edge = finish_mat, finish_mat_rotated
                 else:
-                    self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                    base_mat, base_edge = interior_mat, interior_mat_rotated
+                # Per-region shelf paint override. Shelves are wiped and
+                # rebuilt every recalc, so the Paint Part stamp lives on
+                # the stable opening (or bay) cage, like fronts do.
+                ov_src = None
+                for cage in (opening_cage, bay_cage):
+                    if (cage is not None
+                            and cage.get('hb_shelf_material_override')
+                            in ('FINISH', 'INTERIOR')):
+                        ov_src = cage
+                        break
+                if ov_src is not None:
+                    sstyle = self
+                    sname = ov_src.get('hb_shelf_material_style')
+                    if sname:
+                        for cs in get_style_props().cabinet_styles:
+                            if cs.name == sname:
+                                sstyle = cs
+                                break
+                    if ov_src['hb_shelf_material_override'] == 'FINISH':
+                        base_mat, base_edge = sstyle.get_finish_material()
+                    else:
+                        base_mat, base_edge = sstyle.get_interior_material()
+                self._set_part_surfaces(child, base_mat, base_edge)
                 continue
 
             # Drawer / rollout boxes are a single GeoNodeDrawerBox asset
@@ -2402,6 +2431,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 m = self._get_mirror_panel_material()
                 self._set_part_surfaces(child, m, m)
                 child['IS_PREP_FOR_GLASS'] = True
+                continue
+
+            # Finished-region liner panels: the exterior finish by default,
+            # or the style's interior material when the owning bay/opening
+            # asks for it. Liners are parented to the cabinet ROOT, so the
+            # owning region resolves through the index tags stamped at
+            # emit time, not the parent walk.
+            if role == 'BAY_FINISH':
+                if self._liner_material_mode(cabinet_obj,
+                                             child) == 'INTERIOR':
+                    self._set_part_surfaces(
+                        child, interior_mat, interior_mat_rotated)
+                else:
+                    self._set_part_surfaces(
+                        child, finish_mat, finish_mat_rotated)
                 continue
 
             if role in self._FRONT_ROLES:
@@ -2441,6 +2485,41 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 self._set_part_surfaces(
                     child, interior_mat, interior_mat_rotated,
                 )
+
+    @staticmethod
+    def _region_material_mode(bay_cage, opening_cage):
+        """FINISH / INTERIOR pick for a finished bay / opening region.
+        The opening's own setting wins when the part sits under an
+        opening cage; otherwise the bay's; FINISH when neither resolves
+        (historic behavior)."""
+        if opening_cage is not None:
+            return opening_cage.face_frame_opening.finish_opening_material
+        if bay_cage is not None:
+            return bay_cage.face_frame_bay.finish_bay_material
+        return 'FINISH'
+
+    @staticmethod
+    def _liner_material_mode(cabinet_obj, liner):
+        """finish_*_material mode for a BAY_FINISH liner panel, resolved
+        via the bay / opening index tags the liner carries (liners are
+        parented to the cabinet root, so the cage parent-walk can't find
+        their region). FINISH when the region can't be resolved."""
+        bay_idx = liner.get('hb_bay_finish_bay')
+        op_idx = liner.get('hb_bay_finish_opening', -1)
+        if bay_idx is None:
+            return 'FINISH'
+        for node in cabinet_obj.children:
+            if (not node.get('IS_FACE_FRAME_BAY_CAGE')
+                    or node.get('hb_bay_index') != bay_idx):
+                continue
+            if op_idx is not None and op_idx >= 0:
+                for sub in node.children_recursive:
+                    if (sub.get('IS_FACE_FRAME_OPENING_CAGE')
+                            and sub.get('hb_opening_index') == op_idx
+                            and sub.face_frame_opening.finish_opening):
+                        return sub.face_frame_opening.finish_opening_material
+            return node.face_frame_bay.finish_bay_material
+        return 'FINISH'
 
     def _bay_cage_for_part(self, part_obj):
         """Walk up from a part to its nearest face-frame bay cage
@@ -6653,6 +6732,19 @@ class Face_Frame_Bay_Props(PropertyGroup):
                     "0 runs the full cavity depth",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Which of the cabinet style's two materials the finished bay shows
+    # on its liner panels and shelves. FINISH = the exterior finish
+    # (historic behavior); INTERIOR = the style's interior material, for
+    # a finished opening colored differently from the face frame.
+    finish_bay_material: EnumProperty(
+        name="Finish Color",
+        items=[('FINISH', "Exterior Finish",
+                "Liner panels and shelves take the cabinet's exterior finish"),
+               ('INTERIOR', "Interior Material",
+                "Liner panels and shelves take the style's interior material")],
+        default='FINISH',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # UI-only toggle: in the cabinet_prompts popup each bay shows just
     # its size by default; flipping this expands the bay's secondary
@@ -7290,6 +7382,17 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Flush Depth", default=0.0, unit='LENGTH', precision=4,
         description="How far the flush finish runs back into the opening; "
                     "0 runs the full cavity depth",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Which of the cabinet style's two materials the finished opening
+    # shows on its liner panels and shelves (see finish_bay_material).
+    finish_opening_material: EnumProperty(
+        name="Finish Color",
+        items=[('FINISH', "Exterior Finish",
+                "Liner panels and shelves take the cabinet's exterior finish"),
+               ('INTERIOR', "Interior Material",
+                "Liner panels and shelves take the style's interior material")],
+        default='FINISH',
         update=_update_cabinet_dim,
     )  # type: ignore
 

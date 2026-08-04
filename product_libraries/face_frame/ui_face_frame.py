@@ -795,6 +795,7 @@ def draw_bay_properties(layout, bay_obj):
         col.prop(bp, 'floating_bay', text="Floating")
     col.prop(bp, 'finish_bay', text="Finish")
     if bp.finish_bay:
+        col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
@@ -927,6 +928,7 @@ def draw_opening_properties(layout, opening_obj):
         ncol = nbox.column(align=True)
         ncol.prop(op, 'finish_opening', text="Finish Opening")
         if op.finish_opening:
+            ncol.prop(op, 'finish_opening_material', text="Finish Color")
             ncol.prop(op, 'finish_opening_flush', text="Finish Flush")
             if op.finish_opening_flush:
                 ncol.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
@@ -1533,6 +1535,7 @@ def draw_bay_in_prompts(layout, bay_obj):
         col.prop(bp, 'floating_bay', text="Floating")
     col.prop(bp, 'finish_bay', text="Finish")
     if bp.finish_bay:
+        col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
