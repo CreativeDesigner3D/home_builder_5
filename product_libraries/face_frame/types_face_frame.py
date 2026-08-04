@@ -358,6 +358,11 @@ TAG_RETURN_MEMBER = 'hb_return_member'
 # that draw the return rows.
 RETURN_BACK_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP')
 
+# Side conditions that can carry a return closeout when extended back.
+# Same surfaces as the back set: any side with a finished face -- flat,
+# paneled or textured -- can wrap its exposed back corner.
+RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP')
+
 # Applied flush-X strip: a 1/4 part covering the front portion of a
 # cabinet side when LEFT/RIGHT_finished_end_condition is FLUSH_X. The
 # strip's outer face is flush with the FF outer face; its width along
@@ -5671,8 +5676,9 @@ class FaceFrameCabinet(GeoNodeCage):
         """Effective return-closeout width on `side` ('LEFT' / 'RIGHT'), or
         0.0 when the return isn't active. Active requires a non-angled
         cabinet, a back with a finished surface to return into
-        (RETURN_BACK_CONDITIONS), and that side being FINISHED or
-        PANELED, extended back (extend > 0), with a positive return width.
+        (RETURN_BACK_CONDITIONS), and that side carrying a finished
+        surface of its own (RETURN_SIDE_CONDITIONS), extended back
+        (extend > 0), with a positive return width.
         Single source of truth shared by the return-part builder and the
         back sizing (the finished/paneled/textured back field is
         shortened by this width so it butts the return post instead of
@@ -5690,7 +5696,8 @@ class FaceFrameCabinet(GeoNodeCage):
             condition = cab.right_finished_end_condition
             extend = cab.right_side_finished_extend_back
             width = cab.right_side_return_width
-        if condition not in ('FINISHED', 'PANELED') or extend <= 0.0 or width <= 0.0:
+        if (condition not in RETURN_SIDE_CONDITIONS
+                or extend <= 0.0 or width <= 0.0):
             return 0.0
         return width
 
@@ -5801,6 +5808,8 @@ class FaceFrameCabinet(GeoNodeCage):
             existing = None
         if kind == 'PANELED':
             self._build_return_paneled(role, name, existing, paneled)
+        elif kind in ('BEADBOARD', 'SHIPLAP'):
+            self._build_return_textured(role, name, existing, finished, kind)
         else:
             self._build_return_finished(role, name, existing, finished)
 
@@ -5827,6 +5836,38 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length', geo['length'])
         part.set_input('Width', geo['width'])
         part.set_input('Thickness', geo['thickness'])
+
+    def _build_return_textured(self, role, name, existing, geo, condition):
+        """BEADBOARD / SHIPLAP return member: same footprint and
+        orientation as the flat finished cutpart, but the visible
+        geometry is the carved static mesh (_textured_panel_mesh, the
+        same carve the textured side/back fields use -- 3/4 stock here,
+        beads running vertically). The hidden driven cutpart keeps
+        L/W/T for downstream reads; the carve puts the textured face on
+        the member's exterior (the return panel's inboard face, the
+        stile's rear face)."""
+        if existing is None:
+            part = CabinetPart()
+            part.create(name)
+            part.obj.parent = self.obj
+            part.obj['CABINET_PART'] = True
+            part.obj.rotation_euler.x = geo['rot_x']
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+            part.set_input('Mirror Z', geo['mirror_z'])
+            existing = part.obj
+        else:
+            part = GeoNodeCutpart(existing)
+        existing['hb_part_role'] = role
+        existing[TAG_RETURN_MEMBER] = role
+        existing['hb_return_member_kind'] = condition
+        existing.location = geo['loc']
+        part.set_input('Length', geo['length'])
+        part.set_input('Width', geo['width'])
+        part.set_input('Thickness', geo['thickness'])
+        self._textured_panel_mesh(
+            existing, geo['length'], geo['width'], geo['thickness'],
+            condition, geo['mirror_z'])
 
     def _build_return_paneled(self, role, name, existing, geo):
         """PANELED applied panel (PanelFaceFrameCabinet) filling the member's

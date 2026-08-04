@@ -42,10 +42,14 @@ FIN_END_ITEMS = [
 # Construction of a finished-side RETURN member (the return panel or its
 # rear stile). FINISHED = a flat 3/4 part; PANELED = an applied panel with
 # rails / stiles + inset panel (same PanelFaceFrameCabinet machinery as a
-# PANELED side). Per-member, per-side; default FINISHED.
+# PANELED side); BEADBOARD / SHIPLAP = a 3/4 part carved with the same
+# texture the textured side/back fields use. Per-member, per-side;
+# default FINISHED.
 RETURN_MEMBER_TYPE_ITEMS = [
     ('FINISHED', "Finished", "Flat 3/4 finished part"),
     ('PANELED', "Paneled", "Applied panel with rails / stiles and an inset panel"),
+    ('BEADBOARD', "Beadboard", "3/4 part with vertical quirk-bead grooves"),
+    ('SHIPLAP', "Shiplap", "3/4 part with nickel-gap plank reveals"),
 ]
 
 
@@ -2226,11 +2230,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 continue
             role = child.get('hb_part_role')
 
-            # Static textured panels (beadboard / shiplap ends): the
-            # carved python mesh is the visible geometry (GN cutpart
-            # display hidden), so the finish goes on the mesh slot
-            # directly - cutpart surface inputs are inert here.
-            if (role in ('BEADBOARD', 'SHIPLAP')
+            # Static textured panels (beadboard / shiplap ends, and
+            # textured return members): the carved python mesh is the
+            # visible geometry (GN cutpart display hidden), so the
+            # finish goes on the mesh slot directly - cutpart surface
+            # inputs are inert here.
+            if ((role in ('BEADBOARD', 'SHIPLAP')
+                 or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 if finish_mat is not None:
                     me = child.data

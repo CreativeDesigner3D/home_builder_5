@@ -2051,7 +2051,7 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         if fin_type not in ('UNFINISHED', 'FLUSH_X'):
             layout.prop(cab, f'{key}_side_finished_extend_back',
                         text="Extend Back")
-        if (fin_type in ('FINISHED', 'PANELED')
+        if (fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab, f'{key}_side_finished_extend_back') != 0.0
                 and cab.back_finished_end_condition
                 in types_face_frame.RETURN_BACK_CONDITIONS):

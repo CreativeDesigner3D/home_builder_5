@@ -1400,11 +1400,12 @@ def draw_finished_ends(layout, cab_props):
         elif fin_type == 'UNFINISHED' and side != 'back':
             col.prop(cab_props, f'{side}_scribe', text="Scribe")
 
-        # Return closeout: only meaningful when a FINISHED or PANELED side is
-        # extended back past a back with a finished surface (finished,
-        # paneled or textured -- RETURN_BACK_CONDITIONS). Nonzero return
-        # width caps the exposed corner with a return panel + a rear stile.
-        if (side in ('left', 'right') and fin_type in ('FINISHED', 'PANELED')
+        # Return closeout: only meaningful when a side with a finished
+        # surface (RETURN_SIDE_CONDITIONS) is extended back past a back
+        # with one too (RETURN_BACK_CONDITIONS). Nonzero return width
+        # caps the exposed corner with a return panel + a rear stile.
+        if (side in ('left', 'right')
+                and fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab_props, f'{side}_side_finished_extend_back') != 0.0
                 and getattr(cab_props, 'back_finished_end_condition')
                 in types_face_frame.RETURN_BACK_CONDITIONS):
