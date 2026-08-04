@@ -2798,15 +2798,40 @@ def mid_division_panels(layout, gap_index):
             top_z = higher_top_z - layout.mt + ms['extend_up_amount']
         # Mirror Z=True extends in +X from origin, so origin x = panel's
         # left face = center - dt/2.
+        #
+        # Bay-height STEP at this gap (mid_stile_notches): the division
+        # becomes the void's finished surface. It extends to the face
+        # frame's own extent on the stepped end (no bottom-rail inset;
+        # the stile and panel bottoms align) and shifts over so its
+        # void-side face is flush with the stile's notch plane -- the
+        # cut stile edge and the panel face read as one plane.
+        panel_x = center_x - dt / 2.0
+        step_flush = None
+        step_notches = mid_stile_notches(layout, gap_index)
+        if step_notches:
+            step_flush = step_notches[0]['side']
+            for n in step_notches:
+                if n['end'] == 'BOTTOM':
+                    bottom_z = (bay_bottom_z(layout, lower_idx)
+                                - ms['extend_down_amount'])
+                    if ms.get('to_floor'):
+                        bottom_z = 0.0
+                else:
+                    top_z = (max(bay_top_z(layout, gap_index),
+                                 bay_top_z(layout, gap_index + 1))
+                             + ms['extend_up_amount'])
+            panel_x = (center_x - dt if step_flush == 'RIGHT'
+                       else center_x)
         return [{
             'slot':      0,
             'bay_side':  'CENTER',
-            'x':         center_x - dt / 2.0,
+            'x':         panel_x,
             'y':         _panel_y(bay_a['depth']),
             'z':         bottom_z,
             'length':    top_z - bottom_z,
             'width':     _panel_width(bay_a['depth']),
             'thickness': dt,
+            'step_flush': step_flush,
             # Stretcher notches at top-front + top-back of the panel.
             # Active when stretchers actually cross this gap; sized to
             # the stretcher's own width and thickness for a flush fit.
@@ -2890,6 +2915,13 @@ def partition_skin_panels(layout, gap_index):
     """
     skins = []
     if gap_index >= len(layout.mid_stiles):
+        return skins
+    # A same-depth bay-height STEP is handled by the notched stile +
+    # the flush finished division (mid_stile_notches / the step_flush
+    # panel) -- the void surface IS the division, so no skin.
+    if (_epsilon_eq(layout.bays[gap_index]['depth'],
+                    layout.bays[gap_index + 1]['depth'])
+            and mid_stile_notches(layout, gap_index)):
         return skins
 
     bay_a = layout.bays[gap_index]

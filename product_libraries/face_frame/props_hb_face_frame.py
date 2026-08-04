@@ -2453,6 +2453,22 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 child['IS_PREP_FOR_GLASS'] = True
                 continue
 
+            # A bay-height step gap's mid division is the void's
+            # FINISHED surface (flush with the stile's notch plane):
+            # the face toward the removed bay half takes the exterior
+            # finish; the box face stays interior.
+            if (role == 'MID_DIVISION'
+                    and child.get('HB_STEP_FINISHED_SIDE')):
+                fin_right = child['HB_STEP_FINISHED_SIDE'] == 'RIGHT'
+                self._set_part_surfaces_split(
+                    child,
+                    top_mat=(finish_mat if fin_right else interior_mat),
+                    bottom_mat=(interior_mat if fin_right
+                                else finish_mat),
+                    edge_mat=finish_mat_rotated,
+                )
+                continue
+
             # Finished-region liner panels: the exterior finish by default,
             # or the style's interior material when the owning bay/opening
             # asks for it. Liners are parented to the cabinet ROOT, so the
@@ -2501,6 +2517,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 self._set_part_surfaces(
                     child, finish_mat, finish_mat_rotated,
                 )
+                # Step-notch cut faces on a mid stile read as finished
+                # end grain -- the corner-notch node group exposes a
+                # Material socket for the faces the cut creates.
+                if role == 'MID_STILE' and finish_mat is not None:
+                    for mname in ('Step Notch Bottom', 'Step Notch Top'):
+                        m = child.modifiers.get(mname)
+                        if (m is not None and m.node_group is not None
+                                and m.show_viewport):
+                            ni = m.node_group.interface.items_tree.get(
+                                'Material')
+                            if ni is not None:
+                                hb_utils.set_gn_input(
+                                    m, ni.identifier, finish_mat)
             elif role in self._INTERIOR_PART_ROLES:
                 self._set_part_surfaces(
                     child, interior_mat, interior_mat_rotated,

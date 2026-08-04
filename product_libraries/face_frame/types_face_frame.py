@@ -2604,6 +2604,15 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length',    panel['length'])
                 part.set_input('Width',     panel['width'])
                 part.set_input('Thickness', panel['thickness'])
+                # Bay-height step: this division is the void's finished
+                # surface (flush with the stile's notch plane); the
+                # material walk reads the stamp and finishes the
+                # void-side face.
+                side = panel.get('step_flush')
+                if side:
+                    child['HB_STEP_FINISHED_SIDE'] = side
+                elif 'HB_STEP_FINISHED_SIDE' in child:
+                    del child['HB_STEP_FINISHED_SIDE']
                 # Drive top stretcher notches (slot 0 only - slot 1 has
                 # no notch modifiers and panel['notch_active'] is False
                 # there anyway).
