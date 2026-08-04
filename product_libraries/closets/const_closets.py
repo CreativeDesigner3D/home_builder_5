@@ -60,6 +60,11 @@ HANG_RAIL_COVER_LENGTH = inch(0.5)
 HANG_RAIL_COVER_WIDTH = inch(1.75)
 HANG_RAIL_COVER_DEPTH = inch(2.25)
 HANG_RAIL_COVER_TOP_OFFSET = inch(1.0)
+# The cover stands clear of the wall rather than against it. What
+# it wraps is the claw, which hangs off the front of the rail, so
+# it starts an inch out from the wall and reaches back into the
+# room from there - the rail itself is left alone behind it.
+HANG_RAIL_COVER_STANDOFF = inch(1.0)
 
 # ---------------------------------------------------------------------------
 # Starter defaults

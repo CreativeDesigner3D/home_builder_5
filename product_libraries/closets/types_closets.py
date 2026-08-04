@@ -1218,7 +1218,9 @@ class ClosetStarter(GeoNodeCage):
                 # covers its left end only - the last bay in the run
                 # covers its right end as well. An end lengthened
                 # toward the wall runs out past the last panel, so its
-                # cover stays back at the panel.
+                # cover stays back at the panel. It sits an inch out
+                # from the wall, in front of the rail rather than
+                # around it, because the claw is what it covers.
                 cover_z = _hang_rail_cover_z(local_z, st)
                 hide_cover = ((not self.has_hang_rail)
                               or sp.remove_hang_rail)
@@ -1229,7 +1231,9 @@ class ClosetStarter(GeoNodeCage):
                     cover_x = (0.0 if side == 'LEFT'
                                else bay['width']
                                - const.HANG_RAIL_COVER_LENGTH)
-                    cover.location = (cover_x, 0.0, cover_z)
+                    cover.location = (
+                        cover_x,
+                        -const.HANG_RAIL_COVER_STANDOFF, cover_z)
                     cpart = GeoNodeCutpart(cover)
                     cpart.set_input('Length',
                                     const.HANG_RAIL_COVER_LENGTH)
@@ -3188,20 +3192,28 @@ class LShelfClosetStarter(GeoNodeCage):
             # the one stopped by the back partition is the one clipped
             # to it - so which of the two inner covers shows follows
             # the wall the partition stands against.
+            #
+            # Every cover stands off its wall the inch a run's does.
+            # The two inner ones sit against the partition's room-side
+            # face, which the wall offset holds clear of the wall - so
+            # they measure from wo + pt, not from where the rail was
+            # cut short. The hand recorded on each is the side of the
+            # panel the claw is screwed to.
             cover_z = _hang_rail_cover_z(rail_z, st)
             cl = const.HANG_RAIL_COVER_LENGTH
+            so = const.HANG_RAIL_COVER_STANDOFF
             covers = (
                 ('Back Cover', 'Hang Rail Cover Back', 0.0, True,
-                 (W - pt - cl, 0.0, cover_z), False,
+                 (W - pt - cl, -so, cover_z), False,
                  hide_rail or bool(sp.turn_off_right_panel)),
                 ('Back Corner Cover', 'Hang Rail Cover Back Corner',
-                 0.0, False, (x0, 0.0, cover_z), False,
+                 0.0, True, (wo + pt, -so, cover_z), False,
                  hide_rail or not flip),
-                ('Side Cover', 'Hang Rail Cover Side', -90.0, True,
-                 (0.0, -(D - pt - cl), cover_z), True,
+                ('Side Cover', 'Hang Rail Cover Side', -90.0, False,
+                 (so, -(D - pt - cl), cover_z), True,
                  hide_rail or bool(sp.turn_off_left_panel)),
                 ('Side Corner Cover', 'Hang Rail Cover Side Corner',
-                 -90.0, False, (0.0, -y0, cover_z), True,
+                 -90.0, True, (so, -(wo + pt), cover_z), True,
                  hide_rail or bool(flip)),
             )
             for key, nm, rot_z, on_left, loc, mirror, hide in covers:
