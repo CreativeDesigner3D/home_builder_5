@@ -4826,29 +4826,57 @@ class FaceFrameCabinet(GeoNodeCage):
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
 
+    def _segment_bottom_rail_profile(self, cab_default, seg_key):
+        """Profile id for one bottom-rail segment: the segment's start
+        bay's override when set (bay props bottom_rail_profile, CABINET
+        = inherit), else the cabinet-level default. Lets split rails cut
+        independently -- one arched valance bay between plain ones."""
+        if isinstance(seg_key, int):
+            for node in self.obj.children:
+                if (node.get(TAG_BAY_CAGE)
+                        and node.get('hb_bay_index') == seg_key):
+                    ov = getattr(node.face_frame_bay,
+                                 'bottom_rail_profile', 'CABINET')
+                    if ov and ov != 'CABINET':
+                        return ov
+                    break
+        return cab_default
+
     def _apply_bottom_rail_profile(self, layout):
-        """Cut the chosen decorative profile into the bottom rail(s). Gated on a
-        BASE / UPPER with bottom_rail_profile set; a no-op + full cleanup
-        otherwise. One cutter per bottom-rail segment; the profile's end details
+        """Cut the chosen decorative profile into the bottom rail(s). Gated on
+        BASE / UPPER; a no-op + full cleanup otherwise. One cutter per
+        bottom-rail segment; each segment resolves its own profile (per-bay
+        override, else the cabinet-level pick); the profile's end details
         stay fixed while its flat middle stretches to each rail's length."""
         cab_props = self.obj.face_frame_cabinet
-        profile_id = getattr(cab_props, 'bottom_rail_profile', 'NONE')
-        on = (layout.cabinet_type in ('BASE', 'UPPER')
-              and profile_id not in ('NONE', ''))
-        is_arch = profile_id == _BOTTOM_RAIL_PROFILE_ARCH
-        poly = None if (not on or is_arch) else _bottom_rail_profile_poly(profile_id)
-        if not on or (not is_arch and not poly):
+        cab_default = getattr(cab_props, 'bottom_rail_profile', 'NONE')
+        if layout.cabinet_type not in ('BASE', 'UPPER'):
             self._cleanup_bottom_rail_profile_cutters()
             return
+        poly_cache = {}
         live_keys = set()
         for rail in self._bottom_rail_parts():
             seg_key = rail.get('hb_segment_start_bay')
             if seg_key is None:
                 seg_key = rail.name
+            profile_id = self._segment_bottom_rail_profile(cab_default, seg_key)
+            mod = rail.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
+            is_arch = profile_id == _BOTTOM_RAIL_PROFILE_ARCH
+            if profile_id not in ('NONE', '') and not is_arch:
+                if profile_id not in poly_cache:
+                    poly_cache[profile_id] = _bottom_rail_profile_poly(profile_id)
+                poly = poly_cache[profile_id]
+            else:
+                poly = None
+            if profile_id in ('NONE', '') or (not is_arch and not poly):
+                # This segment stays plain; its cutter (if any) is
+                # dropped by the stale-key sweep below.
+                if mod is not None:
+                    rail.modifiers.remove(mod)
+                continue
             live_keys.add(seg_key)
             cutter = self._ensure_bottom_rail_profile_cutter(seg_key)
             ok = self._position_bottom_rail_profile_cutter(cutter, rail, profile_id, poly)
-            mod = rail.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
             if not ok:
                 if mod is not None:
                     rail.modifiers.remove(mod)

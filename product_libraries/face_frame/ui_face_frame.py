@@ -799,6 +799,8 @@ def draw_bay_properties(layout, bay_obj):
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    if cab_type in ('BASE', 'UPPER'):
+        col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 
 
 def _root_opening_size(opening_obj):
@@ -1539,6 +1541,8 @@ def draw_bay_in_prompts(layout, bay_obj):
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    if cab_type in ('BASE', 'UPPER'):
+        col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 
 
 def draw_bays_in_prompts(layout, root):

@@ -4394,6 +4394,19 @@ def _bottom_rail_profile_items(self, context):
     return _BOTTOM_RAIL_PROFILE_ITEMS_CACHE
 
 
+_BAY_BOTTOM_RAIL_PROFILE_ITEMS_CACHE = []
+
+
+def _bay_bottom_rail_profile_items(self, context):
+    """Per-bay variant of _bottom_rail_profile_items with a leading
+    'Use Cabinet Setting' inherit entry (same GC-guard cache pattern)."""
+    items = [('CABINET', 'Use Cabinet Setting',
+              'Follow the cabinet-level Bottom Rail Profile pick')]
+    items += [tuple(i) for i in _bottom_rail_profile_items(self, context)]
+    _BAY_BOTTOM_RAIL_PROFILE_ITEMS_CACHE[:] = items
+    return _BAY_BOTTOM_RAIL_PROFILE_ITEMS_CACHE
+
+
 def _update_panel_split_auto(self, context):
     """Auto-openings toggle on an applied panel. Recalc the HOST cabinet
     so _reconcile_applied_panels re-runs the split: auto on re-applies the
@@ -6743,6 +6756,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
                ('INTERIOR', "Interior Material",
                 "Liner panels and shelves take the style's interior material")],
         default='FINISH',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Per-bay bottom-rail profile override. CABINET follows the cabinet-
+    # level pick; NONE forces a plain rail on this bay; any profile id
+    # cuts just this bay's rail segment -- so split rails can carry e.g.
+    # one arched valance bay between plain neighbours.
+    bottom_rail_profile: EnumProperty(
+        name="Bottom Rail Profile",
+        items=_bay_bottom_rail_profile_items,
         update=_update_cabinet_dim,
     )  # type: ignore
 
