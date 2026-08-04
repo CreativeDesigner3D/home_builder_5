@@ -2068,6 +2068,66 @@ def mid_stile_dims(layout, gap_index):
     return (length, ms['width'], layout.fft)
 
 
+def mid_stile_notches(layout, gap_index):
+    """Step notches for a mid stile whose adjacent bays differ in
+    vertical extent (the full-overlay height-change case).
+
+    The stile spans the UNION of both bays; where only ONE bay runs
+    beside it, the stile keeps just that bay's HALF of its width --
+    the absent bay's half is notched away from the stile's end up (or
+    down) to the absent bay's edge, so e.g. a 2-1/4" shared stile
+    reads 1-1/8" beside the single full-height door below a shortened
+    middle bay.
+
+    Returns a list of notch dicts: end ('BOTTOM' / 'TOP'), side
+    ('LEFT' / 'RIGHT' -- which adjacent bay's half is removed), span
+    (extent along the stile from that end) and width (the removed
+    width). Empty when the bays align or the gap sits on a bend (the
+    mitered halves handle their own geometry).
+    """
+    if gap_index >= len(layout.mid_stiles):
+        return []
+    if layout.angled_multi and mid_stile_bend_thetas(layout, gap_index):
+        return []
+    ms = layout.mid_stiles[gap_index]
+    a_bot = bay_bottom_z(layout, gap_index)
+    b_bot = bay_bottom_z(layout, gap_index + 1)
+    a_top = bay_top_z(layout, gap_index)
+    b_top = bay_top_z(layout, gap_index + 1)
+    # Physical stile extent -- mirrors mid_stile_position / _dims.
+    bottom_z = min(a_bot, b_bot)
+    if bottom_rail_passthrough(layout, gap_index):
+        bottom_z += layout.bays[gap_index]['bottom_rail_width']
+    bottom_z -= ms['extend_down_amount']
+    if ms.get('to_floor'):
+        bottom_z = 0.0
+    top_z = max(a_top, b_top)
+    if top_rail_passthrough(layout, gap_index):
+        top_z -= layout.bays[gap_index]['top_rail_width']
+    top_z += ms['extend_up_amount']
+
+    half = ms['width'] / 2.0
+    eps = inch(1.0 / 32.0)
+    out = []
+    hi_bot = max(a_bot, b_bot)      # the shallower-reaching bay's bottom
+    if hi_bot - bottom_z > eps:
+        out.append({
+            'end': 'BOTTOM',
+            'side': 'LEFT' if a_bot > b_bot else 'RIGHT',
+            'span': hi_bot - bottom_z,
+            'width': half,
+        })
+    lo_top = min(a_top, b_top)      # the shorter bay's top
+    if top_z - lo_top > eps:
+        out.append({
+            'end': 'TOP',
+            'side': 'LEFT' if a_top < b_top else 'RIGHT',
+            'span': top_z - lo_top,
+            'width': half,
+        })
+    return out
+
+
 def mid_stile_bend_thetas(layout, gap_index):
     """(theta_left_region, theta_right_region) of the front planes
     meeting at this gap's mid stile, or None when the gap is flat (no

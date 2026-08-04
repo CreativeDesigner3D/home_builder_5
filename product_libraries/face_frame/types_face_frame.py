@@ -2563,6 +2563,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._apply_mid_stile_step_notches(child, part, layout, msi)
 
             elif role == PART_ROLE_MID_STILE_HALF:
                 msi = child.get('hb_mid_stile_index', 0)
@@ -3031,6 +3032,52 @@ class FaceFrameCabinet(GeoNodeCage):
                     if child.get('hb_part_role') == PART_ROLE_MID_STILE_HALF}
         for gi in sorted(wanted - existing):
             self._create_mid_stile_half(gi)
+
+    # Step-notch modifiers on a mid stile whose adjacent bays differ in
+    # vertical extent (see solver.mid_stile_notches). Which Flip picks
+    # which stile end / side is fixed by the stile's part config
+    # (rot Y=-90 Z=90, Mirror Y + Z).
+    _MID_STILE_NOTCH_MODS = (('BOTTOM', 'Step Notch Bottom'),
+                             ('TOP', 'Step Notch Top'))
+    _MID_STILE_NOTCH_FLIP_X = {'BOTTOM': False, 'TOP': True}
+    _MID_STILE_NOTCH_FLIP_Y = {'LEFT': False, 'RIGHT': True}
+
+    def _apply_mid_stile_step_notches(self, child, part, layout, msi):
+        """Drive the step-notch corner cutouts on a flat mid stile.
+        Where only one adjacent bay runs beside the stile (bay heights
+        differ), the absent bay's half of the width is notched away
+        (solver.mid_stile_notches). Modifiers are added lazily so
+        stiles from older files pick them up on their next recalc.
+        """
+        notches = {n['end']: n
+                   for n in solver.mid_stile_notches(layout, msi)}
+        for end, mod_name in self._MID_STILE_NOTCH_MODS:
+            n = notches.get(end)
+            mod = child.modifiers.get(mod_name)
+            if n is None:
+                if mod is not None:
+                    mod.show_viewport = False
+                    mod.show_render = False
+                continue
+            if mod is None:
+                part.add_part_modifier('CPM_CORNERNOTCH', mod_name)
+                mod = child.modifiers.get(mod_name)
+                if mod is None:      # unexpected node-group failure
+                    continue
+            ng = mod.node_group
+            if ng is None:
+                continue
+            for iname, val in (
+                    ('X', n['span']),
+                    ('Y', n['width']),
+                    ('Route Depth', layout.fft + inch(0.1)),
+                    ('Flip X', self._MID_STILE_NOTCH_FLIP_X[end]),
+                    ('Flip Y', self._MID_STILE_NOTCH_FLIP_Y[n['side']])):
+                ni = ng.interface.items_tree.get(iname)
+                if ni is not None:
+                    hb_utils.set_gn_input(mod, ni.identifier, val)
+            mod.show_viewport = True
+            mod.show_render = True
 
     def _create_mid_stile_half(self, gap_index):
         """Right-half companion board; same part config as the mid
