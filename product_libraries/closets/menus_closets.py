@@ -107,6 +107,8 @@ def _draw_add_part_entries(layout):
     op.part_type = 'ROD'
     layout.operator("hb_closets.add_adj_shelves",
                     text="Adjustable Shelves...", icon='ALIGN_JUSTIFY')
+    layout.operator("hb_closets.divide_opening",
+                    text="Divide Opening...", icon='MOD_ARRAY')
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
@@ -180,24 +182,21 @@ class HOME_BUILDER_MT_closet_change_opening(bpy.types.Menu):
 
 class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
     """Add Doors & Drawers submenu. Door entries fire directly with the
-    swing / hamper flag baked in (no dialog by design); Drawers keeps its
-    small dialog for the quantity."""
+    swing baked in, tilt-out hamper included (no dialog by design);
+    Drawers keeps its small dialog for the quantity."""
     bl_label = "Add Doors & Drawers"
 
     def draw(self, context):
         layout = self.layout
         op = layout.operator("hb_closets.add_doors", text="Left Swing")
         op.swing = 'LEFT'
-        op.is_hamper = False
         op = layout.operator("hb_closets.add_doors", text="Right Swing")
         op.swing = 'RIGHT'
-        op.is_hamper = False
         op = layout.operator("hb_closets.add_doors", text="Double Door")
         op.swing = 'DOUBLE'
-        op.is_hamper = False
-        op = layout.operator("hb_closets.add_doors", text="Hamper")
-        op.swing = 'LEFT'
-        op.is_hamper = True
+        op = layout.operator("hb_closets.add_doors",
+                             text="Tilt Out Hamper")
+        op.swing = 'TILT_OUT'
         layout.separator()
         layout.operator("hb_closets.add_drawers", text="Drawers...")
 

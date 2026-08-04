@@ -14,8 +14,9 @@ Coordinate conventions (match face_frame):
   lives inside the envelope); for a hanging bay it is the underside of
   the bay's bottom shelf.
 
-Panel sizing between two bays reproduces the legacy shared-panel rules:
-the panel spans from the lowest neighbor bottom to the highest neighbor
+Panel sizing between two bays reproduces the prior library's
+shared-panel rules: the panel spans from the lowest neighbor bottom
+to the highest neighbor
 top, so a floor-mounted bay next to a hanging bay yields a full-height
 panel. Depth is the max of the neighbor depths.
 """
@@ -159,7 +160,7 @@ def compute_layout(spec):
         interior_z = bottom_z + spec.st
         interior_h = max(top_z - interior_z, const.MIN_BAY_WIDTH / 4.0)
         # Cleat rides the bottom shelf; with the bottom removed it drops
-        # to the bay envelope bottom (legacy behavior: the wall cleat
+        # to the bay envelope bottom (as in the prior library: the cleat
         # anchors the panels at the floor / hang line instead).
         cleat_z = 0.0 if b['remove_bottom'] else interior_z
         bays_out.append({

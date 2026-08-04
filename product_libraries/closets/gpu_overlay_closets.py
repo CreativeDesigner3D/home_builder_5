@@ -337,7 +337,7 @@ def compute_labels(context, region, rv3d):
         for bay in _iter_bay_cages(starter):
             if mode == 'Bays':
                 bp = bay.hb_closet_bay
-                targets.append((bay, 'BAY_W', True, bp.width_locked,
+                targets.append((bay, 'BAY_W', True, bp.unlock_width,
                                 _anchor_world(bay, 0.5, 0.5),
                                 bp.width, "W "))
                 # Bay depth: drawn at the FRONT edge of the bay floor
@@ -412,17 +412,17 @@ def compute_labels(context, region, rv3d):
                                         anchor, child.location.z, ""))
                     elif role == types_closets.PART_ROLE_DRAWER_FRONT:
                         # Every drawer front carries its own editable height
-                        # label at its center; the bullet marks fronts the
-                        # user has pinned (locked) so the stack redistributes
-                        # around them.
+                        # label at its center; the bullet marks the fronts
+                        # the user has pinned, which the stack redistributes
+                        # around.
                         dh = child.get(types_closets.PROP_FRONT_HEIGHT,
                                        const.DRAWER_FRONT_HEIGHT)
-                        locked = bool(child.get(
-                            types_closets.PROP_FRONT_LOCKED, 0))
+                        pinned = bool(child.get(
+                            types_closets.PROP_UNLOCK_FRONT_HEIGHT, 0))
                         anchor = o_mw @ Vector(
                             (o_w / 2.0, -0.003,
                              child.location.z + dh / 2.0))
-                        targets.append((child, 'DRAWER_H', True, locked,
+                        targets.append((child, 'DRAWER_H', True, pinned,
                                         anchor, dh, ""))
 
     # SELECTED scope on the Dims pill: keep only labels whose object
@@ -472,13 +472,13 @@ def compute_labels(context, region, rv3d):
                 # Lock glyph flush right of the bay's width label.
                 lrect = bay_w_rects.get(bay.name)
                 if lrect is not None:
-                    glyph = "•" if bp.width_locked else "○"
+                    glyph = "•" if bp.unlock_width else "○"
                     gw, _gh = blf.dimensions(0, glyph)
                     gh = lrect[3]
                     grect = (lrect[0] + lrect[2] + 2 * s, lrect[1],
                              gw + 2 * PAD_X * s, gh)
                     labels.append((bay.name, 'TOGGLE_LOCK', False,
-                                   bp.width_locked, grect, glyph))
+                                   bp.unlock_width, grect, glyph))
                 # Bottom on/off pill just above the bay's bottom edge -
                 # the very bottom-front is the bay depth (BAY_D) label, so
                 # the pill sits a touch higher to clear it.
@@ -664,7 +664,7 @@ def _commit(obj, kind, value):
             above['hb_z_offset'] = float(max(0.0, value - base_world))
             types_closets.recalculate_closet_starter(root)
             return True
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         bp = bay.hb_closet_bay
         kick = (root.hb_closet_starter.toe_kick_height
                 if bp.floor_mounted else 0.0)
@@ -680,7 +680,7 @@ def _commit(obj, kind, value):
         if root is None:
             return False
         bp = obj.hb_closet_bay
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(obj)
         st = scene_props.shelf_thickness
         kick = (root.hb_closet_starter.toe_kick_height
                 if bp.floor_mounted else 0.0)
@@ -711,28 +711,29 @@ def _commit(obj, kind, value):
         types_closets.recalculate_closet_starter(root)
         return True
     if kind == 'DRAWER_H':
-        # obj is a single drawer FRONT. Pin its height and let the stack
-        # redistribute the remaining span across the unlocked fronts.
+        # obj is a single drawer FRONT. Hand it this height and let the
+        # stack spread what is left over the fronts it still owns.
         root = types_closets.find_starter_root(obj)
         if root is None:
             return False
         obj[types_closets.PROP_FRONT_HEIGHT] = float(max(0.0, value))
-        obj[types_closets.PROP_FRONT_LOCKED] = 1
+        obj[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 1
         types_closets.recalculate_closet_starter(root)
         return True
     return False
 
 
 def _reset_to_auto(obj, kind):
-    """Clear a manual lock so redistribution owns the value again. BAY_W
-    releases a bay width; DRAWER_H un-pins a drawer front so the stack
-    fills evenly."""
-    if kind == 'BAY_W' and obj.hb_closet_bay.width_locked:
-        obj.hb_closet_bay.width_locked = False
-        types_closets.recalculate_closet_starter(obj)
+    """Hand a pinned value back so the run owns it again. BAY_W puts a
+    bay width back on the run; DRAWER_H puts a drawer front back on the
+    stack, which then fills evenly."""
+    if kind == 'BAY_W' and obj.hb_closet_bay.unlock_width:
+        # Handing the width back carries its own recalc.
+        obj.hb_closet_bay.unlock_width = False
         return True
-    if kind == 'DRAWER_H' and obj.get(types_closets.PROP_FRONT_LOCKED):
-        obj[types_closets.PROP_FRONT_LOCKED] = 0
+    if kind == 'DRAWER_H' and obj.get(
+            types_closets.PROP_UNLOCK_FRONT_HEIGHT):
+        obj[types_closets.PROP_UNLOCK_FRONT_HEIGHT] = 0
         root = types_closets.find_starter_root(obj)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
@@ -916,12 +917,13 @@ class hb_closets_OT_dim_label_click(bpy.types.Operator):
                 bay = bpy.data.objects.get(name)
                 if bay is not None:
                     bp = bay.hb_closet_bay
-                    if bp.width_locked:
+                    if bp.unlock_width:
                         _reset_to_auto(bay, 'BAY_W')
                     else:
-                        # Pin at the current width; a no-op until a
-                        # neighboring edit tries to redistribute it.
-                        bp.width_locked = True
+                        # Give the bay its own width, held at what it
+                        # measures now while the rest of the run is
+                        # redistributed around it.
+                        bp.unlock_width = True
                     context.area.tag_redraw()
                 return {'FINISHED'}
             if not editable:

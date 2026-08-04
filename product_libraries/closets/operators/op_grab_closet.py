@@ -9,10 +9,13 @@ set:
                     auto-locks both (same as typing their labels).
 - End panels        drag X: overall starter width. The LEFT end keeps
                     the right edge planted by shifting the starter.
-- TOP edge          drag Z: overall starter height (hanging starters
-                    stay top-anchored via the recalc rule).
+- TOP edge          drag Z: overall starter height. The bottom
+                    stays planted, so on a hanging starter this is
+                    the hang height.
 - Fixed SHELVES     drag Z: the shelf slides between its neighbors;
                     the two openings trade height.
+- DIVISIONS         drag X: the division slides between its neighbors
+                    in its own segment; the two columns trade width.
 
 All writes go through the same props/idprops the overlay labels commit,
 so locking, propagation, and the split reconciler behave identically.
@@ -39,6 +42,11 @@ MIN_BAY_WIDTH = inch(2.0)
 MIN_OPENING = inch(1.0)
 MIN_STARTER_WIDTH = inch(6.0)
 MIN_STARTER_HEIGHT = inch(6.0)
+# A corner wing has to stay wide enough to hold a shelf worth having.
+MIN_WING_DEPTH = inch(3.0)
+# The four sizes an inside corner is dragged by. All four are starter
+# prompts, so they share one snapshot, one clamp and one restore.
+L_SIZE_KINDS = ('L_END_R', 'L_END_L', 'L_DEPTH_R', 'L_DEPTH_L')
 SNAP_STEPS = {'COARSE': inch(0.25), 'FINE': inch(0.125)}
 GHOST_LINE = (0.85, 0.85, 0.85, 0.35)
 HOVER_LINE = (1.00, 0.85, 0.20, 1.00)
@@ -88,7 +96,7 @@ def _bkey(b):
     if b is None:
         return None
     return (b['kind'], b['root'], b.get('bay'), b.get('shelf'),
-            b.get('left'), b.get('side'))
+            b.get('div'), b.get('left'), b.get('side'))
 
 
 def _pick_boundary(context, event, boundaries):
@@ -122,6 +130,116 @@ def _current_mode():
         return 'Bays'
 
 
+def _corner_boundaries(root, mw, mode):
+    """Handles for an inside-corner L unit, Starters mode only.
+
+    Its local frame plants the corner at the origin: the right wing
+    runs +X along the back wall and the left wing runs -Y along the
+    side wall. Both overall sizes therefore grow away from the corner,
+    so neither end shifts the object the way a run's left end does -
+    the corner stays against the walls no matter which end is pulled.
+
+    The right wing's end panel sets the width and the left wing's end
+    panel sets the depth, each drawn on its own wing's front face so
+    it reads as that wing's end. The two wing front edges at the top
+    set the height together, and the two at the bottom set the
+    mounting - lift them off the floor and the unit hangs. In between,
+    every interior shelf front on a wing sets that wing's depth,
+    pulling the inner corner of the L in or out. A wing's front reads
+    as one face, so grabbing it anywhere between the top and bottom
+    edges pulls that wing in or out.
+
+    Every line is measured the way the recalculate measures it - the
+    same wing clamps, the same shelf heights - so a handle always sits
+    on geometry that is really there.
+    """
+    if mode != 'Starters':
+        return []
+    sp = root.hb_closet_starter
+    scene_props = types_closets.run_sizes(root)
+    st = scene_props.shelf_thickness
+    pt = scene_props.panel_thickness
+    W, D, H = sp.width, sp.depth, sp.height
+    if W <= 0.0 or D <= 0.0 or H <= 0.0:
+        return []
+    # Wing depths ride inside the opposite overall size; the build
+    # clamps them there, so the handles read the clamped values.
+    LD = min(sp.l_left_depth, W - pt)
+    RD = min(sp.l_right_depth, D - pt)
+    # Only a corner standing on the floor carries a kick, and the
+    # closet type is what says whether it does.
+    kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
+    # Three sets of wing-front lines: the mount at the bottom, the
+    # wing depths on the shelves in between, the height at the top.
+    # Every interior shelf front is a depth handle, so the whole front
+    # of a wing pulls that wing in or out. One lone line partway up
+    # reads as a shelf; a stack of them reads as the wing's front
+    # face, which is what it is. The bottom-most and top-most shelves
+    # are left out - their fronts land on the mount and height lines,
+    # inside the same few pixels. The shelves are spaced the way the
+    # build spaces them.
+    n_sh = max(int(sp.l_shelf_qty) + 2, 2)
+    z_bottom = kick
+    z_top = H - st
+    if n_sh >= 3:
+        z_depths = [(i, z_bottom + (z_top - z_bottom) * i / (n_sh - 1) + st)
+                    for i in range(1, n_sh - 1)]
+    else:
+        # Nothing interior to hang them on - one line halfway up keeps
+        # the depths reachable.
+        z_depths = [(0, (z_bottom + z_top) / 2.0 + st)]
+    z_high = H
+    # The shelves stop a panel thickness short of each end panel, and
+    # the notch leaves the inner corner at (LD, -RD).
+    x_out = W - pt
+    y_out = -(D - pt)
+
+    ax_x = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).normalized()
+    # Depth grows toward -Y, so that is the direction a pull outward
+    # has to move in for the drag delta to come out positive.
+    ax_y = (mw.to_3x3() @ Vector((0.0, -1.0, 0.0))).normalized()
+    ax_z = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+
+    out = []
+    # Right wing end panel -> overall width.
+    x_end = W - pt / 2.0
+    out.append(dict(kind='L_END_R', root=root.name,
+                    p0=mw @ Vector((x_end, -RD, 0.0)),
+                    p1=mw @ Vector((x_end, -RD, H)), axis=ax_x))
+    # Left wing end panel -> overall depth.
+    y_end = -(D - pt / 2.0)
+    out.append(dict(kind='L_END_L', root=root.name,
+                    p0=mw @ Vector((LD, y_end, 0.0)),
+                    p1=mw @ Vector((LD, y_end, H)), axis=ax_y))
+    # Top front edge of each wing -> overall height. Two segments so
+    # the whole top outline is grabbable; the side key keeps them
+    # separate for hover highlighting.
+    out.append(dict(kind='TOP', root=root.name, side='R',
+                    p0=mw @ Vector((LD, -RD, z_high)),
+                    p1=mw @ Vector((x_out, -RD, z_high)), axis=ax_z))
+    out.append(dict(kind='TOP', root=root.name, side='L',
+                    p0=mw @ Vector((LD, -RD, z_high)),
+                    p1=mw @ Vector((LD, y_out, z_high)), axis=ax_z))
+    # Shelf front edge of each wing -> that wing's depth. The shelf
+    # index keeps the lines apart for hover highlighting.
+    for _i, z_low in z_depths:
+        out.append(dict(kind='L_DEPTH_R', root=root.name, shelf=_i,
+                        p0=mw @ Vector((LD, -RD, z_low)),
+                        p1=mw @ Vector((x_out, -RD, z_low)), axis=ax_y))
+        out.append(dict(kind='L_DEPTH_L', root=root.name, shelf=_i,
+                        p0=mw @ Vector((LD, -RD, z_low)),
+                        p1=mw @ Vector((LD, y_out, z_low)), axis=ax_x))
+    # Bottom front edge of each wing -> the mounting, the same way a
+    # bay's bottom edge works. Two segments to match the top pair.
+    out.append(dict(kind='L_BOTTOM', root=root.name, side='R',
+                    p0=mw @ Vector((LD, -RD, 0.0)),
+                    p1=mw @ Vector((x_out, -RD, 0.0)), axis=ax_z))
+    out.append(dict(kind='L_BOTTOM', root=root.name, side='L',
+                    p0=mw @ Vector((LD, -RD, 0.0)),
+                    p1=mw @ Vector((LD, y_out, 0.0)), axis=ax_z))
+    return out
+
+
 def _collect_boundaries(scene, mode=None):
     """List of boundary dicts with world-space line segments, SCOPED BY
     SELECTION MODE: Starters mode grabs the whole
@@ -149,6 +267,13 @@ def _collect_boundaries(scene, mode=None):
             continue
         mw = split_preview._world_matrix(root)
         w, h, d = _starter_dims(root)
+        # An inside corner has perpendicular ends and no bays, so none
+        # of the run collection below applies to it.
+        _cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
+        if getattr(_cls, 'is_corner', False):
+            out.extend(_corner_boundaries(root, mw, mode))
+            continue
         bays = sorted([c for c in root.children
                        if c.get(types_closets.TAG_BAY_CAGE)],
                       key=lambda o: o.get('hb_bay_index', 0))
@@ -252,6 +377,30 @@ def _collect_boundaries(scene, mode=None):
                     out.append(dict(kind='SHELF', root=root.name,
                                     bay=bay.name, shelf=sh.name, side=side,
                                     p0=p0, p1=p1, axis=z_axis))
+                # Divisions: verticals standing inside one segment,
+                # handled on the same face as that segment's shelves.
+                # The handle runs the height of the part, so a division
+                # in an upper segment is grabbed where it actually is.
+                x_axis = (b_mw.to_3x3()
+                          @ Vector((1.0, 0.0, 0.0))).normalized()
+                for dv in [c for c in bay.children
+                           if c.get('hb_part_role')
+                           == types_closets.PART_ROLE_DIVISION
+                           and c.get(types_closets.PROP_OPENING_SIDE,
+                                     'FRONT') == side]:
+                    try:
+                        d_len = GeoNodeCutpart(dv).get_input('Length')
+                        d_th = GeoNodeCutpart(dv).get_input('Thickness')
+                    except Exception:
+                        continue
+                    x = dv.location.x + d_th / 2.0
+                    z0 = dv.location.z
+                    y_face = -b_d if side != 'BACK' else 0.0
+                    p0 = b_mw @ Vector((x, y_face, z0))
+                    p1 = b_mw @ Vector((x, y_face, z0 + d_len))
+                    out.append(dict(kind='DIVISION', root=root.name,
+                                    bay=bay.name, div=dv.name, side=side,
+                                    p0=p0, p1=p1, axis=x_axis))
     return out
 
 
@@ -476,22 +625,51 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         sp = root.hb_closet_starter
         snap['width'] = sp.width
         snap['height'] = sp.height
+        snap['depth'] = sp.depth
         snap['loc'] = tuple(root.location)
-        if b['kind'] == 'PANEL':
+        if b['kind'] in L_SIZE_KINDS:
+            # Any one of a corner's four sizes can be pulled against
+            # the others' clamps, so the whole set is restored on
+            # cancel rather than just the one that was dragged.
+            snap['ld'] = sp.l_left_depth
+            snap['rd'] = sp.l_right_depth
+        elif b['kind'] == 'L_BOTTOM':
+            # Lifting a corner off the floor changes its type and takes
+            # its kick out of the build, and the type it had on the
+            # floor is remembered for when it lands again. All three
+            # come back on a cancel.
+            snap['ctype'] = sp.closet_type
+            snap['kick'] = sp.toe_kick_height
+            snap['floor_ctype'] = root.get('hb_floor_closet_type')
+        elif b['kind'] == 'TOP':
+            # Holding the bottom means overriding the build's own top
+            # anchor and growing the hung bays with the run, so both
+            # have to come back on a cancel.
+            snap['last_h'] = root.get('hb_last_height')
+            snap['bays'] = [
+                (c.name, c.hb_closet_bay.height) for c in root.children
+                if c.get(types_closets.TAG_BAY_CAGE)]
+        elif b['kind'] == 'PANEL':
             left = bpy.data.objects.get(b['left'])
             right = bpy.data.objects.get(b['right'])
             snap['lw'] = left.hb_closet_bay.width
             snap['rw'] = right.hb_closet_bay.width
-            snap['ll'] = left.hb_closet_bay.width_locked
-            snap['rl'] = right.hb_closet_bay.width_locked
+            snap['ll'] = left.hb_closet_bay.unlock_width
+            snap['rl'] = right.hb_closet_bay.unlock_width
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             snap['z'] = sh.get('hb_z_offset', 0.0)
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            snap['x'] = dv.get('hb_x_offset', 0.0)
         elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
             bay = bpy.data.objects.get(b['bay'])
             snap['bh'] = bay.hb_closet_bay.height
             snap['floor'] = bay.hb_closet_bay.floor_mounted
             snap['runH'] = root.hb_closet_starter.height
+            # Giving a bay its own height sets the bay's own padlock,
+            # so a cancel has to put that back as well as the height.
+            snap['bay_unlocked'] = bay.hb_closet_bay.unlock_height
             snap['shelves'] = [
                 (c.name, c.get('hb_z_offset', 0.0))
                 for c in bay.children
@@ -507,7 +685,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         its absolute (off-the-floor) position holds. Drawer stacks keep
         riding the bottom (they sit on the base) and rods keep their
         top anchor - only splitter shelves hold."""
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick_v = root.hb_closet_starter.toe_kick_height
         bp = bay.hb_closet_bay
@@ -526,8 +704,148 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     max(0.0, min(off0 - delta, interior_h - st)))
         types_closets.recalculate_closet_starter(root)
 
+    def _set_bay_height(self, root, bay, new_h, recalc=True):
+        """Give a bay a height of its own, the way the Bays table does.
+
+        A bay keeps its own height only while the run height is
+        unlocked and the bay is locked; otherwise the next solve pulls
+        it back to the run height. Typing into the Bays table performs
+        that unlock through the property callback, so a drag has to do
+        the same or the bay snaps back and nothing appears to happen.
+        Hanging runs seed their bays shorter than the run and are
+        already unlocked, which is why they were the only ones that
+        worked. A height that matches the run puts the bay back on the
+        run height instead of pinning it.
+
+        Written behind the recalc guard so the height and lock
+        callbacks don't each solve the run mid-drag; the caller decides
+        when the single solve happens."""
+        sp = root.hb_closet_starter
+        bp = bay.hb_closet_bay
+        own = abs(new_h - sp.height) > 1e-6
+        rid = id(root)
+        types_closets._RECALCULATING.add(rid)
+        try:
+            bp.height = new_h
+            bp.unlock_height = own
+        finally:
+            types_closets._RECALCULATING.discard(rid)
+        if recalc:
+            types_closets.recalculate_closet_starter(root)
+
+    def _set_bay_mount(self, root, bay, floor_mounted):
+        """Flip a bay between floor-mounted and hanging without
+        letting the property callback solve the run mid-drag."""
+        bp = bay.hb_closet_bay
+        if bp.floor_mounted == floor_mounted:
+            return
+        rid = id(root)
+        types_closets._RECALCULATING.add(rid)
+        try:
+            bp.floor_mounted = floor_mounted
+        finally:
+            types_closets._RECALCULATING.discard(rid)
+
+    def _set_run_top(self, root, new_h):
+        """Move a starter's top, holding its bottom where it is.
+
+        A hanging starter hangs from its top: the build reads a height
+        change as growing the unit downward and slides the origin up by
+        the same amount, so the top stays put and a drag on the top
+        edge looks dead. The height the build last applied rides an
+        idprop, and writing the new height there first tells it this
+        edit is not one of those - the floor line holds and the top
+        moves, which on a hanging starter is the hang height itself.
+
+        A hung bay hangs from the run top too, so it grows with the run
+        to leave its own bottom where it was. A floor bay already
+        stands on the floor and keeps the height it was given. Bays
+        that follow the run height need no help either way.
+        """
+        sp = root.hb_closet_starter
+        delta = new_h - sp.height
+        bays = [c for c in root.children
+                if c.get(types_closets.TAG_BAY_CAGE)]
+
+        def _write():
+            for bay in bays:
+                bp = bay.hb_closet_bay
+                if bp.unlock_height and not bp.floor_mounted:
+                    bp.height = max(self._min_bay_height(root, bay),
+                                    bp.height + delta)
+            sp.height = new_h
+            root['hb_last_height'] = new_h
+
+        self._write_guarded(root, _write)
+
+    def _set_corner_bottom(self, root, new_h, loc):
+        """Write a corner's height and standing position together, so
+        the top lands in the same place the drag drew it."""
+        sp = root.hb_closet_starter
+        self._write_guarded(root, lambda: (
+            setattr(sp, 'height', new_h),
+            setattr(root, 'location', tuple(loc))))
+
+    def _set_corner_mount(self, root, floor):
+        """Stand an inside corner on the floor or hang it on the wall.
+
+        A corner has no bays, so its mounting rides its own closet
+        type - the same prompt the build reads to decide whether the
+        unit carries a toe kick. The type it had on the floor is
+        remembered, so a unit dropped back down is the kind of unit it
+        was before it was lifted.
+
+        Written behind the recalc guard so the property callbacks do
+        not each solve the unit mid-drag; the caller runs the solve.
+        """
+        sp = root.hb_closet_starter
+        if floor == (sp.closet_type != 'HANGING'):
+            return
+        rid = id(root)
+        types_closets._RECALCULATING.add(rid)
+        try:
+            if floor:
+                sp.closet_type = root.get('hb_floor_closet_type', 'TALL')
+                # A corner placed as an Upper was built with no kick at
+                # all. Standing it on the floor gives it the scene
+                # default rather than leaving it on its shelf edges.
+                if sp.toe_kick_height <= 0.0:
+                    sp.toe_kick_height = (
+                        bpy.context.scene.hb_closets.toe_kick_height)
+            else:
+                root['hb_floor_closet_type'] = sp.closet_type
+                sp.closet_type = 'HANGING'
+        finally:
+            types_closets._RECALCULATING.discard(rid)
+
+    def _set_corner_size(self, root, kind, value):
+        """Clamp and write one of an inside corner's four sizes, and
+        return what was written.
+
+        The overall sizes grow away from the planted corner, so there
+        is no origin shift to compensate. Each wing depth runs inside
+        the opposite overall size and stops a panel thickness short of
+        the end panel there - the same limit the build clamps to, so
+        dragging can never ask for a wing the unit cannot hold.
+        """
+        sp = root.hb_closet_starter
+        pt = types_closets.run_sizes(root).panel_thickness
+        if kind == 'L_END_R':
+            new = max(MIN_STARTER_WIDTH, sp.l_left_depth + pt, value)
+            sp.width = new
+        elif kind == 'L_END_L':
+            new = max(MIN_STARTER_WIDTH, sp.l_right_depth + pt, value)
+            sp.depth = new
+        elif kind == 'L_DEPTH_R':
+            new = max(MIN_WING_DEPTH, min(value, sp.depth - pt))
+            sp.l_right_depth = new
+        else:
+            new = max(MIN_WING_DEPTH, min(value, sp.width - pt))
+            sp.l_left_depth = new
+        return new
+
     def _min_bay_height(self, root, bay):
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick = (root.hb_closet_starter.toe_kick_height
                 if bay.hb_closet_bay.floor_mounted else 0.0)
@@ -579,9 +897,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                snap['lw'] + snap['rw'] - MIN_BAY_WIDTH))
             new_right = snap['lw'] + snap['rw'] - new_left
             lb, rb = left.hb_closet_bay, right.hb_closet_bay
-            lb.width_locked = True
-            rb.width_locked = True
+            # Both bays take their widths over, inside the guard - the
+            # padlocks relay the run out the same way the widths do, and
+            # a drag can't afford three solves per mouse move.
             self._write_guarded(root, lambda: (
+                setattr(lb, 'unlock_width', True),
+                setattr(rb, 'unlock_width', True),
                 setattr(lb, 'width', new_left),
                 setattr(rb, 'width', new_right)))
             self._drag_text = "%s | %s" % (
@@ -605,8 +926,48 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             sp = root.hb_closet_starter
             new_h = self._snap_height(snap['height'] + delta, event)
             new_h = max(MIN_STARTER_HEIGHT, new_h)
-            sp.height = new_h
-            self._drag_text = "H " + units.unit_to_string(us, new_h)
+            self._set_run_top(root, new_h)
+            # On a hanging starter the top edge IS the hang height, so
+            # say so rather than calling it the height.
+            label = "Hang Height" if sp.closet_type == 'HANGING' else "H"
+            self._drag_text = "%s %s" % (
+                label, units.unit_to_string(us, new_h))
+        elif b['kind'] == 'L_BOTTOM':
+            # The bottom edge is the mounting control, the way a bay's
+            # bottom edge is: the top holds still, so pulling the
+            # bottom up shortens the unit and hangs it, and letting it
+            # back down to the floor stands it up at its full height
+            # again. Continuous across the changeover, so there is no
+            # step to drag through.
+            top_z = snap['loc'][2] + snap['height']
+            new_bottom = snap['loc'][2] + delta
+            floor = new_bottom <= inch(1.0)
+            self._set_corner_mount(root, floor)
+            if floor:
+                new_h = max(MIN_STARTER_HEIGHT, top_z)
+                state = "Floor"
+            else:
+                # Snap the resulting HEIGHT to the 32mm lattice so a
+                # hung corner is always a system panel height.
+                new_h = self._snap_height(top_z - new_bottom, event)
+                new_h = max(MIN_STARTER_HEIGHT, new_h)
+                state = "Hung"
+            loc = list(snap['loc'])
+            loc[2] = top_z - new_h
+            self._set_corner_bottom(root, new_h, loc)
+            self._drag_text = "H %s (%s)" % (
+                units.unit_to_string(us, new_h), state)
+        elif b['kind'] in L_SIZE_KINDS:
+            base = {'L_END_R': snap['width'], 'L_END_L': snap['depth'],
+                    'L_DEPTH_R': snap['rd'],
+                    'L_DEPTH_L': snap['ld']}[b['kind']]
+            new = self._set_corner_size(
+                root, b['kind'], self._snap_value(base + delta, event))
+            label = {'L_END_R': "W", 'L_END_L': "D",
+                     'L_DEPTH_R': "Right Wing",
+                     'L_DEPTH_L': "Left Wing"}[b['kind']]
+            self._drag_text = "%s %s" % (
+                label, units.unit_to_string(us, new))
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             bay = bpy.data.objects.get(b['bay'])
@@ -620,13 +981,26 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             self._drag_text = "%s below | %s above" % (
                 units.unit_to_string(us, below),
                 units.unit_to_string(us, above))
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            bay = bpy.data.objects.get(b['bay'])
+            if dv is None or bay is None:
+                return
+            new_x = self._clamp_division(
+                bay, dv, self._snap_value(snap['x'] + delta, event))
+            dv['hb_x_offset'] = float(new_x)
+            types_closets.recalculate_closet_starter(root)
+            left, right = self._division_gaps(bay, dv)
+            self._drag_text = "%s | %s" % (
+                units.unit_to_string(us, left),
+                units.unit_to_string(us, right))
         elif b['kind'] == 'BAY_TOP':
             bay = bpy.data.objects.get(b['bay'])
             if bay is None:
                 return
             new_h = self._snap_height(snap['bh'] + delta, event)
             new_h = max(self._min_bay_height(root, bay), new_h)
-            bay.hb_closet_bay.height = new_h
+            self._set_bay_height(root, bay, new_h)
             self._drag_text = "H " + units.unit_to_string(us, new_h)
         elif b['kind'] == 'BAY_BOT':
             bay = bpy.data.objects.get(b['bay'])
@@ -638,24 +1012,24 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
             # hanging with height = run_top - bottom. Continuous across
             # the transition, so a floor bay converts to hanging the
             # moment its bottom lifts, and back when it lands.
-            bp = bay.hb_closet_bay
             run_top = root.hb_closet_starter.height
             bottom0 = 0.0 if snap['floor'] else run_top - snap['bh']
             new_bottom = bottom0 + delta
-            if new_bottom <= inch(1.0):
-                if not bp.floor_mounted:
-                    bp.floor_mounted = True
+            # Set the mount first: the minimum height depends on it,
+            # since only a floor bay carries the toe kick.
+            floor = new_bottom <= inch(1.0)
+            self._set_bay_mount(root, bay, floor)
+            if floor:
                 new_h = max(self._min_bay_height(root, bay), run_top)
                 state = "Floor"
             else:
-                if bp.floor_mounted:
-                    bp.floor_mounted = False
                 # Snap the resulting HEIGHT to the 32mm lattice so a
                 # hung bay is always a system panel height.
                 new_h = self._snap_height(run_top - new_bottom, event)
                 new_h = max(self._min_bay_height(root, bay), new_h)
                 state = "Hung"
-            bp.height = new_h
+            # The shelf hold runs the solve, so skip the one here.
+            self._set_bay_height(root, bay, new_h, recalc=False)
             self._hold_shelves_absolute(bay, root, snap)
             self._drag_text = "H %s (%s)" % (
                 units.unit_to_string(us, new_h), state)
@@ -676,7 +1050,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         types_closets.recalculate_closet_starter(root)
 
     def _clamp_shelf(self, bay, sh, new_z):
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         st = scene_props.shelf_thickness
         side = sh.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
         shelves = [c for c in bay.children
@@ -707,7 +1081,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
 
     def _shelf_gaps(self, bay, sh):
         """(clear below, clear above) for the drag readout."""
-        scene_props = bpy.context.scene.hb_closets
+        scene_props = types_closets.run_sizes(bay)
         st = scene_props.shelf_thickness
         side = sh.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
         z = sh.get('hb_z_offset', 0.0)
@@ -731,6 +1105,69 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 above_bound = min(above_bound, oz)
         return z - below_bound, above_bound - (z + st)
 
+    def _division_row(self, bay, dv):
+        """The other divisions standing in this one's segment, left to
+        right. A division only has to keep clear of the ones sharing
+        its row - one in the segment above or below is nothing to it,
+        since a shelf runs between them."""
+        side = dv.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+        row = int(dv.get('hb_row', 0))
+        others = [c for c in bay.children
+                  if c.get('hb_part_role')
+                  == types_closets.PART_ROLE_DIVISION
+                  and c.get(types_closets.PROP_OPENING_SIDE,
+                            'FRONT') == side
+                  and int(c.get('hb_row', 0)) == row and c is not dv]
+        others.sort(key=lambda o: o.get('hb_x_offset', 0.0))
+        return others
+
+    def _division_bounds(self, bay, dv):
+        """(low, high) the division's left face is allowed between, so
+        neither column either side of it comes out too narrow to
+        build."""
+        from .. import const_closets as const
+        pt = types_closets.run_sizes(bay).panel_thickness
+        b_w, _bh = split_preview._cage_dims(bay)
+        lo = const.DIVISION_MIN_WIDTH
+        hi = b_w - pt - const.DIVISION_MIN_WIDTH
+        x = dv.get('hb_x_offset', 0.0)
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox < x:
+                lo = max(lo, ox + pt + const.DIVISION_MIN_WIDTH)
+            else:
+                hi = min(hi, ox - pt - const.DIVISION_MIN_WIDTH)
+        return lo, hi
+
+    def _clamp_division(self, bay, dv, new_x):
+        lo, hi = self._division_bounds(bay, dv)
+        if hi < lo:
+            return lo
+        return max(lo, min(new_x, hi))
+
+    def _division_left_edge(self, bay, dv):
+        """Where the column to the left of this division starts."""
+        pt = types_closets.run_sizes(bay).panel_thickness
+        x = dv.get('hb_x_offset', 0.0)
+        base = 0.0
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox < x:
+                base = max(base, ox + pt)
+        return base
+
+    def _division_gaps(self, bay, dv):
+        """(column left, column right) for the drag readout."""
+        pt = types_closets.run_sizes(bay).panel_thickness
+        b_w, _bh = split_preview._cage_dims(bay)
+        x = dv.get('hb_x_offset', 0.0)
+        right_bound = b_w
+        for other in self._division_row(bay, dv):
+            ox = other.get('hb_x_offset', 0.0)
+            if ox >= x:
+                right_bound = min(right_bound, ox)
+        return x - self._division_left_edge(bay, dv), right_bound - (x + pt)
+
     def _end_drag(self, context, commit):
         if not self._drag_active:
             return
@@ -747,29 +1184,72 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                     self._write_guarded(root, lambda: (
                         setattr(lb, 'width', snap['lw']),
                         setattr(rb, 'width', snap['rw']),
-                        setattr(lb, 'width_locked', snap['ll']),
-                        setattr(rb, 'width_locked', snap['rl'])))
+                        setattr(lb, 'unlock_width', snap['ll']),
+                        setattr(rb, 'unlock_width', snap['rl'])))
                 elif b['kind'] in ('END_L', 'END_R'):
                     root.location = snap['loc']
                     sp.width = snap['width']
                 elif b['kind'] == 'TOP':
-                    sp.height = snap['height']
+                    def _restore_top():
+                        for name, h0 in snap.get('bays', ()):
+                            bay = bpy.data.objects.get(name)
+                            if bay is not None:
+                                bay.hb_closet_bay.height = h0
+                        sp.height = snap['height']
+                        # Put the anchor back where it was so the next
+                        # height edit from the properties panel behaves
+                        # as though the drag never happened.
+                        last_h = snap.get('last_h')
+                        root['hb_last_height'] = (
+                            snap['height'] if last_h is None else last_h)
+                        root.location = snap['loc']
+                    self._write_guarded(root, _restore_top)
+                elif b['kind'] == 'L_BOTTOM':
+                    def _restore_bottom():
+                        sp.closet_type = snap['ctype']
+                        sp.toe_kick_height = snap['kick']
+                        sp.height = snap['height']
+                        root.location = snap['loc']
+                        if snap.get('floor_ctype') is None:
+                            if 'hb_floor_closet_type' in root:
+                                del root['hb_floor_closet_type']
+                        else:
+                            root['hb_floor_closet_type'] = (
+                                snap['floor_ctype'])
+                    self._write_guarded(root, _restore_bottom)
+                elif b['kind'] in L_SIZE_KINDS:
+                    def _restore_l_size():
+                        sp.width = snap['width']
+                        sp.depth = snap['depth']
+                        sp.l_left_depth = snap['ld']
+                        sp.l_right_depth = snap['rd']
+                    self._write_guarded(root, _restore_l_size)
                 elif b['kind'] == 'SHELF':
                     sh = bpy.data.objects.get(b['shelf'])
                     if sh is not None:
                         sh['hb_z_offset'] = float(snap['z'])
                         types_closets.recalculate_closet_starter(root)
+                elif b['kind'] == 'DIVISION':
+                    dv = bpy.data.objects.get(b['div'])
+                    if dv is not None:
+                        dv['hb_x_offset'] = float(snap['x'])
+                        types_closets.recalculate_closet_starter(root)
                 elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
                     bay = bpy.data.objects.get(b['bay'])
                     if bay is not None:
-                        bay.hb_closet_bay.floor_mounted = snap['floor']
-                        bay.hb_closet_bay.height = snap['bh']
+                        bp = bay.hb_closet_bay
                         for name, off0 in snap.get('shelves', ()):
                             sh = bpy.data.objects.get(name)
                             if sh is not None:
                                 sh['hb_z_offset'] = float(off0)
-                        types_closets.recalculate_closet_starter(
-                            bpy.data.objects.get(b['root']))
+                        # Restore behind the guard: writing the height
+                        # would otherwise hand the bay its own through
+                        # the callback and undo the restore.
+                        self._write_guarded(root, lambda: (
+                            setattr(bp, 'floor_mounted', snap['floor']),
+                            setattr(bp, 'height', snap['bh']),
+                            setattr(bp, 'unlock_height',
+                                    snap['bay_unlocked'])))
         self._drag_active = False
         self._drag_boundary = None
         self._drag_text = ""
@@ -796,9 +1276,12 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                snap['lw'] + snap['rw'] - MIN_BAY_WIDTH))
             new_right = snap['lw'] + snap['rw'] - new_left
             lb, rb = left.hb_closet_bay, right.hb_closet_bay
-            lb.width_locked = True
-            rb.width_locked = True
+            # Both bays take their widths over, inside the guard - the
+            # padlocks relay the run out the same way the widths do, and
+            # a drag can't afford three solves per mouse move.
             self._write_guarded(root, lambda: (
+                setattr(lb, 'unlock_width', True),
+                setattr(rb, 'unlock_width', True),
                 setattr(lb, 'width', new_left),
                 setattr(rb, 'width', new_right)))
         elif b['kind'] in ('END_L', 'END_R'):
@@ -809,19 +1292,43 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                  + self._end_shift_vector(root, shift))
             sp.width = max(MIN_STARTER_WIDTH, value)
         elif b['kind'] == 'TOP':
-            root.hb_closet_starter.height = max(MIN_STARTER_HEIGHT, value)
+            self._set_run_top(root, max(MIN_STARTER_HEIGHT, value))
+        elif b['kind'] == 'L_BOTTOM':
+            # Typing sets the height, as it does on a bay bottom; the
+            # top stays put and the mounting follows from where that
+            # leaves the bottom.
+            top_z = snap['loc'][2] + snap['height']
+            new_h = max(MIN_STARTER_HEIGHT, value)
+            loc = list(snap['loc'])
+            loc[2] = top_z - new_h
+            self._set_corner_mount(root, loc[2] <= inch(1.0))
+            self._set_corner_bottom(root, new_h, loc)
+        elif b['kind'] in L_SIZE_KINDS:
+            self._set_corner_size(root, b['kind'], value)
         elif b['kind'] == 'SHELF':
             sh = bpy.data.objects.get(b['shelf'])
             bay = bpy.data.objects.get(b['bay'])
             if sh is not None and bay is not None:
                 sh['hb_z_offset'] = float(self._clamp_shelf(bay, sh, value))
                 types_closets.recalculate_closet_starter(root)
+        elif b['kind'] == 'DIVISION':
+            dv = bpy.data.objects.get(b['div'])
+            bay = bpy.data.objects.get(b['bay'])
+            if dv is not None and bay is not None:
+                # A typed number is the width of the column to the LEFT
+                # of the division, the way typing on a panel is the
+                # width of the bay to its left.
+                base = self._division_left_edge(bay, dv)
+                dv['hb_x_offset'] = float(
+                    self._clamp_division(bay, dv, base + value))
+                types_closets.recalculate_closet_starter(root)
         elif b['kind'] in ('BAY_TOP', 'BAY_BOT'):
             bay = bpy.data.objects.get(b['bay'])
             if bay is not None:
-                bay.hb_closet_bay.height = max(
-                    self._min_bay_height(root, bay), value)
-                if b['kind'] == 'BAY_BOT':
+                new_h = max(self._min_bay_height(root, bay), value)
+                bottom = b['kind'] == 'BAY_BOT'
+                self._set_bay_height(root, bay, new_h, recalc=not bottom)
+                if bottom:
                     self._hold_shelves_absolute(bay, root, snap)
         self._end_drag(context, commit=True)
 

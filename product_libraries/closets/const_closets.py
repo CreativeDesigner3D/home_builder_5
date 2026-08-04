@@ -1,6 +1,6 @@
 """Closet library constants.
 
-Values ported from the legacy closet system so dealers migrating projects
+Values ported from the prior closet library so dealers migrating projects
 see the same defaults. Heights are defined in millimeters (32mm-system
 panel drilling heights); everything else is inches.
 """
@@ -17,14 +17,37 @@ APPLIED_BACK_THICKNESS = inch(0.75)
 # How far an applied back laps onto the panels and shelves around the
 # bay it closes.
 APPLIED_BACK_OVERLAY = inch(0.3125)
+# A captured back is held inside one opening, between the panels and
+# shelves around it, instead of being applied across the outside of the
+# bay. It is cut from the run's shelf thickness, so it has no thickness
+# of its own. Both corner reliefs are optional and sized the way the
+# prior library sized them: 3" down the side, 1-1/2" in from it.
+CAPTURED_BACK_NOTCH_WIDTH = inch(1.5)
+CAPTURED_BACK_NOTCH_HEIGHT = inch(3.0)
 CLEAT_WIDTH = inch(4.0)
 # End-panel batten: a cosmetic scribe strip against the
 # inner face of an end panel at the front edge.
 BATTEN_WIDTH = inch(1.125)
 BATTEN_THICKNESS = inch(0.25)
-# Wall hang rail (the strip the closet hangs from / anchors to). Legacy
-# profile: 1.125 in tall x 0.25 in thick, rail bottom 3.3125 in below
-# the section top.
+# What the uprights in a cubby grid are cut from. Kept apart from the
+# shelf thickness because the prior library carried its own figure for
+# it, so a grid can be divided in something other than what its
+# shelves are made of.
+DIVIDER_THICKNESS = inch(0.75)
+# The part thicknesses a run can take over from the room. The room and
+# the starter carry the same field names, which is what lets a run be
+# read through the room's settings without anything downstream having
+# to know which figures were taken over.
+RUN_THICKNESSES = (
+    'panel_thickness',
+    'shelf_thickness',
+    'divider_thickness',
+    'batten_thickness',
+    'batten_width',
+)
+# Wall hang rail (the strip the closet hangs from / anchors to). The
+# prior library's profile: 1.125 in tall x 0.25 in thick, rail bottom
+# 3.3125 in below the section top.
 HANG_RAIL_WIDTH = inch(1.125)
 HANG_RAIL_THICKNESS = inch(0.25)
 HANG_RAIL_DROP = inch(3.3125)
@@ -36,7 +59,15 @@ DEFAULT_WIDTH = inch(80.0)
 DEFAULT_BAY_QTY = 4
 DEFAULT_DEPTH = inch(14.0)
 
-# Panel heights by starter type. The mm values are legacy 32mm-system
+# Automatic bay count while a run is being dragged out. The run is split
+# into the fewest bays that keep every bay at or under the target width.
+# A starter carries at most MAX_BAY_QTY openings, so that is the hard
+# ceiling on the count however wide the run gets.
+BAY_WIDTH_TARGET = inch(30.0)
+MIN_BAY_QTY = 1
+MAX_BAY_QTY = 9
+
+# Panel heights by starter type. The mm values are the 32mm-system
 # heights: Base 819mm = 32.25", Tall 2131mm = 83.94", Hanging 1267mm = 49.88".
 BASE_PANEL_HEIGHT = millimeter(819)
 TALL_PANEL_HEIGHT = millimeter(2131)
@@ -82,6 +113,38 @@ def nearest_panel_height_key(value):
     n = min(max(n, 0), (PANEL_HEIGHT_MAX_MM - PANEL_HEIGHT_MIN_MM) // 32)
     snapped = PANEL_HEIGHT_MIN_MM + n * 32
     return str(snapped) if abs(snapped - mm) <= 0.5 else ''
+
+# Standard opening heights: the 32mm ladder the prior library offered
+# for the opening above a hanging rod, 12.95mm through 1932.95mm in
+# 32mm steps. The mm string is the identifier, so a height picked here
+# is the same height the prior library produced.
+OPENING_HEIGHT_MIN_MM = 12.95
+OPENING_HEIGHT_COUNT = 61
+OPENING_HEIGHT_ITEMS = [
+    ('%.2f' % (OPENING_HEIGHT_MIN_MM + i * 32),
+     inch_label(OPENING_HEIGHT_MIN_MM + i * 32),
+     inch_label(OPENING_HEIGHT_MIN_MM + i * 32))
+    for i in range(OPENING_HEIGHT_COUNT)
+]
+TOP_OPENING_HEIGHT_KEY = '716.95'   # the height the dropdown opens on
+
+def opening_height(key):
+    """Distance for an OPENING_HEIGHT_ITEMS identifier, which is the
+    opening's height in millimeters."""
+    try:
+        return millimeter(float(key))
+    except (TypeError, ValueError):
+        return millimeter(float(TOP_OPENING_HEIGHT_KEY))
+
+def nearest_opening_height_key(value):
+    """Closest OPENING_HEIGHT_ITEMS identifier for a distance, or ''
+    when the distance is off the ladder by more than half a step - an
+    opening left somewhere of its own by a shelf dragged by hand."""
+    mm = value / millimeter(1.0)
+    n = int(round((mm - OPENING_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0), OPENING_HEIGHT_COUNT - 1)
+    snapped = OPENING_HEIGHT_MIN_MM + n * 32
+    return ('%.2f' % snapped) if abs(snapped - mm) <= 0.5 else ''
 
 # ---------------------------------------------------------------------------
 # Toe kick
@@ -145,15 +208,53 @@ CLEARANCE_MAX_REACH = inch(240.0)
 ROD_RADIUS = inch(1.0)
 ROD_CUP_DEPTH = inch(0.2)
 ROD_CUP_DEPTH_2 = inch(0.8)
-# Hang-rod centerline distance from the rear (wall side) of the opening.
+# Hang-rod centerline distance from the rear (wall side) of the opening,
+# and the same distance measured from the front edge for an opening set
+# to read that way round.
 ROD_FROM_REAR = inch(12.0)
+ROD_FROM_FRONT = inch(2.0)
+# How much shorter than its opening a rod is cut so it drops into the
+# cups at each end.
+ROD_WIDTH_DEDUCTION = inch(0.25)
+# Double hang: the opening left above the top fixed shelf. A top shelf
+# leaves a shallow storage opening over the two hangs; a mid shelf hangs
+# a storage band under the upper hang, and the upper hang is what this
+# measures. Both are the sizes the prior library built to.
+TOP_SHELF_OPENING_HEIGHT = inch(10.5866)
+MID_SHELF_OPENING_HEIGHT = inch(40.8248)
+MID_SHELF_BAND_HEIGHT = inch(12.0)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
-# the legacy closet system: each front overlays a shared panel/shelf by
+# the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.
 FRONT_THICKNESS = inch(0.75)
 DOOR_TO_CABINET_GAP = inch(0.125)   # front face held off the carcass
 FRONT_GAP = inch(0.125)             # gap between adjacent fronts
-DRAWER_FRONT_HEIGHT = inch(7.5)
+
+# How a front sits against what is around it, as the prior library had
+# it. A half overlay splits what the front shares with its neighbour, so
+# the two meet over the middle of the panel or shelf between them with
+# the gap showing; a side that is not a half overlay is held back from
+# that edge by its reveal instead, leaving the edge showing. The bottom
+# comes in at nothing, so a bank of drawers finishes flush underneath.
+VERTICAL_GAP = inch(0.125)          # between a front and the one above
+HORIZONTAL_GAP = inch(0.125)        # between a front and the one beside
+TOP_REVEAL = inch(0.0625)
+BOTTOM_REVEAL = inch(0.0)
+LEFT_REVEAL = inch(0.0625)
+RIGHT_REVEAL = inch(0.0625)
+# What a half overlay works out to on stock of the usual thickness. Only
+# a starting value for a side an opening takes over for itself; the run
+# works its own out from the thicknesses actually in use.
+DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
+
+# Where a pull sits on a drawer front, and how far apart a pair of them
+# is set when one front carries two. The drawer figure is measured from
+# the top of the front down to the MIDDLE of the pull, where the door
+# figures above are measured to the pull's edge. That is how the prior
+# library had them and what gets measured on the floor, so it is kept.
+DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
+DISTANCE_BETWEEN_PULLS = inch(6.0)
+DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
 MIN_DRAWER_FRONT = inch(2.0)
@@ -161,9 +262,46 @@ DRAWER_SLIDE_GAP = inch(0.5)        # per side, drawer box to panel
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
 DRAWER_BOX_DEPTH_DEDUCT = inch(0.5)
 DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
+# How far back from the face the stretcher between one drawer and
+# the next runs. The prior library's figure.
+DRAWER_STRETCHER_WIDTH = inch(6.0)
+
+# Standard drawer front heights: the 32mm ladder the prior closet
+# library ordered fronts from, 124.82mm and a 32mm step from there.
+# The identifier is the front's cut height in millimeters, the name is
+# the size the front is called by, and the description is the clear
+# opening a front that size covers - a front stands taller than its
+# opening because it half-overlays the shelf above and below it.
+DRAWER_FRONT_HEIGHT_ITEMS = [
+    ('124.82', '5"', 'Front over a 4 1/4" opening'),
+    ('156.82', '6 1/4"', 'Front over a 5 1/2" opening'),
+    ('188.82', '7 1/2"', 'Front over a 6 1/2" opening'),
+    ('220.82', '8 3/4"', 'Front over an 8" opening'),
+    ('252.82', '10"', 'Front over a 9 1/3" opening'),
+    ('284.82', '11 1/4"', 'Front over a 10 1/2" opening'),
+    ('316.82', '12 1/2"', 'Front over an 11 3/4" opening'),
+    ('348.82', '13 3/4"', 'Front over a 13 1/8" opening'),
+]
+DRAWER_FRONT_HEIGHT_KEY = '156.82'   # the size a bank comes in at
+
+
+def drawer_front_height(key):
+    """Distance for a DRAWER_FRONT_HEIGHT_ITEMS identifier, which is
+    the front's cut height in millimeters."""
+    try:
+        return millimeter(float(key))
+    except (TypeError, ValueError):
+        return DRAWER_FRONT_HEIGHT
+
+
+def nearest_drawer_front_height(value):
+    """Closest standard front height identifier for a distance, so a
+    drawer sized by hand reads back as the size it landed nearest."""
+    return min(DRAWER_FRONT_HEIGHT_ITEMS,
+               key=lambda it: abs(drawer_front_height(it[0]) - value))[0]
 # Double-sided island
 ISLAND_DOUBLE_DEPTH = inch(30.0)
-ISLAND_CTOP_OVERHANG = inch(1.5)    # legacy islands overhang all sides
+ISLAND_CTOP_OVERHANG = inch(1.5)    # island tops overhang all sides
 # L Shelves (inside-corner units)
 L_SHELF_SIZE = inch(24.0)           # corner footprint each way
 L_SHELF_QTY = 3                     # interior L shelves between top/bottom
@@ -173,10 +311,22 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # the partition by the router tool radius.
 L_WALL_OFFSET = inch(0.5)
 L_NOTCH_TOOL_RADIUS = inch(0.25)
+# The inside front corner of an L shelf is rounded by default
+# rather than cut square. Segments are how finely the arc is
+# drawn - fifteen reads smooth at shelf scale without loading
+# the viewport with geometry.
+L_CORNER_RADIUS = inch(6.0)
+L_CORNER_RADIUS_SEGMENTS = 15
 # Default distance from the opening TOP to a hang rod's center when the
 # rod is added from the menu (modal placement types an exact height).
-ROD_TOP_OFFSET = inch(2.5)
+ROD_TOP_OFFSET = inch(2.145)
 ADJ_SHELF_DEFAULT_QTY = 3
+# A shelf that sits on clips is cut a touch narrower than the opening
+# so it drops in, and it can be held back from the front edge. The
+# prior library carried both figures at zero, which is a shelf filling
+# the opening; a job that wants a drop-in clearance sets them.
+SHELF_CLIP_GAP = inch(0.0)
+SHELF_SETBACK = inch(0.0)
 # Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
 # opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side
 # clearance for the slides is ROLLOUT_SLIDE_GAP per side.
@@ -185,9 +335,30 @@ ROLLOUT_HEIGHT = inch(4.0)
 ROLLOUT_SLIDE_GAP = inch(0.327)
 # Smallest gap left between stacked trays / above and below the stack.
 ROLLOUT_MIN_GAP = inch(1.0)
+# A tray shorter than this is not worth building, so a stack that is
+# squeezed for room stops shrinking its trays here.
+ROLLOUT_MIN_HEIGHT = inch(2.0)
+# Dividing an opening left and right. A column narrower than this is
+# not worth building, so a division that would leave one is refused.
+DIVISION_MIN_WIDTH = inch(3.0)
 # Cubbies: a grid of divisions and shelves filling an opening. Both are
 # held back from the front edge by the setback.
 CUBBY_SETBACK = inch(0.25)
+# A grid can take a band at the bottom or the top of an opening instead
+# of the whole of it, capped by a shelf, which leaves the rest of the
+# opening free for something else. This is how tall that band stands
+# when it is first built.
+CUBBY_HEIGHT = millimeter(556.95)
+CUBBY_PLACEMENT_ITEMS = [
+    ('BOTTOM', "Bottom",
+     "Cubbies in a band at the bottom of the opening, shelf over them"),
+    ('TOP', "Top",
+     "Cubbies in a band at the top of the opening, shelf under them"),
+    ('FILL', "Fill", "Cubbies filling the whole opening"),
+]
+# Smallest opening worth leaving behind a band. Asking for a band that
+# would not leave this much fills the opening instead.
+CUBBY_MIN_REMAINDER = inch(6.0)
 # Slanted shoe shelves: angled shelves stacked bottom-up, each with a
 # metal shoe fence across the front. Sizes ported from the prior library.
 SLANT_SHELF_DEFAULT_QTY = 4
@@ -197,7 +368,11 @@ SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
 SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
 SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
 SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
-# Modal add-part height snapping increment (legacy fallback; the 32mm
+# How far back from the shelf's front edge the fence stands. The prior
+# library carried this as its own setting and shipped it at zero, the
+# fence flush with the front, so that is where it starts here too.
+SHOE_FENCE_BACK_INSET = inch(0.0)
+# Modal add-part height snapping increment (fallback only; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
 
@@ -205,8 +380,8 @@ PART_Z_SNAP = inch(0.25)
 # 32mm system. Panel/bay heights increment on a 32mm lattice with a 19mm
 # base (819 / 1267 / 2131mm - the Base / Hanging / Tall defaults - all
 # sit on it). Shelf and rod locations land on system holes: a 12.95mm
-# base + n*32mm from the interior bottom (the legacy opening-height
-# enum steps on exactly this lattice).
+# base + n*32mm from the interior bottom (the prior library's
+# opening-height enum steps on exactly this lattice).
 # ---------------------------------------------------------------------------
 SYSTEM_PITCH = millimeter(32.0)
 SYSTEM_HEIGHT_BASE = millimeter(19.0)
