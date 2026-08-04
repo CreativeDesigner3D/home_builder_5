@@ -2217,7 +2217,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # their whole subtree (their own style's walk covers them).
         nested_skip = set()
         for nested in cabinet_obj.children_recursive:
-            if nested.get('IS_FLOATING_SHELF') or nested.get('IS_WOOD_TOP'):
+            if nested.get('IS_FLOATING_SHELF'):
                 nested_skip.add(nested.name)
                 nested_skip.update(
                     d.name for d in nested.children_recursive)
@@ -2249,7 +2249,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # visible geometry (GN cutpart display hidden), so the
             # finish goes on the mesh slot directly - cutpart surface
             # inputs are inert here.
-            if ((role in ('BEADBOARD', 'SHIPLAP')
+            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 if finish_mat is not None:
@@ -9425,27 +9425,26 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
 
 
 def _update_wood_top(self, context):
-    """Refit the wood top from its anchor cabinet (overhang edits) and
-    rebuild the slab. self.id_data is the top's cage object."""
+    """Rebuild the wood top board from its propgroup. self.id_data is
+    the board object itself (a lone part, like Misc Part)."""
     from . import types_face_frame
     obj = self.id_data
-    if obj is None:
+    if obj is None or not obj.get(types_face_frame.WOOD_TOP_TAG):
         return
-    top = types_face_frame.WoodTopFaceFrameCabinet()
+    top = types_face_frame.WoodTopPart()
     top.obj = obj
-    top.refit_to_anchor()
-    top.recalculate()
+    top.rebuild()
 
 
 class Face_Frame_Wood_Top_Props(PropertyGroup):
-    """Options for a Wood Top (countertop part): one finished slab.
+    """Options for a Wood Top (countertop part): ONE lone finished
+    board (no cage, no sub-parts -- like Misc Part).
 
-    Lives on the top's cage object alongside face_frame_cabinet; width /
-    depth / thickness come from face_frame_cabinet (cage Dim X/Y/Z,
-    Dim Z = slab thickness). The overhangs apply relative to the cabinet
-    the top is parented to (placement snaps it onto the cabinet under
-    the cursor); editing them refits a snapped top in place and is a
-    no-op for a free-standing one.
+    Lives on the board object itself; every edit rebuilds through
+    WoodTopPart.rebuild(). A top parented to a cabinet (placement
+    snapped it there) sizes from that cabinet plus the overhangs; a
+    free-standing top uses width / depth directly. The nosing mills the
+    board's front edge with a profile from the shelf-nosing set.
     """
     top_type: EnumProperty(
         name="Construction",
@@ -9457,6 +9456,18 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         ],
         default='VENEER',
         update=_update_wood_top,
+    )  # type: ignore
+    width: FloatProperty(
+        name="Width", default=units.inch(36.0), min=units.inch(1.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    depth: FloatProperty(
+        name="Depth", default=units.inch(25.5), min=units.inch(1.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    thickness: FloatProperty(
+        name="Thickness", default=units.inch(1.5), min=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_wood_top,
     )  # type: ignore
     overhang_front: FloatProperty(
         name="Front Overhang", default=units.inch(1.5),
@@ -9472,6 +9483,19 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
     )  # type: ignore
     overhang_right: FloatProperty(
         name="Right Overhang", default=units.inch(1.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    # Front-edge nosing profile (the shelf-nosing set). Clover / Kelli
+    # match the board thickness; the extra-height styles use
+    # nosing_height and drop below the board bottom.
+    nosing_style: EnumProperty(
+        name="Nosing",
+        items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
+        update=_update_wood_top,
+    )  # type: ignore
+    nosing_height: FloatProperty(
+        name="Nosing Height", default=units.inch(2.0),
+        min=units.inch(0.5), soft_max=units.inch(3.0),
         unit='LENGTH', precision=4, update=_update_wood_top,
     )  # type: ignore
 

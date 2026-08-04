@@ -4031,9 +4031,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 cab_obj.matrix_parent_inverse.identity()
                 cab_obj.location = loc
                 cab_obj.rotation_euler = (0.0, 0.0, 0.0)
-                cab_props = cab_obj.face_frame_cabinet
-                cab_props.depth = fit_d
-                cab_props.width = fit_w
+                # Once parented, rebuild() sizes from the anchor plus
+                # the propgroup overhangs (the same numbers the preview
+                # showed) and keeps tracking overhang edits.
+                cabinet.rebuild()
                 for o in context.selected_objects:
                     o.select_set(False)
                 cab_obj.select_set(True)

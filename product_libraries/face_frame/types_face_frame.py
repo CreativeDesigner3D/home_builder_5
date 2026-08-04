@@ -10866,21 +10866,25 @@ class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
         self.set_input('Dim X', width)
 
 
-class WoodTopFaceFrameCabinet(FaceFrameCabinet):
-    """Wood top (countertop part): one finished slab.
+class WoodTopPart(CabinetPart):
+    """Wood top (countertop part): ONE lone finished board, like Misc
+    Part -- a single GeoNodeCutpart object with NO cabinet cage.
 
-    NOT a bay/opening product: a single parameterized board -- cage
-    Dim X = width, Dim Y = depth, Dim Z = the slab THICKNESS. Placement
-    snaps it onto the top of the cabinet under the cursor sized to that
-    cabinet plus the overhangs on the ``wood_top`` propgroup; free
-    placement drops it at the cursor. No support parts -- the slab is
-    the whole product. Construction (veneer vs solid wood) is a label
-    on the propgroup for downstream consumers; the geometry is the
-    same board either way.
+    Sizing lives on the ``wood_top`` propgroup (width / depth /
+    thickness / overhangs / nosing); rebuild() syncs the board from it.
+    Placement snaps the board onto the cabinet under the cursor
+    (parenting it there), sized to that cabinet plus the overhangs;
+    editing the overhangs refits a seated top in place. A nosing style
+    (the shelf-nosing profile set) mills the front edge: the board
+    shortens by the nosing stock depth and the profiled edge takes its
+    place, all inside this one object's mesh (GN display hands off to a
+    static mesh, same pattern as the textured panels). Construction
+    (veneer vs solid) is a label for downstream consumers.
     """
     single_placement = True
     snap_cabinet_top = True   # placement seats it on the cabinet under the cursor
     default_cabinet_type = 'BASE'
+    placement_stand_rotation = None  # lies flat
 
     def __init__(self):
         super().__init__()
@@ -10888,68 +10892,104 @@ class WoodTopFaceFrameCabinet(FaceFrameCabinet):
         self.default_depth = inch(25.5)
         self.default_height = inch(1.5)   # slab thickness
 
-    def _has_toe_kick(self):
-        return False
-
-    def _has_carcass(self):
-        return False
-
     def create(self, name="Wood Top", bay_qty=1):
-        self.create_cabinet_root(name)
+        # bay_qty accepted (the modal always passes it) but ignored.
+        super().create(name)
         self.obj[WOOD_TOP_TAG] = True
+        self.obj['hb_part_role'] = PART_ROLE_WOOD_TOP
+        self.obj['CABINET_PART'] = True
+        self.obj['IS_FINISHED'] = True
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_wood_top_commands'
-        self.recalculate()
+        self.set_input('Mirror Y', True)
+        self.obj['Finish Top'] = True
+        self.obj['Finish Bottom'] = True
+        self.rebuild()
 
-    def refit_to_anchor(self):
-        """Re-size from the cabinet this top is parented to, applying
-        the propgroup overhangs: width = cabinet width + left + right,
-        depth = cabinet depth + front + back, back edge held at the
-        cabinet back minus the back overhang, sitting on the cabinet
-        top. No-op when the top is free-standing.
-        """
-        anchor = self.obj.parent
-        if anchor is None or not anchor.get(TAG_CABINET_CAGE):
+    # --- placement hooks (read by place_cabinet._finalize for bare parts) ---
+    def apply_placement_width(self, width):
+        self.obj.wood_top.width = width   # update callback rebuilds
+
+    def rebuild(self):
+        """Sync the board from the wood_top propgroup: anchored tops
+        (parented to a cabinet) size from the anchor plus the
+        overhangs; free tops use the propgroup width / depth. Then
+        build the nosed front edge when a nosing style is set."""
+        obj = self.obj
+        wt = obj.wood_top
+        anchor = (obj.parent
+                  if obj.parent is not None
+                  and obj.parent.get(TAG_CABINET_CAGE) else None)
+        if anchor is not None:
+            ap = anchor.face_frame_cabinet
+            width = ap.width + wt.overhang_left + wt.overhang_right
+            depth = ap.depth + wt.overhang_front + wt.overhang_back
+            obj.location = (
+                -wt.overhang_left, wt.overhang_back, ap.height)
+            obj.rotation_euler = (0.0, 0.0, 0.0)
+        else:
+            width = wt.width
+            depth = wt.depth
+        t = wt.thickness
+        self.set_input('Length', width)
+        self.set_input('Width', depth)
+        self.set_input('Thickness', t)
+
+        mod_name = getattr(obj.home_builder, 'mod_name', '')
+        mod = obj.modifiers.get(mod_name) if mod_name else None
+        if wt.nosing_style in (None, '', 'NONE'):
+            # Plain board: the driven cutpart is the geometry.
+            if obj.data is not None and obj.get(TAG_STATIC_TEXTURED):
+                obj.data.clear_geometry()
+            if mod is not None:
+                mod.show_viewport = True
+                mod.show_render = True
+            if TAG_STATIC_TEXTURED in obj:
+                del obj[TAG_STATIC_TEXTURED]
             return
-        wt = self.obj.wood_top
-        ap = anchor.face_frame_cabinet
-        cab = self.obj.face_frame_cabinet
-        cab.width = ap.width + wt.overhang_left + wt.overhang_right
-        cab.depth = ap.depth + wt.overhang_front + wt.overhang_back
-        self.obj.location = (
-            -wt.overhang_left, wt.overhang_back, ap.height)
-        self.obj.rotation_euler = (0.0, 0.0, 0.0)
+        self._write_nosed_mesh(obj, width, depth, t, wt)
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        obj[TAG_STATIC_TEXTURED] = True
 
-    def recalculate(self):
-        cab = self.obj.face_frame_cabinet
-        width = cab.width
-        depth = cab.depth
-        thickness = cab.height
-        self.set_input('Dim X', width)
-        self.set_input('Dim Y', depth)
-        self.set_input('Dim Z', thickness)
-
-        slab = None
-        for child in self.obj.children:
-            if child.get('hb_part_role') == PART_ROLE_WOOD_TOP:
-                slab = child
-                break
-        if slab is None:
-            part = CabinetPart()
-            part.create('Wood Top')
-            part.obj.parent = self.obj
-            part.obj['hb_part_role'] = PART_ROLE_WOOD_TOP
-            part.obj['CABINET_PART'] = True
-            part.obj['IS_FINISHED'] = True
-            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_wood_top_commands'
-            # Length +X, Width -Y (Mirror Y, like the cabinet body),
-            # Thickness +Z from the origin plane.
-            part.set_input('Mirror Y', True)
-            slab = part.obj
-        part = GeoNodeCutpart(slab)
-        slab.location = (0.0, 0.0, 0.0)
-        part.set_input('Length', width)
-        part.set_input('Width', depth)
-        part.set_input('Thickness', thickness)
+    @staticmethod
+    def _write_nosed_mesh(obj, width, depth, t, wt):
+        """Static mesh: the board shortened by the nosing stock depth
+        with the profiled nosing swept along the front edge -- one
+        closed section (board + nosing outline) extruded across the
+        width. Local space matches the driven cutpart: X 0..width,
+        Y 0..-depth (Mirror Y), Z 0..thickness with the nosing top
+        flush to the board top (extra-height styles drop below).
+        """
+        nose_d = shelf_nosing.NOSE_STOCK_DEPTH
+        body_d = max(depth - nose_d, inch(1.0))
+        h = (max(t, wt.nosing_height)
+             if wt.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
+             else t)
+        outline = shelf_nosing.nosing_outline(wt.nosing_style, t, h)
+        # Section in (y, z): back-top, along the top to the nosing back,
+        # around the nosing free boundary (outline d forward / z down
+        # from the top), then back up the nosing rear face to the board
+        # bottom and home along the bottom.
+        sec = [(0.0, t)]
+        for d_pt, z_pt in outline:
+            sec.append((-(body_d + d_pt), t + z_pt))
+        if abs((t + outline[-1][1])) > 1e-9:   # nosing drops below z=0
+            sec.append((-body_d, 0.0))
+        sec.append((0.0, 0.0))
+        bm = bmesh.new()
+        ring0 = [bm.verts.new((0.0, y, z)) for y, z in sec]
+        ring1 = [bm.verts.new((width, y, z)) for y, z in sec]
+        bm.faces.new(ring0)
+        bm.faces.new(list(reversed(ring1)))
+        n = len(sec)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
 
 
 CABINET_NAME_DISPATCH = {
@@ -10985,7 +11025,7 @@ CABINET_NAME_DISPATCH = {
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
     "Valance": ValanceFaceFrameProduct,
-    "Wood Top": WoodTopFaceFrameCabinet,
+    "Wood Top": WoodTopPart,
     "Misc Part": MiscPart,
     "Door": DoorPart,
     "Half Wall": HalfWallFaceFrameProduct,

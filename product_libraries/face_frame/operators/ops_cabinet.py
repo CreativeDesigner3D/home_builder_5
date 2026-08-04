@@ -728,9 +728,8 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        root = types_face_frame.find_cabinet_root(context.active_object)
-        return (root is not None
-                and bool(root.get(types_face_frame.WOOD_TOP_TAG)))
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.WOOD_TOP_TAG))
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self, width=300)
@@ -740,19 +739,24 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        root = types_face_frame.find_cabinet_root(context.active_object)
-        if root is None:
+        obj = context.active_object
+        if obj is None or not obj.get(types_face_frame.WOOD_TOP_TAG):
             layout.label(text="No wood top selected", icon='INFO')
             return
-        wt = root.wood_top
-        cp = root.face_frame_cabinet
+        wt = obj.wood_top
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(wt, 'top_type')
-        col.prop(cp, 'height', text="Thickness")
+        col.prop(wt, 'thickness')
         col.separator()
-        anchor = root.parent
+        # Nosing: front-edge profile from the shelf-nosing set; the
+        # extra-height styles take a height of their own.
+        col.prop(wt, 'nosing_style')
+        if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
+            col.prop(wt, 'nosing_height')
+        col.separator()
+        anchor = obj.parent
         anchored = (anchor is not None
                     and bool(anchor.get(types_face_frame.TAG_CABINET_CAGE)))
         if anchored:
@@ -762,8 +766,8 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
             col.prop(wt, 'overhang_left')
             col.prop(wt, 'overhang_right')
         else:
-            col.prop(cp, 'width', text="Width")
-            col.prop(cp, 'depth', text="Depth")
+            col.prop(wt, 'width')
+            col.prop(wt, 'depth')
 
 
 # ---------------------------------------------------------------------------
