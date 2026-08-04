@@ -2355,12 +2355,18 @@ class hb_face_frame_OT_remove_part_cutout(bpy.types.Operator):
 
 
 class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
-    """Set the cabinet's decorative bottom-rail profile from the right-click
-    menu on a bottom rail. Sets the cabinet-level enum (one profile per
-    cabinet); the update callback re-runs the recalc."""
+    """Set the decorative bottom-rail profile from the right-click menu.
+    Invoked on a bottom RAIL, the pick lands on that rail's bay only
+    (the per-bay bottom_rail_profile override) -- users size the bays
+    first, then style the one rail they clicked, without restyling its
+    neighbours. Every selected bottom rail takes the pick, so a
+    multi-rail selection styles in one go. With no rail in the
+    selection (the valance board / cabinet menus) the pick sets the
+    cabinet-level enum as before. Either write's update callback
+    re-runs the recalc."""
     bl_idname = "hb_face_frame.set_bottom_rail_profile"
     bl_label = "Set Bottom Rail Profile"
-    bl_description = "Cut this decorative profile into the cabinet's bottom rail"
+    bl_description = "Cut this decorative profile into the selected bottom rail"
     bl_options = {'UNDO'}
 
     profile_id: StringProperty(default='NONE', options={'SKIP_SAVE'})  # type: ignore
@@ -2370,7 +2376,32 @@ class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
         return context.active_object is not None
 
     def execute(self, context):
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        rails = [o for o in context.selected_objects
+                 if o.get('hb_part_role') == types_face_frame.PART_ROLE_BOTTOM_RAIL]
+        active = context.active_object
+        if (active is not None and active not in rails
+                and active.get('hb_part_role') == types_face_frame.PART_ROLE_BOTTOM_RAIL):
+            rails.append(active)
+        if rails:
+            # Rail-scoped: write each rail's segment-start bay override.
+            # 'NONE' here FORCES a plain rail on that bay (distinct from
+            # the bay enum's 'CABINET' inherit default).
+            changed = 0
+            for rail in rails:
+                bay = types_face_frame.bay_cage_for_bottom_rail(rail)
+                if bay is None:
+                    continue
+                try:
+                    bay.face_frame_bay.bottom_rail_profile = self.profile_id
+                except TypeError:
+                    self.report({'WARNING'}, f"Unknown profile: {self.profile_id}")
+                    return {'CANCELLED'}
+                changed += 1
+            if not changed:
+                self.report({'WARNING'}, "Could not resolve the rail's bay")
+                return {'CANCELLED'}
+            return {'FINISHED'}
+        root = types_face_frame.find_cabinet_root(active)
         if root is None:
             self.report({'WARNING'}, "No cabinet found for this part")
             return {'CANCELLED'}

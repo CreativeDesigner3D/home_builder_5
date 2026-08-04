@@ -709,18 +709,28 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
 
 
 class HOME_BUILDER_MT_face_frame_bottom_rail_profile(bpy.types.Menu):
-    """Pick the decorative bottom-rail profile for this cabinet. Lists None +
-    every '* Cutter' curve in face_frame_assets/profiles; the current choice is
-    marked. Each item sets the cabinet-level bottom_rail_profile enum."""
+    """Pick the decorative bottom-rail profile. Lists None + every
+    '* Cutter' curve in face_frame_assets/profiles; the current choice is
+    marked. On a bottom RAIL the pick (and the mark) is that rail's bay
+    override; elsewhere (valance board / cabinet menus) it is the
+    cabinet-level enum."""
     bl_label = "Bottom Rail Profile"
 
     def draw(self, context):
         import os
         layout = self.layout
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        active = context.active_object
+        root = types_face_frame.find_cabinet_root(active)
         current = ''
         if root is not None:
             current = getattr(root.face_frame_cabinet, 'bottom_rail_profile', 'NONE')
+        if (active is not None and active.get('hb_part_role')
+                == types_face_frame.PART_ROLE_BOTTOM_RAIL):
+            bay = types_face_frame.bay_cage_for_bottom_rail(active)
+            if bay is not None:
+                ov = getattr(bay.face_frame_bay, 'bottom_rail_profile', 'CABINET')
+                if ov and ov != 'CABINET':
+                    current = ov
         items = [('NONE', 'None'), ('ARCH', 'Arched')]
         d = types_face_frame.bottom_rail_profile_dir()
         if os.path.isdir(d):

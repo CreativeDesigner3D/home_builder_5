@@ -737,6 +737,24 @@ def bottom_rail_profile_dir():
     return os.path.join(os.path.dirname(__file__), 'face_frame_assets', 'profiles')
 
 
+def bay_cage_for_bottom_rail(rail):
+    """The bay cage owning a bottom-rail part's segment (its
+    hb_segment_start_bay index), or None. A ganged rail spanning several
+    bays resolves to its START bay -- the same bay whose per-bay
+    bottom_rail_profile override the cutter pass reads for the segment.
+    Shared by the Set Bottom Rail Profile command and its menu."""
+    seg = rail.get('hb_segment_start_bay')
+    if not isinstance(seg, int):
+        return None
+    root = find_cabinet_root(rail)
+    if root is None:
+        return None
+    for node in root.children:
+        if node.get(TAG_BAY_CAGE) and node.get('hb_bay_index') == seg:
+            return node
+    return None
+
+
 def _bottom_rail_profile_poly(profile_id):
     """Sampled closed-loop (x, y) outline (meters) for a profile id, cached.
     Same depsgraph-free Bezier sampling as _overstool_profile_poly."""
