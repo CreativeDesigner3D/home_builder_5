@@ -708,6 +708,19 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
         layout.operator("hb_general.delete", text="Delete Part", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_wood_top_commands(bpy.types.Menu):
+    """Right-click menu for a Wood Top (countertop part)."""
+    bl_label = "Wood Top Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.wood_top_prompts",
+                        text="Wood Top Options...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_general.delete", text="Delete Wood Top",
+                        icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_bottom_rail_profile(bpy.types.Menu):
     """Pick the decorative bottom-rail profile. Lists None + every
     '* Cutter' curve in face_frame_assets/profiles; the current choice is
@@ -761,6 +774,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,
     HOME_BUILDER_MT_face_frame_add_appliance,
+    HOME_BUILDER_MT_face_frame_wood_top_commands,
     HOME_BUILDER_MT_face_frame_bottom_rail_profile,
 )
 

@@ -164,6 +164,10 @@ PART_ROLE_LEG_CURVED_PANEL = 'LEG_CURVED_PANEL'
 # Floating shelf (wall-mounted hollow slab). Built by a dedicated
 # product class that bypasses the bay/solver pipeline; finished boards.
 FLOATING_SHELF_TAG = 'IS_FLOATING_SHELF'
+# Wood top (countertop part): a single finished slab product that snaps
+# onto cabinet tops; see WoodTopFaceFrameCabinet.
+WOOD_TOP_TAG = 'IS_WOOD_TOP'
+PART_ROLE_WOOD_TOP = 'WOOD_TOP'
 PART_ROLE_SHELF_FRONT = 'SHELF_FRONT'
 PART_ROLE_SHELF_TOP = 'SHELF_TOP'
 PART_ROLE_SHELF_BOTTOM = 'SHELF_BOTTOM'
@@ -10862,6 +10866,92 @@ class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
         self.set_input('Dim X', width)
 
 
+class WoodTopFaceFrameCabinet(FaceFrameCabinet):
+    """Wood top (countertop part): one finished slab.
+
+    NOT a bay/opening product: a single parameterized board -- cage
+    Dim X = width, Dim Y = depth, Dim Z = the slab THICKNESS. Placement
+    snaps it onto the top of the cabinet under the cursor sized to that
+    cabinet plus the overhangs on the ``wood_top`` propgroup; free
+    placement drops it at the cursor. No support parts -- the slab is
+    the whole product. Construction (veneer vs solid wood) is a label
+    on the propgroup for downstream consumers; the geometry is the
+    same board either way.
+    """
+    single_placement = True
+    snap_cabinet_top = True   # placement seats it on the cabinet under the cursor
+    default_cabinet_type = 'BASE'
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = inch(36.0)
+        self.default_depth = inch(25.5)
+        self.default_height = inch(1.5)   # slab thickness
+
+    def _has_toe_kick(self):
+        return False
+
+    def _has_carcass(self):
+        return False
+
+    def create(self, name="Wood Top", bay_qty=1):
+        self.create_cabinet_root(name)
+        self.obj[WOOD_TOP_TAG] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_wood_top_commands'
+        self.recalculate()
+
+    def refit_to_anchor(self):
+        """Re-size from the cabinet this top is parented to, applying
+        the propgroup overhangs: width = cabinet width + left + right,
+        depth = cabinet depth + front + back, back edge held at the
+        cabinet back minus the back overhang, sitting on the cabinet
+        top. No-op when the top is free-standing.
+        """
+        anchor = self.obj.parent
+        if anchor is None or not anchor.get(TAG_CABINET_CAGE):
+            return
+        wt = self.obj.wood_top
+        ap = anchor.face_frame_cabinet
+        cab = self.obj.face_frame_cabinet
+        cab.width = ap.width + wt.overhang_left + wt.overhang_right
+        cab.depth = ap.depth + wt.overhang_front + wt.overhang_back
+        self.obj.location = (
+            -wt.overhang_left, wt.overhang_back, ap.height)
+        self.obj.rotation_euler = (0.0, 0.0, 0.0)
+
+    def recalculate(self):
+        cab = self.obj.face_frame_cabinet
+        width = cab.width
+        depth = cab.depth
+        thickness = cab.height
+        self.set_input('Dim X', width)
+        self.set_input('Dim Y', depth)
+        self.set_input('Dim Z', thickness)
+
+        slab = None
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_WOOD_TOP:
+                slab = child
+                break
+        if slab is None:
+            part = CabinetPart()
+            part.create('Wood Top')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_WOOD_TOP
+            part.obj['CABINET_PART'] = True
+            part.obj['IS_FINISHED'] = True
+            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_wood_top_commands'
+            # Length +X, Width -Y (Mirror Y, like the cabinet body),
+            # Thickness +Z from the origin plane.
+            part.set_input('Mirror Y', True)
+            slab = part.obj
+        part = GeoNodeCutpart(slab)
+        slab.location = (0.0, 0.0, 0.0)
+        part.set_input('Length', width)
+        part.set_input('Width', depth)
+        part.set_input('Thickness', thickness)
+
+
 CABINET_NAME_DISPATCH = {
     "Base Door": BaseFaceFrameCabinet,
     "Base Door Drw": BaseFaceFrameCabinet,
@@ -10895,6 +10985,7 @@ CABINET_NAME_DISPATCH = {
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
     "Valance": ValanceFaceFrameProduct,
+    "Wood Top": WoodTopFaceFrameCabinet,
     "Misc Part": MiscPart,
     "Door": DoorPart,
     "Half Wall": HalfWallFaceFrameProduct,

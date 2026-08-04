@@ -711,6 +711,62 @@ def _selection_mode_toggle_one(obj, mode):
 
 
 # ---------------------------------------------------------------------------
+# Operator: wood top options popup (right-click -> Wood Top Options)
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
+    """Options dialog for a Wood Top (countertop part).
+
+    Construction label, slab thickness, and the four overhangs. The
+    overhangs refit the top from the cabinet it is parented to (the one
+    placement seated it on); a free-standing top edits its width and
+    depth directly instead. All rows are live-bound props, so edits
+    apply as they're made and OK just closes the dialog.
+    """
+    bl_idname = "hb_face_frame.wood_top_prompts"
+    bl_label = "Wood Top Options"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return (root is not None
+                and bool(root.get(types_face_frame.WOOD_TOP_TAG)))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            layout.label(text="No wood top selected", icon='INFO')
+            return
+        wt = root.wood_top
+        cp = root.face_frame_cabinet
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(wt, 'top_type')
+        col.prop(cp, 'height', text="Thickness")
+        col.separator()
+        anchor = root.parent
+        anchored = (anchor is not None
+                    and bool(anchor.get(types_face_frame.TAG_CABINET_CAGE)))
+        if anchored:
+            col.label(text=f"Overhangs from {anchor.name}:")
+            col.prop(wt, 'overhang_front')
+            col.prop(wt, 'overhang_back')
+            col.prop(wt, 'overhang_left')
+            col.prop(wt, 'overhang_right')
+        else:
+            col.prop(cp, 'width', text="Width")
+            col.prop(cp, 'depth', text="Depth")
+
+
+# ---------------------------------------------------------------------------
 # Operator: cabinet prompts popup (right-click -> Cabinet Prompts)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
@@ -4938,6 +4994,7 @@ classes = (
     hb_face_frame_OT_break_cabinet_both,
     hb_face_frame_OT_equalize_bays,
     hb_face_frame_OT_equalize_opening_heights,
+    hb_face_frame_OT_wood_top_prompts,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,

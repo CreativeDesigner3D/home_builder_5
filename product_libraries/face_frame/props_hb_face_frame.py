@@ -1878,6 +1878,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # visible through the opening, so they take the exterior finish
         # material, not the interior material.
         'PARTITION_SKIN',
+        # Wood top (countertop part) slab.
+        'WOOD_TOP',
         # NOTE: 'BAY_FINISH' liner panels are NOT in this set -- they get
         # a dedicated branch in _apply_materials_to_cabinet honoring the
         # owning bay/opening's finish_*_material pick (exterior finish by
@@ -2215,7 +2217,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # their whole subtree (their own style's walk covers them).
         nested_skip = set()
         for nested in cabinet_obj.children_recursive:
-            if nested.get('IS_FLOATING_SHELF'):
+            if nested.get('IS_FLOATING_SHELF') or nested.get('IS_WOOD_TOP'):
                 nested_skip.add(nested.name)
                 nested_skip.update(
                     d.name for d in nested.children_recursive)
@@ -8618,6 +8620,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ("Misc", "Misc Part"), ("Floating Shelf", "Floating Shelves"),
             ("Valance", "Valance"),
         ])
+        self._draw_catalog_labeled_row(layout, "", [
+            ("Wood Top", "Wood Top"),
+        ])
 
     # =====================================================================
     # UI: specialty bath library
@@ -9419,6 +9424,58 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
 
 
+def _update_wood_top(self, context):
+    """Refit the wood top from its anchor cabinet (overhang edits) and
+    rebuild the slab. self.id_data is the top's cage object."""
+    from . import types_face_frame
+    obj = self.id_data
+    if obj is None:
+        return
+    top = types_face_frame.WoodTopFaceFrameCabinet()
+    top.obj = obj
+    top.refit_to_anchor()
+    top.recalculate()
+
+
+class Face_Frame_Wood_Top_Props(PropertyGroup):
+    """Options for a Wood Top (countertop part): one finished slab.
+
+    Lives on the top's cage object alongside face_frame_cabinet; width /
+    depth / thickness come from face_frame_cabinet (cage Dim X/Y/Z,
+    Dim Z = slab thickness). The overhangs apply relative to the cabinet
+    the top is parented to (placement snaps it onto the cabinet under
+    the cursor); editing them refits a snapped top in place and is a
+    no-op for a free-standing one.
+    """
+    top_type: EnumProperty(
+        name="Construction",
+        items=[
+            ('VENEER', "Veneer Top",
+             "Veneer core with applied wood edge"),
+            ('SOLID', "Solid Wood Top",
+             "Staved solid lumber top"),
+        ],
+        default='VENEER',
+        update=_update_wood_top,
+    )  # type: ignore
+    overhang_front: FloatProperty(
+        name="Front Overhang", default=units.inch(1.5),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    overhang_back: FloatProperty(
+        name="Back Overhang", default=0.0,
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    overhang_left: FloatProperty(
+        name="Left Overhang", default=units.inch(1.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    overhang_right: FloatProperty(
+        name="Right Overhang", default=units.inch(1.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+
+
 class Face_Frame_Valance_Props(PropertyGroup):
     """Options for a Valance product (a decorative board spanning the
     gap between two upper cabinets).
@@ -9466,6 +9523,7 @@ class Face_Frame_Valance_Props(PropertyGroup):
 classes = (
     Face_Frame_Leg_Props,
     Face_Frame_Floating_Shelf_Props,
+    Face_Frame_Wood_Top_Props,
     Face_Frame_Valance_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
@@ -9520,6 +9578,7 @@ def register():
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
     bpy.types.Object.leg_product = PointerProperty(type=Face_Frame_Leg_Props)
     bpy.types.Object.floating_shelf = PointerProperty(type=Face_Frame_Floating_Shelf_Props)
+    bpy.types.Object.wood_top = PointerProperty(type=Face_Frame_Wood_Top_Props)
     bpy.types.Object.valance_product = PointerProperty(type=Face_Frame_Valance_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
@@ -9547,6 +9606,8 @@ def unregister():
         del bpy.types.Object.floating_shelf
     if hasattr(bpy.types.Object, 'valance_product'):
         del bpy.types.Object.valance_product
+    if hasattr(bpy.types.Object, 'wood_top'):
+        del bpy.types.Object.wood_top
     if hasattr(bpy.types.Object, 'leg_product'):
         del bpy.types.Object.leg_product
     if hasattr(bpy.types.Object, 'face_frame_cabinet'):

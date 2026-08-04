@@ -2026,9 +2026,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._fill_no_bays = bool(getattr(cls_inst, 'fill_no_bays', False))
         self._fill_manual_bays = bool(getattr(cls_inst, 'fill_manual_bays', False))
         self._follow_cursor_z = bool(getattr(cls_inst, 'follow_cursor_z', False))
+        self._snap_cab_top = bool(getattr(cls_inst, 'snap_cabinet_top', False))
         # Set while the cursor previews inside a cabinet opening
         # (floating shelf only): (opening_cage, width, depth, local_loc).
         self._opening_target = None
+        # Set while the cursor previews a wood top seated on a cabinet:
+        # (cabinet_root, width, depth, local_loc).
+        self._top_target = None
         self._recess_into_wall = bool(getattr(cls_inst, 'recess_into_wall', False))
         # Cage depth/height come straight from the cabinet class so the
         # preview matches subclasses with non-standard dims (e.g. the
@@ -2577,6 +2581,23 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._opening_target = None
                 self._preview_cage.set_input('Dim Y', self._cabinet_depth)
 
+        # Wood top over a cabinet -> preview seated on that cabinet's
+        # top, sized to it plus the default overhangs; off-cabinet
+        # falls through to free placement.
+        if getattr(self, '_snap_cab_top', False):
+            cab = types_face_frame.find_cabinet_root(self.hit_object)
+            if (cab is not None
+                    and (cab.get(types_face_frame.FLOATING_SHELF_TAG)
+                         or cab.get(types_face_frame.WOOD_TOP_TAG))):
+                cab = (types_face_frame.find_cabinet_root(cab.parent)
+                       if cab.parent is not None else None)
+            if cab is not None:
+                self._position_on_cabinet_top(context, cab)
+                return
+            if getattr(self, '_top_target', None) is not None:
+                self._top_target = None
+                self._preview_cage.set_input('Dim Y', self._cabinet_depth)
+
         # Sink + cursor on a Range -> island layout (sink facing the
         # range across a 48" aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
@@ -2761,6 +2782,36 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 gs, ge, units.unit_to_string(unit_settings, z),
                 (0.30, 0.95, 0.40, 1.0)))
         return specs
+
+    def _position_on_cabinet_top(self, context, cab):
+        """Preview the wood top seated on `cab`'s top surface.
+
+        Sized to the cabinet plus the default overhangs (the propgroup
+        defaults; per-top edits come later via the right-click Wood Top
+        Options). Back edge tracks the cabinet back, slab thickness is
+        the product height. The target is stashed on _top_target for
+        _finalize to commit.
+        """
+        from .. import props_hb_face_frame as pm
+        cage_obj = self._preview_cage.obj
+        p = cab.face_frame_cabinet
+        wt_def = pm.Face_Frame_Wood_Top_Props.bl_rna.properties
+        ov_f = wt_def['overhang_front'].default
+        ov_b = wt_def['overhang_back'].default
+        ov_l = wt_def['overhang_left'].default
+        ov_r = wt_def['overhang_right'].default
+        width = p.width + ov_l + ov_r
+        depth = p.depth + ov_f + ov_b
+        loc = Vector((-ov_l, ov_b, p.height))
+        self._cabinet_width = width
+        self._update_cage()
+        self._preview_cage.set_input('Dim Y', depth)
+        cage_obj.matrix_world = cab.matrix_world @ Matrix.Translation(loc)
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._top_target = (cab, width, depth, loc.copy())
+        self._placement_dim_specs = self._build_dim_specs_free(context)
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.
@@ -3959,6 +4010,38 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self.report(
                     {'INFO'},
                     f"Placed {self.cabinet_name} in {opening.name} "
+                    f"({fit_w * 39.37008:.1f}\" wide)")
+                return {'FINISHED'}
+
+        # Wood top committed ON a cabinet: parent to that cabinet so it
+        # rides along, sized to the cabinet plus the overhangs. The
+        # anchor parenting is what the right-click overhang options
+        # refit against.
+        top_target = getattr(self, '_top_target', None)
+        if (getattr(self, '_snap_cab_top', False)
+                and top_target is not None
+                and cab_obj.get(types_face_frame.WOOD_TOP_TAG)):
+            anchor, fit_w, fit_d, loc = top_target
+            try:
+                anchor.name
+            except ReferenceError:
+                anchor = None
+            if anchor is not None:
+                cab_obj.parent = anchor
+                cab_obj.matrix_parent_inverse.identity()
+                cab_obj.location = loc
+                cab_obj.rotation_euler = (0.0, 0.0, 0.0)
+                cab_props = cab_obj.face_frame_cabinet
+                cab_props.depth = fit_d
+                cab_props.width = fit_w
+                for o in context.selected_objects:
+                    o.select_set(False)
+                cab_obj.select_set(True)
+                context.view_layer.objects.active = cab_obj
+                hb_placement.clear_header_text(context)
+                self.report(
+                    {'INFO'},
+                    f"Placed {self.cabinet_name} on {anchor.name} "
                     f"({fit_w * 39.37008:.1f}\" wide)")
                 return {'FINISHED'}
 
