@@ -369,59 +369,97 @@ def _bay_under_cursor(hit_object):
     return None
 
 
-def _opening_under_cursor(hit_object, hit_location):
-    """The face-frame opening cage whose opening rect contains the
-    cursor hit, or None. The raycast lands on cabinet PARTS (carcass
-    back, finish liners, shelves) rather than the wireframe cages, so
-    containment is judged in each opening cage's local X/Z rect, not by
-    a parent walk. The deepest cage wins when several contain the point
-    (split children sit inside their bay root's rect). A hit on a
-    floating shelf already placed in an opening resolves through to the
-    HOST cabinet so more shelves can stack in the same opening.
+def _basis_world_matrix(obj):
+    """World matrix composed purely from basis data (matrix_basis +
+    matrix_parent_inverse up the parent chain). A HIDDEN object with no
+    visible children is never evaluated by the depsgraph, so its
+    matrix_world can be stale -- opening cages sit hidden in most
+    selection modes and an EMPTY opening has no visible children to
+    force evaluation (which is why the snap used to work only after
+    visiting the Openings mode once). Basis data is authoritative
+    regardless of visibility.
     """
-    if hit_object is None or hit_location is None:
+    m = obj.matrix_parent_inverse @ obj.matrix_basis
+    p = obj.parent
+    while p is not None:
+        m = (p.matrix_parent_inverse @ p.matrix_basis) @ m
+        p = p.parent
+    return m
+
+
+def _opening_under_cursor(context, view_point, hit_location):
+    """The face-frame opening cage the VIEW RAY passes through, or None.
+
+    Surface hits are useless here: through an OPEN bay the ray sails
+    past the hidden wireframe cages and lands on whatever is behind --
+    the carcass back at best, the WALL behind the cabinet when the bay
+    has no back at all. So instead of classifying the hit surface, the
+    ray from the viewer through the cursor is intersected with every
+    opening cage's FRONT PLANE and checked against the opening rect
+    (padded a little so the frame area still resolves to the nearer
+    opening). Only intersections at or in front of the actual hit
+    count (slack covers proud fronts), which keeps cabinets behind an
+    aimed-at wall from grabbing the shelf. Nearest plane wins.
+    """
+    if view_point is None or hit_location is None:
         return None
-    root = types_face_frame.find_cabinet_root(hit_object)
-    if root is not None and root.get(types_face_frame.FLOATING_SHELF_TAG):
-        root = (types_face_frame.find_cabinet_root(root.parent)
-                if root.parent is not None else None)
-    if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
+    direction = hit_location - view_point
+    ray_len = direction.length
+    if ray_len <= 0.0:
         return None
-    # The ray often lands on a surface just OUTSIDE the opening rect --
-    # through an open bay it hits the carcass bottom (a hair below the
-    # rect's bottom edge) or the interior top -- so containment is
-    # scored with padding: small in X (a mid-stile hit still resolves
-    # to the nearer opening), generous in Z (bottom / top panel hits).
-    pad_x = units.inch(0.75)
-    pad_z = units.inch(2.5)
+    direction = direction / ray_len
+    pad = units.inch(0.75)
+    slack = units.inch(4.0)   # doors / drawer fronts sit proud of the box
     best = None
-    best_key = None
-    for cage in root.children_recursive:
+    best_t = None
+    for cage in context.scene.objects:
         if not cage.get(types_face_frame.TAG_OPENING_CAGE):
+            continue
+        root = types_face_frame.find_cabinet_root(cage)
+        if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
             continue
         try:
             gn = hb_types.GeoNodeCage(cage)
             dx = gn.get_input('Dim X')
+            dy = gn.get_input('Dim Y')
             dz = gn.get_input('Dim Z')
         except Exception:
             continue
         if not dx or not dz:
             continue
-        local = cage.matrix_world.inverted() @ hit_location
-        out_x = max(-local.x, 0.0, local.x - dx)
-        out_z = max(-local.z, 0.0, local.z - dz)
-        if out_x > pad_x or out_z > pad_z:
+        if not dy:
+            dy = root.face_frame_cabinet.depth
+        inv = _basis_world_matrix(cage).inverted()
+        o = inv @ view_point
+        d = inv.to_3x3() @ direction
+        # Slab-method ray/box in cage space: origin at the opening's
+        # front-bottom-left, +Y toward the back, padded a little in X/Z
+        # so the frame area still resolves to the nearer opening.
+        lo = (-pad, -units.inch(1.0), -pad)
+        hi = (dx + pad, dy, dz + pad)
+        t_near, t_far = 0.0, ray_len + slack
+        ok = True
+        for axis in range(3):
+            da = d[axis]
+            oa = o[axis]
+            if abs(da) < 1e-9:
+                if oa < lo[axis] or oa > hi[axis]:
+                    ok = False
+                    break
+                continue
+            t0 = (lo[axis] - oa) / da
+            t1 = (hi[axis] - oa) / da
+            if t0 > t1:
+                t0, t1 = t1, t0
+            t_near = max(t_near, t0)
+            t_far = min(t_far, t1)
+            if t_near > t_far:
+                ok = False
+                break
+        if not ok:
             continue
-        depth = 0
-        node = cage.parent
-        while node is not None and node is not root:
-            depth += 1
-            node = node.parent
-        # Nearest rect wins (0 when the hit is inside); deeper (leaf)
-        # cages break ties against their enclosing bay-root rects.
-        key = (out_x + out_z, -depth)
-        if best_key is None or key < best_key:
-            best, best_key = cage, key
+        if best_t is None or t_near < best_t:
+            best, best_t = cage, t_near
     return best
 
 
@@ -2514,7 +2552,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # its vertical location. Cleared here so leaving the opening
         # falls back to the normal wall flow.
         if getattr(self, '_follow_cursor_z', False):
-            opening = _opening_under_cursor(self.hit_object, self.hit_location)
+            opening = _opening_under_cursor(
+                context, getattr(self, 'view_point', None),
+                self.hit_location)
             if opening is not None:
                 self._position_in_opening(context, opening)
                 return
@@ -2647,7 +2687,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         depth = max(units.inch(1.0), dy - solver.SHELF_BACK_SETBACK)
         thickness = self._preview_cage.get_input('Dim Z')
 
-        local = opening.matrix_world.inverted() @ self.hit_location
+        # Basis-composed matrix: a hidden empty opening cage's
+        # matrix_world can be depsgraph-stale (see _basis_world_matrix).
+        opening_world = _basis_world_matrix(opening)
+        local = opening_world.inverted() @ self.hit_location
         z = units.inch(round(units.meter_to_inch(local.z)))
         z = min(max(z, 0.0), max(0.0, dz - thickness))
 
@@ -2659,7 +2702,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._update_cage()
         self._preview_cage.set_input('Dim Y', depth)
         cage_obj.matrix_world = (
-            opening.matrix_world @ Matrix.Translation(loc))
+            opening_world @ Matrix.Translation(loc))
         self._gap_wall = None
         self._left_offset = None
         self._right_offset = None
@@ -2675,7 +2718,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         bottom (green, since it's the in-opening measure the user is
         actually driving with the cursor)."""
         unit_settings = context.scene.unit_settings
-        wm = opening.matrix_world
+        wm = _basis_world_matrix(opening)
         z = loc.z
         specs = []
 
