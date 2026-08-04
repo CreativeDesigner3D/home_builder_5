@@ -387,8 +387,15 @@ def _opening_under_cursor(hit_object, hit_location):
                 if root.parent is not None else None)
     if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
         return None
+    # The ray often lands on a surface just OUTSIDE the opening rect --
+    # through an open bay it hits the carcass bottom (a hair below the
+    # rect's bottom edge) or the interior top -- so containment is
+    # scored with padding: small in X (a mid-stile hit still resolves
+    # to the nearer opening), generous in Z (bottom / top panel hits).
+    pad_x = units.inch(0.75)
+    pad_z = units.inch(2.5)
     best = None
-    best_depth = -1
+    best_key = None
     for cage in root.children_recursive:
         if not cage.get(types_face_frame.TAG_OPENING_CAGE):
             continue
@@ -401,15 +408,20 @@ def _opening_under_cursor(hit_object, hit_location):
         if not dx or not dz:
             continue
         local = cage.matrix_world.inverted() @ hit_location
-        if not (0.0 <= local.x <= dx and 0.0 <= local.z <= dz):
+        out_x = max(-local.x, 0.0, local.x - dx)
+        out_z = max(-local.z, 0.0, local.z - dz)
+        if out_x > pad_x or out_z > pad_z:
             continue
         depth = 0
         node = cage.parent
         while node is not None and node is not root:
             depth += 1
             node = node.parent
-        if depth > best_depth:
-            best, best_depth = cage, depth
+        # Nearest rect wins (0 when the hit is inside); deeper (leaf)
+        # cages break ties against their enclosing bay-root rects.
+        key = (out_x + out_z, -depth)
+        if best_key is None or key < best_key:
+            best, best_key = cage, key
     return best
 
 
