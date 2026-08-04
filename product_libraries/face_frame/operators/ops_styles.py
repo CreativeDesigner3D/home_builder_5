@@ -652,35 +652,17 @@ class hb_face_frame_OT_update_fronts_from_door_style(Operator):
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
-    """Modal paint-assign: click fronts in the viewport to apply the active
-    door / drawer-front style. The brush only paints MATCHING fronts -- a
-    DOOR brush paints door fronts, a DRAWER brush paints drawer fronts; a
-    wrong-role click is skipped. Stays active until Esc / right-click."""
-    bl_idname = "hb_face_frame.paint_assign_front_style"
-    bl_label = "Assign by Painting"
-    bl_description = "Click fronts in the viewport to assign the active style"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    kind: bpy.props.EnumProperty(
-        items=[('DOOR', "Door", "Paint door fronts with the active door style"),
-               ('DRAWER', "Drawer", "Paint drawer fronts with the active drawer front style")],
-        default='DOOR',
-        options={'HIDDEN'},
-    )  # type: ignore
+class _paint_front_brush:
+    """Shared machinery for the viewport paint brushes (front-style assign
+    and per-door hardware callouts): region/ray resolution, hover
+    highlight, the modal loop, and selection restore. Deliberately a
+    plain mixin, NOT an Operator subclass -- registering an Operator
+    that subclasses an already-registered Operator corrupts the parent's
+    RNA callbacks (its invoke/execute silently stop being called), so
+    both paint operators derive from this plus bpy.types.Operator."""
 
     _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
     _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
-
-    def _allowed_roles(self):
-        return self._DRAWER_ROLES if self.kind == 'DRAWER' else self._DOOR_ROLES
-
-    def _active_style(self, ff):
-        if self.kind == 'DRAWER':
-            pool, idx = ff.drawer_front_styles, ff.active_drawer_front_style_index
-        else:
-            pool, idx = ff.door_styles, ff.active_door_style_index
-        return pool[idx] if 0 <= idx < len(pool) else None
 
     def _region_under_mouse(self, context, event):
         """The VIEW_3D WINDOW region + rv3d under the cursor, with region-
@@ -719,29 +701,6 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
                 return cur
             cur = cur.parent
         return None
-
-    def _paint(self, context, event):
-        ff = get_style_props(context)
-        style = self._active_style(ff)
-        if style is None:
-            return
-        front = self._front_under_cursor(context, event)
-        if front is None:
-            return
-        if front.get('hb_part_role') not in self._allowed_roles():
-            context.workspace.status_text_set(
-                f"Skipped: not a {self.kind.lower()} front  |  Esc / RMB to finish")
-            return
-        result = style.assign_style_to_front(front, record_override=True)
-        if result is True:
-            self._count += 1
-            # Surfaces come from the cabinet material walk (see assign
-            # op) -- run it per click so a glass panel shows immediately.
-            _reapply_materials_for_door_style(style, context)
-            context.workspace.status_text_set(
-                f"Applied '{style.name}' to {self._count} front(s)  |  Esc / RMB to finish")
-        elif isinstance(result, str):
-            context.workspace.status_text_set(result + "  |  Esc / RMB to finish")
 
     def _set_hover(self, context, front):
         """Highlight the assignable front under the cursor by selecting it (and
@@ -803,6 +762,57 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         context.view_layer.objects.active = (
             bpy.data.objects.get(self._orig_active) if self._orig_active else None)
 
+
+class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Operator):
+    """Modal paint-assign: click fronts in the viewport to apply the active
+    door / drawer-front style. The brush only paints MATCHING fronts -- a
+    DOOR brush paints door fronts, a DRAWER brush paints drawer fronts; a
+    wrong-role click is skipped. Stays active until Esc / right-click."""
+    bl_idname = "hb_face_frame.paint_assign_front_style"
+    bl_label = "Assign by Painting"
+    bl_description = "Click fronts in the viewport to assign the active style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", "Paint door fronts with the active door style"),
+               ('DRAWER', "Drawer", "Paint drawer fronts with the active drawer front style")],
+        default='DOOR',
+        options={'HIDDEN'},
+    )  # type: ignore
+
+    def _allowed_roles(self):
+        return self._DRAWER_ROLES if self.kind == 'DRAWER' else self._DOOR_ROLES
+
+    def _active_style(self, ff):
+        if self.kind == 'DRAWER':
+            pool, idx = ff.drawer_front_styles, ff.active_drawer_front_style_index
+        else:
+            pool, idx = ff.door_styles, ff.active_door_style_index
+        return pool[idx] if 0 <= idx < len(pool) else None
+
+    def _paint(self, context, event):
+        ff = get_style_props(context)
+        style = self._active_style(ff)
+        if style is None:
+            return
+        front = self._front_under_cursor(context, event)
+        if front is None:
+            return
+        if front.get('hb_part_role') not in self._allowed_roles():
+            context.workspace.status_text_set(
+                f"Skipped: not a {self.kind.lower()} front  |  Esc / RMB to finish")
+            return
+        result = style.assign_style_to_front(front, record_override=True)
+        if result is True:
+            self._count += 1
+            # Surfaces come from the cabinet material walk (see assign
+            # op) -- run it per click so a glass panel shows immediately.
+            _reapply_materials_for_door_style(style, context)
+            context.workspace.status_text_set(
+                f"Applied '{style.name}' to {self._count} front(s)  |  Esc / RMB to finish")
+        elif isinstance(result, str):
+            context.workspace.status_text_set(result + "  |  Esc / RMB to finish")
+
     def _finish(self, context):
         self._set_hover(context, None)
         self._restore_selection(context)
@@ -833,7 +843,7 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class hb_face_frame_OT_paint_door_hardware(hb_face_frame_OT_paint_assign_front_style):
+class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operator):
     """Modal paint for hardware callouts: click DOOR fronts to add one
     callout (RC / TL / FR) to that door's opening, Ctrl+Click to remove
     it. The door style's checkboxes only DECLARE the callout for the
