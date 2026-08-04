@@ -2210,7 +2210,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         back_side_finished = (ff_cab.back_finished_end_condition == 'FINISHED')
         corner_finish_interior = ff_cab.corner_finish_interior
 
+        # Floating-shelf products placed INSIDE an opening are nested
+        # under this cabinet but keep their OWN style assignment -- skip
+        # their whole subtree (their own style's walk covers them).
+        nested_skip = set()
+        for nested in cabinet_obj.children_recursive:
+            if nested.get('IS_FLOATING_SHELF'):
+                nested_skip.add(nested.name)
+                nested_skip.update(
+                    d.name for d in nested.children_recursive)
+
         for child in cabinet_obj.children_recursive:
+            if child.name in nested_skip:
+                continue
             if 'CABINET_PART' not in child:
                 # Shelf nosings and bar storage inserts are plain
                 # meshes, deliberately not CABINET_PART (molding stock

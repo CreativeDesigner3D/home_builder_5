@@ -8529,6 +8529,11 @@ class FaceFrameCabinet(GeoNodeCage):
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
 
+        # Floating-shelf PRODUCTS dropped into this opening (library
+        # placement with the cursor over the opening) auto-fit its span
+        # like the adjustable shelves spawned below.
+        self._fit_opening_floating_shelves(opening_obj, rect)
+
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
         ):
@@ -8557,6 +8562,39 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
+
+    def _fit_opening_floating_shelves(self, opening_obj, rect):
+        """Auto-fit floating-shelf PRODUCTS parented into this opening.
+
+        A shelf placed from the library with the cursor over an opening
+        parents to the opening cage; every host recalc re-fits it here
+        so it tracks the opening exactly like an adjustable shelf:
+        width = opening span minus the shelf side clearances, depth =
+        opening depth minus the back setback, front at the opening
+        front plane. The user's vertical location is kept, clamped
+        inside the opening. The shelf's own recalc is invoked directly
+        because prop updates are absorbed by the host's recalc guard.
+        """
+        shelves = [c for c in opening_obj.children
+                   if c.get(FLOATING_SHELF_TAG)]
+        if not shelves:
+            return
+        dx = rect['cage_dim_x']
+        dz = rect['cage_dim_z']
+        dy = rect['cage_dim_y']
+        width = max(0.0, dx - 2.0 * solver.SHELF_X_CLEARANCE)
+        depth = max(0.0, dy - solver.SHELF_BACK_SETBACK)
+        for sh in shelves:
+            props = sh.face_frame_cabinet
+            sh.location = (
+                solver.SHELF_X_CLEARANCE, depth,
+                min(max(sh.location.z, 0.0), max(0.0, dz - props.height)))
+            sh.rotation_euler = (0.0, 0.0, 0.0)
+            props.width = width
+            props.depth = depth
+            fs = FloatingShelfFaceFrameCabinet()
+            fs.obj = sh
+            fs.recalculate()
 
     def _create_shelf_part(self, opening_obj, desc):
         """Horizontal panel oriented as Length+X, Width+Y, Thickness+Z

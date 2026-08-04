@@ -369,6 +369,50 @@ def _bay_under_cursor(hit_object):
     return None
 
 
+def _opening_under_cursor(hit_object, hit_location):
+    """The face-frame opening cage whose opening rect contains the
+    cursor hit, or None. The raycast lands on cabinet PARTS (carcass
+    back, finish liners, shelves) rather than the wireframe cages, so
+    containment is judged in each opening cage's local X/Z rect, not by
+    a parent walk. The deepest cage wins when several contain the point
+    (split children sit inside their bay root's rect). A hit on a
+    floating shelf already placed in an opening resolves through to the
+    HOST cabinet so more shelves can stack in the same opening.
+    """
+    if hit_object is None or hit_location is None:
+        return None
+    root = types_face_frame.find_cabinet_root(hit_object)
+    if root is not None and root.get(types_face_frame.FLOATING_SHELF_TAG):
+        root = (types_face_frame.find_cabinet_root(root.parent)
+                if root.parent is not None else None)
+    if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
+        return None
+    best = None
+    best_depth = -1
+    for cage in root.children_recursive:
+        if not cage.get(types_face_frame.TAG_OPENING_CAGE):
+            continue
+        try:
+            gn = hb_types.GeoNodeCage(cage)
+            dx = gn.get_input('Dim X')
+            dz = gn.get_input('Dim Z')
+        except Exception:
+            continue
+        if not dx or not dz:
+            continue
+        local = cage.matrix_world.inverted() @ hit_location
+        if not (0.0 <= local.x <= dx and 0.0 <= local.z <= dz):
+            continue
+        depth = 0
+        node = cage.parent
+        while node is not None and node is not root:
+            depth += 1
+            node = node.parent
+        if depth > best_depth:
+            best, best_depth = cage, depth
+    return best
+
+
 def _corner_snap_target_under_cursor(hit_object, hit_location):
     """Resolve a CORNER cabinet under the cursor as a snap target, even
     when it is parented to a wall.
@@ -1919,6 +1963,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._fill_no_bays = bool(getattr(cls_inst, 'fill_no_bays', False))
         self._fill_manual_bays = bool(getattr(cls_inst, 'fill_manual_bays', False))
         self._follow_cursor_z = bool(getattr(cls_inst, 'follow_cursor_z', False))
+        # Set while the cursor previews inside a cabinet opening
+        # (floating shelf only): (opening_cage, width, depth, local_loc).
+        self._opening_target = None
         self._recess_into_wall = bool(getattr(cls_inst, 'recess_into_wall', False))
         # Cage depth/height come straight from the cabinet class so the
         # preview matches subclasses with non-standard dims (e.g. the
@@ -2449,6 +2496,22 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # _position_on_wall_side turns it back on.
         self._peninsula = False
 
+        # Floating shelf over a cabinet opening -> snap INSIDE that
+        # opening (finished-opening shelving): the shelf auto-fits the
+        # opening span like an adjustable shelf and the cursor drives
+        # its vertical location. Cleared here so leaving the opening
+        # falls back to the normal wall flow.
+        if getattr(self, '_follow_cursor_z', False):
+            opening = _opening_under_cursor(self.hit_object, self.hit_location)
+            if opening is not None:
+                self._position_in_opening(context, opening)
+                return
+            if getattr(self, '_opening_target', None) is not None:
+                # Left the opening: restore the product's own depth
+                # (the in-opening fit narrowed the preview cage).
+                self._opening_target = None
+                self._preview_cage.set_input('Dim Y', self._cabinet_depth)
+
         # Sink + cursor on a Range -> island layout (sink facing the
         # range across a 48" aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
@@ -2541,6 +2604,54 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return
 
         self._position_free(context)
+
+    def _position_in_opening(self, context, opening):
+        """Preview the floating shelf INSIDE a cabinet opening.
+
+        Fit mirrors an adjustable shelf: width = opening span minus the
+        shelf side clearances, depth = opening depth minus the back
+        setback, front at the opening front plane. The cursor's height
+        (snapped to whole inches) sets the shelf's vertical location,
+        clamped inside the opening. The target is stashed on
+        _opening_target for _finalize to commit.
+        """
+        from .. import solver_face_frame as solver
+        cage_obj = self._preview_cage.obj
+        try:
+            gn = hb_types.GeoNodeCage(opening)
+            dx = gn.get_input('Dim X')
+            dy = gn.get_input('Dim Y')
+            dz = gn.get_input('Dim Z')
+        except Exception:
+            self._opening_target = None
+            self._position_free(context)
+            return
+        if not dy:
+            # Opening cages that don't carry a depth fall back to the
+            # host cabinet's depth.
+            host = types_face_frame.find_cabinet_root(opening)
+            dy = host.face_frame_cabinet.depth if host is not None else 0.0
+        width = max(units.inch(1.0), dx - 2.0 * solver.SHELF_X_CLEARANCE)
+        depth = max(units.inch(1.0), dy - solver.SHELF_BACK_SETBACK)
+        thickness = self._preview_cage.get_input('Dim Z')
+
+        local = opening.matrix_world.inverted() @ self.hit_location
+        z = units.inch(round(units.meter_to_inch(local.z)))
+        z = min(max(z, 0.0), max(0.0, dz - thickness))
+
+        # Cage origin at the shelf's BACK face (the product extends -Y
+        # via Mirror Y, like a cabinet), so it sits at the fitted depth
+        # from the opening's front plane.
+        loc = Vector((solver.SHELF_X_CLEARANCE, depth, z))
+        self._cabinet_width = width
+        self._update_cage()
+        self._preview_cage.set_input('Dim Y', depth)
+        cage_obj.matrix_world = (
+            opening.matrix_world @ Matrix.Translation(loc))
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._opening_target = (opening, width, depth, loc.copy())
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.
@@ -3701,6 +3812,46 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return {'CANCELLED'}
 
         cab_obj = cabinet.obj
+
+        # Floating shelf committed INSIDE a cabinet opening: parent it
+        # to the opening cage so it rides the cabinet, size it to the
+        # fit the preview showed, and let the host recalc take over the
+        # authoritative fit (its interior pass re-fits opening shelves
+        # on every cabinet resize). Ends butt the opening sides, so no
+        # end panels.
+        opening_target = getattr(self, '_opening_target', None)
+        if (getattr(self, '_follow_cursor_z', False)
+                and opening_target is not None
+                and cab_obj.get(types_face_frame.FLOATING_SHELF_TAG)):
+            opening, fit_w, fit_d, loc = opening_target
+            try:
+                opening.name  # raises if the cage was deleted mid-modal
+            except ReferenceError:
+                opening = None
+            if opening is not None:
+                cab_obj.parent = opening
+                cab_obj.matrix_parent_inverse.identity()
+                cab_obj.location = loc
+                cab_obj.rotation_euler = (0.0, 0.0, 0.0)
+                cab_props = cab_obj.face_frame_cabinet
+                cab_props.depth = fit_d
+                cab_props.width = fit_w
+                sp = cab_obj.floating_shelf
+                sp.finish_left = False
+                sp.finish_right = False
+                host = types_face_frame.find_cabinet_root(opening)
+                if host is not None:
+                    types_face_frame.recalculate_face_frame_cabinet(host)
+                for o in context.selected_objects:
+                    o.select_set(False)
+                cab_obj.select_set(True)
+                context.view_layer.objects.active = cab_obj
+                hb_placement.clear_header_text(context)
+                self.report(
+                    {'INFO'},
+                    f"Placed {self.cabinet_name} in {opening.name} "
+                    f"({fit_w * 39.37008:.1f}\" wide)")
+                return {'FINISHED'}
 
         if captured_parent is not None:
             cab_obj.parent = captured_parent
