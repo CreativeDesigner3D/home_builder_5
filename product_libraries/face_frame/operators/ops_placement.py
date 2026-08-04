@@ -369,21 +369,34 @@ def _bay_under_cursor(hit_object):
     return None
 
 
-def _basis_world_matrix(obj):
-    """World matrix composed purely from basis data (matrix_basis +
-    matrix_parent_inverse up the parent chain). A HIDDEN object with no
-    visible children is never evaluated by the depsgraph, so its
-    matrix_world can be stale -- opening cages sit hidden in most
-    selection modes and an EMPTY opening has no visible children to
-    force evaluation (which is why the snap used to work only after
-    visiting the Openings mode once). Basis data is authoritative
-    regardless of visibility.
+def _cage_world_matrix(cage):
+    """Trustworthy world matrix for a (possibly hidden) opening cage.
+
+    A HIDDEN cage with no visible children is never evaluated by the
+    depsgraph, so its matrix_world can be stale -- exactly the state of
+    an EMPTY opening's cage in every selection mode but Openings (which
+    is why the snap used to work only after visiting that mode once).
+    Composing pure basis data all the way up is no good either: chained
+    walls position themselves with CONSTRAINTS (an L room's second wall
+    is a COPY_LOCATION off the first), which basis data can't see.
+
+    So: anchor at the cabinet ROOT's evaluated matrix_world -- fresh,
+    because its visible parts keep it in the depsgraph, and inclusive
+    of any wall constraints -- and compose only the root-to-cage chain
+    from basis data (those are plain parented cages with no
+    constraints of their own).
     """
-    m = obj.matrix_parent_inverse @ obj.matrix_basis
-    p = obj.parent
-    while p is not None:
-        m = (p.matrix_parent_inverse @ p.matrix_basis) @ m
-        p = p.parent
+    root = types_face_frame.find_cabinet_root(cage)
+    chain = []
+    node = cage
+    while node is not None and node is not root:
+        chain.append(node)
+        node = node.parent
+    if root is None or node is not root:
+        return cage.matrix_world.copy()
+    m = root.matrix_world.copy()
+    for n in reversed(chain):
+        m = m @ (n.matrix_parent_inverse @ n.matrix_basis)
     return m
 
 
@@ -429,7 +442,7 @@ def _opening_under_cursor(context, view_point, hit_location):
             continue
         if not dy:
             dy = root.face_frame_cabinet.depth
-        inv = _basis_world_matrix(cage).inverted()
+        inv = _cage_world_matrix(cage).inverted()
         o = inv @ view_point
         d = inv.to_3x3() @ direction
         # Slab-method ray/box in cage space: origin at the opening's
@@ -2688,8 +2701,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         thickness = self._preview_cage.get_input('Dim Z')
 
         # Basis-composed matrix: a hidden empty opening cage's
-        # matrix_world can be depsgraph-stale (see _basis_world_matrix).
-        opening_world = _basis_world_matrix(opening)
+        # matrix_world can be depsgraph-stale (see _cage_world_matrix).
+        opening_world = _cage_world_matrix(opening)
         local = opening_world.inverted() @ self.hit_location
         z = units.inch(round(units.meter_to_inch(local.z)))
         z = min(max(z, 0.0), max(0.0, dz - thickness))
@@ -2718,7 +2731,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         bottom (green, since it's the in-opening measure the user is
         actually driving with the cursor)."""
         unit_settings = context.scene.unit_settings
-        wm = _basis_world_matrix(opening)
+        wm = _cage_world_matrix(opening)
         z = loc.z
         specs = []
 
