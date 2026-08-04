@@ -2054,7 +2054,7 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         if (fin_type in ('FINISHED', 'PANELED')
                 and getattr(cab, f'{key}_side_finished_extend_back') != 0.0
                 and cab.back_finished_end_condition
-                in ('FINISHED', 'PANELED')):
+                in types_face_frame.RETURN_BACK_CONDITIONS):
             layout.prop(cab, f'{key}_side_return_width',
                         text="Return Width")
             if getattr(cab, f'{key}_side_return_width') != 0.0:

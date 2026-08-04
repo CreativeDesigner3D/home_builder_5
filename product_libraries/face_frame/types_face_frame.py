@@ -351,6 +351,13 @@ PART_ROLE_RIGHT_SIDE_RETURN_STILE = 'RIGHT_SIDE_RETURN_STILE'
 # which kind is currently built.
 TAG_RETURN_MEMBER = 'hb_return_member'
 
+# Back conditions a side return can die into. Any back that presents a
+# finished surface qualifies -- the return post simply closes the corner
+# and the back field (flat, paneled or textured) butts into it. Shared by
+# the geometry gate (_finished_side_return_width) and both UI surfaces
+# that draw the return rows.
+RETURN_BACK_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP')
+
 # Applied flush-X strip: a 1/4 part covering the front portion of a
 # cabinet side when LEFT/RIGHT_finished_end_condition is FLUSH_X. The
 # strip's outer face is flush with the FF outer face; its width along
@@ -5617,17 +5624,17 @@ class FaceFrameCabinet(GeoNodeCage):
     def _finished_side_return_width(self, cab, layout, side):
         """Effective return-closeout width on `side` ('LEFT' / 'RIGHT'), or
         0.0 when the return isn't active. Active requires a non-angled
-        cabinet, a FINISHED or PANELED back to return into, and that side
-        being FINISHED or PANELED, extended back (extend > 0), with a
-        positive return width.
+        cabinet, a back with a finished surface to return into
+        (RETURN_BACK_CONDITIONS), and that side being FINISHED or
+        PANELED, extended back (extend > 0), with a positive return width.
         Single source of truth shared by the return-part builder and the
-        back sizing (the finished-back cutpart or the paneled applied-back
-        panel is shortened by this width so it butts the return post
-        instead of running behind it).
+        back sizing (the finished/paneled/textured back field is
+        shortened by this width so it butts the return post instead of
+        running behind it).
         """
         if layout.is_angled:
             return 0.0
-        if cab.back_finished_end_condition not in ('FINISHED', 'PANELED'):
+        if cab.back_finished_end_condition not in RETURN_BACK_CONDITIONS:
             return 0.0
         if side == 'LEFT':
             condition = cab.left_finished_end_condition
@@ -6605,9 +6612,14 @@ class FaceFrameCabinet(GeoNodeCage):
                 er = cab.back_finished_extend_right
                 # A splayed back extension widens the back plane too,
                 # same as the carcass / finished back.
-                location = (location[0] - el - ext_bl, location[1],
+                # Side-return closeouts shorten the field so it butts the
+                # return post instead of running behind it (mirrors the
+                # finished-back trim in _reconcile_finished_back).
+                ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
+                ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
+                location = (location[0] - el - ext_bl + ret_l, location[1],
                             location[2])
-                width = width + el + er + ext_bl + ext_br
+                width = width + el + er + ext_bl + ext_br - ret_l - ret_r
             else:
                 eb = (cab.left_side_finished_extend_back if side == 'LEFT'
                       else cab.right_side_finished_extend_back)

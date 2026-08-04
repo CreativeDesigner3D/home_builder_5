@@ -1397,12 +1397,13 @@ def draw_finished_ends(layout, cab_props):
             col.prop(cab_props, f'{side}_scribe', text="Scribe")
 
         # Return closeout: only meaningful when a FINISHED or PANELED side is
-        # extended back past a FINISHED or PANELED back. Nonzero return width
-        # caps the exposed corner with a return panel + a rear stile that wide.
+        # extended back past a back with a finished surface (finished,
+        # paneled or textured -- RETURN_BACK_CONDITIONS). Nonzero return
+        # width caps the exposed corner with a return panel + a rear stile.
         if (side in ('left', 'right') and fin_type in ('FINISHED', 'PANELED')
                 and getattr(cab_props, f'{side}_side_finished_extend_back') != 0.0
                 and getattr(cab_props, 'back_finished_end_condition')
-                in ('FINISHED', 'PANELED')):
+                in types_face_frame.RETURN_BACK_CONDITIONS):
             col.prop(cab_props, f'{side}_side_return_width', text="Return Width")
             # Per-member Finished / Paneled construction, once a return exists.
             if getattr(cab_props, f'{side}_side_return_width') != 0.0:
