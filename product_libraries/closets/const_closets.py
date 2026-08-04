@@ -51,6 +51,15 @@ RUN_THICKNESSES = (
 HANG_RAIL_WIDTH = inch(1.125)
 HANG_RAIL_THICKNESS = inch(0.25)
 HANG_RAIL_DROP = inch(3.3125)
+# The cover clipped over a rail end where it lands on a panel. It is
+# bought rather than cut, so it wears a material of its own and is
+# counted with the hardware. The prior library's block: 0.5 in along
+# the rail, 1.75 in tall, 2.25 in out from the wall, its top an inch
+# below the underside of the shelf the rail drops from.
+HANG_RAIL_COVER_LENGTH = inch(0.5)
+HANG_RAIL_COVER_WIDTH = inch(1.75)
+HANG_RAIL_COVER_DEPTH = inch(2.25)
+HANG_RAIL_COVER_TOP_OFFSET = inch(1.0)
 
 # ---------------------------------------------------------------------------
 # Starter defaults

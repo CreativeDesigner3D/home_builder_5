@@ -48,6 +48,16 @@ COUNTERTOP_ORDER = (
 # material selection instead of picking an explicit one.
 MATCH = 'MATCH'
 
+# Bought parts - the hang rail covers - wear this instead of the run's
+# finish. It is a negative material: it says the part never comes off a
+# sheet, so nothing that paints the closet touches it and whatever
+# processes hardware downstream counts it there instead. Kept in the
+# file under a known name and marked with an idprop as well, so a
+# rename does not lose track of it.
+NEGATIVE_MATERIAL = 'Negative'
+NEGATIVE_MATERIAL_KEY = 'hb_negative_material'
+NEGATIVE_MATERIAL_COLOR = (0.05, 0.05, 0.06, 1.0)
+
 # Door panel types: Vertical Grain = the front material (doors always
 # run vertical grain); the rest are glass materials that live in
 # the library blend (not asset-marked - they only make sense as door
@@ -165,6 +175,23 @@ def load_material(name, blend=None):
     except Exception:
         return None
     return bpy.data.materials.get(name)
+
+
+def load_negative_material():
+    """The material a bought part wears. Taken from the bundled blend
+    when it holds one by that name, and made here when it does not, so
+    a run always has one to hand its covers."""
+    mat = load_material(NEGATIVE_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(NEGATIVE_MATERIAL)
+        mat.use_nodes = True
+        mat.diffuse_color = NEGATIVE_MATERIAL_COLOR
+        bsdf = mat.node_tree.nodes.get('Principled BSDF')
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = (
+                NEGATIVE_MATERIAL_COLOR)
+    mat[NEGATIVE_MATERIAL_KEY] = True
+    return mat
 
 
 def _mapping_variant(mat, suffix, rot_x=0.0, rot_z=0.0):
@@ -402,6 +429,7 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     role_door = types_closets.PART_ROLE_DOOR
     role_drawer = types_closets.PART_ROLE_DRAWER_FRONT
     role_fence = types_closets.PART_ROLE_SHOE_FENCE
+    role_cover = types_closets.PART_ROLE_HANG_RAIL_COVER
     # A top and its upstands are one surface, banded all the way round
     # in the same material.
     ctop_roles = (types_closets.PART_ROLE_COUNTERTOP,
@@ -432,6 +460,12 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             mat = _fence_finish(child, fence_cache)
             if mat is None:
                 continue
+            edge = mat
+        elif role == role_cover:
+            # A bought clip cover. Its material is what says so, and it
+            # is the same all the way round - there is no banding on a
+            # part that never sees a sheet.
+            mat = load_negative_material()
             edge = mat
         else:
             mat, edge = carcass, carcass_edge

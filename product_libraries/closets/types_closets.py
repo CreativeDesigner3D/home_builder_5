@@ -47,6 +47,12 @@ PART_ROLE_TOP_SHELF = 'CLOSET_TOP_SHELF'
 PART_ROLE_TOE_KICK = 'CLOSET_TOE_KICK'
 PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
+# The cover clipped over a rail end. A bought part, not a cut one: it
+# wears the negative material (see materials_closets) so nothing about
+# the run's finish paints it, and whatever processes hardware
+# downstream counts it there. Each one carries 'hb_clip_on_left', the
+# hand of the claw it covers.
+PART_ROLE_HANG_RAIL_COVER = 'CLOSET_HANG_RAIL_COVER'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
 PART_ROLE_BACKSPLASH = 'CLOSET_BACKSPLASH'
@@ -258,6 +264,17 @@ def _remove_part_tree(obj):
 def _set_part_hidden(obj, hidden):
     obj.hide_viewport = hidden
     obj.hide_render = hidden
+
+
+def _hang_rail_cover_z(rail_z, shelf_thickness):
+    """Bottom of a rail cover, given the bottom of the rail it covers.
+    The cover's top sits an inch below the underside of the shelf the
+    rail drops from, which leaves it standing a little proud of the
+    rail at both ends - it wraps the claw rather than sitting beside
+    it."""
+    return (rail_z + const.HANG_RAIL_DROP - shelf_thickness
+            - const.HANG_RAIL_COVER_TOP_OFFSET
+            - const.HANG_RAIL_COVER_WIDTH)
 
 
 # Every surface and edge slot on a cutpart. A purchased metal rail is one
@@ -778,6 +795,30 @@ class ClosetStarter(GeoNodeCage):
                 return c
         return None
 
+    def _bay_cover(self, bay_obj, side):
+        """The cover clipped over one end of this bay's hang rail.
+        Made on demand, so a run built before covers landed gains them
+        on its next recalculation. A bay has two ends, so they are told
+        apart by the end they sit at rather than by role alone."""
+        for c in bay_obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_HANG_RAIL_COVER
+                    and c.get('hb_cover_side') == side):
+                return c
+        if not self.has_hang_rail:
+            return None
+        part = CabinetPart()
+        part.create('Hang Rail Cover')
+        part.obj.parent = bay_obj
+        part.obj['hb_part_role'] = PART_ROLE_HANG_RAIL_COVER
+        part.obj['hb_cover_side'] = side
+        # The claw is screwed to the face of the panel its cover sits
+        # against, so the hand follows the end: a cover at the LEFT end
+        # of a rail is on the right face of the panel there, one at the
+        # RIGHT end is on the left face of the next panel along.
+        part.obj['hb_clip_on_left'] = 1 if side == 'RIGHT' else 0
+        part.obj.rotation_euler.x = math.radians(90)
+        return part.obj
+
     # -----------------------------------------------------------------
     # Layout
     # -----------------------------------------------------------------
@@ -1170,6 +1211,35 @@ class ClosetStarter(GeoNodeCage):
                 _set_part_hidden(
                     rail, (not self.has_hang_rail)
                     or sp.remove_hang_rail)
+
+                # A cover clips over each rail end that lands on a
+                # panel. Two bays side by side share the panel between
+                # them and so share the one claw, which is why a bay
+                # covers its left end only - the last bay in the run
+                # covers its right end as well. An end lengthened
+                # toward the wall runs out past the last panel, so its
+                # cover stays back at the panel.
+                cover_z = _hang_rail_cover_z(local_z, st)
+                hide_cover = ((not self.has_hang_rail)
+                              or sp.remove_hang_rail)
+                for side in ('LEFT', 'RIGHT'):
+                    cover = self._bay_cover(bay_obj, side)
+                    if cover is None:
+                        continue
+                    cover_x = (0.0 if side == 'LEFT'
+                               else bay['width']
+                               - const.HANG_RAIL_COVER_LENGTH)
+                    cover.location = (cover_x, 0.0, cover_z)
+                    cpart = GeoNodeCutpart(cover)
+                    cpart.set_input('Length',
+                                    const.HANG_RAIL_COVER_LENGTH)
+                    cpart.set_input('Width',
+                                    const.HANG_RAIL_COVER_WIDTH)
+                    cpart.set_input('Thickness',
+                                    const.HANG_RAIL_COVER_DEPTH)
+                    _set_part_hidden(
+                        cover, hide_cover
+                        or (side == 'RIGHT' and bay_i != n_bays - 1))
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
@@ -3111,6 +3181,41 @@ class LShelfClosetStarter(GeoNodeCage):
             # has to come back into the room rather than through it.
             gp.set_input('Mirror Z', True)
             _set_part_hidden(part, hide_rail)
+
+            # ----- Hang rail covers -----
+            # A cover over each rail end that lands on a panel. The two
+            # outer ends always do. At the corner the rails meet, and
+            # the one stopped by the back partition is the one clipped
+            # to it - so which of the two inner covers shows follows
+            # the wall the partition stands against.
+            cover_z = _hang_rail_cover_z(rail_z, st)
+            cl = const.HANG_RAIL_COVER_LENGTH
+            covers = (
+                ('Back Cover', 'Hang Rail Cover Back', 0.0, True,
+                 (W - pt - cl, 0.0, cover_z), False,
+                 hide_rail or bool(sp.turn_off_right_panel)),
+                ('Back Corner Cover', 'Hang Rail Cover Back Corner',
+                 0.0, False, (x0, 0.0, cover_z), False,
+                 hide_rail or not flip),
+                ('Side Cover', 'Hang Rail Cover Side', -90.0, True,
+                 (0.0, -(D - pt - cl), cover_z), True,
+                 hide_rail or bool(sp.turn_off_left_panel)),
+                ('Side Corner Cover', 'Hang Rail Cover Side Corner',
+                 -90.0, False, (0.0, -y0, cover_z), True,
+                 hide_rail or bool(flip)),
+            )
+            for key, nm, rot_z, on_left, loc, mirror, hide in covers:
+                part = self._corner_wall_part(
+                    key, nm, PART_ROLE_HANG_RAIL_COVER, rot_z)
+                part['hb_clip_on_left'] = 1 if on_left else 0
+                part.location = loc
+                gp = GeoNodeCutpart(part)
+                gp.set_input('Length', cl)
+                gp.set_input('Width', const.HANG_RAIL_COVER_WIDTH)
+                gp.set_input('Thickness', const.HANG_RAIL_COVER_DEPTH)
+                if mirror:
+                    gp.set_input('Mirror Z', True)
+                _set_part_hidden(part, hide)
 
             for c in self.obj.children:
                 if c.get('hb_l_kick'):
