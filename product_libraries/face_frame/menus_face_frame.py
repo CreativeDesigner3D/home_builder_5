@@ -448,6 +448,9 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
                     text="Change Opening")
         layout.operator("hb_face_frame.accessory_menu",
                         text="Add Accessory...", icon='ADD')
+        layout.operator("hb_face_frame.equalize_opening_heights",
+                        text="Equalize Opening Heights",
+                        icon='ALIGN_JUSTIFY')
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Horizontal", icon='SNAP_EDGE')

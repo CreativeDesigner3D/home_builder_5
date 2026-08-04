@@ -465,6 +465,82 @@ class hb_face_frame_OT_equalize_bays(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: equalize opening heights across selected openings
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_equalize_opening_heights(bpy.types.Operator):
+    """Lock every selected opening's height to the ACTIVE opening's
+    height. Works across bays and cabinets -- the right-click companion
+    to hand-locking each opening's height in the Openings menu (e.g.
+    matching drawer stacks beside a bay whose flush bottom rail eats
+    into its openings). Only H-split children carry a height of their
+    own: a bay's single root opening follows the bay, and V-split
+    children size by width, so both are skipped with a note."""
+    bl_idname = "hb_face_frame.equalize_opening_heights"
+    bl_label = "Equalize Opening Heights"
+    bl_description = (
+        "Lock every selected opening's height to the active opening's "
+        "height (openings stacked in a horizontal split)"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @staticmethod
+    def _is_h_split_child(cage):
+        parent = cage.parent
+        return (parent is not None
+                and hasattr(parent, 'face_frame_split')
+                and parent.get('IS_FACE_FRAME_SPLIT_NODE')
+                and parent.face_frame_split.axis == 'H')
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get('IS_FACE_FRAME_OPENING_CAGE'))
+
+    def execute(self, context):
+        cages = [o for o in context.selected_objects
+                 if o.get('IS_FACE_FRAME_OPENING_CAGE')]
+        active = context.active_object
+        if active is None or not active.get('IS_FACE_FRAME_OPENING_CAGE'):
+            self.report({'WARNING'}, "Active object is not an opening")
+            return {'CANCELLED'}
+        if active not in cages:
+            cages.append(active)
+        if len(cages) < 2:
+            self.report({'WARNING'}, "Select two or more openings")
+            return {'CANCELLED'}
+        if not self._is_h_split_child(active):
+            self.report(
+                {'WARNING'},
+                "The active opening has no height of its own (only "
+                "openings stacked in a horizontal split do)")
+            return {'CANCELLED'}
+        target = active.face_frame_opening.size
+        roots = []
+        skipped = 0
+        changed = 0
+        with types_face_frame.suspend_recalc():
+            for cage in cages:
+                if not self._is_h_split_child(cage):
+                    skipped += 1
+                    continue
+                fo = cage.face_frame_opening
+                fo.unlock_size = True
+                fo.size = target
+                changed += 1
+                root = types_face_frame.find_cabinet_root(cage)
+                if root is not None and root not in roots:
+                    roots.append(root)
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        msg = (f"Locked {changed} opening(s) at "
+               f"{meter_to_inch(target):.2f}\"")
+        if skipped:
+            msg += f" ({skipped} skipped: no height of their own)"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Selection mode application (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 # Module-level so non-operator callers (the live-preview appliance dialog)
@@ -4861,6 +4937,7 @@ classes = (
     hb_face_frame_OT_break_cabinet_right,
     hb_face_frame_OT_break_cabinet_both,
     hb_face_frame_OT_equalize_bays,
+    hb_face_frame_OT_equalize_opening_heights,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,
