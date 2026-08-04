@@ -3581,30 +3581,42 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 row.enabled = sp.use_one_hang_rail_height
                 row.prop(sp, 'hang_rail_height_location')
 
-        if not is_corner:
-            box = _section(layout, sp, 'show_ends', "Ends")
-            if box is not None:
-                row = box.row()
-                for side, cap in (('left', "Left"), ('right', "Right")):
-                    col = row.column(align=True)
-                    col.label(text=cap)
+        # A corner has an end panel on each wing too, so the three
+        # flags that act on an end panel reach it. Which wing is Left
+        # and which is Right follows the walls - the left wing is the
+        # one along the side wall - and is the same pairing the hang
+        # rail covers already read. What a corner has no use for is
+        # the wall filler, the batten and the bridge: all three want a
+        # neighbouring run to sit against.
+        box = _section(layout, sp, 'show_ends', "Ends")
+        if box is not None:
+            row = box.row()
+            for side, cap in (('left', "Left"), ('right', "Right")):
+                col = row.column(align=True)
+                col.label(text=cap)
+                if not is_corner:
                     col.prop(sp, f'{side}_side_wall_filler',
                              text="Wall Filler")
-                    col.prop(sp, f'include_batten_{side}', text="Batten")
+                    col.prop(sp, f'include_batten_{side}',
+                             text="Batten")
                     col.separator()
-                    col.prop(sp, f'turn_off_{side}_panel',
-                             text="Turn Off Panel")
-                    col.prop(sp, f'{side}_finished_end', text="Finished End")
-                    col.prop(sp, f'drill_through_{side}',
-                             text="Drill Through")
+                col.prop(sp, f'turn_off_{side}_panel',
+                         text="Turn Off Panel")
+                col.prop(sp, f'{side}_finished_end',
+                         text="Finished End")
+                col.prop(sp, f'drill_through_{side}',
+                         text="Drill Through")
+                if not is_corner:
                     col.separator()
                     col.prop(sp, f'bridge_{side}', text="Bridge")
                     sub = col.column(align=True)
                     sub.enabled = getattr(sp, f'bridge_{side}')
-                    sub.prop(sp, f'bridge_{side}_width', text="Shelf Width")
+                    sub.prop(sp, f'bridge_{side}_width',
+                             text="Shelf Width")
                     sub.prop(sp, f'include_bottom_bridge_{side}',
                              text="Bottom Bridge")
 
+        if not is_corner:
             box = _section(layout, sp, 'show_top', "Top")
             if box is not None:
                 col = box.column(align=True)

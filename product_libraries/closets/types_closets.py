@@ -3058,8 +3058,17 @@ class LShelfClosetStarter(GeoNodeCage):
             st = scene_props.shelf_thickness
             pt = scene_props.panel_thickness
             W, D, H = sp.width, sp.depth, sp.height
-            LD = min(sp.l_left_depth, W - pt)
-            RD = min(sp.l_right_depth, D - pt)
+            # An end panel turned off gives its thickness back to the
+            # wing it stood at the end of: the shelves, that wing's toe
+            # kick and the wing depth all reach out to where it was.
+            # Left is the wing along the side wall, right the one along
+            # the back wall - the pairing the covers already follow.
+            left_off = bool(sp.turn_off_left_panel)
+            right_off = bool(sp.turn_off_right_panel)
+            l_pt = 0.0 if left_off else pt
+            r_pt = 0.0 if right_off else pt
+            LD = min(sp.l_left_depth, W - r_pt)
+            RD = min(sp.l_right_depth, D - l_pt)
             bw = sp.l_back_width
             flip = sp.l_flip_partition
             use_radius = bool(sp.l_use_radius)
@@ -3087,6 +3096,15 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Length', H)
                 gp.set_input('Width', RD)
                 gp.set_input('Thickness', pt)
+                # The end flags a run records on its own end panels,
+                # recorded here the same way: whether the end is
+                # exposed, and whether its system holes run all the
+                # way through. Flags only - they carry no geometry.
+                p['hb_panel_off'] = 1 if right_off else 0
+                p['hb_finished_end'] = 1 if sp.right_finished_end else 0
+                p['hb_drill_through'] = (
+                    1 if sp.drill_through_right else 0)
+                _set_part_hidden(p, right_off)
                 # Left wing end panel: plane faces Y at y = -(D - pt),
                 # spanning the left wing depth (rotate the vertical
                 # panel 90 about Z so its Width runs along +X).
@@ -3098,6 +3116,10 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Width', LD)
                 gp.set_input('Thickness', pt)
                 gp.set_input('Mirror Z', False)
+                p['hb_panel_off'] = 1 if left_off else 0
+                p['hb_finished_end'] = 1 if sp.left_finished_end else 0
+                p['hb_drill_through'] = 1 if sp.drill_through_left else 0
+                _set_part_hidden(p, left_off)
 
             # Back Partition (defaults, verified against a live
             # corner build): unflipped it lies parallel to the
@@ -3246,12 +3268,14 @@ class LShelfClosetStarter(GeoNodeCage):
                         # (width - ld - pt + tks).
                         c.location = (LD - setback, -RD + setback, 0.0)
                         gp.set_input('Length',
-                                     max(W - pt - (LD - setback), 0.001))
+                                     max(W - r_pt - (LD - setback),
+                                         0.001))
                     else:
                         # Receiver: full side wall span
                         # (fabs(depth) - pt*2 from -depth + pt).
                         c.location = (LD - setback, -pt, 0.0)
-                        gp.set_input('Length', max(D - 2.0 * pt, 0.001))
+                        gp.set_input('Length',
+                                     max(D - pt - l_pt, 0.001))
                     gp.set_input('Width', kick)
                     gp.set_input('Thickness', st)
                     _set_part_hidden(c, (not floor) or kick <= 0.0)
@@ -3275,8 +3299,8 @@ class LShelfClosetStarter(GeoNodeCage):
                 # offset (the partition and shelf formulas assume it).
                 shelf.location = (wo, -wo, z)
                 gp = GeoNodeCutpart(shelf)
-                gp.set_input('Length', max(W - pt - wo, 0.001))
-                gp.set_input('Width', max(D - pt - wo, 0.001))
+                gp.set_input('Length', max(W - r_pt - wo, 0.001))
+                gp.set_input('Width', max(D - l_pt - wo, 0.001))
                 gp.set_input('Thickness', st)
                 # The front corner comes away either square or
                 # rounded, and which of the two a shelf takes is set
@@ -3291,8 +3315,11 @@ class LShelfClosetStarter(GeoNodeCage):
                     round_it = use_radius and bool(sp.l_radius_top)
                 else:
                     round_it = use_radius and bool(sp.l_radius_shelves)
-                cut_x = max(W - pt - LD, 0.001)
-                cut_y = max(D - pt - RD, 0.001)
+                # The wings are measured from the walls, so the
+                # corner the notch leaves stays put when a shelf grows
+                # into the space an end panel gave up.
+                cut_x = max(W - r_pt - LD, 0.001)
+                cut_y = max(D - l_pt - RD, 0.001)
                 notch = shelf.modifiers.get('L Notch')
                 if notch is not None:
                     cpm = CabinetPartModifier(shelf)
