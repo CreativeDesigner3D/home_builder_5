@@ -9897,8 +9897,16 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         R.hide_render = not r_visible
         R['IS_FINISHED'] = True
 
+        # Flush toe kick: a setback smaller than the face-frame thickness
+        # puts the kick plane at (or within) the face-frame band, so the
+        # side panels take no notch and the kick stile runs the FULL
+        # width in the face-frame plane -- setback 0 reads as a flush
+        # toe / bottom rail.
+        flush_tk = tks < fft
+
         # --- Toe-kick notch on the visible panels ---
-        notch_on = (not leg.is_column) and (not only_stile) and tkh > 0.0
+        notch_on = ((not leg.is_column) and (not only_stile) and tkh > 0.0
+                    and not flush_tk)
         self._set_notch(L, notch_on and l_visible, tkh, tks - fft, mt)
         self._set_notch(R, notch_on and r_visible, tkh, tks - fft, mt)
 
@@ -9908,10 +9916,16 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
               {'Mirror Y': True, 'Mirror Z': True})
         STILE['IS_FINISHED'] = True
 
-        # --- Toe-kick stile + filler (between the side panels) ---
-        tk_width = width - (0.0 if only_stile else mt * 2.0)
-        tk_x = 0.0 if only_stile else mt
-        tk_visible = (not leg.is_column) and (only_stile or finish == 'FINISH_BOTH')
+        # --- Toe-kick stile + filler (between the side panels; full
+        # width when flush) ---
+        tk_full = only_stile or flush_tk
+        tk_width = width - (0.0 if tk_full else mt * 2.0)
+        tk_x = 0.0 if tk_full else mt
+        # A recessed kick between the panels only shows when this leg
+        # owns both faces (or is a bare stile); a FLUSH kick sits in the
+        # face-frame plane, so it shows for every finish type.
+        tk_visible = ((not leg.is_column)
+                      and (only_stile or flush_tk or finish == 'FINISH_BOTH'))
 
         place(TKS, tkh, tk_width, fft, (tk_x, -depth + tks, 0.0),
               (0.0, math.radians(-90), math.radians(90)),
@@ -9920,11 +9934,14 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         TKS.hide_render = not tk_visible
         TKS['IS_FINISHED'] = True
 
+        # The horizontal filler bridges the setback depth; a flush kick
+        # has nothing to bridge.
+        tkf_visible = tk_visible and tks > 0.0 and not flush_tk
         place(TKF, tks, tk_width, fft, (tk_x, -depth + tks + fft, tkh),
               (0.0, 0.0, math.radians(90)),
               {'Mirror Y': True, 'Mirror X': True})
-        TKF.hide_viewport = not tk_visible
-        TKF.hide_render = not tk_visible
+        TKF.hide_viewport = not tkf_visible
+        TKF.hide_render = not tkf_visible
         TKF['IS_FINISHED'] = True
 
         # --- Finished front bands (Finish-X) -------------------------
