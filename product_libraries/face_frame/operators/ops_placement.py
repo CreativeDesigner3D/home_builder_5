@@ -2652,6 +2652,47 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._left_offset = None
         self._right_offset = None
         self._opening_target = (opening, width, depth, loc.copy())
+        self._placement_dim_specs = self._build_dim_specs_in_opening(
+            context, opening, width, loc, thickness)
+
+    def _build_dim_specs_in_opening(self, context, opening, width, loc,
+                                    thickness):
+        """Placement dims while previewing inside an opening: the
+        fitted width above the shelf, the shelf-bottom height off the
+        FLOOR down the left side, and the clear gap from the opening
+        bottom (green, since it's the in-opening measure the user is
+        actually driving with the cursor)."""
+        unit_settings = context.scene.unit_settings
+        wm = opening.matrix_world
+        z = loc.z
+        specs = []
+
+        # Width, drawn just above the shelf top.
+        z_dim = z + thickness + units.inch(2.0)
+        s = wm @ Vector((loc.x, 0.0, z_dim))
+        e = wm @ Vector((loc.x + width, 0.0, z_dim))
+        specs.append(hb_placement.PlacementDimSpec(
+            s, e, units.unit_to_string(unit_settings, width), None))
+
+        # Height off the floor to the shelf's bottom face: world
+        # vertical from the room floor (z=0) below the shelf's front
+        # left corner.
+        base = wm @ Vector((loc.x - units.inch(2.0), 0.0, z))
+        floor = Vector((base.x, base.y, 0.0))
+        if base.z > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                floor, base,
+                units.unit_to_string(unit_settings, base.z), None))
+
+        # Clear gap from the opening bottom, drawn on the right; green
+        # to match the snap-adjacency convention.
+        if z > units.inch(0.5):
+            gs = wm @ Vector((loc.x + width + units.inch(2.0), 0.0, 0.0))
+            ge = wm @ Vector((loc.x + width + units.inch(2.0), 0.0, z))
+            specs.append(hb_placement.PlacementDimSpec(
+                gs, ge, units.unit_to_string(unit_settings, z),
+                (0.30, 0.95, 0.40, 1.0)))
+        return specs
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.
