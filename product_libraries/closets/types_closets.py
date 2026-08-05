@@ -1574,6 +1574,13 @@ class ClosetStarter(GeoNodeCage):
             # opening floor instead of hanging through it, which is
             # where the prior library's stack started.
             rise = shelf_depth * math.sin(angle)
+            # Tipping about the rear edge also swings the front edge
+            # back, by a shelf depth less its own run once tilted. The
+            # prior library pivoted about the FRONT edge instead, its
+            # shelves reaching the opening face. Carry the stack forward
+            # by that difference so the front lip lands on the face here
+            # too, rather than standing off it by the tilt.
+            y_slant = -shelf_depth * (1.0 - math.cos(angle))
             fence_mat = shoe_fence_material(
                 opening.hb_closet_opening.slant_color)
             # The fence is held in from each end of the shelf and can
@@ -1582,14 +1589,16 @@ class ClosetStarter(GeoNodeCage):
             # too big leaves a fence rather than nothing.
             f_inset = min(max(float(_shp.slant_fence_inset), 0.0),
                           max((shelf_w - inch(1.0)) / 2.0, 0.0))
+            f_room = (shelf_depth - const.SHOE_FENCE_DEPTH
+                      - const.SHOE_FENCE_STANDOFF)
             f_back = min(max(float(_shp.slant_back_inset), 0.0),
-                         max(shelf_depth - const.SHOE_FENCE_DEPTH, 0.0))
+                         max(f_room, 0.0))
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 # These rest on clips too, so they take the opening's
                 # clip gap. Their setback is the fence's, not the
                 # room's, which is why it is worked out above.
-                child.location = (clip, 0.0, z)
+                child.location = (clip, y_slant, z)
                 child.rotation_euler = (angle, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
@@ -1602,7 +1611,8 @@ class ClosetStarter(GeoNodeCage):
                     # Sit on the shelf top, frontmost strip, inset each side.
                     fence.location = (
                         f_inset,
-                        y_front + const.SHOE_FENCE_DEPTH + f_back, st)
+                        y_front + const.SHOE_FENCE_STANDOFF
+                        + const.SHOE_FENCE_DEPTH + f_back, st)
                     fpart = GeoNodeCutpart(fence)
                     fpart.set_input(
                         'Length',

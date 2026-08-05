@@ -353,9 +353,11 @@ ROLLOUT_MIN_HEIGHT = inch(2.0)
 # Dividing an opening left and right. A column narrower than this is
 # not worth building, so a division that would leave one is refused.
 DIVISION_MIN_WIDTH = inch(3.0)
-# Cubbies: a grid of divisions and shelves filling an opening. Both are
-# held back from the front edge by the setback.
-CUBBY_SETBACK = inch(0.25)
+# Cubbies: a grid of divisions and shelves filling an opening. Both can
+# be held back from the front edge by the setback. The prior library ran
+# both of them the full depth of the opening, so that is where this
+# starts; the setback is here as a setting for anyone who wants one.
+CUBBY_SETBACK = inch(0.0)
 # A grid can take a band at the bottom or the top of an opening instead
 # of the whole of it, capped by a shelf, which leaves the rest of the
 # opening free for something else. This is how tall that band stands
@@ -384,6 +386,10 @@ SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
 # library carried this as its own setting and shipped it at zero, the
 # fence flush with the front, so that is where it starts here too.
 SHOE_FENCE_BACK_INSET = inch(0.0)
+# The fence does not sit on the very lip of the shelf. It stands off the
+# front edge by this much before the back inset is counted on top, which
+# is the stand-off the prior library built the rail in at.
+SHOE_FENCE_STANDOFF = millimeter(20.0)
 # Modal add-part height snapping increment (fallback only; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
