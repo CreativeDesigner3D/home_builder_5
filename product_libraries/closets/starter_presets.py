@@ -39,4 +39,5 @@ BAY_PROP_DEFAULTS = {
     'unlock_depth': False,
     'remove_bottom': False,
     'remove_cleat': False,
+    'remove_shelf_cleat': False,
 }

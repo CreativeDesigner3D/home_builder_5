@@ -846,6 +846,12 @@ class Closet_Bay_Props(PropertyGroup):
         description="Leave this bay's wall cleat out",
         default=starter_presets.BAY_PROP_DEFAULTS['remove_cleat'],
         update=_update_bay_prop)  # type: ignore
+    remove_shelf_cleat: BoolProperty(
+        name="Remove Shelf Cleat",
+        description="Leave out the cleat that stands behind this bay's "
+                    "mid shelf",
+        default=starter_presets.BAY_PROP_DEFAULTS['remove_shelf_cleat'],
+        update=_update_bay_prop)  # type: ignore
     bottom_shelf_inset: FloatProperty(
         name="Bottom Shelf Inset",
         description="Hold this bay's bottom shelf off the wall by this "
@@ -1190,6 +1196,12 @@ class Closet_Opening_Props(PropertyGroup):
         description="Top of the drawer front to the middle of the pull",
         default=const.DRAWER_PULL_VERTICAL_LOCATION,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    door_pull_location: EnumProperty(
+        name="Door Pull Location",
+        description="Which convention holds the pulls on this opening's "
+                    "doors. Auto reads it off where the door sits",
+        items=const.DOOR_PULL_LOCATION_ITEMS,
+        default='AUTO')  # type: ignore
     double_pull_on_front: BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "

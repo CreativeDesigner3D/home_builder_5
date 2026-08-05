@@ -86,11 +86,20 @@ _BOX_MATERIALS = {
 }
 
 
+# Sizes come back off the drawing as 32 bit floats, so a nominal four
+# inches of room reads as a hair under four and would fall out of the
+# band it names into the one below. A thousandth of an inch of slack is
+# far more than that rounding and far less than the inch between one
+# standard and the next, so a nominal figure lands where it should
+# while a genuinely short opening still steps down.
+_BAND_SLACK = inch(0.001)
+
+
 def _band(table, avail):
     """Largest standard whose minimum fits `avail`, or None when even
     the smallest standard is bigger than what there is room for."""
     for value, minimum in table:
-        if avail >= minimum:
+        if avail >= minimum - _BAND_SLACK:
             return value
     return None
 
@@ -106,7 +115,7 @@ def _slide(avail):
     """Longest slide the depth takes, or None when even the shortest
     is longer than there is room for."""
     for length in _SLIDE_LENGTHS:
-        if avail >= length:
+        if avail >= length - _BAND_SLACK:
             return length
     return None
 

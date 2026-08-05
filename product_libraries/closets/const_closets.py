@@ -268,6 +268,20 @@ DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
 # library had them and what gets measured on the floor, so it is kept.
 DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
 DISTANCE_BETWEEN_PULLS = inch(6.0)
+# Where a door's pull sits on it. Three conventions, each measured from
+# somewhere different: Base holds the pull down from the top edge of the
+# door, Upper holds it up from the bottom edge, and Tall holds it at a
+# height off the floor whatever the door is doing. Auto reads the door's
+# own place in the run and picks the one that suits it, which is what an
+# opening starts on; naming one holds the door to it.
+DOOR_PULL_LOCATION_ITEMS = [
+    ('AUTO', "Auto",
+     "Pick the convention from where the door sits in the run"),
+    ('BASE', "Base", "Hold the pull down from the top edge of the door"),
+    ('TALL', "Tall", "Hold the pull at the tall height off the floor"),
+    ('UPPER', "Upper",
+     "Hold the pull up from the bottom edge of the door"),
+]
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).

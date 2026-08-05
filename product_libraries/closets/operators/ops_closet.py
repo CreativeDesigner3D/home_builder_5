@@ -3914,6 +3914,10 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
                        else 'TRIA_UP_BAR'))
         col.prop(bp, 'remove_bottom')
         col.prop(bp, 'remove_cleat')
+        # Only the mid-shelf configuration stands a cleat behind a
+        # shelf, so the toggle only shows where there is one to remove.
+        if any(c.get('hb_shelf_cleat') for c in bay.children):
+            col.prop(bp, 'remove_shelf_cleat')
         # A double panel splits the junction this bay shares with the bay
         # on its right, so the last bay has nothing to double up on.
         if bp.bay_index < bay_count - 1:
@@ -4346,6 +4350,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="Top of the drawer front to the middle of the pull",
         default=const.DRAWER_PULL_VERTICAL_LOCATION,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    door_pull_location: bpy.props.EnumProperty(
+        name="Door Pull Location",
+        description="Which convention holds the pulls on this opening's "
+                    "doors. Auto reads it off where the door sits",
+        items=const.DOOR_PULL_LOCATION_ITEMS,
+        default='AUTO')  # type: ignore
     double_pull_on_front: bpy.props.BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "
@@ -4435,6 +4445,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.drawer_pull_vertical_location = float(
             op.drawer_pull_vertical_location)
         self.distance_between_pulls = float(op.distance_between_pulls)
+        self.door_pull_location = op.door_pull_location
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def _draw_interior(self, box, context):
@@ -4587,6 +4598,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                 context.scene.unit_settings,
                 cp.pull_vertical_location_drawers))
         col.separator()
+        # Doors carry their own rule; the drawer settings above say
+        # nothing about where a door's pull lands.
+        col.prop(self, 'door_pull_location', text="Doors")
+        col.separator()
         row = col.row(align=True)
         row.prop(self, 'double_pull_on_front', text="Two Per Front")
         sub = row.row(align=True)
@@ -4713,6 +4728,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.drawer_pull_vertical_location
         _op.double_pull_on_front = self.double_pull_on_front
         _op.distance_between_pulls = self.distance_between_pulls
+        _op.door_pull_location = self.door_pull_location
         _op.add_back = self.add_back
         _op.back_inset = self.back_inset
         _op.back_notch_left = self.back_notch_left

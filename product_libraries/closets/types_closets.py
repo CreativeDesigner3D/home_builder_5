@@ -498,7 +498,7 @@ class ClosetRod(GeoNodeObject):
 # Interior part builders (module-level: operators call these directly)
 # ---------------------------------------------------------------------------
 def add_fixed_shelf(opening_obj, z_offset, anchor_top=False,
-                    role=PART_ROLE_FIXED_SHELF):
+                    role=PART_ROLE_FIXED_SHELF, cleat=False):
     """Create a shelf part under an opening. Position/size are written by
     the next recalculate(); only static orientation is set here."""
     shelf = CabinetPart()
@@ -510,7 +510,22 @@ def add_fixed_shelf(opening_obj, z_offset, anchor_top=False,
     shelf.obj['hb_anchor_top'] = 1 if anchor_top else 0
     shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
     shelf.set_input('Mirror Y', True)
+    if cleat:
+        add_shelf_cleat(shelf.obj)
     return shelf.obj
+
+
+def add_shelf_cleat(shelf_obj):
+    """Create the cleat that stiffens the wall behind a shelf. It rides
+    under the shelf as a child, so it keeps its place when the shelf
+    moves and it goes when the shelf goes."""
+    cleat = CabinetPart()
+    cleat.create('Cleat')
+    cleat.obj.parent = shelf_obj
+    cleat.obj['hb_part_role'] = PART_ROLE_CLEAT
+    cleat.obj.rotation_euler.x = math.radians(90)
+    shelf_obj['hb_shelf_cleat'] = 1
+    return cleat.obj
 
 
 def add_rod(opening_obj, z_offset):
@@ -1324,6 +1339,7 @@ class ClosetStarter(GeoNodeCage):
                     part.set_input('Thickness', st)
                     _set_part_hidden(sh, False)
                     boundaries.append(z_off)
+                    self._lay_out_shelf_cleat(sh, bay_obj, bay, st)
 
                 bottoms = [0.0] + [b + st for b in boundaries]
                 tops = boundaries + [bay['interior_h']]
@@ -2030,19 +2046,29 @@ class ClosetStarter(GeoNodeCage):
                 x = width - offset
             else:
                 x = offset
-            # Base / Tall / Upper rule, floor-referenced: hold the pull
-            # at the TALL height off the floor; when the door bottom is
-            # already above that height use the UPPER convention (near
-            # the bottom edge); when the tall height would land past
-            # the door top use the BASE convention (near the top edge).
+            # Base / Tall / Upper, floor-referenced. On Auto the rule
+            # is read off the door: hold the pull at the TALL height
+            # off the floor; when the door bottom is already above that
+            # height use the UPPER convention (near the bottom edge);
+            # when the tall height would land past the door top use the
+            # BASE convention (near the top edge). Naming one instead
+            # holds the door to it, clamped to stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
             tall_target = v_tall
-            if bottom_w >= tall_target:
+            rule = (op.door_pull_location if op is not None else 'AUTO')
+            base_y = height - v_base - half
+            if rule == 'BASE':
+                y = base_y
+            elif rule == 'UPPER':
+                y = v_upper + half
+            elif rule == 'TALL':
+                y = (tall_target - bottom_w) + half
+            elif bottom_w >= tall_target:
                 y = v_upper + half
             else:
                 tall_y = (tall_target - bottom_w) + half
-                base_y = height - v_base - half
                 y = tall_y if tall_y <= base_y else base_y
+            y = min(max(y, half), max(height - half, half))
             rot = (math.radians(-90.0), 0.0, math.radians(90.0))
 
         # One pull, or a pair straddling the middle of the front where
@@ -2384,6 +2410,27 @@ class ClosetStarter(GeoNodeCage):
             obj = add_fixed_shelf(opening, 0.0, role=PART_ROLE_CUBBY_SHELF)
             obj['hb_cubby_index'] = len(shelves)
             shelves.append(obj)
+
+    def _lay_out_shelf_cleat(self, shelf, bay_obj, bay, st):
+        """Size and place the cleat under a shelf that carries one. It
+        hangs from the shelf's underside at the back of the bay, the
+        same four inches deep as the wall cleat above it."""
+        cleat = next((c for c in shelf.children
+                      if c.get('hb_part_role') == PART_ROLE_CLEAT), None)
+        if cleat is None:
+            return
+        # Turned on its edge the cleat stands up from its origin, so
+        # it is dropped its own width to hang under the shelf instead.
+        cleat.location = (0.0, 0.0, -const.CLEAT_WIDTH)
+        cleat.rotation_euler = (math.radians(90), 0.0, 0.0)
+        part = GeoNodeCutpart(cleat)
+        part.set_input('Length', bay['width'])
+        part.set_input('Width', const.CLEAT_WIDTH)
+        part.set_input('Thickness', st)
+        # A double island has no wall behind the shelf to cleat to.
+        _set_part_hidden(
+            cleat,
+            self.is_double or bay_obj.hb_closet_bay.remove_shelf_cleat)
 
     def _bay_split_shelves(self, bay_obj, side):
         """Committed splitting shelves of one side, bottom-up."""
@@ -4059,6 +4106,10 @@ def clear_bay_contents(bay_obj):
     for child in list(bay_obj.children):
         if child.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
                                          PART_ROLE_DIVISION):
+            # A shelf can carry a cleat of its own; that goes with the
+            # shelf rather than being left standing on nothing.
+            for sub in list(child.children):
+                bpy.data.objects.remove(sub, do_unlink=True)
             bpy.data.objects.remove(child, do_unlink=True)
     for opening in [c for c in bay_obj.children if c.get(TAG_OPENING_CAGE)]:
         clear_opening_contents(opening)
@@ -4137,7 +4188,8 @@ def serialize_opening(opening):
             int(opening.hb_closet_opening.unlock_pull_location),
             float(opening.hb_closet_opening.drawer_pull_vertical_location),
             int(opening.hb_closet_opening.double_pull_on_front),
-            float(opening.hb_closet_opening.distance_between_pulls)],
+            float(opening.hb_closet_opening.distance_between_pulls),
+            opening.hb_closet_opening.door_pull_location],
         # Whether this opening is closed at the back, and how, so a
         # copy is backed the way the original was.
         'back': [int(opening.hb_closet_opening.add_back),
@@ -4216,6 +4268,9 @@ def apply_opening_data(opening, data, recalc=True):
         _op.drawer_pull_vertical_location = float(pulls[4])
         _op.double_pull_on_front = bool(pulls[5])
         _op.distance_between_pulls = float(pulls[6])
+        # Copies taken before the door rule was a setting carry six.
+        if len(pulls) > 7:
+            _op.door_pull_location = str(pulls[7])
     if data.get('door_swing'):
         # A copy taken before the tilt-out hamper became a front of its
         # own carries the old flag, so it reads back as that front.
@@ -4273,9 +4328,18 @@ def serialize_bay(bay_obj):
     return {
         'remove_bottom': bool(bp.remove_bottom),
         'remove_cleat': bool(bp.remove_cleat),
+        'remove_shelf_cleat': bool(bp.remove_shelf_cleat),
         'bay_door_swing': bp.door_swing,
         'bay_open_door': float(bp.open_door),
         'shelves': list(shelves),
+        # Which of those shelves carry a cleat of their own, held by the
+        # same offsets so a paste puts one back under the same shelf.
+        'shelf_cleats': sorted(
+            c.get('hb_z_offset', 0.0) for c in bay_obj.children
+            if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+            and c.get('hb_shelf_cleat')
+            and not c.get('hb_preview')
+            and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
         # A division travels as the segment it is in and how far across
         # the bay it stands, which is what puts it back where it was in
         # a bay of the same width.
@@ -4302,8 +4366,9 @@ def apply_bay_data(bay_obj, data):
                   and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'), None)
     if front is None:
         return False
+    cleats = list(data.get('shelf_cleats', ()))
     for z in data.get('shelves', ()):
-        add_fixed_shelf(front, z)
+        add_fixed_shelf(front, z, cleat=z in cleats)
     recalculate_closet_starter(root)   # adopt shelves -> segments
 
     # Divisions go in against the segments the shelves have just made,
@@ -4325,6 +4390,7 @@ def apply_bay_data(bay_obj, data):
         bp = bay_obj.hb_closet_bay
         bp.remove_bottom = data.get('remove_bottom', False)
         bp.remove_cleat = data.get('remove_cleat', False)
+        bp.remove_shelf_cleat = data.get('remove_shelf_cleat', False)
         bp.open_door = float(data.get('bay_open_door', 0.0))
         if data.get('bay_door_swing'):
             bp.door_swing = ('TILT_OUT' if data.get('bay_is_hamper')
@@ -4530,6 +4596,8 @@ def apply_bay_config(bay_obj, config):
 
     splits = []
     actions = []
+    # Which split, if any, carries a cleat behind it.
+    cleat_at = None
     bay_door = None           # FULL_HEIGHT_DOORS -> bay-wide double door
     if config == 'ADJ_SHELVES':
         opening.hb_closet_opening.adj_shelf_qty = max(
@@ -4554,6 +4622,9 @@ def apply_bay_config(bay_obj, config):
         if top - low < st + inch(1.0):
             top = low + st + inch(1.0)
         splits = [low, top]
+        # The shelf under the upper hang takes a cleat behind it, the
+        # way the prior library built this configuration.
+        cleat_at = top
         actions = [(0, _cfg_rod), (2, _cfg_rod)]
     elif drawer_qty is not None:
         qty = drawer_qty
@@ -4589,7 +4660,7 @@ def apply_bay_config(bay_obj, config):
         return False
 
     for z in splits:
-        add_fixed_shelf(opening, z)
+        add_fixed_shelf(opening, z, cleat=(z == cleat_at))
     recalculate_closet_starter(root)   # adopt splits -> segments
 
     openings = sorted(
