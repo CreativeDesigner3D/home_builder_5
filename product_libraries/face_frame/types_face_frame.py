@@ -8568,9 +8568,17 @@ class FaceFrameCabinet(GeoNodeCage):
         for region_props, region_z in self._walk_interior_regions(
             opening_obj, rect,
         ):
-            auto_qty = solver.auto_shelf_qty(region_z, layout.dim_y)
             for item in region_props.interior_items:
-                if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
+                if (item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
+                        and not item.unlock_shelf_qty):
+                    # The item's bottom offset shrinks the space the
+                    # stack distributes in, so the auto count reads the
+                    # remaining height, not the full region height.
+                    item_h = max(
+                        0.0,
+                        region_z - getattr(item, 'bottom_offset', 0.0),
+                    )
+                    auto_qty = solver.auto_shelf_qty(item_h, layout.dim_y)
                     if item.shelf_qty != auto_qty:
                         item.shelf_qty = auto_qty
                 elif (item.kind == 'ROLLOUT'

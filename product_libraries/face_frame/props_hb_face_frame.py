@@ -4730,7 +4730,8 @@ def _update_front_type(self, context):
     """
     if self.front_type == 'DOOR':
         has_shelves = any(
-            item.kind == 'ADJUSTABLE_SHELF' for item in self.interior_items
+            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
+            for item in self.interior_items
         )
         if not has_shelves:
             # .add() picks up the EnumProperty default ('ADJUSTABLE_SHELF')
@@ -6914,6 +6915,10 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('STEMWARE_RACK',    "Stemware Rack",      "SR: slotted hardwood slats at the top of the opening, slots 4\" on center"),
         ('PLATE_RACK',       "Plate Rack",         "PR: 3/8\" birch dowels 2\" on center"),
         ('CLOSET_ROD',       "Closet Rod",         "CR: hang rod across the opening, set down from the opening top"),
+        # Appended at the end (same reason as above): a distinct kind so
+        # the dropdown offers it directly. Solver emits ADJUSTABLE_SHELF
+        # parts with the front edge at half the cavity depth.
+        ('HALF_DEPTH_SHELF', "Half Depth Shelves", "Adjustable shelves whose depth is half the opening depth"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',
@@ -6939,6 +6944,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Shelf Setback",
         description="Distance the shelf is pulled back from the front of the cavity",
         default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Vertical anchor: lifts the item's zone up from the opening bottom.
+    # Shelf stacks distribute in the space above it; tray dividers start
+    # at it. Lets several items share one opening without overlapping
+    # (e.g. tray dividers below, shelves above).
+    bottom_offset: FloatProperty(
+        name="From Bottom",
+        description="Raise this item's zone up from the bottom of the opening; shelves spread out in the space above",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     # Finished-opening nosing on the shelf front edge (ADJUSTABLE_SHELF

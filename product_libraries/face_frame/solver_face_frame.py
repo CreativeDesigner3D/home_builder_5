@@ -4304,12 +4304,15 @@ def auto_shelf_qty(opening_height, depth):
 
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
                               kind, role, name_prefix,
-                              nosing_style='NONE', nosing_height=0.0):
+                              nosing_style='NONE', nosing_height=0.0,
+                              z0=0.0):
     """Stacked horizontal shelves filling a region. Geometry is
     identical for adjustable and glass shelves; the kind/role tag
     drives downstream material handling and selection. setback is
-    per-item so the half-depth preset (which bumps shelf_setback to
-    6") can request a deeper front gap on individual items.
+    per-item (half-depth shelves pass the mid-cavity line) so
+    individual items can request a deeper front gap. z0 lifts the
+    whole stack: shelves distribute evenly in [z0, region top], so
+    an item can sit above another insert sharing the opening.
 
     A nosing style other than NONE (adjustable shelves only) recesses
     the shelf board by the nosing stock depth and emits one
@@ -4322,7 +4325,8 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     cage_dim_x = rect['cage_dim_x']
     cage_dim_z = rect['cage_dim_z']
 
-    interior_h = cage_dim_z - qty * SHELF_THICKNESS
+    z0 = max(0.0, min(z0, cage_dim_z))
+    interior_h = (cage_dim_z - z0) - qty * SHELF_THICKNESS
     if interior_h <= 0:
         return []
     spacing = interior_h / (qty + 1)
@@ -4337,7 +4341,7 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     for k in range(qty):
         # Shelf k bottom-face Z: stack from the bottom with one spacing
         # gap before the first shelf and one after the last.
-        z = (k + 1) * spacing + k * SHELF_THICKNESS
+        z = z0 + (k + 1) * spacing + k * SHELF_THICKNESS
         items.append({
             'kind':     kind,
             'role':     role,
@@ -4364,18 +4368,20 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
 
 
 def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback,
-                                  nosing_style='NONE', nosing_height=0.0):
+                                  nosing_style='NONE', nosing_height=0.0,
+                                  z0=0.0):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Adjustable Shelf',
-        nosing_style, nosing_height,
+        nosing_style, nosing_height, z0,
     )
 
 
-def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback):
+def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'GLASS_SHELF', 'GLASS_SHELF', 'Glass Shelf',
+        z0=z0,
     )
 
 
@@ -4586,9 +4592,12 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
     setback = item.tray_setback
     remove_shelf = item.tray_remove_shelf
     opening_height = item.tray_opening_height
+    # Vertical anchor: the whole insert (dividers + locked shelf) rides
+    # up from the region bottom so it can sit above other items.
+    z0 = max(0.0, min(getattr(item, 'bottom_offset', 0.0), cage_dim_z))
 
     if remove_shelf:
-        div_length = cage_dim_z
+        div_length = max(0.0, cage_dim_z - z0)
     else:
         # Dividers stop just below the locked shelf's bottom face.
         div_length = max(0.0, opening_height - SHELF_THICKNESS)
@@ -4607,7 +4616,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'role':         'TRAY_DIVIDER',
             'name':         f'Tray Divider {k + 1}',
             'orientation':  'VERTICAL',
-            'position':     (x, cage_dim_y - SHELF_BACK_SETBACK, 0.0),
+            'position':     (x, cage_dim_y - SHELF_BACK_SETBACK, z0),
             'dims':         (div_length, div_width, div_thickness),
         })
 
@@ -4620,7 +4629,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'name':         'Tray Locked Shelf',
             'orientation':  'HORIZONTAL',
             'position':     (SHELF_X_CLEARANCE, setback,
-                             max(0.0, opening_height - SHELF_THICKNESS)),
+                             z0 + max(0.0, opening_height - SHELF_THICKNESS)),
             'dims':         (shelf_length, shelf_width, SHELF_THICKNESS),
         })
     return out
@@ -4777,10 +4786,25 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
                 rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
+                getattr(item, 'bottom_offset', 0.0),
+            ))
+        elif item.kind == 'HALF_DEPTH_SHELF':
+            # Half-depth shelves: the front edge always sits at half the
+            # cavity depth, so the look holds across wall, base, and
+            # tall cabinet depths (a static setback would not). Parts
+            # emit as ADJUSTABLE_SHELF so downstream consumers treat
+            # them like any other adjustable shelf.
+            out.extend(_shelf_stack_descriptors(
+                rect, cage_dim_y, item.shelf_qty, cage_dim_y / 2.0,
+                'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Half-Depth Shelf',
+                getattr(item, 'shelf_nosing_style', 'NONE'),
+                getattr(item, 'shelf_nosing_height', 0.0),
+                z0=getattr(item, 'bottom_offset', 0.0),
             ))
         elif item.kind == 'GLASS_SHELF':
             out.extend(_glass_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback
+                rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
+                z0=getattr(item, 'bottom_offset', 0.0),
             ))
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))

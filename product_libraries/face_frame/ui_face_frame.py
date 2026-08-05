@@ -1031,7 +1031,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         rm.index = i
         rm.target_name = target_name
 
-        if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF'}:
+        if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF',
+                         'HALF_DEPTH_SHELF'}:
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             # Greyed out when on auto - the recalc owns the value.
@@ -1039,8 +1040,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             field.prop(item, 'shelf_qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
-            sub.prop(item, 'shelf_setback', text="Setback")
-            if item.kind == 'ADJUSTABLE_SHELF':
+            if item.kind != 'HALF_DEPTH_SHELF':
+                # Half-depth shelves compute their own setback (half the
+                # cavity depth), so the field only shows where it acts.
+                sub.prop(item, 'shelf_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
+            if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF'}:
                 sub.prop(item, 'shelf_nosing_style', text="Nosing")
                 if item.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
                     sub.prop(item, 'shelf_nosing_height', text="Nosing Height")
@@ -1092,6 +1097,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
             sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
             sub.prop(item, 'tray_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
         elif item.kind == 'VANITY_SHELVES':
             sub.prop(item, 'vanity_z', text="Shelf Z")
             sub.prop(item, 'vanity_length', text="Shelf Length")

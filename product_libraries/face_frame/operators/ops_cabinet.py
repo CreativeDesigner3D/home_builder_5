@@ -1511,9 +1511,9 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
     Face_Frame_Interior_Item supply the rest, and the user edits in
     the panel afterward.
 
-    The half_depth flag is a shortcut: when on, sets the new item's
-    kind to ADJUSTABLE_SHELF and bumps shelf_setback to 6" (a half-
-    depth shelf is just a deeper-setback adjustable shelf).
+    The half_depth flag is a shortcut: when on, the new item lands on
+    the HALF_DEPTH_SHELF kind regardless of the kind the operator was
+    called with (kept for callers predating the dedicated kind).
     """
     bl_idname = "hb_face_frame.add_interior_item"
     bl_label = "Add Interior Item"
@@ -1532,7 +1532,7 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
 
     half_depth: bpy.props.BoolProperty(
         name="Half Depth",
-        description="Create a half-depth adjustable shelf (kind = ADJUSTABLE_SHELF, shelf_setback = 6\")",
+        description="Create a half-depth shelf item (kind = HALF_DEPTH_SHELF)",
         default=False,
     )  # type: ignore
 
@@ -1566,10 +1566,10 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
         item = target_props.interior_items.add()
         if self.half_depth:
             # The half-depth preset is a kind override: regardless of
-            # what kind the operator was called with, we land on an
-            # adjustable shelf with the deeper setback.
-            item.kind = 'ADJUSTABLE_SHELF'
-            item.shelf_setback = inch(6.0)
+            # what kind the operator was called with, we land on the
+            # half-depth shelf kind (the solver computes the setback
+            # from the cavity depth).
+            item.kind = 'HALF_DEPTH_SHELF'
         else:
             item.kind = self.kind
             # Seed a couple of default boxes for a new rollout; the box
@@ -2149,8 +2149,8 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op = layout.operator(
                 "hb_face_frame.add_interior_item", text="Half-Depth Shelf",
             )
-            op.kind = 'ADJUSTABLE_SHELF'
-            op.half_depth = True
+            op.kind = 'HALF_DEPTH_SHELF'
+            op.half_depth = False
             op.target_name = target_name
 
             layout.separator()
@@ -2443,11 +2443,12 @@ def apply_opening_preset(opening_obj, config, **overrides):
     shelves = preset.get('shelves')
     if shelves == 'CLEAR':
         for i in range(len(op_props.interior_items) - 1, -1, -1):
-            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+            if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
+                                                   'HALF_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
     elif shelves == 'ENSURE':
         has_shelves = any(
-            item.kind == 'ADJUSTABLE_SHELF'
+            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
             for item in op_props.interior_items
         )
         if not has_shelves:
@@ -2479,7 +2480,8 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # re-seeds a shelf, so this must come after it).
     if overrides.get('no_shelves'):
         for i in range(len(op_props.interior_items) - 1, -1, -1):
-            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+            if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
+                                                   'HALF_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
 
     # Apply post-preset overrides. accessory_label targets the most
@@ -4459,7 +4461,8 @@ def _set_opening_interior(op_props, interior):
     """
     items = op_props.interior_items
     for i in range(len(items) - 1, -1, -1):
-        if items[i].kind in ('ADJUSTABLE_SHELF', 'VANITY_SHELVES'):
+        if items[i].kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                             'VANITY_SHELVES'):
             items.remove(i)
     if interior == 'SHELF':
         items.add()  # .add() picks up the EnumProperty default ADJUSTABLE_SHELF
