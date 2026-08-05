@@ -1827,8 +1827,8 @@ class ClosetStarter(GeoNodeCage):
                 # on what is on screen rather than on a default.
                 box[PROP_TRAY_HEIGHT] = h
                 box[PROP_TRAY_Z] = z_tray
-                # The box is anchored at the face it serves and runs
-                # back from it, leaving the clearance at the rear.
+                # The tray is anchored at the face it serves and
+                # runs back from it to the rear of the opening.
                 box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z_tray)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)

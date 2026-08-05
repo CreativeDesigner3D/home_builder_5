@@ -3,8 +3,10 @@
 One scene-level dropdown picks the drawer box system for every closet
 drawer:
 
-- Wood Box: parametric - box follows the front/opening minus the usual
-  clearance deducts.
+- Wood Box: standard sizes - depth steps 9/12/15/18/21" with the
+  opening depth and height steps in 1" increments with the drawer
+  front, dropping back to the parametric size when the opening is
+  smaller than the smallest standard.
 - Metabox: standard side heights N/54, M/86, K/118, H/150 mm (minimum
   openings 78/110/142/174) and slide lengths 270-550 mm.
 - Avantech (+ Illumination): standard box heights 101/139/187/251 mm
@@ -20,6 +22,8 @@ read it.
 """
 import bpy
 
+from ...units import inch
+
 MM = 0.001
 
 
@@ -32,7 +36,7 @@ BOX_TYPES = [
     ('AVANTECH_ILL', "Avantech Illumination",
      "Avantech with lighting; reserves battery depth"),
     ('METABOX', "Metabox", "Steel sides N/M/K/H"),
-    ('WOOD', "Wood Box", "Parametric wood drawer box"),
+    ('WOOD', "Wood Box", "Wood drawer box in standard sizes"),
     ('NONE', "None", "No drawer boxes"),
 ]
 
@@ -45,12 +49,34 @@ _SLIDE_LENGTHS = [_mm(550), _mm(500), _mm(450), _mm(400),
                   _mm(350), _mm(270)]
 _BATTERY_CLEARANCE = _mm(12.7)
 
+# Wood box standards, largest first, as (box size, minimum it needs).
+# The depth steps with the depth of the opening. The height steps with
+# the drawer front, which is the opening height the box sits in less
+# the gap it is given above and below.
+_WOOD_DEPTHS = [(inch(21), inch(21.75)), (inch(18), inch(18.75)),
+                (inch(15), inch(15.75)), (inch(12), inch(12.75)),
+                (inch(9), inch(9.75))]
+_WOOD_HEIGHTS = [(inch(11.125), inch(13)), (inch(10.125), inch(12)),
+                 (inch(9.125), inch(11)), (inch(8.125), inch(10)),
+                 (inch(7.125), inch(9)), (inch(6.125), inch(8)),
+                 (inch(5.125), inch(7)), (inch(4.125), inch(6)),
+                 (inch(3.125), inch(5)), (inch(2.125), inch(4))]
+
 # Box appearance per system (assets/materials/accessory_finishes.blend).
 _BOX_MATERIALS = {
     'AVANTECH': 'Storm Silver Gray',
     'AVANTECH_ILL': 'Storm Silver Gray',
     'METABOX': 'Metabox White',
 }
+
+
+def _band(table, avail):
+    """Largest standard whose minimum fits `avail`, or None when even
+    the smallest standard is bigger than what there is room for."""
+    for value, minimum in table:
+        if avail >= minimum:
+            return value
+    return None
 
 
 def _pick(table, avail, key=None):
@@ -65,11 +91,21 @@ def _pick(table, avail, key=None):
 def size_box(box_type, avail_h, avail_d, wood_h, wood_d):
     """(box_h, box_d, size_tag) for the selected system, or None when
     boxes are off. wood_h/wood_d are the caller's parametric values
-    (front height / opening depth minus the wood-box deducts)."""
+    (front height / opening depth minus the wood-box deducts), which
+    the wood box falls back to when it is too small to reach a
+    standard size."""
     if box_type == 'NONE':
         return None
     if box_type == 'WOOD':
-        return (wood_h, wood_d, 'WOOD')
+        # A wood box is built to standard sizes the way the prior
+        # library built one, so the same opening always yields the
+        # same box. Where the opening is smaller than the smallest
+        # standard there is nothing to step down to, so the box keeps
+        # the parametric size and still fits what it is going into.
+        box_d = _band(_WOOD_DEPTHS, avail_d)
+        box_h = _band(_WOOD_HEIGHTS, avail_h)
+        return (wood_h if box_h is None else box_h,
+                wood_d if box_d is None else box_d, 'WOOD')
 
     if box_type in ('AVANTECH', 'AVANTECH_ILL'):
         heights = _AVANTECH_HEIGHTS
