@@ -1902,6 +1902,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'BAY_DIVISION', 'BAY_SHELF', 'MID_DIVISION',
         # Sink apron - face-frame-depth panel behind the FF band
         'APRON',
+        # Pipe chase cover panels closing the chase from the interior
+        'PIPE_CHASE_PANEL',
         # Interior items (DRAWER_BOX / ROLLOUT_BOX are GeoNodeDrawerBox
         # assets with a single Material input, handled by their own
         # branch in _apply_materials_to_cabinet)
