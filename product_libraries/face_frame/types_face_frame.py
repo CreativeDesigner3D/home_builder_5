@@ -4028,8 +4028,11 @@ class FaceFrameCabinet(GeoNodeCage):
                         name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
                     mod.operation = 'DIFFERENCE'
                     mod.solver = 'EXACT'
-                if mod is not None and mod.object is not cutter:
-                    mod.object = cutter
+                if mod is not None:
+                    # Route walls show the finish carried on the cutter.
+                    mod.material_mode = 'TRANSFER'
+                    if mod.object is not cutter:
+                        mod.object = cutter
             else:
                 mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
                 if mod is not None:
@@ -4976,6 +4979,9 @@ class FaceFrameCabinet(GeoNodeCage):
                     name=BOTTOM_RAIL_PROFILE_CUT_MOD_NAME, type='BOOLEAN')
                 mod.operation = 'DIFFERENCE'
                 mod.solver = 'EXACT'
+            # Cut faces read the cutter's material (the material walk
+            # keeps the cutter on the finish), not a target index.
+            mod.material_mode = 'TRANSFER'
             if mod.object is not cutter:
                 mod.object = cutter
         # Drop cutters whose rail segment no longer exists.
@@ -10585,6 +10591,7 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
                             type='BOOLEAN')
                         mod.operation = 'DIFFERENCE'
                         mod.solver = 'EXACT'
+                    mod.material_mode = 'TRANSFER'
                     if mod.object is not cutter:
                         mod.object = cutter
 

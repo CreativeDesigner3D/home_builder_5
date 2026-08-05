@@ -1837,6 +1837,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'FURNITURE_TOP', 'FURNITURE_TOP_LEG',
         # Finished back closing a hutch upper's dropped-end recess
         'HUTCH_BACK',
+        # Finished bottom panel under an upper - applied finish stock
+        'FINISHED_BOTTOM',
         # Over-stool shelf between the extended legs
         'OVERSTOOL_SHELF',
         # Full-overlay wall-stile cover + appliance-opening fillers +
@@ -2237,7 +2239,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # exterior" per the catalog.
                 if (child.get('hb_part_role') in ('SHELF_NOSING',
                                                   'BAR_STORAGE',
-                                                  'LEG_CURVED_PANEL')
+                                                  'LEG_CURVED_PANEL',
+                                                  # Boolean cutters: the cut
+                                                  # faces transfer the cutter's
+                                                  # material, so the finish
+                                                  # rides along onto the cut.
+                                                  'BOTTOM_RAIL_PROFILE_CUTTER',
+                                                  'FINISHED_BOTTOM_LED_CUTTER')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
