@@ -2400,6 +2400,18 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
+    # Retracting mechanisms: regular door fronts plus the door_mechanism
+    # stamp (the solver applies the interior clearances; downstream 2D
+    # prints the labels). 'mechanism' is applied unconditionally in
+    # apply_opening_preset so plain presets clear a previous stamp.
+    'RETRACTING_DOOR':        {'front_type': 'DOOR', 'hinge_side': 'LEFT',
+                               'mechanism': 'RETRACTING'},
+    'RETRACTING_DOOR_PAIR':   {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'RETRACTING'},
+    'BIFOLD_RETRACTING_DOOR': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'RETRACTING_BIFOLD'},
+    'TOP_RETRACTING_DOOR':    {'front_type': 'DOOR', 'hinge_side': 'TOP',
+                               'mechanism': 'RETRACTING_TOP'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
     'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
@@ -2467,6 +2479,9 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # Unconditional so re-applying any non-tilt-out preset (including
     # plain FALSE_FRONT) clears a previous tilt-out designation.
     op_props.is_tilt_out = bool(preset.get('tilt_out'))
+    # Same rule for the door mechanism: plain presets drop a previous
+    # retracting designation.
+    op_props.door_mechanism = preset.get('mechanism', 'NONE')
     if 'hinge_side' in preset:
         op_props.hinge_side = preset['hinge_side']
 
@@ -2522,6 +2537,10 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
+            ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
+            ('RETRACTING_DOOR_PAIR', "Retracting Doors (Pair)", "Pair of doors that open, then slide back into the cabinet"),
+            ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors", "Hinged pair that folds, then slides back into the cabinet"),
+            ('TOP_RETRACTING_DOOR', "Top-Mount Retracting Door", "Full-width door that retracts up into the cabinet"),
             ('DRAWER',            "Drawer",            "Drawer front"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
             ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),

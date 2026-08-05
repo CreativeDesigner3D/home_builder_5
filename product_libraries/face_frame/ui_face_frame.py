@@ -864,6 +864,11 @@ def draw_opening_properties(layout, opening_obj):
         fcol.prop(op, 'front_type', text="Front Type")
         if op.front_type in ('DOOR', 'PULLOUT'):
             fcol.prop(op, 'hinge_side', text="Hinge Side")
+        # Door mechanism (doors only): standard swing vs the retracting
+        # options. Retracting stamps cost interior clearance (solver)
+        # and print labels on 2D output.
+        if op.front_type == 'DOOR':
+            fcol.prop(op, 'door_mechanism', text="Mechanism")
 
         # Chase fit (drawer / pullout only): how this opening's drawer
         # box responds to the cabinet's pipe chase. Hidden unless the

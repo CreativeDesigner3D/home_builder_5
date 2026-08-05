@@ -7396,6 +7396,26 @@ class Face_Frame_Opening_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # How the opening's doors operate. Retracting mechanisms pocket the
+    # door back into the cabinet after opening; the closed-door look is
+    # unchanged, but per the product spec they cost interior clearance,
+    # which the solver applies to shelf stacks (see
+    # solver_face_frame._retracting_clearances). Downstream 2D consumers
+    # read this for labels / legend entries.
+    DOOR_MECHANISM_ITEMS = [
+        ('NONE', "Standard Swing", "Doors swing open on hinges"),
+        ('RETRACTING', "Retracting",
+         "Doors open, then slide back into the cabinet on rails"),
+        ('RETRACTING_BIFOLD', "Bi-fold Retracting",
+         "Hinged door pairs fold, then slide back into the cabinet"),
+        ('RETRACTING_TOP', "Top-Mount Retracting",
+         "Full-width door that retracts up into the cabinet"),
+    ]
+    door_mechanism: EnumProperty(
+        name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Pipe chase fit for the drawer box behind this opening. Consulted
     # only when the cabinet carries a pipe chase AND the box overlaps it
     # in X (see _create_drawer_box_for_front). SHORTEN (default) clamps

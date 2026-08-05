@@ -4762,7 +4762,31 @@ def _closet_rod_descriptor(rect, cage_dim_y, item):
     }
 
 
-def interior_item_descriptors(layout, rect, cab_props, opening_props):
+def _retracting_clearances(opening_ff):
+    """(left, right, front, top) interior clearances a retracting-door
+    mechanism costs, in meters. All zero when no mechanism applies.
+
+    Per the product spec: pocketed doors ride the side(s) they hinge
+    on, shelves between them narrow by a fixed amount per pocket side
+    and hold back from the front for hinge access; the top-mount door
+    eats a fixed height at the top of the opening.
+    """
+    if opening_ff is None:
+        return (0.0, 0.0, 0.0, 0.0)
+    mech = getattr(opening_ff, 'door_mechanism', 'NONE')
+    if mech == 'RETRACTING_TOP':
+        return (0.0, 0.0, 0.0, inch(2.0))
+    if mech not in ('RETRACTING', 'RETRACTING_BIFOLD'):
+        return (0.0, 0.0, 0.0, 0.0)
+    per_side = inch(3.25) if mech == 'RETRACTING' else inch(4.75)
+    hinge = getattr(opening_ff, 'hinge_side', 'RIGHT')
+    left = per_side if hinge in ('LEFT', 'DOUBLE') else 0.0
+    right = per_side if hinge in ('RIGHT', 'DOUBLE') else 0.0
+    return (left, right, inch(3.0), 0.0)
+
+
+def interior_item_descriptors(layout, rect, cab_props, opening_props,
+                              opening_ff=None):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
     can produce many descriptors (e.g., ADJUSTABLE_SHELF with qty=3 ->
@@ -4771,41 +4795,69 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
     Each descriptor carries a 'kind' field so the recalc can pick the
     right Blender object type (mesh part vs text object) without
     re-reading the source collection.
+
+    opening_ff is the OWNING OPENING's props even when opening_props is
+    an interior-region leaf - opening-level state (the door mechanism)
+    applies to every region the opening contains.
     """
     # Per-bay depth - threaded onto each leaf rect by bay_openings.
     # Used to be computed here from layout.dim_y, which broke when bay
     # depths diverged from the cabinet's overall depth.
     cage_dim_y = rect['cage_dim_y']
+
+    # Retracting-door clearances: shelf stacks narrow off the pocket
+    # side(s), hold back from the front, and lose the top-mount door's
+    # height. Other insert kinds are left as authored for now.
+    cl_l, cl_r, cl_f, cl_t = _retracting_clearances(opening_ff)
+    shelf_rect = rect
+    if cl_l or cl_r or cl_t:
+        shelf_rect = dict(rect)
+        shelf_rect['cage_dim_x'] = max(
+            0.0, rect['cage_dim_x'] - cl_l - cl_r)
+        shelf_rect['cage_dim_z'] = max(0.0, rect['cage_dim_z'] - cl_t)
+
+    def _pocket_shifted(descs):
+        # shelf_rect shrinks symmetrically off 0; the stack actually
+        # starts past the left pocket, so shift the emitted parts.
+        if cl_l:
+            for d in descs:
+                x, y, z = d['position']
+                d['position'] = (x + cl_l, y, z)
+        return descs
+
     out = []
     for item in opening_props.interior_items:
         if item.kind == 'ADJUSTABLE_SHELF':
             # getattr: tolerate item collections created before the
             # nosing props existed (e.g. a live session spanning an
             # addon update).
-            out.extend(_adjustable_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
+            out.extend(_pocket_shifted(_adjustable_shelf_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(item.shelf_setback, cl_f),
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
                 getattr(item, 'bottom_offset', 0.0),
-            ))
+            )))
         elif item.kind == 'HALF_DEPTH_SHELF':
             # Half-depth shelves: the front edge always sits at half the
             # cavity depth, so the look holds across wall, base, and
             # tall cabinet depths (a static setback would not). Parts
             # emit as ADJUSTABLE_SHELF so downstream consumers treat
             # them like any other adjustable shelf.
-            out.extend(_shelf_stack_descriptors(
-                rect, cage_dim_y, item.shelf_qty, cage_dim_y / 2.0,
+            out.extend(_pocket_shifted(_shelf_stack_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(cage_dim_y / 2.0, cl_f),
                 'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Half-Depth Shelf',
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
                 z0=getattr(item, 'bottom_offset', 0.0),
-            ))
+            )))
         elif item.kind == 'GLASS_SHELF':
-            out.extend(_glass_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
+            out.extend(_pocket_shifted(_glass_shelf_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(item.shelf_setback, cl_f),
                 z0=getattr(item, 'bottom_offset', 0.0),
-            ))
+            )))
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'ROLLOUT':
@@ -4883,19 +4935,20 @@ def _shifted_descriptor(desc, offset):
 
 
 def _walk_interior_node(node, rect, origin_offset,
-                        layout, cab_props, out):
+                        layout, cab_props, out, opening_ff=None):
     """Recurse the interior tree. rect is the region's local cage_dim_*;
     origin_offset is the (x, y, z) of this region's front-left-bottom
     corner in OPENING-local coords. Leaves emit interior items
     (translated by origin_offset); split nodes emit one divider
-    descriptor and recurse into children.
+    descriptor and recurse into children. opening_ff carries the owning
+    opening's props down to every leaf (see interior_item_descriptors).
     """
     from . import types_face_frame
 
     if node.get(types_face_frame.TAG_INTERIOR_REGION):
         rp = node.face_frame_interior_region
         leaf_descs = interior_item_descriptors(
-            layout, rect, cab_props, rp,
+            layout, rect, cab_props, rp, opening_ff,
         )
         for d in leaf_descs:
             out.append(_shifted_descriptor(d, origin_offset))
@@ -4980,10 +5033,10 @@ def _walk_interior_node(node, rect, origin_offset,
                       'reveal_left': rev_l, 'reveal_right': rev_r,
                       'reveal_top': rev_t, 'reveal_bottom': 0.0}
         _walk_interior_node(children[0], lower_rect, origin_offset,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
         upper_origin = (ox, oy, oz + size_a + div_t)
         _walk_interior_node(children[1], upper_rect, upper_origin,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
     else:
         # Vertical divider (division). Children stack in X.
         ox, oy, oz = origin_offset
@@ -5027,10 +5080,10 @@ def _walk_interior_node(node, rect, origin_offset,
                       'reveal_left': 0.0, 'reveal_right': rev_r,
                       'reveal_top': rev_t, 'reveal_bottom': rev_b}
         _walk_interior_node(children[0], left_rect, origin_offset,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
         right_origin = (ox + size_a + div_t, oy, oz)
         _walk_interior_node(children[1], right_rect, right_origin,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
 
 
 def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
@@ -5038,12 +5091,13 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     one exists on `opening_obj`, else falls through to the flat path.
     """
     root = _interior_tree_root(opening_obj)
+    op_props = opening_obj.face_frame_opening
     if root is None:
-        op_props = opening_obj.face_frame_opening
-        return interior_item_descriptors(layout, rect, cab_props, op_props)
+        return interior_item_descriptors(layout, rect, cab_props,
+                                         op_props, op_props)
     out = []
     _walk_interior_node(root, rect, (0.0, 0.0, 0.0),
-                        layout, cab_props, out)
+                        layout, cab_props, out, op_props)
     return out
 
 
