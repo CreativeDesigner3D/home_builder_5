@@ -29,14 +29,32 @@ def has_child_item_type(obj,item_type):
             return True
     return False
 
+def _under_hidden_wall(obj):
+    """True when obj hangs under a wall the user hid (Hide Wall / Isolate
+    Selected Walls). Selection-mode highlighting must not resurrect these:
+    cages are hidden while their mode is inactive, so the wall-hide pass
+    skips them (already hidden), and force-showing them here would float
+    openings in space where the hidden wall stands."""
+    p = obj.parent
+    while p is not None:
+        if p.get('IS_WALL_BP'):
+            try:
+                return p.hide_viewport or p.hide_get()
+            except RuntimeError:
+                return p.hide_viewport
+        p = p.parent
+    return False
+
 def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
     hb_props = bpy.context.window_manager.home_builder
-    add_on_prefs = hb_props.get_user_preferences(bpy.context)         
+    add_on_prefs = hb_props.get_user_preferences(bpy.context)
 
     if toggle:
         if dont_show_parent:
             if has_child_item_type(obj,type_name):
                 return
+        if _under_hidden_wall(obj):
+            return
         obj.color = add_on_prefs.cabinet_color
         obj.show_in_front = True
         obj.hide_viewport = False
