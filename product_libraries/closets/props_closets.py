@@ -1584,6 +1584,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Countertops", default=False)  # type: ignore
     show_molding_options: BoolProperty(
         name="Show Molding", default=False)  # type: ignore
+    show_design_warnings: BoolProperty(
+        name="Show Design Warnings", default=True)  # type: ignore
 
     # =====================================================================
     # UI: closet sizes (Library tab)
@@ -1728,6 +1730,29 @@ class Closets_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: drawers (Options tab)
     # =====================================================================
+    def draw_design_warnings_ui(self, layout, context):
+        """What the room has been asked to build that cannot be built
+        at the size it has been given. Each part carries its own
+        warning, written when it was last drawn, so this gathers what
+        is already there rather than working anything out again."""
+        from . import types_closets
+        col = layout.column(align=True)
+        found = []
+        for obj in context.scene.objects:
+            message = obj.get(types_closets.PROP_BOX_WARNING, '')
+            if message:
+                found.append((obj.name, message))
+        if not found:
+            col.label(text="No design warnings.")
+            return
+        col.label(text=str(len(found)) + " Design Warnings Found",
+                  icon='ERROR')
+        col.separator()
+        for name, message in sorted(found):
+            row = col.row()
+            row.label(text=message)
+            row.label(text=name)
+
     def draw_drawer_box_options_ui(self, layout, context):
         col = layout.column(align=True)
         col.prop(self, 'closet_drawer_box', text="Drawer Box")
@@ -1816,6 +1841,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_closet_sizes_ui),
                 ('show_starter_library', "Closet Starters",
                  self.draw_starter_library_ui),
+                ('show_design_warnings', "Design Warnings",
+                 self.draw_design_warnings_ui),
             ]
         else:
             # Dropdown changes on this tab re-apply room-wide.
@@ -1834,6 +1861,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_countertop_options_ui),
                 ('show_molding_options', "Molding",
                  self.draw_molding_options_ui),
+                ('show_design_warnings', "Design Warnings",
+                 self.draw_design_warnings_ui),
             ]
 
         for prop_name, label, draw_fn in sections:

@@ -4,9 +4,9 @@ One scene-level dropdown picks the drawer box system for every closet
 drawer:
 
 - Wood Box: standard sizes - depth steps 9/12/15/18/21" with the
-  opening depth and height steps in 1" increments with the drawer
-  front, dropping back to the parametric size when the opening is
-  smaller than the smallest standard.
+  depth left behind the front and height steps in 1" increments with
+  the clear opening the front covers, dropping back to the parametric
+  size when the opening is smaller than the smallest standard.
 - Metabox: standard side heights N/54, M/86, K/118, H/150 mm (minimum
   openings 78/110/142/174) and slide lengths 270-550 mm.
 - Avantech (+ Illumination): standard box heights 101/139/187/251 mm
@@ -15,10 +15,17 @@ drawer:
   pack.
 - None: no boxes are built (fronts only).
 
+Every system takes its height from the clear opening the drawer front
+covers, and its depth from what is behind that front, which is how the
+prior library sized a box.
+
 The drawer layout sizes each box to its system's standards, applies the
 system material, and records the resolved selection on the box
 (hb_drawer_box_type / hb_drawer_box_size) so downstream consumers can
-read it.
+read it. Where an opening leaves too little room for even the smallest
+standard the box is built at that smallest size so there is something
+that fits, and box_warning() gives the reason in the words the prior
+library used for it.
 """
 import bpy
 
@@ -56,11 +63,11 @@ _BATTERY_CLEARANCE = _mm(12.7)
 _WOOD_DEPTHS = [(inch(21), inch(21.75)), (inch(18), inch(18.75)),
                 (inch(15), inch(15.75)), (inch(12), inch(12.75)),
                 (inch(9), inch(9.75))]
-_WOOD_HEIGHTS = [(inch(11.125), inch(13)), (inch(10.125), inch(12)),
-                 (inch(9.125), inch(11)), (inch(8.125), inch(10)),
-                 (inch(7.125), inch(9)), (inch(6.125), inch(8)),
-                 (inch(5.125), inch(7)), (inch(4.125), inch(6)),
-                 (inch(3.125), inch(5)), (inch(2.125), inch(4))]
+_WOOD_HEIGHTS = [(inch(11.125), inch(12)), (inch(10.125), inch(11)),
+                 (inch(9.125), inch(10)), (inch(8.125), inch(9)),
+                 (inch(7.125), inch(8)), (inch(6.125), inch(7)),
+                 (inch(5.125), inch(6)), (inch(4.125), inch(5)),
+                 (inch(3.125), inch(4)), (inch(2.125), inch(3))]
 
 # Box appearance per system (assets/materials/accessory_finishes.blend).
 _BOX_MATERIALS = {
@@ -79,21 +86,37 @@ def _band(table, avail):
     return None
 
 
-def _pick(table, avail, key=None):
+def _pick(table, avail):
     """Largest standard whose minimum fits `avail`; smallest as the
     clamp when nothing fits."""
-    for value, minimum in table:
-        if avail >= minimum:
-            return value
-    return table[-1][0]
+    value = _band(table, avail)
+    return table[-1][0] if value is None else value
+
+
+def _slide(avail):
+    """Longest slide the depth takes, or None when even the shortest
+    is longer than there is room for."""
+    for length in _SLIDE_LENGTHS:
+        if avail >= length:
+            return length
+    return None
+
+
+def _metal(box_type):
+    """(name, height table, depth taken off) for a steel system."""
+    if box_type in ('AVANTECH', 'AVANTECH_ILL'):
+        return ("Avantech", _AVANTECH_HEIGHTS,
+                _BATTERY_CLEARANCE if box_type == 'AVANTECH_ILL' else 0.0)
+    return ("Metabox", _METABOX_HEIGHTS, 0.0)
 
 
 def size_box(box_type, avail_h, avail_d, wood_h, wood_d):
     """(box_h, box_d, size_tag) for the selected system, or None when
-    boxes are off. wood_h/wood_d are the caller's parametric values
-    (front height / opening depth minus the wood-box deducts), which
-    the wood box falls back to when it is too small to reach a
-    standard size."""
+    boxes are off. avail_h is the clear opening the drawer front
+    covers and avail_d the depth of the opening; wood_h/wood_d are the
+    caller's parametric values (that height and depth less the
+    wood-box deducts), which the wood box falls back to when it is too
+    small to reach a standard size."""
     if box_type == 'NONE':
         return None
     if box_type == 'WOOD':
@@ -102,23 +125,48 @@ def size_box(box_type, avail_h, avail_d, wood_h, wood_d):
         # same box. Where the opening is smaller than the smallest
         # standard there is nothing to step down to, so the box keeps
         # the parametric size and still fits what it is going into.
-        box_d = _band(_WOOD_DEPTHS, avail_d)
+        # A wood box sits back off the rear of the opening, so it
+        # is the depth behind the front - not the opening itself -
+        # that decides which standard it reaches.
+        box_d = _band(_WOOD_DEPTHS, wood_d)
         box_h = _band(_WOOD_HEIGHTS, avail_h)
         return (wood_h if box_h is None else box_h,
                 wood_d if box_d is None else box_d, 'WOOD')
 
-    if box_type in ('AVANTECH', 'AVANTECH_ILL'):
-        heights = _AVANTECH_HEIGHTS
-    else:
-        heights = _METABOX_HEIGHTS
-    depth_avail = avail_d
-    if box_type == 'AVANTECH_ILL':
-        depth_avail -= _BATTERY_CLEARANCE
+    _name, heights, taken = _metal(box_type)
     box_h = _pick(heights, avail_h)
-    box_d = next((l for l in _SLIDE_LENGTHS if depth_avail >= l),
-                 _SLIDE_LENGTHS[-1])
+    box_d = _slide(avail_d - taken) or _SLIDE_LENGTHS[-1]
     tag = f"H{round(box_h / MM)} L{round(box_d / MM)}"
     return (box_h, box_d, tag)
+
+
+def box_warning(box_type, avail_h, avail_d, wood_d):
+    """Why the drawer box cannot be built to a standard size in the
+    room it has been given, in the words the prior library used, or ''
+    when it fits. The box is still built at the smallest standard, so
+    this is what says the size is not one that can be bought."""
+    if box_type == 'NONE':
+        return ''
+    if box_type == 'WOOD':
+        if _band(_WOOD_DEPTHS, wood_d) is None:
+            return "Wood Drawer Box Doesn't Fit - Opening Too Shallow"
+        if _band(_WOOD_HEIGHTS, avail_h) is None:
+            return "Wood Drawer Box Doesn't Fit - Opening Too Short"
+        return ''
+    name, heights, taken = _metal(box_type)
+    box_h = _band(heights, avail_h)
+    box_d = _slide(avail_d - taken)
+    if box_h is None:
+        return name + " Drawer Box Height Not Available"
+    if box_d is None:
+        return name + " Drawer Box Doesn't Fit"
+    # Two of the Avantech heights are not made in the shortest length.
+    if name == "Avantech" and round(box_d / MM) == 270:
+        height_mm = round(box_h / MM)
+        if height_mm in (139, 251):
+            return ("Avantech H%d Not Available at 270mm Length"
+                    % height_mm)
+    return ''
 
 
 def box_material(box_type):

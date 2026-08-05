@@ -2401,6 +2401,9 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
             row = box.row()
             row.label(text="Opening Height:")
             row.label(text=str(open_h_mm) + " mm")
+            warning = front.get(types_closets.PROP_BOX_WARNING, '')
+            if warning:
+                box.label(text=warning, icon='ERROR')
 
         # Left on Use Default this front runs the way its opening
         # does, and the opening's own default is the room's, so the

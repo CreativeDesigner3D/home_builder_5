@@ -149,6 +149,10 @@ PROP_BOX_DEPTH_OVERRIDE = 'hb_box_depth_override'
 PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
 PROP_BOX_TYPE_RESOLVED = 'hb_box_type'
 PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
+# Why this drawer box is not a size that can be bought, carried on the
+# box and on its front so the panels can read it without working it
+# out again. Empty/absent means there is nothing to say.
+PROP_BOX_WARNING = 'hb_box_warning'
 PROP_OPEN_HEIGHT = 'hb_open_height'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills
 # its opening: the fronts the stack owns share the remaining span
@@ -259,6 +263,16 @@ def _remove_part_tree(obj):
     for child in list(obj.children):
         _remove_part_tree(child)
     bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def _stamp_warning(obj, message):
+    """Carry a design warning on the part it belongs to, and take it
+    off again the moment the part fits, so what the panels find is
+    only ever what is wrong now."""
+    if message:
+        obj[PROP_BOX_WARNING] = message
+    elif PROP_BOX_WARNING in obj:
+        del obj[PROP_BOX_WARNING]
 
 
 def _set_part_hidden(obj, hidden):
@@ -1692,17 +1706,22 @@ class ClosetStarter(GeoNodeCage):
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                # A front laps the part above it, so the top drawer of a
-                # stack has less room behind the front than the front is
-                # tall. Size the box to the clear space that is really
-                # there, or it runs up through the shelf above.
+                # A front laps the parts above and below it, so what
+                # is clear behind it is only the span it shares with
+                # the inside of the opening. Every box system is sized
+                # from that, the way the prior library sized one, and
+                # a box built to the front instead would run up
+                # through the shelf above.
                 z_bot = max(z, 0.0)
                 room = max(interior_h - z_bot, inch(1.0))
-                avail_h = min(dh, room)
+                avail_h = max(min(z + dh, interior_h) - z_bot, 0.0)
                 wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
                 spec = dbx.size_box(box_type, avail_h, depth, wood_h,
                                     wood_d)
+                warn = dbx.box_warning(box_type, avail_h, depth,
+                                       wood_d)
+                _stamp_warning(child, warn)
                 # Explicit per-front size overrides (0 = system size).
                 _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
                 _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
@@ -1714,6 +1733,7 @@ class ClosetStarter(GeoNodeCage):
                     box['hb_drawer_box_type'] = box_type
                     box['hb_drawer_box_size'] = (spec[2] if spec
                                                  else 'NONE')
+                    _stamp_warning(box, warn)
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
                     box_h = _hov if _hov > 0.0 else spec[0]
