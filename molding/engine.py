@@ -814,6 +814,7 @@ def _stretch_segments(spans, include_recessed, x_off,
         segments.append((current, current_meta))
 
     out = []
+    reached = [False, False]
     for pts, meta in segments:
         off = offset_polyline_right(pts, x_off)
         if len(off) < 2:
@@ -822,8 +823,11 @@ def _stretch_segments(spans, include_recessed, x_off,
             for side_idx, at_extreme in (
                     (0, meta['start_idx'] == 0),
                     (1, meta['end_idx'] == n - 1)):
+                if not at_extreme:
+                    continue
+                reached[side_idx] = True
                 term = terminals[side_idx]
-                if term is None or not at_extreme:
+                if term is None:
                     continue
                 outward = ((pts[0] - pts[1]) if side_idx == 0
                            else (pts[-1] - pts[-2]))
@@ -840,6 +844,42 @@ def _stretch_segments(spans, include_recessed, x_off,
                     off[-1] = off[-1] + outward * x_off
                     off.append(term['back'] + outward * x_off)
         out.append((off, False))
+
+    # A FINISHED end on a recessed-kick member carries molding no
+    # matter what Include Recessed says - that option only governs the
+    # recess line. With the recess line excluded, nothing reaches the
+    # extremity and the side gets a standalone piece from the kick face
+    # to the carcass rear, dying flush at both ends. (With it included,
+    # the kept recess run reaches the extremity and the inline wrap
+    # above miters around the corner instead.) It never runs to the
+    # front corner: a stile extended to the floor turns the extremity
+    # span FRONT and reaches it too.
+    if not island and terminals is not None and facts is not None:
+        for side_idx in (0, 1):
+            if reached[side_idx]:
+                continue
+            term = terminals[side_idx]
+            if term is None:
+                continue
+            if spans[0 if side_idx == 0 else -1][1] != 'RECESS':
+                continue
+            f = facts[id(term['obj'])]
+            if not f.get('finished_%s' % term['side'], False):
+                continue
+            front = term.get('front')
+            back = term.get('back')
+            if front is None or back is None:
+                continue
+            toward_back = back - front
+            depth_len = toward_back.length
+            setback = (f.get('kick') or {}).get('setback', 0.0)
+            if depth_len < 1e-6 or depth_len - setback < 1e-6:
+                continue
+            edge = front + toward_back * (setback / depth_len)
+            raw = [back, edge] if side_idx == 0 else [edge, back]
+            off = offset_polyline_right(raw, x_off)
+            if len(off) >= 2:
+                out.append((off, False))
     return out
 
 

@@ -106,6 +106,40 @@ def _floor_flush_spans(cage):
     return merged
 
 
+# Kick-face parts the base molding mounts against, front-most wins:
+# the finish kick skin sits on the subfront, a loose kick carries its
+# own front.
+_KICK_FACE_ROLES = ('FINISH_TOE_KICK', 'LOOSE_KICK_FRONT',
+                    'TOE_KICK_SUBFRONT')
+
+
+def _measured_kick_setback(cage, ffc):
+    """Setback from the CAGE front to the face the base molding mounts
+    on, read from the front-most built kick-face part. The
+    toe_kick_setback prop measures to the subfront from the CARCASS
+    front, so using it directly leaves the molding proud of the
+    finished kick by the face frame overhang minus the finish skin.
+    Falls back to the prop when no kick-face part is built."""
+    inv = cage.matrix_world.inverted()
+    best = None
+    for child in cage.children_recursive:
+        if child.get('hb_part_role') not in _KICK_FACE_ROLES:
+            continue
+        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
+                   for c in child.bound_box]
+        if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
+                or max(c.x for c in corners) - min(c.x for c in corners)
+                < 0.01):
+            continue  # dormant zero-size part
+        y = min(c.y for c in corners)
+        if best is None or y < best:
+            best = y
+    if best is None:
+        return ffc.toe_kick_setback
+    _width, depth, _height = engine.cage_dims(cage)
+    return max(depth + best, 0.0)
+
+
 def _rail_skip_spans(cage):
     """LOCAL x spans of an upper's raised bays - bays whose bottom sits
     above the cabinet's bottom line (e.g. the open center bay over a
@@ -290,7 +324,7 @@ def build_facts(scene, members):
             else:
                 kick = {
                     'skip': False,
-                    'setback': ffc.toe_kick_setback,
+                    'setback': _measured_kick_setback(obj, ffc),
                     'stile_left': ffc.extend_left_stile_to_floor,
                     'stile_right': ffc.extend_right_stile_to_floor,
                     'stile_left_w': ffc.left_stile_width,
