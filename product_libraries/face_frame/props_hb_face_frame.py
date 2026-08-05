@@ -9507,8 +9507,20 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
              "Shelf with visible support"),
             ('HEAVY_DUTY', "Heavy Duty Floating Shelves",
              "Heavy duty floating shelf; supports a light groove"),
+            ('MANTLE', "Mantle",
+             "Fireplace mantle shelf; graded by category"),
         ],
         default='FLOATING',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    mantle_category: EnumProperty(
+        name="Mantle Category",
+        items=[
+            ('A', "Category A", "Standard mantle"),
+            ('B', "Category B", "Mid-grade mantle"),
+            ('C', "Category C", "Premium mantle"),
+        ],
+        default='A',
         update=_update_cabinet_dim,
     )  # type: ignore
     # Light groove (Heavy Duty only) - a routed LED channel on the top

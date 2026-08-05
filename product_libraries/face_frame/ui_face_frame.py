@@ -467,6 +467,8 @@ def draw_floating_shelf(layout, root):
     shelf = root.floating_shelf
 
     layout.prop(shelf, 'shelf_type', text="Type")
+    if shelf.shelf_type == 'MANTLE':
+        layout.prop(shelf, 'mantle_category', text="Category")
 
     col = layout.column(align=True)
     col.prop(cab, 'width', text="Width")
