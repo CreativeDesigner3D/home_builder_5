@@ -131,6 +131,18 @@ def floor_gap(box_type):
     return _FLOOR_GAP.get(box_type, inch(0.5512))
 
 
+def wood_height(avail):
+    """Largest standard wood box height the clear height `avail`
+    takes, or None when it is shorter than the smallest standard."""
+    return _band(_WOOD_HEIGHTS, avail)
+
+
+def wood_depth(avail):
+    """Largest standard wood box depth the depth `avail` takes, or
+    None when it is shallower than the smallest standard."""
+    return _band(_WOOD_DEPTHS, avail)
+
+
 def size_box(box_type, avail_h, avail_d, wood_h, wood_d):
     """(box_h, box_d, size_tag) for the selected system, or None when
     boxes are off. avail_h is the clear opening the drawer front

@@ -1538,7 +1538,13 @@ class ClosetStarter(GeoNodeCage):
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
         if adj:
             adj.sort(key=lambda o: o.get('hb_adj_index', 0))
-            spacing = interior_h / (len(adj) + 1)
+            # The prior library took every shelf's own thickness out
+            # of the opening first, shared what was left between the
+            # shelves and the space above and below them, then added a
+            # thickness back for each shelf underneath. The clear space
+            # between one shelf and the next is the same the whole way
+            # up, which is what a shelf is set by.
+            spacing = (interior_h - st * len(adj)) / (len(adj) + 1) + st
             adj_depth = max(depth - adj_setback, inch(1.0))
             for i, child in enumerate(adj):
                 z = max(0.0, min(spacing * (i + 1), interior_h - st))
@@ -1797,19 +1803,20 @@ class ClosetStarter(GeoNodeCage):
                     if c.get('hb_rollout')]
         if rollouts:
             rollouts.sort(key=lambda o: o.get('hb_rollout_index', 0))
+            from . import drawer_boxes_closets as dbx
             # A tray is a wood box on slides, which is what the prior
-            # library built every one of them out of. The Rollout
-            # Height the opening is given is the height of the tray
-            # itself, so the setting keeps controlling what is drawn;
-            # the drawer box system stays with the drawers, which have
-            # fronts in front of them to cover the standard heights it
-            # rounds to.
+            # library built every one of them out of, so it is built
+            # to the standard sizes a wood box is bought in. The
+            # Rollout Height the opening is given is the room a tray
+            # is allotted in the stack; the tray steps down to the
+            # largest standard height that room takes.
             box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
-            # The tray runs the whole depth of the opening, the way
-            # the prior library ran one: there is no front in front of
-            # it taking room at the face, so it starts at the face and
-            # finishes at the back.
-            box_d = max(depth, inch(2.0))
+            # The depth steps down the same way, from the depth of the
+            # opening. The tray is held at the face it serves, so what
+            # it gives up comes off the back and there is no front in
+            # front of it taking room at the face.
+            _bd = dbx.wood_depth(depth)
+            box_d = max(depth if _bd is None else _bd, inch(2.0))
             y_box = (-box_d if side == 'BACK' else -depth)
             n = len(rollouts)
             stack_h = float(opening.hb_closet_opening.rollout_height)
@@ -1845,10 +1852,21 @@ class ClosetStarter(GeoNodeCage):
                                  max(interior_h - h, 0.0))
                 else:
                     z_tray = z
-                # A tray is built to the height the stack set aside
-                # for it, so what is drawn is what was asked for.
+                # A tray steps down to the largest standard wood box
+                # the room the stack set aside for it takes, and
+                # stands off the floor of that room the way a wood box
+                # stands off the floor of a drawer opening. Where the
+                # room is smaller than the smallest standard the tray
+                # keeps the parametric height so there is still one
+                # that fits, and the warning gives the reason in the
+                # words the prior library used for it.
+                bh = dbx.wood_height(h)
+                bh = h if bh is None else bh
+                lift = min(dbx.floor_gap('WOOD'), max(0.0, h - bh))
                 box['hb_drawer_box_type'] = 'WOOD'
                 box['hb_drawer_box_size'] = 'WOOD'
+                _stamp_warning(box, dbx.box_warning('WOOD', h, depth,
+                                                    depth))
                 _set_part_hidden(box, False)
                 # Persist what the tray resolved to, so a dialog opens
                 # on what is on screen rather than on a default.
@@ -1856,11 +1874,12 @@ class ClosetStarter(GeoNodeCage):
                 box[PROP_TRAY_Z] = z_tray
                 # The tray is anchored at the face it serves and
                 # runs back from it to the rear of the opening.
-                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z_tray)
+                box.location = (const.ROLLOUT_SLIDE_GAP, y_box,
+                                z_tray + lift)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
-                gb.set_input('Dim Z', h)
+                gb.set_input('Dim Z', bh)
                 z += h + gap
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
