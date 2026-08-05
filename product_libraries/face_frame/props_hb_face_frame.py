@@ -8730,7 +8730,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ("Valance", "Valance"),
         ])
         self._draw_catalog_labeled_row(layout, "", [
-            ("Wood Top", "Wood Top"),
+            ("Wood Top", "Wood Top"), ("Mantle", "Mantle"),
         ])
 
     # =====================================================================

@@ -10415,6 +10415,33 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, False)
 
 
+class MantleFaceFrameCabinet(FloatingShelfFaceFrameCabinet):
+    """Fireplace mantle - a floating-shelf variant placed as one
+    fixed-width beam instead of filling the wall gap.
+
+    Same slab construction (front board, inset top/bottom, finish-gated
+    end panels); the mantle defaults to a beefier beam (72" W x 10" D x
+    6" thick), both ends returned, and shelf_type MANTLE so downstream
+    consumers grade it by mantle_category rather than shelf duty.
+    """
+    single_placement = True   # one fixed-width beam at the cursor
+    fill_no_bays = False      # spans the fireplace, not the wall gap
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = inch(72.0)
+        self.default_depth = inch(10.0)
+        self.default_height = inch(6.0)   # beam face height
+
+    def create(self, name="Mantle", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        fs = self.obj.floating_shelf
+        fs.shelf_type = 'MANTLE'
+        fs.finish_left = True
+        fs.finish_right = True
+        self.recalculate()
+
+
 class ValanceFaceFrameProduct(FaceFrameCabinet):
     """Wall-mounted valance - a decorative board spanning the gap
     between two upper cabinets (e.g. over a sink or a window).
@@ -11102,6 +11129,7 @@ CABINET_NAME_DISPATCH = {
     "Bookcase Storage Unit": BookcaseStorageUnitFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
+    "Mantle": MantleFaceFrameCabinet,
     "Valance": ValanceFaceFrameProduct,
     "Wood Top": WoodTopPart,
     "Misc Part": MiscPart,
@@ -11266,6 +11294,7 @@ WRAP_CLASS_REGISTRY.update({
     'FaceFrameAndDoorsCabinet': FaceFrameAndDoorsCabinet,
     'LegProductFaceFrameCabinet': LegProductFaceFrameCabinet,
     'FloatingShelfFaceFrameCabinet': FloatingShelfFaceFrameCabinet,
+    'MantleFaceFrameCabinet': MantleFaceFrameCabinet,
     'ValanceFaceFrameProduct': ValanceFaceFrameProduct,
 })
 
