@@ -272,10 +272,8 @@ DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
 MIN_DRAWER_FRONT = inch(2.0)
-DRAWER_SLIDE_GAP = inch(0.5)        # per side, drawer box to panel
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
 DRAWER_BOX_DEPTH_DEDUCT = inch(0.875)  # wood box, back of opening
-DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
 # How far back from the face the stretcher between one drawer and
 # the next runs. The prior library's figure.
 DRAWER_STRETCHER_WIDTH = inch(6.0)

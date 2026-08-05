@@ -56,6 +56,15 @@ _SLIDE_LENGTHS = [_mm(550), _mm(500), _mm(450), _mm(400),
                   _mm(350), _mm(270)]
 _BATTERY_CLEARANCE = _mm(12.7)
 
+# What each system leaves at the side of its box, and how far it
+# stands the box off the floor of the opening it sits in. These
+# are the clearances the prior library built every box of its
+# kind to.
+_SIDE_GAP = {'WOOD': inch(0.327), 'AVANTECH': inch(0.25),
+             'AVANTECH_ILL': inch(0.25), 'METABOX': _mm(15.5)}
+_FLOOR_GAP = {'WOOD': inch(0.5512), 'AVANTECH': _mm(5),
+              'AVANTECH_ILL': _mm(5), 'METABOX': _mm(5)}
+
 # Wood box standards, largest first, as (box size, minimum it needs).
 # The depth steps with the depth of the opening. The height steps with
 # the drawer front, which is the opening height the box sits in less
@@ -108,6 +117,18 @@ def _metal(box_type):
         return ("Avantech", _AVANTECH_HEIGHTS,
                 _BATTERY_CLEARANCE if box_type == 'AVANTECH_ILL' else 0.0)
     return ("Metabox", _METABOX_HEIGHTS, 0.0)
+
+
+def side_gap(box_type):
+    """How far the side of the box is held in from the panel
+    beside it, per side."""
+    return _SIDE_GAP.get(box_type, inch(0.327))
+
+
+def floor_gap(box_type):
+    """How far the bottom of the box stands above the floor of
+    the clear opening it sits in."""
+    return _FLOOR_GAP.get(box_type, inch(0.5512))
 
 
 def size_box(box_type, avail_h, avail_d, wood_h, wood_d):

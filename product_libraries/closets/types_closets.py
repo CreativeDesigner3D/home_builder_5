@@ -1655,7 +1655,6 @@ class ClosetStarter(GeoNodeCage):
             _ovr = opening.hb_closet_opening.drawer_box_override
             default_box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
                                 else dbx.current_type())
-            box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
             # A stretcher stands in the gap between one drawer and
             # the next, running back from the face by its own width
@@ -1672,6 +1671,19 @@ class ClosetStarter(GeoNodeCage):
             z = -bo
             for i, child in enumerate(fronts):
                 dh = heights[i]
+                # A front laps whatever it meets above and below
+                # it - the overlay at the ends of the stack, half
+                # of what the gap leaves over a stretcher in
+                # between - so the opening left clear behind it is
+                # its height less both laps. Every box system is
+                # sized from that and stands on the floor of it,
+                # the way the prior library sized and stood one.
+                lap = max(st - v_gap, 0.0) / 2.0
+                lap_dn = bo if i == 0 else lap
+                lap_up = to if i == n - 1 else lap
+                avail_h = max(dh - lap_dn - lap_up, 0.0)
+                z_bot = z + lap_dn
+                room = max(avail_h, inch(1.0))
                 # Persist the resolved height so overlay labels read it.
                 child[PROP_FRONT_HEIGHT] = dh
                 child.location = (-lo, front_y, z)
@@ -1691,7 +1703,7 @@ class ClosetStarter(GeoNodeCage):
                 _inside = drawer_inside_width(width + lo + ro, box_type)
                 child['hb_inside_w'] = _inside
                 child['hb_open_depth'] = depth
-                child[PROP_OPEN_HEIGHT] = dh
+                child[PROP_OPEN_HEIGHT] = avail_h
                 child[PROP_BOX_TYPE_RESOLVED] = box_type
                 _tray = child.get(PROP_JEWELRY_TRAY, '')
                 if _tray and _tray != 'NONE':
@@ -1706,15 +1718,6 @@ class ClosetStarter(GeoNodeCage):
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                # A front laps the parts above and below it, so what
-                # is clear behind it is only the span it shares with
-                # the inside of the opening. Every box system is sized
-                # from that, the way the prior library sized one, and
-                # a box built to the front instead would run up
-                # through the shelf above.
-                z_bot = max(z, 0.0)
-                room = max(interior_h - z_bot, inch(1.0))
-                avail_h = max(min(z + dh, interior_h) - z_bot, 0.0)
                 wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
                 spec = dbx.size_box(box_type, avail_h, depth, wood_h,
@@ -1742,12 +1745,16 @@ class ClosetStarter(GeoNodeCage):
                     # box spans [y_box, y_box + box_d], front edge flush
                     # with the opening face, clearance at the rear.
                     y_box = (-box_d if side == 'BACK' else -depth)
-                    # Stand the box off the drawer's floor, giving the
-                    # lift up when the remaining room is tighter than it.
-                    lift = min(const.DRAWER_BOX_Z_LIFT,
+                    # Each system holds its box in from the panel
+                    # beside it and stands it off the floor of the
+                    # clear opening by its own figures. The stand
+                    # off gives way when what is left is tighter
+                    # than it.
+                    lift = min(dbx.floor_gap(box_type),
                                max(0.0, room - box_h))
-                    box.location = (const.DRAWER_SLIDE_GAP, y_box,
-                                    z_bot + lift)
+                    s_gap = dbx.side_gap(box_type)
+                    box_w = max(width - 2 * s_gap, inch(2.0))
+                    box.location = (s_gap, y_box, z_bot + lift)
                     gb = GeoNodeObject(box)
                     gb.set_input('Dim X', box_w)
                     gb.set_input('Dim Y', box_d)
