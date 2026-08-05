@@ -1778,11 +1778,11 @@ class ClosetStarter(GeoNodeCage):
             # fronts in front of them to cover the standard heights it
             # rounds to.
             box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
-            # The tray runs back from the face rather than the whole way
-            # to the back of the opening, keeping the same rear
-            # clearance a wood drawer box keeps.
-            box_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT,
-                        inch(2.0))
+            # The tray runs the whole depth of the opening, the way
+            # the prior library ran one: there is no front in front of
+            # it taking room at the face, so it starts at the face and
+            # finishes at the back.
+            box_d = max(depth, inch(2.0))
             y_box = (-box_d if side == 'BACK' else -depth)
             n = len(rollouts)
             stack_h = float(opening.hb_closet_opening.rollout_height)
