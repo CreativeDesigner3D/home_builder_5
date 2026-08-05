@@ -483,56 +483,67 @@ def rail_sweep_segments(chain, facts, face_offset, end_offset):
         else:
             left_first = True
 
+        # Kept intervals between skip zones, each carrying the kind of
+        # the skip flanking it on either side (None = member edge).
+        # 'OPEN' boundaries (raised bay - nothing at the run line) get
+        # a wall return; 'BOX' boundaries (dropped bay - its box
+        # stands across the run line) die flush into the box.
         skips = sorted(f.get('rail_skips') or [])
         kept = []
         cursor = 0.0
-        for s0, s1 in skips:
+        prev_kind = None
+        for s0, s1, kind in skips:
             if s0 - cursor > 1e-4:
-                kept.append((cursor, s0))
+                kept.append((cursor, s0, prev_kind, kind))
             cursor = max(cursor, s1)
+            prev_kind = kind
         if width - cursor > 1e-4:
-            kept.append((cursor, width))
+            kept.append((cursor, width, prev_kind, None))
 
         if left_first:
             ordered = kept
             start_x, end_x = 0.0, width
         else:
-            ordered = [(b, a) for a, b in reversed(kept)]
+            ordered = [(b, a, kr, kl) for a, b, kl, kr in reversed(kept)]
             start_x, end_x = width, 0.0
 
         if not ordered:
-            # Whole member raised: any incoming rail returns at the
+            # Whole member skipped: seal any incoming rail at the
             # seam; a following member restarts from the far seam.
+            if left_first:
+                k_first, k_last = skips[0][2], skips[-1][2]
+            else:
+                k_first, k_last = skips[-1][2], skips[0][2]
             if current:
-                current.append(_back(start_x))
+                if k_first == 'OPEN':
+                    current.append(_back(start_x))
                 flags[1] = True
                 _close()
             if i + 1 < n:
-                current = [_back(end_x)]
+                current = [_back(end_x)] if k_last == 'OPEN' else []
                 flags[0] = True
             continue
 
-        leading_skip = abs(ordered[0][0] - start_x) > 1e-4
-        trailing_skip = abs(ordered[-1][1] - end_x) > 1e-4
-
-        for j, (enter, exit_) in enumerate(ordered):
-            if j == 0 and leading_skip and current:
-                # Raised zone at the leading edge: the incoming rail
-                # returns to the wall at the seam.
-                current.append(_back(start_x))
-                flags[1] = True
-                _close()
-            if j > 0 or leading_skip:
-                current = [_back(enter)]
+        for j, (enter, exit_, k_in, k_out) in enumerate(ordered):
+            if k_in is not None:
+                if j == 0 and current:
+                    # The skip touches the seam: seal the incoming
+                    # rail there first.
+                    if k_in == 'OPEN':
+                        current.append(_back(start_x))
+                    flags[1] = True
+                    _close()
+                current = [_back(enter)] if k_in == 'OPEN' else []
                 flags[0] = True
             current.append(_front(enter))
             current.append(_front(exit_))
-            if j < len(ordered) - 1 or trailing_skip:
-                current.append(_back(exit_))
+            if k_out is not None:
+                if k_out == 'OPEN':
+                    current.append(_back(exit_))
                 flags[1] = True
                 _close()
-        if trailing_skip and i + 1 < n:
-            current = [_back(end_x)]
+        if ordered and ordered[-1][3] is not None and i + 1 < n:
+            current = [_back(end_x)] if ordered[-1][3] == 'OPEN' else []
             flags[0] = True
     _close()
 
@@ -568,6 +579,83 @@ def rail_sweep_segments(chain, facts, face_offset, end_offset):
 
     segments = [(pts, False) for pts in out if len(pts) >= 2]
     return (segments, chain) if segments else None
+
+
+def raised_rail_runs(obj, f, face_offset, end_offset,
+                     open_left=True, open_right=True):
+    """Standalone light-rail runs for a member's off-line bay levels -
+    bays whose bottom sits above OR below the cabinet bottom line
+    carry their own rail at their own line (the bottom-line run skips
+    them, see rail_sweep_segments). One run per contiguous span per
+    level. A span end dies flush where a lower zone's box stands at
+    that level; it returns to the carcass rear where the adjacent zone
+    sits higher still; a cabinet end wraps to the rear like a finished
+    end when that side is open (no chain neighbor) and FINISHED.
+    Returns [(points, dz)] with dz the level's height relative to the
+    cabinet bottom line (negative for dropped bays)."""
+    bays = f.get('rail_bays') or []
+    if not bays:
+        return []
+    width, depth, _ = cage_dims(obj)
+    mw = obj.matrix_world
+
+    def _front(x):
+        return _xy(mw @ mathutils.Vector((x, -depth, 0.0)))
+
+    def _back(x):
+        return _xy(mw @ mathutils.Vector((x, 0.0, 0.0)))
+
+    def _zone_dz(x):
+        best, best_d = 0.0, None
+        for x0, x1, dz in bays:
+            d = max(x0 - x, 0.0, x - x1)
+            if best_d is None or d < best_d:
+                best, best_d = dz, d
+        return best
+
+    out = []
+    levels = sorted({round(dz, 3) for _x0, _x1, dz in bays
+                     if abs(dz) > 0.02})
+    for level in levels:
+        spans = sorted((x0, x1) for x0, x1, dz in bays
+                       if abs(round(dz, 3) - level) < 1e-6)
+        merged = []
+        for x0, x1 in spans:
+            if merged and x0 - merged[-1][1] < 0.08:
+                merged[-1] = (merged[-1][0], x1)
+            else:
+                merged.append((x0, x1))
+        for x0, x1 in merged:
+            at_left_end = x0 < 0.08
+            at_right_end = width - x1 < 0.08
+            if at_left_end:
+                x0 = 0.0
+            if at_right_end:
+                x1 = width
+            raw = [_front(x0), _front(x1)]
+            if not at_left_end and _zone_dz(x0 - 0.01) > level:
+                raw.insert(0, _back(x0))
+            if not at_right_end and _zone_dz(x1 + 0.01) > level:
+                raw.append(_back(x1))
+            off = offset_polyline_right(raw, face_offset)
+            if len(off) < 2:
+                continue
+            if at_left_end and open_left and f.get('finished_left'):
+                o3 = mw.to_3x3() @ mathutils.Vector((-1.0, 0.0, 0.0))
+                o = mathutils.Vector((o3.x, o3.y))
+                if o.length > 1e-6:
+                    o.normalize()
+                    off[0] = off[0] + o * end_offset
+                    off.insert(0, _back(0.0) + o * end_offset)
+            if at_right_end and open_right and f.get('finished_right'):
+                o3 = mw.to_3x3() @ mathutils.Vector((1.0, 0.0, 0.0))
+                o = mathutils.Vector((o3.x, o3.y))
+                if o.length > 1e-6:
+                    o.normalize()
+                    off[-1] = off[-1] + o * end_offset
+                    off.append(_back(width) + o * end_offset)
+            out.append((off, level))
+    return out
 
 
 # ---------------------------------------------------------------------------

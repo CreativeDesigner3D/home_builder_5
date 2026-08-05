@@ -181,6 +181,26 @@ def _sweep_z(molding_type, first, dy, facts, opts):
     return dy
 
 
+def _member_open_sides(member, chain):
+    """(open_left, open_right): which of the member's local ends have
+    no touching chain neighbor beside them."""
+    open_l = open_r = True
+    inv = member.matrix_world.inverted()
+    width, _depth, _height = engine.cage_dims(member)
+    idx = next((i for i, m in enumerate(chain) if m is member), 0)
+    for j in (idx - 1, idx + 1):
+        if not 0 <= j < len(chain):
+            continue
+        fp = engine.footprint_xy(chain[j])
+        center = sum(fp, mathutils.Vector((0.0, 0.0))) / 4.0
+        lx = (inv @ mathutils.Vector((center.x, center.y, 0.0))).x
+        if lx < width / 2.0:
+            open_l = False
+        else:
+            open_r = False
+    return open_l, open_r
+
+
 def _member_plan_distance(member, point_xy):
     """Plan distance from a world XY point to the member's cage
     footprint rectangle (0 when the point is over the member)."""
@@ -366,6 +386,24 @@ def _apply_type(scene, molding_type, align, stack, opts):
                             profile_ref, fallback_key, dy, facts,
                             opts, height=height) is not None:
                 made += 1
+            if molding_type != 'LIGHT_RAIL':
+                continue
+            # Raised bays carry their own rail at their own bottom
+            # line, one sweep per member and level so each hangs at
+            # its height (the bottom-line run skips those spans).
+            for member in sweep_chain:
+                fmem = facts.get(id(member)) or {}
+                if not fmem.get('rail_bays'):
+                    continue
+                open_l, open_r = _member_open_sides(member, sweep_chain)
+                for pts, dz in engine.raised_rail_runs(
+                        member, fmem, dx, dx,
+                        open_left=open_l, open_right=open_r):
+                    if _spawn_sweep(scene, molding_type, [member],
+                                    [(pts, False)], profile_ref,
+                                    fallback_key, dy + dz, facts, opts,
+                                    height=height) is not None:
+                        made += 1
     return made
 
 
