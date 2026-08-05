@@ -106,6 +106,46 @@ def _floor_flush_spans(cage):
     return merged
 
 
+def _rail_skip_spans(cage):
+    """LOCAL x spans of an upper's raised bays - bays whose bottom sits
+    above the cabinet's bottom line (e.g. the open center bay over a
+    range). No light rail runs across them: the rail returns to the
+    wall at the opening edges, treated like a finished end. Spans are
+    the bay cage extents, so a stile flanking a full-height bay keeps
+    its rail; raised bays adjacent across a stile merge into one span,
+    and a raised zone reaching an end bay extends to the cabinet end."""
+    bays = []
+    for child in cage.children:
+        if not child.get('IS_FACE_FRAME_BAY_CAGE'):
+            continue
+        bp = getattr(child, 'face_frame_bay', None)
+        if bp is None or bp.width <= 1e-4:
+            continue
+        x = child.matrix_local.translation.x
+        bays.append((x, x + bp.width, child.matrix_local.translation.z))
+    if len(bays) < 2:
+        return []
+    base = min(z for _x0, _x1, z in bays)
+    raised = sorted((x0, x1) for x0, x1, z in bays if z - base > 0.02)
+    if not raised:
+        return []
+    merged = []
+    for x0, x1 in raised:
+        if merged and x0 - merged[-1][1] < 0.08:
+            merged[-1] = (merged[-1][0], x1)
+        else:
+            merged.append((x0, x1))
+    width, _depth, _height = engine.cage_dims(cage)
+    out = []
+    for x0, x1 in merged:
+        if x0 < 0.08:
+            x0 = 0.0
+        if width - x1 < 0.08:
+            x1 = width
+        out.append((x0, x1))
+    return out
+
+
 def _top_rail_width(cage):
     """Width of the built TOP_RAIL face-frame part, read from the
     geometry rather than the style props - it's exactly what's drawn."""
@@ -286,6 +326,10 @@ def build_facts(scene, members):
                               'crown_mount': crown_mount,
                               'finished_left': fin_l,
                               'finished_right': fin_r}
+            if ffc.cabinet_type == 'UPPER':
+                skips = _rail_skip_spans(obj)
+                if skips:
+                    facts[id(obj)]['rail_skips'] = skips
             continue
 
         # Frameless (cabinet or product cage).

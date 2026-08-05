@@ -391,6 +391,185 @@ def chain_sweep_points(chain, facts, face_offset, end_offset):
     return off, chain
 
 
+def rail_sweep_segments(chain, facts, face_offset, end_offset):
+    """Light-rail path segments through a chain: chain_sweep_points
+    plus raised-bay handling. A member's 'rail_skips' spans (bays whose
+    bottom sits above the run line) break the run - the rail stops at
+    the raised opening's edge and returns to the carcass rear (the
+    wall), treated like a finished end - and pick back up with a
+    matching return on the far side. Returns ([(points, False), ...],
+    chain possibly reversed) or None."""
+    if not any(facts[id(m)].get('rail_skips') for m in chain):
+        result = chain_sweep_points(chain, facts, face_offset, end_offset)
+        if result is None:
+            return None
+        pts, chain = result
+        return [(pts, False)], chain
+
+    raw, terminals, first_straight = _assemble_front_raw(chain, facts)
+    if first_straight is not None and len(raw) >= 2:
+        idx, fn = first_straight
+        travel = raw[idx + 1] - raw[idx]
+        if travel.length > 1e-6:
+            travel.normalize()
+            right = mathutils.Vector((travel.y, -travel.x))
+            if right.dot(fn) < 0:
+                chain = list(reversed(chain))
+                raw, terminals, first_straight = \
+                    _assemble_front_raw(chain, facts)
+    if len(raw) < 2:
+        return None
+
+    def _center(obj):
+        fp = footprint_xy(obj)
+        return sum(fp, mathutils.Vector((0.0, 0.0))) / 4.0
+
+    # Piecewise raw segments; each carries whether its start / end is a
+    # wall return (those ends never get the terminal end treatment).
+    segs = []
+    seg_returns = []
+    current = []
+    flags = [False, False]
+
+    def _close():
+        nonlocal current, flags
+        if len(current) >= 2:
+            segs.append(current)
+            seg_returns.append((flags[0], flags[1]))
+        current = []
+        flags = [False, False]
+
+    n = len(chain)
+    for i, obj in enumerate(chain):
+        mw = obj.matrix_world
+        f = facts[id(obj)]
+        if current:
+            prev_ref = current[-1]
+        elif segs:
+            prev_ref = segs[-1][-1]
+        else:
+            prev_ref = None
+        next_ref = _center(chain[i + 1]) if i + 1 < n else None
+
+        if f.get('corner'):
+            data = corner_plan_data(obj, f['corner'])
+            pts = [_xy(mw @ mathutils.Vector((p.x, p.y, 0.0)))
+                   for p in data['front']]
+            reverse = False
+            if prev_ref is not None:
+                reverse = ((prev_ref - pts[0]).length
+                           > (prev_ref - pts[-1]).length)
+            elif next_ref is not None:
+                reverse = ((next_ref - pts[-1]).length
+                           > (next_ref - pts[0]).length)
+            if reverse:
+                pts = list(reversed(pts))
+            current.extend(pts)
+            continue
+
+        width, depth, _ = cage_dims(obj)
+
+        def _front(x):
+            return _xy(mw @ mathutils.Vector((x, -depth, 0.0)))
+
+        def _back(x):
+            return _xy(mw @ mathutils.Vector((x, 0.0, 0.0)))
+
+        fl, fr = _front(0.0), _front(width)
+        if prev_ref is not None:
+            left_first = (prev_ref - fl).length <= (prev_ref - fr).length
+        elif next_ref is not None:
+            left_first = (next_ref - fr).length <= (next_ref - fl).length
+        else:
+            left_first = True
+
+        skips = sorted(f.get('rail_skips') or [])
+        kept = []
+        cursor = 0.0
+        for s0, s1 in skips:
+            if s0 - cursor > 1e-4:
+                kept.append((cursor, s0))
+            cursor = max(cursor, s1)
+        if width - cursor > 1e-4:
+            kept.append((cursor, width))
+
+        if left_first:
+            ordered = kept
+            start_x, end_x = 0.0, width
+        else:
+            ordered = [(b, a) for a, b in reversed(kept)]
+            start_x, end_x = width, 0.0
+
+        if not ordered:
+            # Whole member raised: any incoming rail returns at the
+            # seam; a following member restarts from the far seam.
+            if current:
+                current.append(_back(start_x))
+                flags[1] = True
+                _close()
+            if i + 1 < n:
+                current = [_back(end_x)]
+                flags[0] = True
+            continue
+
+        leading_skip = abs(ordered[0][0] - start_x) > 1e-4
+        trailing_skip = abs(ordered[-1][1] - end_x) > 1e-4
+
+        for j, (enter, exit_) in enumerate(ordered):
+            if j == 0 and leading_skip and current:
+                # Raised zone at the leading edge: the incoming rail
+                # returns to the wall at the seam.
+                current.append(_back(start_x))
+                flags[1] = True
+                _close()
+            if j > 0 or leading_skip:
+                current = [_back(enter)]
+                flags[0] = True
+            current.append(_front(enter))
+            current.append(_front(exit_))
+            if j < len(ordered) - 1 or trailing_skip:
+                current.append(_back(exit_))
+                flags[1] = True
+                _close()
+        if trailing_skip and i + 1 < n:
+            current = [_back(end_x)]
+            flags[0] = True
+    _close()
+
+    if not segs:
+        return None
+
+    out = [offset_polyline_right(pts, face_offset) for pts in segs]
+
+    for side_idx in (0, 1):
+        term = terminals[side_idx]
+        if term is None:
+            continue
+        if side_idx == 0:
+            if seg_returns[0][0] or len(segs[0]) < 2:
+                continue
+            outward = segs[0][0] - segs[0][1]
+        else:
+            if seg_returns[-1][1] or len(segs[-1]) < 2:
+                continue
+            outward = segs[-1][-1] - segs[-1][-2]
+        if outward.length < 1e-6:
+            continue
+        outward.normalize()
+        f = facts[id(term['obj'])]
+        if not f.get('finished_%s' % term['side'], False):
+            continue
+        if side_idx == 0:
+            out[0][0] = out[0][0] + outward * end_offset
+            out[0].insert(0, term['back'] + outward * end_offset)
+        else:
+            out[-1][-1] = out[-1][-1] + outward * end_offset
+            out[-1].append(term['back'] + outward * end_offset)
+
+    segments = [(pts, False) for pts in out if len(pts) >= 2]
+    return (segments, chain) if segments else None
+
+
 # ---------------------------------------------------------------------------
 # Kick-level span sweep (base molding)
 # ---------------------------------------------------------------------------

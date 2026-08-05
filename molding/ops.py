@@ -347,6 +347,11 @@ def _apply_type(scene, molding_type, align, stack, opts):
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, opts['include_recessed'])
                 sweep_chain = chain
+            elif molding_type == 'LIGHT_RAIL':
+                result = engine.rail_sweep_segments(chain, facts, dx, dx)
+                if result is None:
+                    continue
+                segments, sweep_chain = result
             else:
                 if molding_type == 'CAP':
                     dx += opts['cap_overhang']
