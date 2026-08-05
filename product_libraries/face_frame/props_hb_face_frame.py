@@ -4579,6 +4579,32 @@ def _update_refrigerator_opening_height(self, context):
                 op.size = value
 
 
+def _update_opening_size(self, context):
+    """Update callback for Face_Frame_Opening_Props.size.
+
+    Any opening size edit recalcs like a cabinet dimension. Editing the
+    refrigerator APPLIANCE opening's size directly (opening dialog or a
+    dimension edit) additionally routes through the cabinet-level
+    refrigerator_opening_height, whose update owns the derived state:
+    back_bottom_inset (the carcass back spanning only the door zone)
+    and the Raise Side Up anchor both read that prop. Skipped for
+    redistribution system writes and for echo writes of the same value,
+    so the two callbacks settle instead of ping-ponging.
+    """
+    from . import types_face_frame
+    obj = self.id_data
+    if obj.get('SIZE_ROLE') == 'REFRIGERATOR':
+        root = types_face_frame.find_cabinet_root(obj)
+        if (root is not None
+                and root.get('CLASS_NAME') == 'RefrigeratorCabinet'
+                and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
+            cab = root.face_frame_cabinet
+            if abs(cab.refrigerator_opening_height - self.size) > 1e-6:
+                cab.refrigerator_opening_height = self.size
+                return  # its update already ran the recalc
+    _update_cabinet_dim(self, context)
+
+
 def _update_remove_bottom(self, context):
     """Update callback for a bay's remove_bottom toggle.
 
@@ -7230,7 +7256,7 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # held during redistribution when unlocked.
     size: FloatProperty(
         name="Size", default=units.inch(12.0), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_opening_size,
     )  # type: ignore
     unlock_size: BoolProperty(
         name="Unlock Size",
