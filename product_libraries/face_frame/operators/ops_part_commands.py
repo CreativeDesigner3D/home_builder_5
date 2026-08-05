@@ -20,7 +20,8 @@ doesn't reset the user's value.
 import os
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import (BoolProperty, BoolVectorProperty, FloatProperty,
+                       StringProperty)
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -2567,12 +2568,30 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _fb_bays_changed(self, context):
+    """Write the dialog's bay toggles back to the cabinet's
+    finished_bottom_bays (all checked stores '' - whole cabinet), so
+    the panels rebuild live like the other options."""
+    if getattr(self, '_fb_init', False):
+        return
+    root = bpy.data.objects.get(self.cabinet_name)
+    if root is None:
+        return
+    keys = [k for k in self.segment_keys.split(',') if k]
+    selected = [k for i, k in enumerate(keys) if self.bay_flags[i]]
+    value = '' if len(selected) == len(keys) else ','.join(selected)
+    cab = root.face_frame_cabinet
+    if cab.finished_bottom_bays != value:
+        cab.finished_bottom_bays = value
+
+
 class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
     """Set the finished bottom condition on the clicked upper cabinet.
     Live-bound to the cabinet's props (the finish panel, LED route,
-    and optional render light rebuild as options change); the room
-    button copies this cabinet's condition to every standard upper in
-    the scene."""
+    and optional render light rebuild as options change); with multiple
+    bottom segments (raised / dropped bays) each gets its own toggle.
+    The room button copies this cabinet's condition to every standard
+    upper in the scene."""
     bl_idname = "hb_face_frame.set_finished_bottom"
     bl_label = "Set Finished Bottom"
     bl_description = ("Set this upper cabinet's finished bottom "
@@ -2581,6 +2600,11 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
 
     cabinet_name: StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    segment_keys: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    bay_flags: BoolVectorProperty(
+        name="Bottoms", size=16, options={'SKIP_SAVE'},
+        update=_fb_bays_changed)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -2597,6 +2621,25 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         if root is None:
             return {'CANCELLED'}
         self.cabinet_name = root.name
+        # One toggle per live carcass-bottom segment (same filter the
+        # builder uses), seeded from the cabinet's current scope.
+        bottoms = [c for c in root.children
+                   if c.get('hb_part_role')
+                   == types_face_frame.PART_ROLE_BOTTOM
+                   and not c.hide_viewport
+                   and not c.get('IS_MANUAL_PART')]
+        keys = sorted({str(c.get('hb_segment_start_bay', 0))
+                       for c in bottoms},
+                      key=lambda k: int(k) if k.lstrip('-').isdigit()
+                      else 0)
+        self.segment_keys = ','.join(keys[:16])
+        cab = root.face_frame_cabinet
+        scope = {s.strip() for s in cab.finished_bottom_bays.split(',')
+                 if s.strip()}
+        self._fb_init = True
+        for i, k in enumerate(keys[:16]):
+            self.bay_flags[i] = (not scope) or (k in scope)
+        self._fb_init = False
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def draw(self, context):
@@ -2608,6 +2651,17 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         cab = root.face_frame_cabinet
         col = layout.column(align=True)
         col.prop(cab, 'finished_bottom_type', text="Condition")
+        keys = [k for k in self.segment_keys.split(',') if k]
+        if len(keys) > 1:
+            bays = col.column(align=True)
+            bays.enabled = cab.finished_bottom_type != 'NONE'
+            bays.label(text="Apply To:")
+            for i, k in enumerate(keys):
+                try:
+                    label = f"Bay {int(k) + 1}"
+                except ValueError:
+                    label = f"Bay {k}"
+                bays.prop(self, 'bay_flags', index=i, text=label)
         sub = col.column(align=True)
         sub.enabled = cab.finished_bottom_type != 'NONE'
         sub.prop(cab, 'finished_bottom_led_route', text="LED Route")
@@ -2668,6 +2722,9 @@ class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
                 cab.finished_bottom_route_inset = \
                     src_cab.finished_bottom_route_inset
                 cab.finished_bottom_light = src_cab.finished_bottom_light
+                # Bay scope is cabinet-specific; room apply covers
+                # every bottom segment.
+                cab.finished_bottom_bays = ''
                 count += 1
         self.report({'INFO'},
                     f"Finished bottom applied to {count} upper(s)")

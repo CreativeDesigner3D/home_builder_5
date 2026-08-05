@@ -6558,6 +6558,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Per-bay scope: comma-separated hb_segment_start_bay keys of the
+    # carcass-bottom segments that get the finish panel. Empty covers
+    # every segment (whole cabinet - the pre-scope behavior).
+    finished_bottom_bays: StringProperty(
+        name="Finished Bottom Bays",
+        description="Bottom segments the finished bottom applies to; empty applies to all",
+        default='',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # Sink apron height for the diagonal SINK_DOORS config: a fixed
     # face-frame-depth panel across the top of the door opening, behind

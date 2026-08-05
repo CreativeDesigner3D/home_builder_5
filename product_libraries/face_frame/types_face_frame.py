@@ -3937,6 +3937,11 @@ class FaceFrameCabinet(GeoNodeCage):
         if not bottoms:
             self._cleanup_finished_bottom()
             return
+        # Per-bay scope: only the listed segment keys get a panel;
+        # empty means every segment.
+        scope = {s.strip() for s in
+                 getattr(cab, 'finished_bottom_bays', '').split(',')
+                 if s.strip()}
         t_fin, flush = spec
         brw = cab.bottom_rail_width
         t = cab.material_thickness
@@ -3955,6 +3960,8 @@ class FaceFrameCabinet(GeoNodeCage):
         live_keys = set()
         for src in bottoms:
             key = str(src.get('hb_segment_start_bay', 0))
+            if scope and key not in scope:
+                continue
             live_keys.add(key)
             try:
                 seg_len = self._part_input(src, 'Length')
