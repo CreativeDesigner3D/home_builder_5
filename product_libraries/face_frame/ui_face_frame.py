@@ -517,29 +517,43 @@ def draw_panel_layout(layout, root):
 
     rows = cab_props.panel_horizontal_rows
     if rows > 1:
-        col.prop(cab_props, 'panel_row_rail_width', text="Mid Rail Width")
+        col.prop(cab_props, 'panel_row_rail_width',
+                 text="Default Mid Rail Width")
     srow = col.row(align=True)
     srow.prop(cab_props, 'panel_mid_stile_override', text="")
     sub = srow.row(align=True)
     sub.enabled = cab_props.panel_mid_stile_override
     sub.prop(cab_props, 'panel_mid_stile_width', text="Mid Stile Width")
 
-    def _size_list(box_label, entries, prop_name, item_label):
-        box = col.box()
-        box.label(text=box_label)
-        for i, entry in enumerate(entries):
-            row = box.row(align=True)
-            row.prop(entry, 'override', text="")
-            sub = row.row(align=True)
-            sub.enabled = entry.override
-            sub.prop(entry, prop_name, text="%s %d" % (item_label, i + 1))
+    def _override_row(box, entry, flag_prop, value_prop, label):
+        row = box.row(align=True)
+        row.prop(entry, flag_prop, text="")
+        sub = row.row(align=True)
+        sub.enabled = getattr(entry, flag_prop)
+        sub.prop(entry, value_prop, text=label)
 
-    if rows > 1:
-        _size_list("Row Heights (bottom up, check to set)",
-                   cab_props.panel_row_heights, 'height', "Row")
+    # Rows read TOP DOWN like the drawings, with each mid rail listed
+    # between the two rows it separates (storage is bottom-up; entry
+    # i's rail sits above row i, so display row k's following rail is
+    # storage entry j-1's).
+    entries = cab_props.panel_row_heights
+    n = len(entries)
+    if rows > 1 and n:
+        box = col.box()
+        box.label(text="Rows (top down, check to set)")
+        for k in range(n):
+            j = n - 1 - k     # storage index (0 = bottom row)
+            _override_row(box, entries[j], 'override', 'height',
+                          "Row %d Height" % (k + 1))
+            if j >= 1:
+                _override_row(box, entries[j - 1], 'rail_override',
+                              'rail_width', "Mid Rail %d" % (k + 1))
     if len(cab_props.panel_col_widths) > 1:
-        _size_list("Column Widths (left to right, check to set)",
-                   cab_props.panel_col_widths, 'width', "Column")
+        box = col.box()
+        box.label(text="Column Widths (left to right, check to set)")
+        for i, entry in enumerate(cab_props.panel_col_widths):
+            _override_row(box, entry, 'override', 'width',
+                          "Column %d" % (i + 1))
 
     if not cab_props.panel_split_auto:
         layout.label(text="Openings are pinned to your manual edits",

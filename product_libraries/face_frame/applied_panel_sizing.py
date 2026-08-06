@@ -696,15 +696,19 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
             if not entry.unlock:
                 entry.width = stile_w
 
-        # Manual rows: write the computed auto-equal heights back so
-        # the dialog displays the calculated values next to the
-        # override checkboxes.
+        # Manual rows: write the computed auto-equal heights (and the
+        # default rail widths) back so the dialog displays the
+        # calculated values next to the override checkboxes.
         if rows_override > 0:
+            default_rail = panel_props.panel_row_rail_width
             for e, v in zip(panel_props.panel_row_heights,
                             _manual_row_heights(panel_props,
                                                 rows_override)):
                 if not e.override and abs(e.height - v) > 1e-6:
                     e.height = v
+                if (not e.rail_override
+                        and abs(e.rail_width - default_rail) > 1e-6):
+                    e.rail_width = default_rail
 
         # Column widths: sync the list to the built column count, then
         # auto-equal / override exactly like the rows. Real-bay columns
@@ -801,14 +805,30 @@ def _bay_top_child(bay_obj):
     return kids[0] if len(kids) == 1 else None
 
 
+def _manual_rail_widths(panel_props, rows):
+    """Per-rail widths for an explicit row count, bottom-up: entry i's
+    rail sits ABOVE row i (rows 0..N-2). Rails without the override
+    follow the panel's default mid rail width."""
+    default_w = panel_props.panel_row_rail_width
+    entries = panel_props.panel_row_heights
+    out = []
+    for i in range(rows - 1):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.rail_override:
+            out.append(max(e.rail_width, units.inch(0.5)))
+        else:
+            out.append(default_w)
+    return out
+
+
 def _manual_row_heights(panel_props, rows):
     """Effective bottom-up row opening heights for an explicit row
     count: rows flagged override hold their typed height, the rest
     share the remaining frame opening equally (auto-calculated)."""
     min_h = units.inch(1.0)
-    rail_w = panel_props.panel_row_rail_width
     open_h = (panel_props.height - panel_props.top_rail_width
-              - panel_props.bottom_rail_width - (rows - 1) * rail_w)
+              - panel_props.bottom_rail_width
+              - sum(_manual_rail_widths(panel_props, rows)))
     entries = panel_props.panel_row_heights
     fixed = 0.0
     n_auto = 0
@@ -855,11 +875,11 @@ def _manual_row_rails(panel_props, rows):
     produces (panel-bay-local Z, sorted top to bottom). Rows are
     measured bottom-up as opening heights; the topmost region closes
     the frame so its rail entry is implicit."""
-    rail_w = panel_props.panel_row_rail_width
+    rail_ws = _manual_rail_widths(panel_props, rows)
     heights = _manual_row_heights(panel_props, rows)
     rails = []
     z = 0.0
-    for h in heights[:-1]:
+    for h, rail_w in zip(heights[:-1], rail_ws):
         z += h
         rails.append({'z_bottom': z, 'splitter_width': rail_w})
         z += rail_w

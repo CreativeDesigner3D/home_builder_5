@@ -871,11 +871,22 @@ class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
                       "row heights")
     bl_options = {'UNDO'}
 
+    # The panel root is resolved ONCE at invoke and held by name: the
+    # clicked part (e.g. a mid rail the edit removes) can die in a
+    # rebuild mid-dialog, and the active object with it - the root
+    # itself survives every rebuild.
+    panel_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return _owning_panel_root(context.active_object) is not None
 
     def invoke(self, context, event):
+        root = _owning_panel_root(context.active_object)
+        if root is None:
+            self.report({'WARNING'}, "Select a panel part first")
+            return {'CANCELLED'}
+        self.panel_name = root.name
         return context.window_manager.invoke_props_dialog(self, width=320)
 
     def execute(self, context):
@@ -883,7 +894,9 @@ class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
 
     def draw(self, context):
         from .. import ui_face_frame
-        root = _owning_panel_root(context.active_object)
+        root = bpy.data.objects.get(self.panel_name)
+        if root is None:
+            root = _owning_panel_root(context.active_object)
         if root is None:
             self.layout.label(text="No panel selected", icon='INFO')
             return

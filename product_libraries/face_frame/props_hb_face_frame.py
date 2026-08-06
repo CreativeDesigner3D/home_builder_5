@@ -4886,10 +4886,13 @@ def _update_bay_kick_height(self, context):
 class Face_Frame_Panel_Row_Height(PropertyGroup):
     """Opening height of one row of an applied panel with a manual row
     count (panel_horizontal_rows > 0). Lives in a CollectionProperty on
-    Face_Frame_Cabinet_Props; index 0 is the BOTTOM row. Rows without
-    the override flag auto-calculate to an equal share of the remaining
-    space (the builder writes the computed value back so the field
-    displays it); flagged rows hold their typed height."""
+    Face_Frame_Cabinet_Props; index 0 is the BOTTOM row (the dialog
+    lists them top-down). Rows without the override flag auto-calculate
+    to an equal share of the remaining space (the builder writes the
+    computed value back so the field displays it); flagged rows hold
+    their typed height. Each entry also carries the mid rail ABOVE its
+    row: auto follows the panel's default mid rail width, the rail
+    override holds a typed width for that one rail."""
     height: FloatProperty(
         name="Row Height",
         default=units.inch(12.0), min=units.inch(1.0),
@@ -4900,6 +4903,20 @@ class Face_Frame_Panel_Row_Height(PropertyGroup):
         name="Set Height",
         description="Hold this row at the typed height; unchecked rows "
                     "share the remaining space equally",
+        default=False,
+        update=_update_panel_split_auto,
+    )  # type: ignore
+    rail_width: FloatProperty(
+        name="Rail Width",
+        description="Width of the mid rail above this row",
+        default=units.inch(1.5), min=units.inch(0.5),
+        unit='LENGTH', precision=4,
+        update=_update_panel_split_auto,
+    )  # type: ignore
+    rail_override: BoolProperty(
+        name="Set Rail Width",
+        description="Hold this mid rail at the typed width; unchecked "
+                    "rails follow the default mid rail width",
         default=False,
         update=_update_panel_split_auto,
     )  # type: ignore
