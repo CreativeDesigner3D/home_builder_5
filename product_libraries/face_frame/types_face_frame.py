@@ -4470,6 +4470,19 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             pos = solver.right_side_position(layout)
             length, width, thickness = solver.right_side_dims(layout)
+        # The wing reads as the cabinet's finished return, so it runs
+        # the full face height. An UNFINISHED upper side is captured by
+        # the bottom panel (its bottom edge rises by the bottom rail
+        # width), which would leave the wing short of the frame bottom -
+        # carry it down to where a finished side would end.
+        if not layout.has_toe_kick:
+            bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+            finished_bottom = (solver.bay_bottom_z(layout, bay_index)
+                               - solver.ends_down_drop(layout, side)
+                               - solver.side_extend_down(layout, side))
+            if pos[2] > finished_bottom + 1e-6:
+                length += pos[2] - finished_bottom
+                pos = (pos[0], pos[1], finished_bottom)
         front_target, back_target, phi, w_new = self._back_ext_line(
             side, extend, width + layout.fft)
         cab = self.obj.face_frame_cabinet
