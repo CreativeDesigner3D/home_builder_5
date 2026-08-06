@@ -20,6 +20,7 @@ import bpy
 
 from ... import hb_types
 from ... import hb_utils
+from ... import units
 from . import types_face_frame
 
 
@@ -613,6 +614,14 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
         return
 
     rails = _detect_panel_mid_rails(cab_obj, side, panel_bay_obj)
+    # Explicit row override: N stacked rows with mid rails between,
+    # replacing the cabinet's rail-matched rows. Row heights come from
+    # the panel's per-row list (bottom-up; the top row absorbs the
+    # remainder), so drafters can lay out wainscot-style ends that
+    # differ from the cabinet's own splits.
+    rows_override = getattr(panel_props, 'panel_horizontal_rows', 0)
+    if rows_override > 0:
+        rails = _manual_row_rails(panel_props, rows_override)
     wide = panel_props.width >= _MID_STILE_WIDTH_THRESHOLD
     # Openings scale with width when the panel splits into real bays
     # (no rail-matched H-split in play); see the width ladder above.
@@ -744,6 +753,25 @@ def _bay_top_child(bay_obj):
             if (c.get(types_face_frame.TAG_OPENING_CAGE)
                 or c.get(types_face_frame.TAG_SPLIT_NODE))]
     return kids[0] if len(kids) == 1 else None
+
+
+def _manual_row_rails(panel_props, rows):
+    """Synthesized mid-rail entries for an explicit row count, in the
+    same {'z_bottom', 'splitter_width'} shape _detect_panel_mid_rails
+    produces (panel-bay-local Z, sorted top to bottom). Rows are
+    measured bottom-up as opening heights from panel_row_heights; the
+    top row is whatever remains, so no entry is needed for it."""
+    rail_w = panel_props.panel_row_rail_width
+    heights = panel_props.panel_row_heights
+    rails = []
+    z = 0.0
+    for i in range(rows - 1):
+        h = heights[i].height if i < len(heights) else units.inch(12.0)
+        z += max(h, units.inch(1.0))
+        rails.append({'z_bottom': z, 'splitter_width': rail_w})
+        z += rail_w
+    rails.sort(key=lambda r: r['z_bottom'], reverse=True)
+    return rails
 
 
 def _detect_panel_mid_rails(cab_obj, side, panel_bay_obj):

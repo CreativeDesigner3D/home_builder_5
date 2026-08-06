@@ -499,6 +499,34 @@ def draw_floating_shelf(layout, root):
         gsub.prop(shelf, 'groove_depth', text="Depth")
 
 
+def draw_panel_layout(layout, root):
+    """Layout controls for an applied / standalone panel: the openings
+    automation toggle, the column + row overrides, the per-row heights
+    and the X-frame switch. Shared by the cabinet prompts dialog (panel
+    roots) and the Panel Layout popup reached from a panel part's
+    right-click menu."""
+    cab_props = root.face_frame_cabinet
+
+    layout.prop(cab_props, 'panel_split_auto')
+    col = layout.column()
+    col.enabled = cab_props.panel_split_auto
+    col.prop(cab_props, 'panel_vertical_bays', text="Columns (0 = Auto)")
+    col.prop(cab_props, 'panel_horizontal_rows',
+             text="Rows (0 = Match Cabinet)")
+    rows = cab_props.panel_horizontal_rows
+    if rows > 1:
+        col.prop(cab_props, 'panel_row_rail_width', text="Row Rail Width")
+        box = col.box()
+        box.label(text="Row Heights (bottom up)")
+        for i, entry in enumerate(cab_props.panel_row_heights):
+            box.prop(entry, 'height', text="Row %d" % (i + 1))
+        box.label(text="Row %d: remainder" % rows)
+    if not cab_props.panel_split_auto:
+        layout.label(text="Openings are pinned to your manual edits",
+                     icon='INFO')
+    layout.prop(cab_props, 'panel_x_frame')
+
+
 def _is_mantle(obj):
     """True when obj (or its cabinet root) is a mantle product."""
     root = types_face_frame.find_cabinet_root(obj)

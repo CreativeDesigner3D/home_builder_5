@@ -834,18 +834,13 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             # dims above are the editor); multi-bay gets a compact box
             # per bay with editable size + an expand toggle for more.
             ui_face_frame.draw_bays_in_prompts(layout, root)
-            # Applied panels: surface the auto-openings toggle so a user
-            # can return a manually-pinned panel to width-driven openings,
-            # plus the vertical-divisions override (0 = width-driven).
-            # The override only applies while Auto Openings is on -- a
+            # Applied panels: the shared layout block (auto-openings
+            # toggle, column + row overrides, per-row heights, X frame).
+            # The overrides only apply while Auto Openings is on -- a
             # pinned panel keeps whatever tree the user built by hand.
             if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                     or types_face_frame._is_standalone_panel(root)):
-                layout.prop(cab_props, 'panel_split_auto')
-                row = layout.row()
-                row.enabled = cab_props.panel_split_auto
-                row.prop(cab_props, 'panel_vertical_bays')
-                layout.prop(cab_props, 'panel_x_frame')
+                ui_face_frame.draw_panel_layout(layout, root)
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated
@@ -853,6 +848,75 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             ui_face_frame.draw_refrigerator_options(layout, root)
         elif self.active_tab == 'FACE_FRAME':
             ui_face_frame.draw_face_frame_defaults(layout, cab_props)
+
+
+def _owning_panel_root(obj):
+    """The applied / standalone panel root that owns ``obj`` (which may
+    be the root itself or any of its parts), or None."""
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+            or types_face_frame._is_standalone_panel(root)):
+        return root
+    return None
+
+
+class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
+    """Edit an applied panel's layout: columns, rows and row heights.
+    Reachable from the right-click menu of any of the panel's parts."""
+    bl_idname = "hb_face_frame.panel_layout_prompts"
+    bl_label = "Panel Layout"
+    bl_description = ("Edit this panel's openings: columns, rows and "
+                      "row heights")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _owning_panel_root(context.active_object) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = _owning_panel_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No panel selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_panel_layout(self.layout, root)
+
+
+class hb_face_frame_OT_panel_remove_stile(bpy.types.Operator):
+    """Merge a panel's columns into one opening (remove the mid
+    stile). Shortcut for Columns = 1 with Auto Openings on."""
+    bl_idname = "hb_face_frame.panel_remove_stile"
+    bl_label = "Remove Stile (Merge Openings)"
+    bl_description = ("Merge this panel's side-by-side openings into "
+                      "one full-width opening per row")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _owning_panel_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = _owning_panel_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        # Order matters: the auto flag's update re-runs the split, so
+        # set the count first and let the toggle's rebuild see it. If
+        # auto is already on, the count write rebuilds by itself.
+        cab.panel_vertical_bays = 1
+        if not cab.panel_split_auto:
+            cab.panel_split_auto = True
+        return {'FINISHED'}
 
 
 # Maximum count of openings the split dialog can produce in one shot.
@@ -5056,6 +5120,8 @@ classes = (
     hb_face_frame_OT_floating_shelf_prompts,
     hb_face_frame_OT_valance_prompts,
     hb_face_frame_OT_mantle_prompts,
+    hb_face_frame_OT_panel_layout_prompts,
+    hb_face_frame_OT_panel_remove_stile,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,

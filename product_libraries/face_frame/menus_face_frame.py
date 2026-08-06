@@ -261,6 +261,13 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                      else "Panel Properties...")
             layout.operator("hb_face_frame.cabinet_prompts",
                             text=ptext, icon='WINDOW')
+            # Focused openings editor: columns / rows / row heights.
+            layout.operator("hb_face_frame.panel_layout_prompts",
+                            text="Panel Layout...", icon='MESH_GRID')
+            # One-click merge on the stile the user is looking at.
+            if role in ('MID_STILE', 'BAY_MID_STILE'):
+                layout.operator("hb_face_frame.panel_remove_stile",
+                                icon='X')
             layout.separator()
 
         # 5-piece door / drawer front: stile / rail / mid rail editor.

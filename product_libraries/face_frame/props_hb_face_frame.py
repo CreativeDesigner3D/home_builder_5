@@ -4504,6 +4504,33 @@ def _update_panel_split_auto(self, context):
 _update_panel_vertical_bays = _update_panel_split_auto
 
 
+def _update_panel_rows(self, context):
+    """Row-count override on an applied panel: sync the per-row height
+    list to the new count (seeding fresh entries with an equal share of
+    the panel's frame opening) before the host recalc rebuilds the
+    split tree."""
+    from . import types_face_frame
+    obj = self.id_data
+    if obj is None:
+        return
+    cab = obj.face_frame_cabinet
+    rows = cab.panel_horizontal_rows
+    heights = cab.panel_row_heights
+    want = max(rows - 1, 0)   # top row takes the remainder
+    if want and len(heights) != want:
+        rail_w = cab.panel_row_rail_width
+        open_h = max(
+            cab.height - cab.panel_top_rail_width
+            - cab.panel_bottom_rail_width - (rows - 1) * rail_w,
+            units.inch(1.0) * rows)
+        share = open_h / rows
+        while len(heights) < want:
+            heights.add().height = share
+        while len(heights) > want:
+            heights.remove(len(heights) - 1)
+    _update_panel_split_auto(self, context)
+
+
 # Standard rollout box heights (inches) keyed by the preset enum id, plus the
 # matching enum items. CUSTOM is intentionally absent from the map: it leaves
 # a box's height untouched so a typed value stands.
@@ -4863,6 +4890,19 @@ def _update_bay_kick_height(self, context):
         self.unlock_kick_height = True
     else:
         types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+class Face_Frame_Panel_Row_Height(PropertyGroup):
+    """Opening height of one row of an applied panel with a manual row
+    count (panel_horizontal_rows > 0). Lives in a CollectionProperty on
+    Face_Frame_Cabinet_Props; index 0 is the BOTTOM row and the list
+    covers rows 1..N-1 - the top row absorbs the remainder."""
+    height: FloatProperty(
+        name="Row Height",
+        default=units.inch(12.0), min=units.inch(1.0),
+        unit='LENGTH', precision=4,
+        update=_update_panel_split_auto,
+    )  # type: ignore
 
 
 class Face_Frame_Mid_Stile_Width(PropertyGroup):
@@ -5751,6 +5791,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "back of the frame face",
         default=False,
         update=_update_panel_split_auto)  # type: ignore
+    # Explicit row override. 0 keeps the automatic rows (mirroring the
+    # source cabinet's stacked-door rails). N > 0 builds N stacked rows
+    # with mid rails between, row heights from panel_row_heights
+    # (bottom-up; the top row absorbs the remainder).
+    panel_horizontal_rows: IntProperty(
+        name="Rows",
+        description="Number of stacked panel rows. 0 = match the "
+                    "cabinet's own splits; 1 = one full-height panel; "
+                    "N builds N rows with mid rails between, heights "
+                    "set per row (bottom up, top row takes the rest)",
+        default=0, min=0, max=8,
+        update=_update_panel_rows)  # type: ignore
+    panel_row_rail_width: FloatProperty(
+        name="Row Rail Width",
+        description="Width of the mid rails between manual panel rows",
+        default=units.inch(1.5), min=units.inch(0.5),
+        unit='LENGTH', precision=4,
+        update=_update_panel_rows)  # type: ignore
+    panel_row_heights: CollectionProperty(
+        type=Face_Frame_Panel_Row_Height)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
         unit='LENGTH', precision=4,
@@ -9866,6 +9926,7 @@ classes = (
     HB_UL_face_frame_cabinet_styles,
     Face_Frame_Door_Style,
     HB_UL_face_frame_door_styles,
+    Face_Frame_Panel_Row_Height,
     Face_Frame_Mid_Stile_Width,
     Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
