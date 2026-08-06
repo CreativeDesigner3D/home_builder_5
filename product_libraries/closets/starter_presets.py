@@ -34,6 +34,10 @@ PART_SECTIONS = [
         ('Misc Part', "Misc Part",
          "A part you size and place yourself",
          'hb_closets.place_misc_part'),
+        ('Continuous Top', "Continuous Top",
+         "One top across a whole run, in two pieces when it is "
+         "longer than can be cut from one length of material",
+         'hb_closets.place_continuous_top'),
     ]),
 ]
 

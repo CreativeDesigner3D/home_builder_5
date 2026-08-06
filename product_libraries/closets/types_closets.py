@@ -77,6 +77,11 @@ PART_ROLE_ROD = 'CLOSET_ROD'
 # geometry inputs and its place sits on its own transform, and it
 # keeps both until the person changes them.
 PART_ROLE_MISC = 'CLOSET_MISC_PART'
+# The top laid across a whole run at once, rather than the piece
+# per bay a run works out for itself. It is dropped rather than
+# prompted, so it is sized and placed once, at the drop, and left
+# alone after: a run resized later keeps the top it was given.
+PART_ROLE_CONTINUOUS_TOP = 'CLOSET_CONTINUOUS_TOP'
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -563,6 +568,80 @@ def add_misc_part(name='Misc Part'):
     part.set_input('Thickness', inch(0.75))
     part.set_input('Mirror Y', True)
     return part.obj
+
+
+def add_continuous_top(name='Continuous Top'):
+    """Create a top meant to be laid across a whole run at once.
+
+    Comes out the size any loose part comes out; the drop sizes it
+    to whatever run it lands on. Nothing sizes it after that, so a
+    run resized later keeps the top it was given until the person
+    changes it.
+    """
+    part = CabinetPart()
+    part.create(name)
+    part.obj['hb_part_role'] = PART_ROLE_CONTINUOUS_TOP
+    part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    part.set_input('Thickness',
+                   bpy.context.scene.hb_closets.shelf_thickness)
+    part.set_input('Mirror Y', True)
+    return part.obj
+
+
+def fit_continuous_top(top_obj, root, x_offset=0.0, length=None):
+    """Lay a top across a run: sitting on the panel tops, running
+    the length of the run, and one projection deeper so it covers
+    the front edges. Takes a length of its own when the top is one
+    piece of a top that had to be split.
+    """
+    sp = root.hb_closet_starter
+    sizes = run_sizes(root)
+    if top_obj.parent is not root:
+        top_obj.parent = root
+        top_obj.matrix_parent_inverse.identity()
+    top_obj.rotation_euler = (0.0, 0.0, 0.0)
+    top_obj.location = (x_offset, 0.0, sp.height)
+    part = GeoNodeCutpart(top_obj)
+    part.set_input(
+        'Length',
+        (sp.width - x_offset) if length is None else length)
+    part.set_input('Width',
+                   sp.depth + const.CONTINUOUS_TOP_PROJECTION)
+    part.set_input('Thickness', sizes.shelf_thickness)
+    part.set_input('Mirror Y', True)
+    return part
+
+
+def split_continuous_top(top_obj):
+    """A top longer than one length of material comes in two.
+
+    Cuts the first piece at the length that can be cut and lays the
+    rest of it beside, end to end, so what is seen is one top
+    across the run and what is made is two parts. Hands back the
+    second piece, or nothing when the top fits in one.
+    """
+    root = find_starter_root(top_obj)
+    if root is None:
+        return None
+    part = GeoNodeCutpart(top_obj)
+    total = float(part.get_input('Length'))
+    limit = const.CONTINUOUS_TOP_MAX_LENGTH
+    if total <= limit:
+        return None
+    part.set_input('Length', limit)
+    second = add_continuous_top()
+    second.parent = root
+    second.matrix_parent_inverse.identity()
+    second.rotation_euler = (0.0, 0.0, 0.0)
+    second.location = (top_obj.location.x + limit,
+                       top_obj.location.y, top_obj.location.z)
+    second_part = GeoNodeCutpart(second)
+    second_part.set_input('Length', total - limit)
+    second_part.set_input('Width', part.get_input('Width'))
+    second_part.set_input('Thickness',
+                          part.get_input('Thickness'))
+    second_part.set_input('Mirror Y', True)
+    return second
 
 
 def add_division(opening_obj, x_offset):

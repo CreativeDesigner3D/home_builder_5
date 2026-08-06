@@ -202,6 +202,13 @@ BRIDGE_SHELF_WIDTH = inch(14.0)
 # forward (and past finished ends) by the overhang. Default 1".
 TOP_ACCENT_OVERHANG = inch(1.0)
 
+# Continuous top: one top laid across a whole run rather than the
+# piece per bay a run works out for itself. It reaches past the
+# front of what it caps, and a top longer than can be cut from one
+# length of material comes in two pieces meeting at the cut length.
+CONTINUOUS_TOP_PROJECTION = inch(1.0)
+CONTINUOUS_TOP_MAX_LENGTH = inch(95.0)
+
 # Minimum bay width the redistributor will assign to an unlocked bay.
 MIN_BAY_WIDTH = inch(1.0)
 

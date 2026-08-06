@@ -3523,6 +3523,210 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_place_continuous_top(bpy.types.Operator,
+                                        hb_placement.PlacementMixin):
+    """Place a continuous top. Over a run it caps the whole run at
+    once, as long as the run and reaching past its front; anywhere
+    else it stands free where it is dropped. A top longer than can be
+    cut from one length of material comes in two pieces when it lands.
+    Click places, Shift-click places and starts another, Right-click
+    or Esc cancels."""
+    bl_idname = "hb_closets.place_continuous_top"
+    bl_label = "Place Continuous Top"
+    bl_options = {'UNDO'}
+
+    _part_obj = None
+
+    def invoke(self, context, event):
+        self._part_obj = types_closets.add_continuous_top()
+        try:
+            materials_closets.apply_to_part(self._part_obj)
+        except Exception:
+            pass
+        cursor = context.scene.cursor.location
+        self._part_obj.location = (cursor.x, cursor.y, 0.0)
+        self.init_placement(context)
+        if self.region is None:
+            self._delete_part()
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self.register_placement_object(self._part_obj)
+        hb_placement.draw_header_text(
+            context,
+            "Place continuous top: move over a run to cap it, click "
+            "to place, Shift-click to place another, Right-click/Esc "
+            "to cancel")
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _delete_part(self):
+        if self._part_obj is not None:
+            try:
+                types_closets._remove_part_tree(self._part_obj)
+            except ReferenceError:
+                pass
+        self._part_obj = None
+
+    def _position_from_hit(self, context):
+        """A run under the cursor takes the top across its whole
+        length; off a run the top stands free on the floor grid."""
+        obj = self._part_obj
+        if self.hit_location is None:
+            return
+        root = None
+        if self.hit_object is not None:
+            root = types_closets.find_starter_root(self.hit_object)
+        if root is not None:
+            types_closets.fit_continuous_top(obj, root)
+            return
+        if obj.parent is not None:
+            obj.parent = None
+            obj.matrix_parent_inverse.identity()
+        obj.rotation_euler = (0.0, 0.0, 0.0)
+        obj.location = hb_snap.snap_vector_to_grid(
+            Vector(self.hit_location))
+
+    def _end(self, context):
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def modal(self, context, event):
+        if self._part_obj is None:
+            return {'CANCELLED'}
+        if context.area is not None:
+            context.area.tag_redraw()
+
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type == 'MOUSEMOVE':
+            obj = self._part_obj
+            obj.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                obj.hide_set(False)
+            self._position_from_hit(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._delete_part()
+            self._end(context)
+            return {'CANCELLED'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            obj = self._part_obj
+            self._part_obj = None
+            types_closets.split_continuous_top(obj)
+            for other in context.selected_objects:
+                other.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            self._end(context)
+            self.report({'INFO'}, "Placed continuous top")
+            if event.shift:
+                bpy.ops.hb_closets.place_continuous_top('INVOKE_DEFAULT')
+            return {'FINISHED'}
+
+        return {'RUNNING_MODAL'}
+
+
+class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
+    """Set how deep the active continuous top is and how far it runs
+    past each end of what it caps. The length is what those come to,
+    so it is shown rather than typed."""
+    bl_idname = "hb_closets.continuous_top_prompts"
+    bl_label = "Continuous Top Properties"
+    bl_options = {'UNDO'}
+
+    top_depth: bpy.props.FloatProperty(
+        name="Depth",
+        description="How far the top reaches out from the wall",
+        unit='LENGTH', precision=4)  # type: ignore
+    left_offset: bpy.props.FloatProperty(
+        name="Left Offset",
+        description="How far the top runs past the left end of what "
+                    "it caps",
+        unit='LENGTH', precision=4)  # type: ignore
+    right_offset: bpy.props.FloatProperty(
+        name="Right Offset",
+        description="How far the top runs past the right end of what "
+                    "it caps",
+        unit='LENGTH', precision=4)  # type: ignore
+    # Where the top started, so dragging an offset back and forth
+    # measures from the same place each time instead of piling up.
+    base_length: bpy.props.FloatProperty(
+        options={'HIDDEN'}, unit='LENGTH')  # type: ignore
+    base_x: bpy.props.FloatProperty(
+        options={'HIDDEN'}, unit='LENGTH')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_CONTINUOUS_TOP)
+
+    def _apply(self, obj):
+        part = hb_types.GeoNodeCutpart(obj)
+        base = float(self.base_length)
+        if base <= 0.0:
+            base = float(part.get_input('Length'))
+            self.base_length = base
+            self.base_x = float(obj.location.x)
+        part.set_input('Length', base + float(self.left_offset)
+                       + float(self.right_offset))
+        depth = float(self.top_depth)
+        if depth > 0.0:
+            part.set_input('Width', depth)
+        obj.location.x = float(self.base_x) - float(self.left_offset)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        part = hb_types.GeoNodeCutpart(obj)
+        self.base_length = float(part.get_input('Length'))
+        self.base_x = float(obj.location.x)
+        self.top_depth = float(part.get_input('Width'))
+        self.left_offset = 0.0
+        self.right_offset = 0.0
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        obj = context.active_object
+        if obj is not None:
+            self._apply(obj)
+        return True
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None:
+            return {'CANCELLED'}
+        self._apply(obj)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+        unit_settings = context.scene.unit_settings
+        length = 0.0
+        if obj is not None:
+            try:
+                length = hb_types.GeoNodeCutpart(obj).get_input('Length')
+            except Exception:
+                length = 0.0
+        box = layout.box()
+        row = box.row()
+        row.label(text="Length: "
+                  + units.unit_to_string(unit_settings, length))
+        row = box.row()
+        row.prop(self, 'top_depth', text="Depth")
+        row = box.row()
+        row.prop(self, 'left_offset', text="Left Offset")
+        row = box.row()
+        row.prop(self, 'right_offset', text="Right Offset")
+
+
 class hb_closets_OT_delete_part(bpy.types.Operator):
     """Delete the active interior part. Config-driven parts (adjustable
     shelves, drawers, doors, cubby parts) decrement their opening's
@@ -3535,6 +3739,7 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                   types_closets.PART_ROLE_ADJ_SHELF,
                   types_closets.PART_ROLE_ROD,
                   types_closets.PART_ROLE_MISC,
+                  types_closets.PART_ROLE_CONTINUOUS_TOP,
                   types_closets.PART_ROLE_DOOR,
                   types_closets.PART_ROLE_DRAWER_FRONT,
                   types_closets.PART_ROLE_CUBBY_DIVISION,
@@ -5419,6 +5624,8 @@ classes = (
     hb_closets_OT_delete_bay,
     hb_closets_OT_add_part,
     hb_closets_OT_place_misc_part,
+    hb_closets_OT_place_continuous_top,
+    hb_closets_OT_continuous_top_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,

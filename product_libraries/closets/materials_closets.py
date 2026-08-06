@@ -522,5 +522,7 @@ def update_room(self=None, context=None):
     for obj in scene.objects:
         if obj.get(types_closets.TAG_STARTER_CAGE):
             apply_to_starter(obj)
-        elif obj.get('hb_part_role') == types_closets.PART_ROLE_MISC:
+        elif obj.get('hb_part_role') in (
+                types_closets.PART_ROLE_MISC,
+                types_closets.PART_ROLE_CONTINUOUS_TOP):
             apply_to_part(obj)
