@@ -8866,17 +8866,40 @@ class FaceFrameCabinet(GeoNodeCage):
                                      role=PART_ROLE_DRAWER_DIVIDER)
 
     def _tray_walls(self, mb, rect, th):
-        """Four walls on a panel bottom - the shell every boxed insert
-        starts from. Returns the interior rectangle."""
-        z0 = rect.z0
-        z1 = z0 + rect.h
-        mb.box(rect.x0, rect.x1, rect.y0, rect.y1, z0,
-               z0 + self.INSERT_PANEL_TH)
-        mb.box(rect.x0, rect.x0 + th, rect.y0, rect.y1, z0, z1)
-        mb.box(rect.x1 - th, rect.x1, rect.y0, rect.y1, z0, z1)
-        mb.box(rect.x0 + th, rect.x1 - th, rect.y0, rect.y0 + th, z0, z1)
-        mb.box(rect.x0 + th, rect.x1 - th, rect.y1 - th, rect.y1, z0, z1)
-        return (rect.x0 + th, rect.x1 - th, rect.y0 + th, rect.y1 - th)
+        """Bottom panel with four walls standing on it - the shell every
+        boxed insert starts from.
+
+        Parts butt, they don't run through each other: the bottom is one
+        panel across the whole footprint, the walls sit on top of it,
+        and the front and back butt between the two sides. Returns
+        (ix0, ix1, iy0, iy1, zb): the inside faces of the walls and the
+        floor every part inside stands on.
+        """
+        zb = rect.z0 + self.INSERT_PANEL_TH
+        z1 = rect.z0 + rect.h
+        mb.box(rect.x0, rect.x1, rect.y0, rect.y1, rect.z0, zb)
+        mb.box(rect.x0, rect.x0 + th, rect.y0, rect.y1, zb, z1)
+        mb.box(rect.x1 - th, rect.x1, rect.y0, rect.y1, zb, z1)
+        mb.box(rect.x0 + th, rect.x1 - th, rect.y0, rect.y0 + th, zb, z1)
+        mb.box(rect.x0 + th, rect.x1 - th, rect.y1 - th, rect.y1, zb, z1)
+        return (rect.x0 + th, rect.x1 - th, rect.y0 + th, rect.y1 - th, zb)
+
+    @staticmethod
+    def _partition_spans(a, b, count, th):
+        """Near edges of the partitions that split the clear span
+        [a, b] into ``count`` equal compartments.
+
+        Each partition occupies its own thickness between two
+        compartments, so the compartments come out equal and nothing
+        overlaps. Empty when they would not fit.
+        """
+        if count < 2:
+            return []
+        clear = (b - a) - th * (count - 1)
+        if clear <= th:
+            return []
+        comp = clear / count
+        return [a + comp * (i + 1) + th * i for i in range(count - 1)]
 
     def _insert_name(self, item, fallback):
         return (getattr(item, 'accessory_label', '') or fallback)[:60]
@@ -8891,14 +8914,13 @@ class FaceFrameCabinet(GeoNodeCage):
         th = self.INSERT_WALL_TH
         if rect.x1 - rect.x0 < th * 3 or rect.y1 - rect.y0 < th * 3:
             return mb
-        ix0, ix1, iy0, iy1 = self._tray_walls(mb, rect, th)
+        ix0, ix1, iy0, iy1, zb = self._tray_walls(mb, rect, th)
+        z1 = rect.z0 + rect.h
         n = rect.slots if slots is None else slots
-        step = (ix1 - ix0) / n if n > 1 else 0.0
-        if n > 1 and step > th * 2:
-            z0, z1 = rect.z0, rect.z0 + rect.h
-            for i in range(1, n):
-                c = ix0 + step * i
-                mb.box(c - th / 2.0, c + th / 2.0, iy0, iy1, z0, z1)
+        # Partitions stand on the bottom and butt between the front and
+        # back walls.
+        for p in self._partition_spans(ix0, ix1, n, th):
+            mb.box(p, p + th, iy0, iy1, zb, z1)
         if own:
             self._emit_drawer_insert(
                 box_obj, self._insert_name(item, 'Drawer Tray'), mb)
@@ -8916,35 +8938,40 @@ class FaceFrameCabinet(GeoNodeCage):
         name = self._insert_name(item, 'Cutlery Tray')
         ix0, ix1 = rect.x0 + th, rect.x1 - th
         iy0, iy1 = rect.y0 + th, rect.y1 - th
-        z0, z1 = rect.z0, rect.z0 + rect.h
+        zb = rect.z0 + self.INSERT_PANEL_TH
+        z1 = rect.z0 + rect.h
         if ix1 - ix0 < inch(3.0) or iy1 - iy0 < inch(6.0):
             self._emit_drawer_insert(box_obj, name, mb)
             return
-        # Compartment across the back; the slot core fills the rest.
+        # Rail across the back, butted between the two side walls; the
+        # compartment behind it is the back band, the slot core takes
+        # the rest. core_back is the rail's FRONT face, so everything
+        # running forward from it stops there rather than into it.
         band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
         core_back = iy1
         if (iy1 - band) - iy0 >= inch(6.0):
             core_back = iy1 - band
-            mb.box(ix0, ix1, core_back - th / 2.0, core_back + th / 2.0,
-                   z0, z1)
+            mb.box(ix0, ix1, core_back, core_back + th, zb, z1)
         slots = max(min(rect.slots or 5, 12), 2)
         core_w = min(self.CUTLERY_SLOT_PITCH * slots, ix1 - ix0)
         cx0 = (ix0 + ix1) / 2.0 - core_w / 2.0
         cx1 = cx0 + core_w
-        for c in (cx0, cx1):
-            if c - ix0 > inch(1.0) and ix1 - c > inch(1.0):
-                mb.box(c - th / 2.0, c + th / 2.0, iy0, core_back, z0, z1)
-        # Cross compartment across the back of the slot core.
+        # Partitions bounding the slot core run its full depth. Where
+        # the drawer leaves no room for side compartments the core is
+        # bounded by the tray's own sides instead.
+        kx0, kx1 = ix0, ix1
+        if cx0 - ix0 > inch(1.0) and ix1 - cx1 > inch(1.0):
+            mb.box(cx0, cx0 + th, iy0, core_back, zb, z1)
+            mb.box(cx1 - th, cx1, iy0, core_back, zb, z1)
+            kx0, kx1 = cx0 + th, cx1 - th
+        # Cross compartment at the back of the core: its rail butts
+        # between whatever bounds the core.
         slot_back = core_back
         if core_back - iy0 > self.CUTLERY_CROSS_DEPTH + inch(4.0):
-            slot_back = core_back - self.CUTLERY_CROSS_DEPTH
-            mb.box(cx0, cx1, slot_back - th / 2.0, slot_back + th / 2.0,
-                   z0, z1)
-        step = core_w / slots
-        if step > th * 2:
-            for i in range(1, slots):
-                c = cx0 + step * i
-                mb.box(c - th / 2.0, c + th / 2.0, iy0, slot_back, z0, z1)
+            slot_back = core_back - self.CUTLERY_CROSS_DEPTH - th
+            mb.box(kx0, kx1, slot_back, slot_back + th, zb, z1)
+        for p in self._partition_spans(kx0, kx1, slots, th):
+            mb.box(p, p + th, iy0, slot_back, zb, z1)
         self._emit_drawer_insert(box_obj, name, mb)
 
     def _build_knife_block_insert(self, box_obj, rect, item, params):
@@ -9029,23 +9056,26 @@ class FaceFrameCabinet(GeoNodeCage):
         side of a wider bay for paper."""
         mb = DrawerInsertMesh()
         th = self.ORGANIZER_PANEL_TH
-        z0, z1 = rect.z0, rect.z0 + rect.h
+        z1 = rect.z0 + rect.h
         if rect.x1 - rect.x0 < inch(6.0) or rect.y1 - rect.y0 < inch(3.0):
             return
-        ix0, ix1, iy0, iy1 = self._tray_walls(mb, rect, th)
+        ix0, ix1, iy0, iy1, zb = self._tray_walls(mb, rect, th)
+        # The paper bay is the clear span in the middle; the two
+        # partitions that bound it stand outside it, and the letter
+        # slots divide what is left on each side.
         bay = min(self.ORGANIZER_PAPER_BAY, (ix1 - ix0) * 0.5)
-        bx0 = (ix0 + ix1) / 2.0 - bay / 2.0
-        for s0, s1 in ((ix0, bx0), (bx0 + bay, ix1)):
+        mid = (ix0 + ix1) / 2.0
+        b0, b1 = mid - bay / 2.0, mid + bay / 2.0
+        for p in (b0 - th, b1):
+            if p > ix0 and p + th < ix1:
+                mb.box(p, p + th, iy0, iy1, zb, z1)
+        for s0, s1 in ((ix0, b0 - th), (b1 + th, ix1)):
             width = s1 - s0
             if width < inch(2.0):
                 continue
             count = max(int(round(width / self.ORGANIZER_SLOT_WIDTH)), 1)
-            step = width / count
-            for i in range(count + 1):
-                c = s0 + step * i
-                if c <= ix0 + 1e-6 or c >= ix1 - 1e-6:
-                    continue
-                mb.box(c - th / 2.0, c + th / 2.0, iy0, iy1, z0, z1)
+            for p in self._partition_spans(s0, s1, count, th):
+                mb.box(p, p + th, iy0, iy1, zb, z1)
         self._emit_drawer_insert(
             box_obj, self._insert_name(item, 'Letter Slot Organizer'), mb)
 
