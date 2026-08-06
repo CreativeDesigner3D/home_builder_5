@@ -9605,6 +9605,13 @@ class Face_Frame_Mantle_Props(PropertyGroup):
         name="Finish Right", default=True, update=_update_cabinet_dim,
         description="Return the front build around the right end",
     )  # type: ignore
+    top_overhang: FloatProperty(
+        name="Top Overhang", default=units.inch(0.75), min=0.0,
+        soft_max=units.inch(3.0), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+        description="How far the top slab extends past the front and"
+                    " each finished end (crown styles)",
+    )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,

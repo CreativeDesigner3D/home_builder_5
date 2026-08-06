@@ -528,6 +528,8 @@ def draw_mantle_product(layout, root):
     row.prop(mantle, 'finish_left', text="Left", toggle=True)
     row.prop(mantle, 'finish_right', text="Right", toggle=True)
 
+    if mantle.mantle_style != 'CONTEMPORARY':
+        layout.prop(mantle, 'top_overhang', text="Top Overhang")
     layout.prop(mantle, 'material_thickness', text="Material Thickness")
 
 

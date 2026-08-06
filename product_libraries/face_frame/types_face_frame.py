@@ -10716,9 +10716,14 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
             proj = min(sweep_proj, max(depth - mt, 0.0))
         core_y = -depth + proj        # core front face plane
 
-        # Top slab: full width x full depth, overhanging the crown.
-        place(TOP, width, depth, mt, (0.0, -depth, z_slab),
-              (0.0, 0.0, 0.0), {'Mirror Z': True})
+        # Top slab: sits on top of the build (no Mirror Z - it extends
+        # up from the slab line to the cage top), overhanging the crown
+        # by top_overhang past the front and each finished end.
+        ov = max(mp.top_overhang, 0.0)
+        ov_l = ov if fl else 0.0
+        ov_r = ov if fr else 0.0
+        place(TOP, width + ov_l + ov_r, depth + ov, mt,
+              (-ov_l, -depth - ov, z_slab), (0.0, 0.0, 0.0), {})
         # Core face: set back behind the crown, slab underside to bottom.
         place(FRONT, inner_len, z_slab, mt, (inset_l, core_y, 0.0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
