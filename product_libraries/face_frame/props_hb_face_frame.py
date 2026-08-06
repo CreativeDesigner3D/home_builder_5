@@ -7599,6 +7599,25 @@ class Face_Frame_Opening_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # ---- Drawer box construction ----
+    # Which box system this opening's boxes are built from. HB5 ships no
+    # list: the host application supplies the options through the
+    # accessory registry (host 'drawer_box_construction'), so one job can
+    # mix systems. Blank = the project style's default construction.
+    # Covers the box behind a drawer / pullout front AND any rollout
+    # boxes in the opening. The display label is cached next to the code
+    # so a file opened without the host add-on still reads and prints.
+    drawer_box_construction: StringProperty(
+        name="Drawer Box Construction",
+        description="Construction for this opening's drawer boxes; blank uses the project default",
+        default="", update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_box_construction_label: StringProperty(
+        name="Drawer Box Construction Label",
+        description="Display name of the selected drawer box construction",
+        default="",
+    )  # type: ignore
+
     # Drawer-look door: a single working DOOR leaf whose face carries N
     # applied drawer-front panels (reveal gaps between them read as mid
     # rails) so it looks like a stack of drawers but opens as one door.

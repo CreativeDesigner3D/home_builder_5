@@ -953,6 +953,85 @@ class HB_UL_face_frame_drawer_items(bpy.types.UIList):
         return flt, []
 
 
+# ---------------------------------------------------------------------------
+# Drawer box construction: which box system a drawer / rollout is built
+# from. HB5 ships no list - the host application supplies the options
+# through the accessory registry, same as every other catalog-backed
+# surface. The pick lives on the owning opening (boxes are wiped and
+# rebuilt every recalc); blank = the project default.
+# ---------------------------------------------------------------------------
+DRAWER_BOX_CONSTRUCTION_HOST = 'drawer_box_construction'
+DRAWER_BOX_CONSTRUCTION_DEFAULT = 'DEFAULT'
+
+_drawer_box_construction_items = []
+
+
+def drawer_box_construction_options():
+    """(code, name) for every box construction the host provides."""
+    out = []
+    for it in accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST):
+        code = it.get('code')
+        if code:
+            out.append((code, it.get('name', code)))
+    return out
+
+
+def drawer_box_construction_label(code):
+    """Display name for a construction code, falling back to the code."""
+    entry = accessory_registry.lookup(
+        DRAWER_BOX_CONSTRUCTION_HOST, code) or {}
+    return entry.get('name', code)
+
+
+def _drawer_box_construction_enum(self, context):
+    """Project Default plus every construction the host provides."""
+    _drawer_box_construction_items.clear()
+    _drawer_box_construction_items.append(
+        (DRAWER_BOX_CONSTRUCTION_DEFAULT, "Project Default",
+         "Build these boxes to the project's default construction"))
+    for code, name in drawer_box_construction_options():
+        _drawer_box_construction_items.append((code, name, ""))
+    return _drawer_box_construction_items
+
+
+def _set_opening_construction(opening, code):
+    """Write a construction pick (code, '' = default) plus its cached
+    label onto an opening. The code prop's update runs the rebuild."""
+    props = opening.face_frame_opening
+    if code == DRAWER_BOX_CONSTRUCTION_DEFAULT:
+        code = ''
+    if (props.drawer_box_construction or '') == code:
+        return False
+    props.drawer_box_construction_label = (
+        drawer_box_construction_label(code) if code else '')
+    props.drawer_box_construction = code
+    return True
+
+
+class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
+    """Build the clicked drawer's / rollout's boxes to the chosen
+    construction. Stored on the owning opening, so it survives the
+    rebuild that wipes the boxes themselves."""
+    bl_idname = "hb_face_frame.set_drawer_box_construction"
+    bl_label = "Set Drawer Box Construction"
+    bl_description = ("Build this opening's drawer boxes with the chosen "
+                      "construction")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = (bpy.data.objects.get(self.opening_name)
+                   if self.opening_name
+                   else _find_owning_opening(context.active_object))
+        if opening is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        _set_opening_construction(opening, self.code)
+        return {'FINISHED'}
+
+
 def _drawer_opening_for(obj):
     """The opening cage owning ``obj`` when it carries a drawer-style
     front (drawer box, front, divider, or the cage itself)."""
@@ -1044,6 +1123,11 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         name="Accessory", items=_drawer_accessory_enum,
         description="Accessory to add to the drawer",
     )  # type: ignore
+    construction: bpy.props.EnumProperty(
+        name="Box Construction", items=_drawer_box_construction_enum,
+        description="Construction this drawer's box is built to",
+        update=_update_drawer_interior_construction,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1059,6 +1143,15 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         op_props = opening.face_frame_opening
         if op_props.swing_percent < 0.5:
             op_props.swing_percent = 1.0
+        # Seed the construction dropdown from the opening. A code the
+        # host no longer offers isn't in the enum - leave the dropdown
+        # on Project Default rather than raising; the stored pick is
+        # untouched unless the user picks something.
+        code = op_props.drawer_box_construction or ''
+        try:
+            self.construction = code or DRAWER_BOX_CONSTRUCTION_DEFAULT
+        except TypeError:
+            pass
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def execute(self, context):
@@ -1071,6 +1164,13 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
             layout.label(text="No drawer selected", icon='INFO')
             return
         props = opening.face_frame_opening
+
+        # Box construction sits above the accessory list: it's a
+        # property of the box itself, not of what goes in it. Hidden
+        # when the host application offers no options.
+        if drawer_box_construction_options():
+            layout.prop(self, 'construction')
+            layout.separator()
 
         row = layout.row(align=True)
         row.prop(self, 'add_code', text="")
@@ -5393,6 +5493,7 @@ classes = (
     HB_UL_face_frame_drawer_items,
     hb_face_frame_OT_drawer_add_accessory,
     hb_face_frame_OT_drawer_remove_accessory,
+    hb_face_frame_OT_set_drawer_box_construction,
     hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,

@@ -8971,6 +8971,22 @@ class FaceFrameCabinet(GeoNodeCage):
         self._emit_drawer_insert(
             box_obj, self._insert_name(item, 'Letter Slot Organizer'), mb)
 
+    @staticmethod
+    def _stamp_drawer_box_construction(obj, op_props):
+        """Tag a drawer / rollout box with the opening's construction
+        pick so downstream consumers (drawings, reports, exports) can
+        list every box system a job uses. A blank pick leaves the box
+        untagged - it is built to the project default.
+        """
+        if op_props is None:
+            return
+        code = getattr(op_props, 'drawer_box_construction', '')
+        if not code:
+            return
+        obj['DRAWER_BOX_CONSTRUCTION'] = code
+        label = getattr(op_props, 'drawer_box_construction_label', '')
+        obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
+
     def _create_drawer_box_for_front(self, pivot_obj, leaf, rect,
                                      op_props=None):
         """Spawn a drawer box behind a drawer or pullout front.
@@ -9097,6 +9113,7 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+        self._stamp_drawer_box_construction(box.obj, op_props)
         if op_props is not None:
             self._spawn_drawer_inserts(box.obj, box_dx, box_dy, box_dz,
                                        op_props)
@@ -9670,6 +9687,10 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['CABINET_PART'] = True
         box.obj['IS_FACE_FRAME_INTERIOR_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        # Rollouts are drawer boxes too, so they follow the opening's
+        # construction pick just like the box behind a drawer front.
+        self._stamp_drawer_box_construction(
+            box.obj, opening_obj.face_frame_opening)
         box.obj.location = desc['position']
         dx, dy, dz = desc['dims']
         box.set_input('Dim X', dx)

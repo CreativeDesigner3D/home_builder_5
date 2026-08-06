@@ -18,6 +18,20 @@ from .operators import ops_part_commands
 from ... import units
 
 
+def _has_drawer_box_construction_options():
+    """Whether the host application offers drawer box constructions. HB5
+    ships none, so the submenu simply doesn't appear on its own."""
+    from ... import accessory_registry
+    from .operators import ops_cabinet
+    return bool(accessory_registry.get_items(
+        ops_cabinet.DRAWER_BOX_CONSTRUCTION_HOST))
+
+
+def _draw_drawer_box_construction_menu(layout):
+    layout.menu("HOME_BUILDER_MT_face_frame_drawer_box_construction",
+                text="Drawer Box Construction", icon='SNAP_VOLUME')
+
+
 def _is_drawer_opening(obj):
     """True when obj is (or sits under) an opening whose front is a
     drawer-style front - the ones with a drawer box to lay out."""
@@ -300,6 +314,13 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_front_pull",
                             text="Set Pull...", icon='TOOL_SETTINGS')
 
+        # Drawer / pullout fronts reach their box's construction from
+        # the front itself - the box is usually hidden behind it.
+        if (role in (types_face_frame.PART_ROLE_DRAWER_FRONT,
+                     types_face_frame.PART_ROLE_PULLOUT_FRONT)
+                and _has_drawer_box_construction_options()):
+            _draw_drawer_box_construction_menu(layout)
+
         # Face frame members (stiles / rails / splitters) keep their role-aware
         # Set Width. Every other cabinet part adjusts its size via Make
         # Editable (below) - there is no direct Set Size command.
@@ -435,11 +456,44 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        if _is_drawer_opening(context.active_object):
+        obj = context.active_object
+        if _is_drawer_opening(obj):
             layout.operator("hb_face_frame.drawer_interior",
                             text="Drawer Interior...", icon='MESH_GRID')
+        # Rollout boxes are drawer boxes on slides, so they carry the
+        # same construction pick as the box behind a drawer front.
+        if (obj is not None
+                and obj.get('hb_part_role') == types_face_frame.PART_ROLE_ROLLOUT_BOX
+                and _has_drawer_box_construction_options()):
+            _draw_drawer_box_construction_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+
+
+class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
+    """Which construction the clicked drawer's / rollout's boxes are
+    built to. The entries come from the host application's option list;
+    the pick is stored on the owning opening, so one job can mix
+    constructions cabinet by cabinet."""
+    bl_label = "Drawer Box Construction"
+
+    def draw(self, context):
+        from .operators import ops_cabinet
+        layout = self.layout
+        opening = ops_cabinet._find_owning_opening(context.active_object)
+        current = (opening.face_frame_opening.drawer_box_construction
+                   if opening is not None else '')
+        entries = [(ops_cabinet.DRAWER_BOX_CONSTRUCTION_DEFAULT,
+                    "Project Default", '')]
+        entries += [(code, name, code)
+                    for code, name in ops_cabinet.drawer_box_construction_options()]
+        for code, name, stored in entries:
+            op = layout.operator(
+                "hb_face_frame.set_drawer_box_construction", text=name,
+                icon=('RADIOBUT_ON' if stored == current else 'RADIOBUT_OFF'))
+            op.code = code
+            if opening is not None:
+                op.opening_name = opening.name
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
@@ -459,6 +513,8 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
+        if _has_drawer_box_construction_options():
+            _draw_drawer_box_construction_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -476,6 +532,8 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         if _is_drawer_opening(context.active_object):
             layout.operator("hb_face_frame.drawer_interior",
                             text="Drawer Interior...", icon='MESH_GRID')
+        if _has_drawer_box_construction_options():
+            _draw_drawer_box_construction_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
@@ -822,6 +880,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
+    HOME_BUILDER_MT_face_frame_drawer_box_construction,
     HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
