@@ -1868,6 +1868,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Floating shelf boards - finished material
         'SHELF_FRONT', 'SHELF_TOP', 'SHELF_BOTTOM',
         'SHELF_PANEL_LEFT', 'SHELF_PANEL_RIGHT',
+        # Mantle boards (shelf assembly + surround legs / header) -
+        # finished material throughout; the crown / base moulding
+        # sweeps are curves handled in _apply_materials_to_cabinet.
+        'MANTLE_FRONT', 'MANTLE_TOP', 'MANTLE_BOTTOM',
+        'MANTLE_PANEL_LEFT', 'MANTLE_PANEL_RIGHT',
+        'MANTLE_CROWN_FRONT', 'MANTLE_CROWN_LEFT', 'MANTLE_CROWN_RIGHT',
+        'MANTLE_LEG_FRONT_L', 'MANTLE_LEG_FRONT_R',
+        'MANTLE_LEG_OUT_L', 'MANTLE_LEG_OUT_R',
+        'MANTLE_LEG_IN_L', 'MANTLE_LEG_IN_R',
+        'MANTLE_HEADER_FRONT', 'MANTLE_HEADER_BOTTOM',
         # Blind ends + finished back + flush skins / decorative panels
         'BLIND_PANEL_LEFT', 'BLIND_PANEL_RIGHT',
         'FINISHED_BACK', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP',
@@ -2240,12 +2250,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 if (child.get('hb_part_role') in ('SHELF_NOSING',
                                                   'BAR_STORAGE',
                                                   'LEG_CURVED_PANEL',
+                                                  # Mantle moulding sweeps:
+                                                  # curve objects whose bevel
+                                                  # geometry renders the
+                                                  # curve's material slot.
+                                                  'MANTLE_CROWN_SWEEP',
+                                                  'MANTLE_BASE_SWEEP',
                                                   # Boolean cutters: the cut
                                                   # faces transfer the cutter's
                                                   # material, so the finish
                                                   # rides along onto the cut.
                                                   'BOTTOM_RAIL_PROFILE_CUTTER',
-                                                  'FINISHED_BOTTOM_LED_CUTTER')
+                                                  'FINISHED_BOTTOM_LED_CUTTER',
+                                                  'BOX_MITER_CUTTER')
                         and finish_mat is not None):
                     if child.data.materials:
                         child.data.materials[0] = finish_mat
