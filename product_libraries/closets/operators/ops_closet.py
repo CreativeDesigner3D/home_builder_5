@@ -2893,6 +2893,17 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
                     "rather than holding a height of its own",
         default=const.ROLLOUT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
+    inset_front: bpy.props.BoolProperty(
+        name="Inset Front",
+        description="Set the tray fronts inside the opening instead "
+                    "of lapping them over it",
+        default=False)  # type: ignore
+    inset_reveal: bpy.props.FloatProperty(
+        name="Inset Reveal",
+        description="How far an inset tray front is held back from "
+                    "each side of the opening",
+        default=const.ROLLOUT_INSET_REVEAL, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
     # Per-tray height and location (tray_1..tray_12; the first `qty` are
     # shown and used). A tray left equal stands the stack's height and
     # takes the spacing the stack works out; unticking either box holds
@@ -2925,6 +2936,8 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
             op = opening.hb_closet_opening
             self.qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
             self.rollout_height = float(op.rollout_height)
+            self.inset_front = bool(op.rollout_inset_front)
+            self.inset_reveal = float(op.rollout_inset_reveal)
             for i, row in enumerate(
                     _read_rollout_trays(opening, self.qty), 1):
                 equal, height, placed, z = row
@@ -2951,6 +2964,9 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'rollout_height')
         if self.qty <= 0:
             return
+        col.prop(self, 'inset_front')
+        if self.inset_front:
+            col.prop(self, 'inset_reveal')
         # A row per tray, bottom tray first, the order the stack is
         # built in. A tray sharing the stack reads back the height it
         # is getting; one holding a height shows that instead.
@@ -2976,6 +2992,8 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
             return {'CANCELLED'}
         opening.hb_closet_opening.rollout_qty = self.qty
         opening.hb_closet_opening.rollout_height = self.rollout_height
+        opening.hb_closet_opening.rollout_inset_front = self.inset_front
+        opening.hb_closet_opening.rollout_inset_reveal = self.inset_reveal
         types_closets.clear_other_interiors(opening, self.interior_kind)
         root = types_closets.find_starter_root(opening)
         # The trays have to be standing there before they can be told
@@ -4149,6 +4167,17 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         name="Rollout Height", description="Height of each tray",
         default=0.1016,  # 4"
         unit='LENGTH', precision=4)  # type: ignore
+    rollout_inset_front: bpy.props.BoolProperty(
+        name="Inset Front",
+        description="Set the tray fronts inside the opening instead "
+                    "of lapping them over it",
+        default=False)  # type: ignore
+    rollout_inset_reveal: bpy.props.FloatProperty(
+        name="Inset Reveal",
+        description="How far an inset tray front is held back from "
+                    "each side of the opening",
+        default=const.ROLLOUT_INSET_REVEAL, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     slant_qty: bpy.props.IntProperty(
         name="Shelf Quantity",
@@ -4408,6 +4437,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.cubby_setback = float(op.cubby_setback)
         self.rollout_qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
         self.rollout_height = float(op.rollout_height)
+        self.rollout_inset_front = bool(op.rollout_inset_front)
+        self.rollout_inset_reveal = float(op.rollout_inset_reveal)
         self.slant_qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
         self.slant_spacing = float(op.slant_spacing)
         self.slant_angle = float(op.slant_angle)
@@ -4487,6 +4518,9 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         elif self.fill == 'ROLLOUTS':
             col.prop(self, 'rollout_qty')
             col.prop(self, 'rollout_height')
+            col.prop(self, 'rollout_inset_front')
+            if self.rollout_inset_front:
+                col.prop(self, 'rollout_inset_reveal')
         elif self.fill == 'SLANTED_SHELVES':
             col.prop(self, 'slant_qty')
             col.prop(self, 'slant_spacing')
@@ -4702,6 +4736,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             opening.hb_closet_opening.drawer_grain = self.drawer_grain
         elif fill == 'ROLLOUTS':
             opening.hb_closet_opening.rollout_height = self.rollout_height
+            opening.hb_closet_opening.rollout_inset_front = \
+                self.rollout_inset_front
+            opening.hb_closet_opening.rollout_inset_reveal = \
+                self.rollout_inset_reveal
         elif fill == 'SLANTED_SHELVES':
             opening.hb_closet_opening.slant_spacing = self.slant_spacing
             opening.hb_closet_opening.slant_angle = self.slant_angle

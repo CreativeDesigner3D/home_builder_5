@@ -1425,7 +1425,7 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_slanted_shelves(opening)
         self._reconcile_doors(opening, side)
         self._reconcile_drawers(opening, side)
-        self._reconcile_rollouts(opening)
+        self._reconcile_rollouts(opening, side)
         self._reconcile_captured_back(opening)
         self._reconcile_cubbies(opening)
 
@@ -1668,7 +1668,8 @@ class ClosetStarter(GeoNodeCage):
         # (interior_h + to + bo) less the inter-front gaps. The fronts the
         # stack owns share the remainder equally; a front the user has
         # pinned holds its height while the rest absorb the difference.
-        fronts = groups.get(PART_ROLE_DRAWER_FRONT, [])
+        fronts = [c for c in groups.get(PART_ROLE_DRAWER_FRONT, [])
+                  if not c.get('hb_rollout')]
         boxes = {c.get('hb_drawer_index', 0): c
                  for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                  if not c.get('hb_rollout')}
@@ -1836,14 +1837,46 @@ class ClosetStarter(GeoNodeCage):
             # Rollout Height the opening is given is the room a tray
             # is allotted in the stack; the tray steps down to the
             # largest standard height that room takes.
-            box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
-            # The depth steps down the same way, from the depth of the
-            # opening. The tray is held at the face it serves, so what
-            # it gives up comes off the back and there is no front in
-            # front of it taking room at the face.
-            _bd = dbx.wood_depth(depth)
-            box_d = max(depth if _bd is None else _bd, inch(2.0))
-            y_box = (-box_d if side == 'BACK' else -depth)
+            # A tray carries a front, the way the prior library built
+            # every one of them. Lapped, the front stands proud of the
+            # face and laps the opening the way a drawer front does.
+            # Set inside instead, it is held back from each side by
+            # the inset reveal and fills the front of the opening
+            # depth with its own thickness, and the box behind it
+            # gives that thickness up. Either way the box is held in
+            # from each side by the overlay as well as the clearance
+            # the slides want, so the front has the room it laps
+            # clear of it.
+            inset = bool(opening.hb_closet_opening.rollout_inset_front)
+            ir = float(opening.hb_closet_opening.rollout_inset_reveal)
+            ft = const.FRONT_THICKNESS
+            f_off = ft if inset else 0.0
+            box_x = lo + const.ROLLOUT_SLIDE_GAP
+            box_w = max(width - lo - ro - 2 * const.ROLLOUT_SLIDE_GAP,
+                        inch(2.0))
+            # The depth steps down the same way, from what the opening
+            # has left once an inset front has taken its own thickness
+            # off the front of it. The tray is held at the face it
+            # serves, so what it gives up comes off the back.
+            d_avail = max(depth - f_off, inch(2.0))
+            _bd = dbx.wood_depth(d_avail)
+            box_d = max(d_avail if _bd is None else _bd, inch(2.0))
+            if side == 'BACK':
+                y_box = -box_d - f_off
+                front_y_t = -f_off
+            else:
+                y_box = -depth + f_off
+                front_y_t = -depth + f_off
+            if inset:
+                f_x = ir
+                f_len = max(width - 2 * ir, inch(1.0))
+            else:
+                f_x = -lo
+                f_len = width + lo + ro
+            tfronts = sorted(
+                (c for c in groups.get(PART_ROLE_DRAWER_FRONT, [])
+                 if c.get('hb_rollout')),
+                key=lambda o: o.get('hb_rollout_index', 0))
             n = len(rollouts)
             stack_h = float(opening.hb_closet_opening.rollout_height)
             heights = [tray_height(b, stack_h) for b in rollouts]
@@ -1891,8 +1924,8 @@ class ClosetStarter(GeoNodeCage):
                 lift = min(dbx.floor_gap('WOOD'), max(0.0, h - bh))
                 box['hb_drawer_box_type'] = 'WOOD'
                 box['hb_drawer_box_size'] = 'WOOD'
-                _stamp_warning(box, dbx.box_warning('WOOD', h, depth,
-                                                    depth))
+                _stamp_warning(box, dbx.box_warning('WOOD', h,
+                                                    d_avail, d_avail))
                 _set_part_hidden(box, False)
                 # Persist what the tray resolved to, so a dialog opens
                 # on what is on screen rather than on a default.
@@ -1900,12 +1933,22 @@ class ClosetStarter(GeoNodeCage):
                 box[PROP_TRAY_Z] = z_tray
                 # The tray is anchored at the face it serves and
                 # runs back from it to the rear of the opening.
-                box.location = (const.ROLLOUT_SLIDE_GAP, y_box,
-                                z_tray + lift)
+                box.location = (box_x, y_box, z_tray + lift)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
                 gb.set_input('Dim Z', bh)
+                # The front stands the whole of the room the stack set
+                # aside for the tray, so a stack of them reads as a
+                # bank of fronts with the gaps between them showing.
+                fr = tfronts[i] if i < len(tfronts) else None
+                if fr is not None:
+                    fr.location = (f_x, front_y_t, z_tray)
+                    fp = GeoNodeCutpart(fr)
+                    fp.set_input('Length', f_len)
+                    fp.set_input('Width', h)
+                    fp.set_input('Thickness', ft)
+                    _apply_front_style(fr, is_drawer=True)
                 z += h + gap
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
@@ -2275,7 +2318,8 @@ class ClosetStarter(GeoNodeCage):
     def _reconcile_drawers(self, opening, side):
         qty = max(0, int(opening.hb_closet_opening.drawer_qty))
         fronts = [c for c in opening.children
-                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
+                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                  and not c.get('hb_rollout')]
         boxes = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
                  and not c.get('hb_rollout')]
@@ -2327,10 +2371,11 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Mirror Y', True)
             strchs.append(part.obj)
 
-    def _reconcile_rollouts(self, opening):
-        """Pullout trays: drawer boxes with no fronts. Same box part and
-        role as a drawer box (tagged hb_rollout so the drawer reconciler
-        leaves them alone); laid out evenly by the opening layout."""
+    def _reconcile_rollouts(self, opening, side):
+        """Pullout trays: a drawer box on slides with a front on it.
+        Box and front carry the same roles a drawer's do, tagged
+        hb_rollout so the drawer reconciler leaves them alone; the
+        opening layout spaces them."""
         qty = max(0, int(opening.hb_closet_opening.rollout_qty))
         boxes = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
@@ -2346,6 +2391,18 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_rollout'] = 1
             box.obj['hb_rollout_index'] = len(boxes)
             boxes.append(box.obj)
+        fronts = [c for c in opening.children
+                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                  and c.get('hb_rollout')]
+        fronts.sort(key=lambda o: o.get('hb_rollout_index', 0))
+        while len(fronts) > qty:
+            _remove_part_tree(fronts.pop())
+        while len(fronts) < qty:
+            obj = self._make_front(opening, 'Rollout Front',
+                                   PART_ROLE_DRAWER_FRONT, side)
+            obj['hb_rollout'] = 1
+            obj['hb_rollout_index'] = len(fronts)
+            fronts.append(obj)
 
     def _reconcile_captured_back(self, opening):
         """One captured back per opening, carrying a corner relief at
@@ -4127,6 +4184,10 @@ def serialize_opening(opening):
         'drawer_qty': int(opening.hb_closet_opening.drawer_qty),
         'rollout_qty': int(opening.hb_closet_opening.rollout_qty),
         'rollout_h': float(opening.hb_closet_opening.rollout_height),
+        'rollout_inset': int(
+            bool(opening.hb_closet_opening.rollout_inset_front)),
+        'rollout_ir': float(
+            opening.hb_closet_opening.rollout_inset_reveal),
         'slant_qty': int(opening.hb_closet_opening.slant_qty),
         'slant_spacing': float(opening.hb_closet_opening.slant_spacing),
         'slant_angle': float(opening.hb_closet_opening.slant_angle),
@@ -4146,7 +4207,8 @@ def serialize_opening(opening):
              int(bool(c.get(PROP_UNLOCK_FRONT_HEIGHT, 0)))]
             for c in sorted(
                 (c for c in opening.children
-                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT),
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                 and not c.get('hb_rollout')),
                 key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
         # How far the fronts here are drawn standing open, so a copy
@@ -4228,6 +4290,10 @@ def apply_opening_data(opening, data, recalc=True):
         opening.hb_closet_opening.rollout_qty = data['rollout_qty']
         opening.hb_closet_opening.rollout_height = data.get('rollout_h',
                                                 const.ROLLOUT_HEIGHT)
+        opening.hb_closet_opening.rollout_inset_front = bool(
+            data.get('rollout_inset', 0))
+        opening.hb_closet_opening.rollout_inset_reveal = data.get(
+            'rollout_ir', const.ROLLOUT_INSET_REVEAL)
     if data.get('slant_qty'):
         opening.hb_closet_opening.slant_qty = data['slant_qty']
         opening.hb_closet_opening.slant_spacing = data.get('slant_spacing',

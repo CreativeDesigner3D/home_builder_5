@@ -364,6 +364,12 @@ ROLLOUT_MIN_GAP = inch(1.0)
 # A tray shorter than this is not worth building, so a stack that is
 # squeezed for room stops shrinking its trays here.
 ROLLOUT_MIN_HEIGHT = inch(2.0)
+# A tray carries a front. Lapped, the front stands proud of the face and
+# laps the opening the way a drawer front does; set inside instead, it
+# is held back from each side of the opening by this reveal and fills
+# the front of the opening depth with its own thickness. The prior
+# library carried the reveal at an eighth.
+ROLLOUT_INSET_REVEAL = inch(0.125)
 # Dividing an opening left and right. A column narrower than this is
 # not worth building, so a division that would leave one is refused.
 DIVISION_MIN_WIDTH = inch(3.0)
