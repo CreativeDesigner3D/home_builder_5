@@ -198,6 +198,9 @@ PART_ROLE_MANTLE_BASE_SWEEP = 'MANTLE_BASE_SWEEP'
 # Tag key on PanelFaceFrameCabinet roots serving as a surround's paneled
 # leg / header fronts (value = which front the panel is).
 TAG_MANTLE_PANEL = 'hb_mantle_panel_role'
+# Hidden prism cutters mitring a box product's front board into its
+# finished end panels (floating shelf / contemporary mantle).
+PART_ROLE_BOX_MITER_CUTTER = 'BOX_MITER_CUTTER'
 
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
@@ -3034,6 +3037,80 @@ class FaceFrameCabinet(GeoNodeCage):
         """Reverse of _apply_multi_angled_wedges for both ends."""
         for side in ('LEFT', 'RIGHT'):
             self._cleanup_multi_angled_wedge_side(side)
+
+    # ---- mitered finished ends on the plain box products ----
+    # On the floating shelf and the contemporary (no-crown) mantle the
+    # shop miters the front board into a finished end panel at 45
+    # through the front corner instead of butting the panel behind the
+    # front. Two hidden prism cutters per finished end (one trims the
+    # front board's end, the complement trims the panel's front tip);
+    # the caller extends the panel to the full depth first so the two
+    # cut faces meet on the diagonal.
+    def _ensure_box_miter_cutter(self, side, which):
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_BOX_MITER_CUTTER
+                    and child.get('hb_miter_side') == side
+                    and child.get('hb_miter_part') == which):
+                return child
+        name = f'End Miter Cutter {side.title()} {which.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_BOX_MITER_CUTTER
+        cutter['hb_miter_side'] = side
+        cutter['hb_miter_part'] = which
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_box_end_miter(self, side, active, front, panel,
+                             width, depth, mt, z1):
+        """Build / drop one end's miter: cutters + booleans on the
+        front board and end panel. `z1` is the top of the parts (the
+        prisms overshoot both ends). Manual parts are left alone."""
+        mod_name = f'End Miter {side[0]}'
+        pairs = (('FRONT', front), ('PANEL', panel))
+        if not active:
+            for _which, part in pairs:
+                mod = part.modifiers.get(mod_name)
+                if mod is not None:
+                    part.modifiers.remove(mod)
+            for child in list(self.obj.children):
+                if (child.get('hb_part_role') == PART_ROLE_BOX_MITER_CUTTER
+                        and child.get('hb_miter_side') == side):
+                    bpy.data.objects.remove(child, do_unlink=True)
+            return
+        m = inch(2.0)
+        # The miter runs from the front outer corner to the inner
+        # corner one material thickness back; each triangle covers one
+        # side of that diagonal (extended past both ends so the
+        # boolean never grazes a coplanar face).
+        if side == 'LEFT':
+            a = (-m, -depth - m)
+            b = (mt + m, -depth + mt + m)
+            close = {'FRONT': (-m, -depth + mt + m),
+                     'PANEL': (mt + m, -depth - m)}
+        else:
+            a = (width + m, -depth - m)
+            b = (width - mt - m, -depth + mt + m)
+            close = {'FRONT': (width + m, -depth + mt + m),
+                     'PANEL': (width - mt - m, -depth - m)}
+        for which, part in pairs:
+            cutter = self._ensure_box_miter_cutter(side, which)
+            self._wedge_prism_mesh(cutter, (a, b, close[which]),
+                                   -m, z1 + m)
+            if part.get('IS_MANUAL_PART'):
+                continue
+            mod = part.modifiers.get(mod_name)
+            if mod is None:
+                mod = part.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     # ---- angled_multi: mitered mid stile halves at the bends ----
     # A mid stile sitting ON a bend splits lengthwise: the original
@@ -10412,8 +10489,12 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
               (0.0, 0.0, 0.0), {})
         BOTTOM['IS_FINISHED'] = True
 
-        # End panels: close each end when finished.
-        place(LP, inner_depth, thickness, mt, (0.0, 0.0, 0.0),
+        # End panels: close each end when finished. A finished panel
+        # runs the full depth and miters into the front board at 45
+        # through the corner (the shop's construction) instead of
+        # butting behind it.
+        place(LP, depth if fl else inner_depth, thickness, mt,
+              (0.0, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
         if not LP.get('IS_MANUAL_PART'):
@@ -10421,13 +10502,19 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             LP.hide_render = not fl
         LP['IS_FINISHED'] = True
 
-        place(RP, inner_depth, thickness, mt, (width, 0.0, 0.0),
+        place(RP, depth if fr else inner_depth, thickness, mt,
+              (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True})
         if not RP.get('IS_MANUAL_PART'):
             RP.hide_viewport = not fr
             RP.hide_render = not fr
         RP['IS_FINISHED'] = True
+
+        self._apply_box_end_miter('LEFT', fl, FRONT, LP,
+                                  width, depth, mt, thickness)
+        self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
+                                  width, depth, mt, thickness)
 
         # --- Light groove (Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face, set a
@@ -10765,6 +10852,9 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         if not has_crown:
             # --- Contemporary: plain hollow box, full-height front.
+            # A finished end panel runs the full depth and miters into
+            # the front board at 45 through the corner (the shop's
+            # construction) instead of butting behind it.
             inner_depth = depth - mt
             place(FRONT, width, shelf_h, mt, (0.0, -depth, z0),
                   (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
@@ -10774,13 +10864,19 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
             place(BOTTOM, inner_len, inner_depth, mt,
                   (inset_l, -depth + mt, z0),
                   (0.0, 0.0, 0.0), {})
-            place(LP, inner_depth, shelf_h, mt, (0.0, 0.0, z0),
+            place(LP, depth if fl else inner_depth, shelf_h, mt,
+                  (0.0, 0.0, z0),
                   (math.radians(-90), 0.0, math.radians(90)),
                   {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
                   show=fl)
-            place(RP, inner_depth, shelf_h, mt, (width, 0.0, z0),
+            place(RP, depth if fr else inner_depth, shelf_h, mt,
+                  (width, 0.0, z0),
                   (math.radians(-90), 0.0, math.radians(90)),
                   {'Mirror X': True, 'Mirror Y': True}, show=fr)
+            self._apply_box_end_miter('LEFT', fl, FRONT, LP,
+                                      width, depth, mt, height)
+            self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
+                                      width, depth, mt, height)
             for p in (CF, CL, CR):
                 if not p.get('IS_MANUAL_PART'):
                     p.hide_viewport = True
@@ -10795,6 +10891,12 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         # profile comes from the molding packs (crown_profile, DEFAULT
         # resolving per style); when no pack provides it, straight
         # sloped boards stand in.
+        # Crown builds butt their panels (the crown covers the joint) -
+        # drop any miters left from a contemporary build.
+        self._apply_box_end_miter('LEFT', False, FRONT, LP,
+                                  width, depth, mt, height)
+        self._apply_box_end_miter('RIGHT', False, FRONT, RP,
+                                  width, depth, mt, height)
         z_slab = height - mt          # underside of the top slab
         ref = mp.crown_profile
         if not ref or ref == 'DEFAULT':
