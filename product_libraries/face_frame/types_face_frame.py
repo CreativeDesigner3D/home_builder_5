@@ -607,6 +607,11 @@ PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
+# Front types whose opening carries a drawer box. Accessories put in one
+# of these are shown by the geometry built inside the box, so their name
+# is not also printed into the opening - the item data is what feeds the
+# schedules and legends downstream.
+DRAWER_BOX_FRONT_TYPES = frozenset({'DRAWER_FRONT', 'PULLOUT'})
 # Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
 # / half-circle, stemware, plate rack). One role for the whole family:
 # each insert is a single derived mesh built in bar_storage.py; the
@@ -9302,7 +9307,11 @@ class FaceFrameCabinet(GeoNodeCage):
             elif kind == 'SHELF_NOSING':
                 self._create_shelf_nosing(opening_obj, desc)
             elif kind == 'ACCESSORY':
-                self._create_accessory_label(opening_obj, desc)
+                # Nothing is printed inside a drawer: what the drawer
+                # holds is either modeled in the box or carried by the
+                # item data alone.
+                if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
+                    self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
             elif kind == 'CLOSET_ROD':
