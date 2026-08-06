@@ -7167,6 +7167,15 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Accessory Code", default="",
     )  # type: ignore
 
+    # ACCESSORY: how many of this accessory the opening carries (e.g. two
+    # removable dividers in one drawer). Dedicated field - the generic qty
+    # defaults to 2 for the multi-count assembly kinds, which would misread
+    # accessories saved before this field existed.
+    accessory_qty: IntProperty(
+        name="Accessory Qty", default=1, min=1, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
 
 # Front-type options for a face-frame opening. Module-level so operators
 # (e.g. the split-opening dialog) can build per-opening enums from the

@@ -1154,6 +1154,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+            sub.prop(item, 'accessory_qty', text="Qty")
         elif item.kind == 'CLOSET_ROD':
             sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:
