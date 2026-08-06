@@ -176,6 +176,16 @@ PART_ROLE_SHELF_PANEL_RIGHT = 'SHELF_PANEL_RIGHT'
 
 # Valance product (a decorative board spanning the gap between two
 # upper cabinets). Same non-bay pattern as the floating shelf.
+MANTLE_TAG = 'IS_MANTLE_PRODUCT'
+PART_ROLE_MANTLE_FRONT = 'MANTLE_FRONT'
+PART_ROLE_MANTLE_TOP = 'MANTLE_TOP'
+PART_ROLE_MANTLE_BOTTOM = 'MANTLE_BOTTOM'
+PART_ROLE_MANTLE_PANEL_LEFT = 'MANTLE_PANEL_LEFT'
+PART_ROLE_MANTLE_PANEL_RIGHT = 'MANTLE_PANEL_RIGHT'
+PART_ROLE_MANTLE_CROWN_FRONT = 'MANTLE_CROWN_FRONT'
+PART_ROLE_MANTLE_CROWN_LEFT = 'MANTLE_CROWN_LEFT'
+PART_ROLE_MANTLE_CROWN_RIGHT = 'MANTLE_CROWN_RIGHT'
+
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
 PART_ROLE_VALANCE_COVER = 'VALANCE_COVER'
@@ -10415,31 +10425,221 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, False)
 
 
-class MantleFaceFrameCabinet(FloatingShelfFaceFrameCabinet):
-    """Fireplace mantle - a floating-shelf variant placed as one
-    fixed-width beam instead of filling the wall gap.
+# Per-style standard build for the Mantle product, inches:
+# (overall_height, crown_projection). Contemporary is a plain hollow box
+# (projection 0). The crown styles read like the catalog sections: a top
+# slab overhangs a set-back core, with the crown band sloping from under
+# the slab's front edge back to the core. The crown band is a straight
+# sloped board for now - swap in the real moulding profiles per style as
+# they get authored.
+MANTLE_STYLE_SPECS = {
+    'CONTEMPORARY': (5.0, 0.0),
+    'TRADITIONAL': (3.75, 2.75),
+    'SHAKER': (4.25, 3.0),
+    'VICTORIAN': (5.75, 2.75),
+    'CLASSIC': (5.5, 3.0),
+    'COLONIAL': (7.5, 1.75),
+}
 
-    Same slab construction (front board, inset top/bottom, finish-gated
-    end panels); the mantle defaults to a beefier beam (72" W x 10" D x
-    6" thick), both ends returned, and shelf_type MANTLE so downstream
-    consumers grade it by mantle_category rather than shelf duty.
+
+def mantle_style_spec(style):
+    return MANTLE_STYLE_SPECS.get(style, MANTLE_STYLE_SPECS['CONTEMPORARY'])
+
+
+def apply_mantle_style(obj):
+    """Re-seed a mantle's overall height from its style's standard build
+    and rebuild. Called from the style prop's update callback."""
+    root = find_cabinet_root(obj)
+    if root is None or not root.get(MANTLE_TAG):
+        return
+    overall_h, _proj = mantle_style_spec(root.mantle_product.mantle_style)
+    # Setting height fires the normal dim update -> recalculate.
+    root.face_frame_cabinet.height = inch(overall_h)
+
+
+class MantleFaceFrameProduct(FaceFrameCabinet):
+    """Fireplace mantle shelf - a wall-mounted product in its own right
+    (NOT a floating-shelf variant): a hollow box build at the top with a
+    style-driven under-crown band wrapping the front and any finished
+    end.
+
+    NOT a bay/opening product: a fixed parameterized assembly built
+    directly from the cage width / depth / height (height = the overall
+    assembly height including the crown drop) and the ``mantle_product``
+    propgroup. Style picks the standard build (box height + crown
+    projection/drop); ``finish_left`` / ``finish_right`` close that end
+    with a panel and return the crown around it. The crown band is a v1
+    sloped-board approximation of the catalog mouldings.
+
+    ``single_placement`` places one fixed-width beam at the cursor
+    height (a mantle spans the fireplace, not the wall gap).
     """
-    single_placement = True   # one fixed-width beam at the cursor
-    fill_no_bays = False      # spans the fireplace, not the wall gap
+    single_placement = True
+    fill_no_bays = False
+    follow_cursor_z = True
+    default_cabinet_type = 'BASE'
 
     def __init__(self):
         super().__init__()
         self.default_width = inch(72.0)
         self.default_depth = inch(10.0)
-        self.default_height = inch(6.0)   # beam face height
+        overall_h, _proj = mantle_style_spec('CONTEMPORARY')
+        self.default_height = inch(overall_h)
+
+    def _has_toe_kick(self):
+        return False
+
+    def _has_carcass(self):
+        return False
 
     def create(self, name="Mantle", bay_qty=1):
-        super().create(name, bay_qty=bay_qty)
-        fs = self.obj.floating_shelf
-        fs.shelf_type = 'MANTLE'
-        fs.finish_left = True
-        fs.finish_right = True
+        self.create_cabinet_root(name)
+        self.obj[MANTLE_TAG] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_mantle_commands'
         self.recalculate()
+
+    def _ensure_mantle_part(self, role, name):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                child['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        return part.obj
+
+    def _ensure_mantle_parts(self):
+        spec = (
+            (PART_ROLE_MANTLE_FRONT, 'Mantle Front'),
+            (PART_ROLE_MANTLE_TOP, 'Mantle Top'),
+            (PART_ROLE_MANTLE_BOTTOM, 'Mantle Bottom'),
+            (PART_ROLE_MANTLE_PANEL_LEFT, 'Mantle Panel Left'),
+            (PART_ROLE_MANTLE_PANEL_RIGHT, 'Mantle Panel Right'),
+            (PART_ROLE_MANTLE_CROWN_FRONT, 'Mantle Crown Front'),
+            (PART_ROLE_MANTLE_CROWN_LEFT, 'Mantle Crown Left'),
+            (PART_ROLE_MANTLE_CROWN_RIGHT, 'Mantle Crown Right'),
+        )
+        return {role: self._ensure_mantle_part(role, name)
+                for role, name in spec}
+
+    def recalculate(self):
+        cab = self.obj.face_frame_cabinet
+        mp = self.obj.mantle_product
+
+        width = cab.width
+        height = cab.height   # overall assembly height incl. crown drop
+        depth = cab.depth
+        self.set_input('Dim X', width)
+        self.set_input('Dim Y', depth)
+        self.set_input('Dim Z', height)
+
+        mt = mp.material_thickness
+        fl = mp.finish_left
+        fr = mp.finish_right
+        _overall, proj_in = mantle_style_spec(mp.mantle_style)
+        proj = min(inch(proj_in), max(depth - mt, 0.0))
+        has_crown = proj > 0.0001 and height > mt * 2
+
+        parts = self._ensure_mantle_parts()
+        FRONT = parts[PART_ROLE_MANTLE_FRONT]
+        TOP = parts[PART_ROLE_MANTLE_TOP]
+        BOTTOM = parts[PART_ROLE_MANTLE_BOTTOM]
+        LP = parts[PART_ROLE_MANTLE_PANEL_LEFT]
+        RP = parts[PART_ROLE_MANTLE_PANEL_RIGHT]
+        CF = parts[PART_ROLE_MANTLE_CROWN_FRONT]
+        CL = parts[PART_ROLE_MANTLE_CROWN_LEFT]
+        CR = parts[PART_ROLE_MANTLE_CROWN_RIGHT]
+
+        def place(obj, length, w, th, loc, rot, mirror, show=True):
+            if not obj.get('IS_MANUAL_PART'):
+                obj.hide_viewport = not show
+                obj.hide_render = not show
+                if not show:
+                    return
+                gn = GeoNodeCutpart(obj)
+                gn.set_input('Length', length)
+                gn.set_input('Width', w)
+                gn.set_input('Thickness', th)
+                obj.location = loc
+                obj.rotation_euler = rot
+                # Always drive all three mirrors - a stale True from a
+                # previous pose would silently flip the part.
+                for k in ('Mirror X', 'Mirror Y', 'Mirror Z'):
+                    gn.set_input(k, mirror.get(k, False))
+            obj['IS_FINISHED'] = True
+
+        inset_l = mt if fl else 0.0
+        inset_r = mt if fr else 0.0
+        inner_len = width - inset_l - inset_r
+
+        if not has_crown:
+            # --- Contemporary: plain hollow box, full-height front.
+            inner_depth = depth - mt
+            place(FRONT, width, height, mt, (0.0, -depth, 0.0),
+                  (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
+            place(TOP, inner_len, inner_depth, mt,
+                  (inset_l, -depth + mt, height),
+                  (0.0, 0.0, 0.0), {'Mirror Z': True})
+            place(BOTTOM, inner_len, inner_depth, mt,
+                  (inset_l, -depth + mt, 0.0),
+                  (0.0, 0.0, 0.0), {})
+            place(LP, inner_depth, height, mt, (0.0, 0.0, 0.0),
+                  (math.radians(-90), 0.0, math.radians(90)),
+                  {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
+                  show=fl)
+            place(RP, inner_depth, height, mt, (width, 0.0, 0.0),
+                  (math.radians(-90), 0.0, math.radians(90)),
+                  {'Mirror X': True, 'Mirror Y': True}, show=fr)
+            for p in (CF, CL, CR):
+                if not p.get('IS_MANUAL_PART'):
+                    p.hide_viewport = True
+                    p.hide_render = True
+            return
+
+        # --- Crown styles (catalog sections): the top slab overhangs a
+        # set-back core; the crown band slopes from under the slab's
+        # front edge back and down to the core, returned along each
+        # finished end. Straight sloped boards stand in for the real
+        # moulding profiles for now; corners butt rather than miter.
+        z_slab = height - mt          # underside of the top slab
+        drop = z_slab                 # crown runs slab underside -> bottom
+        slope_len = math.hypot(proj, drop)
+        tilt = math.atan2(proj, drop)
+        crown_rot_x = math.radians(-90) + tilt
+        core_y = -depth + proj        # core front face plane
+
+        # Top slab: full width x full depth, overhanging the crown.
+        place(TOP, width, depth, mt, (0.0, -depth, z_slab),
+              (0.0, 0.0, 0.0), {'Mirror Z': True})
+        # Core face: set back behind the crown, slab underside to bottom.
+        place(FRONT, inner_len, z_slab, mt, (inset_l, core_y, 0.0),
+              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
+        # Bottom: closes the core underside back to the wall.
+        place(BOTTOM, inner_len, depth - proj - mt, mt,
+              (inset_l, core_y + mt, 0.0), (0.0, 0.0, 0.0), {})
+        # End panels: close the core region of a finished end.
+        place(LP, depth - proj, z_slab, mt, (0.0, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
+              show=fl)
+        place(RP, depth - proj, z_slab, mt, (width, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True}, show=fr)
+        # Crown band + returns. Width-axis direction with rot.x =
+        # tilt - 90 is (0, sin t, -cos t): back toward the wall and
+        # down; the returns get the same tilt with a Z quarter-turn so
+        # they slope down and inward from the finished end.
+        # Returns stop where the front band's slope lands (depth - proj)
+        # so the corner butts cleanly instead of poking through.
+        place(CF, width, slope_len, mt, (0.0, -depth, z_slab),
+              (crown_rot_x, 0.0, 0.0), {})
+        place(CL, depth - proj, slope_len, mt, (0.0, 0.0, z_slab),
+              (crown_rot_x, 0.0, math.radians(-90)), {}, show=fl)
+        place(CR, depth - proj, slope_len, mt, (width, -depth + proj, z_slab),
+              (crown_rot_x, 0.0, math.radians(90)), {}, show=fr)
 
 
 class ValanceFaceFrameProduct(FaceFrameCabinet):
@@ -11129,7 +11329,7 @@ CABINET_NAME_DISPATCH = {
     "Bookcase Storage Unit": BookcaseStorageUnitFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
-    "Mantle": MantleFaceFrameCabinet,
+    "Mantle": MantleFaceFrameProduct,
     "Valance": ValanceFaceFrameProduct,
     "Wood Top": WoodTopPart,
     "Misc Part": MiscPart,
@@ -11294,7 +11494,7 @@ WRAP_CLASS_REGISTRY.update({
     'FaceFrameAndDoorsCabinet': FaceFrameAndDoorsCabinet,
     'LegProductFaceFrameCabinet': LegProductFaceFrameCabinet,
     'FloatingShelfFaceFrameCabinet': FloatingShelfFaceFrameCabinet,
-    'MantleFaceFrameCabinet': MantleFaceFrameCabinet,
+    'MantleFaceFrameProduct': MantleFaceFrameProduct,
     'ValanceFaceFrameProduct': ValanceFaceFrameProduct,
 })
 

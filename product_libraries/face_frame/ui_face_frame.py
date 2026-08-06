@@ -467,8 +467,6 @@ def draw_floating_shelf(layout, root):
     shelf = root.floating_shelf
 
     layout.prop(shelf, 'shelf_type', text="Type")
-    if shelf.shelf_type == 'MANTLE':
-        layout.prop(shelf, 'mantle_category', text="Category")
 
     col = layout.column(align=True)
     col.prop(cab, 'width', text="Width")
@@ -499,6 +497,36 @@ def draw_floating_shelf(layout, root):
         gsub.prop(shelf, 'groove_distance_from_rear', text="Distance From Rear")
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
+
+
+def _is_mantle(obj):
+    """True when obj (or its cabinet root) is a mantle product."""
+    root = types_face_frame.find_cabinet_root(obj)
+    return root is not None and bool(root.get('IS_MANTLE_PRODUCT'))
+
+
+def draw_mantle_product(layout, root):
+    """Mantle prompts: style, dimensions, and finished ends. Shown in the
+    sidebar (HB_FACE_FRAME_PT_mantle) and the right-click popup. Height
+    (Dim Z) is the overall assembly height including the under-crown;
+    picking a style re-seeds it to that style's standard build."""
+    cab = root.face_frame_cabinet
+    mantle = root.mantle_product
+
+    layout.prop(mantle, 'mantle_style', text="Style")
+
+    col = layout.column(align=True)
+    col.prop(cab, 'width', text="Width")
+    col.prop(cab, 'depth', text="Depth")
+    col.prop(cab, 'height', text="Height")
+
+    box = layout.box()
+    box.label(text="Finished Ends")
+    row = box.row(align=True)
+    row.prop(mantle, 'finish_left', text="Left", toggle=True)
+    row.prop(mantle, 'finish_right', text="Right", toggle=True)
+
+    layout.prop(mantle, 'material_thickness', text="Material Thickness")
 
 
 def draw_valance_product(layout, root):
@@ -1786,6 +1814,27 @@ class HB_FACE_FRAME_PT_floating_shelf(bpy.types.Panel):
         draw_floating_shelf(self.layout, root)
 
 
+class HB_FACE_FRAME_PT_mantle(bpy.types.Panel):
+    """Mantle options. Shown only when the active object is a mantle;
+    the bay/construction sub-panels are hidden for it."""
+    bl_label = "Mantle"
+    bl_idname = "HB_FACE_FRAME_PT_mantle"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Home Builder"
+    bl_parent_id = "HB_FACE_FRAME_PT_active_cabinet"
+
+    @classmethod
+    def poll(cls, context):
+        return _is_mantle(context.active_object)
+
+    def draw(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return
+        draw_mantle_product(self.layout, root)
+
+
 class HB_FACE_FRAME_PT_leg_product(bpy.types.Panel):
     """Leg product options. Shown only when the active object is a leg;
     the bay/construction sub-panels are hidden for legs (they have no
@@ -1812,6 +1861,7 @@ classes = (
     HB_FACE_FRAME_PT_active_cabinet,
     HB_FACE_FRAME_PT_leg_product,
     HB_FACE_FRAME_PT_floating_shelf,
+    HB_FACE_FRAME_PT_mantle,
     HB_FACE_FRAME_PT_dimensions,
     HB_FACE_FRAME_PT_construction,
     HB_FACE_FRAME_PT_face_frame_defaults,

@@ -4153,6 +4153,15 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             sp.finish_left = fl
             sp.finish_right = fr
 
+        # Auto-set a mantle's finished ends the same way: box end panel
+        # + crown return when the end is exposed.
+        if selection_target.get('IS_MANTLE_PRODUCT'):
+            context.view_layer.update()
+            fl, fr = exposure.auto_floating_shelf_finish(selection_target)
+            mp = selection_target.mantle_product
+            mp.finish_left = fl
+            mp.finish_right = fr
+
         # Auto-set a valance's finished ends the same way: a return
         # panel when the end is exposed, none when a cabinet abuts it.
         if selection_target.get('IS_VALANCE_PRODUCT'):

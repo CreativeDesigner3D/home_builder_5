@@ -669,6 +669,19 @@ class HOME_BUILDER_MT_face_frame_valance_commands(bpy.types.Menu):
                         text="Delete Valance", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
+    """Right-click menu for a mantle root."""
+    bl_label = "Mantle Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.mantle_prompts",
+                        text="Mantle Properties...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Mantle", icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
     """Right-click menu for a Misc Part - a bare GeoNodeCutpart with no
     cabinet cage. The cabinet / part-role menus don't apply, so this is
@@ -767,6 +780,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_floating_shelf_commands,
     HOME_BUILDER_MT_face_frame_valance_commands,
+    HOME_BUILDER_MT_face_frame_mantle_commands,
     HOME_BUILDER_MT_face_frame_misc_part_commands,
     HOME_BUILDER_MT_face_frame_door_part_commands,
     HOME_BUILDER_MT_face_frame_leg_product_commands,

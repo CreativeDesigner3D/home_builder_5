@@ -4347,6 +4347,35 @@ class hb_face_frame_OT_floating_shelf_prompts(bpy.types.Operator):
         ui_face_frame.draw_floating_shelf(self.layout, root)
 
 
+class hb_face_frame_OT_mantle_prompts(bpy.types.Operator):
+    """Popup properties dialog for a mantle (right-click entry)."""
+    bl_idname = "hb_face_frame.mantle_prompts"
+    bl_label = "Mantle Properties"
+    bl_description = "Edit the mantle's style, dimensions, and finished ends"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and bool(root.get('IS_MANTLE_PRODUCT'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No mantle selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_mantle_product(self.layout, root)
+
+
 class hb_face_frame_OT_valance_prompts(bpy.types.Operator):
     """Popup properties dialog for a valance (right-click entry)."""
     bl_idname = "hb_face_frame.valance_prompts"
@@ -5026,6 +5055,7 @@ classes = (
     hb_face_frame_OT_leg_product_prompts,
     hb_face_frame_OT_floating_shelf_prompts,
     hb_face_frame_OT_valance_prompts,
+    hb_face_frame_OT_mantle_prompts,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,

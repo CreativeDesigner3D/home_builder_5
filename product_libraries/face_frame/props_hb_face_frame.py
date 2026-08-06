@@ -9507,20 +9507,8 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
              "Shelf with visible support"),
             ('HEAVY_DUTY', "Heavy Duty Floating Shelves",
              "Heavy duty floating shelf; supports a light groove"),
-            ('MANTLE', "Mantle",
-             "Fireplace mantle shelf; graded by category"),
         ],
         default='FLOATING',
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    mantle_category: EnumProperty(
-        name="Mantle Category",
-        items=[
-            ('A', "Category A", "Standard mantle"),
-            ('B', "Category B", "Mid-grade mantle"),
-            ('C', "Category C", "Premium mantle"),
-        ],
-        default='A',
         update=_update_cabinet_dim,
     )  # type: ignore
     # Light groove (Heavy Duty only) - a routed LED channel on the top
@@ -9541,6 +9529,56 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
     groove_depth: FloatProperty(
         name="Groove Depth", default=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+def _update_mantle_style(self, context):
+    """Mantle style change: re-seed the overall height to the style's
+    standard build (the styles differ in height and under-crown), then
+    rebuild through the normal dim update."""
+    from . import types_face_frame
+    types_face_frame.apply_mantle_style(self.id_data)
+
+
+class Face_Frame_Mantle_Props(PropertyGroup):
+    """Options for a Mantle (fireplace mantle shelf).
+
+    Lives on the mantle's cage object alongside face_frame_cabinet.
+    Width / depth come from the cage; height (Dim Z) is the overall
+    assembly height, seeded from the style's standard build on style
+    change and editable after. finish_left / finish_right wrap the
+    front build (box end panel + crown return) around that end.
+    """
+    mantle_style: EnumProperty(
+        name="Mantle Style",
+        items=[
+            ('CONTEMPORARY', "Contemporary",
+             "Plain 5\" band with eased edges, no under-crown"),
+            ('TRADITIONAL', "Traditional",
+             "3-3/4\" build with a crown moulding below"),
+            ('SHAKER', "Shaker",
+             "4-1/4\" build with a cove moulding below"),
+            ('VICTORIAN', "Victorian",
+             "5-3/4\" build with a crown moulding below"),
+            ('CLASSIC', "Classic",
+             "5-1/2\" build with stacked mouldings below"),
+            ('COLONIAL', "Colonial",
+             "7-1/2\" build with a crown moulding below"),
+        ],
+        default='CONTEMPORARY',
+        update=_update_mantle_style,
+    )  # type: ignore
+    finish_left: BoolProperty(
+        name="Finish Left", default=True, update=_update_cabinet_dim,
+        description="Return the front build around the left end",
+    )  # type: ignore
+    finish_right: BoolProperty(
+        name="Finish Right", default=True, update=_update_cabinet_dim,
+        description="Return the front build around the right end",
+    )  # type: ignore
+    material_thickness: FloatProperty(
+        name="Material Thickness", default=units.inch(0.75),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -9668,6 +9706,7 @@ class Face_Frame_Valance_Props(PropertyGroup):
 classes = (
     Face_Frame_Leg_Props,
     Face_Frame_Floating_Shelf_Props,
+    Face_Frame_Mantle_Props,
     Face_Frame_Wood_Top_Props,
     Face_Frame_Valance_Props,
     Face_Frame_Millwork_Item,
@@ -9723,6 +9762,7 @@ def register():
     bpy.types.Object.face_frame_cabinet = PointerProperty(type=Face_Frame_Cabinet_Props)
     bpy.types.Object.leg_product = PointerProperty(type=Face_Frame_Leg_Props)
     bpy.types.Object.floating_shelf = PointerProperty(type=Face_Frame_Floating_Shelf_Props)
+    bpy.types.Object.mantle_product = PointerProperty(type=Face_Frame_Mantle_Props)
     bpy.types.Object.wood_top = PointerProperty(type=Face_Frame_Wood_Top_Props)
     bpy.types.Object.valance_product = PointerProperty(type=Face_Frame_Valance_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
@@ -9749,6 +9789,8 @@ def unregister():
         del bpy.types.Object.face_frame_bay
     if hasattr(bpy.types.Object, 'floating_shelf'):
         del bpy.types.Object.floating_shelf
+    if hasattr(bpy.types.Object, 'mantle_product'):
+        del bpy.types.Object.mantle_product
     if hasattr(bpy.types.Object, 'valance_product'):
         del bpy.types.Object.valance_product
     if hasattr(bpy.types.Object, 'wood_top'):
