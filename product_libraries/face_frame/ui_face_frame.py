@@ -528,6 +528,18 @@ def draw_mantle_product(layout, root):
     row.prop(mantle, 'finish_left', text="Left", toggle=True)
     row.prop(mantle, 'finish_right', text="Right", toggle=True)
 
+    box = layout.box()
+    box.prop(mantle, 'include_surround', text="Legs & Header")
+    if mantle.include_surround:
+        box.prop(mantle, 'surround_build', text="Build")
+        col = box.column(align=True)
+        col.prop(mantle, 'leg_width', text="Leg Width")
+        col.prop(mantle, 'leg_depth', text="Leg Depth")
+        col.prop(mantle, 'header_height', text="Header Height")
+        box.prop(mantle, 'include_base_moulding', text="Base Moulding")
+        if mantle.include_base_moulding:
+            box.prop(mantle, 'base_profile', text="")
+
     if mantle.mantle_style != 'CONTEMPORARY':
         layout.prop(mantle, 'top_overhang', text="Top Overhang")
     layout.prop(mantle, 'material_thickness', text="Material Thickness")

@@ -9538,20 +9538,45 @@ _mantle_crown_items_cache = []
 
 def _mantle_crown_profile_items(self, context):
     """Crown choices for the mantle: the mantle mouldings plus every
-    crown profile from the installed molding packs. DEFAULT resolves
-    per style (types_face_frame.MANTLE_STYLE_CROWN)."""
+    crown profile from the installed molding packs, then the rest of
+    the Other mouldings. DEFAULT resolves per style
+    (types_face_frame.MANTLE_STYLE_CROWN)."""
     from ...molding import packages
     global _mantle_crown_items_cache
     items = [('DEFAULT', "Default (by Style)",
               "The style's standard moulding")]
-    other = {i[0] for i in packages.profile_enum_items('Other')}
+    other = [i for i in packages.profile_enum_items('Other')
+             if i[0] != 'DEFAULT']
+    other_idents = {i[0] for i in other}
     for n in ('Mantle', 'Mini Mantle'):
-        if n in other:
+        if n in other_idents:
             items.append(("Other/" + n, n + " Moulding", ""))
     for ident, label, desc in packages.profile_enum_items('Crown Molding')[1:]:
         items.append(("Crown Molding/" + ident, label, desc))
+    for ident, label, desc in other:
+        if ident in ('Mantle', 'Mini Mantle'):
+            continue
+        items.append(("Other/" + ident, label, desc))
     _mantle_crown_items_cache = items
     return _mantle_crown_items_cache
+
+
+_mantle_base_items_cache = []
+
+
+def _mantle_base_profile_items(self, context):
+    """Base moulding choices for the surround's leg feet. DEFAULT
+    resolves per style (types_face_frame.MANTLE_SURROUND_BASE)."""
+    from ...molding import packages
+    global _mantle_base_items_cache
+    items = [('DEFAULT', "Default (by Style)",
+              "The style's standard base moulding")]
+    for ident, label, desc in packages.profile_enum_items('Base Molding'):
+        if ident == 'DEFAULT':
+            continue
+        items.append(("Base Molding/" + ident, label, desc))
+    _mantle_base_items_cache = items
+    return _mantle_base_items_cache
 
 
 def _update_mantle_style(self, context):
@@ -9560,6 +9585,13 @@ def _update_mantle_style(self, context):
     rebuild through the normal dim update."""
     from . import types_face_frame
     types_face_frame.apply_mantle_style(self.id_data)
+
+
+def _update_mantle_surround(self, context):
+    """Legs & Header toggle: keep the shelf top where it is - ON drops
+    the product to the floor, OFF restores the wall-mounted shelf."""
+    from . import types_face_frame
+    types_face_frame.apply_mantle_surround(self.id_data)
 
 
 class Face_Frame_Mantle_Props(PropertyGroup):
@@ -9615,6 +9647,55 @@ class Face_Frame_Mantle_Props(PropertyGroup):
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    include_surround: BoolProperty(
+        name="Legs & Header", default=False,
+        update=_update_mantle_surround,
+        description="Build a full floor-standing mantle surround: legs"
+                    " and a header below the shelf",
+    )  # type: ignore
+    surround_build: EnumProperty(
+        name="Surround Build",
+        items=[
+            ('DEFAULT', "Default (by Style)",
+             "Plain for Contemporary, paneled for the other styles"),
+            ('PLAIN', "Plain",
+             "Plain board legs and header"),
+            ('PANELED', "Paneled",
+             "Applied panel legs and header (raised or flat panels"
+             " per the cabinet style)"),
+        ],
+        default='DEFAULT', update=_update_cabinet_dim,
+    )  # type: ignore
+    leg_width: FloatProperty(
+        name="Leg Width", default=units.inch(8.0),
+        min=units.inch(3.0), soft_max=units.inch(16.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    leg_depth: FloatProperty(
+        name="Leg Depth", default=units.inch(8.0),
+        min=units.inch(2.0), soft_max=units.inch(16.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far the legs project from the wall (the shelf"
+                    " depth is independent)",
+    )  # type: ignore
+    header_height: FloatProperty(
+        name="Header Height", default=units.inch(10.0),
+        min=units.inch(3.0), soft_max=units.inch(24.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Height of the header band directly under the"
+                    " shelf, spanning between the legs",
+    )  # type: ignore
+    include_base_moulding: BoolProperty(
+        name="Base Moulding", default=True, update=_update_cabinet_dim,
+        description="Wrap a base moulding around each leg's foot",
+    )  # type: ignore
+    base_profile: EnumProperty(
+        name="Base Profile",
+        description="Base moulding profile at the leg feet (Default"
+                    " follows the style)",
+        items=_mantle_base_profile_items,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
 

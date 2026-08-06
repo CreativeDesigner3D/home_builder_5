@@ -186,6 +186,18 @@ PART_ROLE_MANTLE_CROWN_FRONT = 'MANTLE_CROWN_FRONT'
 PART_ROLE_MANTLE_CROWN_LEFT = 'MANTLE_CROWN_LEFT'
 PART_ROLE_MANTLE_CROWN_RIGHT = 'MANTLE_CROWN_RIGHT'
 PART_ROLE_MANTLE_CROWN_SWEEP = 'MANTLE_CROWN_SWEEP'
+PART_ROLE_MANTLE_LEG_FRONT_L = 'MANTLE_LEG_FRONT_L'
+PART_ROLE_MANTLE_LEG_FRONT_R = 'MANTLE_LEG_FRONT_R'
+PART_ROLE_MANTLE_LEG_OUT_L = 'MANTLE_LEG_OUT_L'
+PART_ROLE_MANTLE_LEG_OUT_R = 'MANTLE_LEG_OUT_R'
+PART_ROLE_MANTLE_LEG_IN_L = 'MANTLE_LEG_IN_L'
+PART_ROLE_MANTLE_LEG_IN_R = 'MANTLE_LEG_IN_R'
+PART_ROLE_MANTLE_HEADER_FRONT = 'MANTLE_HEADER_FRONT'
+PART_ROLE_MANTLE_HEADER_BOTTOM = 'MANTLE_HEADER_BOTTOM'
+PART_ROLE_MANTLE_BASE_SWEEP = 'MANTLE_BASE_SWEEP'
+# Tag key on PanelFaceFrameCabinet roots serving as a surround's paneled
+# leg / header fronts (value = which front the panel is).
+TAG_MANTLE_PANEL = 'hb_mantle_panel_role'
 
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
@@ -10454,6 +10466,20 @@ MANTLE_STYLE_CROWN = {
     'COLONIAL': 'Crown Molding/51 Crown',
 }
 
+# Standard base moulding at the surround's leg feet per style (the
+# base_profile 'DEFAULT' choice): Contemporary is a solid lumber base
+# with a 3/8" radius edge, Shaker a square-edge board, everything else
+# the standard base.
+MANTLE_SURROUND_BASE = {
+    'CONTEMPORARY': 'Base Molding/3_8 Radius Edge',
+    'SHAKER': 'Base Molding/Square Edge',
+}
+MANTLE_SURROUND_BASE_FALLBACK = 'Base Molding/Standard Base'
+
+# Standard leg height for the surround (floor to the underside of the
+# shelf assembly) when it first turns on.
+MANTLE_SURROUND_LEG_H_IN = 60.0
+
 
 def mantle_style_spec(style):
     return MANTLE_STYLE_SPECS.get(style, MANTLE_STYLE_SPECS['CONTEMPORARY'])
@@ -10461,13 +10487,40 @@ def mantle_style_spec(style):
 
 def apply_mantle_style(obj):
     """Re-seed a mantle's overall height from its style's standard build
-    and rebuild. Called from the style prop's update callback."""
+    and rebuild. Called from the style prop's update callback. With the
+    surround on the cage height is floor-to-top - the style only
+    restyles the shelf zone, so the overall height is left alone."""
     root = find_cabinet_root(obj)
     if root is None or not root.get(MANTLE_TAG):
         return
-    overall_h, _proj = mantle_style_spec(root.mantle_product.mantle_style)
-    # Setting height fires the normal dim update -> recalculate.
-    root.face_frame_cabinet.height = inch(overall_h)
+    mp = root.mantle_product
+    overall_h, _proj = mantle_style_spec(mp.mantle_style)
+    if mp.include_surround:
+        recalculate_face_frame_cabinet(root)
+    else:
+        # Setting height fires the normal dim update -> recalculate.
+        root.face_frame_cabinet.height = inch(overall_h)
+
+
+def apply_mantle_surround(obj):
+    """Legs & Header toggle: keep the shelf where it reads on the wall.
+    Turning the surround ON drops the product to the floor and grows the
+    height so the shelf top stays put; OFF restores a wall-mounted shelf
+    at its old elevation. Called from the prop's update callback; the
+    height write fires the rebuild."""
+    root = find_cabinet_root(obj)
+    if root is None or not root.get(MANTLE_TAG):
+        return
+    mp = root.mantle_product
+    cab = root.face_frame_cabinet
+    overall_h, _proj = mantle_style_spec(mp.mantle_style)
+    top = root.location.z + cab.height
+    if mp.include_surround:
+        root.location.z = 0.0
+        cab.height = max(top, inch(overall_h + MANTLE_SURROUND_LEG_H_IN))
+    else:
+        root.location.z = max(top - inch(overall_h), 0.0)
+        cab.height = inch(overall_h)
 
 
 class MantleFaceFrameProduct(FaceFrameCabinet):
@@ -10486,6 +10539,12 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
     ``single_placement`` places one fixed-width beam at the cursor
     height (a mantle spans the fireplace, not the wall gap).
+
+    With ``include_surround`` the product becomes a full floor-standing
+    mantle surround: the shelf assembly stays at the top of the cage
+    and legs + a header fill below it - plain boards or applied panel
+    assemblies per ``surround_build``, with a base moulding wrapped
+    around each leg's foot.
     """
     single_placement = True
     fill_no_bays = False
@@ -10544,7 +10603,8 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 return child
         return None
 
-    def _rebuild_crown_sweep(self, ref, width, depth, z_slab, fl, fr):
+    def _rebuild_crown_sweep(self, ref, width, depth, z_slab, fl, fr,
+                             avail=None):
         """Extrude the crown moulding profile around the mantle: along
         the front and returned down each finished end, mitred at the
         corners by the curve bevel. Returns the profile's front depth
@@ -10553,7 +10613,9 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         The profile is reloaded every rebuild - cheap, and it keeps the
         clamp (profiles taller than the under-slab space are scaled
-        down to it) correct when the height or style changes.
+        down to it) correct when the height or style changes. `avail`
+        is that under-slab space (defaults to z_slab; the surround
+        passes the shelf zone so the crown stays off the header).
         """
         from ...molding import packages
         sweep = self._crown_sweep_obj()
@@ -10568,6 +10630,8 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 sweep.hide_render = True
             return None
 
+        if avail is None:
+            avail = z_slab
         if not ref:
             return _hide()
         crown_h = packages.profile_top_height(ref, None)
@@ -10590,7 +10654,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         curve.use_fill_caps = True
 
         old = curve.bevel_object
-        height = z_slab if crown_h > z_slab - 1e-4 else None
+        height = avail if crown_h > avail - 1e-4 else None
         coll = (self.obj.users_collection[0] if self.obj.users_collection
                 else bpy.context.scene.collection)
         prof = packages.make_profile_object(
@@ -10601,7 +10665,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         prof.parent = sweep
         if old is not None and old is not prof:
             bpy.data.objects.remove(old, do_unlink=True)
-        eff_h = min(crown_h, z_slab)
+        eff_h = min(crown_h, avail)
 
         curve.splines.clear()
         pts = []
@@ -10625,6 +10689,25 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         sweep['IS_FINISHED'] = True
         return proj
 
+    @staticmethod
+    def _place(obj, length, w, th, loc, rot, mirror, show=True):
+        if not obj.get('IS_MANUAL_PART'):
+            obj.hide_viewport = not show
+            obj.hide_render = not show
+            if not show:
+                return
+            gn = GeoNodeCutpart(obj)
+            gn.set_input('Length', length)
+            gn.set_input('Width', w)
+            gn.set_input('Thickness', th)
+            obj.location = loc
+            obj.rotation_euler = rot
+            # Always drive all three mirrors - a stale True from a
+            # previous pose would silently flip the part.
+            for k in ('Mirror X', 'Mirror Y', 'Mirror Z'):
+                gn.set_input(k, mirror.get(k, False))
+        obj['IS_FINISHED'] = True
+
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         mp = self.obj.mantle_product
@@ -10639,9 +10722,17 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         mt = mp.material_thickness
         fl = mp.finish_left
         fr = mp.finish_right
-        _overall, proj_in = mantle_style_spec(mp.mantle_style)
+        overall_in, proj_in = mantle_style_spec(mp.mantle_style)
+
+        # Surround (legs & header): the cage is floor-to-top - the
+        # shelf assembly reads its style height at the top and the
+        # legs / header fill everything below it.
+        surround = mp.include_surround
+        shelf_h = min(inch(overall_in), height) if surround else height
+        z0 = height - shelf_h            # bottom of the shelf assembly
+
         proj = min(inch(proj_in), max(depth - mt, 0.0))
-        has_crown = proj > 0.0001 and height > mt * 2
+        has_crown = proj > 0.0001 and shelf_h > mt * 2
 
         parts = self._ensure_mantle_parts()
         FRONT = parts[PART_ROLE_MANTLE_FRONT]
@@ -10653,23 +10744,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         CL = parts[PART_ROLE_MANTLE_CROWN_LEFT]
         CR = parts[PART_ROLE_MANTLE_CROWN_RIGHT]
 
-        def place(obj, length, w, th, loc, rot, mirror, show=True):
-            if not obj.get('IS_MANUAL_PART'):
-                obj.hide_viewport = not show
-                obj.hide_render = not show
-                if not show:
-                    return
-                gn = GeoNodeCutpart(obj)
-                gn.set_input('Length', length)
-                gn.set_input('Width', w)
-                gn.set_input('Thickness', th)
-                obj.location = loc
-                obj.rotation_euler = rot
-                # Always drive all three mirrors - a stale True from a
-                # previous pose would silently flip the part.
-                for k in ('Mirror X', 'Mirror Y', 'Mirror Z'):
-                    gn.set_input(k, mirror.get(k, False))
-            obj['IS_FINISHED'] = True
+        place = self._place
 
         inset_l = mt if fl else 0.0
         inset_r = mt if fr else 0.0
@@ -10678,19 +10753,19 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         if not has_crown:
             # --- Contemporary: plain hollow box, full-height front.
             inner_depth = depth - mt
-            place(FRONT, width, height, mt, (0.0, -depth, 0.0),
+            place(FRONT, width, shelf_h, mt, (0.0, -depth, z0),
                   (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
             place(TOP, inner_len, inner_depth, mt,
                   (inset_l, -depth + mt, height),
                   (0.0, 0.0, 0.0), {'Mirror Z': True})
             place(BOTTOM, inner_len, inner_depth, mt,
-                  (inset_l, -depth + mt, 0.0),
+                  (inset_l, -depth + mt, z0),
                   (0.0, 0.0, 0.0), {})
-            place(LP, inner_depth, height, mt, (0.0, 0.0, 0.0),
+            place(LP, inner_depth, shelf_h, mt, (0.0, 0.0, z0),
                   (math.radians(-90), 0.0, math.radians(90)),
                   {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
                   show=fl)
-            place(RP, inner_depth, height, mt, (width, 0.0, 0.0),
+            place(RP, inner_depth, shelf_h, mt, (width, 0.0, z0),
                   (math.radians(-90), 0.0, math.radians(90)),
                   {'Mirror X': True, 'Mirror Y': True}, show=fr)
             for p in (CF, CL, CR):
@@ -10698,6 +10773,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                     p.hide_viewport = True
                     p.hide_render = True
             self._rebuild_crown_sweep(None, width, depth, height, fl, fr)
+            self._rebuild_surround(mp, width, depth, z0, mt, fl, fr)
             return
 
         # --- Crown styles (catalog sections): the top slab overhangs a
@@ -10711,7 +10787,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         if not ref or ref == 'DEFAULT':
             ref = MANTLE_STYLE_CROWN.get(mp.mantle_style)
         sweep_proj = self._rebuild_crown_sweep(
-            ref, width, depth, z_slab, fl, fr)
+            ref, width, depth, z_slab, fl, fr, avail=z_slab - z0)
         if sweep_proj is not None:
             proj = min(sweep_proj, max(depth - mt, 0.0))
         core_y = -depth + proj        # core front face plane
@@ -10724,18 +10800,19 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         ov_r = ov if fr else 0.0
         place(TOP, width + ov_l + ov_r, depth + ov, mt,
               (-ov_l, -depth - ov, z_slab), (0.0, 0.0, 0.0), {})
-        # Core face: set back behind the crown, slab underside to bottom.
-        place(FRONT, inner_len, z_slab, mt, (inset_l, core_y, 0.0),
+        # Core face: set back behind the crown, slab underside to the
+        # bottom of the shelf zone.
+        place(FRONT, inner_len, z_slab - z0, mt, (inset_l, core_y, z0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
         # Bottom: closes the core underside back to the wall.
         place(BOTTOM, inner_len, depth - proj - mt, mt,
-              (inset_l, core_y + mt, 0.0), (0.0, 0.0, 0.0), {})
+              (inset_l, core_y + mt, z0), (0.0, 0.0, 0.0), {})
         # End panels: close the core region of a finished end.
-        place(LP, depth - proj, z_slab, mt, (0.0, 0.0, 0.0),
+        place(LP, depth - proj, z_slab - z0, mt, (0.0, 0.0, z0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
               show=fl)
-        place(RP, depth - proj, z_slab, mt, (width, 0.0, 0.0),
+        place(RP, depth - proj, z_slab - z0, mt, (width, 0.0, z0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True}, show=fr)
 
@@ -10745,7 +10822,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         # a Z quarter-turn so they slope down and inward, trimmed to
         # the slope landing so the corner butts cleanly.
         boards = sweep_proj is None
-        drop = z_slab
+        drop = z_slab - z0
         slope_len = math.hypot(proj, drop)
         tilt = math.atan2(proj, drop)
         crown_rot_x = math.radians(-90) + tilt
@@ -10757,6 +10834,232 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         place(CR, depth - proj, slope_len, mt, (width, -depth + proj, z_slab),
               (crown_rot_x, 0.0, math.radians(90)), {},
               show=boards and fr)
+
+        self._rebuild_surround(mp, width, depth, z0, mt, fl, fr)
+
+    # =====================================================================
+    # Surround (legs & header) - catalog Mantle Surrounds
+    # =====================================================================
+    _SURROUND_PART_SPEC = (
+        (PART_ROLE_MANTLE_LEG_FRONT_L, 'Mantle Leg Front Left'),
+        (PART_ROLE_MANTLE_LEG_FRONT_R, 'Mantle Leg Front Right'),
+        (PART_ROLE_MANTLE_LEG_OUT_L, 'Mantle Leg Side Left'),
+        (PART_ROLE_MANTLE_LEG_OUT_R, 'Mantle Leg Side Right'),
+        (PART_ROLE_MANTLE_LEG_IN_L, 'Mantle Leg Inner Left'),
+        (PART_ROLE_MANTLE_LEG_IN_R, 'Mantle Leg Inner Right'),
+        (PART_ROLE_MANTLE_HEADER_FRONT, 'Mantle Header'),
+        (PART_ROLE_MANTLE_HEADER_BOTTOM, 'Mantle Header Bottom'),
+    )
+
+    def _ensure_surround_parts(self):
+        return {role: self._ensure_mantle_part(role, name)
+                for role, name in self._SURROUND_PART_SPEC}
+
+    def _mantle_panel(self, role):
+        for child in self.obj.children:
+            if child.get(TAG_MANTLE_PANEL) == role:
+                return child
+        return None
+
+    def _ensure_surround_panel(self, role, name, w, h, loc, mt):
+        """A paneled leg / header front: a standalone face frame panel
+        (rails / stiles / inset panels, raised or recessed per the
+        cabinet style) filling the front footprint, front face flush
+        with the plain build's front plane. The header panel keeps the
+        auto width ladder, so a wide header splits into multiple
+        openings like the catalog drawings."""
+        existing = self._mantle_panel(role)
+        if existing is None:
+            panel = PanelFaceFrameCabinet()
+            panel.create(name, bay_qty=1)
+            existing = panel.obj
+            existing.parent = self.obj
+            existing[TAG_MANTLE_PANEL] = role
+        style = self.obj.get('STYLE_NAME')
+        if style:
+            existing['STYLE_NAME'] = style
+        existing.location = loc
+        existing.rotation_euler = (0.0, 0.0, 0.0)
+        pp = existing.face_frame_cabinet
+        pp.depth = mt
+        pp.width = w
+        pp.height = h
+        return existing
+
+    def _remove_surround_panels(self):
+        for child in list(self.obj.children):
+            if child.get(TAG_MANTLE_PANEL):
+                _remove_root_with_children(child)
+
+    def _rebuild_surround(self, mp, width, depth, z0, mt, fl, fr):
+        """Build (or clear) the legs and header below the shelf zone.
+        Two hollow legs stand floor to the shelf underside with the
+        header spanning between them; fronts are plain boards or
+        applied panel assemblies, and a base moulding profile wraps
+        each leg's foot."""
+        surround_on = mp.include_surround and z0 > mt
+        if not surround_on:
+            for role, _name in self._SURROUND_PART_SPEC:
+                for child in self.obj.children:
+                    if (child.get('hb_part_role') == role
+                            and not child.get('IS_MANUAL_PART')):
+                        child.hide_viewport = True
+                        child.hide_render = True
+            self._remove_surround_panels()
+            self._rebuild_base_sweep(None, width, 0.0, 0.0, fl, fr)
+            return
+
+        leg_w = min(max(mp.leg_width, mt * 2), width / 2 - inch(1.0))
+        leg_d = min(max(mp.leg_depth, mt * 2), depth)
+        header_h = min(max(mp.header_height, mt), z0)
+        build = mp.surround_build
+        if build == 'DEFAULT':
+            build = ('PLAIN' if mp.mantle_style == 'CONTEMPORARY'
+                     else 'PANELED')
+        paneled = build == 'PANELED'
+
+        parts = self._ensure_surround_parts()
+        LF = parts[PART_ROLE_MANTLE_LEG_FRONT_L]
+        RF = parts[PART_ROLE_MANTLE_LEG_FRONT_R]
+        LO = parts[PART_ROLE_MANTLE_LEG_OUT_L]
+        RO = parts[PART_ROLE_MANTLE_LEG_OUT_R]
+        LI = parts[PART_ROLE_MANTLE_LEG_IN_L]
+        RI = parts[PART_ROLE_MANTLE_LEG_IN_R]
+        HF = parts[PART_ROLE_MANTLE_HEADER_FRONT]
+        HB = parts[PART_ROLE_MANTLE_HEADER_BOTTOM]
+
+        place = self._place
+        inner_w = max(width - leg_w * 2, mt)
+        z_head = max(z0 - header_h, 0.0)
+
+        # Fronts: plain boards, hidden when panels replace them.
+        place(LF, leg_w, z0, mt, (0.0, -leg_d, 0.0),
+              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True},
+              show=not paneled)
+        place(RF, leg_w, z0, mt, (width - leg_w, -leg_d, 0.0),
+              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True},
+              show=not paneled)
+        place(HF, inner_w, header_h, mt, (leg_w, -leg_d, z_head),
+              (math.radians(-90), 0.0, 0.0), {'Mirror Y': True},
+              show=not paneled)
+
+        # Leg sides: outer faces on finished ends, inner faces always
+        # (they line the fireplace opening).
+        side_len = max(leg_d - mt, mt)
+        place(LO, side_len, z0, mt, (0.0, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
+              show=fl)
+        place(RO, side_len, z0, mt, (width, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True}, show=fr)
+        place(LI, side_len, z0, mt, (leg_w, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True})
+        place(RI, side_len, z0, mt, (width - leg_w, 0.0, 0.0),
+              (math.radians(-90), 0.0, math.radians(90)),
+              {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
+
+        # Header soffit: closes the underside back to the wall.
+        place(HB, inner_w, side_len, mt, (leg_w, -leg_d + mt, z_head),
+              (0.0, 0.0, 0.0), {})
+
+        if paneled:
+            self._ensure_surround_panel(
+                'LEG_L', 'Mantle Leg Panel Left', leg_w, z0,
+                (0.0, -leg_d + mt, 0.0), mt)
+            self._ensure_surround_panel(
+                'LEG_R', 'Mantle Leg Panel Right', leg_w, z0,
+                (width - leg_w, -leg_d + mt, 0.0), mt)
+            self._ensure_surround_panel(
+                'HEADER', 'Mantle Header Panel', inner_w, header_h,
+                (leg_w, -leg_d + mt, z_head), mt)
+        else:
+            self._remove_surround_panels()
+
+        ref = None
+        if mp.include_base_moulding:
+            ref = mp.base_profile
+            if not ref or ref == 'DEFAULT':
+                ref = MANTLE_SURROUND_BASE.get(
+                    mp.mantle_style, MANTLE_SURROUND_BASE_FALLBACK)
+        self._rebuild_base_sweep(ref, width, leg_w, leg_d, fl, fr)
+
+    def _base_sweep_obj(self):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_MANTLE_BASE_SWEEP:
+                return child
+        return None
+
+    def _rebuild_base_sweep(self, ref, width, leg_w, leg_d, fl, fr):
+        """Extrude the base moulding profile around each leg's foot:
+        up the outer side (finished ends only), across the front and
+        back to the wall on the opening side. One curve, one spline
+        per leg, same bevel-sweep construction as the crown."""
+        from ...molding import packages
+        sweep = self._base_sweep_obj()
+
+        def _hide():
+            if sweep is not None:
+                old = sweep.data.bevel_object
+                if old is not None:
+                    sweep.data.bevel_object = None
+                    bpy.data.objects.remove(old, do_unlink=True)
+                sweep.hide_viewport = True
+                sweep.hide_render = True
+            return None
+
+        if not ref:
+            return _hide()
+        if packages.profile_top_height(ref, None) <= 1e-5:
+            return _hide()
+
+        if sweep is None:
+            curve_data = bpy.data.curves.new('Mantle Base', 'CURVE')
+            sweep = bpy.data.objects.new('Mantle Base', curve_data)
+            for coll in self.obj.users_collection:
+                coll.objects.link(sweep)
+            sweep.parent = self.obj
+            sweep['hb_part_role'] = PART_ROLE_MANTLE_BASE_SWEEP
+            sweep['IS_MANTLE_BASE'] = True
+        curve = sweep.data
+        curve.dimensions = '2D'
+        curve.fill_mode = 'NONE'
+        curve.bevel_mode = 'OBJECT'
+        curve.use_fill_caps = True
+
+        old = curve.bevel_object
+        coll = (self.obj.users_collection[0] if self.obj.users_collection
+                else bpy.context.scene.collection)
+        prof = packages.make_profile_object(
+            ref, None, 'Mantle Base Profile', coll)
+        if prof is None:
+            return _hide()
+        curve.bevel_object = prof
+        prof.parent = sweep
+        if old is not None and old is not prof:
+            bpy.data.objects.remove(old, do_unlink=True)
+
+        curve.splines.clear()
+        left = ([(0.0, 0.0)] if fl else []) + [
+            (0.0, -leg_d), (leg_w, -leg_d), (leg_w, 0.0)]
+        right = [(width - leg_w, 0.0), (width - leg_w, -leg_d),
+                 (width, -leg_d)] + ([(width, 0.0)] if fr else [])
+        for pts in (left, right):
+            spline = curve.splines.new('BEZIER')
+            spline.use_smooth = False
+            spline.bezier_points.add(count=len(pts) - 1)
+            for bp, (x, y) in zip(spline.bezier_points, pts):
+                bp.co = (x, y, 0.0)
+                bp.handle_left_type = 'VECTOR'
+                bp.handle_right_type = 'VECTOR'
+
+        sweep.location = (0.0, 0.0, 0.0)
+        sweep.rotation_euler = (0.0, 0.0, 0.0)
+        sweep.hide_viewport = False
+        sweep.hide_render = False
+        sweep['IS_FINISHED'] = True
+        return True
 
 
 class ValanceFaceFrameProduct(FaceFrameCabinet):
