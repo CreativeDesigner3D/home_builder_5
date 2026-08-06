@@ -8626,10 +8626,13 @@ class FaceFrameCabinet(GeoNodeCage):
     # parented to it so they slide out with the front and die with the
     # pivot wipe on the next rebuild. DRAWER_INSERT_BUILDERS maps the
     # hint to the builder; accessories without one stay data-only.
-    # Interior wall approximations for placing accessories inside the
-    # box (the drawer-box asset's own construction owns the real dims).
-    DRAWER_BOX_SIDE_TH = inch(0.625)
-    DRAWER_BOX_BOTTOM_LIFT = inch(0.5)
+    # Fallback inside faces of the box, used only when the drawer box
+    # asset doesn't publish its own (see _drawer_box_interior): wall
+    # thickness, and the top of the bottom panel an insert stands on.
+    DRAWER_BOX_SIDE_TH = inch(0.5)
+    DRAWER_BOX_INSIDE_FLOOR = inch(0.75)
+    # Headroom an insert leaves under the rim of the box.
+    DRAWER_INSERT_RIM_GAP = inch(0.75)
     DRAWER_DIVIDER_TH = inch(0.25)
     # Insert stock: tray walls and partitions, and the thinner panel
     # the bottoms, ribs and sloped shelves are made from.
@@ -8678,6 +8681,45 @@ class FaceFrameCabinet(GeoNodeCage):
         obj['IS_FINISHED'] = True
         return obj
 
+    @classmethod
+    def _drawer_box_interior(cls, box_obj):
+        """(side, front, floor) inside faces of a drawer box, in box
+        local space, read off the box asset itself.
+
+        An insert has to sit ON the box bottom, and the bottom is a
+        panel let into the sides part way up - assuming it is at z=0
+        buries the insert in it. The asset publishes the numbers
+        (material / bottom thickness and where the bottom sits), so
+        take them from there and only fall back to the class defaults
+        when a box is built some other way. A box with no subfront has
+        no front panel, so its inside starts at the front face.
+        """
+        side = cls.DRAWER_BOX_SIDE_TH
+        floor = cls.DRAWER_BOX_INSIDE_FLOOR
+        front = side
+        for mod in box_obj.modifiers:
+            if mod.type != 'NODES' or mod.node_group is None:
+                continue
+            ids = {}
+            for socket in mod.node_group.interface.items_tree:
+                if getattr(socket, 'in_out', '') == 'INPUT':
+                    ids[socket.name] = socket.identifier
+            th = hb_utils.try_get_gn_input(
+                mod, ids.get('Material Thickness', ''), None)
+            bottom_th = hb_utils.try_get_gn_input(
+                mod, ids.get('Bottom Thickness', ''), None)
+            bottom_z = hb_utils.try_get_gn_input(
+                mod, ids.get('Drawer Bottom Z Location', ''), None)
+            if th:
+                side = front = th
+            if bottom_th is not None and bottom_z is not None:
+                floor = bottom_z + bottom_th
+            if hb_utils.try_get_gn_input(
+                    mod, ids.get('Remove Subfront', ''), False):
+                front = 0.0
+            break
+        return side, front, floor
+
     def _spawn_drawer_inserts(self, box_obj, dx, dy, dz, op_props):
         """Build geometry for every rendered accessory in this drawer.
 
@@ -8692,12 +8734,12 @@ class FaceFrameCabinet(GeoNodeCage):
                  and getattr(it, 'accessory_render', '')]
         if not items:
             return
-        side = self.DRAWER_BOX_SIDE_TH
-        lift = self.DRAWER_BOX_BOTTOM_LIFT
+        side, front, floor = self._drawer_box_interior(box_obj)
         inner = SimpleNamespace(
-            x0=side, x1=dx - side, y0=side, y1=dy - side, z0=lift,
+            x0=side, x1=dx - side, y0=front, y1=dy - side, z0=floor,
             # Inserts stand on the box bottom and stop under the rim.
-            h=max(dz - lift - inch(0.75), inch(1.0)), slots=0)
+            h=max(dz - floor - self.DRAWER_INSERT_RIM_GAP, inch(1.0)),
+            slots=0)
         if (inner.x1 - inner.x0 < inch(1.0)
                 or inner.y1 - inner.y0 < inch(1.0)):
             return
