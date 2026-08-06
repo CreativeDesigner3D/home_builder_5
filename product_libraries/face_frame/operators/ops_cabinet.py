@@ -905,6 +905,203 @@ class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
         ui_face_frame.draw_panel_layout(self.layout, root)
 
 
+# ---------------------------------------------------------------------------
+# Drawer Interior editor: one dialog to lay out everything inside a drawer.
+# A list box of the drawer's accessories with add / delete, and the selected
+# item's settings (quantity, orientation, position) below it, so multiple
+# accessories can be positioned without leaving the dialog. HB5 ships no
+# catalog - the add dropdown is filled from the accessory_registry providers
+# (drawer host), like every other accessory surface.
+# ---------------------------------------------------------------------------
+_drawer_accessory_enum_items = []
+
+
+def _drawer_accessory_enum(self, context):
+    """Every drawer-insert accessory the host application provides."""
+    _drawer_accessory_enum_items.clear()
+    for it in accessory_registry.all_items():
+        if it.get('host') != 'drawer_accessory':
+            continue
+        code = it.get('code')
+        if not code:
+            continue
+        _drawer_accessory_enum_items.append(
+            (code, it.get('name', code), it.get('group', '')))
+    if not _drawer_accessory_enum_items:
+        _drawer_accessory_enum_items.append(
+            ('NONE', "(no drawer accessories)", ""))
+    return _drawer_accessory_enum_items
+
+
+class HB_UL_face_frame_drawer_items(bpy.types.UIList):
+    """The drawer's accessories: label on the left, quantity on the
+    right. Non-accessory interior kinds are filtered out - this list is
+    about what goes INSIDE the drawer box."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_propname):
+        split = layout.split(factor=0.75)
+        split.label(text=item.accessory_label or item.accessory_code,
+                    icon='SNAP_VERTEX')
+        qty = getattr(item, 'accessory_qty', 1)
+        split.label(text=("x%d" % qty) if qty > 1 else "")
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        flt = [self.bitflag_filter_item if it.kind == 'ACCESSORY' else 0
+               for it in items]
+        return flt, []
+
+
+def _drawer_opening_for(obj):
+    """The opening cage owning ``obj`` when it carries a drawer-style
+    front (drawer box, front, divider, or the cage itself)."""
+    opening = _find_owning_opening(obj)
+    if opening is None:
+        return None
+    front = opening.face_frame_opening.front_type
+    if front in ('DRAWER_FRONT', 'PULLOUT', 'TILT_OUT'):
+        return opening
+    return None
+
+
+class hb_face_frame_OT_drawer_add_accessory(bpy.types.Operator):
+    """Append the chosen accessory to this drawer's item list."""
+    bl_idname = "hb_face_frame.drawer_add_accessory"
+    bl_label = "Add"
+    bl_description = "Add this accessory to the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None or not self.code or self.code == 'NONE':
+            return {'CANCELLED'}
+        entry = accessory_registry.find(self.code) or {}
+        props = opening.face_frame_opening
+        item = props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = entry.get('name', self.code)
+        item.accessory_code = self.code
+        item.accessory_render = (entry.get('render') or '').upper()
+        props.interior_items_index = len(props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_drawer_remove_accessory(bpy.types.Operator):
+    """Remove the selected accessory from this drawer."""
+    bl_idname = "hb_face_frame.drawer_remove_accessory"
+    bl_label = "Remove"
+    bl_description = "Remove the selected accessory from the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            return {'CANCELLED'}
+        props = opening.face_frame_opening
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            return {'CANCELLED'}
+        props.interior_items.remove(idx)
+        props.interior_items_index = min(idx,
+                                         len(props.interior_items) - 1)
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
+    """Lay out the inside of a drawer: add, remove and position the
+    accessories that live in the drawer box."""
+    bl_idname = "hb_face_frame.drawer_interior"
+    bl_label = "Drawer Interior"
+    bl_description = ("Design the inside of this drawer: add accessories "
+                      "and position them")
+    bl_options = {'UNDO'}
+
+    # Held by name so rebuilds (every accessory edit wipes and respawns
+    # the drawer box and its contents) can't blank the dialog.
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    add_code: bpy.props.EnumProperty(
+        name="Accessory", items=_drawer_accessory_enum,
+        description="Accessory to add to the drawer",
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _drawer_opening_for(context.active_object) is not None
+
+    def invoke(self, context, event):
+        opening = _drawer_opening_for(context.active_object)
+        if opening is None:
+            self.report({'WARNING'}, "Select a drawer first")
+            return {'CANCELLED'}
+        self.opening_name = opening.name
+        # Open the drawer so the user can see what they're laying out.
+        op_props = opening.face_frame_opening
+        if op_props.swing_percent < 0.5:
+            op_props.swing_percent = 1.0
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            layout.label(text="No drawer selected", icon='INFO')
+            return
+        props = opening.face_frame_opening
+
+        row = layout.row(align=True)
+        row.prop(self, 'add_code', text="")
+        add = row.operator("hb_face_frame.drawer_add_accessory",
+                           text="Add", icon='ADD')
+        add.opening_name = self.opening_name
+        add.code = self.add_code
+
+        row = layout.row()
+        row.template_list(
+            "HB_UL_face_frame_drawer_items", "",
+            props, "interior_items",
+            props, "interior_items_index",
+            rows=5,
+        )
+        side = row.column(align=True)
+        rem = side.operator("hb_face_frame.drawer_remove_accessory",
+                            text="", icon='REMOVE')
+        rem.opening_name = self.opening_name
+
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            layout.label(text="Add an accessory to get started", icon='INFO')
+            return
+        item = props.interior_items[idx]
+        if item.kind != 'ACCESSORY':
+            return
+        box = layout.box()
+        box.label(text=item.accessory_label or item.accessory_code)
+        box.prop(item, 'accessory_qty', text="Quantity")
+        if item.accessory_render == 'DIVIDER':
+            box.prop(item, 'divider_lengthwise')
+            sub = box.row()
+            sub.enabled = item.accessory_qty == 1
+            sub.prop(item, 'divider_offset', text="Position (0 = Auto)")
+        else:
+            box.label(text="This accessory is listed, not modeled",
+                      icon='INFO')
+
+
 class hb_face_frame_OT_toggle_front_open(bpy.types.Operator):
     """Open or close the door / drawer the clicked part belongs to.
     Right-click companion to Open Door Mode - resolves the owning
@@ -1602,7 +1799,17 @@ def _interior_items_target(obj):
     - Opening cage with no tree: opening's flat interior_items.
     - Opening cage with a tree: None (the user must drill into a leaf).
     - Interior region (leaf): the leaf's interior_items.
+    - Any other descendant of an opening (drawer box, front, shelf,
+      divider, pull): the owning opening's collection, so right-
+      clicking the geometry works like right-clicking the cage.
     """
+    if obj is None:
+        return None
+    if not (obj.get(types_face_frame.TAG_OPENING_CAGE)
+            or obj.get(types_face_frame.TAG_INTERIOR_REGION)):
+        owner = _find_owning_opening(obj)
+        if owner is not None:
+            obj = owner
     if obj.get(types_face_frame.TAG_OPENING_CAGE):
         # When the opening has a tree, items live on leaves and the
         # opening's flat collection is dead. Block direct edits to
@@ -5180,6 +5387,10 @@ classes = (
     hb_face_frame_OT_panel_layout_prompts,
     hb_face_frame_OT_panel_remove_stile,
     hb_face_frame_OT_toggle_front_open,
+    HB_UL_face_frame_drawer_items,
+    hb_face_frame_OT_drawer_add_accessory,
+    hb_face_frame_OT_drawer_remove_accessory,
+    hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,

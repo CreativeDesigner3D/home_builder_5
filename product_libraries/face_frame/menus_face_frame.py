@@ -18,6 +18,18 @@ from .operators import ops_part_commands
 from ... import units
 
 
+def _is_drawer_opening(obj):
+    """True when obj is (or sits under) an opening whose front is a
+    drawer-style front - the ones with a drawer box to lay out."""
+    cur = obj
+    while cur is not None:
+        if cur.get(types_face_frame.TAG_OPENING_CAGE):
+            return cur.face_frame_opening.front_type in (
+                'DRAWER_FRONT', 'PULLOUT', 'TILT_OUT')
+        cur = cur.parent
+    return False
+
+
 class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
     """Right-click menu for a face frame cabinet root."""
     bl_label = "Face Frame Cabinet Commands"
@@ -423,6 +435,9 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        if _is_drawer_opening(context.active_object):
+            layout.operator("hb_face_frame.drawer_interior",
+                            text="Drawer Interior...", icon='MESH_GRID')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -437,10 +452,10 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.drawer_interior",
+                        text="Drawer Interior...", icon='MESH_GRID')
         layout.operator("hb_face_frame.toggle_front_open",
                         text="Open / Close Drawer", icon='FULLSCREEN_ENTER')
-        layout.operator("hb_face_frame.accessory_menu",
-                        text="Add Drawer Accessory...", icon='ADD')
         layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
@@ -456,6 +471,11 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.toggle_front_open",
                         text="Open / Close", icon='FULLSCREEN_ENTER')
+        # Drawer-style openings get the interior editor (self-polling:
+        # hidden on door / panel openings).
+        if _is_drawer_opening(context.active_object):
+            layout.operator("hb_face_frame.drawer_interior",
+                            text="Drawer Interior...", icon='MESH_GRID')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
