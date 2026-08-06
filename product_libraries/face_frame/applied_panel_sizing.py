@@ -686,12 +686,57 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
         # match it to the door-style stile so a real-bay stile prints
         # at the same width the in-bay V-split used. A user-unlocked
         # entry (Set Width on the stile) holds its value, mirroring
-        # apply_panel_sizing's unlock_* gating.
+        # apply_panel_sizing's unlock_* gating. The panel-level mid
+        # stile override sets the stiles independent of the rails.
         stile_w = _mid_stile_width_for_panel(
             cab_obj, cab_obj.face_frame_cabinet, side)
+        if getattr(panel_props, 'panel_mid_stile_override', False):
+            stile_w = panel_props.panel_mid_stile_width
         for entry in panel_props.mid_stile_widths:
             if not entry.unlock:
                 entry.width = stile_w
+
+        # Manual rows: write the computed auto-equal heights back so
+        # the dialog displays the calculated values next to the
+        # override checkboxes.
+        if rows_override > 0:
+            for e, v in zip(panel_props.panel_row_heights,
+                            _manual_row_heights(panel_props,
+                                                rows_override)):
+                if not e.override and abs(e.height - v) > 1e-6:
+                    e.height = v
+
+        # Column widths: sync the list to the built column count, then
+        # auto-equal / override exactly like the rows. Real-bay columns
+        # apply through the bay widths (the redistributor honors the
+        # locks); the in-bay V-split case sizes its first opening below.
+        n_cols = desired_qty if desired_qty > 1 else (
+            2 if add_mid_stile else 1)
+        col_entries = panel_props.panel_col_widths
+        while len(col_entries) < n_cols:
+            col_entries.add()
+        while len(col_entries) > n_cols:
+            col_entries.remove(len(col_entries) - 1)
+        vsplit_first_size = None
+        if n_cols > 1:
+            eff_cols = _manual_col_widths(panel_props, n_cols, stile_w)
+            for e, v in zip(col_entries, eff_cols):
+                if not e.override and abs(e.width - v) > 1e-6:
+                    e.width = v
+            if desired_qty > 1:
+                for bay_obj, e in zip(bays, col_entries):
+                    bp = bay_obj.face_frame_bay
+                    if e.override:
+                        if not bp.unlock_width:
+                            bp.unlock_width = True
+                        if abs(bp.width - e.width) > 1e-6:
+                            bp.width = e.width
+                    elif bp.unlock_width:
+                        bp.unlock_width = False
+            elif add_mid_stile and any(e.override for e in col_entries):
+                # Two V-split columns: sizing the first opening fixes
+                # both (the second takes the remainder).
+                vsplit_first_size = eff_cols[0]
 
         for bay_obj in bays:
             _wipe_bay_tree(bay_obj)
@@ -702,7 +747,8 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
                 continue
             _build_panel_tree(
                 bay_obj, rails, add_mid_stile, cab_obj, side,
-                front_type=default_front,
+                front_type=default_front, mid_stile_w=stile_w,
+                vsplit_first_size=vsplit_first_size,
             )
 
         # Reapply per-opening front overrides (same-condition rebuild
@@ -755,19 +801,66 @@ def _bay_top_child(bay_obj):
     return kids[0] if len(kids) == 1 else None
 
 
+def _manual_row_heights(panel_props, rows):
+    """Effective bottom-up row opening heights for an explicit row
+    count: rows flagged override hold their typed height, the rest
+    share the remaining frame opening equally (auto-calculated)."""
+    min_h = units.inch(1.0)
+    rail_w = panel_props.panel_row_rail_width
+    open_h = (panel_props.height - panel_props.top_rail_width
+              - panel_props.bottom_rail_width - (rows - 1) * rail_w)
+    entries = panel_props.panel_row_heights
+    fixed = 0.0
+    n_auto = 0
+    vals = []
+    for i in range(rows):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.override:
+            v = max(e.height, min_h)
+            vals.append(v)
+            fixed += v
+        else:
+            vals.append(None)
+            n_auto += 1
+    share = max((open_h - fixed) / n_auto, min_h) if n_auto else min_h
+    return [share if v is None else v for v in vals]
+
+
+def _manual_col_widths(panel_props, n_cols, stile_w):
+    """Effective left-to-right column opening widths, same
+    auto/override model as the row heights."""
+    min_w = units.inch(1.0)
+    open_w = (panel_props.width - panel_props.left_stile_width
+              - panel_props.right_stile_width - (n_cols - 1) * stile_w)
+    entries = panel_props.panel_col_widths
+    fixed = 0.0
+    n_auto = 0
+    vals = []
+    for i in range(n_cols):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.override:
+            v = max(e.width, min_w)
+            vals.append(v)
+            fixed += v
+        else:
+            vals.append(None)
+            n_auto += 1
+    share = max((open_w - fixed) / n_auto, min_w) if n_auto else min_w
+    return [share if v is None else v for v in vals]
+
+
 def _manual_row_rails(panel_props, rows):
     """Synthesized mid-rail entries for an explicit row count, in the
     same {'z_bottom', 'splitter_width'} shape _detect_panel_mid_rails
     produces (panel-bay-local Z, sorted top to bottom). Rows are
-    measured bottom-up as opening heights from panel_row_heights; the
-    top row is whatever remains, so no entry is needed for it."""
+    measured bottom-up as opening heights; the topmost region closes
+    the frame so its rail entry is implicit."""
     rail_w = panel_props.panel_row_rail_width
-    heights = panel_props.panel_row_heights
+    heights = _manual_row_heights(panel_props, rows)
     rails = []
     z = 0.0
-    for i in range(rows - 1):
-        h = heights[i].height if i < len(heights) else units.inch(12.0)
-        z += max(h, units.inch(1.0))
+    for h in heights[:-1]:
+        z += h
         rails.append({'z_bottom': z, 'splitter_width': rail_w})
         z += rail_w
     rails.sort(key=lambda r: r['z_bottom'], reverse=True)
@@ -1050,7 +1143,8 @@ def _create_split_node_under(parent_obj, child_index, axis, splitter_width):
 
 
 def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
-                      front_type='INSET_PANEL'):
+                      front_type='INSET_PANEL', mid_stile_w=None,
+                      vsplit_first_size=None):
     """Construct the panel's opening tree.
 
     `rails` is a list of {'z_bottom', 'splitter_width'} dicts in
@@ -1069,7 +1163,8 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
     otherwise a single opening.
     """
     cab = cab_obj.face_frame_cabinet
-    mid_stile_w = _mid_stile_width_for_panel(cab_obj, cab, side)
+    if mid_stile_w is None:
+        mid_stile_w = _mid_stile_width_for_panel(cab_obj, cab, side)
 
     op_counter = [0]
     def next_op_idx():
@@ -1083,7 +1178,8 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
                                   mid_stile_w=mid_stile_w,
                                   size=size, unlock_size=unlock,
                                   next_op_idx=next_op_idx,
-                                  front_type=front_type)
+                                  front_type=front_type,
+                                  first_size=vsplit_first_size)
         else:
             _create_opening_under(parent, child_index=child_index,
                                   opening_index=next_op_idx(),
@@ -1131,11 +1227,12 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
 
 def _build_v_split_region(parent_obj, child_index, mid_stile_w,
                           size, unlock_size, next_op_idx,
-                          front_type='INSET_PANEL'):
-    """Build a V-split + 2 equal opening children, attached to
-    parent_obj at child_index. size + unlock_size are applied to the
-    SPLIT NODE (so the parent containing the V-split is sized correctly
-    when its container - e.g. H-split - decides positions).
+                          front_type='INSET_PANEL', first_size=None):
+    """Build a V-split + 2 opening children, attached to parent_obj at
+    child_index. size + unlock_size are applied to the SPLIT NODE (so
+    the parent containing the V-split is sized correctly when its
+    container - e.g. H-split - decides positions). ``first_size`` locks
+    the first (left) opening's width; the second takes the remainder.
     """
     v = _create_split_node_under(
         parent_obj, child_index=child_index,
@@ -1149,6 +1246,8 @@ def _build_v_split_region(parent_obj, child_index, mid_stile_w,
     sp.unlock_size = unlock_size
     sp.size = size
     _create_opening_under(v, child_index=0, opening_index=next_op_idx(),
+                          size=(first_size or 0.0),
+                          unlock_size=first_size is not None,
                           front_type=front_type)
     _create_opening_under(v, child_index=1, opening_index=next_op_idx(),
                           front_type=front_type)

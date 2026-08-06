@@ -501,10 +501,11 @@ def draw_floating_shelf(layout, root):
 
 def draw_panel_layout(layout, root):
     """Layout controls for an applied / standalone panel: the openings
-    automation toggle, the column + row overrides, the per-row heights
-    and the X-frame switch. Shared by the cabinet prompts dialog (panel
-    roots) and the Panel Layout popup reached from a panel part's
-    right-click menu."""
+    automation toggle, the column + row overrides with auto-calculated
+    sizes (checkbox unlocks a typed override), the mid rail / mid stile
+    widths and the X-frame switch. Shared by the cabinet prompts dialog
+    (panel roots) and the Panel Layout popup reached from a panel
+    part's right-click menu."""
     cab_props = root.face_frame_cabinet
 
     layout.prop(cab_props, 'panel_split_auto')
@@ -513,14 +514,33 @@ def draw_panel_layout(layout, root):
     col.prop(cab_props, 'panel_vertical_bays', text="Columns (0 = Auto)")
     col.prop(cab_props, 'panel_horizontal_rows',
              text="Rows (0 = Match Cabinet)")
+
     rows = cab_props.panel_horizontal_rows
     if rows > 1:
-        col.prop(cab_props, 'panel_row_rail_width', text="Row Rail Width")
+        col.prop(cab_props, 'panel_row_rail_width', text="Mid Rail Width")
+    srow = col.row(align=True)
+    srow.prop(cab_props, 'panel_mid_stile_override', text="")
+    sub = srow.row(align=True)
+    sub.enabled = cab_props.panel_mid_stile_override
+    sub.prop(cab_props, 'panel_mid_stile_width', text="Mid Stile Width")
+
+    def _size_list(box_label, entries, prop_name, item_label):
         box = col.box()
-        box.label(text="Row Heights (bottom up)")
-        for i, entry in enumerate(cab_props.panel_row_heights):
-            box.prop(entry, 'height', text="Row %d" % (i + 1))
-        box.label(text="Row %d: remainder" % rows)
+        box.label(text=box_label)
+        for i, entry in enumerate(entries):
+            row = box.row(align=True)
+            row.prop(entry, 'override', text="")
+            sub = row.row(align=True)
+            sub.enabled = entry.override
+            sub.prop(entry, prop_name, text="%s %d" % (item_label, i + 1))
+
+    if rows > 1:
+        _size_list("Row Heights (bottom up, check to set)",
+                   cab_props.panel_row_heights, 'height', "Row")
+    if len(cab_props.panel_col_widths) > 1:
+        _size_list("Column Widths (left to right, check to set)",
+                   cab_props.panel_col_widths, 'width', "Column")
+
     if not cab_props.panel_split_auto:
         layout.label(text="Openings are pinned to your manual edits",
                      icon='INFO')

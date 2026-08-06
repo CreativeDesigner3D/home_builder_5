@@ -4506,28 +4506,19 @@ _update_panel_vertical_bays = _update_panel_split_auto
 
 def _update_panel_rows(self, context):
     """Row-count override on an applied panel: sync the per-row height
-    list to the new count (seeding fresh entries with an equal share of
-    the panel's frame opening) before the host recalc rebuilds the
-    split tree."""
-    from . import types_face_frame
+    list to the new count (fresh entries start on auto-equal) before
+    the host recalc rebuilds the split tree. The builder computes the
+    auto shares and writes them back for display."""
     obj = self.id_data
     if obj is None:
         return
     cab = obj.face_frame_cabinet
-    rows = cab.panel_horizontal_rows
     heights = cab.panel_row_heights
-    want = max(rows - 1, 0)   # top row takes the remainder
-    if want and len(heights) != want:
-        rail_w = cab.panel_row_rail_width
-        open_h = max(
-            cab.height - cab.panel_top_rail_width
-            - cab.panel_bottom_rail_width - (rows - 1) * rail_w,
-            units.inch(1.0) * rows)
-        share = open_h / rows
-        while len(heights) < want:
-            heights.add().height = share
-        while len(heights) > want:
-            heights.remove(len(heights) - 1)
+    want = cab.panel_horizontal_rows
+    while len(heights) < want:
+        heights.add()
+    while len(heights) > want:
+        heights.remove(len(heights) - 1)
     _update_panel_split_auto(self, context)
 
 
@@ -4895,12 +4886,40 @@ def _update_bay_kick_height(self, context):
 class Face_Frame_Panel_Row_Height(PropertyGroup):
     """Opening height of one row of an applied panel with a manual row
     count (panel_horizontal_rows > 0). Lives in a CollectionProperty on
-    Face_Frame_Cabinet_Props; index 0 is the BOTTOM row and the list
-    covers rows 1..N-1 - the top row absorbs the remainder."""
+    Face_Frame_Cabinet_Props; index 0 is the BOTTOM row. Rows without
+    the override flag auto-calculate to an equal share of the remaining
+    space (the builder writes the computed value back so the field
+    displays it); flagged rows hold their typed height."""
     height: FloatProperty(
         name="Row Height",
         default=units.inch(12.0), min=units.inch(1.0),
         unit='LENGTH', precision=4,
+        update=_update_panel_split_auto,
+    )  # type: ignore
+    override: BoolProperty(
+        name="Set Height",
+        description="Hold this row at the typed height; unchecked rows "
+                    "share the remaining space equally",
+        default=False,
+        update=_update_panel_split_auto,
+    )  # type: ignore
+
+
+class Face_Frame_Panel_Col_Width(PropertyGroup):
+    """Opening width of one column of an applied panel, left to right.
+    Same auto/override model as the row heights: unchecked columns
+    share the remaining width equally, flagged ones hold."""
+    width: FloatProperty(
+        name="Column Width",
+        default=units.inch(12.0), min=units.inch(1.0),
+        unit='LENGTH', precision=4,
+        update=_update_panel_split_auto,
+    )  # type: ignore
+    override: BoolProperty(
+        name="Set Width",
+        description="Hold this column at the typed width; unchecked "
+                    "columns share the remaining width equally",
+        default=False,
         update=_update_panel_split_auto,
     )  # type: ignore
 
@@ -5804,13 +5823,31 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=0, min=0, max=8,
         update=_update_panel_rows)  # type: ignore
     panel_row_rail_width: FloatProperty(
-        name="Row Rail Width",
+        name="Mid Rail Width",
         description="Width of the mid rails between manual panel rows",
         default=units.inch(1.5), min=units.inch(0.5),
         unit='LENGTH', precision=4,
         update=_update_panel_rows)  # type: ignore
     panel_row_heights: CollectionProperty(
         type=Face_Frame_Panel_Row_Height)  # type: ignore
+    # Mid stile width: auto follows the door style (5-piece stile
+    # width, else the cabinet's end stile); the override lets the
+    # panel's stiles be set independently of its rails.
+    panel_mid_stile_override: BoolProperty(
+        name="Set Mid Stile Width",
+        description="Set the panel's mid stile width directly instead "
+                    "of following the door style",
+        default=False,
+        update=_update_panel_split_auto)  # type: ignore
+    panel_mid_stile_width: FloatProperty(
+        name="Mid Stile Width",
+        description="Width of the mid stiles between panel columns "
+                    "(applies when Set Mid Stile Width is on)",
+        default=units.inch(1.5), min=units.inch(0.5),
+        unit='LENGTH', precision=4,
+        update=_update_panel_split_auto)  # type: ignore
+    panel_col_widths: CollectionProperty(
+        type=Face_Frame_Panel_Col_Width)  # type: ignore
     panel_top_rail_width: FloatProperty(
         name="Panel Top Rail Width", default=units.inch(1.5),
         unit='LENGTH', precision=4,
@@ -9927,6 +9964,7 @@ classes = (
     Face_Frame_Door_Style,
     HB_UL_face_frame_door_styles,
     Face_Frame_Panel_Row_Height,
+    Face_Frame_Panel_Col_Width,
     Face_Frame_Mid_Stile_Width,
     Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
