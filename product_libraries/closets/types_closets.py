@@ -110,6 +110,7 @@ PROP_ACCESSORY_COLOR = 'hb_accessory_color'
 PROP_ACCESSORY_FABRIC = 'hb_accessory_fabric'
 PROP_ACCESSORY_Z = 'hb_accessory_z'
 PROP_ACCESSORY_WARNING = 'hb_accessory_warning'
+PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -2558,6 +2559,7 @@ class ClosetStarter(GeoNodeCage):
                 return c
         part = CabinetPart()
         part.create(name)
+        part.set_input('Mirror Y', True)
         part.obj.parent = cage
         part.obj['hb_part_role'] = role
         part.obj['hb_acc_part'] = name
@@ -2579,19 +2581,30 @@ class ClosetStarter(GeoNodeCage):
             (c for c in cage.children
              if c.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL),
             None)
-        if not acc_def.model or not acc.is_host_addon_active():
+        want = accessory_model_name(cage, acc_def)
+        if not want or not acc.is_host_addon_active():
             if existing is not None:
                 _remove_part_tree(existing)
             return None
         if existing is not None:
-            return existing
-        obj = acc.instance_accessory_model(acc_def.model, acc_def.label)
+            if existing.get(PROP_ACCESSORY_MODEL) == want:
+                return existing
+            # The width was changed under it. These are bought at a
+            # set size rather than stretched, so a different width is
+            # a different thing and the old one comes out.
+            _remove_part_tree(existing)
+        obj = acc.instance_accessory_model(want, acc_def.label)
         if obj is None:
             return None
         bpy.context.scene.collection.objects.link(obj)
         obj.parent = cage
         obj.matrix_parent_inverse.identity()
+        if acc.MODEL_FACES_POSITIVE_Y:
+            # The models are drawn front-to-back down +Y. This library
+            # runs the other way, so each one is turned to face out.
+            obj.rotation_euler.z = math.radians(180)
         obj['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
+        obj[PROP_ACCESSORY_MODEL] = want
         obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
         return obj
 
@@ -2625,18 +2638,17 @@ class ClosetStarter(GeoNodeCage):
                         PART_ROLE_DRAWER_FRONT, side)
                     front['hb_accessory_front'] = 1
 
-    def _warn_accessory_fit(self, cage, acc_def, width, depth,
-                            interior_h, z):
+    def _warn_accessory_fit(self, cage, acc_def, want_w, width,
+                            depth, interior_h, z):
         """What is wrong with where this accessory has been put, in the
         words the prior library used. One message, the first thing that
         does not fit, carried on the cage so the overlay and the report
         both read the same line."""
         msg = ''
-        need_h = acc_def.height + acc_def.space_above + acc_def.space_below
-        if acc_def.width > 0.0 and width + 0.0005 < acc_def.width:
+        need_h = acc_def.reserved_height
+        if want_w > 0.0 and width + 0.0005 < want_w:
             msg = ("%s needs %s of width; this opening is %s"
-                   % (acc_def.label, _in_str(acc_def.width),
-                      _in_str(width)))
+                   % (acc_def.label, _in_str(want_w), _in_str(width)))
         elif acc_def.depth > 0.0 and depth + 0.0005 < acc_def.depth:
             msg = ("%s needs %s of depth; this opening is %s"
                    % (acc_def.label, _in_str(acc_def.depth),
@@ -2645,9 +2657,7 @@ class ClosetStarter(GeoNodeCage):
             msg = ("%s needs %s of height with its clearances; this "
                    "opening is %s" % (acc_def.label, _in_str(need_h),
                                       _in_str(interior_h)))
-        elif (acc_def.height > 0.0
-                and z + acc_def.height + acc_def.space_above
-                > interior_h + 0.0005):
+        elif (need_h > 0.0 and z + need_h > interior_h + 0.0005):
             msg = ("%s does not clear the top of the opening where it "
                    "is set" % acc_def.label)
         if msg:
@@ -2681,8 +2691,7 @@ class ClosetStarter(GeoNodeCage):
                                PART_ROLE_ACCESSORY_PART)
         p_w = min(const.IRONING_BOARD_PLATFORM_WIDTH, width)
         p_d = min(const.IRONING_BOARD_PLATFORM_DEPTH, depth)
-        plate.location = ((width - p_w) / 2.0,
-                          0.0 if side == 'BACK' else -p_d, 0.0)
+        plate.location = ((width - p_w) / 2.0, -(depth - p_d), 0.0)
         pg = GeoNodeCutpart(plate)
         pg.set_input('Length', p_w)
         pg.set_input('Width', p_d)
@@ -2736,10 +2745,27 @@ class ClosetStarter(GeoNodeCage):
              if c.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL),
             None)
         if model is not None:
-            model.location = (width / 2.0,
-                              0.0 if side == 'BACK' else -p_d,
-                              plat_t)
+            model.location = (width / 2.0, -depth, plat_t)
         return cap_z + st
+
+    def _layout_opening_accessory(self, cage, acc_def, width,
+                                  cage_d):
+        """Seat one pull-out inside its cage.
+
+        These are bought whole and are not cut to fit, so the model is
+        centred across the opening rather than stretched, and it is
+        pushed to the front where its runners land. Up and down, its
+        own origin is the mounting line: the room the accessory wants
+        below that line is what lifts it off the bottom of its cage,
+        which is how the prior library sat them."""
+        model = next(
+            (c for c in cage.children
+             if c.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL),
+            None)
+        if model is None:
+            return
+        model.location = (width / 2.0, -cage_d,
+                          acc_def.space_below - acc_def.model_drop)
 
     def _layout_accessories(self, opening, width, depth, interior_h,
                             side, front_y, lo, ro, to, bo,
@@ -2770,23 +2796,38 @@ class ClosetStarter(GeoNodeCage):
                 cage.location.z = z
             else:
                 cage.location = (0.0, 0.0, z)
+            band = accessory_band(cage, acc_def, width)
+            want_w = band[1] if band else acc_def.width
             geo = GeoNodeCage(cage)
-            geo.set_input('Dim X', acc_def.width or width)
-            geo.set_input('Dim Y', acc_def.depth or depth)
-            geo.set_input('Dim Z', acc_def.height or interior_h)
-            if acc_def.family == acc.FAMILY_INSERT:
-                self._acc_ironing_board_drawer(
-                    cage, acc_def, width, depth, interior_h, side,
-                    front_y, lo, ro, to, bo, scene_props)
+            if acc_def.family == acc.FAMILY_OPENING:
+                cage_d = min(acc_def.depth or depth, depth)
+                # A pull-out is fitted at the front of the opening and
+                # runs back its own depth, so the cage does the same.
+                cage.location = (0.0, -(depth - cage_d), z)
+                geo.set_input('Dim X', width)
+                geo.set_input('Dim Y', cage_d)
+                geo.set_input('Dim Z', acc_def.reserved_height
+                              or interior_h)
+                self._layout_opening_accessory(cage, acc_def, width,
+                                               cage_d)
             else:
-                model = next(
-                    (c for c in cage.children
-                     if c.get('hb_part_role')
-                     == PART_ROLE_ACCESSORY_MODEL), None)
-                if model is not None:
-                    model.location = (0.0, 0.0, 0.0)
-            self._warn_accessory_fit(cage, acc_def, width, depth,
-                                     interior_h, z)
+                geo.set_input('Dim X', acc_def.width or width)
+                geo.set_input('Dim Y', acc_def.depth or depth)
+                geo.set_input('Dim Z', acc_def.reserved_height
+                              or interior_h)
+                if acc_def.family == acc.FAMILY_INSERT:
+                    self._acc_ironing_board_drawer(
+                        cage, acc_def, width, depth, interior_h, side,
+                        front_y, lo, ro, to, bo, scene_props)
+                else:
+                    model = next(
+                        (c for c in cage.children
+                         if c.get('hb_part_role')
+                         == PART_ROLE_ACCESSORY_MODEL), None)
+                    if model is not None:
+                        model.location = (0.0, 0.0, 0.0)
+            self._warn_accessory_fit(cage, acc_def, want_w, width,
+                                     depth, interior_h, z)
 
     def _reconcile_captured_back(self, opening):
         """One captured back per opening, carrying a corner relief at
@@ -4528,6 +4569,35 @@ def _in_str(value):
     return '%g"' % round(value / 0.0254, 2)
 
 
+def accessory_band(cage, acc_def, width=0.0):
+    """The width band this accessory was bought at.
+
+    What the person chose is remembered on the cage. If the catalog
+    has since stopped offering that width the nearest one stands in,
+    so an older file still draws rather than coming up empty."""
+    if not acc_def.bands:
+        return None
+    band = acc_def.band_by_model(cage.get(PROP_ACCESSORY_MODEL, ''))
+    if band is None:
+        band = acc_def.band_for_width(width or _cage_dim_x(cage))
+    return band
+
+
+def accessory_model_name(cage, acc_def):
+    """The model file an accessory should be showing, or '' when it
+    has none to show."""
+    band = accessory_band(cage, acc_def)
+    return band[2] if band else acc_def.model
+
+
+def _cage_dim_x(obj):
+    """One cage's width, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim X') or 0.0)
+    except Exception:
+        return 0.0
+
+
 def add_accessory(opening, key):
     """Hang one accessory in an opening and hand back its cage.
 
@@ -4541,6 +4611,10 @@ def add_accessory(opening, key):
         return None
     cage = GeoNodeCage()
     cage.create(acc_def.label)
+    # The closet is built with its back at y=0 and its front at
+    # -depth, so the cage has to run that way too or the accessory is
+    # drawn out through the wall.
+    cage.set_input('Mirror Y', True)
     cage.obj.parent = opening
     cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
     cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
@@ -4549,6 +4623,11 @@ def add_accessory(opening, key):
     cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
                                        if acc_def.fabrics else '')
     cage.obj[PROP_ACCESSORY_Z] = 0.0
+    # An accessory sold in widths arrives as the one nearest the
+    # opening it was dropped in; the person can change it after.
+    band = acc_def.band_for_width(_cage_dim_x(opening))
+    if band is not None:
+        cage.obj[PROP_ACCESSORY_MODEL] = band[2]
     cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
     cage.obj['PROMPT_ID'] = 'hb_closets.accessory_prompts'
     return cage.obj

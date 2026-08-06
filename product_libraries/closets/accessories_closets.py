@@ -10,9 +10,8 @@ parts of their own, and those the library does build.
 Where the models live
 ---------------------
 They do not live here. The 3D models, the finishes and the part
-numbers are the manufacturing side of this, and that side is a
-separate add-on ("Spaces Manufacturing"). This module looks for that
-add-on and asks it where its accessory models are; if it is not
+numbers ship in a separate companion add-on. This module looks for
+that add-on and asks it where its accessory models are; if it is not
 installed the catalog still works, the accessory still takes up its
 space, still carries its prompts and still reports its size - it just
 draws nothing. Nothing here imports the host add-on at module level,
@@ -62,6 +61,9 @@ HOST_PATH_ATTR = 'CLOSET_ACCESSORY_PATH'
 # Finishes an accessory can be ordered in. The host add-on prices them
 # and holds the part numbers; the library only needs the names so the
 # dropdown has something in it before the host is installed.
+# Every finish and fabric the accessories are sold in. An accessory
+# offers its own subset, in the order the prior library listed it, so
+# the dropdown reads the same as the one the person is used to.
 ACCESSORY_COLORS = (
     'Chrome',
     'Black',
@@ -72,10 +74,29 @@ ACCESSORY_COLORS = (
     'White',
 )
 ACCESSORY_FABRICS = (
-    'Beige',
-    'Gray',
-    'Black',
+    'Fabric Beach',
+    'Fabric Slate',
+    'Fabric Black',
 )
+
+COLORS_PULLOUT = ('Black', 'Matte Aluminum', 'Slate', 'Matte Nickel',
+                  'Matte Gold')
+COLORS_DRAWER = ('Black', 'Slate', 'Matte Nickel', 'Matte Aluminum',
+                 'Matte Gold')
+COLORS_HAMPER = ('Black', 'Matte Aluminum', 'Chrome', 'Slate',
+                 'Matte Nickel', 'Matte Gold')
+COLORS_BASKET = ('Chrome', 'Black', 'Slate', 'Matte Nickel',
+                 'Matte Aluminum', 'Matte Gold', 'White')
+COLORS_LIFT = ('Black', 'Chrome')
+
+FABRICS_PULLOUT = ('Fabric Beach', 'Fabric Slate')
+FABRICS_HAMPER = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
+
+# The accessory models are drawn front-to-back down +Y, the way the
+# prior library's openings ran. This one runs the other way, so a model
+# is turned end for end as it is brought in. Re-drawn models facing -Y
+# would set this False and drop straight in.
+MODEL_FACES_POSITIVE_Y = True
 
 FAMILY_OPENING = 'OPENING'
 FAMILY_PANEL = 'PANEL'
@@ -222,13 +243,25 @@ class AccessoryDef:
                 label never breaks a saved file
     label       what the person sees in the menu
     family      FAMILY_OPENING / FAMILY_PANEL / FAMILY_INSERT
-    model       blend filename in the host add-on's model folder
+    model       blend filename in the host add-on's model folder, for
+                an accessory sold at one size only
+    bands       (label, width, filename) for an accessory sold in
+                widths. The person picks one; it is not stretched to
+                fit, which is why a mismatch is worth a warning.
     width       nominal size (m) of the space it wants, 0 = takes the
                 width it is given
     height      nominal height (m) it occupies, 0 = as it comes
     depth       nominal depth (m) it needs, 0 = as it comes
-    space_above clearance (m) it needs above itself to be used
-    space_below clearance (m) it needs below itself
+    space_above the room (m) wanted above the mounting line, where the
+                model's own origin sits
+    space_below the room (m) wanted below that line. An accessory
+                hangs off its runners, so most of it is below.
+    model_drop  how far (m) to lower the model inside that space, for
+                the one accessory whose mesh would otherwise poke out
+    stretch     True when the model is drawn to the opening width
+                rather than picked from a band
+    model_y     how far (m) back from the opening front the model sits
+    model_z     how far (m) up from the bottom of its space it sits
     colors      finish names offered, () = no finish choice
     fabrics     fabric names offered, () = no fabric choice
     ready       True once the accessory is built out. Everything else
@@ -237,27 +270,62 @@ class AccessoryDef:
                 entries that do nothing.
     """
 
-    __slots__ = ('key', 'label', 'family', 'model', 'width', 'height',
-                 'depth', 'space_above', 'space_below', 'colors',
-                 'fabrics', 'ready', 'description')
+    __slots__ = ('key', 'label', 'family', 'model', 'bands', 'width',
+                 'height', 'depth', 'space_above', 'space_below',
+                 'model_drop', 'stretch', 'model_y', 'model_z',
+                 'colors', 'fabrics', 'ready', 'description')
 
-    def __init__(self, key, label, family, model='', width=0.0,
-                 height=0.0, depth=0.0, space_above=0.0,
-                 space_below=0.0, colors=(), fabrics=(), ready=False,
-                 description=""):
+    def __init__(self, key, label, family, model='', bands=(),
+                 width=0.0, height=0.0, depth=0.0, space_above=0.0,
+                 space_below=0.0, model_drop=0.0, stretch=False,
+                 model_y=0.0, model_z=0.0, colors=(), fabrics=(),
+                 ready=False, description=""):
         self.key = key
         self.label = label
         self.family = family
         self.model = model
+        self.bands = tuple(bands)
         self.width = width
         self.height = height
         self.depth = depth
         self.space_above = space_above
         self.space_below = space_below
+        self.model_drop = model_drop
+        self.stretch = stretch
+        self.model_y = model_y
+        self.model_z = model_z
         self.colors = tuple(colors)
         self.fabrics = tuple(fabrics)
         self.ready = ready
         self.description = description or label
+
+    @property
+    def reserved_height(self):
+        """The vertical space the accessory asks an opening for. An
+        accessory with clearances asks for the sum of them; one
+        without asks for its own height."""
+        span = self.space_above + self.space_below
+        return span if span > 0.0 else self.height
+
+    def band_for_width(self, width):
+        """The band closest to a width - what an accessory should
+        arrive as when it is dropped into an opening of that size."""
+        if not self.bands:
+            return None
+        return min(self.bands, key=lambda b: abs(b[1] - width))
+
+    def band_by_model(self, filename):
+        """The band a stored filename names, or None if the catalog
+        has moved on and no longer offers it."""
+        for band in self.bands:
+            if band[2] == filename:
+                return band
+        return None
+
+    def band_items(self):
+        """(filename, label, description) tuples for a dropdown."""
+        return [(b[2], b[0], "%s wide" % _in_label(b[1]))
+                for b in self.bands]
 
 
 def _inch(value):
@@ -266,84 +334,142 @@ def _inch(value):
     return value * 0.0254
 
 
+def _in_label(value):
+    """A metre figure written back out in inches, for a dropdown."""
+    return '%g"' % round(value / 0.0254, 2)
+
+
 # The 21 accessories the prior library offered, in the order it
 # offered them. Only the ready ones reach the menu.
 CATALOG = (
     # --- opening accessories -------------------------------------
-    AccessoryDef(
-        'WARDROBE_LIFT', "Wardrobe Lift", FAMILY_OPENING,
-        model='Wardrobe Lift.blend',
-        height=_inch(26.0), depth=_inch(12.0),
-        space_above=_inch(3.13), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS,
-        description="Pull-down hanging rod for a high opening"),
+    # The pull-outs. Each is bought at a set width rather than cut to
+    # fit, so each carries the widths it is sold in and the person
+    # picks one; dropping it into an opening picks the nearest. The
+    # two clearance figures are the room it wants above and below its
+    # runners, which is where the model's own origin sits.
     AccessoryDef(
         'DIVIDED_DRAWER', "Divided Drawer", FAMILY_OPENING,
-        model='Divided Drawer.blend',
-        height=_inch(4.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS, fabrics=ACCESSORY_FABRICS,
-        description="Compartment insert that drops into a drawer"),
+        bands=(('18" Wide', _inch(18.0), 'Divided Drawer 18.blend'),
+               ('24" Wide', _inch(24.0), 'Divided Drawer 24.blend'),
+               ('30" Wide', _inch(30.0), 'Divided Drawer 30.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(1.25984), space_below=_inch(9.24016),
+        colors=COLORS_DRAWER, fabrics=FABRICS_PULLOUT, ready=True,
+        description="Lined drawer on runners, divided into "
+                    "compartments"),
     AccessoryDef(
         'FOLDING_STATION', "Folding Station", FAMILY_OPENING,
-        model='Folding Station.blend',
-        height=_inch(4.0), depth=_inch(14.0),
-        space_above=_inch(3.13), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS,
-        description="Pull-out folding surface"),
+        bands=(('18" Wide', _inch(18.0),
+                'Folding Station - Flat - 18 x 14.blend'),
+               ('24" Wide', _inch(24.0),
+                'Folding Station - Flat - 24 x 14.blend'),
+               ('30" Wide', _inch(30.0),
+                'Folding Station - Flat - 30 x 14.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(0.88583), space_below=_inch(3.77953),
+        colors=COLORS_PULLOUT, fabrics=FABRICS_PULLOUT, ready=True,
+        description="Flat surface that slides out to fold on"),
     AccessoryDef(
         'PULLOUT_SHELF', "Pullout Shelf", FAMILY_OPENING,
-        model='Pullout Shelf.blend',
-        height=_inch(4.0), depth=_inch(14.0),
-        space_above=_inch(3.13), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS,
-        description="Sliding shelf on a pair of runners"),
+        bands=(('18" Wide', _inch(18.0),
+                'Divided Pull Out Shelf 18 x 14.blend'),
+               ('24" Wide', _inch(24.0),
+                'Divided Pull Out Shelf 24 x 14.blend'),
+               ('30" Wide', _inch(30.0),
+                'Divided Pull Out Shelf 30 x 14.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(2.14567), space_below=_inch(2.8937),
+        colors=COLORS_PULLOUT, fabrics=FABRICS_PULLOUT, ready=True,
+        description="Divided shelf on a pair of runners"),
     AccessoryDef(
         'JEWELRY_ORGANIZER', "Jewelry Organizer", FAMILY_OPENING,
-        model='Jewelry Organizer.blend',
-        height=_inch(2.5), depth=_inch(14.0),
-        space_above=_inch(3.13), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS, fabrics=ACCESSORY_FABRICS,
-        description="Lined tray with jewelry compartments"),
+        bands=(('18" Wide', _inch(18.0),
+                'Pull Out Jewelry Organizer 18 x 14.blend'),
+               ('24" Wide', _inch(24.0),
+                'Pull Out Jewelry Organizer 24 x 14.blend'),
+               ('30" Wide', _inch(30.0),
+                'Pull Out Jewelry Organizer 30 X 14.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(0.88583), space_below=_inch(2.51969),
+        colors=COLORS_PULLOUT, fabrics=FABRICS_PULLOUT, ready=True,
+        description="Lined tray of jewelry compartments on runners"),
     AccessoryDef(
         'LINGERIE_DRAWER', "Lingerie Drawer", FAMILY_OPENING,
-        model='Lingerie Drawer.blend',
-        height=_inch(4.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS, fabrics=ACCESSORY_FABRICS,
-        description="Shallow divided drawer insert"),
+        bands=(('18" Wide', _inch(18.0),
+                'Pull Out Lingerie Drawer 18 x 14.blend'),
+               ('24" Wide', _inch(24.0),
+                'Pull Out Lingerie Drawer 24 x 14.blend'),
+               ('30" Wide', _inch(30.0),
+                'Pull Out Lingerie Drawer 30 x 14.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(0.88583), space_below=_inch(5.41339),
+        colors=COLORS_PULLOUT, fabrics=FABRICS_PULLOUT, ready=True,
+        description="Shallow divided drawer on runners"),
     AccessoryDef(
         'PULLOUT_HAMPER', "Pullout Hamper", FAMILY_OPENING,
-        model='Pullout Hamper.blend',
-        height=_inch(21.0), depth=_inch(14.0),
-        space_above=_inch(1.0), space_below=_inch(0.25),
-        colors=ACCESSORY_COLORS, fabrics=ACCESSORY_FABRICS,
+        bands=(('Engage 18" Wide', _inch(18.0),
+                'Pull Out Hamper Engage 18 x 14.blend'),
+               ('Engage 24" Wide', _inch(24.0),
+                'Pull Out Hamper Engage 24 x 14.blend'),
+               ('Engage 30" Wide', _inch(30.0),
+                'Pull Out Hamper Engage 30 x 14.blend'),
+               ('Synergy 18" Wide', _inch(18.0),
+                'Pull Out Hamper Synergy 18.blend'),
+               ('Synergy 24" Wide', _inch(24.0),
+                'Pull Out Hamper Synergy 24.blend'),
+               ('Synergy 30" Wide', _inch(30.0),
+                'Pull Out Hamper Synergy 30.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(0.88583), space_below=_inch(22.36417),
+        colors=COLORS_HAMPER, fabrics=FABRICS_HAMPER, ready=True,
         description="Laundry basket on full-extension runners"),
     AccessoryDef(
         'SHOE_ORGANIZER', "Shoe Organizer", FAMILY_OPENING,
-        model='Shoe Organizer.blend',
-        height=_inch(6.0), depth=_inch(14.0),
-        space_above=_inch(3.13), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS,
-        description="Sliding shoe rack"),
+        bands=(('18" Wide', _inch(18.0),
+                'Shoe Organizer 18 x 14.blend'),
+               ('24" Wide', _inch(24.0),
+                'Shoe Organizer 24 x 14.blend'),
+               ('30" Wide', _inch(30.0),
+                'Shoe Organizer 30 x 14.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(8.5), space_below=_inch(6.0),
+        colors=COLORS_PULLOUT, ready=True,
+        description="Sliding rack of angled shoe shelves"),
     AccessoryDef(
         'SLIDING_PANTS_RACK', "Sliding Pants Rack", FAMILY_OPENING,
-        model='Sliding Pants Rack.blend',
-        height=_inch(3.0), depth=_inch(14.0),
-        space_above=_inch(20.0), space_below=_inch(1.14),
-        colors=ACCESSORY_COLORS,
-        description="Pull-out rack of trouser bars"),
+        bands=(('18" Wide', _inch(18.0),
+                'Pull Out Pants Rack 18.blend'),
+               ('24" Wide', _inch(24.0),
+                'Pull Out Pants Rack 24.blend'),
+               ('30" Wide', _inch(30.0),
+                'Pull Out Pants Rack 30.blend')),
+        depth=_inch(14.0),
+        space_above=_inch(0.88583), space_below=_inch(26.11417),
+        model_drop=_inch(0.33858),
+        colors=COLORS_PULLOUT, ready=True,
+        description="Pull-out frame of trouser bars"),
     AccessoryDef(
         'STORAGE_BOX', "Storage Box", FAMILY_OPENING,
-        model='Storage Box.blend',
-        height=_inch(11.0), depth=_inch(14.0),
-        fabrics=ACCESSORY_FABRICS,
+        bands=(('15" Wide', _inch(15.0), 'Storage Box 15 x 14.blend'),
+               ('18" Wide', _inch(18.0), 'Storage Box 18 x 14.blend'),
+               ('24" Wide', _inch(24.0), 'Storage Box 24 x 14.blend')),
+        height=_inch(7.43), depth=_inch(13.55),
+        fabrics=FABRICS_PULLOUT,
         description="Fabric bin that sits on a shelf"),
     AccessoryDef(
         'WIRE_BASKET', "Wire Basket", FAMILY_OPENING,
-        model='Wire Basket.blend',
         height=_inch(11.0), depth=_inch(14.0),
         space_above=_inch(6.23), space_below=_inch(0.25),
-        colors=ACCESSORY_COLORS,
+        colors=COLORS_BASKET,
         description="Sliding wire basket, banded 18/24/30 wide"),
+    AccessoryDef(
+        'WARDROBE_LIFT', "Wardrobe Lift", FAMILY_OPENING,
+        model='Wardrobe Lift.blend',
+        height=_inch(39.0), depth=_inch(5.79),
+        stretch=True, model_y=_inch(5.0), model_z=_inch(4.35),
+        colors=COLORS_LIFT,
+        description="Pull-down hanging rod for a high opening"),
     # --- panel accessories ---------------------------------------
     AccessoryDef(
         'BELT_RACK', "Belt Rack", FAMILY_PANEL,
