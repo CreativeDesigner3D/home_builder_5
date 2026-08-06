@@ -441,6 +441,12 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        if role == types_closets.PART_ROLE_ACCESSORY_MODEL:
+            # A bought accessory arrives already finished, in whatever
+            # it was ordered in. Painting it the closet material would
+            # be wrong twice over - it is not a sheet good, and its
+            # finish is a line on the order.
+            continue
         if role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated

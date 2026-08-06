@@ -443,3 +443,22 @@ def snap_system_hole(value):
     """Nearest system hole (12.95 + n*32 mm from the interior bottom)."""
     n = round((value - SYSTEM_HOLE_BASE) / SYSTEM_PITCH)
     return SYSTEM_HOLE_BASE + max(0, int(n)) * SYSTEM_PITCH
+
+
+# ---------------------------------------------------------------------------
+# Accessories. Bought items that hang in a closet; the library places
+# the model and holds the space, the companion add-on carries the
+# models, the finishes and the part numbers. See accessories_closets.
+# ---------------------------------------------------------------------------
+# How close to the opening floor an accessory has to land before it is
+# treated as sitting ON the floor rather than floating above it.
+ACCESSORY_BOTTOM_SNAP_TOL = inch(0.5)
+# Ironing Board Drawer: the melamine plate the board bolts to, and the
+# compartment it folds into. Fixed sizes - the board is bought at one
+# size and the plate is cut to suit it, so neither follows the opening.
+IRONING_BOARD_PLATFORM_WIDTH = inch(12.0)
+IRONING_BOARD_PLATFORM_DEPTH = inch(13.625)
+IRONING_BOARD_PLATFORM_THICKNESS = inch(0.75)
+# Clear height of the compartment the board lives in, measured from the
+# opening floor to the underside of the shelf that caps it.
+IRONING_BOARD_OPENING_HEIGHT = inch(5.0)

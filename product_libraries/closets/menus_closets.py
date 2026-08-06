@@ -118,6 +118,9 @@ def _draw_add_part_entries(layout):
                     text="Rollout Trays...", icon='MESH_PLANE')
     layout.operator("hb_closets.add_slanted_shelves",
                     text="Slanted Shoe Shelves...", icon='SORTBYEXT')
+    layout.operator(
+        "hb_closets.add_accessory", text="Add Accessory...",
+        icon='OUTLINER_OB_GROUP_INSTANCE')
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
@@ -228,6 +231,12 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 == types_closets.PART_ROLE_CONTINUOUS_TOP):
             layout.operator("hb_closets.continuous_top_prompts",
                             text="Top Properties...", icon='WINDOW')
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_ACCESSORY):
+            layout.operator("hb_closets.accessory_prompts",
+                            text="Accessory Properties...",
+                            icon='WINDOW')
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_DRAWER_FRONT):

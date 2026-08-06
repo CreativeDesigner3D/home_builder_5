@@ -3523,6 +3523,164 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_add_accessory(bpy.types.Operator):
+    """Hang an accessory in the active opening.
+
+    The library places what it can and holds the space either way: the
+    3D models, the finishes and the part numbers come from the Spaces
+    Manufacturing add-on, so an accessory dropped without that add-on
+    installed still takes up its room, still carries its prompts and
+    still measures - it just does not draw."""
+    bl_idname = "hb_closets.add_accessory"
+    bl_label = "Add Accessory"
+    bl_options = {'UNDO'}
+
+    def _items(self, context):
+        from ..accessories_closets import enum_items
+        items = enum_items()
+        return items if items else [('NONE', "None", "")]
+
+    accessory: bpy.props.EnumProperty(
+        name="Accessory", items=_items,
+        description="What to hang in this opening")  # type: ignore
+    location: bpy.props.FloatProperty(
+        name="Height Off Opening Floor", min=0.0,
+        description="How far up the opening the accessory sits. Zero "
+                    "stands it on the floor of the opening",
+        unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return types_closets.find_opening_cage(
+            context.active_object) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self,
+                                                          width=320)
+
+    def draw(self, context):
+        from .. import accessories_closets as acc
+        layout = self.layout
+        col = layout.column(align=True)
+        col.prop(self, 'accessory')
+        col.prop(self, 'location')
+        acc_def = acc.get(self.accessory)
+        if acc_def is not None and acc_def.description:
+            box = layout.box()
+            box.label(text=acc_def.description, icon='INFO')
+        if not acc.is_host_addon_active():
+            box = layout.box()
+            box.label(text="Accessory models are not installed.",
+                      icon='ERROR')
+            box.label(text="The accessory will hold its space but "
+                           "will not draw.")
+
+    def execute(self, context):
+        opening = types_closets.find_opening_cage(context.active_object)
+        if opening is None or self.accessory == 'NONE':
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(opening)
+        with types_closets.suspend_recalc():
+            cage = types_closets.add_accessory(opening, self.accessory)
+            if cage is None:
+                return {'CANCELLED'}
+            cage[types_closets.PROP_ACCESSORY_Z] = float(self.location)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_accessory_prompts(bpy.types.Operator):
+    """Finish, fabric and height for the active accessory. What is
+    offered depends on the accessory: one sold in a single finish has
+    no finish to choose."""
+    bl_idname = "hb_closets.accessory_prompts"
+    bl_label = "Accessory Properties"
+    bl_options = {'UNDO'}
+
+    def _color_items(self, context):
+        from .. import accessories_closets as acc
+        obj = context.active_object
+        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, '')
+                          ) if obj is not None else None
+        names = acc_def.colors if acc_def is not None else ()
+        return ([(n, n, "") for n in names]
+                or [('NONE', "As It Comes", "")])
+
+    def _fabric_items(self, context):
+        from .. import accessories_closets as acc
+        obj = context.active_object
+        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, '')
+                          ) if obj is not None else None
+        names = acc_def.fabrics if acc_def is not None else ()
+        return ([(n, n, "") for n in names]
+                or [('NONE', "As It Comes", "")])
+
+    color: bpy.props.EnumProperty(
+        name="Finish", items=_color_items)  # type: ignore
+    fabric: bpy.props.EnumProperty(
+        name="Fabric", items=_fabric_items)  # type: ignore
+    location: bpy.props.FloatProperty(
+        name="Height Off Opening Floor", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_ACCESSORY)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        stored = obj.get(types_closets.PROP_ACCESSORY_COLOR, '')
+        if stored:
+            try:
+                self.color = stored
+            except TypeError:
+                pass
+        stored = obj.get(types_closets.PROP_ACCESSORY_FABRIC, '')
+        if stored:
+            try:
+                self.fabric = stored
+            except TypeError:
+                pass
+        self.location = float(
+            obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
+        return context.window_manager.invoke_props_dialog(self,
+                                                          width=320)
+
+    def draw(self, context):
+        from .. import accessories_closets as acc
+        obj = context.active_object
+        layout = self.layout
+        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
+        col = layout.column(align=True)
+        if acc_def is not None and acc_def.colors:
+            col.prop(self, 'color')
+        if acc_def is not None and acc_def.fabrics:
+            col.prop(self, 'fabric')
+        col.prop(self, 'location')
+        warning = obj.get(types_closets.PROP_ACCESSORY_WARNING, '')
+        if warning:
+            box = layout.box()
+            box.label(text=warning, icon='ERROR')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None:
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(obj)
+        with types_closets.suspend_recalc():
+            if self.color != 'NONE':
+                obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
+            if self.fabric != 'NONE':
+                obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
+            obj[types_closets.PROP_ACCESSORY_Z] = float(self.location)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_place_continuous_top(bpy.types.Operator,
                                         hb_placement.PlacementMixin):
     """Place a continuous top. Over a run it caps the whole run at
@@ -3744,7 +3902,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                   types_closets.PART_ROLE_DRAWER_FRONT,
                   types_closets.PART_ROLE_CUBBY_DIVISION,
                   types_closets.PART_ROLE_CUBBY_SHELF,
-                  types_closets.PART_ROLE_DIVISION}
+                  types_closets.PART_ROLE_DIVISION,
+                  types_closets.PART_ROLE_ACCESSORY}
 
     @classmethod
     def poll(cls, context):
@@ -5636,6 +5795,8 @@ classes = (
     hb_closets_OT_divide_opening,
     hb_closets_OT_add_rollouts,
     hb_closets_OT_add_slanted_shelves,
+    hb_closets_OT_add_accessory,
+    hb_closets_OT_accessory_prompts,
     hb_closets_OT_change_bay,
     hb_closets_OT_change_opening,
     hb_closets_OT_copy_bay,
