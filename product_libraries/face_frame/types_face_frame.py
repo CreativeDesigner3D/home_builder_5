@@ -10768,12 +10768,22 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         eff_h = min(crown_h, avail)
 
         curve.splines.clear()
+        # The path runs on the CORE faces (front set back by the
+        # profile's projection, returns inset the same amount at
+        # finished ends) so the moulding's outer faces land flush with
+        # the cage - the overall mantle dims are to the farthest point
+        # of the moulding, tucked under the slab overhang.
+        mt = self.obj.mantle_product.material_thickness
+        proj = min(proj, max(depth - mt, 0.0))
+        y_front = -depth + proj
+        x0 = proj if fl else 0.0
+        x1 = width - proj if fr else width
         pts = []
         if fl:
-            pts.append((0.0, 0.0))
-        pts += [(0.0, -depth), (width, -depth)]
+            pts.append((x0, 0.0))
+        pts += [(x0, y_front), (x1, y_front)]
         if fr:
-            pts.append((width, 0.0))
+            pts.append((x1, 0.0))
         spline = curve.splines.new('BEZIER')
         spline.use_smooth = False
         spline.bezier_points.add(count=len(pts) - 1)
@@ -10906,6 +10916,12 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         if sweep_proj is not None:
             proj = min(sweep_proj, max(depth - mt, 0.0))
         core_y = -depth + proj        # core front face plane
+        # Core side planes: a profile sweep wraps the core with its
+        # returns flush to the cage sides (the overall dims include the
+        # moulding projection), so the core insets by the projection at
+        # a finished end; the fallback boards mount at the cage sides.
+        in_l = proj if (sweep_proj is not None and fl) else 0.0
+        in_r = proj if (sweep_proj is not None and fr) else 0.0
 
         # Top slab: sits on top of the build (no Mirror Z - it extends
         # up from the slab line to the cage top), overhanging the crown
@@ -10917,17 +10933,19 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
               (-ov_l, -depth - ov, z_slab), (0.0, 0.0, 0.0), {})
         # Core face: set back behind the crown, slab underside to the
         # bottom of the shelf zone.
-        place(FRONT, inner_len, z_slab - z0, mt, (inset_l, core_y, z0),
+        core_len = width - in_l - in_r - inset_l - inset_r
+        place(FRONT, core_len, z_slab - z0, mt,
+              (in_l + inset_l, core_y, z0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
         # Bottom: closes the core underside back to the wall.
-        place(BOTTOM, inner_len, depth - proj - mt, mt,
-              (inset_l, core_y + mt, z0), (0.0, 0.0, 0.0), {})
+        place(BOTTOM, core_len, depth - proj - mt, mt,
+              (in_l + inset_l, core_y + mt, z0), (0.0, 0.0, 0.0), {})
         # End panels: close the core region of a finished end.
-        place(LP, depth - proj, z_slab - z0, mt, (0.0, 0.0, z0),
+        place(LP, depth - proj, z_slab - z0, mt, (in_l, 0.0, z0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True},
               show=fl)
-        place(RP, depth - proj, z_slab - z0, mt, (width, 0.0, z0),
+        place(RP, depth - proj, z_slab - z0, mt, (width - in_r, 0.0, z0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True}, show=fr)
 
