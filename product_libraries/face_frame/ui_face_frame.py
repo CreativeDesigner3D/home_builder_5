@@ -536,6 +536,7 @@ def draw_mantle_product(layout, root):
         col.prop(mantle, 'leg_width', text="Leg Width")
         col.prop(mantle, 'leg_depth', text="Leg Depth")
         col.prop(mantle, 'header_height', text="Header Height")
+        col.prop(mantle, 'header_depth', text="Header Depth")
         box.prop(mantle, 'include_base_moulding', text="Base Moulding")
         if mantle.include_base_moulding:
             box.prop(mantle, 'base_profile', text="")

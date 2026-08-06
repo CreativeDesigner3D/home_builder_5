@@ -10925,6 +10925,8 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         leg_w = min(max(mp.leg_width, mt * 2), width / 2 - inch(1.0))
         leg_d = min(max(mp.leg_depth, mt * 2), depth)
         header_h = min(max(mp.header_height, mt), z0)
+        # The header is a shallower band than the legs (6" standard).
+        header_d = min(max(mp.header_depth, mt * 2), leg_d)
         build = mp.surround_build
         if build == 'DEFAULT':
             build = ('PLAIN' if mp.mantle_style == 'CONTEMPORARY'
@@ -10952,7 +10954,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         place(RF, leg_w, z0, mt, (width - leg_w, -leg_d, 0.0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True},
               show=not paneled)
-        place(HF, inner_w, header_h, mt, (leg_w, -leg_d, z_head),
+        place(HF, inner_w, header_h, mt, (leg_w, -header_d, z_head),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True},
               show=not paneled)
 
@@ -10974,8 +10976,8 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
 
         # Header soffit: closes the underside back to the wall.
-        place(HB, inner_w, side_len, mt, (leg_w, -leg_d + mt, z_head),
-              (0.0, 0.0, 0.0), {})
+        place(HB, inner_w, max(header_d - mt, mt), mt,
+              (leg_w, -header_d + mt, z_head), (0.0, 0.0, 0.0), {})
 
         if paneled:
             self._ensure_surround_panel(
@@ -10986,7 +10988,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 (width - leg_w, -leg_d + mt, 0.0), mt)
             self._ensure_surround_panel(
                 'HEADER', 'Mantle Header Panel', inner_w, header_h,
-                (leg_w, -leg_d + mt, z_head), mt)
+                (leg_w, -header_d + mt, z_head), mt)
         else:
             self._remove_surround_panels()
 

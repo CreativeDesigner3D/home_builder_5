@@ -9695,6 +9695,13 @@ class Face_Frame_Mantle_Props(PropertyGroup):
         description="Height of the header band directly under the"
                     " shelf, spanning between the legs",
     )  # type: ignore
+    header_depth: FloatProperty(
+        name="Header Depth", default=units.inch(6.0),
+        min=units.inch(1.0), soft_max=units.inch(12.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far the header projects from the wall -"
+                    " shallower than the legs (6\" standard)",
+    )  # type: ignore
     include_base_moulding: BoolProperty(
         name="Base Moulding", default=True, update=_update_cabinet_dim,
         description="Wrap a base moulding around each leg's foot",
