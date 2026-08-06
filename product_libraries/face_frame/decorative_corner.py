@@ -572,11 +572,13 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
     corners = list(spec.get('corners') or ())
     # A post may not eat more than half the cabinet in either direction,
     # or two corners on the same face would collide.
-    size = min(spec['size'], width / 2.0, depth / 2.0)
+    size = min(spec.get('size', DEFAULT_SIZE), width / 2.0, depth / 2.0)
     bands = None
     if style != 'NONE' and corners and size > 0.0:
-        bands = band_stack(height, spec['kick_height'], spec['bottom'],
-                           spec['top_detail'], spec['block_run'])
+        bands = band_stack(height, spec.get('kick_height', 0.0),
+                           spec.get('bottom', 'STANDARD'),
+                           spec.get('top_detail', True),
+                           spec.get('block_run', DEFAULT_BLOCK_RUN))
     if bands is None:
         cleanup(cabinet_obj)
         _apply_cuts(cabinet_obj, {})

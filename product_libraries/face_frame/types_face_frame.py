@@ -33,6 +33,7 @@ from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
+from . import decorative_corner
 from . import bar_storage
 from . import pulls
 
@@ -2869,6 +2870,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # when chase_enabled is off.
         self._apply_pipe_chase(layout)
 
+        # Decorative corners: square notch in a vertical corner filled
+        # by a milled post. Last, so the notch cuts parts the passes
+        # above have already reshaped (back extension, extended bottom,
+        # finished bottom). No-op + cleanup when no corner is on.
+        self._apply_decorative_corners(layout)
+
     def _part_ff_theta(self, layout, role, child):
         """Z rotation added to a FF part's baseline. Single-plane cabinets
         (square or single-bay angled) share one face_frame_angle.
@@ -5662,6 +5669,30 @@ class FaceFrameCabinet(GeoNodeCage):
                    'PIPE_CHASE_DEPTH'):
             if _k in self.obj:
                 del self.obj[_k]
+
+    # =====================================================================
+    # Decorative corners (notched corner posts)
+    # =====================================================================
+    def _apply_decorative_corners(self, layout):
+        """Build / position / remove the milled posts let into the
+        cabinet's vertical corners, and the notch cutters that make
+        room for them. Managed like the pipe chase - ensure, position,
+        cut, clean up - so it is safe every recalc and survives part
+        reconciliation. Face-frame-only roots (panels) have no corner
+        to notch, so they only ever clean up.
+
+        Section profiles, the band stack and the notch box all live in
+        decorative_corner.py; this is the recalc-side wiring.
+        """
+        cab = self.obj.face_frame_cabinet
+        if not self._has_carcass():
+            decorative_corner.apply_corners(
+                self.obj, cab.width, cab.depth, cab.height,
+                {'style': 'NONE'})
+            return
+        spec = decorative_corner.spec_from_props(cab, self._has_toe_kick())
+        decorative_corner.apply_corners(
+            self.obj, cab.width, cab.depth, cab.height, spec)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)

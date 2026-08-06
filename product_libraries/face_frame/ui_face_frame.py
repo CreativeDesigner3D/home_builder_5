@@ -368,6 +368,33 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_bottom_left', text="Extend Bottom Left X")
             col.prop(cab_props, 'extend_bottom_right', text="Extend Bottom Right X")
 
+    # Decorative corners: a milled post let into a vertical corner.
+    # Picking a style alone does nothing - the corners it goes on are
+    # chosen per corner below, so one cabinet can carry a post on just
+    # the exposed end of a run or on all four corners of an island.
+    dcbox = layout.box()
+    dcbox.prop(cab_props, 'show_decorative_corners', text="Decorative Corners",
+               icon='TRIA_DOWN' if cab_props.show_decorative_corners
+               else 'TRIA_RIGHT', emboss=False)
+    if cab_props.show_decorative_corners:
+        dcbox.prop(cab_props, 'decorative_corner_style', text="Style")
+        if cab_props.decorative_corner_style != 'NONE':
+            col = dcbox.column(align=True)
+            col.label(text="Corners")
+            row = col.row(align=True)
+            row.prop(cab_props, 'decorative_corner_front_left', toggle=True)
+            row.prop(cab_props, 'decorative_corner_front_right', toggle=True)
+            row = col.row(align=True)
+            row.prop(cab_props, 'decorative_corner_back_left', toggle=True)
+            row.prop(cab_props, 'decorative_corner_back_right', toggle=True)
+            col = dcbox.column(align=True)
+            col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
+            col.prop(cab_props, 'decorative_corner_top_detail',
+                     text="Top Transition Detail")
+            col.prop(cab_props, 'decorative_corner_size', text="Size")
+            col.prop(cab_props, 'decorative_corner_block_run',
+                     text="Square Block Run")
+
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.
     box = layout.box()

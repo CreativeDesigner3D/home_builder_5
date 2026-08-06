@@ -24,6 +24,7 @@ from bpy.props import (
 from ... import units
 from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
+from . import decorative_corner
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -2253,6 +2254,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 slot_mat = None
                 if slot_role in ('SHELF_NOSING', 'BAR_STORAGE',
                                  'LEG_CURVED_PANEL',
+                                 # Decorative corner posts: milled stock
+                                 # standing in the cabinet's own corner,
+                                 # so always the exterior finish.
+                                 'DECORATIVE_CORNER',
                                  # Mantle moulding sweeps: curve objects
                                  # whose bevel geometry renders the
                                  # curve's material slot.
@@ -2262,6 +2267,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # the finish rides along onto the cut.
                                  'BOTTOM_RAIL_PROFILE_CUTTER',
                                  'FINISHED_BOTTOM_LED_CUTTER',
+                                 'DECORATIVE_CORNER_CUTTER',
                                  'BOX_MITER_CUTTER'):
                     slot_mat = finish_mat
                 elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT'):
@@ -6250,6 +6256,57 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "panel (pipe intrudes past the cabinet side)",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Decorative corners: a milled post let into a vertical corner of
+    # the cabinet. The corner is notched square, the post fills the
+    # notch, and its outer face carries the chosen profile (see
+    # decorative_corner.py and types_face_frame._apply_decorative_corners).
+    decorative_corner_style: EnumProperty(
+        name="Decorative Corner Style",
+        items=decorative_corner.STYLE_ITEMS,
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_bottom: EnumProperty(
+        name="Bottom Condition",
+        items=decorative_corner.BOTTOM_ITEMS,
+        default='STANDARD',
+        description="Where the post ends at the floor and whether it "
+                    "gets a transition detail and square bottom block",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_front_left: BoolProperty(
+        name="Front Left", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_front_right: BoolProperty(
+        name="Front Right", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_back_left: BoolProperty(
+        name="Back Left", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_back_right: BoolProperty(
+        name="Back Right", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_size: FloatProperty(
+        name="Corner Size", default=decorative_corner.DEFAULT_SIZE,
+        unit='LENGTH', precision=4, min=units.inch(0.25),
+        description="Face size of the post, and the size of the square "
+                    "notch cut into the cabinet corner",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_block_run: FloatProperty(
+        name="Square Block Run",
+        default=decorative_corner.DEFAULT_BLOCK_RUN,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Length of the plain square block between a "
+                    "transition detail and the end of the post",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    decorative_corner_top_detail: BoolProperty(
+        name="Top Transition Detail", default=True,
+        description="Finish the top of the post with a transition "
+                    "detail under a square block for crown moulding",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # ---- Construction-tab section visibility (UI only) ----
     show_angled_back_extension: BoolProperty(
         name="Show Angled Back Extension", default=False)  # type: ignore
@@ -6258,6 +6315,8 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     show_toe_kick: BoolProperty(name="Show Toe Kick", default=True)  # type: ignore
     show_finished_ends: BoolProperty(name="Show Finished Ends", default=True)  # type: ignore
     show_wood_top: BoolProperty(name="Show Wood Top", default=False)  # type: ignore
+    show_decorative_corners: BoolProperty(
+        name="Show Decorative Corners", default=False)  # type: ignore
     # ---- Angled back extension (trapezoidal back) ----
     # Per-cabinet, per-end: extend the BACK corner outward in +X (left or
     # right) by the given amount, splaying that side panel so the back is
