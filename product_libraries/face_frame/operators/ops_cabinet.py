@@ -905,6 +905,44 @@ class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
         ui_face_frame.draw_panel_layout(self.layout, root)
 
 
+class hb_face_frame_OT_toggle_front_open(bpy.types.Operator):
+    """Open or close the door / drawer the clicked part belongs to.
+    Right-click companion to Open Door Mode - resolves the owning
+    opening from any descendant (front, drawer box, divider, pull) and
+    flips its swing."""
+    bl_idname = "hb_face_frame.toggle_front_open"
+    bl_label = "Open / Close"
+    bl_description = "Open or close this door / drawer"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def _owning_opening(cls, obj):
+        cur = obj
+        while cur is not None:
+            if cur.get(types_face_frame.TAG_OPENING_CAGE):
+                return cur
+            cur = cur.parent
+        return None
+
+    @classmethod
+    def poll(cls, context):
+        opening = cls._owning_opening(context.active_object)
+        if opening is None:
+            return False
+        return opening.face_frame_opening.front_type in (
+            'DOOR', 'DRAWER_FRONT', 'PULLOUT', 'TILT_OUT')
+
+    def execute(self, context):
+        opening = self._owning_opening(context.active_object)
+        if opening is None:
+            return {'CANCELLED'}
+        op_props = opening.face_frame_opening
+        # The prop's update runs the recalc that moves the front.
+        op_props.swing_percent = (
+            0.0 if op_props.swing_percent > 0.5 else 1.0)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_panel_remove_stile(bpy.types.Operator):
     """Merge a panel's columns into one opening (remove the mid
     stile). Shortcut for Columns = 1 with Auto Openings on."""
@@ -2928,6 +2966,8 @@ class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
         item.kind = 'ACCESSORY'
         item.accessory_label = name
         item.accessory_code = self.product
+        item.accessory_render = ((entry.get('render') or '').upper()
+                                 if entry else '')
         target_props.interior_items_index = len(target_props.interior_items) - 1
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:
@@ -3189,6 +3229,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
                 new_item.kind = 'ACCESSORY'
                 new_item.accessory_label = name
                 new_item.accessory_code = self.product
+                new_item.accessory_render = (item.get('render') or '').upper()
                 region_props.interior_items_index = (
                     len(region_props.interior_items) - 1)
                 root = types_face_frame.find_cabinet_root(target)
@@ -3217,7 +3258,9 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
             self.report({'INFO'}, "Set pullout model: %s" % name)
             return {'FINISHED'}
 
-        # Every other host: a data-only ACCESSORY interior item.
+        # Every other host: an ACCESSORY interior item (data-only unless
+        # the catalog entry carries a render hint - dividers build real
+        # geometry inside the drawer box).
         target_props = _interior_items_target(target)
         if target_props is None:
             self.report({'WARNING'}, "Select an opening or interior region first")
@@ -3226,6 +3269,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
         new_item.kind = 'ACCESSORY'
         new_item.accessory_label = name
         new_item.accessory_code = self.product
+        new_item.accessory_render = (item.get('render') or '').upper()
         target_props.interior_items_index = len(target_props.interior_items) - 1
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:
@@ -5135,6 +5179,7 @@ classes = (
     hb_face_frame_OT_mantle_prompts,
     hb_face_frame_OT_panel_layout_prompts,
     hb_face_frame_OT_panel_remove_stile,
+    hb_face_frame_OT_toggle_front_open,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,

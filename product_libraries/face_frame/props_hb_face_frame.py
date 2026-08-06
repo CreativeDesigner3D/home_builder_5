@@ -2246,28 +2246,30 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # material goes on the mesh slot directly. Always the
                 # exterior finish: nosing is finished-opening trim and
                 # the bar storage units are "finished to match
-                # exterior" per the catalog.
-                if (child.get('hb_part_role') in ('SHELF_NOSING',
-                                                  'BAR_STORAGE',
-                                                  'LEG_CURVED_PANEL',
-                                                  # Mantle moulding sweeps:
-                                                  # curve objects whose bevel
-                                                  # geometry renders the
-                                                  # curve's material slot.
-                                                  'MANTLE_CROWN_SWEEP',
-                                                  'MANTLE_BASE_SWEEP',
-                                                  # Boolean cutters: the cut
-                                                  # faces transfer the cutter's
-                                                  # material, so the finish
-                                                  # rides along onto the cut.
-                                                  'BOTTOM_RAIL_PROFILE_CUTTER',
-                                                  'FINISHED_BOTTOM_LED_CUTTER',
-                                                  'BOX_MITER_CUTTER')
-                        and finish_mat is not None):
+                # exterior" per the catalog. Drawer-interior accessory
+                # geometry (dividers) matches the drawer box instead.
+                slot_role = child.get('hb_part_role')
+                slot_mat = None
+                if slot_role in ('SHELF_NOSING', 'BAR_STORAGE',
+                                 'LEG_CURVED_PANEL',
+                                 # Mantle moulding sweeps: curve objects
+                                 # whose bevel geometry renders the
+                                 # curve's material slot.
+                                 'MANTLE_CROWN_SWEEP', 'MANTLE_BASE_SWEEP',
+                                 # Boolean cutters: the cut faces
+                                 # transfer the cutter's material, so
+                                 # the finish rides along onto the cut.
+                                 'BOTTOM_RAIL_PROFILE_CUTTER',
+                                 'FINISHED_BOTTOM_LED_CUTTER',
+                                 'BOX_MITER_CUTTER'):
+                    slot_mat = finish_mat
+                elif slot_role == 'DRAWER_DIVIDER':
+                    slot_mat = interior_mat or finish_mat
+                if slot_mat is not None:
                     if child.data.materials:
-                        child.data.materials[0] = finish_mat
+                        child.data.materials[0] = slot_mat
                     else:
-                        child.data.materials.append(finish_mat)
+                        child.data.materials.append(slot_mat)
                 continue
             role = child.get('hb_part_role')
 
@@ -7304,6 +7306,28 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # accessories saved before this field existed.
     accessory_qty: IntProperty(
         name="Accessory Qty", default=1, min=1, max=10,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # ACCESSORY: geometry hint from the catalog entry ('render' field),
+    # stamped when the accessory is picked from the browser. Items with
+    # a hint build real parts inside the drawer box (see
+    # _spawn_drawer_dividers); blank stays data-only.
+    accessory_render: StringProperty(
+        name="Accessory Render", default="",
+    )  # type: ignore
+    divider_lengthwise: BoolProperty(
+        name="Run Front to Back",
+        description="Turn the divider(s) to run front-to-back, splitting "
+                    "the drawer left / right instead of front / back",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_offset: FloatProperty(
+        name="Position",
+        description="Distance from the drawer front (or left side when "
+                    "running front to back) to a single divider. 0 "
+                    "spaces the divider(s) evenly",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
 

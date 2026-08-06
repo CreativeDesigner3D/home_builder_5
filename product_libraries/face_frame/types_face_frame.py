@@ -466,6 +466,9 @@ PART_ROLE_FRONT_PIVOT = 'FRONT_PIVOT'
 # overlay-inflated size. Not a member of FRONT_PART_ROLES; it's an interior
 # part by structure even though it's spawned alongside the front.
 PART_ROLE_DRAWER_BOX = 'DRAWER_BOX'
+# Visual drawer-interior accessory geometry (dividers etc.), parented to
+# the drawer box so it slides out with the front.
+PART_ROLE_DRAWER_DIVIDER = 'DRAWER_DIVIDER'
 
 # Front roles that share the same panel geometry today. Keeping them
 # grouped here so reconciliation can iterate the set instead of
@@ -8499,6 +8502,76 @@ class FaceFrameCabinet(GeoNodeCage):
             cur = cur.parent
         return x, y, z
 
+    # Drawer-interior accessory geometry. Catalog accessories carrying a
+    # render hint (stamped onto the interior item as accessory_render
+    # when picked from the browser) build real parts inside the drawer
+    # box, parented to it so they slide out with the front and die with
+    # the pivot wipe on the next rebuild. v1 renders DIVIDER (removable
+    # partitions); other hints can gain geometry as they come up.
+    # Interior wall approximations for placing accessories inside the
+    # box (the drawer-box asset's own construction owns the real dims).
+    DRAWER_BOX_SIDE_TH = inch(0.625)
+    DRAWER_BOX_BOTTOM_LIFT = inch(0.5)
+    DRAWER_DIVIDER_TH = inch(0.25)
+
+    def _spawn_drawer_dividers(self, box_obj, dx, dy, dz, op_props):
+        items = [it for it in getattr(op_props, 'interior_items', ())
+                 if it.kind == 'ACCESSORY'
+                 and getattr(it, 'accessory_render', '') == 'DIVIDER']
+        if not items:
+            return
+        side = self.DRAWER_BOX_SIDE_TH
+        lift = self.DRAWER_BOX_BOTTOM_LIFT
+        th = self.DRAWER_DIVIDER_TH
+        inner_x0, inner_x1 = side, dx - side
+        inner_y0, inner_y1 = side, dy - side
+        if inner_x1 - inner_x0 < th * 2 or inner_y1 - inner_y0 < th * 2:
+            return
+        # Dividers stand on the box bottom and stop just under the rim.
+        h = max(dz - lift - inch(0.75), inch(1.0))
+
+        def _make(name, x0, x1, y0, y1):
+            mesh = bpy.data.meshes.new(name)
+            bm = bmesh.new()
+            bmesh.ops.create_cube(bm, size=1.0)
+            for v in bm.verts:
+                v.co.x = x1 if v.co.x > 0 else x0
+                v.co.y = y1 if v.co.y > 0 else y0
+                v.co.z = lift + h if v.co.z > 0 else lift
+            bm.to_mesh(mesh)
+            bm.free()
+            obj = bpy.data.objects.new(name, mesh)
+            for coll in box_obj.users_collection:
+                coll.objects.link(obj)
+                break
+            obj.parent = box_obj
+            obj['hb_part_role'] = PART_ROLE_DRAWER_DIVIDER
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+            obj['IS_FINISHED'] = True
+            return obj
+
+        for item in items:
+            qty = max(getattr(item, 'accessory_qty', 1), 1)
+            lengthwise = getattr(item, 'divider_lengthwise', False)
+            off = getattr(item, 'divider_offset', 0.0)
+            span0, span1 = ((inner_x0, inner_x1) if lengthwise
+                            else (inner_y0, inner_y1))
+            span = span1 - span0
+            if qty == 1 and off > 0.0001:
+                # Typed position: divider center that far from the
+                # front (or the left side when running front-to-back).
+                centers = [span0 + min(max(off, th), span - th)]
+            else:
+                step = span / (qty + 1)
+                centers = [span0 + step * (i + 1) for i in range(qty)]
+            for c in centers:
+                if lengthwise:
+                    _make('Drawer Divider', c - th / 2.0, c + th / 2.0,
+                          inner_y0, inner_y1)
+                else:
+                    _make('Drawer Divider', inner_x0, inner_x1,
+                          c - th / 2.0, c + th / 2.0)
+
     def _create_drawer_box_for_front(self, pivot_obj, leaf, rect,
                                      op_props=None):
         """Spawn a drawer box behind a drawer or pullout front.
@@ -8625,6 +8698,9 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+        if op_props is not None:
+            self._spawn_drawer_dividers(box.obj, box_dx, box_dy, box_dz,
+                                        op_props)
         if chase_notch:
             # _iter_pipe_chase_cut_targets picks this up and booleans
             # the chase cutter into the box. The notch does NOT change

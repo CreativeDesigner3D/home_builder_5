@@ -437,6 +437,11 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.toggle_front_open",
+                        text="Open / Close Drawer", icon='FULLSCREEN_ENTER')
+        layout.operator("hb_face_frame.accessory_menu",
+                        text="Add Drawer Accessory...", icon='ADD')
+        layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
         layout.operator("hb_face_frame.opening_prompts",
@@ -449,6 +454,8 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.toggle_front_open",
+                        text="Open / Close", icon='FULLSCREEN_ENTER')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",

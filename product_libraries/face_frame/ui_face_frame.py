@@ -1218,6 +1218,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
             sub.prop(item, 'accessory_qty', text="Qty")
+            if item.accessory_render == 'DIVIDER':
+                sub.prop(item, 'divider_lengthwise')
+                row = sub.row()
+                row.enabled = item.accessory_qty == 1
+                row.prop(item, 'divider_offset',
+                         text="Position (0 = Auto)")
         elif item.kind == 'CLOSET_ROD':
             sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:
