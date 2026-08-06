@@ -185,6 +185,7 @@ PART_ROLE_MANTLE_PANEL_RIGHT = 'MANTLE_PANEL_RIGHT'
 PART_ROLE_MANTLE_CROWN_FRONT = 'MANTLE_CROWN_FRONT'
 PART_ROLE_MANTLE_CROWN_LEFT = 'MANTLE_CROWN_LEFT'
 PART_ROLE_MANTLE_CROWN_RIGHT = 'MANTLE_CROWN_RIGHT'
+PART_ROLE_MANTLE_CROWN_SWEEP = 'MANTLE_CROWN_SWEEP'
 
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
@@ -10441,6 +10442,18 @@ MANTLE_STYLE_SPECS = {
     'COLONIAL': (7.5, 1.75),
 }
 
+# Standard moulding per style (the crown_profile 'DEFAULT' choice), as
+# molding-pack profile refs. The moulding is extruded around the mantle
+# front and finished ends; the style spec's projection is only the
+# fallback when no molding pack provides the profile.
+MANTLE_STYLE_CROWN = {
+    'TRADITIONAL': 'Crown Molding/51 Crown',
+    'SHAKER': 'Crown Molding/Shaker Cove',
+    'VICTORIAN': 'Crown Molding/Beaded Crown',
+    'CLASSIC': 'Other/Mantle',
+    'COLONIAL': 'Crown Molding/51 Crown',
+}
+
 
 def mantle_style_spec(style):
     return MANTLE_STYLE_SPECS.get(style, MANTLE_STYLE_SPECS['CONTEMPORARY'])
@@ -10525,6 +10538,93 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         return {role: self._ensure_mantle_part(role, name)
                 for role, name in spec}
 
+    def _crown_sweep_obj(self):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_MANTLE_CROWN_SWEEP:
+                return child
+        return None
+
+    def _rebuild_crown_sweep(self, ref, width, depth, z_slab, fl, fr):
+        """Extrude the crown moulding profile around the mantle: along
+        the front and returned down each finished end, mitred at the
+        corners by the curve bevel. Returns the profile's front depth
+        (the core setback) when the sweep built, else None (caller
+        falls back to the flat sloped boards).
+
+        The profile is reloaded every rebuild - cheap, and it keeps the
+        clamp (profiles taller than the under-slab space are scaled
+        down to it) correct when the height or style changes.
+        """
+        from ...molding import packages
+        sweep = self._crown_sweep_obj()
+
+        def _hide():
+            if sweep is not None:
+                old = sweep.data.bevel_object
+                if old is not None:
+                    sweep.data.bevel_object = None
+                    bpy.data.objects.remove(old, do_unlink=True)
+                sweep.hide_viewport = True
+                sweep.hide_render = True
+            return None
+
+        if not ref:
+            return _hide()
+        crown_h = packages.profile_top_height(ref, None)
+        proj = packages.profile_front_depth(ref, None)
+        if crown_h <= 1e-5 or proj <= 1e-5:
+            return _hide()
+
+        if sweep is None:
+            curve_data = bpy.data.curves.new('Mantle Crown', 'CURVE')
+            sweep = bpy.data.objects.new('Mantle Crown', curve_data)
+            for coll in self.obj.users_collection:
+                coll.objects.link(sweep)
+            sweep.parent = self.obj
+            sweep['hb_part_role'] = PART_ROLE_MANTLE_CROWN_SWEEP
+            sweep['IS_MANTLE_CROWN'] = True
+        curve = sweep.data
+        curve.dimensions = '2D'
+        curve.fill_mode = 'NONE'
+        curve.bevel_mode = 'OBJECT'
+        curve.use_fill_caps = True
+
+        old = curve.bevel_object
+        height = z_slab if crown_h > z_slab - 1e-4 else None
+        coll = (self.obj.users_collection[0] if self.obj.users_collection
+                else bpy.context.scene.collection)
+        prof = packages.make_profile_object(
+            ref, None, 'Mantle Crown Profile', coll, height=height)
+        if prof is None:
+            return _hide()
+        curve.bevel_object = prof
+        prof.parent = sweep
+        if old is not None and old is not prof:
+            bpy.data.objects.remove(old, do_unlink=True)
+        eff_h = min(crown_h, z_slab)
+
+        curve.splines.clear()
+        pts = []
+        if fl:
+            pts.append((0.0, 0.0))
+        pts += [(0.0, -depth), (width, -depth)]
+        if fr:
+            pts.append((width, 0.0))
+        spline = curve.splines.new('BEZIER')
+        spline.use_smooth = False
+        spline.bezier_points.add(count=len(pts) - 1)
+        for bp, (x, y) in zip(spline.bezier_points, pts):
+            bp.co = (x, y, 0.0)
+            bp.handle_left_type = 'VECTOR'
+            bp.handle_right_type = 'VECTOR'
+
+        sweep.location = (0.0, 0.0, z_slab - eff_h)
+        sweep.rotation_euler = (0.0, 0.0, 0.0)
+        sweep.hide_viewport = False
+        sweep.hide_render = False
+        sweep['IS_FINISHED'] = True
+        return proj
+
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         mp = self.obj.mantle_product
@@ -10597,18 +10697,23 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 if not p.get('IS_MANUAL_PART'):
                     p.hide_viewport = True
                     p.hide_render = True
+            self._rebuild_crown_sweep(None, width, depth, height, fl, fr)
             return
 
         # --- Crown styles (catalog sections): the top slab overhangs a
-        # set-back core; the crown band slopes from under the slab's
-        # front edge back and down to the core, returned along each
-        # finished end. Straight sloped boards stand in for the real
-        # moulding profiles for now; corners butt rather than miter.
+        # set-back core; the crown moulding is extruded from under the
+        # slab's front edge, returned along each finished end. The
+        # profile comes from the molding packs (crown_profile, DEFAULT
+        # resolving per style); when no pack provides it, straight
+        # sloped boards stand in.
         z_slab = height - mt          # underside of the top slab
-        drop = z_slab                 # crown runs slab underside -> bottom
-        slope_len = math.hypot(proj, drop)
-        tilt = math.atan2(proj, drop)
-        crown_rot_x = math.radians(-90) + tilt
+        ref = mp.crown_profile
+        if not ref or ref == 'DEFAULT':
+            ref = MANTLE_STYLE_CROWN.get(mp.mantle_style)
+        sweep_proj = self._rebuild_crown_sweep(
+            ref, width, depth, z_slab, fl, fr)
+        if sweep_proj is not None:
+            proj = min(sweep_proj, max(depth - mt, 0.0))
         core_y = -depth + proj        # core front face plane
 
         # Top slab: full width x full depth, overhanging the crown.
@@ -10628,18 +10733,25 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
         place(RP, depth - proj, z_slab, mt, (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True}, show=fr)
-        # Crown band + returns. Width-axis direction with rot.x =
-        # tilt - 90 is (0, sin t, -cos t): back toward the wall and
-        # down; the returns get the same tilt with a Z quarter-turn so
-        # they slope down and inward from the finished end.
-        # Returns stop where the front band's slope lands (depth - proj)
-        # so the corner butts cleanly instead of poking through.
+
+        # Fallback boards, only when no profile resolved. Width-axis
+        # direction with rot.x = tilt - 90 is (0, sin t, -cos t): back
+        # toward the wall and down; the returns get the same tilt with
+        # a Z quarter-turn so they slope down and inward, trimmed to
+        # the slope landing so the corner butts cleanly.
+        boards = sweep_proj is None
+        drop = z_slab
+        slope_len = math.hypot(proj, drop)
+        tilt = math.atan2(proj, drop)
+        crown_rot_x = math.radians(-90) + tilt
         place(CF, width, slope_len, mt, (0.0, -depth, z_slab),
-              (crown_rot_x, 0.0, 0.0), {})
+              (crown_rot_x, 0.0, 0.0), {}, show=boards)
         place(CL, depth - proj, slope_len, mt, (0.0, 0.0, z_slab),
-              (crown_rot_x, 0.0, math.radians(-90)), {}, show=fl)
+              (crown_rot_x, 0.0, math.radians(-90)), {},
+              show=boards and fl)
         place(CR, depth - proj, slope_len, mt, (width, -depth + proj, z_slab),
-              (crown_rot_x, 0.0, math.radians(90)), {}, show=fr)
+              (crown_rot_x, 0.0, math.radians(90)), {},
+              show=boards and fr)
 
 
 class ValanceFaceFrameProduct(FaceFrameCabinet):

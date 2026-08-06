@@ -514,6 +514,8 @@ def draw_mantle_product(layout, root):
     mantle = root.mantle_product
 
     layout.prop(mantle, 'mantle_style', text="Style")
+    if mantle.mantle_style != 'CONTEMPORARY':
+        layout.prop(mantle, 'crown_profile', text="Crown")
 
     col = layout.column(align=True)
     col.prop(cab, 'width', text="Width")

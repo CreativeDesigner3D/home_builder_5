@@ -9533,6 +9533,27 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
 
 
+_mantle_crown_items_cache = []
+
+
+def _mantle_crown_profile_items(self, context):
+    """Crown choices for the mantle: the mantle mouldings plus every
+    crown profile from the installed molding packs. DEFAULT resolves
+    per style (types_face_frame.MANTLE_STYLE_CROWN)."""
+    from ...molding import packages
+    global _mantle_crown_items_cache
+    items = [('DEFAULT', "Default (by Style)",
+              "The style's standard moulding")]
+    other = {i[0] for i in packages.profile_enum_items('Other')}
+    for n in ('Mantle', 'Mini Mantle'):
+        if n in other:
+            items.append(("Other/" + n, n + " Moulding", ""))
+    for ident, label, desc in packages.profile_enum_items('Crown Molding')[1:]:
+        items.append(("Crown Molding/" + ident, label, desc))
+    _mantle_crown_items_cache = items
+    return _mantle_crown_items_cache
+
+
 def _update_mantle_style(self, context):
     """Mantle style change: re-seed the overall height to the style's
     standard build (the styles differ in height and under-crown), then
@@ -9568,6 +9589,13 @@ class Face_Frame_Mantle_Props(PropertyGroup):
         ],
         default='CONTEMPORARY',
         update=_update_mantle_style,
+    )  # type: ignore
+    crown_profile: EnumProperty(
+        name="Crown Profile",
+        description="Moulding profile extruded around the mantle front"
+                    " and finished ends (Default follows the style)",
+        items=_mantle_crown_profile_items,
+        update=_update_cabinet_dim,
     )  # type: ignore
     finish_left: BoolProperty(
         name="Finish Left", default=True, update=_update_cabinet_dim,
