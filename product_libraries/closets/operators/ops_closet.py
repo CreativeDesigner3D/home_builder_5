@@ -1597,7 +1597,9 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     part_type: bpy.props.EnumProperty(
         name="Part Type",
         items=[('FIXED_SHELF', "Fixed Shelf", "Fixed shelf at a set height"),
-               ('ROD', "Closet Rod", "Closet rod at a set height")],
+               ('ROD', "Closet Rod", "Closet rod at a set height"),
+               ('MISC', "Misc Part", "A part you size and place "
+                                     "yourself")],
         default='FIXED_SHELF')  # type: ignore
 
     _preview = None
@@ -1607,6 +1609,15 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         from .. import const_closets as const
         if self.part_type == 'ROD':
             obj = types_closets.add_rod(opening, const.ROD_TOP_OFFSET)
+        elif self.part_type == 'MISC':
+            # It starts out the size of the opening it is put in,
+            # which is the size most of them want to be, and from
+            # there the person sizes it to whatever they are after.
+            cage = hb_types.GeoNodeCage(opening)
+            obj = types_closets.add_misc_part(
+                opening, 0.0, 0.0, 0.0,
+                cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                types_closets.run_sizes(opening).shelf_thickness)
         else:
             obj = types_closets.add_fixed_shelf(opening, 0.0)
         # Previews are invisible to the split reconciler; the flag comes
@@ -1706,7 +1717,12 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         # the segment offset before snapping and remove it after -
         # holes stay aligned across split segments.
         seg_bottom = opening.get('hb_seg_bottom', 0.0)
-        z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
+        if self.part_type == 'MISC':
+            # A misc part is not a system part, so it does not land on
+            # the system holes - it stands where it is put.
+            z = local_z
+        else:
+            z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
         z = max(0.0, min(z, interior_h))
         if self.part_type == 'ROD':
             # Stored as distance from the opening top (rods ride the top).
@@ -1753,8 +1769,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self.add_placement_dim_handler(context)
-        label = ("fixed shelf" if self.part_type == 'FIXED_SHELF'
-                 else "closet rod")
+        label = {'FIXED_SHELF': "fixed shelf",
+                 'ROD': "closet rod"}.get(self.part_type, "misc part")
         hb_placement.draw_header_text(
             context,
             f"Add {label}: hover an opening, click to place "
@@ -3308,6 +3324,115 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
+    """Size and place the active misc part. Nothing about a misc part
+    is worked out for the person: the numbers here are the part."""
+    bl_idname = "hb_closets.misc_part_prompts"
+    bl_label = "Misc Part Properties"
+    bl_options = {'UNDO'}
+
+    part_name: bpy.props.StringProperty(
+        name="Part Name",
+        description="What this part is called")  # type: ignore
+    length: bpy.props.FloatProperty(
+        name="Part Length", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Part Width", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    thickness: bpy.props.FloatProperty(
+        name="Part Thickness", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    loc_x: bpy.props.FloatProperty(
+        name="Horizontal",
+        description="How far across the opening the part stands, "
+                    "measured from its left",
+        unit='LENGTH', precision=4)  # type: ignore
+    loc_y: bpy.props.FloatProperty(
+        name="Off Wall",
+        description="How far out from the wall side of the opening "
+                    "the part stands",
+        unit='LENGTH', precision=4)  # type: ignore
+    loc_z: bpy.props.FloatProperty(
+        name="Vertical",
+        description="How far above the bottom of the opening the "
+                    "part stands",
+        unit='LENGTH', precision=4)  # type: ignore
+    rot_x: bpy.props.FloatProperty(
+        name="X", unit='ROTATION', precision=4)  # type: ignore
+    rot_y: bpy.props.FloatProperty(
+        name="Y", unit='ROTATION', precision=4)  # type: ignore
+    rot_z: bpy.props.FloatProperty(
+        name="Z", unit='ROTATION', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_MISC)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        tcm = types_closets
+        self.part_name = obj.name
+        self.length = float(obj.get(tcm.PROP_MISC_LENGTH, 0.0))
+        self.width = float(obj.get(tcm.PROP_MISC_WIDTH, 0.0))
+        self.thickness = float(obj.get(tcm.PROP_MISC_THICKNESS, 0.0))
+        self.loc_x = float(obj.get(tcm.PROP_MISC_X, 0.0))
+        self.loc_y = float(obj.get(tcm.PROP_MISC_Y, 0.0))
+        self.loc_z = float(obj.get('hb_z_offset', 0.0))
+        rot = obj.get(tcm.PROP_MISC_ROT, (0.0, 0.0, 0.0))
+        self.rot_x = float(rot[0])
+        self.rot_y = float(rot[1])
+        self.rot_z = float(rot[2])
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Part", icon='MESH_PLANE')
+        col = box.column(align=True)
+        col.prop(self, 'part_name')
+        col.prop(self, 'length')
+        col.prop(self, 'width')
+        col.prop(self, 'thickness')
+        box = layout.box()
+        box.label(text="Location", icon='ORIENTATION_LOCAL')
+        col = box.column(align=True)
+        col.prop(self, 'loc_x')
+        col.prop(self, 'loc_z')
+        col.prop(self, 'loc_y')
+        box = layout.box()
+        box.label(text="Rotation", icon='ORIENTATION_GIMBAL')
+        col = box.column(align=True)
+        col.prop(self, 'rot_x')
+        col.prop(self, 'rot_y')
+        col.prop(self, 'rot_z')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None:
+            return {'CANCELLED'}
+        tcm = types_closets
+        if self.part_name:
+            obj.name = self.part_name
+        obj[tcm.PROP_MISC_LENGTH] = float(self.length)
+        obj[tcm.PROP_MISC_WIDTH] = float(self.width)
+        obj[tcm.PROP_MISC_THICKNESS] = float(self.thickness)
+        obj[tcm.PROP_MISC_X] = float(self.loc_x)
+        obj[tcm.PROP_MISC_Y] = float(self.loc_y)
+        obj['hb_z_offset'] = float(self.loc_z)
+        obj[tcm.PROP_MISC_ROT] = (float(self.rot_x), float(self.rot_y),
+                                  float(self.rot_z))
+        root = types_closets.find_starter_root(obj)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_delete_part(bpy.types.Operator):
     """Delete the active interior part. Config-driven parts (adjustable
     shelves, drawers, doors, cubby parts) decrement their opening's
@@ -3319,6 +3444,7 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
     PART_ROLES = {types_closets.PART_ROLE_FIXED_SHELF,
                   types_closets.PART_ROLE_ADJ_SHELF,
                   types_closets.PART_ROLE_ROD,
+                  types_closets.PART_ROLE_MISC,
                   types_closets.PART_ROLE_DOOR,
                   types_closets.PART_ROLE_DRAWER_FRONT,
                   types_closets.PART_ROLE_CUBBY_DIVISION,
@@ -5202,6 +5328,7 @@ classes = (
     hb_closets_OT_insert_bay,
     hb_closets_OT_delete_bay,
     hb_closets_OT_add_part,
+    hb_closets_OT_misc_part_prompts,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,
     hb_closets_OT_drawer_accessory,
