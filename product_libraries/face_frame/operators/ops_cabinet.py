@@ -913,24 +913,68 @@ class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
 # catalog - the add dropdown is filled from the accessory_registry providers
 # (drawer host), like every other accessory surface.
 # ---------------------------------------------------------------------------
-_drawer_accessory_enum_items = []
+class AccessorySearchRow(bpy.types.PropertyGroup):
+    """One result row in an accessory search list."""
+    code: bpy.props.StringProperty()  # type: ignore
+    label: bpy.props.StringProperty()  # type: ignore
+    name: bpy.props.StringProperty()  # type: ignore
+    section: bpy.props.StringProperty()  # type: ignore
+    group: bpy.props.StringProperty()  # type: ignore
+    # Non-empty when the accessory builds geometry, so a search row can
+    # say up front whether picking it will show anything in the drawer.
+    render_kind: bpy.props.StringProperty()  # type: ignore
 
 
-def _drawer_accessory_enum(self, context):
-    """Every drawer-insert accessory the host application provides."""
-    _drawer_accessory_enum_items.clear()
+def _populate_drawer_accessory_search(operator, context):
+    """Fill ``operator.matches`` with the host application's drawer
+    accessories, ordered by group then name and narrowed by
+    ``operator.filter_text``. The filter is split into space-separated
+    tokens; every token must appear (case-insensitively) in the item's
+    name, group or code, so "knife dbl" or "kbwd" both land on the
+    double tier block."""
+    operator.matches.clear()
+    tokens = operator.filter_text.lower().split()
+    found = []
     for it in accessory_registry.all_items():
         if it.get('host') != 'drawer_accessory':
             continue
         code = it.get('code')
         if not code:
             continue
-        _drawer_accessory_enum_items.append(
-            (code, it.get('name', code), it.get('group', '')))
-    if not _drawer_accessory_enum_items:
-        _drawer_accessory_enum_items.append(
-            ('NONE', "(no drawer accessories)", ""))
-    return _drawer_accessory_enum_items
+        name = it.get('name', code)
+        group = it.get('group', '')
+        if tokens:
+            hay = (" ".join((name, group, code))).lower()
+            if not all(tok in hay for tok in tokens):
+                continue
+        found.append((group.lower(), name.lower(), code, name, group,
+                      it.get('render') or ''))
+    for _g, _n, code, name, group, render in sorted(found):
+        row = operator.matches.add()
+        row.code = code
+        row.name = name
+        row.label = name
+        row.group = group
+        row.render_kind = types_face_frame.render_hint_kind(render.upper())
+    operator.match_index = min(operator.match_index,
+                               max(0, len(operator.matches) - 1))
+
+
+class HB_UL_face_frame_drawer_catalog(bpy.types.UIList):
+    """Search results for the drawer's Add list: the accessory, its
+    product code, and the group it belongs to. The code earns its
+    column - two different products can carry the same name, and it is
+    what gets quoted. Items that build real geometry are flagged so it
+    is obvious which ones will show up inside the drawer."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_propname):
+        split = layout.split(factor=0.52)
+        split.label(text=item.label,
+                    icon='MESH_GRID' if item.render_kind else 'DOT')
+        sub = split.split(factor=0.28)
+        sub.label(text=item.code)
+        sub.label(text=item.group)
 
 
 class HB_UL_face_frame_drawer_items(bpy.types.UIList):
@@ -1119,10 +1163,14 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
     # Held by name so rebuilds (every accessory edit wipes and respawns
     # the drawer box and its contents) can't blank the dialog.
     opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    add_code: bpy.props.EnumProperty(
-        name="Accessory", items=_drawer_accessory_enum,
-        description="Accessory to add to the drawer",
+    filter_text: bpy.props.StringProperty(
+        name="Search",
+        description="Filter the accessory list by name, group or code",
+        options={'TEXTEDIT_UPDATE'},
+        update=lambda self, ctx: _populate_drawer_accessory_search(self, ctx),
     )  # type: ignore
+    matches: bpy.props.CollectionProperty(type=AccessorySearchRow)  # type: ignore
+    match_index: bpy.props.IntProperty(default=0)  # type: ignore
     construction: bpy.props.EnumProperty(
         name="Box Construction", items=_drawer_box_construction_enum,
         description="Construction this drawer's box is built to",
@@ -1152,7 +1200,16 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
             self.construction = code or DRAWER_BOX_CONSTRUCTION_DEFAULT
         except TypeError:
             pass
-        return context.window_manager.invoke_props_dialog(self, width=420)
+        self.filter_text = ""
+        self.match_index = 0
+        _populate_drawer_accessory_search(self, context)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def check(self, context):
+        # Any edit in the dialog re-runs the filter and forces a redraw,
+        # so the list follows the search box keystroke by keystroke.
+        _populate_drawer_accessory_search(self, context)
+        return True
 
     def execute(self, context):
         return {'FINISHED'}
@@ -1172,19 +1229,41 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
             layout.prop(self, 'construction')
             layout.separator()
 
-        row = layout.row(align=True)
-        row.prop(self, 'add_code', text="")
-        add = row.operator("hb_face_frame.drawer_add_accessory",
-                           text="Add", icon='ADD')
-        add.opening_name = self.opening_name
-        add.code = self.add_code
+        # Pick from the catalog: type to narrow, highlight, Add. The
+        # list is grouped the way the product data groups it, so
+        # browsing works as well as searching.
+        pick = layout.box()
+        pick.label(text="Add an accessory", icon='ADD')
+        pick.prop(self, 'filter_text', text="", icon='VIEWZOOM')
+        if len(self.matches) == 0:
+            pick.label(text="Nothing matches that search", icon='INFO')
+        else:
+            row = pick.row()
+            row.template_list(
+                "HB_UL_face_frame_drawer_catalog", "",
+                self, "matches",
+                self, "match_index",
+                rows=6,
+            )
+            side = row.column(align=True)
+            add = side.operator("hb_face_frame.drawer_add_accessory",
+                                text="", icon='ADD')
+            add.opening_name = self.opening_name
+            idx = max(0, min(self.match_index, len(self.matches) - 1))
+            add.code = self.matches[idx].code
+            note = pick.row()
+            note.enabled = False
+            note.label(text="Marked accessories are drawn in the drawer; "
+                            "the rest are listed only", icon='MESH_GRID')
 
+        layout.separator()
+        layout.label(text="In this drawer")
         row = layout.row()
         row.template_list(
             "HB_UL_face_frame_drawer_items", "",
             props, "interior_items",
             props, "interior_items_index",
-            rows=5,
+            rows=4,
         )
         side = row.column(align=True)
         rem = side.operator("hb_face_frame.drawer_remove_accessory",
@@ -3408,6 +3487,8 @@ def _populate_accessory_search(operator, context):
         row.name = name
         row.section = sec
         row.group = grp
+        row.render_kind = types_face_frame.render_hint_kind(
+            (it.get('render') or '').upper())
         mw = it.get('min_opening_w')
         row.label = name if mw is None else "%s  (min %g\")" % (name, mw)
     operator.active_index = min(operator.active_index,
@@ -3656,15 +3737,6 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
             op.group = grp
 
 
-class AccessorySearchRow(bpy.types.PropertyGroup):
-    """One result row in the accessory search dialog."""
-    code: bpy.props.StringProperty()  # type: ignore
-    label: bpy.props.StringProperty()  # type: ignore
-    name: bpy.props.StringProperty()  # type: ignore
-    section: bpy.props.StringProperty()  # type: ignore
-    group: bpy.props.StringProperty()  # type: ignore
-
-
 class HB_UL_face_frame_accessory_search(bpy.types.UIList):
     """Result list for the accessory search dialog: model name (with any
     minimum-width note) on the left, its catalog section / group on the
@@ -3672,7 +3744,8 @@ class HB_UL_face_frame_accessory_search(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_propname):
         split = layout.split(factor=0.55)
-        split.label(text=item.label, icon='DOT')
+        split.label(text=item.label,
+                    icon='MESH_GRID' if item.render_kind else 'DOT')
         loc = ("%s / %s" % (item.section, item.group)
                if item.group else item.section)
         split.label(text=loc)
@@ -5490,7 +5563,9 @@ classes = (
     hb_face_frame_OT_panel_layout_prompts,
     hb_face_frame_OT_panel_remove_stile,
     hb_face_frame_OT_toggle_front_open,
+    AccessorySearchRow,
     HB_UL_face_frame_drawer_items,
+    HB_UL_face_frame_drawer_catalog,
     hb_face_frame_OT_drawer_add_accessory,
     hb_face_frame_OT_drawer_remove_accessory,
     hb_face_frame_OT_set_drawer_box_construction,
@@ -5517,7 +5592,6 @@ classes = (
     hb_face_frame_OT_add_interior_accessory,
     hb_face_frame_OT_add_accessory,
     hb_face_frame_OT_accessory_menu,
-    AccessorySearchRow,
     HB_UL_face_frame_accessory_search,
     hb_face_frame_OT_search_accessory,
     hb_face_frame_OT_add_appliance_to_bay,
