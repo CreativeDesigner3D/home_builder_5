@@ -1108,6 +1108,37 @@ def draw_opening_properties(layout, opening_obj):
             _draw_interior_tree_inline(ibox, opening_obj)
 
 
+def draw_drawer_insert_settings(layout, item, show_hint=True):
+    """Per-item settings for a drawer accessory that renders geometry.
+
+    Shared by the Drawer Interior dialog and the interior item rows so
+    an insert is edited the same way wherever it is reached. Accessories
+    without a render hint draw nothing but a note (when asked for one) -
+    they are quoted and scheduled, just not modeled.
+    """
+    kind = types_face_frame.render_hint_kind(item.accessory_render)
+    if not kind:
+        if show_hint:
+            layout.label(text="This accessory is listed, not modeled",
+                         icon='INFO')
+        return
+    if kind == 'DIVIDER':
+        layout.prop(item, 'divider_lengthwise')
+        row = layout.row()
+        row.enabled = item.accessory_qty == 1
+        row.prop(item, 'divider_offset', text="Position (0 = Auto)")
+        return
+    if kind in ('CUTLERY', 'TRAY', 'KNIFE_BLOCK'):
+        layout.prop(item, 'insert_slots', text="Compartments (0 = Auto)")
+    col = layout.column(align=True)
+    col.prop(item, 'insert_offset', text="From Left (0 = Auto)")
+    col.prop(item, 'insert_from_front', text="From Front")
+    col = layout.column(align=True)
+    col.prop(item, 'insert_width', text="Width (0 = Auto)")
+    col.prop(item, 'insert_depth', text="Depth (0 = Auto)")
+    col.prop(item, 'insert_height', text="Height (0 = Auto)")
+
+
 def _draw_interior_items_section(layout, target_props, target_name=""):
     """Add buttons + per-item rows for any object whose props expose an
     `interior_items` collection. Used by the opening panel (flat path),
@@ -1218,12 +1249,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
             sub.prop(item, 'accessory_qty', text="Qty")
-            if item.accessory_render == 'DIVIDER':
-                sub.prop(item, 'divider_lengthwise')
-                row = sub.row()
-                row.enabled = item.accessory_qty == 1
-                row.prop(item, 'divider_offset',
-                         text="Position (0 = Auto)")
+            draw_drawer_insert_settings(sub, item, show_hint=False)
         elif item.kind == 'CLOSET_ROD':
             sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:

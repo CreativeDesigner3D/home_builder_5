@@ -469,6 +469,93 @@ PART_ROLE_DRAWER_BOX = 'DRAWER_BOX'
 # Visual drawer-interior accessory geometry (dividers etc.), parented to
 # the drawer box so it slides out with the front.
 PART_ROLE_DRAWER_DIVIDER = 'DRAWER_DIVIDER'
+# Every other rendered drawer accessory (trays, knife blocks, stepped
+# spice shelves, organizers). Same wipe-and-rebuild lifecycle as the
+# dividers; kept as its own role so reports can tell a loose partition
+# from a dropped-in insert.
+PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
+
+# Render hints an accessory can carry -> (builder method, default
+# height in inches, whether the insert takes up drawer floor). Hints
+# are matched case-insensitively; an accessory whose hint isn't listed
+# here stays data-only (it is quoted and scheduled, just not modeled).
+DRAWER_INSERT_BUILDERS = {
+    'DIVIDER': ('_build_drawer_dividers', 0.0, False),
+    'CUTLERY': ('_build_cutlery_insert', 2.375, True),
+    'KNIFE_BLOCK': ('_build_knife_block_insert', 2.0, True),
+    'SPICE': ('_build_spice_insert', 2.75, True),
+    'PIGEON_HOLE': ('_build_pigeon_hole_insert', 6.0, True),
+    'TRAY': ('_build_tray_insert', 2.0, True),
+}
+
+
+def parse_render_hint(hint):
+    """Split an accessory render hint into ``(kind, params)``.
+
+    A hint is a kind name, optionally followed by ``key=value`` pairs
+    carrying the product spec's published sizes, e.g.
+    ``"TRAY W=8.3125 D=16.6875 H=4.75 SLOTS=4"``. Values are inches.
+    W / D / H are the size the product is made in; WMAX / DMAX are the
+    largest it can be built, for the ones cut to fit the drawer.
+    Unknown keys are ignored so the host application can extend a spec
+    without breaking older builds, and an unparsable hint degrades to
+    kind-only rather than failing the rebuild.
+    """
+    parts = (hint or '').split()
+    if not parts:
+        return '', {}
+    params = {}
+    for token in parts[1:]:
+        key, sep, value = token.partition('=')
+        if not sep:
+            continue
+        try:
+            params[key.strip().upper()] = float(value)
+        except ValueError:
+            continue
+    return parts[0].strip().upper(), params
+
+
+def render_hint_kind(hint):
+    """The insert kind a render hint resolves to, or '' when the hint
+    is empty or names something this build can't model. UI uses this to
+    decide which per-item settings are worth drawing."""
+    kind = parse_render_hint(hint)[0]
+    return kind if kind in DRAWER_INSERT_BUILDERS else ''
+
+
+class DrawerInsertMesh:
+    """Collects the prisms that make up one drawer insert so the whole
+    insert ships as a single mesh object.
+
+    Every insert part - tray walls and partitions, knife ribs, sloped
+    spice shelves - is a (y, z) profile extruded along X, so one
+    primitive covers the lot and a tray with a dozen partitions still
+    costs one object per rebuild.
+    """
+
+    def __init__(self):
+        self.verts = []
+        self.faces = []
+
+    def prism(self, x0, x1, profile):
+        if x1 - x0 <= 1e-9 or len(profile) < 3:
+            return
+        base = len(self.verts)
+        n = len(profile)
+        self.verts.extend((x0, y, z) for y, z in profile)
+        self.verts.extend((x1, y, z) for y, z in profile)
+        self.faces.append([base + i for i in range(n)])
+        self.faces.append([base + i for i in range(2 * n - 1, n - 1, -1)])
+        for i in range(n):
+            j = (i + 1) % n
+            self.faces.append([base + i, base + j,
+                               base + j + n, base + i + n])
+
+    def box(self, x0, x1, y0, y1, z0, z1):
+        if y1 - y0 <= 1e-9 or z1 - z0 <= 1e-9:
+            return
+        self.prism(x0, x1, [(y0, z0), (y1, z0), (y1, z1), (y0, z1)])
 
 # Front roles that share the same panel geometry today. Keeping them
 # grouped here so reconciliation can iterate the set instead of
@@ -8502,75 +8589,387 @@ class FaceFrameCabinet(GeoNodeCage):
             cur = cur.parent
         return x, y, z
 
-    # Drawer-interior accessory geometry. Catalog accessories carrying a
-    # render hint (stamped onto the interior item as accessory_render
-    # when picked from the browser) build real parts inside the drawer
-    # box, parented to it so they slide out with the front and die with
-    # the pivot wipe on the next rebuild. v1 renders DIVIDER (removable
-    # partitions); other hints can gain geometry as they come up.
+    # Drawer-interior accessory geometry. Accessories carrying a render
+    # hint (stamped onto the interior item as accessory_render when
+    # picked from the browser) build real parts inside the drawer box,
+    # parented to it so they slide out with the front and die with the
+    # pivot wipe on the next rebuild. DRAWER_INSERT_BUILDERS maps the
+    # hint to the builder; accessories without one stay data-only.
     # Interior wall approximations for placing accessories inside the
     # box (the drawer-box asset's own construction owns the real dims).
     DRAWER_BOX_SIDE_TH = inch(0.625)
     DRAWER_BOX_BOTTOM_LIFT = inch(0.5)
     DRAWER_DIVIDER_TH = inch(0.25)
+    # Insert stock: tray walls and partitions, and the thinner panel
+    # the bottoms, ribs and sloped shelves are made from.
+    INSERT_WALL_TH = inch(0.375)
+    INSERT_PANEL_TH = inch(0.25)
+    # Cutlery tray: the utensil slots come on a fixed pitch and the
+    # cross compartment behind them is a fixed depth, so a tray trimmed
+    # to a wider drawer grows its side compartments, not its slots.
+    CUTLERY_SLOT_PITCH = inch(2.875)
+    CUTLERY_CROSS_DEPTH = inch(4.0)
+    # Knife block: ribs on a fixed pitch with a saw-kerf gap between
+    # them, and the step up from one tier to the next.
+    KNIFE_RIB_PITCH = inch(0.75)
+    KNIFE_RIB_GAP = inch(0.25)
+    KNIFE_TIER_RISE = inch(1.25)
+    # Stepped spice shelves: run and rise of one step.
+    SPICE_STEP_RUN = inch(3.5)
+    SPICE_STEP_RISE = inch(2.25)
+    # Letter-slot organizer: heavier plywood, a wide bay in the middle
+    # for paper with equal letter slots out to each side.
+    ORGANIZER_PANEL_TH = inch(0.5)
+    ORGANIZER_PAPER_BAY = inch(12.0)
+    ORGANIZER_SLOT_WIDTH = inch(4.5)
 
-    def _spawn_drawer_dividers(self, box_obj, dx, dy, dz, op_props):
+    def _emit_drawer_insert(self, box_obj, name, mb, role=None):
+        """Turn a collected DrawerInsertMesh into one child object of
+        the drawer box. One object per physical unit: a tray with a
+        dozen partitions is still one thing the user can click."""
+        if not mb.faces:
+            return None
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata(mb.verts, [], mb.faces)
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+        obj = bpy.data.objects.new(name, mesh)
+        for coll in box_obj.users_collection:
+            coll.objects.link(obj)
+            break
+        obj.parent = box_obj
+        obj['hb_part_role'] = role or PART_ROLE_DRAWER_INSERT
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+        obj['IS_FINISHED'] = True
+        return obj
+
+    def _spawn_drawer_inserts(self, box_obj, dx, dy, dz, op_props):
+        """Build geometry for every rendered accessory in this drawer.
+
+        Inserts that take up drawer floor are packed left to right in
+        list order, each one trimmed to what is left; typing a position
+        or a size pins one wherever it belongs. Full-width kinds
+        (removable dividers) span the box and take no space in the
+        pack, so a divider between two inserts still reads correctly.
+        """
         items = [it for it in getattr(op_props, 'interior_items', ())
                  if it.kind == 'ACCESSORY'
-                 and getattr(it, 'accessory_render', '') == 'DIVIDER']
+                 and getattr(it, 'accessory_render', '')]
         if not items:
             return
         side = self.DRAWER_BOX_SIDE_TH
         lift = self.DRAWER_BOX_BOTTOM_LIFT
-        th = self.DRAWER_DIVIDER_TH
-        inner_x0, inner_x1 = side, dx - side
-        inner_y0, inner_y1 = side, dy - side
-        if inner_x1 - inner_x0 < th * 2 or inner_y1 - inner_y0 < th * 2:
+        inner = SimpleNamespace(
+            x0=side, x1=dx - side, y0=side, y1=dy - side, z0=lift,
+            # Inserts stand on the box bottom and stop under the rim.
+            h=max(dz - lift - inch(0.75), inch(1.0)), slots=0)
+        if (inner.x1 - inner.x0 < inch(1.0)
+                or inner.y1 - inner.y0 < inch(1.0)):
             return
-        # Dividers stand on the box bottom and stop just under the rim.
-        h = max(dz - lift - inch(0.75), inch(1.0))
-
-        def _make(name, x0, x1, y0, y1):
-            mesh = bpy.data.meshes.new(name)
-            bm = bmesh.new()
-            bmesh.ops.create_cube(bm, size=1.0)
-            for v in bm.verts:
-                v.co.x = x1 if v.co.x > 0 else x0
-                v.co.y = y1 if v.co.y > 0 else y0
-                v.co.z = lift + h if v.co.z > 0 else lift
-            bm.to_mesh(mesh)
-            bm.free()
-            obj = bpy.data.objects.new(name, mesh)
-            for coll in box_obj.users_collection:
-                coll.objects.link(obj)
-                break
-            obj.parent = box_obj
-            obj['hb_part_role'] = PART_ROLE_DRAWER_DIVIDER
-            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
-            obj['IS_FINISHED'] = True
-            return obj
-
+        fill_w = self._drawer_insert_fill_width(inner, items)
+        cursor = inner.x0
         for item in items:
-            qty = max(getattr(item, 'accessory_qty', 1), 1)
-            lengthwise = getattr(item, 'divider_lengthwise', False)
-            off = getattr(item, 'divider_offset', 0.0)
-            span0, span1 = ((inner_x0, inner_x1) if lengthwise
-                            else (inner_y0, inner_y1))
-            span = span1 - span0
-            if qty == 1 and off > 0.0001:
-                # Typed position: divider center that far from the
-                # front (or the left side when running front-to-back).
-                centers = [span0 + min(max(off, th), span - th)]
+            kind, params = parse_render_hint(item.accessory_render)
+            spec = DRAWER_INSERT_BUILDERS.get(kind)
+            if spec is None:
+                continue
+            builder = getattr(self, spec[0])
+            if not spec[2]:
+                builder(box_obj, inner, item, params)
+                continue
+            off = getattr(item, 'insert_offset', 0.0)
+            if off > 0.0001:
+                cursor = inner.x0 + off
+            for _i in range(max(getattr(item, 'accessory_qty', 1), 1)):
+                rect = self._drawer_insert_rect(inner, item, params,
+                                                spec[1], cursor, fill_w)
+                if rect is None:
+                    break
+                builder(box_obj, rect, item, params)
+                cursor = rect.x1
+
+    @staticmethod
+    def _drawer_insert_fill_width(inner, items):
+        """Width for each insert that has no size of its own: what the
+        sized ones leave, split evenly. Lets a drawer of spice shelves +
+        knife block + cutlery tray lay itself out with nothing typed."""
+        widths = []
+        for item in items:
+            kind, params = parse_render_hint(item.accessory_render)
+            spec = DRAWER_INSERT_BUILDERS.get(kind)
+            if spec is None or not spec[2]:
+                continue
+            w = getattr(item, 'insert_width', 0.0)
+            if w < 1e-6:
+                w = inch(params.get('W', 0.0))
+            widths.extend([w] * max(getattr(item, 'accessory_qty', 1), 1))
+        fillers = sum(1 for w in widths if w < 1e-6)
+        if fillers < 2:
+            return 0.0
+        left = (inner.x1 - inner.x0) - sum(w for w in widths if w > 1e-6)
+        return max(left, 0.0) / fillers
+
+    def _drawer_insert_rect(self, inner, item, params, default_h, cursor,
+                            fill_w=0.0):
+        """Footprint and height for one packed insert. Each size falls
+        back from the typed override to the published size that came
+        with the render hint, then to the drawer's fill width."""
+        tol = 1e-6
+        x0 = min(max(cursor, inner.x0), inner.x1)
+        avail_w = inner.x1 - x0
+        avail_d = inner.y1 - inner.y0
+        if avail_w < inch(1.0) or avail_d < inch(1.0):
+            return None
+        w = getattr(item, 'insert_width', 0.0)
+        if w < tol:
+            w = inch(params.get('W', 0.0))
+        if w < tol:
+            # No size of its own: take the drawer's fill width, but no
+            # wider than the product is built (WMAX).
+            w = fill_w if fill_w > inch(1.0) else avail_w
+            wmax = inch(params.get('WMAX', 0.0))
+            if wmax > tol:
+                w = min(w, wmax)
+        w = min(w, avail_w)
+        y0 = inner.y0 + min(max(getattr(item, 'insert_from_front', 0.0),
+                                0.0), avail_d - inch(1.0))
+        d = getattr(item, 'insert_depth', 0.0)
+        if d < tol:
+            d = inch(params.get('D', 0.0))
+        if d < tol:
+            d = inner.y1 - y0
+            dmax = inch(params.get('DMAX', 0.0))
+            if dmax > tol:
+                d = min(d, dmax)
+        d = min(d, inner.y1 - y0)
+        h = getattr(item, 'insert_height', 0.0)
+        if h < tol:
+            h = inch(params.get('H', default_h))
+        h = min(max(h, inch(0.5)), inner.h)
+        slots = int(getattr(item, 'insert_slots', 0)
+                    or params.get('SLOTS', 0))
+        return SimpleNamespace(x0=x0, x1=x0 + w, y0=y0, y1=y0 + d,
+                               z0=inner.z0, h=h, slots=max(slots, 0))
+
+    def _build_drawer_dividers(self, box_obj, rect, item, params):
+        """Removable partitions dropped into the box: full-width (or
+        full-depth) panels, evenly spaced or pinned by position. One
+        object each - they lift out individually."""
+        th = self.DRAWER_DIVIDER_TH
+        if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
+            return
+        z0, z1 = rect.z0, rect.z0 + rect.h
+        qty = max(getattr(item, 'accessory_qty', 1), 1)
+        lengthwise = getattr(item, 'divider_lengthwise', False)
+        off = getattr(item, 'divider_offset', 0.0)
+        span0, span1 = ((rect.x0, rect.x1) if lengthwise
+                        else (rect.y0, rect.y1))
+        span = span1 - span0
+        if qty == 1 and off > 0.0001:
+            # Typed position: divider center that far from the front
+            # (or the left side when running front-to-back).
+            centers = [span0 + min(max(off, th), span - th)]
+        else:
+            step = span / (qty + 1)
+            centers = [span0 + step * (i + 1) for i in range(qty)]
+        for c in centers:
+            mb = DrawerInsertMesh()
+            if lengthwise:
+                mb.box(c - th / 2.0, c + th / 2.0, rect.y0, rect.y1,
+                       z0, z1)
             else:
-                step = span / (qty + 1)
-                centers = [span0 + step * (i + 1) for i in range(qty)]
-            for c in centers:
-                if lengthwise:
-                    _make('Drawer Divider', c - th / 2.0, c + th / 2.0,
-                          inner_y0, inner_y1)
-                else:
-                    _make('Drawer Divider', inner_x0, inner_x1,
-                          c - th / 2.0, c + th / 2.0)
+                mb.box(rect.x0, rect.x1, c - th / 2.0, c + th / 2.0,
+                       z0, z1)
+            self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
+                                     role=PART_ROLE_DRAWER_DIVIDER)
+
+    def _tray_walls(self, mb, rect, th):
+        """Four walls on a panel bottom - the shell every boxed insert
+        starts from. Returns the interior rectangle."""
+        z0 = rect.z0
+        z1 = z0 + rect.h
+        mb.box(rect.x0, rect.x1, rect.y0, rect.y1, z0,
+               z0 + self.INSERT_PANEL_TH)
+        mb.box(rect.x0, rect.x0 + th, rect.y0, rect.y1, z0, z1)
+        mb.box(rect.x1 - th, rect.x1, rect.y0, rect.y1, z0, z1)
+        mb.box(rect.x0 + th, rect.x1 - th, rect.y0, rect.y0 + th, z0, z1)
+        mb.box(rect.x0 + th, rect.x1 - th, rect.y1 - th, rect.y1, z0, z1)
+        return (rect.x0 + th, rect.x1 - th, rect.y0 + th, rect.y1 - th)
+
+    def _insert_name(self, item, fallback):
+        return (getattr(item, 'accessory_label', '') or fallback)[:60]
+
+    def _build_tray_insert(self, box_obj, rect, item, params, mb=None,
+                           slots=None):
+        """An open box, optionally split into equal front-to-back
+        compartments. Covers the plain utensil / storage boxes, and
+        gives the compartmented inserts their shell."""
+        own = mb is None
+        mb = mb if mb is not None else DrawerInsertMesh()
+        th = self.INSERT_WALL_TH
+        if rect.x1 - rect.x0 < th * 3 or rect.y1 - rect.y0 < th * 3:
+            return mb
+        ix0, ix1, iy0, iy1 = self._tray_walls(mb, rect, th)
+        n = rect.slots if slots is None else slots
+        step = (ix1 - ix0) / n if n > 1 else 0.0
+        if n > 1 and step > th * 2:
+            z0, z1 = rect.z0, rect.z0 + rect.h
+            for i in range(1, n):
+                c = ix0 + step * i
+                mb.box(c - th / 2.0, c + th / 2.0, iy0, iy1, z0, z1)
+        if own:
+            self._emit_drawer_insert(
+                box_obj, self._insert_name(item, 'Drawer Tray'), mb)
+        return mb
+
+    def _build_cutlery_insert(self, box_obj, rect, item, params):
+        """Cutlery tray: a band of equal utensil slots with a cross
+        compartment behind them, side compartments left and right, and
+        one compartment across the back. The slot band keeps its pitch
+        and the side compartments take up the slack, which is how the
+        tray is trimmed to the drawer it ships in."""
+        th = self.INSERT_WALL_TH
+        mb = self._build_tray_insert(box_obj, rect, item, params,
+                                     mb=DrawerInsertMesh(), slots=1)
+        name = self._insert_name(item, 'Cutlery Tray')
+        ix0, ix1 = rect.x0 + th, rect.x1 - th
+        iy0, iy1 = rect.y0 + th, rect.y1 - th
+        z0, z1 = rect.z0, rect.z0 + rect.h
+        if ix1 - ix0 < inch(3.0) or iy1 - iy0 < inch(6.0):
+            self._emit_drawer_insert(box_obj, name, mb)
+            return
+        # Compartment across the back; the slot core fills the rest.
+        band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
+        core_back = iy1
+        if (iy1 - band) - iy0 >= inch(6.0):
+            core_back = iy1 - band
+            mb.box(ix0, ix1, core_back - th / 2.0, core_back + th / 2.0,
+                   z0, z1)
+        slots = max(min(rect.slots or 5, 12), 2)
+        core_w = min(self.CUTLERY_SLOT_PITCH * slots, ix1 - ix0)
+        cx0 = (ix0 + ix1) / 2.0 - core_w / 2.0
+        cx1 = cx0 + core_w
+        for c in (cx0, cx1):
+            if c - ix0 > inch(1.0) and ix1 - c > inch(1.0):
+                mb.box(c - th / 2.0, c + th / 2.0, iy0, core_back, z0, z1)
+        # Cross compartment across the back of the slot core.
+        slot_back = core_back
+        if core_back - iy0 > self.CUTLERY_CROSS_DEPTH + inch(4.0):
+            slot_back = core_back - self.CUTLERY_CROSS_DEPTH
+            mb.box(cx0, cx1, slot_back - th / 2.0, slot_back + th / 2.0,
+                   z0, z1)
+        step = core_w / slots
+        if step > th * 2:
+            for i in range(1, slots):
+                c = cx0 + step * i
+                mb.box(c - th / 2.0, c + th / 2.0, iy0, slot_back, z0, z1)
+        self._emit_drawer_insert(box_obj, name, mb)
+
+    def _build_knife_block_insert(self, box_obj, rect, item, params):
+        """Knife block: a ribbed bed across the back of a panel, the
+        blades sliding front to back between the ribs, with a handle
+        rest rail in front of it. A second tier steps up behind the
+        first so the back row stays reachable."""
+        mb = DrawerInsertMesh()
+        bt = self.INSERT_PANEL_TH
+        th = self.INSERT_WALL_TH
+        z_base = rect.z0 + bt
+        z_top = rect.z0 + rect.h
+        w = rect.x1 - rect.x0
+        d = rect.y1 - rect.y0
+        if w < inch(2.0) or d < inch(6.0):
+            return
+        mb.box(rect.x0, rect.x1, rect.y0, rect.y1, rect.z0, z_base)
+        tiers = max(int(params.get('TIERS', 1)), 1)
+        bed_d = min(d - inch(3.0), d * (0.55 + 0.1 * (tiers - 1)))
+        if bed_d < inch(2.0) * tiers:
+            tiers = 1
+            bed_d = max(d - inch(3.0), inch(2.0))
+        bed_front = rect.y1 - bed_d
+        tier_d = bed_d / tiers
+        rail_y = max(bed_front - inch(1.5), rect.y0 + inch(0.5))
+        mb.box(rect.x0, rect.x1, rail_y, rail_y + th, z_base,
+               min(z_base + inch(0.75), z_top))
+        margin = inch(0.25)
+        bx0, bx1 = rect.x0 + margin, rect.x1 - margin
+        pitch = self.KNIFE_RIB_PITCH
+        if rect.slots > 0:
+            pitch = (bx1 - bx0) / rect.slots
+        count = max(int((bx1 - bx0) / pitch), 1)
+        gap = min(self.KNIFE_RIB_GAP, pitch * 0.4)
+        sx0 = (bx0 + bx1) / 2.0 - (pitch * count) / 2.0
+        for t in range(tiers):
+            ty0 = bed_front + tier_d * t
+            ty1 = ty0 + tier_d
+            rise = self.KNIFE_TIER_RISE * t
+            zb = min(z_base + rise, z_top)
+            top = min(zb + inch(1.0), z_top)
+            if rise > 0.0:
+                mb.box(rect.x0, rect.x1, ty0, ty1, z_base, zb)
+            if top - zb < inch(0.125):
+                continue
+            for i in range(count):
+                x0 = sx0 + pitch * i
+                mb.box(x0, x0 + pitch - gap, ty0, ty1, zb, top)
+        self._emit_drawer_insert(
+            box_obj, self._insert_name(item, 'Knife Block'), mb)
+
+    def _build_spice_insert(self, box_obj, rect, item, params):
+        """Stepped shelves: bottles lie on their sides on shelves that
+        climb toward the back of the drawer, each shelf carried on a
+        riser at its high end so the labels stay readable."""
+        mb = DrawerInsertMesh()
+        bt = self.INSERT_PANEL_TH
+        z_base = rect.z0 + bt
+        w = rect.x1 - rect.x0
+        d = rect.y1 - rect.y0
+        if w < inch(2.0) or d < inch(4.0):
+            return
+        mb.box(rect.x0, rect.x1, rect.y0, rect.y1, rect.z0, z_base)
+        rise = min(self.SPICE_STEP_RISE, max(rect.h - bt, inch(0.75)))
+        steps = max(int(d / (self.SPICE_STEP_RUN + bt)), 1)
+        run = d / steps - bt
+        if run < inch(1.0):
+            return
+        y = rect.y0
+        for _s in range(steps):
+            y1 = y + run
+            mb.prism(rect.x0, rect.x1,
+                     [(y, z_base + bt), (y1, z_base + rise),
+                      (y1, z_base + rise - bt), (y, z_base)])
+            mb.box(rect.x0, rect.x1, y1, y1 + bt, z_base, z_base + rise)
+            y = y1 + bt
+        self._emit_drawer_insert(
+            box_obj, self._insert_name(item, 'Spice Insert'), mb)
+
+    def _build_pigeon_hole_insert(self, box_obj, rect, item, params):
+        """Letter-slot organizer: upright slots on a fixed width either
+        side of a wider bay for paper."""
+        mb = DrawerInsertMesh()
+        th = self.ORGANIZER_PANEL_TH
+        z0, z1 = rect.z0, rect.z0 + rect.h
+        if rect.x1 - rect.x0 < inch(6.0) or rect.y1 - rect.y0 < inch(3.0):
+            return
+        ix0, ix1, iy0, iy1 = self._tray_walls(mb, rect, th)
+        bay = min(self.ORGANIZER_PAPER_BAY, (ix1 - ix0) * 0.5)
+        bx0 = (ix0 + ix1) / 2.0 - bay / 2.0
+        for s0, s1 in ((ix0, bx0), (bx0 + bay, ix1)):
+            width = s1 - s0
+            if width < inch(2.0):
+                continue
+            count = max(int(round(width / self.ORGANIZER_SLOT_WIDTH)), 1)
+            step = width / count
+            for i in range(count + 1):
+                c = s0 + step * i
+                if c <= ix0 + 1e-6 or c >= ix1 - 1e-6:
+                    continue
+                mb.box(c - th / 2.0, c + th / 2.0, iy0, iy1, z0, z1)
+        self._emit_drawer_insert(
+            box_obj, self._insert_name(item, 'Letter Slot Organizer'), mb)
 
     def _create_drawer_box_for_front(self, pivot_obj, leaf, rect,
                                      op_props=None):
@@ -8699,8 +9098,8 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['CABINET_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
         if op_props is not None:
-            self._spawn_drawer_dividers(box.obj, box_dx, box_dy, box_dz,
-                                        op_props)
+            self._spawn_drawer_inserts(box.obj, box_dx, box_dy, box_dz,
+                                       op_props)
         if chase_notch:
             # _iter_pipe_chase_cut_targets picks this up and booleans
             # the chase cutter into the box. The notch does NOT change

@@ -2247,7 +2247,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # exterior finish: nosing is finished-opening trim and
                 # the bar storage units are "finished to match
                 # exterior" per the catalog. Drawer-interior accessory
-                # geometry (dividers) matches the drawer box instead.
+                # geometry (dividers and inserts) matches the drawer box
+                # instead.
                 slot_role = child.get('hb_part_role')
                 slot_mat = None
                 if slot_role in ('SHELF_NOSING', 'BAR_STORAGE',
@@ -2263,7 +2264,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  'FINISHED_BOTTOM_LED_CUTTER',
                                  'BOX_MITER_CUTTER'):
                     slot_mat = finish_mat
-                elif slot_role == 'DRAWER_DIVIDER':
+                elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT'):
                     slot_mat = interior_mat or finish_mat
                 if slot_mat is not None:
                     if child.data.materials:
@@ -7309,10 +7310,10 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
-    # ACCESSORY: geometry hint from the catalog entry ('render' field),
+    # ACCESSORY: geometry hint from the product entry ('render' field),
     # stamped when the accessory is picked from the browser. Items with
     # a hint build real parts inside the drawer box (see
-    # _spawn_drawer_dividers); blank stays data-only.
+    # _spawn_drawer_inserts); blank stays data-only.
     accessory_render: StringProperty(
         name="Accessory Render", default="",
     )  # type: ignore
@@ -7328,6 +7329,55 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                     "running front to back) to a single divider. 0 "
                     "spaces the divider(s) evenly",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # ACCESSORY: placement and size of a rendered drawer insert (tray,
+    # knife block, spice shelves, organizer). Every one of these is an
+    # override: left at 0 the insert takes the size on its product
+    # spec, or fills what is left of the drawer when the spec is silent,
+    # and packs in after the insert before it in the list.
+    insert_offset: FloatProperty(
+        name="From Left",
+        description="Distance from the left inside face of the drawer box "
+                    "to this insert. 0 packs it in after the insert above "
+                    "it in the list",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    insert_from_front: FloatProperty(
+        name="From Front",
+        description="Distance from the inside of the drawer box front to "
+                    "this insert",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    insert_width: FloatProperty(
+        name="Insert Width",
+        description="Width of this insert. 0 uses the size it is made in, "
+                    "or fills the rest of the drawer",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    insert_depth: FloatProperty(
+        name="Insert Depth",
+        description="Front-to-back size of this insert. 0 uses the size it "
+                    "is made in, or fills the depth of the drawer",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    insert_height: FloatProperty(
+        name="Insert Height",
+        description="Height of this insert. 0 uses the size it is made in; "
+                    "a taller value is clipped to the drawer box",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    insert_slots: IntProperty(
+        name="Compartments",
+        description="How many compartments (or knife slots) this insert is "
+                    "divided into. 0 uses the standard layout",
+        default=0, min=0, max=24,
         update=_update_cabinet_dim,
     )  # type: ignore
 

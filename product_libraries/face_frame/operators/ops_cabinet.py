@@ -1019,6 +1019,15 @@ class hb_face_frame_OT_drawer_remove_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _update_drawer_interior_construction(self, context):
+    """Live-bind the dialog's construction dropdown to the opening. The
+    no-op guard in _set_opening_construction keeps seeding the enum on
+    invoke from triggering a pointless rebuild."""
+    opening = bpy.data.objects.get(self.opening_name)
+    if opening is not None:
+        _set_opening_construction(opening, self.construction)
+
+
 class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
     """Lay out the inside of a drawer: add, remove and position the
     accessories that live in the drawer box."""
@@ -1089,17 +1098,11 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         item = props.interior_items[idx]
         if item.kind != 'ACCESSORY':
             return
+        from .. import ui_face_frame
         box = layout.box()
         box.label(text=item.accessory_label or item.accessory_code)
         box.prop(item, 'accessory_qty', text="Quantity")
-        if item.accessory_render == 'DIVIDER':
-            box.prop(item, 'divider_lengthwise')
-            sub = box.row()
-            sub.enabled = item.accessory_qty == 1
-            sub.prop(item, 'divider_offset', text="Position (0 = Auto)")
-        else:
-            box.label(text="This accessory is listed, not modeled",
-                      icon='INFO')
+        ui_face_frame.draw_drawer_insert_settings(box, item)
 
 
 class hb_face_frame_OT_toggle_front_open(bpy.types.Operator):
