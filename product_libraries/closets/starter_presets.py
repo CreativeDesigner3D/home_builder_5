@@ -25,6 +25,18 @@ STARTER_SECTIONS = [
     ]),
 ]
 
+# Loose parts: dropped on their own rather than built into a run, so
+# each entry names the operator that places it instead of resolving
+# through the starter dispatch. Same shape otherwise, so the library
+# UI draws these rows exactly like the starter rows above them.
+PART_SECTIONS = [
+    ("Parts", [
+        ('Misc Part', "Misc Part",
+         "A part you size and place yourself",
+         'hb_closets.place_misc_part'),
+    ]),
+]
+
 # Flat list retained for anything iterating the whole catalog
 # (thumbnail checks etc.).
 STARTER_MENU_ENTRIES = [entry for _sec, entries in STARTER_SECTIONS

@@ -1708,6 +1708,16 @@ class Closets_Scene_Props(PropertyGroup):
                         cell.template_icon(icon_value=icon_id, scale=4.0)
                 op = cell.operator('hb_closets.place_starter', text=label)
                 op.starter_name = name
+        for sec_label, entries in starter_presets.PART_SECTIONS:
+            row = layout.row(align=True)
+            row.label(text=sec_label)
+            for name, label, _desc, op_id in entries:
+                cell = row.column(align=True)
+                if self.library_view_mode == 'THUMBNAIL':
+                    icon_id = load_starter_thumbnail(name)
+                    if icon_id:
+                        cell.template_icon(icon_value=icon_id, scale=4.0)
+                cell.operator(op_id, text=label)
 
     # =====================================================================
     # UI: materials (Options tab)

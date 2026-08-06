@@ -72,22 +72,11 @@ PART_ROLE_FIXED_SHELF = 'CLOSET_FIXED_SHELF'
 PART_ROLE_ADJ_SHELF = 'CLOSET_ADJ_SHELF'
 PART_ROLE_ROD = 'CLOSET_ROD'
 # The part the library does not name: a nailer, a valance, a strip of
-# filler. Nothing sizes it and nothing moves it - the person says how
-# big it is, where it stands and which way it faces, and all a recalc
-# does is put it back there. It carries its own figures:
-#   hb_misc_x       across the opening, from its left
-#   hb_misc_y       out from the wall side of the opening
-#   hb_misc_length / hb_misc_width / hb_misc_thickness
-#   hb_misc_rot     the three rotations, in radians
-# Its height rides on 'hb_z_offset' like every other loose part, so a
-# shelf put in underneath carries it along with the segment it is in.
+# filler. It is dropped on its own rather than built into a run, so
+# nothing sizes it and nothing moves it. Its size sits on its own
+# geometry inputs and its place sits on its own transform, and it
+# keeps both until the person changes them.
 PART_ROLE_MISC = 'CLOSET_MISC_PART'
-PROP_MISC_X = 'hb_misc_x'
-PROP_MISC_Y = 'hb_misc_y'
-PROP_MISC_LENGTH = 'hb_misc_length'
-PROP_MISC_WIDTH = 'hb_misc_width'
-PROP_MISC_THICKNESS = 'hb_misc_thickness'
-PROP_MISC_ROT = 'hb_misc_rot'
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -557,53 +546,23 @@ def add_rod(opening_obj, z_offset):
     return rod.obj
 
 
-def add_misc_part(opening_obj, x_offset, y_offset, z_offset,
-                  length, width, thickness):
-    """Create a part in an opening that nothing sizes for the person.
+def add_misc_part(name='Misc Part'):
+    """Create a part the library does not size and does not place.
 
-    Off Wall is measured from the wall side of the opening, so the
-    number reads the same on either side of a double island.
+    It stands on its own rather than inside an opening, so no recalc
+    ever reaches it: it is the size it was cut and it stays where it
+    was put until the person moves it. Starts at the size most of
+    them want to be, which the person then changes.
     """
     part = CabinetPart()
-    part.create('Misc Part')
-    part.obj.parent = opening_obj
+    part.create(name)
     part.obj['hb_part_role'] = PART_ROLE_MISC
-    part.obj['hb_z_offset'] = float(z_offset)
-    part.obj['hb_anchor_top'] = 0
-    part.obj[PROP_MISC_X] = float(x_offset)
-    part.obj[PROP_MISC_Y] = float(y_offset)
-    part.obj[PROP_MISC_LENGTH] = float(length)
-    part.obj[PROP_MISC_WIDTH] = float(width)
-    part.obj[PROP_MISC_THICKNESS] = float(thickness)
-    part.obj[PROP_MISC_ROT] = (0.0, 0.0, 0.0)
     part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    part.set_input('Length', inch(30))
+    part.set_input('Width', inch(18))
+    part.set_input('Thickness', inch(0.75))
     part.set_input('Mirror Y', True)
     return part.obj
-
-
-def _serialize_misc(obj):
-    """One misc part as a flat list of numbers, so a copied opening
-    carries it at the size it was cut and the place it was put."""
-    rot = obj.get(PROP_MISC_ROT, (0.0, 0.0, 0.0))
-    return [float(obj.get('hb_z_offset', 0.0)),
-            float(obj.get(PROP_MISC_X, 0.0)),
-            float(obj.get(PROP_MISC_Y, 0.0)),
-            float(obj.get(PROP_MISC_LENGTH, 0.0)),
-            float(obj.get(PROP_MISC_WIDTH, 0.0)),
-            float(obj.get(PROP_MISC_THICKNESS, 0.0)),
-            float(rot[0]), float(rot[1]), float(rot[2])]
-
-
-def _apply_misc(opening, row):
-    """Put a serialized misc part back on an opening."""
-    if len(row) < 6:
-        return None
-    obj = add_misc_part(opening, row[1], row[2], row[0],
-                        row[3], row[4], row[5])
-    if len(row) >= 9:
-        obj[PROP_MISC_ROT] = (float(row[6]), float(row[7]),
-                              float(row[8]))
-    return obj
 
 
 def add_division(opening_obj, x_offset):
@@ -1556,29 +1515,6 @@ class ClosetStarter(GeoNodeCage):
                         child, rod_len, allow=not op.remove_hangers)
                 except Exception:
                     pass
-            elif role == PART_ROLE_MISC:
-                # Nothing sizes a misc part. It is the size it was told
-                # to be and it stands where it was put; all a recalc
-                # does is put it back. Off Wall is measured from the
-                # wall side of the opening whichever way the opening
-                # faces, so the number reads the same on either side
-                # of a double island.
-                y_off = float(child.get(PROP_MISC_Y, 0.0))
-                child.location = (
-                    float(child.get(PROP_MISC_X, 0.0)),
-                    -depth + y_off if side == 'BACK' else -y_off,
-                    float(child.get('hb_z_offset', 0.0)))
-                rot = child.get(PROP_MISC_ROT, (0.0, 0.0, 0.0))
-                child.rotation_euler = (float(rot[0]), float(rot[1]),
-                                        float(rot[2]))
-                part = GeoNodeCutpart(child)
-                part.set_input(
-                    'Length', float(child.get(PROP_MISC_LENGTH, width)))
-                part.set_input(
-                    'Width', float(child.get(PROP_MISC_WIDTH, depth)))
-                part.set_input(
-                    'Thickness',
-                    float(child.get(PROP_MISC_THICKNESS, st)))
             elif role is not None:
                 groups.setdefault(role, []).append(child)
 
@@ -4235,8 +4171,7 @@ def clear_opening_contents(opening):
     opening.hb_closet_opening.clear_contents()
     for child in list(opening.children):
         if child.get('hb_part_role') in (PART_ROLE_ROD,
-                                         PART_ROLE_FIXED_SHELF,
-                                         PART_ROLE_MISC):
+                                         PART_ROLE_FIXED_SHELF):
             _remove_part_tree(child)  # rods carry hanger children
 
 
@@ -4353,8 +4288,6 @@ def serialize_opening(opening):
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
-        'misc': [_serialize_misc(c) for c in opening.children
-                 if c.get('hb_part_role') == PART_ROLE_MISC],
     }
 
 
@@ -4461,8 +4394,6 @@ def apply_opening_data(opening, data, recalc=True):
         data.get('open_drawer', 0.0))
     for z in data.get('rods', ()):
         add_rod(opening, z)
-    for row in data.get('misc', ()):
-        _apply_misc(opening, row)
     if recalc and root is not None:
         recalculate_closet_starter(root)
 

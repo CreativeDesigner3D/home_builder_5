@@ -65,9 +65,6 @@ class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
         op = layout.operator("hb_closets.add_part",
                              text="Add Closet Rod", icon='MOD_CLOTH')
         op.part_type = 'ROD'
-        op = layout.operator("hb_closets.add_part",
-                             text="Add Misc Part", icon='MESH_PLANE')
-        op.part_type = 'MISC'
         layout.separator()
         layout.menu("HOME_BUILDER_MT_closet_change_bay",
                     text="Bay Configuration", icon='PRESET')
@@ -108,9 +105,6 @@ def _draw_add_part_entries(layout):
     op = layout.operator("hb_closets.add_part",
                          text="Add Closet Rod", icon='MOD_CLOTH')
     op.part_type = 'ROD'
-    op = layout.operator("hb_closets.add_part",
-                         text="Add Misc Part", icon='MESH_PLANE')
-    op.part_type = 'MISC'
     layout.operator("hb_closets.add_adj_shelves",
                     text="Adjustable Shelves...", icon='ALIGN_JUSTIFY')
     layout.operator("hb_closets.divide_opening",

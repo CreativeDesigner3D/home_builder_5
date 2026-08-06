@@ -487,10 +487,40 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     return True
 
 
+def apply_to_part(obj, carcass_name=None):
+    """Assign the closet material and its edgebanding to one loose part
+    standing outside a starter, so a part dropped on its own reads the
+    same as the run beside it. Returns True when it took.
+    """
+    from ... import hb_types
+    props = bpy.context.scene.hb_closets
+    if carcass_name is None:
+        carcass_name = getattr(props, 'closet_material', DEFAULT_MATERIAL)
+    carcass = load_material(carcass_name)
+    if carcass is None:
+        return False
+    edge = rotated_variant(
+        _resolve_edge_base('closet_edge_material', carcass))
+    try:
+        part = hb_types.GeoNodeCutpart(obj)
+        part.set_input('Top Surface', carcass)
+        part.set_input('Bottom Surface', carcass)
+        part.set_input('Edge W1', edge)
+        part.set_input('Edge W2', edge)
+        part.set_input('Edge L1', edge)
+        part.set_input('Edge L2', edge)
+    except Exception:
+        return False
+    return True
+
+
 def update_room(self=None, context=None):
-    """Dropdown update callback: re-apply to every starter in the scene."""
+    """Dropdown update callback: re-apply to every starter in the
+    scene, and to any loose part standing on its own outside one."""
     scene = getattr(context, 'scene', None) or bpy.context.scene
     from . import types_closets
     for obj in scene.objects:
         if obj.get(types_closets.TAG_STARTER_CAGE):
             apply_to_starter(obj)
+        elif obj.get('hb_part_role') == types_closets.PART_ROLE_MISC:
+            apply_to_part(obj)

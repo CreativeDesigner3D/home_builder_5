@@ -1597,9 +1597,7 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     part_type: bpy.props.EnumProperty(
         name="Part Type",
         items=[('FIXED_SHELF', "Fixed Shelf", "Fixed shelf at a set height"),
-               ('ROD', "Closet Rod", "Closet rod at a set height"),
-               ('MISC', "Misc Part", "A part you size and place "
-                                     "yourself")],
+               ('ROD', "Closet Rod", "Closet rod at a set height")],
         default='FIXED_SHELF')  # type: ignore
 
     _preview = None
@@ -1609,15 +1607,6 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         from .. import const_closets as const
         if self.part_type == 'ROD':
             obj = types_closets.add_rod(opening, const.ROD_TOP_OFFSET)
-        elif self.part_type == 'MISC':
-            # It starts out the size of the opening it is put in,
-            # which is the size most of them want to be, and from
-            # there the person sizes it to whatever they are after.
-            cage = hb_types.GeoNodeCage(opening)
-            obj = types_closets.add_misc_part(
-                opening, 0.0, 0.0, 0.0,
-                cage.get_input('Dim X'), cage.get_input('Dim Y'),
-                types_closets.run_sizes(opening).shelf_thickness)
         else:
             obj = types_closets.add_fixed_shelf(opening, 0.0)
         # Previews are invisible to the split reconciler; the flag comes
@@ -1717,12 +1706,7 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         # the segment offset before snapping and remove it after -
         # holes stay aligned across split segments.
         seg_bottom = opening.get('hb_seg_bottom', 0.0)
-        if self.part_type == 'MISC':
-            # A misc part is not a system part, so it does not land on
-            # the system holes - it stands where it is put.
-            z = local_z
-        else:
-            z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
+        z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
         z = max(0.0, min(z, interior_h))
         if self.part_type == 'ROD':
             # Stored as distance from the opening top (rods ride the top).
@@ -1769,8 +1753,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self.add_placement_dim_handler(context)
-        label = {'FIXED_SHELF': "fixed shelf",
-                 'ROD': "closet rod"}.get(self.part_type, "misc part")
+        label = ("closet rod" if self.part_type == 'ROD'
+                 else "fixed shelf")
         hb_placement.draw_header_text(
             context,
             f"Add {label}: hover an opening, click to place "
@@ -3324,6 +3308,113 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_place_misc_part(bpy.types.Operator,
+                                    hb_placement.PlacementMixin):
+    """Place a misc part. It follows the cursor and takes the wall it
+    is over as its parent, otherwise it stands free on the floor grid.
+    Click places, Right-click or Esc cancels. Nothing about it is
+    worked out: drop it, then size it with Part Properties on its own
+    right-click menu."""
+    bl_idname = "hb_closets.place_misc_part"
+    bl_label = "Place Misc Part"
+    bl_options = {'UNDO'}
+
+    _part_obj = None
+
+    def invoke(self, context, event):
+        self._part_obj = types_closets.add_misc_part()
+        try:
+            materials_closets.apply_to_part(self._part_obj)
+        except Exception:
+            pass
+        cursor = context.scene.cursor.location
+        self._part_obj.location = (cursor.x, cursor.y, 0.0)
+        self.init_placement(context)
+        if self.region is None:
+            self._delete_part()
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self.register_placement_object(self._part_obj)
+        hb_placement.draw_header_text(
+            context,
+            "Place misc part: move to position, click to place, "
+            "Right-click/Esc to cancel")
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _delete_part(self):
+        if self._part_obj is not None:
+            try:
+                types_closets._remove_part_tree(self._part_obj)
+            except ReferenceError:
+                pass
+        self._part_obj = None
+
+    def _position_from_hit(self, context):
+        """A wall under the cursor takes the part as a child, squared
+        up to that wall; off a wall the part stands free on the grid."""
+        obj = self._part_obj
+        if self.hit_location is None:
+            return
+        wall = _detect_wall(self, context)
+        if wall is not None:
+            if obj.parent is not wall:
+                obj.parent = wall
+                obj.matrix_parent_inverse.identity()
+            obj.rotation_euler = (0.0, 0.0, 0.0)
+            obj.location = (wall.matrix_world.inverted()
+                            @ Vector(self.hit_location))
+            return
+        if obj.parent is not None:
+            obj.parent = None
+            obj.matrix_parent_inverse.identity()
+        obj.rotation_euler = (0.0, 0.0, 0.0)
+        obj.location = hb_snap.snap_vector_to_grid(
+            Vector(self.hit_location))
+
+    def _end(self, context):
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def modal(self, context, event):
+        if self._part_obj is None:
+            return {'CANCELLED'}
+        if context.area is not None:
+            context.area.tag_redraw()
+
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type == 'MOUSEMOVE':
+            obj = self._part_obj
+            obj.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                obj.hide_set(False)
+            self._position_from_hit(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._delete_part()
+            self._end(context)
+            return {'CANCELLED'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            obj = self._part_obj
+            self._part_obj = None
+            for other in context.selected_objects:
+                other.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            self._end(context)
+            self.report({'INFO'}, "Placed misc part")
+            return {'FINISHED'}
+
+        return {'RUNNING_MODAL'}
+
+
 class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
     """Size and place the active misc part. Nothing about a misc part
     is worked out for the person: the numbers here are the part."""
@@ -3345,18 +3436,16 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         unit='LENGTH', precision=4)  # type: ignore
     loc_x: bpy.props.FloatProperty(
         name="Horizontal",
-        description="How far across the opening the part stands, "
-                    "measured from its left",
+        description="How far along the wall the part stands, or east "
+                    "of the origin when it stands off a wall",
         unit='LENGTH', precision=4)  # type: ignore
     loc_y: bpy.props.FloatProperty(
         name="Off Wall",
-        description="How far out from the wall side of the opening "
-                    "the part stands",
+        description="How far out from the wall the part stands",
         unit='LENGTH', precision=4)  # type: ignore
     loc_z: bpy.props.FloatProperty(
         name="Vertical",
-        description="How far above the bottom of the opening the "
-                    "part stands",
+        description="How far off the floor the part stands",
         unit='LENGTH', precision=4)  # type: ignore
     rot_x: bpy.props.FloatProperty(
         name="X", unit='ROTATION', precision=4)  # type: ignore
@@ -3373,18 +3462,22 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
 
     def invoke(self, context, event):
         obj = context.active_object
-        tcm = types_closets
         self.part_name = obj.name
-        self.length = float(obj.get(tcm.PROP_MISC_LENGTH, 0.0))
-        self.width = float(obj.get(tcm.PROP_MISC_WIDTH, 0.0))
-        self.thickness = float(obj.get(tcm.PROP_MISC_THICKNESS, 0.0))
-        self.loc_x = float(obj.get(tcm.PROP_MISC_X, 0.0))
-        self.loc_y = float(obj.get(tcm.PROP_MISC_Y, 0.0))
-        self.loc_z = float(obj.get('hb_z_offset', 0.0))
-        rot = obj.get(tcm.PROP_MISC_ROT, (0.0, 0.0, 0.0))
-        self.rot_x = float(rot[0])
-        self.rot_y = float(rot[1])
-        self.rot_z = float(rot[2])
+        try:
+            part = hb_types.GeoNodeCutpart(obj)
+            self.length = float(part.get_input('Length'))
+            self.width = float(part.get_input('Width'))
+            self.thickness = float(part.get_input('Thickness'))
+        except Exception:
+            self.length = 0.0
+            self.width = 0.0
+            self.thickness = 0.0
+        self.loc_x = float(obj.location.x)
+        self.loc_y = float(obj.location.y)
+        self.loc_z = float(obj.location.z)
+        self.rot_x = float(obj.rotation_euler.x)
+        self.rot_y = float(obj.rotation_euler.y)
+        self.rot_z = float(obj.rotation_euler.z)
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
@@ -3414,22 +3507,19 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         obj = context.active_object
         if obj is None:
             return {'CANCELLED'}
-        tcm = types_closets
         if self.part_name:
             obj.name = self.part_name
-        obj[tcm.PROP_MISC_LENGTH] = float(self.length)
-        obj[tcm.PROP_MISC_WIDTH] = float(self.width)
-        obj[tcm.PROP_MISC_THICKNESS] = float(self.thickness)
-        obj[tcm.PROP_MISC_X] = float(self.loc_x)
-        obj[tcm.PROP_MISC_Y] = float(self.loc_y)
-        obj['hb_z_offset'] = float(self.loc_z)
-        obj[tcm.PROP_MISC_ROT] = (float(self.rot_x), float(self.rot_y),
-                                  float(self.rot_z))
-        root = types_closets.find_starter_root(obj)
-        if root is not None:
-            types_closets.recalculate_closet_starter(root)
-            _apply_finish(root)
-            _apply_selection_shading(context, root)
+        try:
+            part = hb_types.GeoNodeCutpart(obj)
+            part.set_input('Length', float(self.length))
+            part.set_input('Width', float(self.width))
+            part.set_input('Thickness', float(self.thickness))
+        except Exception:
+            pass
+        obj.location = (float(self.loc_x), float(self.loc_y),
+                        float(self.loc_z))
+        obj.rotation_euler = (float(self.rot_x), float(self.rot_y),
+                              float(self.rot_z))
         return {'FINISHED'}
 
 
@@ -5328,6 +5418,7 @@ classes = (
     hb_closets_OT_insert_bay,
     hb_closets_OT_delete_bay,
     hb_closets_OT_add_part,
+    hb_closets_OT_place_misc_part,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,
