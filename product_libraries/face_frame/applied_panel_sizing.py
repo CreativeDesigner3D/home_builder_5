@@ -114,9 +114,11 @@ def _match_5_piece_door(cab, door_style, side):
     rail in panel-only form. Same logic for the bottom rail, plus
     the toe-kick band for Base/Tall.
 
-    Stiles: sourced from the cabinet face frame (not the door) since
-    what's visible at a corner is the face frame edge plus the panel
-    behind it. See _stile_widths for the per-side mapping.
+    Stiles: the panel reads as a door leaf on the cabinet side, so
+    both stiles take the DOOR style's stile width -- a 2.5" door
+    stile yields 2.5" panel stiles. (Cabinet face-frame stiles vary
+    per side -- wall / end / refrigerator stiles -- and matching them
+    made the paneled end read wider than the doors next to it.)
     """
     rail = door_style.rail_width
     top_rail = cab.top_rail_width - cab.default_top_overlay + rail
@@ -124,12 +126,12 @@ def _match_5_piece_door(cab, door_style, side):
         cab.bottom_rail_width - cab.default_bottom_overlay
         + rail + _toe_kick_band(cab)
     )
-    left_stile, right_stile = _stile_widths(cab, side)
+    stile = door_style.stile_width
     return {
         'top_rail_width':    top_rail,
         'bottom_rail_width': bottom_rail,
-        'left_stile_width':  left_stile,
-        'right_stile_width': right_stile,
+        'left_stile_width':  stile,
+        'right_stile_width': stile,
     }
 
 
