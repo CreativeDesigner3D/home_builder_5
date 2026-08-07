@@ -3546,13 +3546,20 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         items = acc_def.band_items() if acc_def is not None else []
         return items or [('NONE', "As It Comes", "")]
 
+    def _panel_items(self, context):
+        from .. import accessories_closets as acc
+        return list(acc.PANEL_LOCATIONS)
+
     accessory: bpy.props.EnumProperty(
         name="Accessory", items=_items,
         description="What to hang in this opening")  # type: ignore
     model: bpy.props.EnumProperty(
         name="Width", items=_width_items,
-        description="Which width to buy. These are not cut to fit, so "
-                    "one wider than the opening is a warning")
+        description="Which one to buy. These are not cut to fit, so "
+                    "one bigger than the opening is a warning")
+    panel_location: bpy.props.EnumProperty(
+        name="Mounts On", items=_panel_items,
+        description="Which panel face it screws to")
     location: bpy.props.FloatProperty(
         name="Height Off Opening Floor", min=0.0,
         description="How far up the opening the accessory sits. Zero "
@@ -3576,6 +3583,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         col.prop(self, 'accessory')
         if acc_def is not None and acc_def.bands:
             col.prop(self, 'model')
+        if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+            col.prop(self, 'panel_location')
         col.prop(self, 'location')
         if acc_def is not None and acc_def.description:
             box = layout.box()
@@ -3588,6 +3597,7 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
                            "will not draw.")
 
     def execute(self, context):
+        from .. import accessories_closets as acc
         opening = types_closets.find_opening_cage(context.active_object)
         if opening is None or self.accessory == 'NONE':
             return {'CANCELLED'}
@@ -3599,6 +3609,10 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             cage[types_closets.PROP_ACCESSORY_Z] = float(self.location)
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+            acc_def = acc.get(self.accessory)
+            if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+                cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
+                    self.panel_location)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
@@ -3629,6 +3643,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         items = acc_def.band_items() if acc_def is not None else []
         return items or [('NONE', "As It Comes", "")]
 
+    def _panel_items(self, context):
+        from .. import accessories_closets as acc
+        return list(acc.PANEL_LOCATIONS)
+
     def _fabric_items(self, context):
         from .. import accessories_closets as acc
         obj = context.active_object
@@ -3640,6 +3658,8 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     model: bpy.props.EnumProperty(
         name="Width", items=_width_items)  # type: ignore
+    panel_location: bpy.props.EnumProperty(
+        name="Mounts On", items=_panel_items)  # type: ignore
     color: bpy.props.EnumProperty(
         name="Finish", items=_color_items)  # type: ignore
     fabric: bpy.props.EnumProperty(
@@ -3660,6 +3680,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         if stored:
             try:
                 self.model = stored
+            except TypeError:
+                pass
+        stored = obj.get(types_closets.PROP_ACCESSORY_PANEL_LOC, '')
+        if stored:
+            try:
+                self.panel_location = stored
             except TypeError:
                 pass
         stored = obj.get(types_closets.PROP_ACCESSORY_COLOR, '')
@@ -3687,6 +3713,8 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         col = layout.column(align=True)
         if acc_def is not None and acc_def.bands:
             col.prop(self, 'model')
+        if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+            col.prop(self, 'panel_location')
         if acc_def is not None and acc_def.colors:
             col.prop(self, 'color')
         if acc_def is not None and acc_def.fabrics:
@@ -3698,13 +3726,18 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             box.label(text=warning, icon='ERROR')
 
     def execute(self, context):
+        from .. import accessories_closets as acc
         obj = context.active_object
         if obj is None:
             return {'CANCELLED'}
+        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
         root = types_closets.find_starter_root(obj)
         with types_closets.suspend_recalc():
             if self.model != 'NONE':
                 obj[types_closets.PROP_ACCESSORY_MODEL] = self.model
+            if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+                obj[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
+                    self.panel_location)
             if self.color != 'NONE':
                 obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
             if self.fabric != 'NONE':

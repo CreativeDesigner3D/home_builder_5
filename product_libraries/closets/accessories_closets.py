@@ -92,6 +92,13 @@ COLORS_LIFT = ('Black', 'Chrome')
 FABRICS_PULLOUT = ('Fabric Beach', 'Fabric Slate')
 FABRICS_HAMPER = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
+COLORS_RACK = ('Black', 'Chrome', 'Matte Aluminum', 'Slate',
+               'Matte Nickel', 'Matte Gold')
+COLORS_SCARF = ('Black', 'Chrome', 'Slate', 'Matte Aluminum',
+                'Matte Nickel', 'Matte Gold')
+COLORS_MIRROR = ('Black', 'Slate', 'Matte Aluminum',
+                 'Matte Nickel', 'Matte Gold')
+
 # An accessory model is drawn with its origin on its front face and
 # its depth running back down +Y. This library runs the same way -
 # back to front is +Y here too - so a model needs no turning, only
@@ -103,6 +110,33 @@ MODEL_DEPTH_RUNS_BACK = True
 FAMILY_OPENING = 'OPENING'
 FAMILY_PANEL = 'PANEL'
 FAMILY_INSERT = 'INSERT'
+
+# A panel accessory screws to the face of a panel, and there are four
+# faces going: the two sides of the panel at each end of the opening.
+# Inside faces look into the opening, outside faces look away from it.
+PANEL_OUTSIDE_LEFT = 'OUTSIDE_LEFT'
+PANEL_INSIDE_LEFT = 'INSIDE_LEFT'
+PANEL_INSIDE_RIGHT = 'INSIDE_RIGHT'
+PANEL_OUTSIDE_RIGHT = 'OUTSIDE_RIGHT'
+
+PANEL_LOCATIONS = (
+    (PANEL_OUTSIDE_LEFT, "Outside Left", "On the far face of the left "
+                                         "panel, facing away"),
+    (PANEL_INSIDE_LEFT, "Inside Left", "On the left panel, facing "
+                                       "into the opening"),
+    (PANEL_INSIDE_RIGHT, "Inside Right", "On the right panel, facing "
+                                         "into the opening"),
+    (PANEL_OUTSIDE_RIGHT, "Outside Right", "On the far face of the "
+                                           "right panel, facing away"),
+)
+PANEL_LOCATION_KEYS = tuple(p[0] for p in PANEL_LOCATIONS)
+PANEL_DEFAULT_LOCATION = PANEL_INSIDE_LEFT
+
+# Which figure a width band is measuring. A pull-out is bought by how
+# wide it is; a rack on a panel is bought by how far it reaches back.
+BAND_BY_WIDTH = 'WIDTH'
+BAND_BY_DEPTH = 'DEPTH'
+BAND_BY_STYLE = 'STYLE'
 
 FAMILY_LABELS = {
     FAMILY_OPENING: "Opening",
@@ -272,21 +306,24 @@ class AccessoryDef:
                 entries that do nothing.
     """
 
-    __slots__ = ('key', 'label', 'family', 'model', 'bands', 'width',
+    __slots__ = ('key', 'label', 'family', 'model', 'bands',
+                 'band_axis', 'width',
                  'height', 'depth', 'space_above', 'space_below',
                  'model_drop', 'stretch', 'model_y', 'model_z',
                  'colors', 'fabrics', 'ready', 'description')
 
     def __init__(self, key, label, family, model='', bands=(),
-                 width=0.0, height=0.0, depth=0.0, space_above=0.0,
-                 space_below=0.0, model_drop=0.0, stretch=False,
-                 model_y=0.0, model_z=0.0, colors=(), fabrics=(),
-                 ready=False, description=""):
+                 band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
+                 depth=0.0, space_above=0.0, space_below=0.0,
+                 model_drop=0.0, stretch=False, model_y=0.0,
+                 model_z=0.0, colors=(), fabrics=(), ready=False,
+                 description=""):
         self.key = key
         self.label = label
         self.family = family
         self.model = model
         self.bands = tuple(bands)
+        self.band_axis = band_axis
         self.width = width
         self.height = height
         self.depth = depth
@@ -326,8 +363,25 @@ class AccessoryDef:
 
     def band_items(self):
         """(filename, label, description) tuples for a dropdown."""
-        return [(b[2], b[0], "%s wide" % _in_label(b[1]))
+        if self.band_axis == BAND_BY_STYLE:
+            return [(b[2], b[0], "") for b in self.bands]
+        word = ("deep" if self.band_axis == BAND_BY_DEPTH else "wide")
+        return [(b[2], b[0], "%s %s" % (_in_label(b[1]), word))
                 for b in self.bands]
+
+    def band_width(self, band):
+        """How wide the chosen band is, or 0 when its bands are not
+        measuring width."""
+        if band is None or self.band_axis != BAND_BY_WIDTH:
+            return self.width
+        return band[1]
+
+    def band_depth(self, band):
+        """How deep the chosen band is, falling back to the depth the
+        catalog gives the accessory."""
+        if band is None or self.band_axis != BAND_BY_DEPTH:
+            return self.depth
+        return band[1]
 
 
 def _inch(value):
@@ -473,60 +527,92 @@ CATALOG = (
         colors=COLORS_LIFT,
         description="Pull-down hanging rod for a high opening"),
     # --- panel accessories ---------------------------------------
+    # These screw to the face of a panel rather than sitting in the
+    # opening. The person says which of the four faces; the accessory
+    # is mirrored so it always points the way it should. A rack is
+    # bought by how far back it reaches, so its bands measure depth.
     AccessoryDef(
         'BELT_RACK', "Belt Rack", FAMILY_PANEL,
-        model='Belt Rack.blend',
-        width=_inch(2.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('12" Deep', _inch(12.0), 'Rack Belt 12.blend'),
+               ('14" Deep', _inch(14.0), 'Rack Belt 14.blend'),
+               ('18" Deep', _inch(18.0), 'Rack Belt 18.blend')),
+        band_axis=BAND_BY_DEPTH,
+        colors=COLORS_RACK, ready=True,
         description="Sliding belt rack on a panel face"),
     AccessoryDef(
         'TIE_RACK', "Tie Rack", FAMILY_PANEL,
-        model='Tie Rack.blend',
-        width=_inch(2.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('12" Deep', _inch(12.0), 'Rack Tie 12.blend'),
+               ('14" Deep', _inch(14.0), 'Rack Tie 14.blend'),
+               ('18" Deep', _inch(18.0), 'Rack Tie 18.blend')),
+        band_axis=BAND_BY_DEPTH,
+        colors=COLORS_RACK, ready=True,
         description="Sliding tie rack on a panel face"),
     AccessoryDef(
         'SCARF_RACK', "Scarf Rack", FAMILY_PANEL,
-        model='Scarf Rack.blend',
-        width=_inch(2.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('12" Deep', _inch(12.0), 'Rack Scarf 12.blend'),
+               ('14" Deep', _inch(14.0), 'Rack Scarf 14.blend'),
+               ('18" Deep', _inch(18.0), 'Rack Scarf 18.blend')),
+        band_axis=BAND_BY_DEPTH,
+        colors=COLORS_SCARF, ready=True,
         description="Sliding scarf rack on a panel face"),
     AccessoryDef(
         'VALET_ROD', "Valet Rod", FAMILY_PANEL,
-        model='Valet Rod.blend',
-        width=_inch(2.0), depth=_inch(14.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('12" Deep', _inch(12.0), 'Rack Valet 12.blend'),
+               ('14" Deep', _inch(14.0), 'Rack Valet 14.blend')),
+        band_axis=BAND_BY_DEPTH,
+        colors=COLORS_SCARF, ready=True,
         description="Pull-out rod for laying out an outfit"),
     AccessoryDef(
         'VALET_PIN', "Valet Pin", FAMILY_PANEL,
         model='Valet Pin.blend',
-        width=_inch(1.0), depth=_inch(3.0),
-        colors=ACCESSORY_COLORS,
+        depth=_inch(0.35),
+        colors=COLORS_SCARF, ready=True,
         description="Single hanging pin on a panel face"),
     AccessoryDef(
         'HOOKS', "Hooks", FAMILY_PANEL,
-        model='Hooks.blend',
-        width=_inch(2.0), depth=_inch(3.0),
-        colors=ACCESSORY_COLORS,
-        description="Row of hooks on a panel face"),
-    AccessoryDef(
-        'CLEAT_HOOKS', "Cleat Hooks", FAMILY_PANEL,
-        model='Cleat Hooks.blend',
-        width=_inch(2.0), depth=_inch(3.0),
-        colors=ACCESSORY_COLORS,
-        description="Hooks on a mounting cleat"),
+        bands=(('Belt Hook', 0.0, 'Hook Belt.blend'),
+               ('Broom Hook', 0.0, 'Hook Broom.blend'),
+               ('Coat Hook', 0.0, 'Hook Coat.blend'),
+               ('Double Hook', 0.0, 'Hook Double.blend'),
+               ('Tie Hook', 0.0, 'Hook Tie.blend'),
+               ('Waterfall Hook', 0.0, 'Hook Waterfall.blend')),
+        band_axis=BAND_BY_STYLE,
+        depth=_inch(1.8),
+        colors=COLORS_SCARF, ready=True,
+        description="A hook on a panel face, in six patterns"),
     AccessoryDef(
         'IRONING_BOARD', "Ironing Board", FAMILY_PANEL,
-        model='Ironing Board.blend',
-        width=_inch(14.0), depth=_inch(4.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('Deluxe Swivel', 0.0,
+                'Ironing Board Panel Deluxe Swivel.blend'),
+               ('Premier Pop-Up', 0.0,
+                'Ironing Board Panel Premier Pop-Up.blend')),
+        band_axis=BAND_BY_STYLE,
+        depth=_inch(13.8), ready=True,
         description="Fold-down ironing board on a panel face"),
     AccessoryDef(
         'MIRROR', "Mirror", FAMILY_PANEL,
-        model='Mirror.blend',
-        width=_inch(14.0), depth=_inch(1.0),
-        colors=ACCESSORY_COLORS,
+        bands=(('Fixed 35"', 0.0, 'Mirror Fixed 35.blend'),
+               ('Fixed 47"', 0.0, 'Mirror Fixed 47.blend'),
+               ('Full Rotation 35"', 0.0,
+                'Mirror Full Rotation 35.blend'),
+               ('Full Rotation 47"', 0.0,
+                'Mirror Full Rotation 47.blend')),
+        band_axis=BAND_BY_STYLE,
+        depth=_inch(13.4),
+        colors=COLORS_MIRROR, ready=True,
         description="Mirror mounted on a panel face"),
+    AccessoryDef(
+        'CLEAT_HOOKS', "Cleat Hooks", FAMILY_PANEL,
+        bands=(('Belt Hook', 0.0, 'Hook Belt.blend'),
+               ('Broom Hook', 0.0, 'Hook Broom.blend'),
+               ('Coat Hook', 0.0, 'Hook Coat.blend'),
+               ('Double Hook', 0.0, 'Hook Double.blend'),
+               ('Tie Hook', 0.0, 'Hook Tie.blend'),
+               ('Waterfall Hook', 0.0, 'Hook Waterfall.blend')),
+        band_axis=BAND_BY_STYLE,
+        depth=_inch(1.8),
+        colors=COLORS_SCARF,
+        description="Hooks on a mounting cleat cut for the opening"),
     # --- insert accessories --------------------------------------
     AccessoryDef(
         'IRONING_BOARD_DRAWER', "Ironing Board Drawer", FAMILY_INSERT,

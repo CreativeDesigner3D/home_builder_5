@@ -462,3 +462,7 @@ IRONING_BOARD_PLATFORM_THICKNESS = inch(0.75)
 # Clear height of the compartment the board lives in, measured from the
 # opening floor to the underside of the shelf that caps it.
 IRONING_BOARD_OPENING_HEIGHT = inch(5.0)
+
+# How tall an accessory that hangs off a panel face draws its cage.
+# It is a handle to take hold of, not a claim on the opening.
+ACCESSORY_PANEL_CAGE_H = inch(2.0)

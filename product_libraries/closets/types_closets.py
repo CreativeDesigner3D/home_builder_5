@@ -111,6 +111,7 @@ PROP_ACCESSORY_FABRIC = 'hb_accessory_fabric'
 PROP_ACCESSORY_Z = 'hb_accessory_z'
 PROP_ACCESSORY_WARNING = 'hb_accessory_warning'
 PROP_ACCESSORY_MODEL = 'hb_accessory_model'
+PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -2643,8 +2644,8 @@ class ClosetStarter(GeoNodeCage):
                         PART_ROLE_DRAWER_FRONT, side)
                     front['hb_accessory_front'] = 1
 
-    def _warn_accessory_fit(self, cage, acc_def, want_w, width,
-                            depth, interior_h, z):
+    def _warn_accessory_fit(self, cage, acc_def, want_w, want_d,
+                            width, depth, interior_h, z):
         """What is wrong with where this accessory has been put, in the
         words the prior library used. One message, the first thing that
         does not fit, carried on the cage so the overlay and the report
@@ -2654,10 +2655,9 @@ class ClosetStarter(GeoNodeCage):
         if want_w > 0.0 and width + 0.0005 < want_w:
             msg = ("%s needs %s of width; this opening is %s"
                    % (acc_def.label, _in_str(want_w), _in_str(width)))
-        elif acc_def.depth > 0.0 and depth + 0.0005 < acc_def.depth:
+        elif want_d > 0.0 and depth + 0.0005 < want_d:
             msg = ("%s needs %s of depth; this opening is %s"
-                   % (acc_def.label, _in_str(acc_def.depth),
-                      _in_str(depth)))
+                   % (acc_def.label, _in_str(want_d), _in_str(depth)))
         elif need_h > 0.0 and interior_h + 0.0005 < need_h:
             msg = ("%s needs %s of height with its clearances; this "
                    "opening is %s" % (acc_def.label, _in_str(need_h),
@@ -2772,6 +2772,44 @@ class ClosetStarter(GeoNodeCage):
         model.location = (width / 2.0, -cage_d,
                           acc_def.space_below - acc_def.model_drop)
 
+    def _layout_panel_accessory(self, cage, acc_def, band, width,
+                                depth, pt):
+        """Hang one accessory off the face of a panel.
+
+        There are four faces to choose from - either side of the panel
+        at each end of the opening - and the model is drawn to hang
+        off one of them, reaching out in one direction only. Rather
+        than keep four models, the one is mirrored to face the other
+        way, which is what the prior library did.
+
+        Front to back it sits at the front of the opening and reaches
+        back, the way a rack pulls out."""
+        from . import accessories_closets as acc
+        loc = cage.get(PROP_ACCESSORY_PANEL_LOC,
+                       acc.PANEL_DEFAULT_LOCATION)
+        if loc not in acc.PANEL_LOCATION_KEYS:
+            loc = acc.PANEL_DEFAULT_LOCATION
+            cage[PROP_ACCESSORY_PANEL_LOC] = loc
+        # x is the face it screws to; mirrored means it reaches the
+        # other way, so that an inside face always reaches inward and
+        # an outside face always reaches away.
+        if loc == acc.PANEL_OUTSIDE_LEFT:
+            x, mirror = -pt, False
+        elif loc == acc.PANEL_INSIDE_LEFT:
+            x, mirror = 0.0, True
+        elif loc == acc.PANEL_INSIDE_RIGHT:
+            x, mirror = width, False
+        else:
+            x, mirror = width + pt, True
+        model = next(
+            (c for c in cage.children
+             if c.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL),
+            None)
+        if model is not None:
+            model.location = (x, -depth, 0.0)
+            model.scale.x = -1.0 if mirror else 1.0
+        return x, mirror
+
     def _layout_accessories(self, opening, width, depth, interior_h,
                             side, front_y, lo, ro, to, bo,
                             scene_props):
@@ -2802,9 +2840,22 @@ class ClosetStarter(GeoNodeCage):
             else:
                 cage.location = (0.0, 0.0, z)
             band = accessory_band(cage, acc_def, width)
-            want_w = band[1] if band else acc_def.width
+            want_w = acc_def.band_width(band)
+            want_d = acc_def.band_depth(band)
             geo = GeoNodeCage(cage)
-            if acc_def.family == acc.FAMILY_OPENING:
+            if acc_def.family == acc.FAMILY_PANEL:
+                # It hangs off a panel, so it claims that panel's
+                # thickness across, what it reaches back, and a hand's
+                # height - enough to take hold of, not enough to
+                # pretend it fills the opening.
+                cage.location = (0.0, 0.0, z)
+                geo.set_input('Dim X', scene_props.panel_thickness)
+                geo.set_input('Dim Y', min(want_d or depth, depth))
+                geo.set_input('Dim Z', const.ACCESSORY_PANEL_CAGE_H)
+                self._layout_panel_accessory(
+                    cage, acc_def, band, width, depth,
+                    scene_props.panel_thickness)
+            elif acc_def.family == acc.FAMILY_OPENING:
                 cage_d = min(acc_def.depth or depth, depth)
                 # A pull-out is fitted at the front of the opening and
                 # runs back its own depth, so the cage does the same.
@@ -2831,8 +2882,8 @@ class ClosetStarter(GeoNodeCage):
                          == PART_ROLE_ACCESSORY_MODEL), None)
                     if model is not None:
                         model.location = (0.0, 0.0, 0.0)
-            self._warn_accessory_fit(cage, acc_def, want_w, width,
-                                     depth, interior_h, z)
+            self._warn_accessory_fit(cage, acc_def, want_w, want_d,
+                                     width, depth, interior_h, z)
 
     def _reconcile_captured_back(self, opening):
         """One captured back per opening, carrying a corner relief at
@@ -4630,7 +4681,12 @@ def add_accessory(opening, key):
     cage.obj[PROP_ACCESSORY_Z] = 0.0
     # An accessory sold in widths arrives as the one nearest the
     # opening it was dropped in; the person can change it after.
-    band = acc_def.band_for_width(_cage_dim_x(opening))
+    from . import accessories_closets as acc
+    if acc_def.family == acc.FAMILY_PANEL:
+        cage.obj[PROP_ACCESSORY_PANEL_LOC] = acc.PANEL_DEFAULT_LOCATION
+        band = acc_def.bands[0] if acc_def.bands else None
+    else:
+        band = acc_def.band_for_width(_cage_dim_x(opening))
     if band is not None:
         cage.obj[PROP_ACCESSORY_MODEL] = band[2]
     cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
