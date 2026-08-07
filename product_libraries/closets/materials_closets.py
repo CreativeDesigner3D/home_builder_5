@@ -441,6 +441,10 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        if role == types_closets.PART_ROLE_ACCESSORY_BLOCK:
+            # A stand-in for something missing. It is meant to look
+            # nothing like the room, so it keeps its red.
+            continue
         if role == types_closets.PART_ROLE_ACCESSORY_MODEL:
             # A bought accessory arrives already finished, in whatever
             # it was ordered in. Painting it the closet material would

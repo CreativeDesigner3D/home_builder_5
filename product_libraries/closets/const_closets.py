@@ -466,3 +466,9 @@ IRONING_BOARD_OPENING_HEIGHT = inch(5.0)
 # How tall an accessory that hangs off a panel face draws its cage.
 # It is a handle to take hold of, not a claim on the opening.
 ACCESSORY_PANEL_CAGE_H = inch(2.0)
+
+# An accessory with no model to show is drawn as a block of the space
+# it claims, in a red nothing else in the room is, so it reads as
+# something missing rather than something built.
+ACCESSORY_PLACEHOLDER_COLOR = (0.8, 0.05, 0.05, 1.0)
+ACCESSORY_PLACEHOLDER_MATERIAL = 'Accessory Placeholder'
