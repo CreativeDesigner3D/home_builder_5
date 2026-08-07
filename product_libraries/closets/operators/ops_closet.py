@@ -3523,6 +3523,28 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Blender keeps pointers to the strings a dynamic enum hands back
+# but does not take ownership of them, so something on this side has
+# to hold them. A callback that builds its list fresh and returns it
+# leaves Blender pointing at freed memory - the dropdown fills with
+# rubbish, or Blender goes down. Everything below answers through here.
+_enum_hold = {}
+
+
+def _held(key, items):
+    """Hand back enum items, keeping a reference to them alive."""
+    _enum_hold[key] = items
+    return items
+
+
+def _accessory_of(obj):
+    """The catalog line for whatever accessory an object is, or None."""
+    from .. import accessories_closets as acc
+    if obj is None:
+        return None
+    return acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
+
+
 class hb_closets_OT_add_accessory(bpy.types.Operator):
     """Hang an accessory in the active opening.
 
@@ -3537,18 +3559,18 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
 
     def _items(self, context):
         from ..accessories_closets import enum_items
-        items = enum_items()
-        return items if items else [('NONE', "None", "")]
+        return _held('add', enum_items() or [('NONE', "None", "")])
 
     def _width_items(self, context):
         from .. import accessories_closets as acc
         acc_def = acc.get(self.accessory)
         items = acc_def.band_items() if acc_def is not None else []
-        return items or [('NONE', "As It Comes", "")]
+        return _held('add_width',
+                     items or [('NONE', "As It Comes", "")])
 
     def _panel_items(self, context):
         from .. import accessories_closets as acc
-        return list(acc.PANEL_LOCATIONS)
+        return _held('add_panel', list(acc.PANEL_LOCATIONS))
 
     accessory: bpy.props.EnumProperty(
         name="Accessory", items=_items,
@@ -3568,8 +3590,20 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return types_closets.find_opening_cage(
-            context.active_object) is not None
+        from .. import accessories_closets as acc
+        if types_closets.find_opening_cage(
+                context.active_object) is None:
+            cls.poll_message_set("Select an opening first")
+            return False
+        if not acc.catalog():
+            # Nothing is offering accessories, so there is nothing to
+            # offer the person. Saying so on the greyed-out entry beats
+            # a dialog with an empty list in it.
+            cls.poll_message_set(
+                "No accessories are available. They are installed "
+                "with the product catalog.")
+            return False
+        return True
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self,
@@ -3589,17 +3623,24 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         if acc_def is not None and acc_def.description:
             box = layout.box()
             box.label(text=acc_def.description, icon='INFO')
-        if not acc.is_host_addon_active():
+        if acc_def is not None and not acc.model_is_installed(
+                acc.accessory_model_path(
+                    self.model if self.model != 'NONE'
+                    else acc_def.model)):
             box = layout.box()
-            box.label(text="Accessory models are not installed.",
+            box.label(text="This one has no model installed.",
                       icon='ERROR')
-            box.label(text="The accessory will hold its space but "
-                           "will not draw.")
+            box.label(text="It will hold its space and measure, "
+                           "and draw as a red block.")
 
     def execute(self, context):
         from .. import accessories_closets as acc
         opening = types_closets.find_opening_cage(context.active_object)
-        if opening is None or self.accessory == 'NONE':
+        if opening is None:
+            return {'CANCELLED'}
+        if self.accessory == 'NONE' or acc.get(self.accessory) is None:
+            self.report({'WARNING'},
+                        "That accessory is no longer offered")
             return {'CANCELLED'}
         root = types_closets.find_starter_root(opening)
         with types_closets.suspend_recalc():
@@ -3627,34 +3668,28 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     bl_options = {'UNDO'}
 
     def _color_items(self, context):
-        from .. import accessories_closets as acc
-        obj = context.active_object
-        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, '')
-                          ) if obj is not None else None
+        acc_def = _accessory_of(context.active_object)
         names = acc_def.colors if acc_def is not None else ()
-        return ([(n, n, "") for n in names]
-                or [('NONE', "As It Comes", "")])
+        return _held('prompt_colour',
+                     [(n, n, "") for n in names]
+                     or [('NONE', "As It Comes", "")])
 
     def _width_items(self, context):
-        from .. import accessories_closets as acc
-        obj = context.active_object
-        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, '')
-                          ) if obj is not None else None
+        acc_def = _accessory_of(context.active_object)
         items = acc_def.band_items() if acc_def is not None else []
-        return items or [('NONE', "As It Comes", "")]
+        return _held('prompt_width',
+                     items or [('NONE', "As It Comes", "")])
 
     def _panel_items(self, context):
         from .. import accessories_closets as acc
-        return list(acc.PANEL_LOCATIONS)
+        return _held('prompt_panel', list(acc.PANEL_LOCATIONS))
 
     def _fabric_items(self, context):
-        from .. import accessories_closets as acc
-        obj = context.active_object
-        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, '')
-                          ) if obj is not None else None
+        acc_def = _accessory_of(context.active_object)
         names = acc_def.fabrics if acc_def is not None else ()
-        return ([(n, n, "") for n in names]
-                or [('NONE', "As It Comes", "")])
+        return _held('prompt_fabric',
+                     [(n, n, "") for n in names]
+                     or [('NONE', "As It Comes", "")])
 
     model: bpy.props.EnumProperty(
         name="Width", items=_width_items)  # type: ignore
@@ -3709,7 +3744,14 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         from .. import accessories_closets as acc
         obj = context.active_object
         layout = self.layout
-        acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
+        acc_def = _accessory_of(obj)
+        if acc_def is None:
+            box = layout.box()
+            box.label(text="This accessory is no longer offered.",
+                      icon='ERROR')
+            box.label(text="It keeps the space it was given until it "
+                           "is deleted.")
+            return
         col = layout.column(align=True)
         if acc_def is not None and acc_def.bands:
             col.prop(self, 'model')
