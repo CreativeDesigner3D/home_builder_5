@@ -4875,6 +4875,14 @@ def clear_height_for(opening, acc_def, wanted, skip=None):
     return wanted
 
 
+def _cage_dim_y(obj):
+    """One cage's depth, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim Y') or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _cage_dim_z(obj):
     """One cage's height, or 0 for anything that is not a cage."""
     try:

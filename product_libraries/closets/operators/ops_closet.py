@@ -24,6 +24,7 @@ from .. import const_closets as const
 from .. import types_closets
 from .. import drawer_boxes_closets
 from .. import materials_closets
+from .. import drop_dims_closets
 
 # Per-opening box-system choices: "Use Default" (defer to the project
 # setting) plus every box system. Held at module scope so the enum
@@ -3781,6 +3782,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                    if self.hit_object is not None else None)
         if opening is None:
             self._drop()
+            drop_dims_closets.hide()
             self._note = "Move over an opening to place the accessory"
             return
         if not self._carry_into(opening):
@@ -3796,6 +3798,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 acc.PANEL_LOCATION_KEYS[self._face])
         if self._root is not None:
             types_closets.recalculate_closet_starter(self._root)
+        self._show_dims(opening, acc_def, z)
         where = types_closets._in_str(z)
         why = ""
         if z <= 1e-6:
@@ -3809,7 +3812,40 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         self._note = "%s at %s off the opening floor%s%s" % (
             acc_def.label, where, why, face)
 
+    def _show_dims(self, opening, acc_def, z):
+        """What the prior library drew while a thing was being
+        dropped: how high off the floor it has landed, how much room
+        is left above it, and how wide it is. Green where it has come
+        up against something instead of landing where it was asked."""
+        cage = self._cage
+        if cage is None:
+            return
+        base = opening.matrix_world.translation
+        interior_h = types_closets._cage_dim_z(opening)
+        width = hb_types.GeoNodeCage(cage).get_input('Dim X') or 0.0
+        top = z + acc_def.reserved_height
+        # Stood a little in front of the opening so the lines are not
+        # buried in the parts.
+        y = base.y - types_closets._cage_dim_y(opening) - units.inch(2)
+        x = base.x
+        entries = [
+            (Vector((x, y, 0.0)), Vector((x, y, base.z + z)),
+             drop_dims_closets.label_for(base.z + z),
+             z <= 1e-6),
+            (Vector((x, y, base.z + top)),
+             Vector((x, y, base.z + interior_h)),
+             drop_dims_closets.label_for(max(interior_h - top, 0.0)),
+             abs(interior_h - top) < 1e-6),
+        ]
+        if width > 0.0:
+            entries.append(
+                (Vector((x, y, base.z + z)),
+                 Vector((x + width, y, base.z + z)),
+                 drop_dims_closets.label_for(width), False))
+        drop_dims_closets.show(entries)
+
     def _end(self, context):
+        drop_dims_closets.hide()
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
 
