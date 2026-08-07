@@ -17,19 +17,23 @@ class Appliance(GeoNodeCage):
     # width override only for these; fixed-size appliances ignore it.
     variable_width = False
     
-    def create_appliance(self, name, appliance_type):
+    def create_appliance(self, name, appliance_type, label=None):
         """Create an appliance with standard setup.
-        
+
         Args:
             name: Display name for the appliance
             appliance_type: Type identifier (RANGE, DISHWASHER, REFRIGERATOR, etc.)
+            label: Annotation text drawn on the cage; defaults to
+                appliance_type. Stored on the root (APPLIANCE_LABEL) so
+                the Set Label command can re-read / rewrite it.
         """
         super().create(name)
         self.obj['IS_APPLIANCE'] = True
         self.obj['APPLIANCE_TYPE'] = appliance_type
+        self.obj['APPLIANCE_LABEL'] = label or appliance_type
         self.obj['MENU_ID'] = 'HOME_BUILDER_MT_appliance_commands'
         self.obj.display_type = 'WIRE'
-        
+
         self.set_input('Dim X', self.width)
         self.set_input('Dim Y', self.depth)
         self.set_input('Dim Z', self.height)
@@ -42,7 +46,8 @@ class Appliance(GeoNodeCage):
         props = bpy.context.scene.home_builder
 
         appliance_text = GeoNodeText()
-        appliance_text.create('Appliance Text', appliance_type, props.annotation_text_size)
+        appliance_text.create('Appliance Text', label or appliance_type,
+                              props.annotation_text_size)
         appliance_text.obj.parent = self.obj
         appliance_text.obj['IS_APPLIANCE_TEXT'] = True
         appliance_text.obj.rotation_euler.x = math.radians(90)
@@ -113,6 +118,23 @@ class Dishwasher(Appliance):
         self.create_appliance(name, 'DISHWASHER')
         
         # Add dishwasher-specific properties
+        self.add_property('Panel Ready', 'CHECKBOX', False)
+
+
+class UnderCounterAppliance(Appliance):
+    """Generic under-counter appliance (beverage center, wine fridge,
+    ice maker, ...). Dishwasher-sized wireframe cage; the annotation
+    label is user-editable via the Set Label command so one product
+    covers the whole category."""
+
+    width = inch(24)
+    height = inch(34)
+    depth = inch(24)
+
+    def create(self, name="Under Counter Appliance"):
+        self.create_appliance(name, 'UNDER_COUNTER', label='BEV CENTER')
+
+        # Paneled like a dishwasher more often than not.
         self.add_property('Panel Ready', 'CHECKBOX', False)
 
 

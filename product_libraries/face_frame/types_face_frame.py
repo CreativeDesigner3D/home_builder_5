@@ -12672,6 +12672,7 @@ APPLIANCE_NAME_DISPATCH = {
     "Range": types_appliances.Range,
     "Range Hood": types_appliances.Hood,
     "Standalone Refrigerator": types_appliances.Refrigerator,
+    "Under Counter Appliance": types_appliances.UnderCounterAppliance,
 }
 
 

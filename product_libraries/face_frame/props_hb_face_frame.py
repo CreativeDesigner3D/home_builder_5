@@ -9040,6 +9040,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ("Hood", "Range Hood"),
             ("Refrigerator", "Standalone Refrigerator"),
         ])
+        # Generic under-counter appliance (beverage center, wine fridge,
+        # ice maker) - relabel it after placing via right-click Set Label.
+        self._draw_catalog_labeled_row(layout, "", [
+            ("Under Counter", "Under Counter Appliance"),
+        ])
 
     # =====================================================================
     # UI: vanities library
