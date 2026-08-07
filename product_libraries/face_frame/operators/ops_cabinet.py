@@ -5005,6 +5005,21 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
 _appliance_dialog_session = [0]
 
 
+def _bay_layout_is_presetlike(bay_obj):
+    """True when the bay's current fronts are the door / false-front
+    layouts the sink and cooktop presets themselves produce, so the
+    dialog's immediate live preview loses nothing by rebuilding them.
+    Anything else (a drawer stack, pullouts, a split the user built)
+    must NOT be wiped by the seeded first execute -- those bays open
+    the dialog on Keep Existing instead."""
+    fronts = [c.face_frame_opening.front_type
+              for c in bay_obj.children_recursive
+              if c.get(types_face_frame.TAG_OPENING_CAGE)]
+    if len(fronts) > 2:
+        return False
+    return all(f in ('NONE', 'DOOR', 'FALSE_FRONT') for f in fronts)
+
+
 def _set_opening_interior(op_props, interior):
     """Set a door opening's interior to OPEN / SHELF / VANITY_SHELVES by
     rewriting only its shelf-type interior items (ADJUSTABLE_SHELF /
@@ -5168,9 +5183,20 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             # Fresh bay: explicit defaults (REGISTER remembers last-used
             # values across invocations; the defaults should win here).
             # A vanity sink base is narrow (20"); kitchen sink / cooktop
-            # default to a 36" sink base.
-            self.config = 'FALSE_FRONT_DOORS'
-            self.width = (inch(20.0) if self.appliance_kind == 'VANITY_SINK'
+            # default to a 36" sink base. A bay whose fronts the user
+            # already customized (a drawer stack, pullouts, splits)
+            # opens on Keep Existing: the seeded execute below runs
+            # BEFORE the popup shows, and applying the false-front
+            # preset there would wipe a layout Keep Existing can never
+            # bring back.
+            presetlike = _bay_layout_is_presetlike(bay)
+            self.config = ('FALSE_FRONT_DOORS' if presetlike
+                           else 'KEEP_EXISTING')
+            # Keep Existing also keeps the bay's width; the sink-base
+            # width defaults only make sense when the preset rebuilds
+            # the fronts anyway.
+            self.width = (bp.width if not presetlike
+                          else inch(20.0) if self.appliance_kind == 'VANITY_SINK'
                           else inch(36.0))
         # Sinks default to an open interior (plumbing under the basin);
         # cooktop bays keep the shelf default. Still user-selectable in
