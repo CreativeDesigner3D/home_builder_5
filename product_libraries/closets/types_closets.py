@@ -1579,11 +1579,6 @@ class ClosetStarter(GeoNodeCage):
         # object in the file, so the list is taken once here and shared
         # by everything below rather than asked for again each time.
         children = list(opening.children)
-        self._accessories(
-            [c for c in children
-             if c.get('hb_part_role') == PART_ROLE_ACCESSORY],
-            width, depth, interior_h, side, front_y, lo, ro, to, bo,
-            scene_props)
 
         groups = {}
         for child in children:
@@ -2138,6 +2133,11 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width)
                 part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
+
+        # Last, so that everything an accessory has to keep clear of
+        # has already been put where it goes.
+        self._accessories(children, width, depth, interior_h, side,
+                          front_y, lo, ro, to, bo, scene_props)
 
     # ----- regenerators (create/remove children to match config) -----
 
@@ -2754,7 +2754,7 @@ class ClosetStarter(GeoNodeCage):
         self._acc_placeholder(cage, False, kids)
         return obj
 
-    def _accessories(self, cages, width, depth, interior_h, side,
+    def _accessories(self, children, width, depth, interior_h, side,
                      front_y, lo, ro, to, bo, scene_props):
         """Bring every accessory in one opening into line, and place
         it, in a single pass.
@@ -2770,6 +2770,9 @@ class ClosetStarter(GeoNodeCage):
         standing but emptied, so a file saved against a fuller catalog
         opens rather than losing the person's work."""
         from . import accessories_closets as acc
+        st = scene_props.shelf_thickness
+        cages = [c for c in children
+                 if c.get('hb_part_role') == PART_ROLE_ACCESSORY]
         for cage in cages:
             kids = {}
             for child in cage.children:
@@ -2856,11 +2859,13 @@ class ClosetStarter(GeoNodeCage):
                     acc_def.depth or depth,
                     acc_def.reserved_height or interior_h)
 
-            self._warn_accessory_fit(cage, acc_def, want_w, want_d,
-                                     width, depth, interior_h, z)
+            self._warn_accessory_fit(
+                cage, acc_def, want_w, want_d, width, depth,
+                interior_h, z,
+                opening_spans(children, st, cage))
 
     def _warn_accessory_fit(self, cage, acc_def, want_w, want_d,
-                            width, depth, interior_h, z):
+                            width, depth, interior_h, z, spans=()):
         """What is wrong with where this accessory has been put, in the
         words the prior library used. One message, the first thing that
         does not fit, carried on the cage so the overlay and the report
@@ -2877,6 +2882,12 @@ class ClosetStarter(GeoNodeCage):
             msg = ("%s needs %s of height with its clearances; this "
                    "opening is %s" % (acc_def.label, _in_str(need_h),
                                       _in_str(interior_h)))
+        elif spans and need_h > 0.0 and _clashes_with(
+                z, z + need_h, spans):
+            msg = ("%s is too close to %s; it needs %s clear"
+                   % (acc_def.label,
+                      _clashes_with(z, z + need_h, spans),
+                      _in_str(need_h)))
         elif (need_h > 0.0 and z + need_h > interior_h + 0.0005):
             msg = ("%s does not clear the top of the opening where it "
                    "is set" % acc_def.label)
@@ -4754,6 +4765,95 @@ def _in_str(value):
     """A metre figure in the inches the accessory is sold in, rounded
     the way a tape reads it."""
     return '%g"' % round(value / 0.0254, 2)
+
+
+def _clashes_with(lo, hi, spans):
+    """What the band from lo to hi runs into, or '' if it is clear."""
+    for s_lo, s_hi, what in spans:
+        if lo < s_hi - 1e-6 and hi > s_lo + 1e-6:
+            return what
+    return ''
+
+
+def _part_span(obj, st):
+    """The band of an opening a part takes up, or None for the ones
+    that block nothing vertically - panels, backs, cleats and the
+    like, which run the whole height anyway."""
+    role = obj.get('hb_part_role')
+    z = obj.location.z
+    if role in (PART_ROLE_FIXED_SHELF, PART_ROLE_ADJ_SHELF,
+                PART_ROLE_CUBBY_SHELF, PART_ROLE_SLANTED_SHELF):
+        return (z, z + st, "a shelf")
+    if role == PART_ROLE_ROD:
+        return (z - const.ROD_RADIUS, z + const.ROD_RADIUS, "the rod")
+    if role == PART_ROLE_DRAWER_FRONT and not obj.get(
+            'hb_accessory_front'):
+        h = float(obj.get(PROP_FRONT_HEIGHT, 0.0))
+        return (z, z + h, "a drawer") if h > 0.0 else None
+    return None
+
+
+def accessory_span(cage, acc_def):
+    """The band an accessory claims: the room it wants below its
+    mounting line, the line itself, and the room it wants above. This
+    is what the manufacturer says has to be left for it to work, which
+    is more than the thing physically fills."""
+    z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+    return (z, z + acc_def.reserved_height)
+
+
+def opening_spans(children, st, skip=None):
+    """Everything in an opening that an accessory has to keep clear
+    of, as (bottom, top, what it is)."""
+    from . import accessories_closets as acc
+    out = []
+    for child in children:
+        if child is skip:
+            continue
+        if child.get('hb_part_role') == PART_ROLE_ACCESSORY:
+            acc_def = acc.get(child.get(PROP_ACCESSORY_KEY, ''))
+            if acc_def is None or acc_def.reserved_height <= 0.0:
+                continue
+            top, bottom = accessory_span(child, acc_def)
+            out.append((top, bottom, acc_def.label))
+            continue
+        span = _part_span(child, st)
+        if span is not None:
+            out.append(span)
+    return out
+
+
+def clear_height_for(opening, acc_def, wanted, skip=None):
+    """The nearest height at or above the one asked for where this
+    accessory's clearance runs into nothing.
+
+    Used when one is added, which is the moment the person has not
+    said anything precise yet. A height typed in afterwards is left
+    alone and warned about instead - being moved after saying exactly
+    where you want something is worse than being told it is tight."""
+    need = acc_def.reserved_height
+    if need <= 0.0:
+        return wanted
+    interior_h = _cage_dim_z(opening)
+    props = bpy.context.scene.hb_closets
+    spans = opening_spans(list(opening.children),
+                          props.shelf_thickness, skip)
+    tops = sorted({s[1] for s in spans if s[1] >= wanted - 1e-9})
+    for start in [wanted] + tops + [0.0]:
+        if start < -1e-9 or start + need > interior_h + 0.0005:
+            continue
+        if not any(start < hi - 1e-6 and start + need > lo + 1e-6
+                   for lo, hi, _ in spans):
+            return start
+    return wanted
+
+
+def _cage_dim_z(obj):
+    """One cage's height, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim Z') or 0.0)
+    except Exception:
+        return 0.0
 
 
 def accessory_band(cage, acc_def, width=0.0):

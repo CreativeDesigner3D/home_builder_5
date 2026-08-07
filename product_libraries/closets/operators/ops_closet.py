@@ -3638,7 +3638,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         opening = types_closets.find_opening_cage(context.active_object)
         if opening is None:
             return {'CANCELLED'}
-        if self.accessory == 'NONE' or acc.get(self.accessory) is None:
+        acc_def = acc.get(self.accessory)
+        if self.accessory == 'NONE' or acc_def is None:
             self.report({'WARNING'},
                         "That accessory is no longer offered")
             return {'CANCELLED'}
@@ -3647,7 +3648,20 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             cage = types_closets.add_accessory(opening, self.accessory)
             if cage is None:
                 return {'CANCELLED'}
-            cage[types_closets.PROP_ACCESSORY_Z] = float(self.location)
+            # Put where asked if it will go there, and clear of what
+            # is already in the opening if it will not. Being moved
+            # when a height has not really been chosen yet is helpful;
+            # being moved after typing one is not, so a height edited
+            # later is warned about instead of shifted.
+            wanted = float(self.location)
+            clear = types_closets.clear_height_for(
+                opening, acc_def, wanted, skip=cage)
+            cage[types_closets.PROP_ACCESSORY_Z] = clear
+            if abs(clear - wanted) > 1e-6:
+                self.report(
+                    {'INFO'},
+                    "Moved up to %s to keep it clear"
+                    % types_closets._in_str(clear))
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
             acc_def = acc.get(self.accessory)
