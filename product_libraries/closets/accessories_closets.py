@@ -339,13 +339,20 @@ def _def_from_item(item):
 
 
 _catalog_cache = None
+_by_key_cache = None
+# Whether a model file is on disk. Asked for every accessory on every
+# recalculation, and the answer only changes when something is
+# installed, so it is remembered rather than asked of the disk again.
+_installed_cache = {}
 
 
 def clear_catalog_cache():
     """Forget the built catalog, so the next read picks up a provider
     that has just registered or a data file that has just changed."""
-    global _catalog_cache
+    global _catalog_cache, _by_key_cache
     _catalog_cache = None
+    _by_key_cache = None
+    _installed_cache.clear()
 
 
 def catalog():
@@ -373,7 +380,15 @@ def catalog():
 
 
 def catalog_by_key():
-    return {d.key: d for d in catalog()}
+    """The catalog keyed for lookup. Built once alongside the catalog
+    itself - get() is called for every accessory on every
+    recalculation, and rebuilding the whole map each time is work for
+    nothing."""
+    global _by_key_cache
+    built = catalog()
+    if _by_key_cache is None or len(_by_key_cache) != len(built):
+        _by_key_cache = {d.key: d for d in built}
+    return _by_key_cache
 
 
 def __getattr__(name):
@@ -412,8 +427,18 @@ def enum_items(family=None):
 
 
 def model_is_installed(path):
-    """True when a resolved path points at a file that is there."""
-    return bool(path) and os.path.isfile(path)
+    """True when a resolved path points at a file that is there.
+
+    Remembered per path: this is asked for every accessory on every
+    recalculation, and a file does not appear or vanish between two
+    of them. clear_model_cache() forgets it."""
+    if not path:
+        return False
+    known = _installed_cache.get(path)
+    if known is None:
+        known = os.path.isfile(path)
+        _installed_cache[path] = known
+    return known
 
 
 def accessory_model_path(name):
