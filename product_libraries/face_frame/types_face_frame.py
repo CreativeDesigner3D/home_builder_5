@@ -12419,6 +12419,16 @@ class WoodTopPart(CabinetPart):
             mod.show_viewport = False
             mod.show_render = False
         obj[TAG_STATIC_TEXTURED] = True
+        # The static mesh renders its own slots; seed them from the
+        # cutpart's surface input so a finish applied while the top was
+        # a plain board carries over to the nosed display.
+        if obj.data is not None and not obj.data.materials:
+            try:
+                surf = self.get_input('Top Surface')
+            except Exception:
+                surf = None
+            if surf is not None:
+                obj.data.materials.append(surf)
 
     @staticmethod
     def _write_nosed_mesh(obj, width, depth, t, wt):

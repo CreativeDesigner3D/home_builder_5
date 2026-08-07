@@ -294,6 +294,35 @@ class hb_face_frame_OT_remove_drawer_front_style(Operator):
         return {'FINISHED'}
 
 
+def _bare_part_for(obj):
+    """A cabinet bare part (Wood Top / Misc Part) with NO cabinet cage
+    above it, or None. These live outside any cabinet's material walk,
+    so style assignment has to finish them directly."""
+    if obj is None or not obj.get('CABINET_PART'):
+        return None
+    from .. import types_face_frame
+    if types_face_frame.find_cabinet_root(obj) is not None:
+        return None
+    return obj
+
+
+def _apply_style_finish_to_bare_part(style, part_obj):
+    """Push a style's exterior finish onto a bare part. Live cutparts
+    take it on the GN surface inputs; a static carved mesh (nosed wood
+    top) renders its mesh slots instead, so those are painted too --
+    both are written so the finish survives the part flipping between
+    the two display modes. Returns True when a material was applied."""
+    fin, fin_rot = style.get_finish_material()
+    if fin is None:
+        return False
+    part_obj['STYLE_NAME'] = style.name
+    style._set_part_surfaces(part_obj, fin, fin_rot)
+    if part_obj.get('HB_STATIC_TEXTURED') or part_obj.get('IS_MANUAL_PART'):
+        hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
+            part_obj, fin, fin_rot)
+    return True
+
+
 class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
     """Apply the active cabinet style to every selected face frame cabinet"""
     bl_idname = "hb_face_frame.assign_style_to_selected_cabinets"
@@ -320,6 +349,7 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         from ...common import wood_hoods
         cab_roots = []
         hood_roots = []
+        bare_parts = []
         seen = set()
         for obj in context.selected_objects:
             root = types_face_frame.find_cabinet_root(obj)
@@ -332,8 +362,13 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             if hood is not None and hood.name not in seen:
                 seen.add(hood.name)
                 hood_roots.append(hood)
+                continue
+            part = _bare_part_for(obj)
+            if part is not None and part.name not in seen:
+                seen.add(part.name)
+                bare_parts.append(part)
 
-        if not cab_roots and not hood_roots:
+        if not cab_roots and not hood_roots and not bare_parts:
             self.report({'WARNING'}, "No face frame cabinets or wood hoods in selection")
             return {'CANCELLED'}
 
@@ -344,7 +379,9 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             # static doors pick up the new style's door construction.
             style.assign_style_to_hood(hood)
             wood_hoods.rebuild_built_hood(hood)
-        n = len(cab_roots) + len(hood_roots)
+        for part in bare_parts:
+            _apply_style_finish_to_bare_part(style, part)
+        n = len(cab_roots) + len(hood_roots) + len(bare_parts)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
 
@@ -448,12 +485,16 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
         if not hit or obj is None:
             return None
         # The hit may be any cabinet or hood part -- resolve to the cabinet
-        # root, else fall back to the wood-hood cage.
+        # root, else fall back to the wood-hood cage, else a bare part
+        # (Wood Top / Misc Part) standing on its own.
         root = types_face_frame.find_cabinet_root(obj)
         if root is not None:
             return root
         from ...common import wood_hoods
-        return wood_hoods.find_hood_root(obj)
+        hood = wood_hoods.find_hood_root(obj)
+        if hood is not None:
+            return hood
+        return _bare_part_for(obj)
 
     def _paint(self, context, event):
         ff = get_style_props(context)
@@ -471,6 +512,10 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             style.assign_style_to_hood(root)
             from ...common import wood_hoods
             wood_hoods.rebuild_built_hood(root)
+        elif root.get('CABINET_PART'):
+            # Bare part (Wood Top / Misc Part) with no cabinet above it.
+            if not _apply_style_finish_to_bare_part(style, root):
+                return
         else:
             return
         if root.name not in self._painted:
@@ -1369,6 +1414,13 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 obj['hb_part_material_style'] = style.name
                 if obj.get('IS_MANUAL_PART'):
                     # Manual part: GN applied, paint the baked slots.
+                    self._paint_manual_part_slots(obj, mat, edge)
+                elif obj.get('HB_STATIC_TEXTURED'):
+                    # Static carved mesh (nosed wood top / textured
+                    # panel): the mesh slots render, the GN inputs are
+                    # inert -- write both so the paint survives the part
+                    # flipping back to live cutpart display.
+                    style._set_part_surfaces(obj, mat, edge)
                     self._paint_manual_part_slots(obj, mat, edge)
                 else:
                     style._set_part_surfaces(obj, mat, edge)
