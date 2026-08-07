@@ -2646,28 +2646,30 @@ class ClosetStarter(GeoNodeCage):
     def _acc_model(self, cage, acc_def):
         """The bought model under an accessory cage, or None.
 
-        The models ship with the companion add-on, so this is the one
-        place the library asks whether that add-on is there. When it is
-        not, any model already hanging is taken off and the accessory
-        carries on without one - it still holds its space and still
-        reports its size, which is what a drawing needs."""
+        The catalog says which model an accessory should be showing
+        and where that model is on this machine. When it is not here -
+        nothing is offering closet accessories, or this particular one
+        has not been installed - any model already hanging is taken
+        off and a block is drawn in its place. The accessory still
+        holds its space and still measures either way."""
         from . import accessories_closets as acc
         existing = next(
             (c for c in cage.children
              if c.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL),
             None)
-        want = accessory_model_name(cage, acc_def)
-        if not want or not acc.is_host_addon_active():
+        want = accessory_model_path_for(cage, acc_def)
+        if not acc.model_is_installed(want):
             if existing is not None:
                 _remove_part_tree(existing)
             # Nothing to draw, so the space is drawn instead.
             self._acc_placeholder(cage, True)
             return None
+        name = accessory_model_name(cage, acc_def)
         if existing is not None:
-            if existing.get(PROP_ACCESSORY_MODEL) == want:
-                # Squared up on the way past, so a model that was
-                # brought in turned - by an older build of this
-                # library, or by hand - comes back straight.
+            if existing.get(PROP_ACCESSORY_MODEL) == name:
+                # Squared up on the way past, so a model that
+                # was brought in turned - by an older build of
+                # this library, or by hand - comes back straight.
                 existing.rotation_euler = (0.0, 0.0, 0.0)
                 self._acc_placeholder(cage, False)
                 return existing
@@ -2691,7 +2693,7 @@ class ClosetStarter(GeoNodeCage):
         # of the closet, which is a mistake worth not repeating.
         obj.rotation_euler.z = 0.0
         obj['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
-        obj[PROP_ACCESSORY_MODEL] = want
+        obj[PROP_ACCESSORY_MODEL] = name
         obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
         # The real thing turned up, so the stand-in comes off.
         self._acc_placeholder(cage, False)
@@ -4736,10 +4738,16 @@ def accessory_band(cage, acc_def, width=0.0):
 
 
 def accessory_model_name(cage, acc_def):
-    """The model file an accessory should be showing, or '' when it
-    has none to show."""
+    """What the drawing remembers this accessory being - the model's
+    name, which means the same thing on any machine."""
     band = accessory_band(cage, acc_def)
     return band[2] if band else acc_def.model
+
+
+def accessory_model_path_for(cage, acc_def):
+    """Where that model is on this machine, or '' if it is not here."""
+    band = accessory_band(cage, acc_def)
+    return acc_def.path_for(band)
 
 
 def _cage_dim_x(obj):
