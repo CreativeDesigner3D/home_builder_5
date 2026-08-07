@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
                          GeoNodeDrawerBox, CabinetPartModifier)
+from mathutils import Matrix, Vector
+
 from ...units import inch, millimeter
 from ..frameless.types_frameless import CabinetPart
 from . import solver_closets as solver
@@ -2625,6 +2627,49 @@ class ClosetStarter(GeoNodeCage):
         block.color = const.ACCESSORY_PLACEHOLDER_COLOR
         return block
 
+    def _fit_cage_to_model(self, cage, kids):
+        """Pull the cage in around the model it is showing.
+
+        The cage is what a person clicks on and what they see selected,
+        so it wants to be the box the thing actually fills. Sized to
+        the space the accessory reserves instead, it reads wrong: a
+        shoe organizer floats in the middle of a box half again its
+        height, and a mirror gets a box around its bottom two inches.
+
+        Where the cage sits is also where the accessory sits, so the
+        model is moved back by exactly as much as the cage moves and
+        stays where it was put. The space the accessory reserves is
+        still what the fit warnings are worked out from - that is a
+        different question from what is drawn round it."""
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        if not found:
+            return False
+        model = found[0]
+        # Built from what has just been set rather than read off the
+        # object: matrix_local is worked out by the depsgraph and is
+        # still a step behind at this point in the pass.
+        mat = Matrix.LocRotScale(model.location, model.rotation_euler,
+                                 model.scale)
+        corners = [mat @ Vector(c) for c in model.bound_box]
+        lo_x = min(c.x for c in corners)
+        lo_y = min(c.y for c in corners)
+        lo_z = min(c.z for c in corners)
+        hi_x = max(c.x for c in corners)
+        hi_y = max(c.y for c in corners)
+        hi_z = max(c.z for c in corners)
+        if hi_x - lo_x <= 0.0 or hi_z - lo_z <= 0.0:
+            return False
+        # The cage runs +X, -Y and +Z from its own origin, so its
+        # corner is the model's low X, high Y, low Z.
+        shift = Vector((lo_x, hi_y, lo_z))
+        cage.location = cage.location + shift
+        model.location = model.location - shift
+        geo = GeoNodeCage(cage)
+        geo.set_input('Dim X', hi_x - lo_x)
+        geo.set_input('Dim Y', hi_y - lo_y)
+        geo.set_input('Dim Z', hi_z - lo_z)
+        return True
+
     def _size_placeholder(self, kids, width, depth, height):
         """Rewrite the block to fill the space it stands for.
 
@@ -2778,9 +2823,10 @@ class ClosetStarter(GeoNodeCage):
                 self._layout_panel_accessory(
                     cage, acc_def, kids, width, depth,
                     scene_props.panel_thickness)
-                self._size_placeholder(
-                    kids, scene_props.panel_thickness, cage_d,
-                    const.ACCESSORY_PANEL_CAGE_H)
+                if not self._fit_cage_to_model(cage, kids):
+                    self._size_placeholder(
+                        kids, scene_props.panel_thickness, cage_d,
+                        const.ACCESSORY_PANEL_CAGE_H)
             elif acc_def.family == acc.FAMILY_OPENING:
                 # A pull-out is fitted at the front of the opening and
                 # runs back its own depth, so the cage does the same.
@@ -2792,9 +2838,10 @@ class ClosetStarter(GeoNodeCage):
                               or interior_h)
                 self._layout_opening_accessory(cage, acc_def, kids,
                                                width, cage_d)
-                self._size_placeholder(
-                    kids, width, cage_d,
-                    acc_def.reserved_height or interior_h)
+                if not self._fit_cage_to_model(cage, kids):
+                    self._size_placeholder(
+                        kids, width, cage_d,
+                        acc_def.reserved_height or interior_h)
             else:
                 cage.location = (0.0, 0.0, z)
                 geo.set_input('Dim X', acc_def.width or width)
