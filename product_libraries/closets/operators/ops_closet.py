@@ -3673,6 +3673,210 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_place_accessory(bpy.types.Operator,
+                                    hb_placement.PlacementMixin):
+    """Put an accessory in an opening with the mouse.
+
+    Move over an opening and the accessory follows the cursor up and
+    down it, landing where it would actually go rather than where the
+    cursor is: on a one inch grid, on the floor when it is let go low,
+    held back from the top so the room it needs above it still fits,
+    and clear of whatever else is already in there. The header says
+    where it has landed and why. Click places it, Shift-click places
+    it and starts another, Left/Right arrow turns a panel accessory to
+    another face, Right-click or Esc cancels."""
+    bl_idname = "hb_closets.place_accessory"
+    bl_label = "Place Accessory"
+    bl_options = {'UNDO'}
+
+    def _place_items(self, context):
+        from ..accessories_closets import enum_items
+        return _held('place', enum_items() or [('NONE', "None", "")])
+
+    def _place_width_items(self, context):
+        from .. import accessories_closets as acc
+        acc_def = acc.get(self.accessory)
+        items = acc_def.band_items() if acc_def is not None else []
+        return _held('place_width',
+                     items or [('NONE', "As It Comes", "")])
+
+    accessory: bpy.props.EnumProperty(
+        name="Accessory", items=_place_items,
+        description="What to hang in the opening")
+    model: bpy.props.EnumProperty(
+        name="Width", items=_place_width_items,
+        description="Which one to buy")
+
+    _cage = None
+    _opening = None
+    _root = None
+    _face = 0
+    _note = ""
+
+    @classmethod
+    def poll(cls, context):
+        from .. import accessories_closets as acc
+        if not acc.catalog():
+            cls.poll_message_set(
+                "No accessories are available. They are installed "
+                "with the product catalog.")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        from .. import accessories_closets as acc
+        if self.accessory == 'NONE' or acc.get(self.accessory) is None:
+            self.report({'WARNING'}, "Pick an accessory first")
+            return {'CANCELLED'}
+        self.init_placement(context)
+        if self.region is None:
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self._face = 1
+        hb_placement.draw_header_text(
+            context, "Move over an opening to place the accessory")
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    # ----- the accessory being carried -----
+
+    def _drop(self):
+        """Take the carried accessory away again."""
+        if self._cage is not None:
+            try:
+                types_closets._remove_part_tree(self._cage)
+            except ReferenceError:
+                pass
+        self._cage = None
+        self._opening = None
+
+    def _carry_into(self, opening):
+        """Move what is being carried into a different opening."""
+        from .. import accessories_closets as acc
+        if self._opening is opening and self._cage is not None:
+            return True
+        self._drop()
+        cage = types_closets.add_accessory(opening, self.accessory)
+        if cage is None:
+            return False
+        if self.model != 'NONE':
+            cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+        acc_def = acc.get(self.accessory)
+        if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+            cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
+                acc.PANEL_LOCATION_KEYS[self._face])
+        self._cage = cage
+        self._opening = opening
+        self._root = types_closets.find_starter_root(opening)
+        return True
+
+    def _follow(self, context):
+        """Put the carried accessory where the cursor says, by the
+        rules that decide where one actually lands."""
+        from .. import accessories_closets as acc
+        if self.hit_location is None:
+            return
+        opening = (types_closets.find_opening_cage(self.hit_object)
+                   if self.hit_object is not None else None)
+        if opening is None:
+            self._drop()
+            self._note = "Move over an opening to place the accessory"
+            return
+        if not self._carry_into(opening):
+            return
+        acc_def = acc.get(self.accessory)
+        raw = (self.hit_location[2]
+               - opening.matrix_world.translation[2])
+        z = types_closets.accessory_drop_height(
+            opening, acc_def, raw, skip=self._cage)
+        self._cage[types_closets.PROP_ACCESSORY_Z] = z
+        if acc_def.family == acc.FAMILY_PANEL:
+            self._cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
+                acc.PANEL_LOCATION_KEYS[self._face])
+        if self._root is not None:
+            types_closets.recalculate_closet_starter(self._root)
+        where = types_closets._in_str(z)
+        why = ""
+        if z <= 1e-6:
+            why = " (on the floor)"
+        elif abs(z - raw) > const.ACCESSORY_DROP_GRID:
+            why = " (moved to keep it clear)"
+        face = ""
+        if acc_def.family == acc.FAMILY_PANEL:
+            face = "  -  %s  [Left/Right arrow]" % (
+                acc.PANEL_LOCATIONS[self._face][1])
+        self._note = "%s at %s off the opening floor%s%s" % (
+            acc_def.label, where, why, face)
+
+    def _end(self, context):
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def modal(self, context, event):
+        from .. import accessories_closets as acc
+        if context.area is not None:
+            context.area.tag_redraw()
+
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE',
+                          'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+
+        if event.type in {'LEFT_ARROW', 'RIGHT_ARROW'} \
+                and event.value == 'PRESS':
+            step = -1 if event.type == 'LEFT_ARROW' else 1
+            self._face = (self._face + step) % len(
+                acc.PANEL_LOCATION_KEYS)
+            self._follow(context)
+            hb_placement.draw_header_text(context, self._note)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'MOUSEMOVE':
+            hidden = self._cage
+            if hidden is not None:
+                hidden.hide_set(True)
+            try:
+                self.update_snap(context, event)
+            finally:
+                if hidden is not None:
+                    try:
+                        hidden.hide_set(False)
+                    except ReferenceError:
+                        pass
+            self._follow(context)
+            hb_placement.draw_header_text(context, self._note)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            root = self._root
+            self._drop()
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+            self._end(context)
+            return {'CANCELLED'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self._cage is None:
+                self.report({'WARNING'},
+                            "Move over an opening to place it")
+                return {'RUNNING_MODAL'}
+            cage = self._cage
+            self._cage = None
+            for other in context.selected_objects:
+                other.select_set(False)
+            cage.select_set(True)
+            context.view_layer.objects.active = cage
+            self._end(context)
+            self.report({'INFO'}, self._note)
+            if event.shift:
+                bpy.ops.hb_closets.place_accessory(
+                    'INVOKE_DEFAULT', accessory=self.accessory,
+                    model=self.model)
+            return {'FINISHED'}
+
+        return {'RUNNING_MODAL'}
+
+
 class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     """Finish, fabric and height for the active accessory. What is
     offered depends on the accessory: one sold in a single finish has
@@ -5919,6 +6123,7 @@ classes = (
     hb_closets_OT_add_rollouts,
     hb_closets_OT_add_slanted_shelves,
     hb_closets_OT_add_accessory,
+    hb_closets_OT_place_accessory,
     hb_closets_OT_accessory_prompts,
     hb_closets_OT_change_bay,
     hb_closets_OT_change_opening,

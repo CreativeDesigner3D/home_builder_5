@@ -188,6 +188,9 @@ class AccessoryDef:
                 hangs off its runners, so most of it is below.
     model_drop  how far (m) to lower the model inside that space, for
                 the one accessory whose mesh would otherwise poke out
+    floor_snap  True for the ones that hang down to the floor. Dropped
+                near it they sit on it; everything else is taken to
+                belong on the floor from much further up
     stretch     True when the model is drawn to the opening width
                 rather than picked from a band
     model_y     how far (m) back from the opening front the model sits
@@ -204,14 +207,15 @@ class AccessoryDef:
                  'bands', 'band_axis', 'width',
                  'height', 'depth', 'space_above', 'space_below',
                  'model_drop', 'stretch', 'model_y', 'model_z',
+                 'floor_snap',
                  'colors', 'fabrics', 'ready', 'description')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
                  depth=0.0, space_above=0.0, space_below=0.0,
                  model_drop=0.0, stretch=False, model_y=0.0,
-                 model_z=0.0, colors=(), fabrics=(), ready=False,
-                 description=""):
+                 model_z=0.0, floor_snap=False, colors=(), fabrics=(),
+                 ready=False, description=""):
         self.key = key
         self.label = label
         self.family = family
@@ -228,6 +232,7 @@ class AccessoryDef:
         self.stretch = stretch
         self.model_y = model_y
         self.model_z = model_z
+        self.floor_snap = floor_snap
         self.colors = tuple(colors)
         self.fabrics = tuple(fabrics)
         self.ready = ready
@@ -332,6 +337,7 @@ def _def_from_item(item):
         stretch=bool(item.get('stretch')),
         model_y=float(item.get('model_y') or 0.0),
         model_z=float(item.get('model_z') or 0.0),
+        floor_snap=bool(item.get('floor_snap')),
         colors=tuple(item.get('colors') or ()),
         fabrics=tuple(item.get('fabrics') or ()),
         ready=bool(item.get('ready')),

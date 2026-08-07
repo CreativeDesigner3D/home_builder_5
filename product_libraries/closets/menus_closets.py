@@ -118,9 +118,42 @@ def _draw_add_part_entries(layout):
                     text="Rollout Trays...", icon='MESH_PLANE')
     layout.operator("hb_closets.add_slanted_shelves",
                     text="Slanted Shoe Shelves...", icon='SORTBYEXT')
-    layout.operator(
-        "hb_closets.add_accessory", text="Add Accessory...",
-        icon='OUTLINER_OB_GROUP_INSTANCE')
+    layout.menu("HOME_BUILDER_MT_closet_accessories",
+                text="Add Accessory",
+                icon='OUTLINER_OB_GROUP_INSTANCE')
+
+
+class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
+    """What can be hung in a closet, grouped the way it mounts.
+
+    Picking one starts placing it, so the choice and the placing are
+    one action rather than a dialog and then a height typed in."""
+    bl_idname = "HOME_BUILDER_MT_closet_accessories"
+    bl_label = "Add Accessory"
+
+    def draw(self, context):
+        from . import accessories_closets as acc
+        layout = self.layout
+        offered = acc.catalog_items()
+        if not offered:
+            layout.label(text="No accessories are available",
+                         icon='INFO')
+            layout.label(text="They come with the product catalog")
+            return
+        first = True
+        for family in (acc.FAMILY_OPENING, acc.FAMILY_PANEL,
+                       acc.FAMILY_INSERT):
+            in_family = [d for d in offered if d.family == family]
+            if not in_family:
+                continue
+            if not first:
+                layout.separator()
+            first = False
+            layout.label(text=acc.FAMILY_LABELS.get(family, family))
+            for acc_def in in_family:
+                op = layout.operator("hb_closets.place_accessory",
+                                     text=acc_def.label)
+                op.accessory = acc_def.key
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
@@ -259,6 +292,7 @@ classes = (
     HOME_BUILDER_MT_closet_change_bay,
     HOME_BUILDER_MT_closet_change_opening,
     HOME_BUILDER_MT_closet_doors_drawers,
+    HOME_BUILDER_MT_closet_accessories,
     HOME_BUILDER_MT_closet_part_commands,
 )
 

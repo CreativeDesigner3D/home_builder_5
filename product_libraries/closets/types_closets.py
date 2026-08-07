@@ -4823,6 +4823,33 @@ def opening_spans(children, st, skip=None):
     return out
 
 
+def accessory_drop_height(opening, acc_def, raw_z, skip=None):
+    """Where an accessory actually lands when it is dropped at a
+    given height in an opening.
+
+    The rules the prior library dropped them by, in the order it
+    applied them. Heights land on a one inch grid. An accessory that
+    hangs down to the floor sits on it when dropped within an inch of
+    it; every other one is taken to belong on the floor from the room
+    it wants below it plus five inches up, which is why a drawer let
+    go low in an opening drops rather than floats. Then it is held
+    back from the top so the room it wants above it still fits, and
+    last it is put clear of whatever else is in the opening."""
+    grid = const.ACCESSORY_DROP_GRID
+    z = round(raw_z / grid) * grid if grid > 0.0 else raw_z
+    if acc_def.floor_snap:
+        if z <= const.ACCESSORY_FLOOR_SNAP:
+            z = 0.0
+    elif z - const.ACCESSORY_FLOOR_REACH < acc_def.space_below:
+        z = 0.0
+    need = acc_def.reserved_height
+    interior_h = _cage_dim_z(opening)
+    if need > 0.0 and z + need > interior_h:
+        z = interior_h - need
+    z = max(0.0, z)
+    return clear_height_for(opening, acc_def, z, skip)
+
+
 def clear_height_for(opening, acc_def, wanted, skip=None):
     """The nearest height at or above the one asked for where this
     accessory's clearance runs into nothing.

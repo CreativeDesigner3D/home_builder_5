@@ -472,3 +472,12 @@ ACCESSORY_PANEL_CAGE_H = inch(2.0)
 # something missing rather than something built.
 ACCESSORY_PLACEHOLDER_COLOR = (0.8, 0.05, 0.05, 1.0)
 ACCESSORY_PLACEHOLDER_MATERIAL = 'Accessory Placeholder'
+
+# Dropping an accessory with the mouse. Heights land on a one inch
+# grid. An accessory that hangs to the floor sits on it when dropped
+# within an inch; everything else is taken to belong on the floor from
+# the room it wants below it plus five inches up, which is the rule the
+# prior library dropped them by.
+ACCESSORY_DROP_GRID = inch(1.0)
+ACCESSORY_FLOOR_SNAP = inch(1.0)
+ACCESSORY_FLOOR_REACH = inch(5.0)
