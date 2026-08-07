@@ -3620,7 +3620,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             col.prop(self, 'model')
         if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
             col.prop(self, 'panel_location')
-        col.prop(self, 'location')
+        if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
+            col.prop(self, 'location')
         if acc_def is not None and acc_def.description:
             box = layout.box()
             box.label(text=acc_def.description, icon='INFO')
@@ -3654,7 +3655,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             # when a height has not really been chosen yet is helpful;
             # being moved after typing one is not, so a height edited
             # later is warned about instead of shifted.
-            wanted = float(self.location)
+            wanted = (0.0 if acc_def.family == acc.FAMILY_INSERT
+                      else float(self.location))
             clear = types_closets.clear_height_for(
                 opening, acc_def, wanted, skip=cage)
             cage[types_closets.PROP_ACCESSORY_Z] = clear
@@ -4068,7 +4070,17 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             col.prop(self, 'color')
         if acc_def is not None and acc_def.fabrics:
             col.prop(self, 'fabric')
-        col.prop(self, 'location')
+        if acc_def.family == acc.FAMILY_INSERT:
+            # It stands on a shelf. Letting a height be typed here
+            # would lift it off that shelf and leave it on nothing, so
+            # where it sits is settled when it is placed and not
+            # after - which is how the prior library had it too.
+            box = layout.box()
+            box.label(text="Height is set by placing it.",
+                      icon='INFO')
+            box.label(text="It stands on the shelf under it.")
+        else:
+            col.prop(self, 'location')
         warning = obj.get(types_closets.PROP_ACCESSORY_WARNING, '')
         if warning:
             box = layout.box()
@@ -4098,7 +4110,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
             if self.fabric != 'NONE':
                 obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
-            obj[types_closets.PROP_ACCESSORY_Z] = float(self.location)
+            if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
+                obj[types_closets.PROP_ACCESSORY_Z] = float(
+                    self.location)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
