@@ -5437,7 +5437,23 @@ class FaceFrameCabinet(GeoNodeCage):
         if cab.chase_location == 'RIGHT_BACK':
             return cab.width - w, cab.width
         off = max(0.0, min(cab.chase_offset, cab.width - w))
+        if getattr(cab, 'chase_offset_from', 'LEFT') == 'RIGHT':
+            return cab.width - w - off, cab.width - off
         return off, off + w
+
+    def _chase_z_span(self, cab):
+        """(z_lo, z_hi) of the chase cut in cabinet-local Z, clamped to
+        the cabinet. chase_height 0 (or a span that covers everything)
+        runs the historic full-height chase."""
+        h = getattr(cab, 'chase_height', 0.0)
+        if h <= 0.0:
+            return 0.0, cab.height
+        z_lo = max(0.0, min(getattr(cab, 'chase_z_offset', 0.0),
+                            cab.height))
+        z_hi = min(z_lo + h, cab.height)
+        if z_hi <= z_lo:
+            return 0.0, cab.height
+        return z_lo, z_hi
 
     def _apply_pipe_chase(self, layout):
         """Notch the chosen back corner (or the back middle) full height
@@ -5452,16 +5468,21 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         x_lo, x_hi = span
         depth = min(cab.chase_depth, cab.depth)
+        z_lo, z_hi = self._chase_z_span(cab)
         cutter = self._ensure_pipe_chase_cutter()
-        self._position_pipe_chase_cutter(cutter, cab, x_lo, x_hi, depth)
+        self._position_pipe_chase_cutter(
+            cutter, cab, x_lo, x_hi, depth, z_lo, z_hi)
         self._apply_pipe_chase_cuts(cutter, cab)
-        self._build_pipe_chase_panels(layout, cab, x_lo, x_hi, depth)
+        self._build_pipe_chase_panels(
+            layout, cab, x_lo, x_hi, depth, z_lo, z_hi)
         # Publish the applied spec on the root (meters) so downstream
         # consumers (drawings / reports) can read it without recomputing.
         # Cleared when the chase is removed.
         self.obj['PIPE_CHASE_LOCATION'] = cab.chase_location
         self.obj['PIPE_CHASE_WIDTH'] = x_hi - x_lo
         self.obj['PIPE_CHASE_DEPTH'] = depth
+        self.obj['PIPE_CHASE_HEIGHT'] = z_hi - z_lo
+        self.obj['PIPE_CHASE_Z'] = z_lo
 
     def _ensure_pipe_chase_cutter(self):
         """Find or lazily create the chase cutter MESH object. Hidden in
@@ -5481,7 +5502,8 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return cutter
 
-    def _position_pipe_chase_cutter(self, cutter_obj, cab, x_lo, x_hi, depth):
+    def _position_pipe_chase_cutter(self, cutter_obj, cab, x_lo, x_hi,
+                                    depth, z_lo, z_hi):
         """Rebuild the cutter's box mesh from the live chase dims. The box
         spans the chase footprint (back at y=0), pushed past the back /
         floor / top faces by a margin so the boolean cuts cleanly through;
@@ -5489,7 +5511,10 @@ class FaceFrameCabinet(GeoNodeCage):
         optional side notch opens through the side's outside face. An
         applied finished back sits OUTSIDE the cage (Y in [0, thickness],
         optionally extended past the cabinet ends), so the rear face and
-        the corner overshoot grow to punch all the way through it."""
+        the corner overshoot grow to punch all the way through it.
+        Partial-height chases stop the cut at the typed z span; the
+        margin overshoot applies only at ends coinciding with the
+        cabinet bottom / top so those faces are punched through."""
         margin = inch(0.5)
         rear = 0.0
         for child in self.obj.children:
@@ -5501,7 +5526,8 @@ class FaceFrameCabinet(GeoNodeCage):
         elif cab.chase_location == 'RIGHT_BACK':
             x1 += margin + max(0.0, getattr(cab, 'back_finished_extend_right', 0.0))
         y0, y1 = -depth, rear + margin
-        z0, z1 = -margin, cab.height + margin
+        z0 = z_lo - margin if z_lo <= 1e-6 else z_lo
+        z1 = z_hi + margin if z_hi >= cab.height - 1e-6 else z_hi
         bm = bmesh.new()
         bmesh.ops.create_cube(bm, size=1.0)
         for v in bm.verts:
@@ -5588,13 +5614,16 @@ class FaceFrameCabinet(GeoNodeCage):
         part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         return part.obj
 
-    def _build_pipe_chase_panels(self, layout, cab, x_lo, x_hi, depth):
+    def _build_pipe_chase_panels(self, layout, cab, x_lo, x_hi, depth,
+                                 z_lo, z_hi):
         """Cover panels closing the chase opening from the cabinet
         interior, flush with the cut faces: a face panel parallel to the
         back at the chase depth, plus a return parallel to the side at
         each open chase edge (one for a corner chase, two for a middle
-        chase). All run the cabinet's full height, passing through the
-        notches the cutter leaves in the bottom / stretchers / top."""
+        chase). Panels span the chase's z range (the full cabinet height
+        for a historic full-height chase); a partial-height chase also
+        gets a horizontal cap closing the notch at its top -- and at its
+        bottom when the notch is lifted off the cabinet bottom."""
         t = PIPE_CHASE_PANEL_THICKNESS
         loc = cab.chase_location
         # Face panel X span: butt against the intact side panel's inner
@@ -5609,15 +5638,27 @@ class FaceFrameCabinet(GeoNodeCage):
         wanted = {}
         if face_hi - face_lo > 0.0:
             wanted['FACE'] = ('Chase Face',
-                              (face_lo, -depth + t, 0.0),
+                              (face_lo, -depth + t, z_lo),
                               face_hi - face_lo)
         if depth - t > 0.0:
             if loc in ('RIGHT_BACK', 'BACK_MIDDLE'):
                 wanted['RETURN_L'] = ('Chase Return',
-                                      (x_lo, 0.0, 0.0), depth - t)
+                                      (x_lo, 0.0, z_lo), depth - t)
             if loc in ('LEFT_BACK', 'BACK_MIDDLE'):
                 wanted['RETURN_R'] = ('Chase Return',
-                                      (x_hi - t, 0.0, 0.0), depth - t)
+                                      (x_hi - t, 0.0, z_lo), depth - t)
+
+        # Horizontal caps closing a partial-height notch, inset between
+        # the returns and stopping at the face panel's plane.
+        cap_lo = face_lo + (t if 'RETURN_L' in wanted else 0.0)
+        cap_hi = face_hi - (t if 'RETURN_R' in wanted else 0.0)
+        if cap_hi - cap_lo > 0.0 and depth - t > 0.0:
+            if z_hi < cab.height - 1e-6:
+                wanted['TOP'] = ('Chase Top',
+                                 (cap_lo, 0.0, z_hi - t), cap_hi - cap_lo)
+            if z_lo > 1e-6:
+                wanted['BOTTOM'] = ('Chase Bottom',
+                                    (cap_lo, 0.0, z_lo), cap_hi - cap_lo)
 
         # Drop panels whose slot is no longer wanted (location changed).
         for child in list(self.obj.children):
@@ -5637,6 +5678,16 @@ class FaceFrameCabinet(GeoNodeCage):
                 part = GeoNodeCutpart(obj)
                 part.set_input('Mirror Y', True)
                 part.set_input('Mirror Z', False)
+                length = z_hi - z_lo
+            elif slot in ('TOP', 'BOTTOM'):
+                # Flat cap: Length along +X, Width toward the front (-Y),
+                # Thickness up from the origin z.
+                obj.rotation_euler = (0.0, 0.0, 0.0)
+                part = GeoNodeCutpart(obj)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', False)
+                length = width
+                width = depth - t
             else:
                 # Mid-division orientation: Length up, Width toward the
                 # front (-Y), Thickness along +X.
@@ -5644,8 +5695,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part = GeoNodeCutpart(obj)
                 part.set_input('Mirror Y', True)
                 part.set_input('Mirror Z', True)
+                length = z_hi - z_lo
             obj.location = position
-            part.set_input('Length', cab.height)
+            part.set_input('Length', length)
             part.set_input('Width', width)
             part.set_input('Thickness', t)
 

@@ -6246,8 +6246,31 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     chase_offset: FloatProperty(
         name="Chase Offset", default=0.0,
         unit='LENGTH', precision=4, min=0.0,
-        description="Back Middle only: distance from the cabinet's left "
-                    "edge to the left edge of the notch",
+        description="Back Middle only: distance from the cabinet edge "
+                    "(see Offset From) to the near edge of the notch",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_offset_from: EnumProperty(
+        name="Offset From",
+        items=[
+            ('LEFT', "Left", "Measure the offset from the cabinet's left edge"),
+            ('RIGHT', "Right", "Measure the offset from the cabinet's right edge"),
+        ],
+        default='LEFT',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_height: FloatProperty(
+        name="Chase Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Vertical size of the notch; 0 runs the chase the "
+                    "full cabinet height",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    chase_z_offset: FloatProperty(
+        name="Chase Bottom Offset", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Distance from the cabinet bottom to the bottom of a "
+                    "partial-height notch",
         update=_update_cabinet_dim,
     )  # type: ignore
     chase_notch_side: BoolProperty(
