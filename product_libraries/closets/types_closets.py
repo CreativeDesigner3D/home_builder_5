@@ -4823,6 +4823,97 @@ def opening_spans(children, st, skip=None):
     return out
 
 
+def _opening_at_height(bay, world_z, tol):
+    """The opening in a bay whose floor is at a given height."""
+    best, gap = None, tol
+    for child in (bay.children if bay is not None else ()):
+        if not child.get(TAG_OPENING_CAGE):
+            continue
+        d = abs(child.matrix_world.translation.z - world_z)
+        if d < gap:
+            best, gap = child, d
+    return best
+
+
+def fit_opening_to_accessory(cage):
+    """Make the opening the width the accessory needs.
+
+    These are bought at set widths rather than cut to fit, so an
+    accessory in an opening that is not one of those widths is a
+    warning. This is the other way round it: leave the accessory alone
+    and move the closet to it, which is what the prior library's
+    Update Opening Width did.
+
+    A run with one bay grows or shrinks as a whole, so the width it is
+    given is the accessory plus a panel at each end. A run with more
+    than one takes the width out of that bay alone, unlocking it from
+    the equal share, and the rest of the run makes up the difference -
+    again as the prior library did."""
+    from . import accessories_closets as acc
+    opening = cage.parent
+    acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+    if opening is None or acc_def is None:
+        return 0.0
+    want = acc_def.band_width(accessory_band(cage, acc_def))
+    if want <= 0.0:
+        return 0.0
+    root = find_starter_root(opening)
+    if root is None:
+        return 0.0
+    bay = opening.parent
+    pt = bpy.context.scene.hb_closets.panel_thickness
+    bays = [b for b in root.children if b.get(TAG_BAY_CAGE)]
+    if len(bays) <= 1:
+        root.hb_closet_starter.width = want + 2.0 * pt
+    elif bay is not None:
+        bay.hb_closet_bay.unlock_width = True
+        bay.hb_closet_bay.width = want
+    recalculate_closet_starter(root)
+    return want
+
+
+def seat_insert_on_shelf(cage, z):
+    """Give an accessory that stands on something a floor to stand on.
+
+    The ironing board drawer is built on a plate that bolts down, so
+    it wants a shelf under it rather than air. Put in at the bottom of
+    an opening it has one already. Put in higher up it does not, so a
+    fixed shelf goes in at that height and the drawer sits on it.
+
+    A shelf across an opening is bay structure here rather than
+    something in the opening, so putting one in divides the opening in
+    two. The drawer belongs in the upper half, standing on the new
+    shelf - which is the height it was asked for. If a shelf is
+    already there it is used rather than a second one added."""
+    opening = cage.parent
+    if opening is None:
+        return cage
+    scene_props = bpy.context.scene.hb_closets
+    st = scene_props.shelf_thickness
+    if z <= const.ACCESSORY_BOTTOM_SNAP_TOL:
+        # The floor of the opening is its shelf.
+        cage[PROP_ACCESSORY_Z] = 0.0
+        return cage
+    root = find_starter_root(opening)
+    bay = opening.parent
+    bpy.context.view_layer.update()
+    want_floor = opening.matrix_world.translation.z + z + st
+    above = _opening_at_height(bay, want_floor, st)
+    if above is None:
+        add_fixed_shelf(opening, z)
+        if root is not None:
+            recalculate_closet_starter(root)
+        bpy.context.view_layer.update()
+        above = _opening_at_height(bay, want_floor, st)
+    if above is not None and above is not opening:
+        cage.parent = above
+        cage.matrix_parent_inverse.identity()
+    cage[PROP_ACCESSORY_Z] = 0.0
+    if root is not None:
+        recalculate_closet_starter(root)
+    return cage
+
+
 def accessory_drop_height(opening, acc_def, raw_z, skip=None):
     """Where an accessory actually lands when it is dropped at a
     given height in an opening.

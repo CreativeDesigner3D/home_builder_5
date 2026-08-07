@@ -3665,7 +3665,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
                     % types_closets._in_str(clear))
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
-            acc_def = acc.get(self.accessory)
+            if acc_def.family == acc.FAMILY_INSERT:
+                types_closets.seat_insert_on_shelf(cage, clear)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
@@ -3806,6 +3807,9 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         elif abs(z - raw) > const.ACCESSORY_DROP_GRID:
             why = " (moved to keep it clear)"
         face = ""
+        if acc_def.family == acc.FAMILY_INSERT and z > \
+                const.ACCESSORY_BOTTOM_SNAP_TOL:
+            why += " - a shelf goes in under it"
         if acc_def.family == acc.FAMILY_PANEL:
             face = "  -  %s  [Left/Right arrow]" % (
                 acc.PANEL_LOCATIONS[self._face][1])
@@ -3898,6 +3902,15 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 return {'RUNNING_MODAL'}
             cage = self._cage
             self._cage = None
+            acc_def = acc.get(self.accessory)
+            if acc_def is not None and (
+                    acc_def.family == acc.FAMILY_INSERT):
+                # It stands on a plate, so it wants a shelf under it.
+                # Done on the click rather than while it is being
+                # carried: putting a shelf in divides the opening, and
+                # doing that on every mouse move would be unusable.
+                z = float(cage.get(types_closets.PROP_ACCESSORY_Z, 0.0))
+                types_closets.seat_insert_on_shelf(cage, z)
             for other in context.selected_objects:
                 other.select_set(False)
             cage.select_set(True)
@@ -3911,6 +3924,46 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             return {'FINISHED'}
 
         return {'RUNNING_MODAL'}
+
+
+class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
+    """Make the opening the width this accessory needs.
+
+    An accessory is bought at a set width rather than cut to fit, so
+    one that does not match its opening is a warning. This moves the
+    closet to the accessory instead of the other way round."""
+    bl_idname = "hb_closets.fit_opening_to_accessory"
+    bl_label = "Fit Opening To Accessory"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        from .. import accessories_closets as acc
+        obj = context.active_object
+        if obj is None or obj.get('hb_part_role') != (
+                types_closets.PART_ROLE_ACCESSORY):
+            cls.poll_message_set("Select an accessory first")
+            return False
+        acc_def = _accessory_of(obj)
+        if acc_def is None:
+            cls.poll_message_set("That accessory is no longer offered")
+            return False
+        if acc_def.band_width(
+                types_closets.accessory_band(obj, acc_def)) <= 0.0:
+            cls.poll_message_set(
+                "This one takes the width it is given")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = context.active_object
+        want = types_closets.fit_opening_to_accessory(obj)
+        if want <= 0.0:
+            self.report({'WARNING'}, "Nothing to fit it to")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Opening set to %s"
+                    % types_closets._in_str(want))
+        return {'FINISHED'}
 
 
 class hb_closets_OT_accessory_prompts(bpy.types.Operator):
@@ -4020,6 +4073,13 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         if warning:
             box = layout.box()
             box.label(text=warning, icon='ERROR')
+        if acc_def.band_width(
+                types_closets.accessory_band(obj, acc_def)) > 0.0:
+            row = layout.row()
+            row.scale_y = 1.3
+            row.operator("hb_closets.fit_opening_to_accessory",
+                         text="Fit Opening To Accessory",
+                         icon='ARROW_LEFTRIGHT')
 
     def execute(self, context):
         from .. import accessories_closets as acc
@@ -6161,6 +6221,7 @@ classes = (
     hb_closets_OT_add_accessory,
     hb_closets_OT_place_accessory,
     hb_closets_OT_accessory_prompts,
+    hb_closets_OT_fit_opening_to_accessory,
     hb_closets_OT_change_bay,
     hb_closets_OT_change_opening,
     hb_closets_OT_copy_bay,
