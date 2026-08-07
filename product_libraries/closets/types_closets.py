@@ -2588,6 +2588,10 @@ class ClosetStarter(GeoNodeCage):
             return None
         if existing is not None:
             if existing.get(PROP_ACCESSORY_MODEL) == want:
+                # Squared up on the way past, so a model that was
+                # brought in turned - by an older build of this
+                # library, or by hand - comes back straight.
+                existing.rotation_euler = (0.0, 0.0, 0.0)
                 return existing
             # The width was changed under it. These are bought at a
             # set size rather than stretched, so a different width is
@@ -2599,10 +2603,11 @@ class ClosetStarter(GeoNodeCage):
         bpy.context.scene.collection.objects.link(obj)
         obj.parent = cage
         obj.matrix_parent_inverse.identity()
-        if acc.MODEL_FACES_POSITIVE_Y:
-            # The models are drawn front-to-back down +Y. This library
-            # runs the other way, so each one is turned to face out.
-            obj.rotation_euler.z = math.radians(180)
+        # No turning. A model's depth runs back down +Y and so does
+        # this library's; it is placed at the front and runs back from
+        # there. Turning one end for end would stand it out in front
+        # of the closet, which is a mistake worth not repeating.
+        obj.rotation_euler.z = 0.0
         obj['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
         obj[PROP_ACCESSORY_MODEL] = want
         obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'

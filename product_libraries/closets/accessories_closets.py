@@ -92,11 +92,13 @@ COLORS_LIFT = ('Black', 'Chrome')
 FABRICS_PULLOUT = ('Fabric Beach', 'Fabric Slate')
 FABRICS_HAMPER = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
-# The accessory models are drawn front-to-back down +Y, the way the
-# prior library's openings ran. This one runs the other way, so a model
-# is turned end for end as it is brought in. Re-drawn models facing -Y
-# would set this False and drop straight in.
-MODEL_FACES_POSITIVE_Y = True
+# An accessory model is drawn with its origin on its front face and
+# its depth running back down +Y. This library runs the same way -
+# back to front is +Y here too - so a model needs no turning, only
+# putting at the front of the opening it belongs to. What differs is
+# where the front IS: the prior library had it at y=0, this one has it
+# at minus the depth.
+MODEL_DEPTH_RUNS_BACK = True
 
 FAMILY_OPENING = 'OPENING'
 FAMILY_PANEL = 'PANEL'
