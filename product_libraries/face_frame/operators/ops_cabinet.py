@@ -750,11 +750,20 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         col.prop(wt, 'top_type')
         col.prop(wt, 'thickness')
         col.separator()
-        # Nosing: front-edge profile from the shelf-nosing set; the
-        # extra-height styles take a height of their own.
+        # Nosing: edge profile from the shelf-nosing set; the
+        # extra-height styles take a height of their own. Side toggles
+        # pick which edges are milled (exposed sides, not walls).
         col.prop(wt, 'nosing_style')
-        if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
-            col.prop(wt, 'nosing_height')
+        if wt.nosing_style != 'NONE':
+            if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
+                col.prop(wt, 'nosing_height')
+            row = col.row(align=True)
+            row.label(text="Nosing Sides:")
+            row = col.row(align=True)
+            row.prop(wt, 'nosing_front', text="Front", toggle=True)
+            row.prop(wt, 'nosing_back', text="Back", toggle=True)
+            row.prop(wt, 'nosing_left', text="Left", toggle=True)
+            row.prop(wt, 'nosing_right', text="Right", toggle=True)
         col.separator()
         anchor = obj.parent
         anchored = (anchor is not None

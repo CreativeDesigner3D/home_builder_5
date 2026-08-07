@@ -10082,9 +10082,11 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         name="Right Overhang", default=units.inch(1.0),
         unit='LENGTH', precision=4, update=_update_wood_top,
     )  # type: ignore
-    # Front-edge nosing profile (the shelf-nosing set). Clover / Kelli
-    # match the board thickness; the extra-height styles use
-    # nosing_height and drop below the board bottom.
+    # Nosing profile (the shelf-nosing set). Clover / Kelli match the
+    # board thickness; the extra-height styles use nosing_height and
+    # drop below the board bottom. The per-side toggles pick which
+    # edges are milled -- typically the exposed sides (not against a
+    # wall); sides meeting at a corner miter into each other.
     nosing_style: EnumProperty(
         name="Nosing",
         items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
@@ -10094,6 +10096,26 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         name="Nosing Height", default=units.inch(2.0),
         min=units.inch(0.5), soft_max=units.inch(3.0),
         unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    nosing_front: BoolProperty(
+        name="Nosing Front", default=True,
+        description="Mill the nosing on the front edge",
+        update=_update_wood_top,
+    )  # type: ignore
+    nosing_back: BoolProperty(
+        name="Nosing Back", default=False,
+        description="Mill the nosing on the back edge",
+        update=_update_wood_top,
+    )  # type: ignore
+    nosing_left: BoolProperty(
+        name="Nosing Left", default=False,
+        description="Mill the nosing on the left edge",
+        update=_update_wood_top,
+    )  # type: ignore
+    nosing_right: BoolProperty(
+        name="Nosing Right", default=False,
+        description="Mill the nosing on the right edge",
+        update=_update_wood_top,
     )  # type: ignore
 
 

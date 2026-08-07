@@ -12456,7 +12456,9 @@ class WoodTopPart(CabinetPart):
 
         mod_name = getattr(obj.home_builder, 'mod_name', '')
         mod = obj.modifiers.get(mod_name) if mod_name else None
-        if wt.nosing_style in (None, '', 'NONE'):
+        nosed_sides = [s for s in ('front', 'back', 'left', 'right')
+                       if getattr(wt, 'nosing_' + s, s == 'front')]
+        if wt.nosing_style in (None, '', 'NONE') or not nosed_sides:
             # Plain board: the driven cutpart is the geometry.
             if obj.data is not None and obj.get(TAG_STATIC_TEXTURED):
                 obj.data.clear_geometry()
@@ -12466,7 +12468,7 @@ class WoodTopPart(CabinetPart):
             if TAG_STATIC_TEXTURED in obj:
                 del obj[TAG_STATIC_TEXTURED]
             return
-        self._write_nosed_mesh(obj, width, depth, t, wt)
+        self._write_nosed_mesh(obj, width, depth, t, wt, nosed_sides)
         if mod is not None:
             mod.show_viewport = False
             mod.show_render = False
@@ -12483,39 +12485,79 @@ class WoodTopPart(CabinetPart):
                 obj.data.materials.append(surf)
 
     @staticmethod
-    def _write_nosed_mesh(obj, width, depth, t, wt):
-        """Static mesh: the board shortened by the nosing stock depth
-        with the profiled nosing swept along the front edge -- one
-        closed section (board + nosing outline) extruded across the
-        width. Local space matches the driven cutpart: X 0..width,
-        Y 0..-depth (Mirror Y), Z 0..thickness with the nosing top
-        flush to the board top (extra-height styles drop below).
+    def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
+        """Static mesh: a core board shortened by the nosing stock depth
+        on each nosed side, plus one profiled prism per nosed edge.
+        Prism ends miter at 45 degrees where two nosed edges meet at a
+        corner, and cut square at the board edge otherwise. Local space
+        matches the driven cutpart: X 0..width, Y 0..-depth (Mirror Y),
+        Z 0..thickness with the nosing top flush to the board top
+        (extra-height styles drop below).
         """
         nose_d = shelf_nosing.NOSE_STOCK_DEPTH
-        body_d = max(depth - nose_d, inch(1.0))
         h = (max(t, wt.nosing_height)
              if wt.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
              else t)
         outline = shelf_nosing.nosing_outline(wt.nosing_style, t, h)
-        # Section in (y, z): back-top, along the top to the nosing back,
-        # around the nosing free boundary (outline d forward / z down
-        # from the top), then back up the nosing rear face to the board
-        # bottom and home along the bottom.
+        nosed = set(nosed_sides)
+        # Prism cross-section in (d, z): d grows outward from the core
+        # face (0) to the board's outer face (nose_d). From the core top
+        # around the nosing free boundary, closing at the core face at
+        # the outline's final height (below z=0 for hang-down styles).
         sec = [(0.0, t)]
         for d_pt, z_pt in outline:
-            sec.append((-(body_d + d_pt), t + z_pt))
-        if abs((t + outline[-1][1])) > 1e-9:   # nosing drops below z=0
-            sec.append((-body_d, 0.0))
-        sec.append((0.0, 0.0))
+            sec.append((nose_d - d_pt, t + z_pt))
+        sec.append((0.0, min(0.0, t + outline[-1][1])))
+        if sec[-1][1] < -1e-9:
+            sec.append((0.0, 0.0))
+
+        # Core box, shrunk on each nosed side (clamped to stay a solid).
+        x0 = min(nose_d if 'left' in nosed else 0.0, width * 0.5 - 1e-4)
+        x1 = max(width - (nose_d if 'right' in nosed else 0.0),
+                 width * 0.5 + 1e-4)
+        yf = min(-depth + (nose_d if 'front' in nosed else 0.0),
+                 -depth * 0.5 - 1e-4)
+        yb = max(-(nose_d if 'back' in nosed else 0.0), -depth * 0.5 + 1e-4)
+
         bm = bmesh.new()
-        ring0 = [bm.verts.new((0.0, y, z)) for y, z in sec]
-        ring1 = [bm.verts.new((width, y, z)) for y, z in sec]
-        bm.faces.new(ring0)
-        bm.faces.new(list(reversed(ring1)))
-        n = len(sec)
-        for i in range(n):
-            j = (i + 1) % n
-            bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+        corners = [(x, y, z) for z in (0.0, t) for y in (yf, yb)
+                   for x in (x0, x1)]
+        cv = [bm.verts.new(c) for c in corners]
+        for quad in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 2, 6, 4),
+                     (1, 5, 7, 3), (0, 4, 5, 1), (2, 3, 7, 6)):
+            bm.faces.new([cv[i] for i in quad])
+
+        # (a, d, z) -> local xyz per side; ends list the adjacent side
+        # at (a0, a1) for the miter decision.
+        def _point(side, a, d, z):
+            if side == 'front':
+                return (a, -depth + (nose_d - d), z)
+            if side == 'back':
+                return (a, -(nose_d - d), z)
+            if side == 'left':
+                return (nose_d - d, a, z)
+            return (width - (nose_d - d), a, z)
+
+        spans = {
+            'front': (0.0, width, 'left', 'right'),
+            'back':  (0.0, width, 'left', 'right'),
+            'left':  (-depth, 0.0, 'front', 'back'),
+            'right': (-depth, 0.0, 'front', 'back'),
+        }
+        for side in nosed_sides:
+            a0, a1, adj0, adj1 = spans[side]
+            ring0, ring1 = [], []
+            for d, z in sec:
+                s0 = a0 + (nose_d - d) if adj0 in nosed else a0
+                s1 = a1 - (nose_d - d) if adj1 in nosed else a1
+                ring0.append(bm.verts.new(_point(side, s0, d, z)))
+                ring1.append(bm.verts.new(_point(side, s1, d, z)))
+            bm.faces.new(ring0)
+            bm.faces.new(list(reversed(ring1)))
+            n = len(sec)
+            for i in range(n):
+                j = (i + 1) % n
+                bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         bm.to_mesh(obj.data)
         bm.free()
