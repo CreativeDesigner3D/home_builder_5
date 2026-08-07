@@ -475,6 +475,10 @@ PART_ROLE_DRAWER_DIVIDER = 'DRAWER_DIVIDER'
 # dividers; kept as its own role so reports can tell a loose partition
 # from a dropped-in insert.
 PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
+# Hidden boolean cutter carving the U-notch of a sink duo drawer box.
+# A wire child of the box, so it lives and dies with the box's own
+# wipe-and-rebuild lifecycle.
+PART_ROLE_DRAWER_BOX_CUTTER = 'DRAWER_BOX_CUTTER'
 
 # Render hints an accessory can carry -> (builder method, default
 # height in inches, whether the insert takes up drawer floor). Hints
@@ -9277,6 +9281,9 @@ class FaceFrameCabinet(GeoNodeCage):
         if op_props is not None:
             self._spawn_drawer_inserts(box.obj, box_dx, box_dy, box_dz,
                                        op_props)
+        if op_props is not None and getattr(op_props, 'sink_duo', False):
+            self._apply_sink_duo_notch(box.obj, box_dx, box_dy, box_dz,
+                                       op_props)
         if chase_notch:
             # _iter_pipe_chase_cut_targets picks this up and booleans
             # the chase cutter into the box. The notch does NOT change
@@ -9288,6 +9295,55 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
             box.obj['CHASE_NOTCH_DEPTH'] = intrusion
         return box
+
+    @staticmethod
+    def _apply_sink_duo_notch(box_obj, box_dx, box_dy, box_dz, op_props):
+        """U-shaped (sink duo) drawer box: boolean a centered notch into
+        the box from the back so it wraps the sink basin / plumbing.
+        The cutter is a wire child of the box (both are wiped and
+        rebuilt every recalc together); the notch rect is published on
+        the box for drawings / reports. The box's Dim inputs stay full
+        size -- the U is a shop operation on the built box."""
+        margin = inch(0.5)
+        notch_w = min(getattr(op_props, 'sink_duo_notch_width', 0.0),
+                      box_dx)
+        notch_d = getattr(op_props, 'sink_duo_notch_depth', 0.0)
+        if notch_d <= 0.0:
+            notch_d = box_dy * (2.0 / 3.0)
+        notch_d = min(notch_d, box_dy)
+        if notch_w <= 0.0 or notch_d <= 0.0:
+            return
+        x0 = (box_dx - notch_w) / 2.0
+        x1 = x0 + notch_w
+        mesh = bpy.data.meshes.new('Sink Duo Cutter')
+        cutter = bpy.data.objects.new('Sink Duo Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
+        cutter.parent = box_obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in box_obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        for v in bm.verts:
+            v.co.x = x0 if v.co.x < 0.0 else x1
+            v.co.y = (box_dy - notch_d) if v.co.y < 0.0 else box_dy + margin
+            v.co.z = -margin if v.co.z < 0.0 else box_dz + margin
+        bm.to_mesh(mesh)
+        bm.free()
+        mod = box_obj.modifiers.new(name='Sink Duo Notch', type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        # MANIFOLD, not EXACT: the drawer box mesh is several closed
+        # box islands, and EXACT degenerates on it (drops faces without
+        # cutting). Every input here is a closed solid, which is what
+        # the manifold solver requires.
+        mod.solver = 'MANIFOLD'
+        mod.object = cutter
+        box_obj['SINK_DUO'] = True
+        box_obj['SINK_DUO_NOTCH_WIDTH'] = notch_w
+        box_obj['SINK_DUO_NOTCH_DEPTH'] = notch_d
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory

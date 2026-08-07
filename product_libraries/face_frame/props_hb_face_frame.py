@@ -7681,6 +7681,31 @@ class Face_Frame_Opening_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # ---- Sink duo (U-shaped) drawer ----
+    # A drawer under a sink whose box wraps the basin / drain: a
+    # centered notch cut into the box from the back. Durable on the
+    # opening (boxes are wiped every recalc); the box builds full size
+    # and the U-notch is cut on top, published for drawings / reports.
+    sink_duo: BoolProperty(
+        name="Sink Duo Drawer",
+        description="U-shaped drawer box: a centered notch from the "
+                    "back wraps the sink basin / plumbing",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    sink_duo_notch_width: FloatProperty(
+        name="Notch Width",
+        description="Width of the U-notch, centered across the box",
+        default=units.inch(9.0), unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    sink_duo_notch_depth: FloatProperty(
+        name="Notch Depth",
+        description="How far the U-notch reaches into the box from the "
+                    "back; 0 uses two-thirds of the box depth",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # ---- Drawer box construction ----
     # Which box system this opening's boxes are built from. HB5 ships no
     # list: the host application supplies the options through the

@@ -513,6 +513,8 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
+        layout.operator("hb_face_frame.sink_duo_drawer_prompts",
+                        text="Sink Duo Drawer...", icon='SELECT_SUBTRACT')
         if _has_drawer_box_construction_options():
             _draw_drawer_box_construction_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
