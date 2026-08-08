@@ -12557,12 +12557,14 @@ class WoodTopPart(CabinetPart):
         outline = shelf_nosing.nosing_outline(wt.nosing_style, t, h)
         nosed = set(nosed_sides)
         # Prism cross-section in (d, z): d grows outward from the core
-        # face (0) to the board's outer face (nose_d). From the core top
+        # face (0) to the board's outer face (nose_d) -- the outline's
+        # forward distance maps to d DIRECTLY (mirroring it through the
+        # stock renders every profile inside-out). From the core top
         # around the nosing free boundary, closing at the core face at
         # the outline's final height (below z=0 for hang-down styles).
         sec = [(0.0, t)]
         for d_pt, z_pt in outline:
-            sec.append((nose_d - d_pt, t + z_pt))
+            sec.append((d_pt, t + z_pt))
         sec.append((0.0, min(0.0, t + outline[-1][1])))
         if sec[-1][1] < -1e-9:
             sec.append((0.0, 0.0))
