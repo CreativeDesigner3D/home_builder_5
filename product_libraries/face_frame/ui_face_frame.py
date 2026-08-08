@@ -1257,6 +1257,9 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
+            # 0 = fit the cavity; a typed depth shortens the boxes at
+            # the back (pipe / vent run behind the rollouts).
+            sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
                      text="Hide Rollout Spacers")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the

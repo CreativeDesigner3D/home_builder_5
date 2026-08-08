@@ -7301,6 +7301,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # PULLOUT_SHELF-only.
     rollout_boxes: CollectionProperty(type=Face_Frame_Rollout_Box)  # type: ignore
     rollout_boxes_index: IntProperty(default=0)  # type: ignore
+    # Explicit rollout box depth; 0 = automatic (cavity depth less the
+    # front setback). A typed value shortens the boxes at the BACK -
+    # e.g. 18" deep rollouts clearing a pipe run behind them.
+    rollout_depth: FloatProperty(
+        name="Rollout Depth",
+        description="Depth of the rollout boxes; 0 fits the cavity "
+                    "automatically. A typed depth shortens the boxes at "
+                    "the back (e.g. to clear plumbing behind them)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Omit the four slide-mount spacer parts for this ROLLOUT. A single
     # rollout fixed at the floor mounts straight to the cabinet, so no
     # spacer/ladder assembly is wanted (or manufactured) for it.

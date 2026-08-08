@@ -4552,6 +4552,11 @@ def _rollout_descriptors(rect, cage_dim_y, item):
     box_x, box_dx, spacer_l, spacer_r = _assembly_side_geometry(
         rect, cage_dim_x)
     box_dy = max(0.0, cage_dim_y - setback)
+    # Explicit depth (0 = auto): shorten the boxes at the BACK so they
+    # clear a pipe / vent run behind them. Clamped to the auto fit.
+    typed_dy = getattr(item, 'rollout_depth', 0.0)
+    if typed_dy > 0.0:
+        box_dy = min(typed_dy, box_dy)
 
     out = []
     z = bottom_gap
