@@ -5273,12 +5273,107 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         self.appliance_width = bp.front_drop_appliance_width
         self.left_filler_amount = bp.front_drop_left_filler
         self.right_filler_amount = bp.front_drop_right_filler
-        # Apply once with the seeded values, then keep the popup open --
-        # invoke_props_popup re-runs execute on every subsequent edit so
-        # the viewport tracks the dialog live.
-        if self.execute(context) == {'CANCELLED'}:
-            return {'CANCELLED'}
-        return context.window_manager.invoke_props_popup(self, event)
+        # Snapshot everything the live preview may touch so Cancel can
+        # put it back. (The front-layout preset is NOT previewed -- it
+        # only applies on OK -- so the snapshot stays scalar.)
+        self._revert = {
+            'appliance_bay': bay.get('APPLIANCE_BAY'),
+            'appliance_bay_kind': bay.get('APPLIANCE_BAY_KIND'),
+            'width': bp.width,
+            'unlock_width': bp.unlock_width,
+            'front_drop': bp.front_drop,
+            'include_fillers': bp.front_drop_include_fillers,
+            'set_appliance_width': bp.front_drop_set_appliance_width,
+            'appliance_width': bp.front_drop_appliance_width,
+            'left_filler': bp.front_drop_left_filler,
+            'right_filler': bp.front_drop_right_filler,
+        }
+        # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
+        # re-runs execute through the operator-repeat machinery, whose
+        # undo + re-execute rolled the bay back to its pre-dialog layout
+        # on every later edit (the last_preset guard then skipped the
+        # rebuild, so the viewport snapped back to the old fronts).
+        # check() live-previews the cheap reversible writes instead;
+        # the destructive front-layout preset waits for OK.
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def check(self, context):
+        """Live preview on each dialog edit: width / drop / fillers /
+        appliance stamp. Cheap prop writes + one recalc -- no front
+        layout rebuild (that happens on OK) so every edit is fully
+        reversible by Cancel."""
+        self._apply_scalars(context)
+        return True
+
+    def cancel(self, context):
+        """Dialog dismissed (Cancel / Esc / click-away): restore the
+        state the live preview touched."""
+        snap = getattr(self, '_revert', None)
+        bay = self._resolve_bay(context)
+        if snap is None or bay is None:
+            return
+        root = types_face_frame.find_cabinet_root(bay)
+        with types_face_frame.suspend_recalc():
+            for key, tag in (('appliance_bay', 'APPLIANCE_BAY'),
+                             ('appliance_bay_kind', 'APPLIANCE_BAY_KIND')):
+                if snap[key] is None:
+                    if tag in bay:
+                        del bay[tag]
+                else:
+                    bay[tag] = snap[key]
+            bp = bay.face_frame_bay
+            bp.width = snap['width']
+            bp.unlock_width = snap['unlock_width']
+            bp.front_drop = snap['front_drop']
+            bp.front_drop_include_fillers = snap['include_fillers']
+            bp.front_drop_set_appliance_width = snap['set_appliance_width']
+            bp.front_drop_appliance_width = snap['appliance_width']
+            bp.front_drop_left_filler = snap['left_filler']
+            bp.front_drop_right_filler = snap['right_filler']
+            if root is not None:
+                types_face_frame.recalculate_face_frame_cabinet(root)
+
+    def _apply_scalars(self, context):
+        """The reversible live-preview writes shared by check() and
+        execute(): appliance stamps, bay width, drop and fillers."""
+        if self.session_id and self.session_id != _appliance_dialog_session[0]:
+            return None
+        bay = self._resolve_bay(context)
+        if bay is None:
+            return None
+        root = types_face_frame.find_cabinet_root(bay)
+        if root is None or root.face_frame_cabinet.cabinet_type != 'BASE':
+            return None
+        with types_face_frame.suspend_recalc():
+            # Durable annotation signal: the bay cage persists across
+            # recalcs, so _apply_appliance_annotations can rebuild the
+            # square + word from this stamp every pass.
+            bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
+                                    else 'SINK')
+            # The annotation pass only needs SINK vs COOKTOP, but 2D
+            # consumers distinguish kitchen from vanity sinks (e.g.
+            # depth callout rules), so keep the specific kind too.
+            bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
+            bp = bay.face_frame_bay
+            # Width setter auto-locks unlock_width.
+            bp.width = self.width
+            # Drop: lower the bay's FRONT construction (top rail + front
+            # stretcher) by the amount. Only the front drops - the back,
+            # rear stretcher, sides and end / mid stiles stay full height
+            # to carry the countertop; the basin occupies the open band
+            # behind the dropped rail. Assigned (not added) so re-running
+            # the dialog replaces the drop instead of compounding it.
+            bp.front_drop = self.drop_bay_amount
+            # Drop-band fillers: written through even when the drop is 0
+            # or fillers are off - the solver gates on front_drop +
+            # include, so stale filler parts reconcile away.
+            bp.front_drop_include_fillers = self.include_fillers
+            bp.front_drop_set_appliance_width = self.set_appliance_width
+            bp.front_drop_appliance_width = self.appliance_width
+            bp.front_drop_left_filler = self.left_filler_amount
+            bp.front_drop_right_filler = self.right_filler_amount
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return bay, root
 
     def draw(self, context):
         layout = self.layout
@@ -5305,11 +5400,13 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         box.prop(self, 'config', expand=True)
         box.label(text="Interior:")
         box.prop(self, 'interior', expand=True)
+        # Width / drop / fillers preview live; the front-layout rebuild
+        # is deliberately deferred so Cancel can restore everything.
+        box.label(text="Configuration and Interior apply on OK",
+                  icon='INFO')
 
     def execute(self, context):
-        # Stale-popup guard: only the NEWEST dialog may touch the bay.
-        # A lingering popup from an earlier invocation re-executing with
-        # its frozen properties is what reverted configurations mid-edit.
+        # Stale-dialog guard: only the NEWEST dialog may touch the bay.
         # session_id 0 (direct EXEC / scripting, never invoked) is allowed.
         if self.session_id and self.session_id != _appliance_dialog_session[0]:
             return {'CANCELLED'}
@@ -5339,11 +5436,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             preset = 'DOUBLE_DOOR' if wide else 'LEFT_SWING_DOOR'
 
         with types_face_frame.suspend_recalc():
-            # Only rebuild the front layout when the resolved preset
-            # actually changed (config switch, or the width crossing the
-            # double-door threshold). Live-preview edits to width / drop /
-            # fillers / interior re-run execute constantly; rebuilding the
-            # opening tree each time would flicker and discard door styles.
+            # The destructive front-layout rebuild happens HERE (OK),
+            # never in the live preview -- so Cancel always has a bay
+            # layout to go back to. last_preset still guards a repeat
+            # execute (OK after OK via redo) from rebuilding twice.
             if (preset is not None and preset != self.last_preset
                     and not apply_bay_preset(bay, preset)):
                 self.report({'WARNING'},
@@ -5351,33 +5447,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                 return {'CANCELLED'}
             if preset is not None:
                 self.last_preset = preset
-            # Durable annotation signal: the bay cage persists across
-            # recalcs, so _apply_appliance_annotations can rebuild the
-            # square + word from this stamp every pass.
-            bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
-                                    else 'SINK')
-            # The annotation pass only needs SINK vs COOKTOP, but 2D
-            # consumers distinguish kitchen from vanity sinks (e.g.
-            # depth callout rules), so keep the specific kind too.
-            bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
-            bp = bay.face_frame_bay
-            # Width setter auto-locks unlock_width.
-            bp.width = self.width
-            # Drop: lower the bay's FRONT construction (top rail + front
-            # stretcher) by the amount. Only the front drops - the back,
-            # rear stretcher, sides and end / mid stiles stay full height
-            # to carry the countertop; the basin occupies the open band
-            # behind the dropped rail. Assigned (not added) so re-running
-            # the dialog replaces the drop instead of compounding it.
-            bp.front_drop = self.drop_bay_amount
-            # Drop-band fillers: written through even when the drop is 0
-            # or fillers are off - the solver gates on front_drop +
-            # include, so stale filler parts reconcile away.
-            bp.front_drop_include_fillers = self.include_fillers
-            bp.front_drop_set_appliance_width = self.set_appliance_width
-            bp.front_drop_appliance_width = self.appliance_width
-            bp.front_drop_left_filler = self.left_filler_amount
-            bp.front_drop_right_filler = self.right_filler_amount
+        if self._apply_scalars(context) is None:
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
             # Interior on the door opening(s) only - skip the false-front
             # apron opening. Walk recursively since the preset nests the
             # openings under a vertical split cage.
@@ -5394,11 +5466,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             types_face_frame.recalculate_face_frame_cabinet(root)
 
         # Re-apply selection mode so the rebuilt cages render correctly.
-        # DIRECT call, not bpy.ops.hb_face_frame.toggle_mode: calling a
-        # registered operator from inside execute steals the "last redo"
-        # slot, which kills this dialog's invoke_props_popup live updates
-        # (edits stop re-executing and the property UI reverts to
-        # defaults -- the config snapping back to False Front with Doors).
+        # DIRECT call, not bpy.ops.hb_face_frame.toggle_mode: a nested
+        # operator call would steal the "last redo" slot.
         try:
             apply_face_frame_selection_mode(context, root)
         except Exception:
