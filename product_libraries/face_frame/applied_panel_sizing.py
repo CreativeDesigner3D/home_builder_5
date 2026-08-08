@@ -114,11 +114,16 @@ def _match_5_piece_door(cab, door_style, side):
     rail in panel-only form. Same logic for the bottom rail, plus
     the toe-kick band for Base/Tall.
 
-    Stiles: the panel reads as a door leaf on the cabinet side, so
-    both stiles take the DOOR style's stile width -- a 2.5" door
-    stile yields 2.5" panel stiles. (Cabinet face-frame stiles vary
+    Stiles: the panel reads as a door leaf on the cabinet side, sized
+    from the DOOR style's stile width (cabinet face-frame stiles vary
     per side -- wall / end / refrigerator stiles -- and matching them
-    made the paneled end read wider than the doors next to it.)
+    made the paneled end read wider than the doors next to it). The
+    panel's front edge stops face_frame_thickness short of the cabinet
+    front (the FF edge provides that last 3/4" -- see
+    applied_panel_geometry), so the FACING stile deducts fft and the
+    visible corner reads as the full door stile: a 3" door stile =
+    3/4" FF edge + 2.25" panel stile. The outer (wall-side) stile has
+    no FF in front of it and keeps the full door stile width.
     """
     rail = door_style.rail_width
     top_rail = cab.top_rail_width - cab.default_top_overlay + rail
@@ -127,11 +132,19 @@ def _match_5_piece_door(cab, door_style, side):
         + rail + _toe_kick_band(cab)
     )
     stile = door_style.stile_width
+    fft = cab.face_frame_thickness
+    if side == 'LEFT':
+        left_stile, right_stile = stile, stile - fft
+    elif side == 'RIGHT':
+        left_stile, right_stile = stile - fft, stile
+    else:  # BACK: no face frame at either end (mid-stile rule
+        # overrides both in resolve_panel_sizing anyway).
+        left_stile = right_stile = stile
     return {
         'top_rail_width':    top_rail,
         'bottom_rail_width': bottom_rail,
-        'left_stile_width':  stile,
-        'right_stile_width': stile,
+        'left_stile_width':  left_stile,
+        'right_stile_width': right_stile,
     }
 
 
@@ -457,11 +470,13 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         elif role == facing_role:
             facing_stile = c
 
-    # Facing stile width comes from the same per-side rule as the
-    # panel sizing - facing element is the second value for LEFT, the
-    # first for RIGHT.
-    left_stile, right_stile = _stile_widths(cab, side)
-    facing_width = right_stile if side == 'LEFT' else left_stile
+    # Facing stile width: read what apply_panel_sizing actually wrote
+    # to the panel (door-stile rule for 5-piece PANELED, cabinet-stile
+    # rule otherwise, plus any per-part user override) - facing element
+    # is the right stile for LEFT panels, the left stile for RIGHT.
+    panel_props = panel_obj.face_frame_cabinet
+    facing_width = (panel_props.right_stile_width if side == 'LEFT'
+                    else panel_props.left_stile_width)
     if is_leg:
         setback = cab_obj.leg_product.toe_kick_setback
         kick = (0.0 if cab_obj.leg_product.is_column
@@ -469,6 +484,12 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     else:
         setback = cab.toe_kick_setback
         kick = cab.toe_kick_height
+    # The panel's front edge stops face_frame_thickness short of the
+    # cabinet front (the FF edge covers that last 3/4" - see
+    # applied_panel_geometry), so the notch measured from the panel's
+    # own front is the setback LESS fft - cutting the full setback
+    # notched the panel 3/4" too far.
+    setback = max(0.0, setback - cab.face_frame_thickness)
 
     # Axis mapping differs by part because their local rotations
     # differ. Bottom rail: X = depth-into-the-rail (setback), Y = kick
