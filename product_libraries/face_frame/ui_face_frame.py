@@ -1292,6 +1292,12 @@ def _walk_tree_leaves(opening_obj):
     """DFS yielder for leaf cages of the opening's interior tree.
     Yields (leaf_obj, parent_split, child_index, depth). Skips when
     no tree exists.
+
+    DISPLAY order only (generation indexes are untouched): children of
+    a horizontal split list TOP region first, matching how the user
+    reads the cabinet in the viewport and on drawings - the build
+    order (bottom = child 0) had users adding items to the wrong
+    region. Vertical splits keep left before right.
     """
     def _recurse(node, depth):
         if node.get(types_face_frame.TAG_INTERIOR_REGION):
@@ -1303,11 +1309,13 @@ def _walk_tree_leaves(opening_obj):
             return
         if not node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
             return
+        top_first = node.face_frame_interior_split.axis == 'H'
         children = sorted(
             [c for c in node.children
              if c.get(types_face_frame.TAG_INTERIOR_REGION)
              or c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)],
             key=lambda c: c.get('hb_interior_child_index', 0),
+            reverse=top_first,
         )
         for c in children:
             yield from _recurse(c, depth + 1)
