@@ -486,16 +486,20 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         kick = cab.toe_kick_height
     # The panel's front edge stops face_frame_thickness short of the
     # cabinet front (the FF edge covers that last 3/4" - see
-    # applied_panel_geometry), so the notch measured from the panel's
-    # own front is the setback LESS fft - cutting the full setback
-    # notched the panel 3/4" too far.
-    setback = max(0.0, setback - cab.face_frame_thickness)
+    # applied_panel_geometry), so the STILE's notch measured from the
+    # panel's own front is the setback LESS fft: its notch face lands
+    # exactly on the kick plane. The BOTTOM RAIL behind it cuts fft
+    # DEEPER (its share comes from the full setback), so the panel is
+    # notched behind the finish toe kick stock - the 3/4" kick board
+    # seats in front of the rail's notch face, flush with the stile's.
+    fft = cab.face_frame_thickness
+    stile_depth = max(0.0, setback - fft)
 
     # Axis mapping differs by part because their local rotations
-    # differ. Bottom rail: X = depth-into-the-rail (setback), Y = kick
-    # height. Facing stile: rotated such that X = kick height, Y =
-    # setback - the same notch corner but the part's local X axis
-    # points up the stile instead of along the rail.
+    # differ. Bottom rail: X = depth-into-the-rail, Y = kick height.
+    # Facing stile: rotated such that X = kick height, Y = depth - the
+    # same notch corner but the part's local X axis points up the
+    # stile instead of along the rail.
     parts = []
     if bottom_rail is not None:
         parts.append((
@@ -508,8 +512,8 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         parts.append((
             facing_stile,
             _NOTCH_FLIPS_FACING_STILE[side],
-            kick,      # X = height (stile runs vertically)
-            setback,   # Y = depth
+            kick,         # X = height (stile runs vertically)
+            stile_depth,  # Y = depth
         ))
 
     for part_obj, flips, x_val, y_val in parts:
