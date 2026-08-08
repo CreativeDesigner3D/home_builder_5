@@ -779,11 +779,11 @@ class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
 class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
     """Right-click menu for a Misc Part - a bare GeoNodeCutpart with no
     cabinet cage. The cabinet / part-role menus don't apply, so this is
-    size, machining cutouts, Make Editable / Revert, and delete. Set
-    Dimensions and the cutout items edit the cutpart's GeoNode inputs, so
-    they hide once the part is made editable (GN applied); Delete routes
-    through the HB5-aware delete (which falls back to object.delete for a
-    cage-less part).
+    properties (size + panel type), machining cutouts, Make Editable /
+    Revert, and delete. Part Properties and the cutout items edit the
+    cutpart's GeoNode inputs, so they hide once the part is made editable
+    (GN applied); Delete routes through the HB5-aware delete (which falls
+    back to object.delete for a cage-less part).
     """
     bl_label = "Misc Part Commands"
 
@@ -793,7 +793,7 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
 
         if ops_part_commands._is_cutpart(obj):
             layout.operator("hb_face_frame.set_misc_part_dimensions",
-                            text="Set Dimensions...", icon='ARROW_LEFTRIGHT')
+                            text="Part Properties...", icon='WINDOW')
             # Machining cutout - same entries as the cabinet-part menu; a
             # Misc Part is itself a parametric cutpart so the operators
             # apply unchanged.

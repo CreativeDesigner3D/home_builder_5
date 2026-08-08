@@ -733,7 +733,7 @@ def _on_misc_panel_type_update(self, context):
 
 
 class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
-    """Set a Misc Part's size.
+    """Misc Part properties: size + panel type (plain / beadboard / shiplap).
 
     A Misc Part is a bare GeoNodeCutpart with no cabinet cage, so it has
     none of the width / height props the other Set-* operators bind to.
@@ -745,9 +745,12 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
     (Width / Depth / Thickness); the GeoNode input each maps to is noted
     on its update callback.
     """
+    # bl_idname kept for compatibility; the dialog outgrew its name and
+    # presents as Part Properties (size + panel type).
     bl_idname = "hb_face_frame.set_misc_part_dimensions"
-    bl_label = "Set Dimensions"
-    bl_description = "Set this part's width, depth, and thickness"
+    bl_label = "Part Properties"
+    bl_description = ("Edit this part's size and panel type "
+                      "(plain / beadboard / shiplap)")
     bl_options = {'UNDO'}
 
     # Resolved each tick by the update callbacks (see _misc_part_for_dialog).
