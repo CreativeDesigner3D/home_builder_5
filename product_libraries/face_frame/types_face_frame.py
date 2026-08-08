@@ -12139,6 +12139,50 @@ class MiscPart(CabinetPart):
     def apply_placement_width(self, width):
         """The cage width maps to the board's X span = its 'Length' input."""
         self.set_input('Length', width)
+        self.rebuild()
+
+    def rebuild(self):
+        """Sync the board's display with its panel type (stored on the
+        object as HB_MISC_PANEL_TYPE). PANEL is the live GN cutpart;
+        BEADBOARD / SHIPLAP carve a static textured mesh via the same
+        builder the finished-end applied panels use, sized from the
+        cutpart's own Length / Width / Thickness inputs so size edits
+        re-carve in place. The carved (exterior) face lands on the
+        board's TOP face -- the finish face of the flat-lying part."""
+        obj = self.obj
+        ptype = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
+        if ptype not in ('BEADBOARD', 'SHIPLAP'):
+            mod_name = getattr(obj.home_builder, 'mod_name', '')
+            mod = obj.modifiers.get(mod_name) if mod_name else None
+            if obj.data is not None and obj.get(TAG_STATIC_TEXTURED):
+                obj.data.clear_geometry()
+            if mod is not None:
+                mod.show_viewport = True
+                mod.show_render = True
+            if TAG_STATIC_TEXTURED in obj:
+                del obj[TAG_STATIC_TEXTURED]
+            return
+        length = self.get_input('Length')
+        width = self.get_input('Width')
+        t = self.get_input('Thickness')
+        # mirror_z=True carves the exterior on the z=0 plane with the
+        # material extending -z; shifting the mesh up by the thickness
+        # puts the body back at 0..t (matching the plain cutpart) with
+        # the grooves on the top face. The builder hides the GN display
+        # and stamps TAG_STATIC_TEXTURED itself.
+        FaceFrameCabinet._textured_panel_mesh(
+            obj, length, width, t, ptype, mirror_z=True)
+        obj.data.transform(Matrix.Translation((0.0, 0.0, t)))
+        obj.data.update()
+        # The static mesh renders its own slots; seed them from the
+        # cutpart's surface input so an applied finish carries over.
+        if obj.data is not None and not obj.data.materials:
+            try:
+                surf = self.get_input('Top Surface')
+            except Exception:
+                surf = None
+            if surf is not None:
+                obj.data.materials.append(surf)
 
 
 # Door Part: stand-up rotation so a standalone door reads vertical with

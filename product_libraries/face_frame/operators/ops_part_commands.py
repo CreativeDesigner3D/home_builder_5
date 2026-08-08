@@ -20,8 +20,8 @@ doesn't reset the user's value.
 import os
 
 import bpy
-from bpy.props import (BoolProperty, BoolVectorProperty, FloatProperty,
-                       StringProperty)
+from bpy.props import (BoolProperty, BoolVectorProperty, EnumProperty,
+                       FloatProperty, StringProperty)
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -684,11 +684,23 @@ def _misc_part_for_dialog(op):
     return bpy.data.objects.get(op.source_obj_name)
 
 
+def _misc_part_recarve(obj):
+    """Re-carve a textured (beadboard / shiplap) Misc Part after a GN
+    input write -- the static mesh doesn't follow the inputs on its
+    own. No-op for plain panels."""
+    if not obj.get('HB_STATIC_TEXTURED'):
+        return
+    part = types_face_frame.MiscPart()
+    part.obj = obj
+    part.rebuild()
+
+
 def _on_misc_width_update(self, context):
     """Live-apply Width -> the cutpart's 'Length' (X) input."""
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Length', self.part_width)
+        _misc_part_recarve(obj)
 
 
 def _on_misc_depth_update(self, context):
@@ -696,6 +708,7 @@ def _on_misc_depth_update(self, context):
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Width', self.part_depth)
+        _misc_part_recarve(obj)
 
 
 def _on_misc_thickness_update(self, context):
@@ -703,6 +716,20 @@ def _on_misc_thickness_update(self, context):
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Thickness', self.part_thickness)
+        _misc_part_recarve(obj)
+
+
+def _on_misc_panel_type_update(self, context):
+    """Live-apply the panel type: stamp it on the part and rebuild --
+    PANEL restores the live GN cutpart, BEADBOARD / SHIPLAP carve the
+    static textured mesh."""
+    obj = _misc_part_for_dialog(self)
+    if obj is None:
+        return
+    obj['HB_MISC_PANEL_TYPE'] = self.panel_type
+    part = types_face_frame.MiscPart()
+    part.obj = obj
+    part.rebuild()
 
 
 class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
@@ -732,6 +759,17 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
                               update=_on_misc_depth_update)  # type: ignore
     part_thickness: FloatProperty(name="Thickness", unit='LENGTH', precision=4, min=0.0,
                                   update=_on_misc_thickness_update)  # type: ignore
+    panel_type: EnumProperty(
+        name="Type",
+        items=[
+            ('PANEL', "Panel", "Plain flat panel"),
+            ('BEADBOARD', "Beadboard",
+             "Vertical quirk-bead grooves carved across the face"),
+            ('SHIPLAP', "Shiplap",
+             "Nickel-gap plank reveals carved across the face"),
+        ],
+        default='PANEL',
+        update=_on_misc_panel_type_update)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -747,6 +785,7 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         self.part_width = part.get_input('Length')
         self.part_depth = part.get_input('Width')
         self.part_thickness = part.get_input('Thickness')
+        self.panel_type = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
 
@@ -755,6 +794,8 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         col.prop(self, 'part_width')
         col.prop(self, 'part_depth')
         col.prop(self, 'part_thickness')
+        col.separator()
+        col.prop(self, 'panel_type')
 
     def execute(self, context):
         # Live-bound via the prop update callbacks; execute is only hit on
