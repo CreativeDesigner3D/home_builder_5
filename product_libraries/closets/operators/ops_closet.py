@@ -366,11 +366,17 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
                                   'IS_WINDOW_BP', 'IS_CUTTING_OBJ',
                                   'IS_2D_ANNOTATION')):
             return
-        if obj.get('hb_part_role') == (
+        if obj.get('hb_part_role') in (
+                types_closets.PART_ROLE_ACCESSORY,
                 types_closets.PART_ROLE_ACCESSORY_BLOCK):
-            # A stand-in for a model that is not installed. It is red
-            # so that it reads as missing at a glance, and this pass
-            # does not get to paint that out.
+            # The block is a stand-in for a model that is not
+            # installed: it is red so that it reads as missing at a
+            # glance, and this pass does not get to paint that out.
+            # The cage is the accessory itself - the box a person
+            # clicks on and sees selected. This pass hides every cage
+            # it does not recognise, and it recognises starters, bays
+            # and openings only, so an accessory left to it would be
+            # hidden in every mode and never brought back.
             return
         if types_closets.find_starter_root(obj) is None:
             return
@@ -3575,11 +3581,14 @@ def _held(key, items):
 
 
 def _accessory_of(obj):
-    """The catalog line for whatever accessory an object is, or None."""
+    """The catalog line for whatever accessory an object is part of,
+    or None. Reads from the model or the block as readily as from the
+    cage, because those are what get clicked on."""
     from .. import accessories_closets as acc
-    if obj is None:
+    cage = types_closets.find_accessory_cage(obj)
+    if cage is None:
         return None
-    return acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
+    return acc.get(cage.get(types_closets.PROP_ACCESSORY_KEY, ''))
 
 
 class hb_closets_OT_add_accessory(bpy.types.Operator):
@@ -4065,9 +4074,8 @@ class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None or obj.get('hb_part_role') != (
-                types_closets.PART_ROLE_ACCESSORY):
+        obj = types_closets.find_accessory_cage(context.active_object)
+        if obj is None:
             cls.poll_message_set("Select an accessory first")
             return False
         acc_def = _accessory_of(obj)
@@ -4081,7 +4089,9 @@ class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        obj = context.active_object
+        obj = types_closets.find_accessory_cage(context.active_object)
+        if obj is None:
+            return {'CANCELLED'}
         root = types_closets.find_starter_root(obj)
         got = types_closets.fit_opening_to_accessory(obj)
         line = _fit_report(got)
@@ -4142,12 +4152,13 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return (obj is not None and obj.get('hb_part_role')
-                == types_closets.PART_ROLE_ACCESSORY)
+        return types_closets.find_accessory_cage(
+            context.active_object) is not None
 
     def invoke(self, context, event):
-        obj = context.active_object
+        obj = types_closets.find_accessory_cage(context.active_object)
+        if obj is None:
+            return {'CANCELLED'}
         stored = obj.get(types_closets.PROP_ACCESSORY_MODEL, '')
         if stored:
             try:
@@ -4179,10 +4190,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def draw(self, context):
         from .. import accessories_closets as acc
-        obj = context.active_object
+        obj = types_closets.find_accessory_cage(context.active_object)
         layout = self.layout
         acc_def = _accessory_of(obj)
-        if acc_def is None:
+        if obj is None or acc_def is None:
             box = layout.box()
             box.label(text="This accessory is no longer offered.",
                       icon='ERROR')
@@ -4222,7 +4233,7 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def execute(self, context):
         from .. import accessories_closets as acc
-        obj = context.active_object
+        obj = types_closets.find_accessory_cage(context.active_object)
         if obj is None:
             return {'CANCELLED'}
         acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
@@ -4472,10 +4483,19 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.get('hb_part_role') in cls.PART_ROLES
+        if obj is None:
+            return False
+        if types_closets.find_accessory_cage(obj) is not None:
+            return True
+        return obj.get('hb_part_role') in cls.PART_ROLES
 
     def execute(self, context):
-        obj = context.active_object
+        # A click lands on the model or the red block rather than on
+        # the accessory itself, and deleting one of those alone would
+        # only have the next pass build it again. The accessory goes
+        # as a whole or not at all.
+        obj = (types_closets.find_accessory_cage(context.active_object)
+               or context.active_object)
         role = obj.get('hb_part_role')
         root = types_closets.find_starter_root(obj)
         # A bay-wide door lives on the bay cage; clearing its config

@@ -4470,6 +4470,23 @@ def default_adj_shelf_qty(opening):
     return max(1, min(12, int(interior_h / inch(12.0))))
 
 
+def find_accessory_cage(obj):
+    """The accessory an object belongs to, or None.
+
+    An accessory is a cage carrying a model, its own parts, and - when
+    the model is not installed - a red block. The cage is what the
+    accessory IS as far as the rest of the library is concerned, but
+    what a person clicks on is whichever of those children they can
+    see. So a click anywhere under it reads as the accessory itself.
+    """
+    current = obj
+    while current is not None:
+        if current.get('hb_part_role') == PART_ROLE_ACCESSORY:
+            return current
+        current = current.parent
+    return None
+
+
 def find_opening_cage(obj):
     """Resolve the opening cage for any object in a closet hierarchy:
     the object's own opening if it's under one, else the (single)

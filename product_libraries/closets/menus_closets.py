@@ -265,8 +265,7 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             layout.operator("hb_closets.continuous_top_prompts",
                             text="Top Properties...", icon='WINDOW')
             layout.separator()
-        if (obj is not None and obj.get('hb_part_role')
-                == types_closets.PART_ROLE_ACCESSORY):
+        if types_closets.find_accessory_cage(obj) is not None:
             layout.operator("hb_closets.accessory_prompts",
                             text="Accessory Properties...",
                             icon='WINDOW')
