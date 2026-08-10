@@ -3726,8 +3726,10 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
     cursor is: on a one inch grid, on the floor when it is let go low,
     held back from the top so the room it needs above it still fits,
     and clear of whatever else is already in there. The header says
-    where it has landed and why. Click places it, Shift-click places
-    it and starts another, Left/Right arrow turns a panel accessory to
+    where it has landed and why, and says so when the opening is the
+    wrong size for it - F gives the opening the size it asks for
+    before it is put down. Click places it, Shift-click places it and
+    starts another, Left/Right arrow turns a panel accessory to
     another face, Right-click or Esc cancels."""
     bl_idname = "hb_closets.place_accessory"
     bl_label = "Place Accessory"
@@ -3857,6 +3859,35 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 acc.PANEL_LOCATIONS[self._face][1])
         self._note = "%s at %s off the opening floor%s%s" % (
             acc_def.label, where, why, face)
+        # The opening being the wrong size for it is the thing worth
+        # reading first, and it is fixable without putting it down.
+        warning = self._cage.get(
+            types_closets.PROP_ACCESSORY_WARNING, '')
+        if warning:
+            self._note = "%s  [F fits the opening]  -  %s" % (
+                warning, self._note)
+
+    def _resettle(self, context):
+        """Work out again where the carried accessory lands, in the
+        opening it is already in - for after the opening itself has
+        changed size underneath it."""
+        from .. import accessories_closets as acc
+        cage = self._cage
+        opening = cage.parent if cage is not None else None
+        if opening is None:
+            return
+        acc_def = acc.get(self.accessory)
+        z = types_closets.accessory_drop_height(
+            opening, acc_def,
+            float(cage.get(types_closets.PROP_ACCESSORY_Z, 0.0)),
+            skip=cage)
+        cage[types_closets.PROP_ACCESSORY_Z] = z
+        if self._root is not None:
+            types_closets.recalculate_closet_starter(self._root)
+        self._show_dims(opening, acc_def, z)
+        warning = cage.get(types_closets.PROP_ACCESSORY_WARNING, '')
+        self._note = warning or (
+            "%s: the opening now fits it" % acc_def.label)
 
     def _show_dims(self, opening, acc_def, z):
         """What the prior library drew while a thing was being
@@ -3903,6 +3934,22 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE',
                           'WHEELDOWNMOUSE'}:
             return {'PASS_THROUGH'}
+
+        if event.type == 'F' and event.value == 'PRESS':
+            # Move the closet to the accessory rather than the other
+            # way round, without having to put it down first.
+            cage = self._cage
+            if cage is None:
+                return {'RUNNING_MODAL'}
+            if not cage.get(types_closets.PROP_ACCESSORY_WARNING, ''):
+                self._note = "The opening already fits it"
+            else:
+                types_closets.fit_opening_to_accessory(cage)
+                self._resettle(context)
+                _settle_new_opening(context, self._root,
+                                    keep_active=False)
+            hb_placement.draw_header_text(context, self._note)
+            return {'RUNNING_MODAL'}
 
         if event.type in {'LEFT_ARROW', 'RIGHT_ARROW'} \
                 and event.value == 'PRESS':
@@ -3972,19 +4019,52 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         return {'RUNNING_MODAL'}
 
 
-class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
-    """Make the opening the width this accessory needs.
+def _accessory_can_fit(obj, acc_def):
+    """Whether there is anything for a fit to do here.
 
-    An accessory is bought at a set width rather than cut to fit, so
+    An accessory bought at a set width can have its opening snapped to
+    it whenever, warning or no - that is what the prior library
+    offered, and it is how a run gets laid out around one. Everything
+    else is only worth offering when the opening is actually wrong for
+    it, which is exactly what the warning says. Otherwise a hook, which
+    needs an inch and three quarters of depth and will never not have
+    it, would carry the button around for no reason."""
+    if acc_def is None:
+        return False
+    band = types_closets.accessory_band(obj, acc_def)
+    if acc_def.band_width(band) > 0.0:
+        return True
+    return bool(obj.get(types_closets.PROP_ACCESSORY_WARNING, ''))
+
+
+def _fit_report(got):
+    """What the fit did, in a line - or '' when it did nothing."""
+    parts = [(name, size) for name, size in
+             (('wide', got.get('width', 0.0)),
+              ('deep', got.get('depth', 0.0)),
+              ('high', got.get('height', 0.0))) if size > 0.0]
+    if not parts:
+        return ""
+    return "Opening set to " + ", ".join(
+        "%s %s" % (types_closets._in_str(size), name)
+        for name, size in parts)
+
+
+class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
+    """Make the opening the size this accessory needs.
+
+    An accessory is bought at a set size rather than cut to fit, so
     one that does not match its opening is a warning. This moves the
-    closet to the accessory instead of the other way round."""
+    closet to the accessory instead of the other way round: the width
+    it is bought at, the depth it needs to sit in, and the height it
+    needs once its clearances are counted. Depth and height are only
+    ever grown - they are shared with everything else in the run."""
     bl_idname = "hb_closets.fit_opening_to_accessory"
     bl_label = "Fit Opening To Accessory"
     bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        from .. import accessories_closets as acc
         obj = context.active_object
         if obj is None or obj.get('hb_part_role') != (
                 types_closets.PART_ROLE_ACCESSORY):
@@ -3994,21 +4074,25 @@ class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
         if acc_def is None:
             cls.poll_message_set("That accessory is no longer offered")
             return False
-        if acc_def.band_width(
-                types_closets.accessory_band(obj, acc_def)) <= 0.0:
+        if not _accessory_can_fit(obj, acc_def):
             cls.poll_message_set(
-                "This one takes the width it is given")
+                "Nothing to fit: it takes the opening it is given")
             return False
         return True
 
     def execute(self, context):
         obj = context.active_object
-        want = types_closets.fit_opening_to_accessory(obj)
-        if want <= 0.0:
-            self.report({'WARNING'}, "Nothing to fit it to")
+        root = types_closets.find_starter_root(obj)
+        got = types_closets.fit_opening_to_accessory(obj)
+        line = _fit_report(got)
+        if not line:
+            self.report({'INFO'}, "It already fits")
             return {'CANCELLED'}
-        self.report({'INFO'}, "Opening set to %s"
-                    % types_closets._in_str(want))
+        # Growing the run can split nothing, but it does move parts and
+        # it can bring a new shelf position into play, so the finish
+        # and shading passes run the same as after any other change.
+        _settle_new_opening(context, root)
+        self.report({'INFO'}, line)
         return {'FINISHED'}
 
 
@@ -4129,8 +4213,7 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         if warning:
             box = layout.box()
             box.label(text=warning, icon='ERROR')
-        if acc_def.band_width(
-                types_closets.accessory_band(obj, acc_def)) > 0.0:
+        if _accessory_can_fit(obj, acc_def):
             row = layout.row()
             row.scale_y = 1.3
             row.operator("hb_closets.fit_opening_to_accessory",

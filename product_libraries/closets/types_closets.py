@@ -4868,41 +4868,131 @@ def _opening_at_height(bay, world_z, tol):
     return best
 
 
-def fit_opening_to_accessory(cage):
-    """Make the opening the width the accessory needs.
+def _run_bays(root):
+    """The bays of a run, in no particular order."""
+    return [b for b in root.children if b.get(TAG_BAY_CAGE)]
 
-    These are bought at set widths rather than cut to fit, so an
-    accessory in an opening that is not one of those widths is a
-    warning. This is the other way round it: leave the accessory alone
-    and move the closet to it, which is what the prior library's
-    Update Opening Width did.
+
+def _fit_width(root, bay, acc_def, band):
+    """Give the opening the width the accessory is bought at.
 
     A run with one bay grows or shrinks as a whole, so the width it is
     given is the accessory plus a panel at each end. A run with more
     than one takes the width out of that bay alone, unlocking it from
     the equal share, and the rest of the run makes up the difference -
-    again as the prior library did."""
+    as the prior library did. Set rather than grown: an accessory
+    rattling around in an opening too wide for it is as wrong as one
+    that will not fit."""
+    want = acc_def.band_width(band)
+    if want <= 0.0:
+        return 0.0
+    pt = bpy.context.scene.hb_closets.panel_thickness
+    if len(_run_bays(root)) <= 1:
+        root.hb_closet_starter.width = want + 2.0 * pt
+    else:
+        bay.hb_closet_bay.unlock_width = True
+        bay.hb_closet_bay.width = want
+    return want
+
+
+def _fit_depth(root, bay, opening, acc_def, band):
+    """Give the opening the depth the accessory needs.
+
+    Grown only, never taken back in: depth is shared with everything
+    else in the bay, and a pull-out in an opening deeper than it needs
+    is perfectly happy - it just sits at the front. A double island
+    splits its bay depth between two faces, so the bay grows by twice
+    what one face is short."""
+    want = acc_def.band_depth(band)
+    have = _cage_dim_y(opening)
+    if want <= 0.0 or have + 0.0005 >= want:
+        return 0.0
+    share = 2.0 if _wrap_starter(root).is_double else 1.0
+    bp = bay.hb_closet_bay
+    new_d = bp.depth + (want - have) * share
+    if len(_run_bays(root)) <= 1:
+        root.hb_closet_starter.depth = new_d
+    else:
+        bp.unlock_depth = True
+        bp.depth = new_d
+    return want
+
+
+def _fit_height(root, bay, opening, cage, acc_def):
+    """Give the opening the height the accessory needs.
+
+    Height is the awkward one, because an opening does not own its
+    height: it is the gap between the shelves either side of it. The
+    room is taken off the top of the run rather than out of the
+    neighbour - every splitting shelf at or above this opening goes up
+    by the same amount - so no other opening loses the height it was
+    given and only the run gets taller. Grown only; a short accessory
+    is not a reason to cut a closet down."""
+    need = acc_def.reserved_height
+    have = _cage_dim_z(opening)
+    if need <= 0.0 or have <= 0.0:
+        return 0.0
+    # Both ways an accessory runs out of height: too tall for the
+    # opening at all, and too tall for the opening from where it sits.
+    z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+    delta = max(0.0, z) + need - have
+    if delta <= 0.0005:
+        return 0.0
+    seg_top = float(opening.get('hb_seg_bottom', 0.0)) + have
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    for shelf in bay.children:
+        if shelf.get('hb_part_role') != PART_ROLE_FIXED_SHELF:
+            continue
+        if shelf.get(PROP_OPENING_SIDE, 'FRONT') != side:
+            continue
+        if shelf.get('hb_preview'):
+            continue
+        at = float(shelf.get('hb_z_offset', 0.0))
+        if at >= seg_top - 1e-6:
+            shelf['hb_z_offset'] = at + delta
+    bp = bay.hb_closet_bay
+    if len(_run_bays(root)) <= 1:
+        sp = root.hb_closet_starter
+        sp.height = sp.height + delta
+    else:
+        bp.unlock_height = True
+        bp.height = bp.height + delta
+    return have + delta
+
+
+def fit_opening_to_accessory(cage):
+    """Move the closet to the accessory instead of the other way.
+
+    These are bought at set sizes rather than cut to fit, so an
+    accessory in an opening that is not one of those sizes is a
+    warning. This answers the warning: leave the accessory alone and
+    give the opening what it asked for - the width it is bought at,
+    the depth it needs to sit in, and the height it needs once its
+    clearances are counted. This is what the prior library's Update
+    Opening Width did, on all three axes rather than the one.
+
+    Returns what the opening measures afterwards on each axis, with
+    0.0 for an axis that was already right and was left alone."""
     from . import accessories_closets as acc
     opening = cage.parent
     acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+    got = {'width': 0.0, 'depth': 0.0, 'height': 0.0}
     if opening is None or acc_def is None:
-        return 0.0
-    want = acc_def.band_width(accessory_band(cage, acc_def))
-    if want <= 0.0:
-        return 0.0
+        return got
     root = find_starter_root(opening)
-    if root is None:
-        return 0.0
     bay = opening.parent
-    pt = bpy.context.scene.hb_closets.panel_thickness
-    bays = [b for b in root.children if b.get(TAG_BAY_CAGE)]
-    if len(bays) <= 1:
-        root.hb_closet_starter.width = want + 2.0 * pt
-    elif bay is not None:
-        bay.hb_closet_bay.unlock_width = True
-        bay.hb_closet_bay.width = want
+    if root is None or bay is None:
+        return got
+    band = accessory_band(cage, acc_def)
+    # One solve at the end rather than one per axis: each of these
+    # writes a property that would otherwise set the whole run going
+    # again, and the three are read off the opening as it stands now.
+    with suspend_recalc():
+        got['width'] = _fit_width(root, bay, acc_def, band)
+        got['depth'] = _fit_depth(root, bay, opening, acc_def, band)
+        got['height'] = _fit_height(root, bay, opening, cage, acc_def)
     recalculate_closet_starter(root)
-    return want
+    return got
 
 
 def seat_insert_on_shelf(cage, z):
