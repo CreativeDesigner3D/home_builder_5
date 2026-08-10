@@ -3203,17 +3203,34 @@ class ClosetStarter(GeoNodeCage):
             # openings around it stay as they are. A division reads
             # across instead of up and merges the same way when it goes.
             slots = {cell: [] for cell in cells}
-            for op_obj in openings:
-                bottom = float(op_obj.get('hb_seg_bottom', 0.0))
-                left = float(op_obj.get('hb_seg_left', 0.0))
+
+            def _standing(op_obj):
                 try:
                     seg_h = float(GeoNodeCage(op_obj).get_input('Dim Z'))
                 except Exception:
                     seg_h = 0.0
-                k = min(sum(1 for c in cuts if c < bottom), rows - 1)
-                j = min(sum(1 for x in row_cuts[k] if x < left),
-                        len(row_cuts[k]))
-                slots[(k, j)].append((bottom, left, seg_h, op_obj))
+                return (float(op_obj.get('hb_seg_bottom', 0.0)),
+                        float(op_obj.get('hb_seg_left', 0.0)),
+                        seg_h, op_obj)
+
+            if len(openings) == len(cells):
+                # Nothing was put in or taken out, so every opening is
+                # the segment it always was, in the order it always
+                # was. Counting cuts would be wrong here: a shelf that
+                # has MOVED reads as one that has gone, and the opening
+                # above it would be merged into the one below and come
+                # back empty. This is what lets a shelf be raised or
+                # lowered without it taking the contents of the opening
+                # above it along with it.
+                for cell, op_obj in zip(cells, openings):
+                    slots[cell].append(_standing(op_obj))
+            else:
+                for op_obj in openings:
+                    bottom, left, seg_h, _o = _standing(op_obj)
+                    k = min(sum(1 for c in cuts if c < bottom), rows - 1)
+                    j = min(sum(1 for x in row_cuts[k] if x < left),
+                            len(row_cuts[k]))
+                    slots[(k, j)].append((bottom, left, seg_h, op_obj))
 
             for k, j in cells:
                 members = slots[(k, j)]
