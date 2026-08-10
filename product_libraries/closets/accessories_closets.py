@@ -105,11 +105,16 @@ BAND_BY_STYLE = 'STYLE'
 FAMILY_OPENING = 'OPENING'
 FAMILY_PANEL = 'PANEL'
 FAMILY_INSERT = 'INSERT'
+# A board across the back of an opening with things hung off it. Not a
+# panel accessory, whatever the name of the one that uses it suggests:
+# it spans the opening rather than screwing to a panel face.
+FAMILY_CLEAT = 'CLEAT'
 
 FAMILY_LABELS = {
     FAMILY_OPENING: "Opening",
     FAMILY_PANEL: "Panel",
     FAMILY_INSERT: "Insert",
+    FAMILY_CLEAT: "Cleat",
 }
 
 # ---------------------------------------------------------------------------
@@ -163,6 +168,73 @@ def instance_accessory_model(path, name):
     return obj
 
 
+def instance_rig_model(path, name):
+    """Every mesh of a model that is drawn to be sized, together with
+    the markers those meshes are hung off.
+
+    A telescoping accessory is one mesh and two markers; a wire basket
+    is four meshes and four. Either way the markers cannot be shared
+    between two of them, so this brings in a copy of the whole rig.
+
+    Returns (meshes, markers), both empty when there is nothing to
+    bring in or when what is there turns out not to be a rig."""
+    if not path or not os.path.isfile(path):
+        return (), ()
+    try:
+        with bpy.data.libraries.load(path) as (src, dst):
+            dst.objects = list(src.objects)
+    except Exception:
+        return (), ()
+    brought = [o for o in dst.objects if o is not None]
+    meshes = [o for o in brought
+              if o.type == 'MESH'
+              and any(m.type == 'HOOK' for m in o.modifiers)]
+    if not meshes:
+        for obj in brought:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        return (), ()
+    markers = []
+    for mesh in meshes:
+        for mod in mesh.modifiers:
+            if mod.type == 'HOOK' and mod.object is not None \
+                    and mod.object not in markers:
+                markers.append(mod.object)
+    keep = set(meshes) | set(markers)
+    for obj in brought:
+        if obj not in keep:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for obj in keep:
+        obj.parent = None
+    # The markers are read in the frame the meshes were drawn in, so
+    # they are put back where they were before anything is moved.
+    for marker in markers:
+        marker['hb_rig_at'] = tuple(marker.location)
+    return tuple(meshes), tuple(markers)
+
+
+def instance_stretch_model(path, name):
+    """A model that is drawn to be pulled out to a width, together
+    with the markers its ends are hung off.
+
+    Some accessories telescope. Their model is one mesh with a hook
+    at each moving point, and pulling a marker along takes that part
+    of the mesh with it while the ends keep their shape - which is
+    what a plain scale would ruin. Two of these cannot share a mesh
+    the way the fixed models do, because each one has to be hooked to
+    markers of its own, so this brings in a copy of the whole rig.
+
+    Returns (model, markers). Both are empty when there is no model
+    to bring in, or when the one there is turns out not to telescope
+    after all."""
+    meshes, markers = instance_rig_model(path, name)
+    if not meshes:
+        return None, ()
+    model = meshes[0]
+    model.name = name
+    model.matrix_basis.identity()
+    return model, markers
+
+
 # ---------------------------------------------------------------------------
 # The catalog
 # ---------------------------------------------------------------------------
@@ -172,7 +244,8 @@ class AccessoryDef:
     key         stable identifier written on the object; renaming the
                 label never breaks a saved file
     label       what the person sees in the menu
-    family      FAMILY_OPENING / FAMILY_PANEL / FAMILY_INSERT
+    family      FAMILY_OPENING / FAMILY_PANEL / FAMILY_INSERT /
+                FAMILY_CLEAT
     model       blend filename in the host add-on's model folder, for
                 an accessory sold at one size only
     bands       (label, width, filename) for an accessory sold in
@@ -193,6 +266,14 @@ class AccessoryDef:
                 belong on the floor from much further up
     stretch     True when the model is drawn to the opening width
                 rather than picked from a band
+    widths      the widths a sized accessory is made in, when it is
+                drawn from a rig rather than bought whole. Empty for
+                everything that comes at one size or picks a band.
+    heights     the heights the same accessory is made in
+    depths      the depths it is made in
+    min_width   narrowest opening a stretched accessory is made for,
+                0 = no lower limit
+    max_width   widest one it reaches, 0 = no upper limit
     model_y     how far (m) back from the opening front the model sits
     model_z     how far (m) up from the bottom of its space it sits
     colors      finish names offered, () = no finish choice
@@ -206,14 +287,18 @@ class AccessoryDef:
     __slots__ = ('key', 'label', 'family', 'model', 'model_path',
                  'bands', 'band_axis', 'width',
                  'height', 'depth', 'space_above', 'space_below',
-                 'model_drop', 'stretch', 'model_y', 'model_z',
+                 'model_drop', 'stretch', 'widths', 'heights',
+                 'depths', 'min_width', 'max_width',
+                 'model_y', 'model_z',
                  'floor_snap',
                  'colors', 'fabrics', 'ready', 'description')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
                  depth=0.0, space_above=0.0, space_below=0.0,
-                 model_drop=0.0, stretch=False, model_y=0.0,
+                 model_drop=0.0, stretch=False, widths=(),
+                 heights=(), depths=(), min_width=0.0,
+                 max_width=0.0, model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
                  ready=False, description=""):
         self.key = key
@@ -230,6 +315,11 @@ class AccessoryDef:
         self.space_below = space_below
         self.model_drop = model_drop
         self.stretch = stretch
+        self.widths = tuple(widths)
+        self.heights = tuple(heights)
+        self.depths = tuple(depths)
+        self.min_width = min_width
+        self.max_width = max_width
         self.model_y = model_y
         self.model_z = model_z
         self.floor_snap = floor_snap
@@ -237,6 +327,18 @@ class AccessoryDef:
         self.fabrics = tuple(fabrics)
         self.ready = ready
         self.description = description or label
+
+    @property
+    def is_sized(self):
+        """Whether this one is drawn to a size that is chosen on three
+        axes rather than bought at a band."""
+        return bool(self.widths and self.heights and self.depths)
+
+    def nearest(self, sizes, want):
+        """The size in a list closest to one asked for."""
+        if not sizes:
+            return 0.0
+        return min(sizes, key=lambda s: abs(s - want))
 
     @property
     def reserved_height(self):
@@ -305,6 +407,11 @@ def _in_label(value):
     return '%g"' % round(value / 0.0254, 2)
 
 
+def _sizes(raw):
+    """A list of sizes from the catalog as metres, in order."""
+    return tuple(float(v) for v in (raw or ()))
+
+
 def _def_from_item(item):
     """One catalog line built from whatever the provider handed over.
 
@@ -335,6 +442,11 @@ def _def_from_item(item):
         space_below=float(item.get('space_below') or 0.0),
         model_drop=float(item.get('model_drop') or 0.0),
         stretch=bool(item.get('stretch')),
+        widths=_sizes(item.get('widths')),
+        heights=_sizes(item.get('heights')),
+        depths=_sizes(item.get('depths')),
+        min_width=float(item.get('min_width') or 0.0),
+        max_width=float(item.get('max_width') or 0.0),
         model_y=float(item.get('model_y') or 0.0),
         model_z=float(item.get('model_z') or 0.0),
         floor_snap=bool(item.get('floor_snap')),

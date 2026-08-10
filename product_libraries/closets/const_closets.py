@@ -465,6 +465,29 @@ IRONING_BOARD_OPENING_HEIGHT = inch(5.0)
 
 # How tall an accessory that hangs off a panel face draws its cage.
 # It is a handle to take hold of, not a claim on the opening.
+# Cleat hooks: a board across the back of the opening with hooks
+# along it. The board is a hand's height, the hooks stand off its face
+# by the thickness of the board, and they are spread between an inset
+# at each end - all as the prior library had them.
+# A wire basket is drawn from a rig rather than bought whole: its
+# wires are laid out one to the inch, and how many there are follows
+# how big it has been made. The counts the prior library drove them
+# by, one per mesh.
+BASKET_BACK_WIRE_OFFSET = -1
+BASKET_FRONT_WIRE_OFFSET = -4
+BASKET_MESH_BACK = 'Back Wire'
+BASKET_MESH_FRONT = 'Front Wire'
+BASKET_MESH_BOTTOM = 'Bottom Wire'
+
+CLEAT_HOOK_HEIGHT = inch(4.0)
+CLEAT_HOOK_QTY = 6
+CLEAT_HOOK_END_INSET = inch(2.0)
+# Where a cleat lands when it is let go. Low in the opening it is
+# taken to belong on the floor, and near the top to belong flush with
+# it - the two snaps the prior library dropped one by.
+CLEAT_HOOK_FLOOR_REACH = inch(10.0)
+CLEAT_HOOK_TOP_REACH = inch(5.0)
+
 ACCESSORY_PANEL_CAGE_H = inch(2.0)
 
 # An accessory with no model to show is drawn as a block of the space

@@ -3909,7 +3909,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         base = opening.matrix_world.translation
         interior_h = types_closets._cage_dim_z(opening)
         width = hb_types.GeoNodeCage(cage).get_input('Dim X') or 0.0
-        top = z + acc_def.reserved_height
+        top = z + types_closets.accessory_stack_height(cage, acc_def)
         # Stood a little in front of the opening so the lines are not
         # buried in the parts.
         y = base.y - types_closets._cage_dim_y(opening) - units.inch(2)
@@ -4026,6 +4026,21 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             return {'FINISHED'}
 
         return {'RUNNING_MODAL'}
+
+
+def _size_items(sizes):
+    """A dropdown of the sizes something is made in."""
+    return [(str(i), types_closets._in_str(size), "")
+            for i, size in enumerate(sizes)] or [
+                ('0', "As It Comes", "")]
+
+
+def _size_index(sizes, value):
+    """Which of the sizes a stored figure is, by measure."""
+    for i, size in enumerate(sizes):
+        if abs(size - value) < 1e-6:
+            return str(i)
+    return '0'
 
 
 def _accessory_can_fit(obj, acc_def):
@@ -4149,6 +4164,44 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     location: bpy.props.FloatProperty(
         name="Height Off Opening Floor", min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    cleat_length: bpy.props.FloatProperty(
+        name="Cleat Length", min=0.0, unit='LENGTH', precision=4,
+        description="How long the board is cut. Left at the width of "
+                    "the opening it follows the opening and re-cuts "
+                    "when that changes")  # type: ignore
+    cleat_x: bpy.props.FloatProperty(
+        name="From The Left", min=0.0, unit='LENGTH', precision=4,
+        description="How far in from the left of the opening a board "
+                    "shorter than the opening sits")  # type: ignore
+    cleat_height: bpy.props.FloatProperty(
+        name="Cleat Height", min=0.0, unit='LENGTH', precision=4,
+        description="How tall the board is")  # type: ignore
+    hook_qty: bpy.props.IntProperty(
+        name="Hooks", min=0, soft_max=24,
+        description="How many hooks along the board")  # type: ignore
+    basket_width: bpy.props.EnumProperty(
+        name="Width", items=lambda s, c: _held(
+            'basket_w', _size_items(
+                (_accessory_of(c.active_object).widths
+                 if _accessory_of(c.active_object) else ()))),
+        description="Which width it is bought at")  # type: ignore
+    basket_height: bpy.props.EnumProperty(
+        name="Height", items=lambda s, c: _held(
+            'basket_h', _size_items(
+                (_accessory_of(c.active_object).heights
+                 if _accessory_of(c.active_object) else ()))),
+        description="Which height it is bought at")  # type: ignore
+    basket_depth: bpy.props.EnumProperty(
+        name="Depth", items=lambda s, c: _held(
+            'basket_d', _size_items(
+                (_accessory_of(c.active_object).depths
+                 if _accessory_of(c.active_object) else ()))),
+        description="Which depth it is bought at")  # type: ignore
+    hook_inset: bpy.props.FloatProperty(
+        name="In From Each End", min=0.0, unit='LENGTH', precision=4,
+        description="How far in from each end the first and last "
+                    "hook sit. The rest are spread evenly "
+                    "between")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -4185,6 +4238,25 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 pass
         self.location = float(
             obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
+        # A cleat is shown the length it actually is rather than the
+        # zero that means "follow the opening", so there is a real
+        # figure to shorten. Typed back to the opening's width it goes
+        # back to following, the way a bay size does.
+        width = types_closets._cage_dim_x(obj.parent)
+        c_len, c_x, c_h, qty, inset = types_closets.cleat_hook_values(
+            obj, width)
+        acc_def = _accessory_of(obj)
+        if acc_def is not None and acc_def.is_sized:
+            b_w, b_h, b_d = types_closets.basket_values(
+                obj, acc_def, width)
+            self.basket_width = _size_index(acc_def.widths, b_w)
+            self.basket_height = _size_index(acc_def.heights, b_h)
+            self.basket_depth = _size_index(acc_def.depths, b_d)
+        self.cleat_length = c_len
+        self.cleat_x = c_x
+        self.cleat_height = c_h
+        self.hook_qty = qty
+        self.hook_inset = inset
         return context.window_manager.invoke_props_dialog(self,
                                                           width=320)
 
@@ -4209,6 +4281,26 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             col.prop(self, 'color')
         if acc_def is not None and acc_def.fabrics:
             col.prop(self, 'fabric')
+        if acc_def.is_sized:
+            # Three sizes rather than one, because it is made to any
+            # of them: how wide, how tall and how deep.
+            box = layout.box()
+            row = box.row(align=True)
+            row.prop(self, 'basket_width')
+            row.prop(self, 'basket_height')
+            row.prop(self, 'basket_depth')
+        if acc_def.family == acc.FAMILY_CLEAT:
+            box = layout.box()
+            col = box.column(align=True)
+            col.prop(self, 'cleat_length')
+            width = types_closets._cage_dim_x(obj.parent)
+            if self.cleat_length < width - 1e-6:
+                col.prop(self, 'cleat_x')
+            col.prop(self, 'cleat_height')
+            col = box.column(align=True)
+            col.prop(self, 'hook_qty')
+            if self.hook_qty > 1:
+                col.prop(self, 'hook_inset')
         if acc_def.family == acc.FAMILY_INSERT:
             # It stands on a shelf. Letting a height be typed here
             # would lift it off that shelf and leave it on nothing, so
@@ -4251,6 +4343,32 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
                 obj[types_closets.PROP_ACCESSORY_Z] = float(
                     self.location)
+            if acc_def is not None and acc_def.is_sized:
+                for prop, sizes, chosen in (
+                        (types_closets.PROP_BASKET_W, acc_def.widths,
+                         self.basket_width),
+                        (types_closets.PROP_BASKET_H, acc_def.heights,
+                         self.basket_height),
+                        (types_closets.PROP_BASKET_D, acc_def.depths,
+                         self.basket_depth)):
+                    i = int(chosen)
+                    if 0 <= i < len(sizes):
+                        obj[prop] = float(sizes[i])
+            if acc_def is not None and acc_def.family == acc.FAMILY_CLEAT:
+                width = types_closets._cage_dim_x(obj.parent)
+                # Given the opening's own width, it goes back to
+                # following the opening rather than being pinned to
+                # the figure it happens to be at today.
+                follows = self.cleat_length >= width - 1e-6
+                obj[types_closets.PROP_CLEAT_LENGTH] = (
+                    0.0 if follows else float(self.cleat_length))
+                obj[types_closets.PROP_CLEAT_X] = (
+                    -1.0 if follows else float(self.cleat_x))
+                obj[types_closets.PROP_CLEAT_HEIGHT] = float(
+                    self.cleat_height)
+                obj[types_closets.PROP_HOOK_QTY] = int(self.hook_qty)
+                obj[types_closets.PROP_HOOK_INSET] = float(
+                    self.hook_inset)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
