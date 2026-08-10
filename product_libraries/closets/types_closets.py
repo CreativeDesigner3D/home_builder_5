@@ -4778,6 +4778,22 @@ def recalculate_closet_starter(obj):
     _wrap_starter(root).recalculate()
 
 
+def _recalculate_now(obj):
+    """Solve a run this instant, even inside a suspend_recalc() block.
+
+    Nearly everything is happy to have its recalc held to the end of
+    the block. Splitting an opening is not: the segment above a new
+    shelf does not exist until the run has been solved, so anything
+    that needs to be put in it has to solve first and read after.
+    """
+    global _RECALC_SUSPEND_DEPTH
+    held, _RECALC_SUSPEND_DEPTH = _RECALC_SUSPEND_DEPTH, 0
+    try:
+        recalculate_closet_starter(obj)
+    finally:
+        _RECALC_SUSPEND_DEPTH = held
+
+
 def _in_str(value):
     """A metre figure in the inches the accessory is sold in, rounded
     the way a tape reads it."""
@@ -4918,16 +4934,26 @@ def seat_insert_on_shelf(cage, z):
     above = _opening_at_height(bay, want_floor, st)
     if above is None:
         add_fixed_shelf(opening, z)
+        # The opening above a new shelf is made by the recalc that
+        # adopts the shelf as a splitter, so that recalc has to have
+        # run before there is anywhere to put the accessory. Held-back
+        # recalcs would leave it homeless: call this one straight.
         if root is not None:
-            recalculate_closet_starter(root)
+            _recalculate_now(root)
         bpy.context.view_layer.update()
         above = _opening_at_height(bay, want_floor, st)
-    if above is not None and above is not opening:
+    if above is None:
+        # Nothing came of it. Leave the accessory at the height it was
+        # asked for rather than dropping it to the floor of an opening
+        # that has no shelf in it.
+        return cage
+    if above is not opening:
         cage.parent = above
         cage.matrix_parent_inverse.identity()
     cage[PROP_ACCESSORY_Z] = 0.0
     if root is not None:
-        recalculate_closet_starter(root)
+        _recalculate_now(root)
+    bpy.context.view_layer.update()
     return cage
 
 

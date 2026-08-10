@@ -80,6 +80,36 @@ def _apply_selection_shading(context, root_obj, keep_active=True):
         pass
 
 
+def _settle_new_opening(context, root_obj, keep_active=True):
+    """Finish and shade what an opening split has just made.
+
+    A shelf dropped in by hand goes through the same two passes on the
+    way in, and a shelf put in under an accessory has to as well: the
+    new shelf needs the run's finish on it and the new segment needs
+    the shading of whatever selection mode is on, or neither shows up
+    until something else on screen happens to run those passes.
+    """
+    if root_obj is None:
+        return
+    _apply_finish(root_obj)
+    _apply_selection_shading(context, root_obj, keep_active=keep_active)
+    _redraw_viewports(context)
+
+
+def _redraw_viewports(context):
+    """Ask every 3D view to draw again. Selection shading and a new
+    opening cage are both changes Blender does not always notice on
+    its own, so the viewport can otherwise sit on the old picture
+    until the person moves the mouse over it."""
+    try:
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+    except Exception:
+        pass
+
+
 def _clearance_obstacles(scene, exclude_obj, z0, z1):
     """Plan-view obstacles for island clearance: wall bodies and every
     cabinet/closet root that overlaps the island's height band. Each
@@ -335,6 +365,12 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
         if any(t in obj for t in ('IS_WALL_BP', 'IS_ENTRY_DOOR_BP',
                                   'IS_WINDOW_BP', 'IS_CUTTING_OBJ',
                                   'IS_2D_ANNOTATION')):
+            return
+        if obj.get('hb_part_role') == (
+                types_closets.PART_ROLE_ACCESSORY_BLOCK):
+            # A stand-in for a model that is not installed. It is red
+            # so that it reads as missing at a glance, and this pass
+            # does not get to paint that out.
             return
         if types_closets.find_starter_root(obj) is None:
             return
@@ -3667,13 +3703,17 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
                     % types_closets._in_str(clear))
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
-            if acc_def.family == acc.FAMILY_INSERT:
-                types_closets.seat_insert_on_shelf(cage, clear)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+        if acc_def.family == acc.FAMILY_INSERT:
+            # After the batch rather than inside it: the shelf this
+            # puts in divides the opening, and the segment above it
+            # only exists once the run has been solved.
+            types_closets.seat_insert_on_shelf(cage, clear)
+            _settle_new_opening(context, root)
         return {'FINISHED'}
 
 
@@ -3913,6 +3953,10 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 # doing that on every mouse move would be unusable.
                 z = float(cage.get(types_closets.PROP_ACCESSORY_Z, 0.0))
                 types_closets.seat_insert_on_shelf(cage, z)
+                # The accessory is selected below, so the shading pass
+                # is told not to put the selection back itself.
+                _settle_new_opening(context, self._root,
+                                    keep_active=False)
             for other in context.selected_objects:
                 other.select_set(False)
             cage.select_set(True)
