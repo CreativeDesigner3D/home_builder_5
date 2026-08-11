@@ -115,6 +115,7 @@ PROP_ACCESSORY_WARNING = 'hb_accessory_warning'
 PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
+PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
 PROP_BASKET_W = 'hb_basket_width'
 PROP_BASKET_H = 'hb_basket_height'
 PROP_BASKET_D = 'hb_basket_depth'
@@ -3305,6 +3306,27 @@ class ClosetStarter(GeoNodeCage):
                 found[0].location = (0.0, -pt, 0.0)
         return cleat
 
+    def _model_front_reach(self, model):
+        """How far a model reaches in front of its own origin.
+
+        Read off the model rather than written down, because it is
+        different for every one of them - the six hooks alone run from
+        seven tenths of an inch to nearly two. Anything that has to
+        land its front edge somewhere has to know this first."""
+        try:
+            return max(0.0, -min(c[1] for c in model.bound_box))
+        except Exception:
+            return 0.0
+
+    def _accessory_setback(self, cage, acc_def):
+        """How far back from the front of the opening this accessory
+        is mounted, measured to its own front edge. What the catalog
+        says unless this one has been given a figure of its own."""
+        given = cage.get(PROP_ACCESSORY_SETBACK)
+        if given is None:
+            return acc_def.setback
+        return max(0.0, float(given))
+
     def _layout_panel_accessory(self, cage, acc_def, kids, width,
                                 depth, pt):
         """Hang one accessory off the face of a panel.
@@ -3336,7 +3358,13 @@ class ClosetStarter(GeoNodeCage):
             x, mirror = width + pt, True
         found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
         if found:
-            found[0].location = (x, -depth, 0.0)
+            # Placed by its front edge rather than by its origin, so
+            # that a hook drawn reaching forward off its mounting
+            # plate lands where it was asked for instead of hanging
+            # out through the front of the closet.
+            reach = self._model_front_reach(found[0])
+            back = self._accessory_setback(cage, acc_def)
+            found[0].location = (x, -depth + reach + back, 0.0)
             found[0].scale.x = -1.0 if mirror else 1.0
         return x, mirror
 

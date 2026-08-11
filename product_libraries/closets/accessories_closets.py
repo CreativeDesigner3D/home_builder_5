@@ -274,7 +274,14 @@ class AccessoryDef:
     min_width   narrowest opening a stretched accessory is made for,
                 0 = no lower limit
     max_width   widest one it reaches, 0 = no upper limit
-    model_y     how far (m) back from the opening front the model sits
+    model_y     how far (m) back from the opening front the model's
+                own origin sits. A fact about how the model was drawn,
+                not a choice: some are drawn from their front face and
+                some about their middle.
+    setback     how far (m) back from the front of the opening the
+                accessory itself is mounted, measured to its own front
+                edge. A choice rather than a fact, and one the person
+                can overrule per accessory.
     model_z     how far (m) up from the bottom of its space it sits
     colors      finish names offered, () = no finish choice
     fabrics     fabric names offered, () = no fabric choice
@@ -288,7 +295,7 @@ class AccessoryDef:
                  'bands', 'band_axis', 'width',
                  'height', 'depth', 'space_above', 'space_below',
                  'model_drop', 'stretch', 'widths', 'heights',
-                 'depths', 'min_width', 'max_width',
+                 'depths', 'min_width', 'max_width', 'setback',
                  'model_y', 'model_z',
                  'floor_snap',
                  'colors', 'fabrics', 'ready', 'description')
@@ -298,7 +305,7 @@ class AccessoryDef:
                  depth=0.0, space_above=0.0, space_below=0.0,
                  model_drop=0.0, stretch=False, widths=(),
                  heights=(), depths=(), min_width=0.0,
-                 max_width=0.0, model_y=0.0,
+                 max_width=0.0, setback=0.0, model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
                  ready=False, description=""):
         self.key = key
@@ -318,6 +325,7 @@ class AccessoryDef:
         self.widths = tuple(widths)
         self.heights = tuple(heights)
         self.depths = tuple(depths)
+        self.setback = setback
         self.min_width = min_width
         self.max_width = max_width
         self.model_y = model_y
@@ -445,6 +453,7 @@ def _def_from_item(item):
         widths=_sizes(item.get('widths')),
         heights=_sizes(item.get('heights')),
         depths=_sizes(item.get('depths')),
+        setback=float(item.get('setback') or 0.0),
         min_width=float(item.get('min_width') or 0.0),
         max_width=float(item.get('max_width') or 0.0),
         model_y=float(item.get('model_y') or 0.0),

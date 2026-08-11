@@ -4164,6 +4164,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     location: bpy.props.FloatProperty(
         name="Height Off Opening Floor", min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    setback: bpy.props.FloatProperty(
+        name="Back From The Front", min=0.0, unit='LENGTH',
+        precision=4,
+        description="How far back from the front of the opening it "
+                    "is mounted, measured to its own front edge. "
+                    "Zero puts it flush with the front")  # type: ignore
     cleat_length: bpy.props.FloatProperty(
         name="Cleat Length", min=0.0, unit='LENGTH', precision=4,
         description="How long the board is cut. Left at the width of "
@@ -4246,6 +4252,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         c_len, c_x, c_h, qty, inset = types_closets.cleat_hook_values(
             obj, width)
         acc_def = _accessory_of(obj)
+        if acc_def is not None:
+            given = obj.get(types_closets.PROP_ACCESSORY_SETBACK)
+            self.setback = float(acc_def.setback if given is None
+                                 else given)
         if acc_def is not None and acc_def.is_sized:
             b_w, b_h, b_d = types_closets.basket_values(
                 obj, acc_def, width)
@@ -4281,6 +4291,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             col.prop(self, 'color')
         if acc_def is not None and acc_def.fabrics:
             col.prop(self, 'fabric')
+        if acc_def.family == acc.FAMILY_PANEL:
+            # Where it sits front to back. It screws to a panel face,
+            # so how far in from the front is a choice - unlike a
+            # pull-out, which lands on its runners at the front.
+            col.prop(self, 'setback')
         if acc_def.is_sized:
             # Three sizes rather than one, because it is made to any
             # of them: how wide, how tall and how deep.
@@ -4343,6 +4358,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
                 obj[types_closets.PROP_ACCESSORY_Z] = float(
                     self.location)
+            if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+                obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
+                    self.setback)
             if acc_def is not None and acc_def.is_sized:
                 for prop, sizes, chosen in (
                         (types_closets.PROP_BASKET_W, acc_def.widths,
