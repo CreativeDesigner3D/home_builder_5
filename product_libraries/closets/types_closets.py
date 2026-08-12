@@ -220,6 +220,10 @@ PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
 # out again. Empty/absent means there is nothing to say.
 PROP_BOX_WARNING = 'hb_box_warning'
 PROP_OPEN_HEIGHT = 'hb_open_height'
+# Marks the shelf a drawer bank carries on top of itself. It is a fixed
+# shelf like any other, but it is placed by the bank rather than by
+# what it was given, because only the bank knows where it stops.
+PROP_DRAWER_CAP = 'hb_drawer_cap'
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills
 # its opening: the fronts the stack owns share the remaining span
 # equally. Typing a front's height hands that front its own
@@ -1638,6 +1642,12 @@ class ClosetStarter(GeoNodeCage):
                 # rather than falling into groups so nothing downstream
                 # mistakes an accessory's front for a drawer's.
                 continue
+            if role == PART_ROLE_FIXED_SHELF and child.get(PROP_DRAWER_CAP):
+                # The shelf that caps a drawer bank goes where the bank
+                # stops, and the bank is the only thing that knows
+                # where that is, so it is left for the stack below.
+                groups.setdefault(role, []).append(child)
+                continue
             if role == PART_ROLE_FIXED_SHELF:
                 z_off = child.get('hb_z_offset', 0.0)
                 z = (interior_h - z_off if child.get('hb_anchor_top')
@@ -2014,6 +2024,23 @@ class ClosetStarter(GeoNodeCage):
                     s_part.set_input('Length', width)
                     s_part.set_input('Width', s_w)
                     s_part.set_input('Thickness', st)
+                if i == n - 1:
+                    # The bank's own shelf, lapped by the top front the
+                    # same way a stretcher is. Where the bank fills the
+                    # opening there is nothing for it to cap and the
+                    # opening's own top shelf is already there, so it
+                    # steps aside rather than doubling it.
+                    cap_z = z + dh - (st - v_gap) / 2.0
+                    for cap in groups.get(PART_ROLE_FIXED_SHELF, []):
+                        if not cap.get(PROP_DRAWER_CAP):
+                            continue
+                        room = cap_z + st <= interior_h + inch(0.01)
+                        _set_part_hidden(cap, not room)
+                        cap.location = (0.0, 0.0, cap_z)
+                        c_part = GeoNodeCutpart(cap)
+                        c_part.set_input('Length', width)
+                        c_part.set_input('Width', depth)
+                        c_part.set_input('Thickness', st)
                 z += dh + v_gap
 
         # ----- Rollout trays -----
@@ -2554,6 +2581,23 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
             box.obj['hb_drawer_index'] = len(boxes)
             boxes.append(box.obj)
+        # The bank carries its own shelf on top. The prior library
+        # capped a stack that way, and a bank that stops short of the
+        # top of its opening needs it: without one the drawers are open
+        # to whatever is above them.
+        caps = [c for c in opening.children if c.get(PROP_DRAWER_CAP)]
+        want_cap = 1 if qty else 0
+        while len(caps) > want_cap:
+            bpy.data.objects.remove(caps.pop(), do_unlink=True)
+        while len(caps) < want_cap:
+            cap = CabinetPart()
+            cap.create('Drawer Cap Shelf')
+            cap.obj.parent = opening
+            cap.obj['hb_part_role'] = PART_ROLE_FIXED_SHELF
+            cap.obj[PROP_DRAWER_CAP] = 1
+            cap.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            cap.set_input('Mirror Y', True)
+            caps.append(cap.obj)
         # One stretcher between each drawer and the next, so a stack
         # of n carries n-1 of them: the shelf above the stack caps
         # the top and the opening carries the bottom drawer.
@@ -3526,6 +3570,11 @@ class ClosetStarter(GeoNodeCage):
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
             side = opening.get(PROP_OPENING_SIDE, 'FRONT')
             for child in list(opening.children):
+                # The shelf a drawer bank carries on top of itself is
+                # part of the bank, not a shelf someone put in to split
+                # the bay. It stays where it is.
+                if child.get(PROP_DRAWER_CAP):
+                    continue
                 if (child.get('hb_part_role') == PART_ROLE_FIXED_SHELF
                         and not child.get('hb_preview')):
                     child.parent = bay_obj
@@ -5012,12 +5061,23 @@ def tray_height(tray, stack_h):
 
 
 def _distribute_front_heights(avail, fronts):
-    """Split the available front span among a drawer stack so it fills the
-    opening. `fronts` is a list of (height, locked) per front, bottom-up.
-    Locked fronts keep their height; unlocked fronts share the remainder
-    equally (floored at MIN_DRAWER_FRONT). If every front is locked, scale
-    them proportionally to fit. Vertical analog of the bay-width solver."""
-    out = [h for h, _l in fronts]
+    """How tall each front in a drawer bank stands.
+
+    `fronts` is (height, pinned) per front, bottom-up. A bank is a bank
+    rather than a fill: a front nobody has pinned stands at the standard
+    drawer height, the bank stops where it stops, and its own shelf caps
+    it - which is what the prior library built, and what a closet drawer
+    bank is. Dividing a full-height opening between three fronts gives
+    three fronts two feet tall, which is not a drawer.
+
+    A pinned front holds the height it was given. Only when the bank
+    would not fit does the opening take over: the fronts still sharing
+    give up what is over, down to MIN_DRAWER_FRONT, and if every front
+    is pinned they scale together.
+    """
+    out = [h if lk else const.DRAWER_FRONT_HEIGHT for h, lk in fronts]
+    if sum(out) <= avail:
+        return out
     unlocked = [i for i, (_h, lk) in enumerate(fronts) if not lk]
     if unlocked:
         locked_sum = sum(h for h, lk in fronts if lk)
@@ -6310,17 +6370,26 @@ BAY_CONFIGS = [item for group in BAY_CONFIG_GROUPS for item in group]
 
 def seed_door_shelves(opening):
     """Door openings include adjustable shelves behind the doors by
-    default. Seeds the opening's shelf count unless something else
-    already occupies it (an existing shelf count, drawers, cubbies, or
-    a rod) - adding doors over an existing interior never overwrites
-    it. Callers skip this for a tilt-out hamper, whose basket stands
-    in the whole opening; clear_hamper_shelves below takes the shelves
-    back out of one whose front is changed to a hamper."""
+    default. Seeds the opening's shelf count where the opening is
+    still empty - an existing shelf count, drawers, trays, shoe
+    shelves, cubbies or a rod all mean something is already there, and
+    adding doors over an interior never overwrites it. Callers skip
+    this for a tilt-out hamper, whose basket stands in the whole
+    opening; clear_hamper_shelves below takes the shelves back out of
+    one whose front is changed to a hamper.
+
+    The room can turn it off. The prior library added a door and
+    nothing else, so a job carried over from it - or quoted against it
+    - wants the shelves left out until they are asked for.
+    """
+    props = bpy.context.scene.hb_closets
+    if not getattr(props, 'closet_seed_door_shelves', True):
+        return
     op = opening.hb_closet_opening
     # One column by one row is the empty state, not a cubby grid, so it
     # does not count as an interior.
-    if (op.adj_shelf_qty or op.drawer_qty
-            or op.cubby_cols > 1 or op.cubby_rows > 1):
+    if (op.adj_shelf_qty or op.drawer_qty or op.rollout_qty
+            or op.slant_qty or op.cubby_cols > 1 or op.cubby_rows > 1):
         return
     for c in opening.children:
         if c.get('hb_part_role') == PART_ROLE_ROD:

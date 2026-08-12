@@ -1594,6 +1594,14 @@ class Closets_Scene_Props(PropertyGroup):
         default='SLAB',
         update=fronts_closets.update_room)  # type: ignore
 
+    closet_seed_door_shelves: BoolProperty(
+        name="Shelves Behind Doors",
+        description="Put adjustable shelves into an opening when a "
+                    "door is added to it, where the opening is still "
+                    "empty. Turn this off to add a door and nothing "
+                    "else, the way the prior library did",
+        default=True)  # type: ignore
+
     closet_crown_profile: EnumProperty(
         name="Crown Profile",
         description="Profile used by Add Crown Molding",
@@ -1783,6 +1791,10 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.prop(self, 'closet_front_style', text="Front Style")
         col.prop(self, 'closet_panel_type', text="Door Panel")
+
+        col.separator()
+        col.prop(self, 'closet_seed_door_shelves',
+                 text="Shelves Behind Doors")
 
     # =====================================================================
     # UI: pulls (Options tab)
