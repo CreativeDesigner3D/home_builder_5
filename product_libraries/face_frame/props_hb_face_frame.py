@@ -1352,9 +1352,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Drawer Slides",
         description="Drawer slide hardware for the style section page",
         items=[
+            # New options append at the END so saved files keep their
+            # stored enum indexes.
             ('Tandem BLUMOTION', 'Tandem BLUMOTION', ''),
             ('KV8400', 'KV8400', ''),
             ('KV4270', 'KV4270', ''),
+            ('MOVENTO Heavy Duty', 'MOVENTO Heavy Duty', ''),
+            ('Tandem Touch Latch', 'Tandem Touch Latch', ''),
+            ('Blum Edge Soft Close 7/8 Extension',
+             'Blum Edge Soft Close 7/8 Extension', ''),
+            ('KV 8505 Heavy Duty', 'KV 8505 Heavy Duty', ''),
         ],
         default='Tandem BLUMOTION',
     )  # type: ignore
@@ -7744,6 +7751,22 @@ class Face_Frame_Opening_Props(PropertyGroup):
     drawer_box_construction_label: StringProperty(
         name="Drawer Box Construction Label",
         description="Display name of the selected drawer box construction",
+        default="",
+    )  # type: ignore
+    # ---- Drawer slides ----
+    # Same registry-driven shape as the box construction (host
+    # 'drawer_slides'): a per-opening slide override for the odd heavy
+    # duty drawer, blank = the project style's slide selection. Pure
+    # spec metadata - no geometry - stamped onto the built boxes for
+    # downstream drawings / reports.
+    drawer_slides: StringProperty(
+        name="Drawer Slides",
+        description="Slide hardware for this opening's drawers; blank uses the project default",
+        default="", update=_update_cabinet_dim,
+    )  # type: ignore
+    drawer_slides_label: StringProperty(
+        name="Drawer Slides Label",
+        description="Display name of the selected drawer slides",
         default="",
     )  # type: ignore
 

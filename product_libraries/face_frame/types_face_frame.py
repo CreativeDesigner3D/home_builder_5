@@ -9145,11 +9145,17 @@ class FaceFrameCabinet(GeoNodeCage):
         if op_props is None:
             return
         code = getattr(op_props, 'drawer_box_construction', '')
-        if not code:
-            return
-        obj['DRAWER_BOX_CONSTRUCTION'] = code
-        label = getattr(op_props, 'drawer_box_construction_label', '')
-        obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
+        if code:
+            obj['DRAWER_BOX_CONSTRUCTION'] = code
+            label = getattr(op_props, 'drawer_box_construction_label', '')
+            obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
+        # Slide pick rides the same stamp path: per-opening override for
+        # the odd heavy duty drawer, blank = project default.
+        slide_code = getattr(op_props, 'drawer_slides', '')
+        if slide_code:
+            obj['DRAWER_SLIDES'] = slide_code
+            slide_label = getattr(op_props, 'drawer_slides_label', '')
+            obj['DRAWER_SLIDES_NAME'] = slide_label or slide_code
 
     def _create_drawer_box_for_front(self, pivot_obj, leaf, rect,
                                      op_props=None):

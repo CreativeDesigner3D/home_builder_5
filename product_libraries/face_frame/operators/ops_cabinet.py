@@ -1015,8 +1015,13 @@ class HB_UL_face_frame_drawer_items(bpy.types.UIList):
 # ---------------------------------------------------------------------------
 DRAWER_BOX_CONSTRUCTION_HOST = 'drawer_box_construction'
 DRAWER_BOX_CONSTRUCTION_DEFAULT = 'DEFAULT'
+# Slides ride the same registry shape: the host supplies the options
+# (host 'drawer_slides'), the pick lives on the owning opening as pure
+# spec metadata for the odd heavy duty drawer.
+DRAWER_SLIDES_HOST = 'drawer_slides'
 
 _drawer_box_construction_items = []
+_drawer_slides_items = []
 
 
 def _opening_overlay_bucket(opening):
@@ -1084,6 +1089,47 @@ def _set_opening_construction(opening, code):
     props.drawer_box_construction_label = (
         drawer_box_construction_label(code) if code else '')
     props.drawer_box_construction = code
+    return True
+
+
+def drawer_slides_options():
+    """(code, name) for every slide option the host provides."""
+    out = []
+    for it in accessory_registry.get_items(DRAWER_SLIDES_HOST):
+        code = it.get('code')
+        if code:
+            out.append((code, it.get('name', code)))
+    return out
+
+
+def drawer_slides_label(code):
+    """Display name for a slide code, falling back to the code."""
+    entry = accessory_registry.lookup(DRAWER_SLIDES_HOST, code) or {}
+    return entry.get('name', code)
+
+
+def _drawer_slides_enum(self, context):
+    """Project Default plus every slide option the host provides."""
+    _drawer_slides_items.clear()
+    _drawer_slides_items.append(
+        (DRAWER_BOX_CONSTRUCTION_DEFAULT, "Project Default",
+         "Use the project's slide selection for these drawers"))
+    for code, name in drawer_slides_options():
+        _drawer_slides_items.append((code, name, ""))
+    return _drawer_slides_items
+
+
+def _set_opening_slides(opening, code):
+    """Write a slide pick (code, '' = default) plus its cached label
+    onto an opening."""
+    props = opening.face_frame_opening
+    if code == DRAWER_BOX_CONSTRUCTION_DEFAULT:
+        code = ''
+    if (props.drawer_slides or '') == code:
+        return False
+    props.drawer_slides_label = (
+        drawer_slides_label(code) if code else '')
+    props.drawer_slides = code
     return True
 
 
@@ -1186,6 +1232,14 @@ def _update_drawer_interior_construction(self, context):
         _set_opening_construction(opening, self.construction)
 
 
+def _update_drawer_interior_slides(self, context):
+    """Live-bind the dialog's slides dropdown to the opening; same
+    no-op-guard seeding contract as the construction dropdown."""
+    opening = bpy.data.objects.get(self.opening_name)
+    if opening is not None:
+        _set_opening_slides(opening, self.slides)
+
+
 class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
     """Lay out the inside of a drawer: add, remove and position the
     accessories that live in the drawer box."""
@@ -1211,6 +1265,11 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
         description="Construction this drawer's box is built to",
         update=_update_drawer_interior_construction,
     )  # type: ignore
+    slides: bpy.props.EnumProperty(
+        name="Slides", items=_drawer_slides_enum,
+        description="Slide hardware this drawer runs on",
+        update=_update_drawer_interior_slides,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1235,6 +1294,11 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
             self.construction = code or DRAWER_BOX_CONSTRUCTION_DEFAULT
         except TypeError:
             pass
+        slide_code = op_props.drawer_slides or ''
+        try:
+            self.slides = slide_code or DRAWER_BOX_CONSTRUCTION_DEFAULT
+        except TypeError:
+            pass
         self.filter_text = ""
         self.match_index = 0
         _populate_drawer_accessory_search(self, context)
@@ -1257,11 +1321,16 @@ class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
             return
         props = opening.face_frame_opening
 
-        # Box construction sits above the accessory list: it's a
-        # property of the box itself, not of what goes in it. Hidden
-        # when the host application offers no options.
-        if drawer_box_construction_options():
+        # Box construction / slides sit above the accessory list:
+        # they're properties of the box itself, not of what goes in
+        # it. Each hidden when the host application offers no options.
+        has_construction = bool(drawer_box_construction_options())
+        has_slides = bool(drawer_slides_options())
+        if has_construction:
             layout.prop(self, 'construction')
+        if has_slides:
+            layout.prop(self, 'slides')
+        if has_construction or has_slides:
             layout.separator()
 
         # Pick from the catalog: type to narrow, highlight, Add. The
