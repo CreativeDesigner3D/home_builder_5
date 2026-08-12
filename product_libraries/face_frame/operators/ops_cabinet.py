@@ -1157,6 +1157,29 @@ class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_drawer_slides(bpy.types.Operator):
+    """Run the clicked drawer's / rollout's boxes on the chosen slide
+    hardware. Stored on the owning opening, so it survives the rebuild
+    that wipes the boxes themselves."""
+    bl_idname = "hb_face_frame.set_drawer_slides"
+    bl_label = "Set Drawer Slides"
+    bl_description = "Run this opening's drawers on the chosen slides"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = (bpy.data.objects.get(self.opening_name)
+                   if self.opening_name
+                   else _find_owning_opening(context.active_object))
+        if opening is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        _set_opening_slides(opening, self.code)
+        return {'FINISHED'}
+
+
 def _drawer_opening_for(obj):
     """The opening cage owning ``obj`` when it carries a drawer-style
     front (drawer box, front, divider, or the cage itself)."""
@@ -5827,6 +5850,7 @@ classes = (
     hb_face_frame_OT_drawer_add_accessory,
     hb_face_frame_OT_drawer_remove_accessory,
     hb_face_frame_OT_set_drawer_box_construction,
+    hb_face_frame_OT_set_drawer_slides,
     hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
