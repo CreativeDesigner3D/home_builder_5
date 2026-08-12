@@ -455,9 +455,16 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated
             # material while its neighbours do not.
-            mat = (front_v
-                   if front_grain(child, role == role_drawer) == 'VERTICAL'
-                   else front)
+            #
+            # The library textures read along the part's length. A
+            # front cut length-up already has its length running up
+            # it, so vertical grain is the plain material there and
+            # the rotated one is what turns it sideways.
+            want = front_grain(child, role == role_drawer)
+            if child.get('hb_front_length_up'):
+                mat = front if want == 'VERTICAL' else front_v
+            else:
+                mat = front_v if want == 'VERTICAL' else front
             edge = front_edge
         elif role in ctop_roles:
             mat, edge = ctop, ctop_edge

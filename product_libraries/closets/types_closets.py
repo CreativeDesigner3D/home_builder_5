@@ -224,6 +224,25 @@ PROP_OPEN_HEIGHT = 'hb_open_height'
 # shelf like any other, but it is placed by the bank rather than by
 # what it was given, because only the bank knows where it stops.
 PROP_DRAWER_CAP = 'hb_drawer_cap'
+# Marks a front that is cut with its length running UP it rather than
+# across. Length is the grain axis - every nester places a grained part
+# unrotated, so a part cut across its length reads its grain sideways -
+# and a door's grain runs down the door. Standing the part up in its
+# own frame leaves the door exactly where it was: only which side is
+# called the length changes. Swinging doors carry this; a lift-up and
+# a tilt-out hamper still pivot about their own edges in the old frame
+# and are pending.
+PROP_FRONT_LENGTH_UP = 'hb_front_length_up'
+
+
+def front_size(front):
+    """(width across, height up) of a front, whichever way it is cut."""
+    part = GeoNodeCutpart(front)
+    length = part.get_input('Length')
+    width = part.get_input('Width')
+    if front.get(PROP_FRONT_LENGTH_UP):
+        return width, length
+    return length, width
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills
 # its opening: the fronts the stack owns share the remaining span
 # equally. Typing a front's height hands that front its own
@@ -1854,16 +1873,34 @@ class ClosetStarter(GeoNodeCage):
                 leaf = (full - h_gap) / 2.0
             else:
                 leaf = full
+            d_h = interior_h + to + bo
             for i, child in enumerate(doors):
                 x = -lo + i * (leaf + h_gap)
-                child.location = (x, front_y, -bo)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', leaf)
-                part.set_input('Width', interior_h + to + bo)
+                # A swinging door is cut with its length running up it,
+                # so the grain runs down the door on a grained sheet.
+                # A lift-up or a tilt-out pivots about an edge in the
+                # old frame and is left in it.
+                up = child.get('hb_hinge', 'LEFT') in ('LEFT', 'RIGHT')
+                if up:
+                    child[PROP_FRONT_LENGTH_UP] = 1
+                    child.location = (x, front_y, -bo + d_h)
+                    child.rotation_euler = (math.radians(90),
+                                            math.radians(90), 0.0)
+                    part.set_input('Length', d_h)
+                    part.set_input('Width', leaf)
+                else:
+                    if PROP_FRONT_LENGTH_UP in child:
+                        del child[PROP_FRONT_LENGTH_UP]
+                    child.location = (x, front_y, -bo)
+                    child.rotation_euler = (math.radians(90), 0.0, 0.0)
+                    part.set_input('Length', leaf)
+                    part.set_input('Width', d_h)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 _apply_front_style(child, is_drawer=False)
-                _stash_door_closed(child, x, front_y, -bo, leaf, side,
-                                   height=interior_h + to + bo)
+                _stash_door_closed(child, x, front_y,
+                                   (-bo + d_h) if up else -bo,
+                                   leaf, side, height=d_h)
                 self._position_front_pull(
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
@@ -2274,9 +2311,12 @@ class ClosetStarter(GeoNodeCage):
         pull_spacing = (float(op.distance_between_pulls) if op is not None
                         else const.DISTANCE_BETWEEN_PULLS)
         part = GeoNodeCutpart(front)
-        width = part.get_input('Length')
-        height = part.get_input('Width')
+        width, height = front_size(front)
         thickness = part.get_input('Thickness')
+        # A front cut length-up sits in a frame turned a quarter about
+        # its own face, so what is worked out below in face terms -
+        # across, up, out - is turned the same way on the way in.
+        length_up = bool(front.get(PROP_FRONT_LENGTH_UP))
         half = pulls_closets.pull_length(pull_obj) / 2.0
         z = thickness
 
@@ -2360,6 +2400,14 @@ class ClosetStarter(GeoNodeCage):
             inst['hb_part_role'] = 'PULL'
             inst['IS_CABINET_PULL'] = True
             existing.append(inst)
+        # Everything above is worked out in the face's own terms -
+        # across, up, out. A front cut length-up sits in a frame turned
+        # a quarter about that face, so the answer is turned with it on
+        # the way out rather than worked out twice.
+        if length_up:
+            from mathutils import Euler, Matrix
+            turn = Matrix.Rotation(math.radians(90.0), 3, 'Z')
+            rot = (turn @ Euler(rot).to_matrix()).to_euler()
         for i, dx in enumerate(offsets):
             inst = existing[i]
             if inst.data is not pull_obj.data:
@@ -2368,7 +2416,11 @@ class ClosetStarter(GeoNodeCage):
             # the asset's internal name) - downstream reports key on it.
             inst['hb_pull_index'] = i
             inst['hb_pull_name'] = pulls_closets.current_pull_stem()
-            inst.location = (x + dx, y, z)
+            across, up = x + dx, y
+            if length_up:
+                inst.location = (height - up, across, z)
+            else:
+                inst.location = (across, up, z)
             inst.rotation_euler = rot
 
     def _reconcile_adj_shelves(self, opening):
@@ -4996,7 +5048,11 @@ def apply_door_open(door, frac):
         off_y = math.sin(ez) * (-leaf)
         loc = (cx + leaf + off_x, cy + off_y, cz)
     door.location = loc
-    door.rotation_euler = (math.radians(90.0), 0.0, ez)
+    # A door cut length-up stands in a frame turned a quarter about its
+    # own face. The swing is the same turn about the room's Z either
+    # way; only the base the swing is added to differs.
+    ry = math.radians(90.0) if door.get(PROP_FRONT_LENGTH_UP) else 0.0
+    door.rotation_euler = (math.radians(90.0), ry, ez)
 
 
 def _stash_door_closed(door, cx, cy, cz, leaf, side, height=0.0):
