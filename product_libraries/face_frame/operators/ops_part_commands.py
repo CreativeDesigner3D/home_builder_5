@@ -689,6 +689,62 @@ class hb_face_frame_OT_remove_bottom_rail(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Stash for the toe kick type a flush toggle replaced, so toggling back
+# restores what the cabinet had (NOTCH, FLOATING, ...) instead of
+# assuming NOTCH.
+_PRE_FLUSH_TOE_KICK_TYPE = 'HB_PRE_FLUSH_TOE_KICK_TYPE'
+
+
+def _flush_rail_root(obj):
+    """Cabinet root for the flush-rail toggle, or None when the clicked
+    part doesn't qualify: bottom rails on plain BASE / TALL cabinets
+    only (uppers have no kick; corners carry their own kick frame)."""
+    if obj is None or obj.get('hb_part_role') \
+            != types_face_frame.PART_ROLE_BOTTOM_RAIL:
+        return None
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    cab = root.face_frame_cabinet
+    if cab.cabinet_type not in ('BASE', 'TALL'):
+        return None
+    if cab.corner_type != 'NONE':
+        return None
+    return root
+
+
+class hb_face_frame_OT_toggle_flush_bottom_rail(bpy.types.Operator):
+    """Toggle the cabinet between its recessed toe kick and the FLUSH
+    (wide bottom rail) construction, from the clicked bottom rail. The
+    prior toe kick type is stashed on the cabinet root so toggling back
+    restores it exactly. Base / Tall cabinets only.
+    """
+    bl_idname = "hb_face_frame.toggle_flush_bottom_rail"
+    bl_label = "Toggle Flush Bottom Rail"
+    bl_description = ("Switch this cabinet between its toe kick and the "
+                      "flush wide-bottom-rail construction")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _flush_rail_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = _flush_rail_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        if cab.toe_kick_type == 'FLUSH':
+            # The enum write recalcs via its update callback.
+            cab.toe_kick_type = root.get(_PRE_FLUSH_TOE_KICK_TYPE, 'NOTCH')
+            self.report({'INFO'}, "Flush bottom rail removed")
+        else:
+            root[_PRE_FLUSH_TOE_KICK_TYPE] = cab.toe_kick_type
+            cab.toe_kick_type = 'FLUSH'
+            self.report({'INFO'}, "Flush bottom rail set")
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -2813,6 +2869,7 @@ classes = (
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,
+    hb_face_frame_OT_toggle_flush_bottom_rail,
     hb_face_frame_OT_remove_mid_rail,
     hb_face_frame_OT_set_misc_part_dimensions,
     hb_face_frame_OT_set_door_part_dimensions,

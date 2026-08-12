@@ -382,6 +382,17 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
             layout.operator("hb_face_frame.remove_bottom_rail",
                             text="Remove Bottom Rail", icon='X')
+            # Flush wide-bottom-rail toggle - base / tall cabinets only
+            # (uppers have no kick; corners carry their own kick frame).
+            _fr_root = ops_part_commands._flush_rail_root(obj)
+            if _fr_root is not None:
+                is_flush = (_fr_root.face_frame_cabinet.toe_kick_type
+                            == 'FLUSH')
+                layout.operator(
+                    "hb_face_frame.toggle_flush_bottom_rail",
+                    text=("Remove Flush Bottom Rail" if is_flush
+                          else "Make Flush Bottom Rail"),
+                    icon='TRIA_DOWN_BAR')
             layout.menu("HOME_BUILDER_MT_face_frame_bottom_rail_profile",
                         text="Bottom Rail Profile", icon='MOD_BEVEL')
 
