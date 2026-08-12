@@ -4701,6 +4701,123 @@ class LShelfClosetStarter(GeoNodeCage):
             _RECALCULATING.discard(cabinet_id)
 
 
+class CornerFillerStarter(GeoNodeCage):
+    """The filler that closes an inside corner.
+
+    Where two runs meet at a right angle there is a square of nothing
+    between their ends. This fills it: a board on edge against each
+    wall, the second lapping the first so the joint reads closed from
+    the room, and a top laid over both.
+
+    It is not fixed to the runs either side and does not read them.
+    That is how the prior library had it, and it is the honest
+    arrangement - a filler is cut on site to whatever gap is left, and
+    the two widths are what gets cut.
+    """
+    default_closet_type = 'BASE'
+    has_toe_kick = False
+    floor_mounted = True
+    has_countertop = True
+    # A corner product: no bays, no openings, and placed on its own
+    # rather than filled along a wall.
+    is_corner = True
+    is_filler = True
+
+    def default_height(self, scene_props):
+        return const.BASE_PANEL_HEIGHT
+
+    def create_starter(self, name, bay_qty=1):
+        self.create(name)
+        self.obj[TAG_STARTER_CAGE] = True
+        self.obj['CLASS_NAME'] = self.__class__.__name__
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_starter_commands'
+        self.set_input('Mirror Y', True)
+        sp = self.obj.hb_closet_starter
+        scene_props = bpy.context.scene.hb_closets
+        sp.closet_type = self.default_closet_type
+        # Deep enough to close the corner two runs of the room's own
+        # depth leave between them, plus the board that faces it.
+        reach = (float(scene_props.default_panel_depth)
+                 + const.CORNER_FILLER_WIDTH)
+        sp.width = reach
+        sp.depth = reach
+        sp.height = self.default_height(scene_props)
+        sp.include_countertop = True
+        recalculate_closet_starter(self.obj)
+        return self
+
+    def _reconcile(self, role, name, want):
+        """Find or make the parts of one kind under this filler."""
+        found = [c for c in self.obj.children
+                 if c.get('hb_part_role') == role]
+        found.sort(key=lambda o: o.get('hb_filler_index', 0))
+        while len(found) > want:
+            _remove_part_tree(found.pop())
+        while len(found) < want:
+            part = CabinetPart()
+            part.create(name)
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = role
+            part.obj['hb_filler_index'] = len(found)
+            part.obj['MENU_ID'] = (
+                'HOME_BUILDER_MT_closet_part_commands')
+            found.append(part.obj)
+        return found
+
+    def recalculate(self):
+        cabinet_id = id(self.obj)
+        if cabinet_id in _RECALCULATING:
+            return
+        _RECALCULATING.add(cabinet_id)
+        try:
+            scene_props = run_sizes(self.obj)
+            sp = self.obj.hb_closet_starter
+            pt = scene_props.panel_thickness
+            W, D, H = sp.width, sp.depth, sp.height
+            lw = max(float(sp.filler_left_width), 0.0)
+            rw = max(float(sp.filler_right_width), 0.0)
+            boards = self._reconcile(PART_ROLE_FILLER, 'Filler', 2)
+            # Against the side wall, standing on edge: its face looks
+            # down the run that meets it there.
+            left = boards[0]
+            left.rotation_euler = (0.0, math.radians(-90), 0.0)
+            left.location = (max(W - rw, 0.0), -D, 0.0)
+            gl = GeoNodeCutpart(left)
+            gl.set_input('Length', H)
+            gl.set_input('Width', max(lw, 0.001))
+            gl.set_input('Thickness', pt)
+            # Against the back wall, lapping the first board's edge by
+            # a panel thickness so the joint reads closed from the
+            # room rather than showing end grain.
+            right = boards[1]
+            right.rotation_euler = (0.0, math.radians(-90),
+                                    math.radians(90))
+            right.location = (W, -D + lw, 0.0)
+            gr = GeoNodeCutpart(right)
+            gr.set_input('Length', H)
+            gr.set_input('Width', max(rw + pt, 0.001))
+            gr.set_input('Thickness', pt)
+            gr.set_input('Mirror Z', True)
+            # A top over the corner, so the two runs' tops are joined
+            # rather than stopping either side of a hole. Only where
+            # the runs have tops to join.
+            tops = self._reconcile(PART_ROLE_COUNTERTOP, 'Countertop',
+                                   1 if sp.include_countertop else 0)
+            if tops:
+                top = tops[0]
+                top.rotation_euler = (0.0, 0.0, math.radians(-90))
+                top.location = (0.0, 0.0, H)
+                gt = GeoNodeCutpart(top)
+                gt.set_input('Length', abs(D))
+                gt.set_input('Width', W)
+                gt.set_input('Thickness', sp.countertop_thickness)
+            self.set_input('Dim X', W)
+            self.set_input('Dim Y', D)
+            self.set_input('Dim Z', H)
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+
+
 class LShelfBaseStarter(LShelfClosetStarter):
     default_closet_type = 'BASE'
 
@@ -4724,6 +4841,7 @@ CLOSET_NAME_DISPATCH = {
     'L Shelf Base': LShelfBaseStarter,
     'L Shelf Tall': LShelfTallStarter,
     'L Shelf Upper': LShelfUpperStarter,
+    'Corner Filler': CornerFillerStarter,
 }
 
 WRAP_CLASS_REGISTRY = {cls.__name__: cls for cls in CLOSET_NAME_DISPATCH.values()}

@@ -4937,6 +4937,15 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
 
     # -- tab bodies ---------------------------------------------------
     def _draw_sizes(self, layout, root, sp, bays, is_corner):
+        if getattr(self, '_is_filler', False):
+            # A filler has two boards and a top and nothing else, so
+            # what it is cut to is the whole of its sizes page.
+            box = layout.box()
+            box.label(text="Filler")
+            col = box.column(align=True)
+            col.prop(sp, 'filler_left_width')
+            col.prop(sp, 'filler_right_width')
+            return
         if is_corner:
             box = layout.box()
             box.label(text="Corner")
@@ -5204,6 +5213,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         cls = types_closets.WRAP_CLASS_REGISTRY.get(
             root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
         is_corner = getattr(cls, 'is_corner', False)
+        self._is_filler = bool(getattr(cls, 'is_filler', False))
         bays = _starter_bays(root)
 
         # Overall size stays visible on every tab - it is what people

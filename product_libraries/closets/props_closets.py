@@ -726,6 +726,19 @@ class Closet_Starter_Props(PropertyGroup):
         name="Right Depth", description="Right wing panel depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    filler_left_width: FloatProperty(
+        name="Left Filler Width",
+        description="How wide the board against the side wall is cut",
+        default=const.CORNER_FILLER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    filler_right_width: FloatProperty(
+        name="Right Filler Width",
+        description="How wide the board against the back wall is cut",
+        default=const.CORNER_FILLER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     l_interior: EnumProperty(
         name="Corner Holds",
         description="What goes inside the corner unit",

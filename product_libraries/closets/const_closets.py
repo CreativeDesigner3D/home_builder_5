@@ -351,6 +351,11 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # of them is holding the unit square.
 L_LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
 
+# The filler that closes an inside corner: two boards standing on
+# edge, one lapping the other, and a top laid over both. The widths
+# are what the prior library started them at.
+CORNER_FILLER_WIDTH = inch(1.5)
+
 L_ROD_FROM_WALL = inch(12.0)
 L_ROD_END_GAP = inch(0.75)
 # The other wing has to be at least this deep for clothes on the rod

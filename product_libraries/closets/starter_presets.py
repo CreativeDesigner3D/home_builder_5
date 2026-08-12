@@ -19,6 +19,10 @@ STARTER_SECTIONS = [
         ('L Shelf Tall', "Tall", "Floor-mounted full-height corner L-shelf unit"),
         ('L Shelf Upper', "Hanging", "Wall-mounted corner L-shelf unit"),
     ]),
+    ("Fillers", [
+        ('Corner Filler', "Corner",
+         "Closes the corner where two runs meet at a right angle"),
+    ]),
     ("Islands", [
         ('Island', "Single", "Single-sided island with countertop and applied back"),
         ('Island Double', "Double", "Double-sided island with center back"),
