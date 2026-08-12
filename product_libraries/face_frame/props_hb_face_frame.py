@@ -1765,11 +1765,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'FULL_INSET':    (-0.09375, -0.09375, -0.09375, -0.09375),
     }
 
-    def assign_style_to_cabinet(self, cabinet_obj):
-        """Write the style's overlay floats + inset amount onto the cabinet
-        and recalc. Material assignment to parts and door-style application
-        to fronts ship in the next phase, once Face_Frame_Door_Style and
-        the per-part material rules are in place.
+    def apply_overlay_to_cabinet(self, cabinet_obj):
+        """Write the style's overlay floats + inset depth onto a cabinet
+        (or an applied panel carrying working / false fronts) WITHOUT
+        touching face-frame sizes or running a recalc.
+
+        Inset depth scales with door thickness so non-standard doors
+        land correctly. FULL_INSET makes the outer face flush with the
+        face frame; PARTIAL_INSET sits halfway between flush and the
+        standard overlay position. The 0.125 magic number must stay in
+        sync with DOOR_TO_FRAME_GAP in solver_face_frame.py.
         """
         l, r, t, b = self._OVERLAY_TABLE.get(
             self.door_overlay_type, self._OVERLAY_TABLE['CLASSIC'])
@@ -1779,12 +1784,6 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         props.default_top_overlay = units.inch(t)
         props.default_bottom_overlay = units.inch(b)
 
-        # Inset depth scales with door thickness so non-standard
-        # doors land correctly. FULL_INSET makes the outer face flush
-        # with the face frame; PARTIAL_INSET sits halfway between
-        # flush and the standard overlay position. The 0.125 magic
-        # number must stay in sync with DOOR_TO_FRAME_GAP in
-        # solver_face_frame.py.
         door_thickness = props.door_thickness
         door_to_frame_gap = units.inch(0.125)
         full_inset = door_thickness + door_to_frame_gap
@@ -1794,6 +1793,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             props.default_door_inset_amount = full_inset / 2.0
         else:
             props.default_door_inset_amount = 0.0
+
+    def assign_style_to_cabinet(self, cabinet_obj):
+        """Write the style's overlay floats + inset amount onto the cabinet
+        and recalc. Material assignment to parts and door-style application
+        to fronts ship in the next phase, once Face_Frame_Door_Style and
+        the per-part material rules are in place.
+        """
+        self.apply_overlay_to_cabinet(cabinet_obj)
 
         cabinet_obj['STYLE_NAME'] = self.name
         # Seed the rename anchor the first time this style is stamped onto a
