@@ -81,6 +81,27 @@ def _find_owning_split_node(part_obj):
 # Width: read current and apply
 # ---------------------------------------------------------------------------
 
+def _rail_flush_kick(root, bay):
+    """Kick-zone height folded into a FLUSH cabinet's bottom rail.
+
+    FLUSH builds the bottom rail down to the floor at kick_height +
+    bottom_rail_width (see solver bottom_rail_segments), so the width
+    the user sees and types is the BUILT wide rail: display adds this
+    amount and a commit subtracts it, keeping type-back-what-you-see a
+    no-op. 0 for every other kick type. A bay the per-bay flush toggle
+    locked at kick 0 already holds the full total in its rail width,
+    so adding its (zero) kick stays correct.
+    """
+    cab = root.face_frame_cabinet
+    if cab.cabinet_type not in ('BASE', 'TALL', 'LAP_DRAWER'):
+        return 0.0
+    if cab.corner_type != 'NONE' or cab.toe_kick_type != 'FLUSH':
+        return 0.0
+    if bay is not None:
+        return bay.face_frame_bay.kick_height
+    return cab.toe_kick_height
+
+
 def _get_current_width(obj, role, root):
     """Effective width currently in use for this part."""
     cab = root.face_frame_cabinet
@@ -100,8 +121,9 @@ def _get_current_width(obj, role, root):
     if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
         start = obj.get('hb_segment_start_bay', 0)
         bay = _find_bay_with_index(root, start)
-        return (bay.face_frame_bay.bottom_rail_width
-                if bay else cab.bottom_rail_width)
+        width = (bay.face_frame_bay.bottom_rail_width
+                 if bay else cab.bottom_rail_width)
+        return width + _rail_flush_kick(root, bay)
     if role in (types_face_frame.PART_ROLE_BAY_MID_RAIL,
                 types_face_frame.PART_ROLE_BAY_MID_STILE):
         split = _find_owning_split_node(obj)
@@ -285,7 +307,13 @@ def _fan_out_value(obj, role, root, value):
         for idx in indices:
             bay = bays.get(idx)
             if bay is not None:
-                setattr(bay.face_frame_bay, attr, value)
+                v = value
+                if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
+                    # The typed value is the BUILT wide rail on a FLUSH
+                    # cabinet; store the rail's own share, floored at 0
+                    # so a value under the kick height can't go negative.
+                    v = max(value - _rail_flush_kick(root, bay), 0.0)
+                setattr(bay.face_frame_bay, attr, v)
         return
     if role in (types_face_frame.PART_ROLE_BAY_MID_RAIL,
                 types_face_frame.PART_ROLE_BAY_MID_STILE):
