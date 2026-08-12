@@ -3574,13 +3574,30 @@ def _walk_tree(node, layout, bay_index,
             brw = bay.get('bottom_rail_width') or 0.0
             if brw > 0:
                 eff_widths[bottom_rail_splitter_index] = brw
-    splitter_total = sum(eff_widths)
+    # For size distribution a removed rail still consumes its FULL width
+    # from the pool; the freed space (full width minus the collapsed gap)
+    # is handed to the two adjacent openings below, half each. Without
+    # this the freed space went to whichever siblings were unlocked --
+    # and silently vanished when every sibling held a typed size, so the
+    # opening dims never summed back to the cabinet height.
+    dist_widths = list(eff_widths)
+    if node['axis'] == 'H':
+        for i in range(n_splitters):
+            if removes[i]:
+                dist_widths[i] = widths[i]
+    splitter_total = sum(dist_widths)
 
     if node['axis'] == 'H':
         ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
         sizes = _redistribute_sizes(
             children, ff_avail_z, splitter_total
         )
+        for i in range(n_splitters):
+            if removes[i]:
+                freed = dist_widths[i] - eff_widths[i]
+                if freed > 0:
+                    sizes[i] += freed / 2.0
+                    sizes[i + 1] += freed / 2.0
         ff_opening_top_z = cage_z + cage_dim_z - reveals['top']
         cur_z_top = ff_opening_top_z
         for i, child in enumerate(children):
