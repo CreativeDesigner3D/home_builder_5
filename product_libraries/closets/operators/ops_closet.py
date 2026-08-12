@@ -4596,6 +4596,51 @@ class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
         row.prop(self, 'right_offset', text="Right Offset")
 
 
+class hb_closets_OT_lock_l_shelf(bpy.types.Operator):
+    """Hold a corner shelf in place, or let it move again.
+
+    A locked shelf and an adjustable one are the same board cut the
+    same way - what differs is how it is held: pins in routed notches,
+    or cams into the wings. So this is a flag rather than a different
+    part, which is how the prior library had it."""
+    bl_idname = "hb_closets.lock_l_shelf"
+    bl_label = "Lock Corner Shelf"
+    bl_options = {'UNDO'}
+
+    lock: bpy.props.BoolProperty(name="Lock", default=True)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.get('hb_l_index') is None:
+            return False
+        if obj.get('hb_l_carcass'):
+            cls.poll_message_set(
+                "The top and bottom hold the unit together")
+            return False
+        return obj.get('hb_part_role') in (
+            types_closets.PART_ROLE_FIXED_SHELF,
+            types_closets.PART_ROLE_ADJ_SHELF)
+
+    def execute(self, context):
+        obj = context.active_object
+        root = types_closets.find_starter_root(obj)
+        if root is None:
+            return {'CANCELLED'}
+        sp = root.hb_closet_starter
+        if sp.l_interior not in ('ADJ',):
+            self.report({'INFO'},
+                        "These shelves are all locked already")
+            return {'CANCELLED'}
+        obj[types_closets.PROP_L_LOCKED] = bool(self.lock)
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _redraw_viewports(context)
+        self.report({'INFO'}, "Shelf locked" if self.lock
+                    else "Shelf unlocked")
+        return {'FINISHED'}
+
+
 class hb_closets_OT_delete_part(bpy.types.Operator):
     """Delete the active interior part. Config-driven parts (adjustable
     shelves, drawers, doors, cubby parts) decrement their opening's
@@ -4830,7 +4875,20 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(sp, 'l_left_depth')
             col.prop(sp, 'l_right_depth')
-            col.prop(sp, 'l_shelf_qty')
+            col = box.column(align=True)
+            col.prop(sp, 'l_interior')
+            if sp.l_interior in ('ADJ', 'LOCK'):
+                col.prop(sp, 'l_shelf_qty')
+            else:
+                # A rod runs along one wing rather than turning the
+                # corner, so which wing is the question.
+                col.prop(sp, 'l_rod_on_left')
+                if sp.l_interior == 'DOUBLE':
+                    col.prop(sp, 'l_top_opening_height')
+            warning = root.get(types_closets.PROP_ACCESSORY_WARNING, '')
+            if warning:
+                sub = box.box()
+                sub.label(text=warning, icon='ERROR')
             col = box.column(align=True)
             col.prop(sp, 'l_back_width')
             col.prop(sp, 'l_flip_partition')
@@ -6528,6 +6586,7 @@ classes = (
     hb_closets_OT_clear_opening,
     hb_closets_OT_clear_bay,
     hb_closets_OT_adj_shelf_step,
+    hb_closets_OT_lock_l_shelf,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,

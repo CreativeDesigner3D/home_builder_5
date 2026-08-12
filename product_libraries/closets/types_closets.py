@@ -116,6 +116,12 @@ PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
 PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# A corner shelf that has been locked. Lock and adjustable are the
+# same board cut the same way - what differs is how it is held: pins
+# in routed notches, or cams into the wings. So it is a flag on the
+# shelf rather than a part of its own, which is how the prior library
+# had it too.
+PROP_L_LOCKED = 'hb_l_locked'
 PROP_BASKET_W = 'hb_basket_width'
 PROP_BASKET_H = 'hb_basket_height'
 PROP_BASKET_D = 'hb_basket_depth'
@@ -4153,10 +4159,93 @@ class LShelfClosetStarter(GeoNodeCage):
         part.obj.rotation_euler.z = math.radians(rot_z)
         return part.obj
 
+    def _l_shelf_wanted(self):
+        """How many shelves a corner unit holds, top and bottom in.
+
+        A unit hung with rods keeps its top and bottom - they are the
+        carcass, not shelves someone asked for - and the double hang
+        adds the one between the rods, which is always fixed."""
+        sp = self.obj.hb_closet_starter
+        if sp.l_interior == 'ROD':
+            return 2
+        if sp.l_interior == 'DOUBLE':
+            return 3
+        return max(0, int(sp.l_shelf_qty)) + 2
+
+    def _reconcile_l_rods(self, want):
+        """The rods in a corner unit: none, one, or two.
+
+        A rod does not turn the corner - the hardware will not do it
+        and the prior library never tried. It runs along one wing and
+        stops, and which wing is a choice."""
+        rods = [c for c in self.obj.children
+                if c.get('hb_part_role') == PART_ROLE_ROD]
+        rods.sort(key=lambda o: o.get('hb_l_index', 0))
+        while len(rods) > want:
+            _remove_part_tree(rods.pop())
+        while len(rods) < want:
+            rod = ClosetRod()
+            rod.create()
+            rod.obj.parent = self.obj
+            rod.obj['hb_part_role'] = PART_ROLE_ROD
+            rod.obj['hb_l_index'] = len(rods)
+            rods.append(rod.obj)
+        return rods
+
+    def _layout_l_rods(self, rods, W, D, LD, RD, l_pt, r_pt, z_tops):
+        """Stand each rod along its wing, a foot out from the wall it
+        does not run along and clear of the one it does.
+
+        The figures are the prior library's: twelve inches off the
+        opposite wall, three quarters of an inch clear at each end,
+        and hung the standard drop below whatever is above it."""
+        sp = self.obj.hb_closet_starter
+        on_left = bool(sp.l_rod_on_left)
+        out = const.L_ROD_FROM_WALL
+        gap = const.L_ROD_END_GAP
+        for rod, z_top in zip(rods, z_tops):
+            geo = GeoNodeObject(rod)
+            if on_left:
+                # Along the side wall: runs back down -Y.
+                length = max(D - l_pt - gap, 0.001)
+                rod.rotation_euler.z = math.radians(-90)
+                rod.location = (out, -gap, z_top - const.ROD_TOP_OFFSET)
+            else:
+                # Along the back wall: runs across +X.
+                length = max(W - r_pt - gap, 0.001)
+                rod.rotation_euler.z = 0.0
+                rod.location = (gap, -out, z_top - const.ROD_TOP_OFFSET)
+            geo.set_input('Dim X', length)
+            rod['hb_l_on_left'] = 1 if on_left else 0
+
+    def _warn_l_rod(self, W, D):
+        """A rod needs the wing it does not run along to be deep
+        enough for the clothes on it to clear - two feet, the way the
+        prior library had it. Said rather than prevented."""
+        sp = self.obj.hb_closet_starter
+        if sp.l_interior not in ('ROD', 'DOUBLE'):
+            if PROP_ACCESSORY_WARNING in self.obj:
+                del self.obj[PROP_ACCESSORY_WARNING]
+            return ''
+        across = D if sp.l_rod_on_left else W
+        msg = ''
+        if across + 0.0005 < const.L_ROD_MIN_CLEAR:
+            wall = "back" if sp.l_rod_on_left else "side"
+            msg = ("A rod needs %s across the %s wall for the clothes "
+                   "to clear; this corner is %s"
+                   % (_in_str(const.L_ROD_MIN_CLEAR), wall,
+                      _in_str(across)))
+        if msg:
+            self.obj[PROP_ACCESSORY_WARNING] = msg
+        elif PROP_ACCESSORY_WARNING in self.obj:
+            del self.obj[PROP_ACCESSORY_WARNING]
+        return msg
+
     def _reconcile_l_shelves(self):
-        want = max(0, int(self.obj.hb_closet_starter.l_shelf_qty)) + 2
+        want = self._l_shelf_wanted()
         shelves = [c for c in self.obj.children
-                   if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF]
+                   if c.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
+                                                PART_ROLE_ADJ_SHELF)]
         shelves.sort(key=lambda o: o.get('hb_l_index', 0))
         while len(shelves) > want:
             bpy.data.objects.remove(shelves.pop(), do_unlink=True)
@@ -4436,13 +4525,43 @@ class LShelfClosetStarter(GeoNodeCage):
             z_bottom = kick
             z_top = H - st
             n_mid = max(0, len(shelves) - 2)
+            n = len(shelves)
+            mode = sp.l_interior
             for i, shelf in enumerate(shelves):
+                carcass = i == 0 or i == n - 1
                 if i == 0:
                     z = z_bottom
-                elif i == len(shelves) - 1:
+                elif i == n - 1:
                     z = z_top
+                elif mode == 'DOUBLE':
+                    # The one shelf a double hang has is the one
+                    # between its two rods, and where it sits is what
+                    # divides the hanging into a long half and a short
+                    # one - so it is set rather than spaced.
+                    z = min(max(sp.l_top_opening_height, z_bottom + st),
+                            z_top - st)
                 else:
-                    z = z_bottom + (z_top - z_bottom) * i / (len(shelves) - 1)
+                    z = z_bottom + (z_top - z_bottom) * i / (n - 1)
+                # Top and bottom are the carcass and are always fixed.
+                # In between, a shelf is adjustable or locked - the
+                # same board either way, held on pins or on cams, so
+                # it is the same part carrying a flag.
+                # Only a shelf someone could have locked by hand
+                # remembers being locked. A unit set to lock all of
+                # them, or the shelf between two rods, is locked by
+                # what the unit is - written down it would still be
+                # locked after the unit was set back to adjustable,
+                # which is not what anyone asked for.
+                chosen = bool(shelf.get(PROP_L_LOCKED, False))
+                if carcass or mode in ('LOCK', 'DOUBLE'):
+                    locked = True
+                else:
+                    locked = chosen
+                shelf['hb_part_role'] = (PART_ROLE_FIXED_SHELF if locked
+                                         else PART_ROLE_ADJ_SHELF)
+                shelf['hb_l_carcass'] = 1 if carcass else 0
+                shelf.color = (const.L_LOCK_SHELF_COLOR if locked
+                               and not carcass else (1.0, 1.0, 1.0, 1.0))
                 # shelves are held off both walls by the wall
                 # offset (the partition and shelf formulas assume it).
                 shelf.location = (wo, -wo, z)
@@ -4522,6 +4641,25 @@ class LShelfClosetStarter(GeoNodeCage):
                     cpm.set_input('Flip Y', False)
                     bnotch.show_viewport = True
                     bnotch.show_render = True
+
+            # ----- Rods -----
+            # A single hang gets one rod under the top; a double hang
+            # gets a second under the shelf between them. Each hangs
+            # the standard drop below whatever is over it, which is
+            # how the prior library measured them.
+            if mode == 'ROD':
+                tops = [z_top]
+            elif mode == 'DOUBLE':
+                middle = [s for s in shelves
+                          if not s.get('hb_l_carcass')]
+                under = (middle[0].location.z if middle
+                         else (z_top + z_bottom) / 2.0)
+                tops = [z_top, under]
+            else:
+                tops = []
+            rods = self._reconcile_l_rods(len(tops))
+            self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, tops)
+            self._warn_l_rod(W, D)
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)

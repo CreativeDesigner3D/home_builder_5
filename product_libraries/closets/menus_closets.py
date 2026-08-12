@@ -279,6 +279,16 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                                 text="Resize Drawer to Fit Tray",
                                 icon='FULLSCREEN_ENTER')
             layout.separator()
+        if (obj is not None and obj.get('hb_l_index') is not None
+                and not obj.get('hb_l_carcass')):
+            locked = bool(obj.get(types_closets.PROP_L_LOCKED))
+            op = layout.operator(
+                "hb_closets.lock_l_shelf",
+                text="Unlock Shelf" if locked else "Lock Shelf",
+                icon='DECORATE_UNLOCKED' if locked
+                else 'DECORATE_LOCKED')
+            op.lock = not locked
+            layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')
 

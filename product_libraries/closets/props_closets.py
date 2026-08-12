@@ -726,6 +726,35 @@ class Closet_Starter_Props(PropertyGroup):
         name="Right Depth", description="Right wing panel depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    l_interior: EnumProperty(
+        name="Corner Holds",
+        description="What goes inside the corner unit",
+        items=[
+            ('ADJ', "Adjustable Shelves",
+             "Shelves on pins, moved by hand. Any one of them can be "
+             "locked afterwards"),
+            ('LOCK', "Lock Shelves",
+             "Shelves fixed on cams, holding the unit square"),
+            ('ROD', "Single Hanging Rod",
+             "One rod along a wing, for full-length hanging"),
+            ('DOUBLE', "Double Hang",
+             "Two rods with a fixed shelf between them"),
+        ],
+        default='ADJ', update=_update_starter_prop)  # type: ignore
+    l_rod_on_left: BoolProperty(
+        name="Rod On The Side Wall",
+        description="Hang the rod along the side wall rather than the "
+                    "back wall. A rod needs the other wing to be at "
+                    "least two feet for the clothes to clear",
+        default=True, update=_update_starter_prop)  # type: ignore
+    l_top_opening_height: FloatProperty(
+        name="Top Opening Height",
+        description="Floor to the underside of the shelf between the "
+                    "two rods",
+        default=const.L_DOUBLE_TOP_OPENING, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     l_shelf_qty: IntProperty(
         name="Shelf Quantity",
         description="Interior L shelves between the bottom and top",

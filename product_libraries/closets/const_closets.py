@@ -342,6 +342,23 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # Corner construction: shelves and the back partition are held
 # off the walls by the wall offset; the shelves' partition notch clears
 # the partition by the router tool radius.
+# A corner unit's rod runs along one wing rather than turning the
+# corner - which is what the prior library did, and what the hardware
+# allows. It stands this far off the wall it does not run along, and
+# clear of the one it does.
+# A locked shelf reads orange in the viewport, the way the prior
+# library marked them, so a stack of shelves says at a glance which
+# of them is holding the unit square.
+L_LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+
+L_ROD_FROM_WALL = inch(12.0)
+L_ROD_END_GAP = inch(0.75)
+# The other wing has to be at least this deep for clothes on the rod
+# to clear it.
+L_ROD_MIN_CLEAR = inch(24.0)
+# Double hang: how far up the shelf between the two rods sits.
+L_DOUBLE_TOP_OPENING = inch(40.8248)
+
 L_WALL_OFFSET = inch(0.5)
 L_NOTCH_TOOL_RADIUS = inch(0.25)
 # The inside front corner of an L shelf is rounded by default
