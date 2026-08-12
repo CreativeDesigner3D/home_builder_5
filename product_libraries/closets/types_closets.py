@@ -122,6 +122,11 @@ PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
 # shelf rather than a part of its own, which is how the prior library
 # had it too.
 PROP_L_LOCKED = 'hb_l_locked'
+# A front told to be a style of its own rather than the room's. Unset
+# is the ordinary case: the front follows whatever the room is set to,
+# so changing the room still changes every front that has not been
+# spoken for.
+PROP_FRONT_STYLE = 'hb_front_style'
 PROP_BASKET_W = 'hb_basket_width'
 PROP_BASKET_H = 'hb_basket_height'
 PROP_BASKET_D = 'hb_basket_depth'
@@ -305,12 +310,16 @@ def suspend_recalc():
 
 
 def _apply_front_style(front_obj, is_drawer):
-    """Apply the scene's front-style selection to one front (see
-    fronts_closets). Best-effort: a missing module/selection leaves the
-    front a slab rather than failing the recalc."""
+    """Apply a front's style: its own if it has been given one, and
+    the room's if it has not.
+
+    Best-effort - a missing module or selection leaves the front a
+    slab rather than failing the recalc."""
     try:
         from . import fronts_closets
-        fronts_closets.apply_style_to_front(front_obj, is_drawer)
+        own = front_obj.get(PROP_FRONT_STYLE) or None
+        fronts_closets.apply_style_to_front(front_obj, is_drawer,
+                                            style=own)
     except Exception:
         pass
 
@@ -601,22 +610,46 @@ def add_rod(opening_obj, z_offset):
     return rod.obj
 
 
-def add_misc_part(name='Misc Part'):
+# The loose parts, and the size and stance each one starts at. A part
+# dropped on its own is not worked out by anything afterwards, so what
+# it arrives as is all the help there is - a cleat should arrive lying
+# like a cleat and a back standing like a back, rather than every one
+# of them arriving as the same flat rectangle to be turned by hand.
+#   (label, length, width, thickness, upright)
+LOOSE_PARTS = {
+    'MISC': ("Misc Part", inch(30), inch(18), inch(0.75), False),
+    'BACK': ("Back", inch(30), inch(30), const.APPLIED_BACK_THICKNESS,
+             True),
+    'CLEAT': ("Cleat", inch(30), const.CLEAT_WIDTH,
+              const.SHELF_THICKNESS, True),
+    'SHELF': ("Shelf", inch(30), inch(12), const.SHELF_THICKNESS,
+              False),
+}
+
+
+def add_misc_part(name='Misc Part', kind='MISC'):
     """Create a part the library does not size and does not place.
 
     It stands on its own rather than inside an opening, so no recalc
     ever reaches it: it is the size it was cut and it stays where it
-    was put until the person moves it. Starts at the size most of
-    them want to be, which the person then changes.
+    was put until the person moves it. Starts at the size and the
+    stance most of that kind want, which the person then changes.
     """
+    label, length, width, thickness, upright = LOOSE_PARTS.get(
+        kind, LOOSE_PARTS['MISC'])
     part = CabinetPart()
-    part.create(name)
+    part.create(name if name != 'Misc Part' else label)
     part.obj['hb_part_role'] = PART_ROLE_MISC
+    part.obj['hb_loose_kind'] = kind
     part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
-    part.set_input('Length', inch(30))
-    part.set_input('Width', inch(18))
-    part.set_input('Thickness', inch(0.75))
+    part.set_input('Length', length)
+    part.set_input('Width', width)
+    part.set_input('Thickness', thickness)
     part.set_input('Mirror Y', True)
+    if upright:
+        # Stood on its long edge, the way it is fixed - a back against
+        # the wall, a cleat along it.
+        part.obj.rotation_euler.x = math.radians(90)
     return part.obj
 
 

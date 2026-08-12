@@ -1740,13 +1740,15 @@ class Closets_Scene_Props(PropertyGroup):
         for sec_label, entries in starter_presets.PART_SECTIONS:
             row = layout.row(align=True)
             row.label(text=sec_label)
-            for name, label, _desc, op_id in entries:
+            for name, label, _desc, op_id, op_props in entries:
                 cell = row.column(align=True)
                 if self.library_view_mode == 'THUMBNAIL':
                     icon_id = load_starter_thumbnail(name)
                     if icon_id:
                         cell.template_icon(icon_value=icon_id, scale=4.0)
-                cell.operator(op_id, text=label)
+                op = cell.operator(op_id, text=label)
+                for key, value in (op_props or {}).items():
+                    setattr(op, key, value)
 
     # =====================================================================
     # UI: materials (Options tab)

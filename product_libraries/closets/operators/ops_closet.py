@@ -3362,10 +3362,17 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
     bl_label = "Place Misc Part"
     bl_options = {'UNDO'}
 
+    kind: bpy.props.EnumProperty(
+        name="Part",
+        items=[(k, v[0], v[0])
+               for k, v in types_closets.LOOSE_PARTS.items()],
+        default='MISC',
+        description="Which loose part to place")  # type: ignore
+
     _part_obj = None
 
     def invoke(self, context, event):
-        self._part_obj = types_closets.add_misc_part()
+        self._part_obj = types_closets.add_misc_part(kind=self.kind)
         try:
             materials_closets.apply_to_part(self._part_obj)
         except Exception:
@@ -4594,6 +4601,67 @@ class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
         row.prop(self, 'left_offset', text="Left Offset")
         row = box.row()
         row.prop(self, 'right_offset', text="Right Offset")
+
+
+class hb_closets_OT_front_style(bpy.types.Operator):
+    """Give one front a style of its own, or hand it back to the room.
+
+    Nearly every job is one style throughout, which is why the style
+    is a room setting. This is for the job that is not: a run of
+    slab drawers under shaker doors, say. A front handed back follows
+    the room again, so changing the room still changes it."""
+    bl_idname = "hb_closets.front_style"
+    bl_label = "Front Style"
+    bl_options = {'UNDO'}
+
+    def _items(self, context):
+        from .. import fronts_closets
+        items = [('FOLLOW', "Follow The Room",
+                  "Take whatever style the room is set to")]
+        items += [(k, label, desc or label)
+                  for k, label, desc in fronts_closets.FRONT_STYLES]
+        return _held('front_style', items)
+
+    style: bpy.props.EnumProperty(
+        name="Style", items=_items)  # type: ignore
+
+    FRONT_ROLES = frozenset((types_closets.PART_ROLE_DOOR,
+                             types_closets.PART_ROLE_DRAWER_FRONT))
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.get('hb_part_role') not in cls.FRONT_ROLES:
+            cls.poll_message_set("Select a door or a drawer front")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        stored = obj.get(types_closets.PROP_FRONT_STYLE) or 'FOLLOW'
+        try:
+            self.style = stored
+        except TypeError:
+            self.style = 'FOLLOW'
+        return context.window_manager.invoke_props_dialog(self,
+                                                          width=260)
+
+    def draw(self, context):
+        self.layout.prop(self, 'style')
+
+    def execute(self, context):
+        obj = context.active_object
+        root = types_closets.find_starter_root(obj)
+        if self.style == 'FOLLOW':
+            if types_closets.PROP_FRONT_STYLE in obj:
+                del obj[types_closets.PROP_FRONT_STYLE]
+        else:
+            obj[types_closets.PROP_FRONT_STYLE] = self.style
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+            _apply_finish(root)
+        _redraw_viewports(context)
+        return {'FINISHED'}
 
 
 class hb_closets_OT_lock_l_shelf(bpy.types.Operator):
@@ -6586,6 +6654,7 @@ classes = (
     hb_closets_OT_clear_opening,
     hb_closets_OT_clear_bay,
     hb_closets_OT_adj_shelf_step,
+    hb_closets_OT_front_style,
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,

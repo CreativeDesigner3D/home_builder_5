@@ -271,6 +271,11 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                             icon='WINDOW')
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
+                in (types_closets.PART_ROLE_DOOR,
+                    types_closets.PART_ROLE_DRAWER_FRONT)):
+            layout.operator("hb_closets.front_style",
+                            text="Front Style...", icon='SHADERFX')
+        if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_DRAWER_FRONT):
             layout.operator("hb_closets.drawer_accessory",
                             text="Drawer Options...", icon='MODIFIER')

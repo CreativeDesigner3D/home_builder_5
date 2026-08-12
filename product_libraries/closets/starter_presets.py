@@ -27,17 +27,27 @@ STARTER_SECTIONS = [
 
 # Loose parts: dropped on their own rather than built into a run, so
 # each entry names the operator that places it instead of resolving
-# through the starter dispatch. Same shape otherwise, so the library
-# UI draws these rows exactly like the starter rows above them.
+# through the starter dispatch, and carries whatever that operator
+# needs to be told. Same shape otherwise, so the library UI draws
+# these rows exactly like the starter rows above them.
 PART_SECTIONS = [
     ("Parts", [
         ('Misc Part', "Misc Part",
          "A part you size and place yourself",
-         'hb_closets.place_misc_part'),
+         'hb_closets.place_misc_part', {'kind': 'MISC'}),
+        ('Back', "Back",
+         "A back panel on its own, for a site fix",
+         'hb_closets.place_misc_part', {'kind': 'BACK'}),
+        ('Cleat', "Cleat",
+         "A cleat on its own, for fixing to a wall",
+         'hb_closets.place_misc_part', {'kind': 'CLEAT'}),
+        ('Shelf', "Shelf",
+         "A shelf on its own, outside any opening",
+         'hb_closets.place_misc_part', {'kind': 'SHELF'}),
         ('Continuous Top', "Continuous Top",
          "One top across a whole run, in two pieces when it is "
          "longer than can be cut from one length of material",
-         'hb_closets.place_continuous_top'),
+         'hb_closets.place_continuous_top', {}),
     ]),
 ]
 
