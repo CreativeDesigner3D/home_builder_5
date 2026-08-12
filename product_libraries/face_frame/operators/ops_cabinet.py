@@ -1019,10 +1019,33 @@ DRAWER_BOX_CONSTRUCTION_DEFAULT = 'DEFAULT'
 _drawer_box_construction_items = []
 
 
-def drawer_box_construction_options():
-    """(code, name) for every box construction the host provides."""
+def _opening_overlay_bucket(opening):
+    """The door-overlay bucket of the cabinet style governing an opening
+    (walk up to the cage, resolve STYLE_NAME), or None when unresolvable."""
+    if opening is None:
+        return None
+    cur = opening
+    while cur is not None:
+        if cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+            style_name = cur.get('STYLE_NAME')
+            if style_name:
+                ff = props_hb_face_frame.get_style_props()
+                for cs in ff.cabinet_styles:
+                    if cs.name == style_name:
+                        return cs.door_overlay_type
+            return None
+        cur = cur.parent
+    return None
+
+
+def drawer_box_construction_options(overlay=None):
+    """(code, name) for every box construction the host provides. Items may
+    declare overlays they are not offered for (excluded_overlays); those are
+    dropped when the caller passes the governing overlay bucket."""
     out = []
     for it in accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST):
+        if overlay and overlay in (it.get('excluded_overlays') or ()):
+            continue
         code = it.get('code')
         if code:
             out.append((code, it.get('name', code)))
@@ -1037,12 +1060,15 @@ def drawer_box_construction_label(code):
 
 
 def _drawer_box_construction_enum(self, context):
-    """Project Default plus every construction the host provides."""
+    """Project Default plus every construction the host provides for the
+    opening's overlay."""
+    overlay = _opening_overlay_bucket(
+        bpy.data.objects.get(getattr(self, 'opening_name', '') or ''))
     _drawer_box_construction_items.clear()
     _drawer_box_construction_items.append(
         (DRAWER_BOX_CONSTRUCTION_DEFAULT, "Project Default",
          "Build these boxes to the project's default construction"))
-    for code, name in drawer_box_construction_options():
+    for code, name in drawer_box_construction_options(overlay):
         _drawer_box_construction_items.append((code, name, ""))
     return _drawer_box_construction_items
 

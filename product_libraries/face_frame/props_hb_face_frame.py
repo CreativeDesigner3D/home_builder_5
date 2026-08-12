@@ -949,6 +949,21 @@ class Face_Frame_Style_Note(PropertyGroup):
     )  # type: ignore
 
 
+# Full-inset doors sit inside the frame, so the box hangs from slides on a
+# construction that must keep its sides clear of the frame edge -- the product
+# spec offers no French dovetail box there. The items list is rebuilt per draw
+# and held at module level so the enum strings stay alive.
+_SS_BOX_CONSTRUCTION_ITEMS = []
+
+
+def get_ss_box_construction_items(self, context):
+    _SS_BOX_CONSTRUCTION_ITEMS.clear()
+    if self.door_overlay_type != 'FULL_INSET':
+        _SS_BOX_CONSTRUCTION_ITEMS.append(('French', 'French', ''))
+    _SS_BOX_CONSTRUCTION_ITEMS.append(('English', 'English', ''))
+    return _SS_BOX_CONSTRUCTION_ITEMS
+
+
 class Face_Frame_Cabinet_Style(PropertyGroup):
     """Face frame cabinet style: wood species, finish color, interior
     material, door overlay, and references to a door style + drawer front
@@ -1346,11 +1361,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     ss_drawer_box_construction: EnumProperty(
         name="Box Construction",
         description="Drawer box construction for the style section page",
-        items=[
-            ('French', 'French', ''),
-            ('English', 'English', ''),
-        ],
-        default='French',
+        items=get_ss_box_construction_items,
     )  # type: ignore
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
