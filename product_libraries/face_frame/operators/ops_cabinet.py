@@ -4126,7 +4126,12 @@ class hb_face_frame_OT_toggle_flush_toe_kick(bpy.types.Operator):
                 # the lap drawer lift).
                 bp.kick_height = 0.0
                 bp.unlock_bottom_rail = True
-                bp.bottom_rail_width = FLUSH_KICK_BOTTOM_RAIL
+                # The wide rail covers the kick zone plus the rail itself,
+                # so it tracks the cabinet's toe kick height + bottom rail
+                # width; the constant only backstops degenerate values.
+                rail = cab.toe_kick_height + cab.bottom_rail_width
+                bp.bottom_rail_width = (rail if rail > _FLUSH_KICK_EPS
+                                        else FLUSH_KICK_BOTTOM_RAIL)
             else:
                 # Unlocking re-syncs the bay to the cabinet's
                 # toe_kick_height on the next recalc distribution.
