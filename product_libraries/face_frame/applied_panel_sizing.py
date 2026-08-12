@@ -51,16 +51,22 @@ def _resolve_door_style(cab_obj):
     return None
 
 
-def _toe_kick_band(cab):
+def _toe_kick_band(cab, side):
     """Bottom-rail growth needed for Base/Tall cabinets where the
     applied panel spans the full cabinet height (floor to top) and
     the bottom rail has to visually cover the toe-kick band so the
     panel's frame opening doesn't drop into the recess. Uppers and
-    PANEL cabinets have no toe kick.
+    PANEL cabinets have no toe kick. A side with an inset toe kick
+    holds its panel up at the bay bottom instead (see
+    applied_panel_geometry), so there is no kick band to cover.
     """
-    if cab.cabinet_type in ('BASE', 'TALL'):
-        return cab.toe_kick_height
-    return 0.0
+    if cab.cabinet_type not in ('BASE', 'TALL'):
+        return 0.0
+    if side == 'LEFT' and cab.inset_toe_kick_left > 0:
+        return 0.0
+    if side == 'RIGHT' and cab.inset_toe_kick_right > 0:
+        return 0.0
+    return cab.toe_kick_height
 
 
 def _stile_widths(cab, side):
@@ -100,7 +106,7 @@ def _match_cabinet_widths(cab, side):
     left_stile, right_stile = _stile_widths(cab, side)
     return {
         'top_rail_width':    cab.top_rail_width,
-        'bottom_rail_width': cab.bottom_rail_width + _toe_kick_band(cab),
+        'bottom_rail_width': cab.bottom_rail_width + _toe_kick_band(cab, side),
         'left_stile_width':  left_stile,
         'right_stile_width': right_stile,
     }
@@ -129,7 +135,7 @@ def _match_5_piece_door(cab, door_style, side):
     top_rail = cab.top_rail_width - cab.default_top_overlay + rail
     bottom_rail = (
         cab.bottom_rail_width - cab.default_bottom_overlay
-        + rail + _toe_kick_band(cab)
+        + rail + _toe_kick_band(cab, side)
     )
     stile = door_style.stile_width
     fft = cab.face_frame_thickness
@@ -451,10 +457,16 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     else:
         stile_to_floor = (cab.extend_left_stile_to_floor if side == 'LEFT'
                           else cab.extend_right_stile_to_floor)
+        # A side toe-kick inset holds the panel up at the bay bottom
+        # (applied_panel_geometry), so there is no kick recess for the
+        # panel's parts to clear on that side.
+        side_inset = (cab.inset_toe_kick_left if side == 'LEFT'
+                      else cab.inset_toe_kick_right)
         active = (
             cab.cabinet_type in ('BASE', 'TALL')
             and cab.toe_kick_type == 'NOTCH'
             and not stile_to_floor
+            and side_inset <= 0
         )
 
     facing_role = _FACING_STILE_ROLE.get(side)

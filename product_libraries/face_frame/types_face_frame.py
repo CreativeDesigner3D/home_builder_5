@@ -12808,10 +12808,15 @@ def applied_panel_geometry(layout, side):
         # to that side's own front edge (where the angled FF meets it).
         depth_l = (solver.effective_left_depth(layout)
                    if layout.is_angled else layout.dim_y)
-        location = (scribe, 0.0, 0.0)
+        # A side toe-kick inset recesses the kick from this face, so the
+        # panel is held up at the bay bottom (like the carcass side is)
+        # and the inset kick stays visible beneath it.
+        z0 = (solver.bay_bottom_z(layout, 0)
+              if layout.kick_inset_left > 0 else 0.0)
+        location = (scribe, 0.0, z0)
         rotation_z = -math.pi / 2.0
         width = depth_l - layout.fft
-        height = layout.dim_z
+        height = layout.dim_z - z0
         return (location, rotation_z, width, height, scribe)
     if side == 'RIGHT':
         scribe = solver.right_scribe_offset(layout)
@@ -12820,11 +12825,13 @@ def applied_panel_geometry(layout, side):
         # with FF outer face) when depth = scribe.
         depth_r = (solver.effective_right_depth(layout)
                    if layout.is_angled else layout.dim_y)
+        z0 = (solver.bay_bottom_z(layout, len(layout.bays) - 1)
+              if layout.kick_inset_right > 0 else 0.0)
         location = (layout.dim_x - scribe,
-                    -depth_r + layout.fft, 0.0)
+                    -depth_r + layout.fft, z0)
         rotation_z = math.pi / 2.0
         width = depth_r - layout.fft
-        height = layout.dim_z
+        height = layout.dim_z - z0
         return (location, rotation_z, width, height, scribe)
     # BACK: rotate +pi around Z. Front face -> +Y. Origin at
     # back-right-bottom; width spans cabinet x from dim_x down to 0.
