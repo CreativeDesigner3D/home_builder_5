@@ -2281,6 +2281,8 @@ def _read_cage_dims(obj):
     """Return cage_dim_x/y/z dict by reading 'Dim X/Y/Z' inputs off the
     object's geometry node modifier. Used by the split operator to seed
     the new children's sizes from the active target's current rect.
+
+    Reads via hb_utils: a modifier isn't an ID property container on 5.2.
     """
     rect = {'cage_dim_x': 0.0, 'cage_dim_y': 0.0, 'cage_dim_z': 0.0}
     nm = next((m for m in obj.modifiers if m.type == 'NODES'), None)
@@ -2290,11 +2292,11 @@ def _read_cage_dims(obj):
         if sk.in_out != 'INPUT':
             continue
         if sk.name == 'Dim X':
-            rect['cage_dim_x'] = nm.get(sk.identifier, 0.0) or 0.0
+            rect['cage_dim_x'] = hb_utils.try_get_gn_input(nm, sk.identifier, 0.0) or 0.0
         elif sk.name == 'Dim Y':
-            rect['cage_dim_y'] = nm.get(sk.identifier, 0.0) or 0.0
+            rect['cage_dim_y'] = hb_utils.try_get_gn_input(nm, sk.identifier, 0.0) or 0.0
         elif sk.name == 'Dim Z':
-            rect['cage_dim_z'] = nm.get(sk.identifier, 0.0) or 0.0
+            rect['cage_dim_z'] = hb_utils.try_get_gn_input(nm, sk.identifier, 0.0) or 0.0
     return rect
 
 
