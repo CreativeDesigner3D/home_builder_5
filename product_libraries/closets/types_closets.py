@@ -258,6 +258,13 @@ def front_size(front):
 # stays hot-reloadable.
 PROP_FRONT_HEIGHT = 'hb_front_height'
 PROP_UNLOCK_FRONT_HEIGHT = 'hb_unlock_front_height'
+# What the front actually stands at after the stack has shared the
+# opening out - the labels and the clearance math read this one. It is
+# kept apart from PROP_FRONT_HEIGHT so a pinned height rides out a
+# squeeze: the solve narrows the front on screen but the height the
+# user asked for stays put, and the bank comes back to it when the
+# room comes back.
+PROP_FRONT_HEIGHT_SOLVED = 'hb_front_height_solved'
 # Heights a pasted drawer bank is owed, left on the opening until the
 # fronts it describes have been built and can be handed them.
 PROP_PASTED_FRONT_PINS = 'hb_pasted_front_pins'
@@ -1837,6 +1844,13 @@ class ClosetStarter(GeoNodeCage):
                          max(f_room, 0.0))
             for i, child in enumerate(slants):
                 z = spacing * i + rise
+                # The stack stops where the opening stops: a shelf whose
+                # rear edge would stand past the top steps aside instead
+                # of running through whatever is above, and steps back in
+                # when the opening has the room again. The count is the
+                # user's either way.
+                fits = z + st <= interior_h
+                _set_part_hidden(child, not fits)
                 # These rest on clips too, so they take the opening's
                 # clip gap. Their setback is the fence's, not the
                 # room's, which is why it is worked out above.
@@ -1850,6 +1864,7 @@ class ClosetStarter(GeoNodeCage):
                     (c for c in child.children
                      if c.get('hb_part_role') == PART_ROLE_SHOE_FENCE), None)
                 if fence is not None:
+                    _set_part_hidden(fence, not fits)
                     # Sit on the shelf top, frontmost strip, inset each side.
                     fence.location = (
                         f_inset,
@@ -1961,8 +1976,14 @@ class ClosetStarter(GeoNodeCage):
                 avail_h = max(dh - lap_dn - lap_up, 0.0)
                 z_bot = z + lap_dn
                 room = max(avail_h, inch(1.0))
-                # Persist the resolved height so overlay labels read it.
-                child[PROP_FRONT_HEIGHT] = dh
+                # Persist the height the front actually stands at. A
+                # pinned front keeps the height it was given: only the
+                # fronts the bank still owns take the solved figure
+                # over, so a squeeze reads on screen without writing
+                # itself into what the user asked for.
+                child[PROP_FRONT_HEIGHT_SOLVED] = dh
+                if not child.get(PROP_UNLOCK_FRONT_HEIGHT, 0):
+                    child[PROP_FRONT_HEIGHT] = dh
                 child.location = (-lo, front_y, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', width + lo + ro)
@@ -5584,7 +5605,10 @@ def _part_span(obj, st):
         return (z - const.ROD_RADIUS, z + const.ROD_RADIUS, "the rod")
     if role == PART_ROLE_DRAWER_FRONT and not obj.get(
             'hb_accessory_front'):
-        h = float(obj.get(PROP_FRONT_HEIGHT, 0.0))
+        # The height it is standing at, not the height it is owed - a
+        # squeezed bank claims the room it is actually taking up.
+        h = float(obj.get(PROP_FRONT_HEIGHT_SOLVED,
+                          obj.get(PROP_FRONT_HEIGHT, 0.0)))
         return (z, z + h, "a drawer") if h > 0.0 else None
     return None
 

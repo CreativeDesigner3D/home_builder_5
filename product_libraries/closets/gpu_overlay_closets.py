@@ -415,8 +415,13 @@ def compute_labels(context, region, rv3d):
                         # label at its center; the bullet marks the fronts
                         # the user has pinned, which the stack redistributes
                         # around.
-                        dh = child.get(types_closets.PROP_FRONT_HEIGHT,
-                                       const.DRAWER_FRONT_HEIGHT)
+                        # The height the front is standing at right now:
+                        # a pinned front squeezed by its opening labels
+                        # what is on screen, not the height it is owed.
+                        dh = child.get(
+                            types_closets.PROP_FRONT_HEIGHT_SOLVED,
+                            child.get(types_closets.PROP_FRONT_HEIGHT,
+                                      const.DRAWER_FRONT_HEIGHT))
                         pinned = bool(child.get(
                             types_closets.PROP_UNLOCK_FRONT_HEIGHT, 0))
                         anchor = o_mw @ Vector(
