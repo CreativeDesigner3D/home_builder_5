@@ -1688,7 +1688,10 @@ def _copy_geo_value_inputs(src_geo, dst_geo):
     if not src_mod.node_group or not dst_mod.node_group:
         return
     src_tree = src_mod.node_group.interface.items_tree
-    for item in dst_mod.node_group.interface.items_tree:
+    # Materialized: set_input runs interface_update on the first write of an
+    # input name, which rebuilds the interface item list and invalidates a live
+    # iterator over it - inputs after that point are skipped or the walk dies.
+    for item in list(dst_mod.node_group.interface.items_tree):
         if getattr(item, 'item_type', '') != 'SOCKET':
             continue
         if getattr(item, 'in_out', '') != 'INPUT':

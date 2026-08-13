@@ -6,6 +6,7 @@ from mathutils import Vector
 from gpu_extras.batch import batch_for_shader
 from bpy_extras.view3d_utils import region_2d_to_location_3d, location_3d_to_region_2d
 import bmesh
+from . import hb_types
 from . import hb_utils
 
 class home_builder_OT_to_do(bpy.types.Operator):
@@ -169,24 +170,16 @@ class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
                 
                 texts_updated += 1
             
-            # Update dimensions
-            elif obj.get('IS_2D_ANNOTATION') and obj.type == 'MESH':
-                for mod in obj.modifiers:
-                    if mod.type == 'NODES' and mod.node_group:
-                        try:
-                            hb_utils.set_gn_input(mod, 'Socket_3', hb_scene.annotation_dimension_text_size)
-                        except (KeyError, AttributeError):
-                            pass
-                        try:
-                            hb_utils.set_gn_input(mod, 'Socket_4', hb_scene.annotation_dimension_tick_length)
-                        except (KeyError, AttributeError):
-                            pass
-                        try:
-                            hb_utils.set_gn_input(mod, 'Socket_5', hb_scene.annotation_dimension_line_thickness)
-                        except (KeyError, AttributeError):
-                            pass
-                
-                dimensions_updated += 1
+            # Update dimensions by input name; hardcoded sockets hit swings.
+            elif obj.get('IS_DIMENSION'):
+                dim = hb_types.GeoNodeDimension(obj)
+                if dim.has_modifier():
+                    dim.set_input("Text Size", hb_scene.annotation_dimension_text_size)
+                    dim.set_input("Tick Length", hb_scene.annotation_dimension_tick_length)
+                    dim.set_input("Line Thickness", hb_scene.annotation_dimension_line_thickness)
+                    dim.set_input("Tick Thickness", hb_scene.annotation_dimension_tick_thickness)
+
+                    dimensions_updated += 1
         
         total = lines_updated + texts_updated + dimensions_updated
         self.report({'INFO'}, f"Updated {total} annotations ({lines_updated} lines, {texts_updated} texts, {dimensions_updated} dimensions)")
