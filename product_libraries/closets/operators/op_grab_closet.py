@@ -678,30 +678,38 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 and not c.get('hb_preview')]
         return snap
 
-    def _hold_shelves_absolute(self, bay, root, snap):
+    def _settle_bay_shelves(self, bay, root, snap):
         """Bottom drags move the bay's interior bottom; shelves store
-        offsets FROM that bottom, so uncompensated they'd ride along.
-        Rewrite each committed shelf's offset from the drag snapshot so
-        its absolute (off-the-floor) position holds. Drawer stacks keep
-        riding the bottom (they sit on the base) and rods keep their
-        top anchor - only splitter shelves hold."""
+        offsets FROM that bottom, so they ride it - the whole
+        arrangement follows the drag up and back down, and it is the
+        TOP opening that gives and takes the room, the same opening a
+        top drag trades with. Drawer stacks ride the same way (they
+        sit on the base), so a bank and the shelf capping it move as
+        one.
+
+        What is enforced is only the frame the ride happens in: a
+        shelf stays inside the interior, and it never stands closer to
+        the bottom than the segments under it are holding (a drawer
+        bank keeps the fronts it was given, an inch for anything
+        else), so nothing the bay carries can be squeezed out. Offsets
+        are written from the drag snapshot each move, so backing a
+        drag out re-lands every shelf exactly where it started."""
         scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick_v = root.hb_closet_starter.toe_kick_height
         bp = bay.hb_closet_bay
-        runH = snap['runH']
-        old_base = ((0.0 + kick_v) if snap['floor']
-                    else runH - snap['bh'])
-        new_base = ((0.0 + kick_v) if bp.floor_mounted
-                    else runH - bp.height)
-        delta = new_base - old_base
         interior_h = bp.height - 2.0 * st - (kick_v if bp.floor_mounted
                                              else 0.0)
+        floors = types_closets.bay_segment_floors(bay, root, scene_props)
+        # The opening above a shelf keeps the same inch everything
+        # else bottoms out at, so a full drag leaves a sliver of an
+        # opening rather than none at all.
+        ceiling = interior_h - st - types_closets.MIN_SEGMENT
         for name, off0 in snap.get('shelves', ()):
             sh = bpy.data.objects.get(name)
             if sh is not None:
                 sh['hb_z_offset'] = float(
-                    max(0.0, min(off0 - delta, interior_h - st)))
+                    max(floors.get(name, 0.0), min(off0, ceiling)))
         types_closets.recalculate_closet_starter(root)
 
     def _set_bay_height(self, root, bay, new_h, recalc=True):
@@ -845,11 +853,17 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
         return new
 
     def _min_bay_height(self, root, bay):
+        """The least height a bay can be dragged to: structure plus
+        whatever its own contents cannot give up, so the drag stops
+        when every segment is at its smallest instead of driving on
+        into a drawer bank."""
         scene_props = types_closets.run_sizes(root)
         st = scene_props.shelf_thickness
         kick = (root.hb_closet_starter.toe_kick_height
                 if bay.hb_closet_bay.floor_mounted else 0.0)
-        return kick + 2.0 * st + MIN_OPENING
+        interior_min = max(MIN_OPENING, types_closets.bay_min_interior(
+            bay, root, scene_props))
+        return kick + 2.0 * st + interior_min
 
     def _snap_value(self, value, event):
         if event.shift or self._snap_mode == 'OFF':
@@ -1028,9 +1042,9 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 new_h = self._snap_height(run_top - new_bottom, event)
                 new_h = max(self._min_bay_height(root, bay), new_h)
                 state = "Hung"
-            # The shelf hold runs the solve, so skip the one here.
+            # The shelf pass runs the solve, so skip the one here.
             self._set_bay_height(root, bay, new_h, recalc=False)
-            self._hold_shelves_absolute(bay, root, snap)
+            self._settle_bay_shelves(bay, root, snap)
             self._drag_text = "H %s (%s)" % (
                 units.unit_to_string(us, new_h), state)
         if context.area:
@@ -1329,7 +1343,7 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                 bottom = b['kind'] == 'BAY_BOT'
                 self._set_bay_height(root, bay, new_h, recalc=not bottom)
                 if bottom:
-                    self._hold_shelves_absolute(bay, root, snap)
+                    self._settle_bay_shelves(bay, root, snap)
         self._end_drag(context, commit=True)
 
     # ---- modal ----

@@ -5169,6 +5169,99 @@ def _distribute_front_heights(avail, fronts):
     return out
 
 
+# The least a segment stands at once a grab is pushing on it - the
+# same inch the shelf drag keeps between a shelf and its neighbours.
+MIN_SEGMENT = inch(1.0)
+
+
+def opening_min_interior(root, opening, scene_props):
+    """The interior height an opening cannot give up.
+
+    A bank is a bank: each front claims the height it is holding - the
+    height it was pinned at, or the standard drawer height while it is
+    sharing - so the segment carrying a bank stops a grab at the bank
+    instead of letting it mash the drawers flat. Everything else in an
+    opening gives way on its own - adjustable shelves and rollouts
+    respace, slanted stacks step aside, fixed shelves and rods clamp -
+    and claims nothing here."""
+    fronts = [c for c in opening.children
+              if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+              and not c.get('hb_rollout')
+              and not c.get('hb_accessory_front')]
+    n = len(fronts)
+    if not n:
+        return 0.0
+    sp = root.hb_closet_starter
+    lo, ro, to, bo = front_overlays(sp, scene_props, opening)
+    span = sum((float(f.get(PROP_FRONT_HEIGHT, 0.0))
+                if f.get(PROP_UNLOCK_FRONT_HEIGHT, 0)
+                else const.DRAWER_FRONT_HEIGHT) for f in fronts)
+    span += (n - 1) * sp.vertical_gap
+    return max(span - to - bo, 0.0)
+
+
+def _bay_side_needs(bay, root, scene_props, side):
+    """One side's splitter shelves (sorted bottom-up) and the least
+    interior each of its segments must keep, by row."""
+    shelves = sorted(
+        [c for c in bay.children
+         if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+         and not c.get('hb_preview')
+         and c.get(PROP_OPENING_SIDE, 'FRONT') == side],
+        key=lambda o: float(o.get('hb_z_offset', 0.0)))
+    needs = {}
+    for op_obj in bay.children:
+        if not op_obj.get(TAG_OPENING_CAGE):
+            continue
+        if op_obj.get(PROP_OPENING_SIDE, 'FRONT') != side:
+            continue
+        k = int(op_obj.get('hb_opening_index', 0))
+        needs[k] = max(needs.get(k, 0.0),
+                       opening_min_interior(root, op_obj, scene_props))
+    return shelves, needs
+
+
+def bay_segment_floors(bay, root, scene_props):
+    """The least offset each splitter shelf in a bay may stand at,
+    by shelf name.
+
+    A shelf may not come closer to the interior bottom than the
+    segments below it can give up: each keeps what its own contents
+    claim, and each shelf below keeps its thickness. An empty segment
+    claims nothing and closes right up. This is what stops a bottom
+    drag from carrying a shelf down through a drawer bank and leaving
+    the bank shut in a segment with no height to it."""
+    st = scene_props.shelf_thickness
+    floors = {}
+    for side in ('FRONT', 'BACK'):
+        shelves, needs = _bay_side_needs(bay, root, scene_props, side)
+        floor = 0.0
+        for k, sh in enumerate(shelves):
+            floor += max(needs.get(k, 0.0), MIN_SEGMENT)
+            if k:
+                floor += st
+            floors[sh.name] = floor
+    return floors
+
+
+def bay_min_interior(bay, root, scene_props):
+    """The interior a bay cannot close below: every segment's own
+    claim (an inch at the least) plus a thickness for each splitter
+    shelf. Both sides of a double share one interior, so the tighter
+    side rules."""
+    st = scene_props.shelf_thickness
+    out = 0.0
+    for side in ('FRONT', 'BACK'):
+        shelves, needs = _bay_side_needs(bay, root, scene_props, side)
+        if not shelves and not needs:
+            continue
+        total = sum(max(needs.get(k, 0.0), MIN_SEGMENT)
+                    for k in range(len(shelves) + 1))
+        total += len(shelves) * st
+        out = max(out, total)
+    return out
+
+
 def current_open_frac(part):
     """How far one front is standing open right now, 0 closed .. 1 fully
     open. A front carries its own answer only once someone has clicked it
