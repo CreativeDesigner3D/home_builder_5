@@ -20,7 +20,8 @@ doesn't reset the user's value.
 import os
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import (BoolProperty, BoolVectorProperty, EnumProperty,
+                       FloatProperty, StringProperty)
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -80,6 +81,27 @@ def _find_owning_split_node(part_obj):
 # Width: read current and apply
 # ---------------------------------------------------------------------------
 
+def _rail_flush_kick(root, bay):
+    """Kick-zone height folded into a FLUSH cabinet's bottom rail.
+
+    FLUSH builds the bottom rail down to the floor at kick_height +
+    bottom_rail_width (see solver bottom_rail_segments), so the width
+    the user sees and types is the BUILT wide rail: display adds this
+    amount and a commit subtracts it, keeping type-back-what-you-see a
+    no-op. 0 for every other kick type. A bay the per-bay flush toggle
+    locked at kick 0 already holds the full total in its rail width,
+    so adding its (zero) kick stays correct.
+    """
+    cab = root.face_frame_cabinet
+    if cab.cabinet_type not in ('BASE', 'TALL', 'LAP_DRAWER'):
+        return 0.0
+    if cab.corner_type != 'NONE' or cab.toe_kick_type != 'FLUSH':
+        return 0.0
+    if bay is not None:
+        return bay.face_frame_bay.kick_height
+    return cab.toe_kick_height
+
+
 def _get_current_width(obj, role, root):
     """Effective width currently in use for this part."""
     cab = root.face_frame_cabinet
@@ -99,8 +121,9 @@ def _get_current_width(obj, role, root):
     if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
         start = obj.get('hb_segment_start_bay', 0)
         bay = _find_bay_with_index(root, start)
-        return (bay.face_frame_bay.bottom_rail_width
-                if bay else cab.bottom_rail_width)
+        width = (bay.face_frame_bay.bottom_rail_width
+                 if bay else cab.bottom_rail_width)
+        return width + _rail_flush_kick(root, bay)
     if role in (types_face_frame.PART_ROLE_BAY_MID_RAIL,
                 types_face_frame.PART_ROLE_BAY_MID_STILE):
         split = _find_owning_split_node(obj)
@@ -284,7 +307,13 @@ def _fan_out_value(obj, role, root, value):
         for idx in indices:
             bay = bays.get(idx)
             if bay is not None:
-                setattr(bay.face_frame_bay, attr, value)
+                v = value
+                if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
+                    # The typed value is the BUILT wide rail on a FLUSH
+                    # cabinet; store the rail's own share, floored at 0
+                    # so a value under the kick height can't go negative.
+                    v = max(value - _rail_flush_kick(root, bay), 0.0)
+                setattr(bay.face_frame_bay, attr, v)
         return
     if role in (types_face_frame.PART_ROLE_BAY_MID_RAIL,
                 types_face_frame.PART_ROLE_BAY_MID_STILE):
@@ -660,6 +689,62 @@ class hb_face_frame_OT_remove_bottom_rail(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Stash for the toe kick type a flush toggle replaced, so toggling back
+# restores what the cabinet had (NOTCH, FLOATING, ...) instead of
+# assuming NOTCH.
+_PRE_FLUSH_TOE_KICK_TYPE = 'HB_PRE_FLUSH_TOE_KICK_TYPE'
+
+
+def _flush_rail_root(obj):
+    """Cabinet root for the flush-rail toggle, or None when the clicked
+    part doesn't qualify: bottom rails on plain BASE / TALL cabinets
+    only (uppers have no kick; corners carry their own kick frame)."""
+    if obj is None or obj.get('hb_part_role') \
+            != types_face_frame.PART_ROLE_BOTTOM_RAIL:
+        return None
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    cab = root.face_frame_cabinet
+    if cab.cabinet_type not in ('BASE', 'TALL'):
+        return None
+    if cab.corner_type != 'NONE':
+        return None
+    return root
+
+
+class hb_face_frame_OT_toggle_flush_bottom_rail(bpy.types.Operator):
+    """Toggle the cabinet between its recessed toe kick and the FLUSH
+    (wide bottom rail) construction, from the clicked bottom rail. The
+    prior toe kick type is stashed on the cabinet root so toggling back
+    restores it exactly. Base / Tall cabinets only.
+    """
+    bl_idname = "hb_face_frame.toggle_flush_bottom_rail"
+    bl_label = "Toggle Flush Bottom Rail"
+    bl_description = ("Switch this cabinet between its toe kick and the "
+                      "flush wide-bottom-rail construction")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _flush_rail_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = _flush_rail_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        if cab.toe_kick_type == 'FLUSH':
+            # The enum write recalcs via its update callback.
+            cab.toe_kick_type = root.get(_PRE_FLUSH_TOE_KICK_TYPE, 'NOTCH')
+            self.report({'INFO'}, "Flush bottom rail removed")
+        else:
+            root[_PRE_FLUSH_TOE_KICK_TYPE] = cab.toe_kick_type
+            cab.toe_kick_type = 'FLUSH'
+            self.report({'INFO'}, "Flush bottom rail set")
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -683,11 +768,23 @@ def _misc_part_for_dialog(op):
     return bpy.data.objects.get(op.source_obj_name)
 
 
+def _misc_part_recarve(obj):
+    """Re-carve a textured (beadboard / shiplap) Misc Part after a GN
+    input write -- the static mesh doesn't follow the inputs on its
+    own. No-op for plain panels."""
+    if not obj.get('HB_STATIC_TEXTURED'):
+        return
+    part = types_face_frame.MiscPart()
+    part.obj = obj
+    part.rebuild()
+
+
 def _on_misc_width_update(self, context):
     """Live-apply Width -> the cutpart's 'Length' (X) input."""
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Length', self.part_width)
+        _misc_part_recarve(obj)
 
 
 def _on_misc_depth_update(self, context):
@@ -695,6 +792,7 @@ def _on_misc_depth_update(self, context):
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Width', self.part_depth)
+        _misc_part_recarve(obj)
 
 
 def _on_misc_thickness_update(self, context):
@@ -702,10 +800,24 @@ def _on_misc_thickness_update(self, context):
     obj = _misc_part_for_dialog(self)
     if obj is not None:
         GeoNodeCutpart(obj).set_input('Thickness', self.part_thickness)
+        _misc_part_recarve(obj)
+
+
+def _on_misc_panel_type_update(self, context):
+    """Live-apply the panel type: stamp it on the part and rebuild --
+    PANEL restores the live GN cutpart, BEADBOARD / SHIPLAP carve the
+    static textured mesh."""
+    obj = _misc_part_for_dialog(self)
+    if obj is None:
+        return
+    obj['HB_MISC_PANEL_TYPE'] = self.panel_type
+    part = types_face_frame.MiscPart()
+    part.obj = obj
+    part.rebuild()
 
 
 class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
-    """Set a Misc Part's size.
+    """Misc Part properties: size + panel type (plain / beadboard / shiplap).
 
     A Misc Part is a bare GeoNodeCutpart with no cabinet cage, so it has
     none of the width / height props the other Set-* operators bind to.
@@ -717,9 +829,12 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
     (Width / Depth / Thickness); the GeoNode input each maps to is noted
     on its update callback.
     """
+    # bl_idname kept for compatibility; the dialog outgrew its name and
+    # presents as Part Properties (size + panel type).
     bl_idname = "hb_face_frame.set_misc_part_dimensions"
-    bl_label = "Set Dimensions"
-    bl_description = "Set this part's width, depth, and thickness"
+    bl_label = "Part Properties"
+    bl_description = ("Edit this part's size and panel type "
+                      "(plain / beadboard / shiplap)")
     bl_options = {'UNDO'}
 
     # Resolved each tick by the update callbacks (see _misc_part_for_dialog).
@@ -731,6 +846,17 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
                               update=_on_misc_depth_update)  # type: ignore
     part_thickness: FloatProperty(name="Thickness", unit='LENGTH', precision=4, min=0.0,
                                   update=_on_misc_thickness_update)  # type: ignore
+    panel_type: EnumProperty(
+        name="Type",
+        items=[
+            ('PANEL', "Panel", "Plain flat panel"),
+            ('BEADBOARD', "Beadboard",
+             "Vertical quirk-bead grooves carved across the face"),
+            ('SHIPLAP', "Shiplap",
+             "Nickel-gap plank reveals carved across the face"),
+        ],
+        default='PANEL',
+        update=_on_misc_panel_type_update)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -746,6 +872,7 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         self.part_width = part.get_input('Length')
         self.part_depth = part.get_input('Width')
         self.part_thickness = part.get_input('Thickness')
+        self.panel_type = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
 
@@ -754,6 +881,8 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         col.prop(self, 'part_width')
         col.prop(self, 'part_depth')
         col.prop(self, 'part_thickness')
+        col.separator()
+        col.prop(self, 'panel_type')
 
     def execute(self, context):
         # Live-bound via the prop update callbacks; execute is only hit on
@@ -1471,6 +1600,76 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Set Door Hardware (per-door hardware callouts)
+# ---------------------------------------------------------------------------
+# Hardware callouts (restrictor clips / touch latches / finger rout)
+# live on specific doors, not every door of a style: the door style's
+# checkboxes only declare the option for the job, and each door that
+# carries the letter mark is stamped individually -- painted with the
+# style editor's brush buttons (ops_styles.paint_door_hardware) or
+# edited here per door. Stamps live on the front's opening-cage store
+# (fronts are rebuilt every recalc); downstream 2D consumers read them
+# for the letter marks.
+
+def _on_hw_field(self, context):
+    front = _door_frame_for_dialog(self)
+    if front is None:
+        return
+    store = _frame_store(front)
+    store['HB_DOOR_HW_SET'] = True
+    store['HB_DOOR_HW_RC'] = self.restrictor_clips
+    store['HB_DOOR_HW_TL'] = self.touch_latches
+    store['HB_DOOR_HW_FR'] = self.finger_rout
+
+
+class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
+    """Hardware callouts for THIS door: exactly the checked boxes mark
+    the door on drawings (all-off = no callouts). Live-bound like the
+    other Set-* dialogs; the style editor's brush buttons paint the
+    same stamps across many doors."""
+    bl_idname = "hb_face_frame.set_door_hardware"
+    bl_label = "Set Door Hardware"
+    bl_description = ("Set this door's hardware callouts (restrictor "
+                      "clips / touch latches / finger rout)")
+    bl_options = {'UNDO'}
+
+    source_obj_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    restrictor_clips: bpy.props.BoolProperty(
+        name="Restrictor Clips (RC)", default=False, update=_on_hw_field)  # type: ignore
+    touch_latches: bpy.props.BoolProperty(
+        name="Touch Latches (TL)", default=False, update=_on_hw_field)  # type: ignore
+    finger_rout: bpy.props.BoolProperty(
+        name="Finger Rout (FR)", default=False, update=_on_hw_field)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.get('hb_part_role') == 'DOOR'
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        store = _frame_store(obj)
+        # Seed BEFORE source_obj_name is set so the callbacks bail and
+        # the seed writes don't fan back (same as Set Door Frame).
+        self.restrictor_clips = bool(store.get('HB_DOOR_HW_RC', False))
+        self.touch_latches = bool(store.get('HB_DOOR_HW_TL', False))
+        self.finger_rout = bool(store.get('HB_DOOR_HW_FR', False))
+        self.source_obj_name = obj.name
+        return context.window_manager.invoke_props_dialog(self, width=240)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'restrictor_clips')
+        col.prop(self, 'touch_latches')
+        col.prop(self, 'finger_rout')
+
+    def execute(self, context):
+        # Live-bound via the prop update callbacks; nothing to do on OK.
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Set Size  (any cabinet cutpart: direct GeoNode Length / Width / Thickness).
 # Transient for solver-driven parts - overwritten on the next recalc. A
 # durable override path will come later.
@@ -1981,10 +2180,10 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         if fin_type not in ('UNFINISHED', 'FLUSH_X'):
             layout.prop(cab, f'{key}_side_finished_extend_back',
                         text="Extend Back")
-        if (fin_type in ('FINISHED', 'PANELED')
+        if (fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab, f'{key}_side_finished_extend_back') != 0.0
                 and cab.back_finished_end_condition
-                in ('FINISHED', 'PANELED')):
+                in types_face_frame.RETURN_BACK_CONDITIONS):
             layout.prop(cab, f'{key}_side_return_width',
                         text="Return Width")
             if getattr(cab, f'{key}_side_return_width') != 0.0:
@@ -2285,12 +2484,18 @@ class hb_face_frame_OT_remove_part_cutout(bpy.types.Operator):
 
 
 class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
-    """Set the cabinet's decorative bottom-rail profile from the right-click
-    menu on a bottom rail. Sets the cabinet-level enum (one profile per
-    cabinet); the update callback re-runs the recalc."""
+    """Set the decorative bottom-rail profile from the right-click menu.
+    Invoked on a bottom RAIL, the pick lands on that rail's bay only
+    (the per-bay bottom_rail_profile override) -- users size the bays
+    first, then style the one rail they clicked, without restyling its
+    neighbours. Every selected bottom rail takes the pick, so a
+    multi-rail selection styles in one go. With no rail in the
+    selection (the valance board / cabinet menus) the pick sets the
+    cabinet-level enum as before. Either write's update callback
+    re-runs the recalc."""
     bl_idname = "hb_face_frame.set_bottom_rail_profile"
     bl_label = "Set Bottom Rail Profile"
-    bl_description = "Cut this decorative profile into the cabinet's bottom rail"
+    bl_description = "Cut this decorative profile into the selected bottom rail"
     bl_options = {'UNDO'}
 
     profile_id: StringProperty(default='NONE', options={'SKIP_SAVE'})  # type: ignore
@@ -2300,7 +2505,32 @@ class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
         return context.active_object is not None
 
     def execute(self, context):
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        rails = [o for o in context.selected_objects
+                 if o.get('hb_part_role') == types_face_frame.PART_ROLE_BOTTOM_RAIL]
+        active = context.active_object
+        if (active is not None and active not in rails
+                and active.get('hb_part_role') == types_face_frame.PART_ROLE_BOTTOM_RAIL):
+            rails.append(active)
+        if rails:
+            # Rail-scoped: write each rail's segment-start bay override.
+            # 'NONE' here FORCES a plain rail on that bay (distinct from
+            # the bay enum's 'CABINET' inherit default).
+            changed = 0
+            for rail in rails:
+                bay = types_face_frame.bay_cage_for_bottom_rail(rail)
+                if bay is None:
+                    continue
+                try:
+                    bay.face_frame_bay.bottom_rail_profile = self.profile_id
+                except TypeError:
+                    self.report({'WARNING'}, f"Unknown profile: {self.profile_id}")
+                    return {'CANCELLED'}
+                changed += 1
+            if not changed:
+                self.report({'WARNING'}, "Could not resolve the rail's bay")
+                return {'CANCELLED'}
+            return {'FINISHED'}
+        root = types_face_frame.find_cabinet_root(active)
         if root is None:
             self.report({'WARNING'}, "No cabinet found for this part")
             return {'CANCELLED'}
@@ -2466,12 +2696,30 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _fb_bays_changed(self, context):
+    """Write the dialog's bay toggles back to the cabinet's
+    finished_bottom_bays (all checked stores '' - whole cabinet), so
+    the panels rebuild live like the other options."""
+    if getattr(self, '_fb_init', False):
+        return
+    root = bpy.data.objects.get(self.cabinet_name)
+    if root is None:
+        return
+    keys = [k for k in self.segment_keys.split(',') if k]
+    selected = [k for i, k in enumerate(keys) if self.bay_flags[i]]
+    value = '' if len(selected) == len(keys) else ','.join(selected)
+    cab = root.face_frame_cabinet
+    if cab.finished_bottom_bays != value:
+        cab.finished_bottom_bays = value
+
+
 class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
     """Set the finished bottom condition on the clicked upper cabinet.
     Live-bound to the cabinet's props (the finish panel, LED route,
-    and optional render light rebuild as options change); the room
-    button copies this cabinet's condition to every standard upper in
-    the scene."""
+    and optional render light rebuild as options change); with multiple
+    bottom segments (raised / dropped bays) each gets its own toggle.
+    The room button copies this cabinet's condition to every standard
+    upper in the scene."""
     bl_idname = "hb_face_frame.set_finished_bottom"
     bl_label = "Set Finished Bottom"
     bl_description = ("Set this upper cabinet's finished bottom "
@@ -2480,6 +2728,11 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
 
     cabinet_name: StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    segment_keys: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    bay_flags: BoolVectorProperty(
+        name="Bottoms", size=16, options={'SKIP_SAVE'},
+        update=_fb_bays_changed)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -2496,6 +2749,25 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         if root is None:
             return {'CANCELLED'}
         self.cabinet_name = root.name
+        # One toggle per live carcass-bottom segment (same filter the
+        # builder uses), seeded from the cabinet's current scope.
+        bottoms = [c for c in root.children
+                   if c.get('hb_part_role')
+                   == types_face_frame.PART_ROLE_BOTTOM
+                   and not c.hide_viewport
+                   and not c.get('IS_MANUAL_PART')]
+        keys = sorted({str(c.get('hb_segment_start_bay', 0))
+                       for c in bottoms},
+                      key=lambda k: int(k) if k.lstrip('-').isdigit()
+                      else 0)
+        self.segment_keys = ','.join(keys[:16])
+        cab = root.face_frame_cabinet
+        scope = {s.strip() for s in cab.finished_bottom_bays.split(',')
+                 if s.strip()}
+        self._fb_init = True
+        for i, k in enumerate(keys[:16]):
+            self.bay_flags[i] = (not scope) or (k in scope)
+        self._fb_init = False
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def draw(self, context):
@@ -2507,6 +2779,17 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         cab = root.face_frame_cabinet
         col = layout.column(align=True)
         col.prop(cab, 'finished_bottom_type', text="Condition")
+        keys = [k for k in self.segment_keys.split(',') if k]
+        if len(keys) > 1:
+            bays = col.column(align=True)
+            bays.enabled = cab.finished_bottom_type != 'NONE'
+            bays.label(text="Apply To:")
+            for i, k in enumerate(keys):
+                try:
+                    label = f"Bay {int(k) + 1}"
+                except ValueError:
+                    label = f"Bay {k}"
+                bays.prop(self, 'bay_flags', index=i, text=label)
         sub = col.column(align=True)
         sub.enabled = cab.finished_bottom_type != 'NONE'
         sub.prop(cab, 'finished_bottom_led_route', text="LED Route")
@@ -2567,6 +2850,9 @@ class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
                 cab.finished_bottom_route_inset = \
                     src_cab.finished_bottom_route_inset
                 cab.finished_bottom_light = src_cab.finished_bottom_light
+                # Bay scope is cabinet-specific; room apply covers
+                # every bottom segment.
+                cab.finished_bottom_bays = ''
                 count += 1
         self.report({'INFO'},
                     f"Finished bottom applied to {count} upper(s)")
@@ -2583,6 +2869,7 @@ classes = (
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_remove_bottom_rail,
+    hb_face_frame_OT_toggle_flush_bottom_rail,
     hb_face_frame_OT_remove_mid_rail,
     hb_face_frame_OT_set_misc_part_dimensions,
     hb_face_frame_OT_set_door_part_dimensions,
@@ -2591,6 +2878,7 @@ classes = (
     hb_face_frame_OT_switch_door_part_pull_side,
     hb_face_frame_OT_toggle_door_part_front_kind,
     hb_face_frame_OT_set_door_frame,
+    hb_face_frame_OT_set_door_hardware,
     hb_face_frame_OT_set_cabinet_part_size,
     hb_face_frame_OT_make_part_editable,
     hb_face_frame_OT_revert_part_to_parametric,

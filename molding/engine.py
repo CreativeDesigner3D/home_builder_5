@@ -391,6 +391,273 @@ def chain_sweep_points(chain, facts, face_offset, end_offset):
     return off, chain
 
 
+def rail_sweep_segments(chain, facts, face_offset, end_offset):
+    """Light-rail path segments through a chain: chain_sweep_points
+    plus raised-bay handling. A member's 'rail_skips' spans (bays whose
+    bottom sits above the run line) break the run - the rail stops at
+    the raised opening's edge and returns to the carcass rear (the
+    wall), treated like a finished end - and pick back up with a
+    matching return on the far side. Returns ([(points, False), ...],
+    chain possibly reversed) or None."""
+    if not any(facts[id(m)].get('rail_skips') for m in chain):
+        result = chain_sweep_points(chain, facts, face_offset, end_offset)
+        if result is None:
+            return None
+        pts, chain = result
+        return [(pts, False)], chain
+
+    raw, terminals, first_straight = _assemble_front_raw(chain, facts)
+    if first_straight is not None and len(raw) >= 2:
+        idx, fn = first_straight
+        travel = raw[idx + 1] - raw[idx]
+        if travel.length > 1e-6:
+            travel.normalize()
+            right = mathutils.Vector((travel.y, -travel.x))
+            if right.dot(fn) < 0:
+                chain = list(reversed(chain))
+                raw, terminals, first_straight = \
+                    _assemble_front_raw(chain, facts)
+    if len(raw) < 2:
+        return None
+
+    def _center(obj):
+        fp = footprint_xy(obj)
+        return sum(fp, mathutils.Vector((0.0, 0.0))) / 4.0
+
+    # Piecewise raw segments; each carries whether its start / end is a
+    # wall return (those ends never get the terminal end treatment).
+    segs = []
+    seg_returns = []
+    current = []
+    flags = [False, False]
+
+    def _close():
+        nonlocal current, flags
+        if len(current) >= 2:
+            segs.append(current)
+            seg_returns.append((flags[0], flags[1]))
+        current = []
+        flags = [False, False]
+
+    n = len(chain)
+    for i, obj in enumerate(chain):
+        mw = obj.matrix_world
+        f = facts[id(obj)]
+        if current:
+            prev_ref = current[-1]
+        elif segs:
+            prev_ref = segs[-1][-1]
+        else:
+            prev_ref = None
+        next_ref = _center(chain[i + 1]) if i + 1 < n else None
+
+        if f.get('corner'):
+            data = corner_plan_data(obj, f['corner'])
+            pts = [_xy(mw @ mathutils.Vector((p.x, p.y, 0.0)))
+                   for p in data['front']]
+            reverse = False
+            if prev_ref is not None:
+                reverse = ((prev_ref - pts[0]).length
+                           > (prev_ref - pts[-1]).length)
+            elif next_ref is not None:
+                reverse = ((next_ref - pts[-1]).length
+                           > (next_ref - pts[0]).length)
+            if reverse:
+                pts = list(reversed(pts))
+            current.extend(pts)
+            continue
+
+        width, depth, _ = cage_dims(obj)
+
+        def _front(x):
+            return _xy(mw @ mathutils.Vector((x, -depth, 0.0)))
+
+        def _back(x):
+            return _xy(mw @ mathutils.Vector((x, 0.0, 0.0)))
+
+        fl, fr = _front(0.0), _front(width)
+        if prev_ref is not None:
+            left_first = (prev_ref - fl).length <= (prev_ref - fr).length
+        elif next_ref is not None:
+            left_first = (next_ref - fr).length <= (next_ref - fl).length
+        else:
+            left_first = True
+
+        # Kept intervals between skip zones, each carrying the kind of
+        # the skip flanking it on either side (None = member edge).
+        # 'OPEN' boundaries (raised bay - nothing at the run line) get
+        # a wall return; 'BOX' boundaries (dropped bay - its box
+        # stands across the run line) die flush into the box.
+        skips = sorted(f.get('rail_skips') or [])
+        kept = []
+        cursor = 0.0
+        prev_kind = None
+        for s0, s1, kind in skips:
+            if s0 - cursor > 1e-4:
+                kept.append((cursor, s0, prev_kind, kind))
+            cursor = max(cursor, s1)
+            prev_kind = kind
+        if width - cursor > 1e-4:
+            kept.append((cursor, width, prev_kind, None))
+
+        if left_first:
+            ordered = kept
+            start_x, end_x = 0.0, width
+        else:
+            ordered = [(b, a, kr, kl) for a, b, kl, kr in reversed(kept)]
+            start_x, end_x = width, 0.0
+
+        if not ordered:
+            # Whole member skipped: seal any incoming rail at the
+            # seam; a following member restarts from the far seam.
+            if left_first:
+                k_first, k_last = skips[0][2], skips[-1][2]
+            else:
+                k_first, k_last = skips[-1][2], skips[0][2]
+            if current:
+                if k_first == 'OPEN':
+                    current.append(_back(start_x))
+                flags[1] = True
+                _close()
+            if i + 1 < n:
+                current = [_back(end_x)] if k_last == 'OPEN' else []
+                flags[0] = True
+            continue
+
+        for j, (enter, exit_, k_in, k_out) in enumerate(ordered):
+            if k_in is not None:
+                if j == 0 and current:
+                    # The skip touches the seam: seal the incoming
+                    # rail there first.
+                    if k_in == 'OPEN':
+                        current.append(_back(start_x))
+                    flags[1] = True
+                    _close()
+                current = [_back(enter)] if k_in == 'OPEN' else []
+                flags[0] = True
+            current.append(_front(enter))
+            current.append(_front(exit_))
+            if k_out is not None:
+                if k_out == 'OPEN':
+                    current.append(_back(exit_))
+                flags[1] = True
+                _close()
+        if ordered and ordered[-1][3] is not None and i + 1 < n:
+            current = [_back(end_x)] if ordered[-1][3] == 'OPEN' else []
+            flags[0] = True
+    _close()
+
+    if not segs:
+        return None
+
+    out = [offset_polyline_right(pts, face_offset) for pts in segs]
+
+    for side_idx in (0, 1):
+        term = terminals[side_idx]
+        if term is None:
+            continue
+        if side_idx == 0:
+            if seg_returns[0][0] or len(segs[0]) < 2:
+                continue
+            outward = segs[0][0] - segs[0][1]
+        else:
+            if seg_returns[-1][1] or len(segs[-1]) < 2:
+                continue
+            outward = segs[-1][-1] - segs[-1][-2]
+        if outward.length < 1e-6:
+            continue
+        outward.normalize()
+        f = facts[id(term['obj'])]
+        if not f.get('finished_%s' % term['side'], False):
+            continue
+        if side_idx == 0:
+            out[0][0] = out[0][0] + outward * end_offset
+            out[0].insert(0, term['back'] + outward * end_offset)
+        else:
+            out[-1][-1] = out[-1][-1] + outward * end_offset
+            out[-1].append(term['back'] + outward * end_offset)
+
+    segments = [(pts, False) for pts in out if len(pts) >= 2]
+    return (segments, chain) if segments else None
+
+
+def raised_rail_runs(obj, f, face_offset, end_offset,
+                     open_left=True, open_right=True):
+    """Standalone light-rail runs for a member's off-line bay levels -
+    bays whose bottom sits above OR below the cabinet bottom line
+    carry their own rail at their own line (the bottom-line run skips
+    them, see rail_sweep_segments). One run per contiguous span per
+    level. A span end dies flush where a lower zone's box stands at
+    that level; it returns to the carcass rear where the adjacent zone
+    sits higher still; a cabinet end wraps to the rear like a finished
+    end when that side is open (no chain neighbor) and FINISHED.
+    Returns [(points, dz)] with dz the level's height relative to the
+    cabinet bottom line (negative for dropped bays)."""
+    bays = f.get('rail_bays') or []
+    if not bays:
+        return []
+    width, depth, _ = cage_dims(obj)
+    mw = obj.matrix_world
+
+    def _front(x):
+        return _xy(mw @ mathutils.Vector((x, -depth, 0.0)))
+
+    def _back(x):
+        return _xy(mw @ mathutils.Vector((x, 0.0, 0.0)))
+
+    def _zone_dz(x):
+        best, best_d = 0.0, None
+        for x0, x1, dz in bays:
+            d = max(x0 - x, 0.0, x - x1)
+            if best_d is None or d < best_d:
+                best, best_d = dz, d
+        return best
+
+    out = []
+    levels = sorted({round(dz, 3) for _x0, _x1, dz in bays
+                     if abs(dz) > 0.02})
+    for level in levels:
+        spans = sorted((x0, x1) for x0, x1, dz in bays
+                       if abs(round(dz, 3) - level) < 1e-6)
+        merged = []
+        for x0, x1 in spans:
+            if merged and x0 - merged[-1][1] < 0.08:
+                merged[-1] = (merged[-1][0], x1)
+            else:
+                merged.append((x0, x1))
+        for x0, x1 in merged:
+            at_left_end = x0 < 0.08
+            at_right_end = width - x1 < 0.08
+            if at_left_end:
+                x0 = 0.0
+            if at_right_end:
+                x1 = width
+            raw = [_front(x0), _front(x1)]
+            if not at_left_end and _zone_dz(x0 - 0.01) > level:
+                raw.insert(0, _back(x0))
+            if not at_right_end and _zone_dz(x1 + 0.01) > level:
+                raw.append(_back(x1))
+            off = offset_polyline_right(raw, face_offset)
+            if len(off) < 2:
+                continue
+            if at_left_end and open_left and f.get('finished_left'):
+                o3 = mw.to_3x3() @ mathutils.Vector((-1.0, 0.0, 0.0))
+                o = mathutils.Vector((o3.x, o3.y))
+                if o.length > 1e-6:
+                    o.normalize()
+                    off[0] = off[0] + o * end_offset
+                    off.insert(0, _back(0.0) + o * end_offset)
+            if at_right_end and open_right and f.get('finished_right'):
+                o3 = mw.to_3x3() @ mathutils.Vector((1.0, 0.0, 0.0))
+                o = mathutils.Vector((o3.x, o3.y))
+                if o.length > 1e-6:
+                    o.normalize()
+                    off[-1] = off[-1] + o * end_offset
+                    off.append(_back(width) + o * end_offset)
+            out.append((off, level))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Kick-level span sweep (base molding)
 # ---------------------------------------------------------------------------
@@ -635,6 +902,7 @@ def _stretch_segments(spans, include_recessed, x_off,
         segments.append((current, current_meta))
 
     out = []
+    reached = [False, False]
     for pts, meta in segments:
         off = offset_polyline_right(pts, x_off)
         if len(off) < 2:
@@ -643,8 +911,11 @@ def _stretch_segments(spans, include_recessed, x_off,
             for side_idx, at_extreme in (
                     (0, meta['start_idx'] == 0),
                     (1, meta['end_idx'] == n - 1)):
+                if not at_extreme:
+                    continue
+                reached[side_idx] = True
                 term = terminals[side_idx]
-                if term is None or not at_extreme:
+                if term is None:
                     continue
                 outward = ((pts[0] - pts[1]) if side_idx == 0
                            else (pts[-1] - pts[-2]))
@@ -661,6 +932,42 @@ def _stretch_segments(spans, include_recessed, x_off,
                     off[-1] = off[-1] + outward * x_off
                     off.append(term['back'] + outward * x_off)
         out.append((off, False))
+
+    # A FINISHED end on a recessed-kick member carries molding no
+    # matter what Include Recessed says - that option only governs the
+    # recess line. With the recess line excluded, nothing reaches the
+    # extremity and the side gets a standalone piece from the kick face
+    # to the carcass rear, dying flush at both ends. (With it included,
+    # the kept recess run reaches the extremity and the inline wrap
+    # above miters around the corner instead.) It never runs to the
+    # front corner: a stile extended to the floor turns the extremity
+    # span FRONT and reaches it too.
+    if not island and terminals is not None and facts is not None:
+        for side_idx in (0, 1):
+            if reached[side_idx]:
+                continue
+            term = terminals[side_idx]
+            if term is None:
+                continue
+            if spans[0 if side_idx == 0 else -1][1] != 'RECESS':
+                continue
+            f = facts[id(term['obj'])]
+            if not f.get('finished_%s' % term['side'], False):
+                continue
+            front = term.get('front')
+            back = term.get('back')
+            if front is None or back is None:
+                continue
+            toward_back = back - front
+            depth_len = toward_back.length
+            setback = (f.get('kick') or {}).get('setback', 0.0)
+            if depth_len < 1e-6 or depth_len - setback < 1e-6:
+                continue
+            edge = front + toward_back * (setback / depth_len)
+            raw = [back, edge] if side_idx == 0 else [edge, back]
+            off = offset_polyline_right(raw, x_off)
+            if len(off) >= 2:
+                out.append((off, False))
     return out
 
 

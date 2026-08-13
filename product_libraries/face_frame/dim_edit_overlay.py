@@ -415,12 +415,36 @@ def compute_labels(context, region, rv3d):
                                 _anchor_world(bay, 0.5, 0.0)))
         elif mode == 'Openings':
             targets = []
+            # Non-editable openings (bay roots / V-split children) show
+            # the solver leaf's real FF opening height -- cage minus the
+            # top / bottom reveals, the same number Opening Properties
+            # prints. The raw cage spans the front-overlay footprint,
+            # which read one overlay too tall (e.g. 28.5" for a 27.5"
+            # opening). Leaf heights resolve once per cabinet; anything
+            # unresolvable falls back to the raw cage height.
+            leaf_h = {}
+            try:
+                from . import solver_face_frame as solver
+                layout_ss = solver.FaceFrameLayout(cabinet)
+                for bay in _iter_bay_cages(cabinet):
+                    bi = bay.get('hb_bay_index')
+                    if bi is None:
+                        continue
+                    for lf in solver.bay_openings(
+                            layout_ss, bi).get('leaves', []):
+                        leaf_h[lf['obj_name']] = (
+                            lf['cage_dim_z'] - lf['reveal_top']
+                            - lf['reveal_bottom'])
+            except Exception:
+                pass
             for bay in _iter_bay_cages(cabinet):
                 for op in _iter_opening_cages(bay):
                     editable = _opening_height_editable(op)
                     props = op.face_frame_opening
                     value = (props.size if editable
-                             else split_preview._cage_dims(op)[1])
+                             else leaf_h.get(
+                                 op.name,
+                                 split_preview._cage_dims(op)[1]))
                     targets.append((op, 'OPENING', editable,
                                     editable and props.unlock_size,
                                     value, "", None))

@@ -366,8 +366,11 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
                             text="Wood Hood Prompts", icon='MOD_BEVEL')
         else:
             layout.operator("hb_frameless.appliance_prompts", text="Appliance Prompts")
-        if obj is not None and obj.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR'}:
+        if obj is not None and obj.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR',
+                                                            'UNDER_COUNTER'}:
             layout.operator("hb_face_frame.add_appliance_panels", text="Appliance Panels", icon='MOD_SOLIDIFY')
+        layout.operator("hb_frameless.set_appliance_label",
+                        text="Set Label...", icon='FONT_DATA')
         layout.separator()
         layout.operator("hb_frameless.delete_appliance", text="Delete Appliance")
 

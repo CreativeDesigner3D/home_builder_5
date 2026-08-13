@@ -294,6 +294,35 @@ class hb_face_frame_OT_remove_drawer_front_style(Operator):
         return {'FINISHED'}
 
 
+def _bare_part_for(obj):
+    """A cabinet bare part (Wood Top / Misc Part) with NO cabinet cage
+    above it, or None. These live outside any cabinet's material walk,
+    so style assignment has to finish them directly."""
+    if obj is None or not obj.get('CABINET_PART'):
+        return None
+    from .. import types_face_frame
+    if types_face_frame.find_cabinet_root(obj) is not None:
+        return None
+    return obj
+
+
+def _apply_style_finish_to_bare_part(style, part_obj):
+    """Push a style's exterior finish onto a bare part. Live cutparts
+    take it on the GN surface inputs; a static carved mesh (nosed wood
+    top) renders its mesh slots instead, so those are painted too --
+    both are written so the finish survives the part flipping between
+    the two display modes. Returns True when a material was applied."""
+    fin, fin_rot = style.get_finish_material()
+    if fin is None:
+        return False
+    part_obj['STYLE_NAME'] = style.name
+    style._set_part_surfaces(part_obj, fin, fin_rot)
+    if part_obj.get('HB_STATIC_TEXTURED') or part_obj.get('IS_MANUAL_PART'):
+        hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
+            part_obj, fin, fin_rot)
+    return True
+
+
 class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
     """Apply the active cabinet style to every selected face frame cabinet"""
     bl_idname = "hb_face_frame.assign_style_to_selected_cabinets"
@@ -320,6 +349,7 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         from ...common import wood_hoods
         cab_roots = []
         hood_roots = []
+        bare_parts = []
         seen = set()
         for obj in context.selected_objects:
             root = types_face_frame.find_cabinet_root(obj)
@@ -332,8 +362,13 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             if hood is not None and hood.name not in seen:
                 seen.add(hood.name)
                 hood_roots.append(hood)
+                continue
+            part = _bare_part_for(obj)
+            if part is not None and part.name not in seen:
+                seen.add(part.name)
+                bare_parts.append(part)
 
-        if not cab_roots and not hood_roots:
+        if not cab_roots and not hood_roots and not bare_parts:
             self.report({'WARNING'}, "No face frame cabinets or wood hoods in selection")
             return {'CANCELLED'}
 
@@ -344,7 +379,9 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             # static doors pick up the new style's door construction.
             style.assign_style_to_hood(hood)
             wood_hoods.rebuild_built_hood(hood)
-        n = len(cab_roots) + len(hood_roots)
+        for part in bare_parts:
+            _apply_style_finish_to_bare_part(style, part)
+        n = len(cab_roots) + len(hood_roots) + len(bare_parts)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
 
@@ -448,12 +485,16 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
         if not hit or obj is None:
             return None
         # The hit may be any cabinet or hood part -- resolve to the cabinet
-        # root, else fall back to the wood-hood cage.
+        # root, else fall back to the wood-hood cage, else a bare part
+        # (Wood Top / Misc Part) standing on its own.
         root = types_face_frame.find_cabinet_root(obj)
         if root is not None:
             return root
         from ...common import wood_hoods
-        return wood_hoods.find_hood_root(obj)
+        hood = wood_hoods.find_hood_root(obj)
+        if hood is not None:
+            return hood
+        return _bare_part_for(obj)
 
     def _paint(self, context, event):
         ff = get_style_props(context)
@@ -471,6 +512,10 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             style.assign_style_to_hood(root)
             from ...common import wood_hoods
             wood_hoods.rebuild_built_hood(root)
+        elif root.get('CABINET_PART'):
+            # Bare part (Wood Top / Misc Part) with no cabinet above it.
+            if not _apply_style_finish_to_bare_part(style, root):
+                return
         else:
             return
         if root.name not in self._painted:
@@ -652,35 +697,17 @@ class hb_face_frame_OT_update_fronts_from_door_style(Operator):
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
-    """Modal paint-assign: click fronts in the viewport to apply the active
-    door / drawer-front style. The brush only paints MATCHING fronts -- a
-    DOOR brush paints door fronts, a DRAWER brush paints drawer fronts; a
-    wrong-role click is skipped. Stays active until Esc / right-click."""
-    bl_idname = "hb_face_frame.paint_assign_front_style"
-    bl_label = "Assign by Painting"
-    bl_description = "Click fronts in the viewport to assign the active style"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    kind: bpy.props.EnumProperty(
-        items=[('DOOR', "Door", "Paint door fronts with the active door style"),
-               ('DRAWER', "Drawer", "Paint drawer fronts with the active drawer front style")],
-        default='DOOR',
-        options={'HIDDEN'},
-    )  # type: ignore
+class _paint_front_brush:
+    """Shared machinery for the viewport paint brushes (front-style assign
+    and per-door hardware callouts): region/ray resolution, hover
+    highlight, the modal loop, and selection restore. Deliberately a
+    plain mixin, NOT an Operator subclass -- registering an Operator
+    that subclasses an already-registered Operator corrupts the parent's
+    RNA callbacks (its invoke/execute silently stop being called), so
+    both paint operators derive from this plus bpy.types.Operator."""
 
     _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
     _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
-
-    def _allowed_roles(self):
-        return self._DRAWER_ROLES if self.kind == 'DRAWER' else self._DOOR_ROLES
-
-    def _active_style(self, ff):
-        if self.kind == 'DRAWER':
-            pool, idx = ff.drawer_front_styles, ff.active_drawer_front_style_index
-        else:
-            pool, idx = ff.door_styles, ff.active_door_style_index
-        return pool[idx] if 0 <= idx < len(pool) else None
 
     def _region_under_mouse(self, context, event):
         """The VIEW_3D WINDOW region + rv3d under the cursor, with region-
@@ -719,29 +746,6 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
                 return cur
             cur = cur.parent
         return None
-
-    def _paint(self, context, event):
-        ff = get_style_props(context)
-        style = self._active_style(ff)
-        if style is None:
-            return
-        front = self._front_under_cursor(context, event)
-        if front is None:
-            return
-        if front.get('hb_part_role') not in self._allowed_roles():
-            context.workspace.status_text_set(
-                f"Skipped: not a {self.kind.lower()} front  |  Esc / RMB to finish")
-            return
-        result = style.assign_style_to_front(front, record_override=True)
-        if result is True:
-            self._count += 1
-            # Surfaces come from the cabinet material walk (see assign
-            # op) -- run it per click so a glass panel shows immediately.
-            _reapply_materials_for_door_style(style, context)
-            context.workspace.status_text_set(
-                f"Applied '{style.name}' to {self._count} front(s)  |  Esc / RMB to finish")
-        elif isinstance(result, str):
-            context.workspace.status_text_set(result + "  |  Esc / RMB to finish")
 
     def _set_hover(self, context, front):
         """Highlight the assignable front under the cursor by selecting it (and
@@ -803,6 +807,57 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         context.view_layer.objects.active = (
             bpy.data.objects.get(self._orig_active) if self._orig_active else None)
 
+
+class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Operator):
+    """Modal paint-assign: click fronts in the viewport to apply the active
+    door / drawer-front style. The brush only paints MATCHING fronts -- a
+    DOOR brush paints door fronts, a DRAWER brush paints drawer fronts; a
+    wrong-role click is skipped. Stays active until Esc / right-click."""
+    bl_idname = "hb_face_frame.paint_assign_front_style"
+    bl_label = "Assign by Painting"
+    bl_description = "Click fronts in the viewport to assign the active style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", "Paint door fronts with the active door style"),
+               ('DRAWER', "Drawer", "Paint drawer fronts with the active drawer front style")],
+        default='DOOR',
+        options={'HIDDEN'},
+    )  # type: ignore
+
+    def _allowed_roles(self):
+        return self._DRAWER_ROLES if self.kind == 'DRAWER' else self._DOOR_ROLES
+
+    def _active_style(self, ff):
+        if self.kind == 'DRAWER':
+            pool, idx = ff.drawer_front_styles, ff.active_drawer_front_style_index
+        else:
+            pool, idx = ff.door_styles, ff.active_door_style_index
+        return pool[idx] if 0 <= idx < len(pool) else None
+
+    def _paint(self, context, event):
+        ff = get_style_props(context)
+        style = self._active_style(ff)
+        if style is None:
+            return
+        front = self._front_under_cursor(context, event)
+        if front is None:
+            return
+        if front.get('hb_part_role') not in self._allowed_roles():
+            context.workspace.status_text_set(
+                f"Skipped: not a {self.kind.lower()} front  |  Esc / RMB to finish")
+            return
+        result = style.assign_style_to_front(front, record_override=True)
+        if result is True:
+            self._count += 1
+            # Surfaces come from the cabinet material walk (see assign
+            # op) -- run it per click so a glass panel shows immediately.
+            _reapply_materials_for_door_style(style, context)
+            context.workspace.status_text_set(
+                f"Applied '{style.name}' to {self._count} front(s)  |  Esc / RMB to finish")
+        elif isinstance(result, str):
+            context.workspace.status_text_set(result + "  |  Esc / RMB to finish")
+
     def _finish(self, context):
         self._set_hover(context, None)
         self._restore_selection(context)
@@ -829,6 +884,93 @@ class hb_face_frame_OT_paint_assign_front_style(bpy.types.Operator):
         context.window.cursor_modal_set('PAINT_BRUSH')
         context.workspace.status_text_set(
             "Paint-assign: hover highlights a front, click to assign  |  Esc / RMB to finish")
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+
+class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operator):
+    """Modal paint for hardware callouts: click DOOR fronts to add one
+    callout (RC / TL / FR) to that door's opening, Ctrl+Click to remove
+    it. The door style's checkboxes only DECLARE the callout for the
+    job (the style-page legend line); which doors actually carry the
+    letter mark on the drawings is painted here -- hardware lives on
+    specific doors, not every door of a style. Esc / right-click
+    finishes. Stamps persist on the opening cage (fronts are rebuilt
+    every recalc; a double door's leaves share their opening's stamp)
+    and are read by downstream 2D consumers."""
+    bl_idname = "hb_face_frame.paint_door_hardware"
+    bl_label = "Assign Doors"
+    bl_description = ("Click doors in the viewport to add this hardware "
+                      "callout per door; Ctrl+Click removes it")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    callout: bpy.props.EnumProperty(
+        items=[('RC', "Restrictor Clips", ""),
+               ('TL', "Touch Latches", ""),
+               ('FR', "Finger Rout", "")],
+        default='TL', options={'HIDDEN'},
+    )  # type: ignore
+
+    _KEYS = {'RC': 'HB_DOOR_HW_RC', 'TL': 'HB_DOOR_HW_TL',
+             'FR': 'HB_DOOR_HW_FR'}
+
+    def _allowed_roles(self):
+        return {'DOOR'}
+
+    def _paint(self, context, event):
+        front = self._front_under_cursor(context, event)
+        if front is None:
+            return
+        if front.get('hb_part_role') != 'DOOR':
+            context.workspace.status_text_set(
+                "Skipped: not a door  |  Esc / RMB to finish")
+            return
+        from . import ops_part_commands
+        store = ops_part_commands._frame_store(front)
+        key = self._KEYS[self.callout]
+        # Click APPLIES, Ctrl+Click removes -- never a blind toggle: a
+        # double door's two leaves share one opening store, and toggling
+        # would undo the first leaf's stamp when the user paints its
+        # partner (observed as "painted both doors, nothing lettered").
+        state = not event.ctrl
+        if (store.get('HB_DOOR_HW_SET')
+                and bool(store.get(key, False)) == state):
+            context.workspace.status_text_set(
+                f"{self.callout} already {'ON' if state else 'OFF'}: "
+                f"{front.name}  |  Esc / RMB to finish")
+            return
+        store[key] = state
+        store['HB_DOOR_HW_SET'] = True
+        self._count += 1
+        context.workspace.status_text_set(
+            f"{self.callout} {'ON' if state else 'OFF'}: {front.name}  |  "
+            f"{self._count} change(s)  |  Click = add, Ctrl+Click = "
+            "remove, Esc / RMB to finish")
+
+    def _finish(self, context):
+        self._set_hover(context, None)
+        self._restore_selection(context)
+        context.window.cursor_modal_restore()
+        context.workspace.status_text_set(None)
+        if context.area is not None:
+            context.area.tag_redraw()
+        self.report({'INFO'},
+                    f"Toggled {self.callout} on {self._count} door(s)")
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Run from the 3D viewport")
+            return {'CANCELLED'}
+        self._count = 0
+        self._hovered = None
+        self._orig_sel = [o.name for o in context.selected_objects]
+        active = context.view_layer.objects.active
+        self._orig_active = active.name if active else None
+        context.window.cursor_modal_set('PAINT_BRUSH')
+        context.workspace.status_text_set(
+            f"Paint {self.callout} callouts: Click a door = add, "
+            "Ctrl+Click = remove  |  Esc / RMB to finish")
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
@@ -1162,6 +1304,10 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
 
     _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT',
                     'FALSE_FRONT', 'TILT_OUT'}
+    # Shelf roles are wiped + rebuilt every recalc (like fronts), so
+    # their paint stamp also lives on a stable cage, not the part.
+    _SHELF_ROLES = {'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF',
+                    'VANITY_SHELF', 'CORNER_SHELF', 'CORNER_FIXED_SHELF'}
 
     @staticmethod
     def _opening_for(obj):
@@ -1172,6 +1318,22 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 return node
             node = node.parent
         return None
+
+    @staticmethod
+    def _shelf_cage_for(obj):
+        """Walk up to the stable cage a shelf stamp lives on: the opening
+        cage when the shelf sits under one, else the bay cage. None for
+        shelves outside both (the stamp then falls back to the part and
+        lasts until the next recalc)."""
+        node = obj.parent
+        bay = None
+        while node is not None:
+            if node.get('IS_FACE_FRAME_OPENING_CAGE'):
+                return node
+            if bay is None and node.get('IS_FACE_FRAME_BAY_CAGE'):
+                bay = node
+            node = node.parent
+        return bay
 
     def _paint(self, context, event):
         ff = get_style_props(context)
@@ -1186,6 +1348,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
             return
         is_part = bool(obj.get('CABINET_PART'))
         is_front = is_part and obj.get('hb_part_role') in self._FRONT_ROLES
+        is_shelf = is_part and obj.get('hb_part_role') in self._SHELF_ROLES
 
         if self.brush == 'RESET':
             if is_front:
@@ -1194,6 +1357,17 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 for k in ('hb_front_material_override', 'hb_front_material_style'):
                     if k in tgt:
                         del tgt[k]
+            elif is_shelf:
+                tgt = self._shelf_cage_for(obj)
+                for t in (tgt, obj):
+                    if t is None:
+                        continue
+                    for k in ('hb_shelf_material_override',
+                              'hb_shelf_material_style',
+                              'hb_part_material_override',
+                              'hb_part_material_style'):
+                        if k in t:
+                            del t[k]
             elif is_part:
                 for k in ('hb_part_material_override', 'hb_part_material_style'):
                     if k in obj:
@@ -1224,11 +1398,29 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 else:
                     style._set_part_surfaces(obj, mat, edge)
                     style._set_door_modifier_materials(obj, mat, edge)
+            elif is_shelf:
+                # Shelves are wiped + rebuilt each recalc, so the stamp
+                # lives on the stable opening / bay cage; the material
+                # walk re-applies it to the respawned shelves.
+                cage = self._shelf_cage_for(obj)
+                tgt = cage if cage is not None else obj
+                key = ('hb_shelf_material' if cage is not None
+                       else 'hb_part_material')
+                tgt[key + '_override'] = self.brush
+                tgt[key + '_style'] = style.name
+                style._set_part_surfaces(obj, mat, edge)
             elif is_part:
                 obj['hb_part_material_override'] = self.brush
                 obj['hb_part_material_style'] = style.name
                 if obj.get('IS_MANUAL_PART'):
                     # Manual part: GN applied, paint the baked slots.
+                    self._paint_manual_part_slots(obj, mat, edge)
+                elif obj.get('HB_STATIC_TEXTURED'):
+                    # Static carved mesh (nosed wood top / textured
+                    # panel): the mesh slots render, the GN inputs are
+                    # inert -- write both so the paint survives the part
+                    # flipping back to live cutpart display.
+                    style._set_part_surfaces(obj, mat, edge)
                     self._paint_manual_part_slots(obj, mat, edge)
                 else:
                     style._set_part_surfaces(obj, mat, edge)
@@ -1306,6 +1498,7 @@ classes = (
     hb_face_frame_OT_assign_door_style_to_selected_fronts,
     hb_face_frame_OT_update_fronts_from_door_style,
     hb_face_frame_OT_paint_assign_front_style,
+    hb_face_frame_OT_paint_door_hardware,
     hb_face_frame_OT_update_fronts_from_style,
 )
 

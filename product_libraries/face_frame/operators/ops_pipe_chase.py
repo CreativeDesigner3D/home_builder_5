@@ -67,9 +67,31 @@ class HB_FACE_FRAME_OT_add_pipe_chase(bpy.types.Operator):
         min=0.0,
     )  # type: ignore
     chase_offset: FloatProperty(
-        name="Offset From Left",
-        description="Back Middle only: distance from the cabinet's left "
-                    "edge to the left edge of the notch",
+        name="Offset",
+        description="Back Middle only: distance from the chosen cabinet "
+                    "edge to the near edge of the notch",
+        default=0.0, unit='LENGTH', subtype='DISTANCE', precision=4,
+        min=0.0,
+    )  # type: ignore
+    chase_offset_from: EnumProperty(
+        name="Offset From",
+        items=[
+            ('LEFT', "Left", "Measure the offset from the cabinet's left edge"),
+            ('RIGHT', "Right", "Measure the offset from the cabinet's right edge"),
+        ],
+        default='LEFT',
+    )  # type: ignore
+    chase_height: FloatProperty(
+        name="Height",
+        description="Vertical size of the notch; 0 runs the chase the "
+                    "full cabinet height",
+        default=0.0, unit='LENGTH', subtype='DISTANCE', precision=4,
+        min=0.0,
+    )  # type: ignore
+    chase_z_offset: FloatProperty(
+        name="Bottom Offset",
+        description="Distance from the cabinet bottom to the bottom of a "
+                    "partial-height notch",
         default=0.0, unit='LENGTH', subtype='DISTANCE', precision=4,
         min=0.0,
     )  # type: ignore
@@ -93,6 +115,9 @@ class HB_FACE_FRAME_OT_add_pipe_chase(bpy.types.Operator):
             self.chase_width = cab.chase_width
             self.chase_depth = cab.chase_depth
             self.chase_offset = cab.chase_offset
+            self.chase_offset_from = cab.chase_offset_from
+            self.chase_height = cab.chase_height
+            self.chase_z_offset = cab.chase_z_offset
             self.notch_side = cab.chase_notch_side
         else:
             # Seed the middle offset centered for the current sizes.
@@ -104,8 +129,14 @@ class HB_FACE_FRAME_OT_add_pipe_chase(bpy.types.Operator):
         layout.prop(self, 'location')
         layout.prop(self, 'chase_width')
         layout.prop(self, 'chase_depth')
+        row = layout.row()
+        row.prop(self, 'chase_height')
+        if self.chase_height > 0.0:
+            row.prop(self, 'chase_z_offset')
         if self.location == 'BACK_MIDDLE':
-            layout.prop(self, 'chase_offset')
+            row = layout.row()
+            row.prop(self, 'chase_offset')
+            row.prop(self, 'chase_offset_from', text="From")
         else:
             layout.prop(self, 'notch_side')
 
@@ -116,6 +147,9 @@ class HB_FACE_FRAME_OT_add_pipe_chase(bpy.types.Operator):
         cab.chase_width = self.chase_width
         cab.chase_depth = self.chase_depth
         cab.chase_offset = self.chase_offset
+        cab.chase_offset_from = self.chase_offset_from
+        cab.chase_height = self.chase_height
+        cab.chase_z_offset = self.chase_z_offset
         cab.chase_notch_side = (self.notch_side
                                 and self.location != 'BACK_MIDDLE')
         # Setting chase_enabled fires the update callback -> recalc.

@@ -181,6 +181,92 @@ def _sweep_z(molding_type, first, dy, facts, opts):
     return dy
 
 
+def _member_open_sides(member, chain):
+    """(open_left, open_right): which of the member's local ends have
+    no touching chain neighbor beside them."""
+    open_l = open_r = True
+    inv = member.matrix_world.inverted()
+    width, _depth, _height = engine.cage_dims(member)
+    idx = next((i for i, m in enumerate(chain) if m is member), 0)
+    for j in (idx - 1, idx + 1):
+        if not 0 <= j < len(chain):
+            continue
+        fp = engine.footprint_xy(chain[j])
+        center = sum(fp, mathutils.Vector((0.0, 0.0))) / 4.0
+        lx = (inv @ mathutils.Vector((center.x, center.y, 0.0))).x
+        if lx < width / 2.0:
+            open_l = False
+        else:
+            open_r = False
+    return open_l, open_r
+
+
+def _member_plan_distance(member, point_xy):
+    """Plan distance from a world XY point to the member's cage
+    footprint rectangle (0 when the point is over the member)."""
+    inv = member.matrix_world.inverted()
+    lp = inv @ mathutils.Vector((point_xy.x, point_xy.y, 0.0))
+    width, depth, _ = engine.cage_dims(member)
+    dx = max(-lp.x, 0.0, lp.x - width)
+    dy = max(-depth - lp.y, 0.0, lp.y)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _material_runs(pts, cyclic, member_materials, fallback):
+    """Split one sweep polyline into (points, material, cyclic) runs of
+    consecutive edges attributed to the same style finish, so a run
+    across mixed-style cabinets changes color at the cabinet seams.
+
+    Each edge goes to the nearest chain member in plan (by midpoint);
+    members that resolve no material - appliance bridges, styleless
+    cabinets - take the fallback. Consecutive runs share their boundary
+    point so the sweep stays continuous. A single-material loop stays
+    cyclic; a mixed loop is rotated so a style boundary lands at the
+    seam and emitted as open runs covering the whole perimeter."""
+    edges = list(zip(pts, pts[1:]))
+    if cyclic and len(pts) > 2:
+        edges.append((pts[-1], pts[0]))
+    if not edges:
+        return []
+
+    def _edge_material(a, b):
+        mid = (a + b) * 0.5
+        best_mat, best_d = fallback, None
+        for member, mat in member_materials:
+            d = _member_plan_distance(member, mid)
+            if best_d is None or d < best_d:
+                best_d = d
+                best_mat = mat if mat is not None else fallback
+        return best_mat
+
+    mats = [_edge_material(a, b) for a, b in edges]
+    if all(m is mats[0] for m in mats):
+        return [(pts, mats[0], cyclic)]
+    if cyclic:
+        for i in range(1, len(edges)):
+            if mats[i] is not mats[i - 1]:
+                edges = edges[i:] + edges[:i]
+                mats = mats[i:] + mats[:i]
+                break
+    runs = []
+    for (a, b), mat in zip(edges, mats):
+        if runs and runs[-1][1] is mat:
+            runs[-1][0].append(b)
+        else:
+            runs.append(([a, b], mat))
+    return [(run_pts, mat, False) for run_pts, mat in runs]
+
+
+def _material_slot(curve, material):
+    """Index of the material in the curve's slots, appending it on
+    first use."""
+    for i, existing in enumerate(curve.materials):
+        if existing is material:
+            return i
+    curve.materials.append(material)
+    return len(curve.materials) - 1
+
+
 def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
                  fallback_key, dy, facts, opts, height=None):
     """Create one sweep object: hidden profile + curve through the
@@ -205,43 +291,47 @@ def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
     sweep.location.z = _sweep_z(molding_type, first, dy, facts, opts)
     profile.parent = sweep
 
+    # Each stretch of the sweep takes the style finish of the cabinet
+    # it fronts: mixed-style chains split into per-style splines at the
+    # cabinet seams (see _material_runs). Members that resolve no
+    # material - appliance bridges - fall back to the first material
+    # the chain resolves.
+    member_materials = [(m, adapters.finish_material(m)) for m in chain]
+    fallback_mat = next(
+        (mat for _m, mat in member_materials if mat is not None), None)
+
     first_inv = first.matrix_world.inverted()
     wrote = 0
     for pts, cyclic in segments:
-        local = []
-        for p in pts:
-            lp = first_inv @ mathutils.Vector((p.x, p.y, 0.0))
-            if not local or (abs(lp.x - local[-1][0]) > 1e-4
-                             or abs(lp.y - local[-1][1]) > 1e-4):
-                local.append((lp.x, lp.y, 0.0))
-        if (cyclic and len(local) > 2
-                and abs(local[0][0] - local[-1][0]) < 1e-4
-                and abs(local[0][1] - local[-1][1]) < 1e-4):
-            local.pop()
-        if len(local) < (3 if cyclic else 2):
-            continue
-        spline = curve.splines.new('BEZIER')
-        spline.use_smooth = False
-        spline.bezier_points.add(count=len(local) - 1)
-        for bp, co in zip(spline.bezier_points, local):
-            bp.co = co
-            bp.handle_left_type = 'VECTOR'
-            bp.handle_right_type = 'VECTOR'
-        spline.use_cyclic_u = cyclic
-        wrote += 1
+        for run_pts, material, run_cyclic in _material_runs(
+                pts, cyclic, member_materials, fallback_mat):
+            local = []
+            for p in run_pts:
+                lp = first_inv @ mathutils.Vector((p.x, p.y, 0.0))
+                if not local or (abs(lp.x - local[-1][0]) > 1e-4
+                                 or abs(lp.y - local[-1][1]) > 1e-4):
+                    local.append((lp.x, lp.y, 0.0))
+            if (run_cyclic and len(local) > 2
+                    and abs(local[0][0] - local[-1][0]) < 1e-4
+                    and abs(local[0][1] - local[-1][1]) < 1e-4):
+                local.pop()
+            if len(local) < (3 if run_cyclic else 2):
+                continue
+            spline = curve.splines.new('BEZIER')
+            spline.use_smooth = False
+            spline.bezier_points.add(count=len(local) - 1)
+            for bp, co in zip(spline.bezier_points, local):
+                bp.co = co
+                bp.handle_left_type = 'VECTOR'
+                bp.handle_right_type = 'VECTOR'
+            spline.use_cyclic_u = run_cyclic
+            if material is not None:
+                spline.material_index = _material_slot(curve, material)
+            wrote += 1
     if wrote == 0:
         bpy.data.objects.remove(sweep, do_unlink=True)
         bpy.data.objects.remove(profile, do_unlink=True)
         return None
-
-    # Moldings take the run's cabinet finish: the style material of the
-    # first chain member that resolves one (appliance bridges resolve
-    # to None and are skipped).
-    for member in chain:
-        material = adapters.finish_material(member)
-        if material is not None:
-            curve.materials.append(material)
-            break
     return sweep
 
 
@@ -277,6 +367,11 @@ def _apply_type(scene, molding_type, align, stack, opts):
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, opts['include_recessed'])
                 sweep_chain = chain
+            elif molding_type == 'LIGHT_RAIL':
+                result = engine.rail_sweep_segments(chain, facts, dx, dx)
+                if result is None:
+                    continue
+                segments, sweep_chain = result
             else:
                 if molding_type == 'CAP':
                     dx += opts['cap_overhang']
@@ -291,6 +386,24 @@ def _apply_type(scene, molding_type, align, stack, opts):
                             profile_ref, fallback_key, dy, facts,
                             opts, height=height) is not None:
                 made += 1
+            if molding_type != 'LIGHT_RAIL':
+                continue
+            # Raised bays carry their own rail at their own bottom
+            # line, one sweep per member and level so each hangs at
+            # its height (the bottom-line run skips those spans).
+            for member in sweep_chain:
+                fmem = facts.get(id(member)) or {}
+                if not fmem.get('rail_bays'):
+                    continue
+                open_l, open_r = _member_open_sides(member, sweep_chain)
+                for pts, dz in engine.raised_rail_runs(
+                        member, fmem, dx, dx,
+                        open_left=open_l, open_right=open_r):
+                    if _spawn_sweep(scene, molding_type, [member],
+                                    [(pts, False)], profile_ref,
+                                    fallback_key, dy + dz, facts, opts,
+                                    height=height) is not None:
+                        made += 1
     return made
 
 

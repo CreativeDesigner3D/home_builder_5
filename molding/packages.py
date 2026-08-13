@@ -223,25 +223,35 @@ def _finish_profile(obj, collection):
     return obj
 
 
+# Legacy profile names that were renamed in the asset packs: refs saved
+# in older files resolve to the current name when the old file is gone.
+_PROFILE_NAME_ALIASES = {
+    'Misson Crown': 'Mission Crown',
+}
+
+
 def _load_library_profile(profile_ref, collection):
     """Append `Category/Profile Name` from the first registered asset
     pack that provides it. The .blend contains an object named like the
     file stem (the molding-library convention)."""
     parts = profile_ref.replace("\\", "/").split("/")
-    stem = parts[-1]
-    for base in _PROFILE_PATHS:
-        path = os.path.join(base, *parts) + ".blend"
-        if not os.path.isfile(path):
-            continue
-        try:
-            with bpy.data.libraries.load(path) as (data_from, data_to):
-                data_to.objects = ([stem] if stem in data_from.objects
-                                   else [])
-        except Exception:
-            continue
-        if not data_to.objects or data_to.objects[0] is None:
-            continue
-        return _finish_profile(data_to.objects[0], collection)
+    alias = _PROFILE_NAME_ALIASES.get(parts[-1])
+    tries = [parts] if alias is None else [parts, parts[:-1] + [alias]]
+    for parts in tries:
+        stem = parts[-1]
+        for base in _PROFILE_PATHS:
+            path = os.path.join(base, *parts) + ".blend"
+            if not os.path.isfile(path):
+                continue
+            try:
+                with bpy.data.libraries.load(path) as (data_from, data_to):
+                    data_to.objects = ([stem] if stem in data_from.objects
+                                       else [])
+            except Exception:
+                continue
+            if not data_to.objects or data_to.objects[0] is None:
+                continue
+            return _finish_profile(data_to.objects[0], collection)
     return None
 
 
@@ -273,6 +283,11 @@ def _profile_metrics(profile_ref, fallback_key):
         return _profile_height_cache[profile_ref]
     metrics = None
     parts = profile_ref.replace("\\", "/").split("/")
+    alias = _PROFILE_NAME_ALIASES.get(parts[-1])
+    if alias is not None and not any(
+            os.path.isfile(os.path.join(base, *parts) + ".blend")
+            for base in _PROFILE_PATHS):
+        parts = parts[:-1] + [alias]
     stem = parts[-1]
     for base in _PROFILE_PATHS:
         path = os.path.join(base, *parts) + ".blend"

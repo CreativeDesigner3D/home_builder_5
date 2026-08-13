@@ -369,6 +369,113 @@ def _bay_under_cursor(hit_object):
     return None
 
 
+def _cage_world_matrix(cage):
+    """Trustworthy world matrix for a (possibly hidden) opening cage.
+
+    A HIDDEN cage with no visible children is never evaluated by the
+    depsgraph, so its matrix_world can be stale -- exactly the state of
+    an EMPTY opening's cage in every selection mode but Openings (which
+    is why the snap used to work only after visiting that mode once).
+    Composing pure basis data all the way up is no good either: chained
+    walls position themselves with CONSTRAINTS (an L room's second wall
+    is a COPY_LOCATION off the first), which basis data can't see.
+
+    So: anchor at the cabinet ROOT's evaluated matrix_world -- fresh,
+    because its visible parts keep it in the depsgraph, and inclusive
+    of any wall constraints -- and compose only the root-to-cage chain
+    from basis data (those are plain parented cages with no
+    constraints of their own).
+    """
+    root = types_face_frame.find_cabinet_root(cage)
+    chain = []
+    node = cage
+    while node is not None and node is not root:
+        chain.append(node)
+        node = node.parent
+    if root is None or node is not root:
+        return cage.matrix_world.copy()
+    m = root.matrix_world.copy()
+    for n in reversed(chain):
+        m = m @ (n.matrix_parent_inverse @ n.matrix_basis)
+    return m
+
+
+def _opening_under_cursor(context, view_point, hit_location):
+    """The face-frame opening cage the VIEW RAY passes through, or None.
+
+    Surface hits are useless here: through an OPEN bay the ray sails
+    past the hidden wireframe cages and lands on whatever is behind --
+    the carcass back at best, the WALL behind the cabinet when the bay
+    has no back at all. So instead of classifying the hit surface, the
+    ray from the viewer through the cursor is intersected with every
+    opening cage's FRONT PLANE and checked against the opening rect
+    (padded a little so the frame area still resolves to the nearer
+    opening). Only intersections at or in front of the actual hit
+    count (slack covers proud fronts), which keeps cabinets behind an
+    aimed-at wall from grabbing the shelf. Nearest plane wins.
+    """
+    if view_point is None or hit_location is None:
+        return None
+    direction = hit_location - view_point
+    ray_len = direction.length
+    if ray_len <= 0.0:
+        return None
+    direction = direction / ray_len
+    pad = units.inch(0.75)
+    slack = units.inch(4.0)   # doors / drawer fronts sit proud of the box
+    best = None
+    best_t = None
+    for cage in context.scene.objects:
+        if not cage.get(types_face_frame.TAG_OPENING_CAGE):
+            continue
+        root = types_face_frame.find_cabinet_root(cage)
+        if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
+            continue
+        try:
+            gn = hb_types.GeoNodeCage(cage)
+            dx = gn.get_input('Dim X')
+            dy = gn.get_input('Dim Y')
+            dz = gn.get_input('Dim Z')
+        except Exception:
+            continue
+        if not dx or not dz:
+            continue
+        if not dy:
+            dy = root.face_frame_cabinet.depth
+        inv = _cage_world_matrix(cage).inverted()
+        o = inv @ view_point
+        d = inv.to_3x3() @ direction
+        # Slab-method ray/box in cage space: origin at the opening's
+        # front-bottom-left, +Y toward the back, padded a little in X/Z
+        # so the frame area still resolves to the nearer opening.
+        lo = (-pad, -units.inch(1.0), -pad)
+        hi = (dx + pad, dy, dz + pad)
+        t_near, t_far = 0.0, ray_len + slack
+        ok = True
+        for axis in range(3):
+            da = d[axis]
+            oa = o[axis]
+            if abs(da) < 1e-9:
+                if oa < lo[axis] or oa > hi[axis]:
+                    ok = False
+                    break
+                continue
+            t0 = (lo[axis] - oa) / da
+            t1 = (hi[axis] - oa) / da
+            if t0 > t1:
+                t0, t1 = t1, t0
+            t_near = max(t_near, t0)
+            t_far = min(t_far, t1)
+            if t_near > t_far:
+                ok = False
+                break
+        if not ok:
+            continue
+        if best_t is None or t_near < best_t:
+            best, best_t = cage, t_near
+    return best
+
+
 def _corner_snap_target_under_cursor(hit_object, hit_location):
     """Resolve a CORNER cabinet under the cursor as a snap target, even
     when it is parented to a wall.
@@ -1919,6 +2026,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._fill_no_bays = bool(getattr(cls_inst, 'fill_no_bays', False))
         self._fill_manual_bays = bool(getattr(cls_inst, 'fill_manual_bays', False))
         self._follow_cursor_z = bool(getattr(cls_inst, 'follow_cursor_z', False))
+        self._snap_cab_top = bool(getattr(cls_inst, 'snap_cabinet_top', False))
+        # Set while the cursor previews inside a cabinet opening
+        # (floating shelf only): (opening_cage, width, depth, local_loc).
+        self._opening_target = None
+        # Set while the cursor previews a wood top seated on a cabinet:
+        # (cabinet_root, width, depth, local_loc).
+        self._top_target = None
         self._recess_into_wall = bool(getattr(cls_inst, 'recess_into_wall', False))
         # Cage depth/height come straight from the cabinet class so the
         # preview matches subclasses with non-standard dims (e.g. the
@@ -2449,6 +2563,41 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # _position_on_wall_side turns it back on.
         self._peninsula = False
 
+        # Floating shelf over a cabinet opening -> snap INSIDE that
+        # opening (finished-opening shelving): the shelf auto-fits the
+        # opening span like an adjustable shelf and the cursor drives
+        # its vertical location. Cleared here so leaving the opening
+        # falls back to the normal wall flow.
+        if getattr(self, '_follow_cursor_z', False):
+            opening = _opening_under_cursor(
+                context, getattr(self, 'view_point', None),
+                self.hit_location)
+            if opening is not None:
+                self._position_in_opening(context, opening)
+                return
+            if getattr(self, '_opening_target', None) is not None:
+                # Left the opening: restore the product's own depth
+                # (the in-opening fit narrowed the preview cage).
+                self._opening_target = None
+                self._preview_cage.set_input('Dim Y', self._cabinet_depth)
+
+        # Wood top over a cabinet -> preview seated on that cabinet's
+        # top, sized to it plus the default overhangs; off-cabinet
+        # falls through to free placement.
+        if getattr(self, '_snap_cab_top', False):
+            cab = types_face_frame.find_cabinet_root(self.hit_object)
+            if (cab is not None
+                    and (cab.get(types_face_frame.FLOATING_SHELF_TAG)
+                         or cab.get(types_face_frame.WOOD_TOP_TAG))):
+                cab = (types_face_frame.find_cabinet_root(cab.parent)
+                       if cab.parent is not None else None)
+            if cab is not None:
+                self._position_on_cabinet_top(context, cab)
+                return
+            if getattr(self, '_top_target', None) is not None:
+                self._top_target = None
+                self._preview_cage.set_input('Dim Y', self._cabinet_depth)
+
         # Sink + cursor on a Range -> island layout (sink facing the
         # range across a 48" aisle). Checked before wall detection: a
         # direct raycast hit on the range is a stronger signal than the
@@ -2541,6 +2690,128 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return
 
         self._position_free(context)
+
+    def _position_in_opening(self, context, opening):
+        """Preview the floating shelf INSIDE a cabinet opening.
+
+        Fit mirrors an adjustable shelf: width = opening span minus the
+        shelf side clearances, depth = opening depth minus the back
+        setback, front at the opening front plane. The cursor's height
+        (snapped to whole inches) sets the shelf's vertical location,
+        clamped inside the opening. The target is stashed on
+        _opening_target for _finalize to commit.
+        """
+        from .. import solver_face_frame as solver
+        cage_obj = self._preview_cage.obj
+        try:
+            gn = hb_types.GeoNodeCage(opening)
+            dx = gn.get_input('Dim X')
+            dy = gn.get_input('Dim Y')
+            dz = gn.get_input('Dim Z')
+        except Exception:
+            self._opening_target = None
+            self._position_free(context)
+            return
+        if not dy:
+            # Opening cages that don't carry a depth fall back to the
+            # host cabinet's depth.
+            host = types_face_frame.find_cabinet_root(opening)
+            dy = host.face_frame_cabinet.depth if host is not None else 0.0
+        width = max(units.inch(1.0), dx - 2.0 * solver.SHELF_X_CLEARANCE)
+        depth = max(units.inch(1.0), dy - solver.SHELF_BACK_SETBACK)
+        thickness = self._preview_cage.get_input('Dim Z')
+
+        # Basis-composed matrix: a hidden empty opening cage's
+        # matrix_world can be depsgraph-stale (see _cage_world_matrix).
+        opening_world = _cage_world_matrix(opening)
+        local = opening_world.inverted() @ self.hit_location
+        z = units.inch(round(units.meter_to_inch(local.z)))
+        z = min(max(z, 0.0), max(0.0, dz - thickness))
+
+        # Cage origin at the shelf's BACK face (the product extends -Y
+        # via Mirror Y, like a cabinet), so it sits at the fitted depth
+        # from the opening's front plane.
+        loc = Vector((solver.SHELF_X_CLEARANCE, depth, z))
+        self._cabinet_width = width
+        self._update_cage()
+        self._preview_cage.set_input('Dim Y', depth)
+        cage_obj.matrix_world = (
+            opening_world @ Matrix.Translation(loc))
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._opening_target = (opening, width, depth, loc.copy())
+        self._placement_dim_specs = self._build_dim_specs_in_opening(
+            context, opening, width, loc, thickness)
+
+    def _build_dim_specs_in_opening(self, context, opening, width, loc,
+                                    thickness):
+        """Placement dims while previewing inside an opening: the
+        fitted width above the shelf, the shelf-bottom height off the
+        FLOOR down the left side, and the clear gap from the opening
+        bottom (green, since it's the in-opening measure the user is
+        actually driving with the cursor)."""
+        unit_settings = context.scene.unit_settings
+        wm = _cage_world_matrix(opening)
+        z = loc.z
+        specs = []
+
+        # Width, drawn just above the shelf top.
+        z_dim = z + thickness + units.inch(2.0)
+        s = wm @ Vector((loc.x, 0.0, z_dim))
+        e = wm @ Vector((loc.x + width, 0.0, z_dim))
+        specs.append(hb_placement.PlacementDimSpec(
+            s, e, units.unit_to_string(unit_settings, width), None))
+
+        # Height off the floor to the shelf's bottom face: world
+        # vertical from the room floor (z=0) below the shelf's front
+        # left corner.
+        base = wm @ Vector((loc.x - units.inch(2.0), 0.0, z))
+        floor = Vector((base.x, base.y, 0.0))
+        if base.z > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                floor, base,
+                units.unit_to_string(unit_settings, base.z), None))
+
+        # Clear gap from the opening bottom, drawn on the right; green
+        # to match the snap-adjacency convention.
+        if z > units.inch(0.5):
+            gs = wm @ Vector((loc.x + width + units.inch(2.0), 0.0, 0.0))
+            ge = wm @ Vector((loc.x + width + units.inch(2.0), 0.0, z))
+            specs.append(hb_placement.PlacementDimSpec(
+                gs, ge, units.unit_to_string(unit_settings, z),
+                (0.30, 0.95, 0.40, 1.0)))
+        return specs
+
+    def _position_on_cabinet_top(self, context, cab):
+        """Preview the wood top seated on `cab`'s top surface.
+
+        Sized to the cabinet plus the default overhangs (the propgroup
+        defaults; per-top edits come later via the right-click Wood Top
+        Options). Back edge tracks the cabinet back, slab thickness is
+        the product height. The target is stashed on _top_target for
+        _finalize to commit.
+        """
+        from .. import props_hb_face_frame as pm
+        cage_obj = self._preview_cage.obj
+        p = cab.face_frame_cabinet
+        wt_def = pm.Face_Frame_Wood_Top_Props.bl_rna.properties
+        ov_f = wt_def['overhang_front'].default
+        ov_b = wt_def['overhang_back'].default
+        ov_l = wt_def['overhang_left'].default
+        ov_r = wt_def['overhang_right'].default
+        width = p.width + ov_l + ov_r
+        depth = p.depth + ov_f + ov_b
+        loc = Vector((-ov_l, ov_b, p.height))
+        self._cabinet_width = width
+        self._update_cage()
+        self._preview_cage.set_input('Dim Y', depth)
+        cage_obj.matrix_world = cab.matrix_world @ Matrix.Translation(loc)
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._top_target = (cab, width, depth, loc.copy())
+        self._placement_dim_specs = self._build_dim_specs_free(context)
 
     def _position_on_wall(self, context, wall):
         """Parent the cage to the wall and fill the available gap.
@@ -3702,6 +3973,79 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         cab_obj = cabinet.obj
 
+        # Floating shelf committed INSIDE a cabinet opening: parent it
+        # to the opening cage so it rides the cabinet, size it to the
+        # fit the preview showed, and let the host recalc take over the
+        # authoritative fit (its interior pass re-fits opening shelves
+        # on every cabinet resize). Ends butt the opening sides, so no
+        # end panels.
+        opening_target = getattr(self, '_opening_target', None)
+        if (getattr(self, '_follow_cursor_z', False)
+                and opening_target is not None
+                and cab_obj.get(types_face_frame.FLOATING_SHELF_TAG)):
+            opening, fit_w, fit_d, loc = opening_target
+            try:
+                opening.name  # raises if the cage was deleted mid-modal
+            except ReferenceError:
+                opening = None
+            if opening is not None:
+                cab_obj.parent = opening
+                cab_obj.matrix_parent_inverse.identity()
+                cab_obj.location = loc
+                cab_obj.rotation_euler = (0.0, 0.0, 0.0)
+                cab_props = cab_obj.face_frame_cabinet
+                cab_props.depth = fit_d
+                cab_props.width = fit_w
+                sp = cab_obj.floating_shelf
+                sp.finish_left = False
+                sp.finish_right = False
+                host = types_face_frame.find_cabinet_root(opening)
+                if host is not None:
+                    types_face_frame.recalculate_face_frame_cabinet(host)
+                for o in context.selected_objects:
+                    o.select_set(False)
+                cab_obj.select_set(True)
+                context.view_layer.objects.active = cab_obj
+                hb_placement.clear_header_text(context)
+                self.report(
+                    {'INFO'},
+                    f"Placed {self.cabinet_name} in {opening.name} "
+                    f"({fit_w * 39.37008:.1f}\" wide)")
+                return {'FINISHED'}
+
+        # Wood top committed ON a cabinet: parent to that cabinet so it
+        # rides along, sized to the cabinet plus the overhangs. The
+        # anchor parenting is what the right-click overhang options
+        # refit against.
+        top_target = getattr(self, '_top_target', None)
+        if (getattr(self, '_snap_cab_top', False)
+                and top_target is not None
+                and cab_obj.get(types_face_frame.WOOD_TOP_TAG)):
+            anchor, fit_w, fit_d, loc = top_target
+            try:
+                anchor.name
+            except ReferenceError:
+                anchor = None
+            if anchor is not None:
+                cab_obj.parent = anchor
+                cab_obj.matrix_parent_inverse.identity()
+                cab_obj.location = loc
+                cab_obj.rotation_euler = (0.0, 0.0, 0.0)
+                # Once parented, rebuild() sizes from the anchor plus
+                # the propgroup overhangs (the same numbers the preview
+                # showed) and keeps tracking overhang edits.
+                cabinet.rebuild()
+                for o in context.selected_objects:
+                    o.select_set(False)
+                cab_obj.select_set(True)
+                context.view_layer.objects.active = cab_obj
+                hb_placement.clear_header_text(context)
+                self.report(
+                    {'INFO'},
+                    f"Placed {self.cabinet_name} on {anchor.name} "
+                    f"({fit_w * 39.37008:.1f}\" wide)")
+                return {'FINISHED'}
+
         if captured_parent is not None:
             cab_obj.parent = captured_parent
             cab_obj.matrix_parent_inverse.identity()
@@ -3808,6 +4152,15 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             sp = selection_target.floating_shelf
             sp.finish_left = fl
             sp.finish_right = fr
+
+        # Auto-set a mantle's finished ends the same way: box end panel
+        # + crown return when the end is exposed.
+        if selection_target.get('IS_MANTLE_PRODUCT'):
+            context.view_layer.update()
+            fl, fr = exposure.auto_floating_shelf_finish(selection_target)
+            mp = selection_target.mantle_product
+            mp.finish_left = fl
+            mp.finish_right = fr
 
         # Auto-set a valance's finished ends the same way: a return
         # panel when the end is exposed, none when a cabinet abuts it.

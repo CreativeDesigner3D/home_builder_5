@@ -465,6 +465,82 @@ class hb_face_frame_OT_equalize_bays(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: equalize opening heights across selected openings
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_equalize_opening_heights(bpy.types.Operator):
+    """Lock every selected opening's height to the ACTIVE opening's
+    height. Works across bays and cabinets -- the right-click companion
+    to hand-locking each opening's height in the Openings menu (e.g.
+    matching drawer stacks beside a bay whose flush bottom rail eats
+    into its openings). Only H-split children carry a height of their
+    own: a bay's single root opening follows the bay, and V-split
+    children size by width, so both are skipped with a note."""
+    bl_idname = "hb_face_frame.equalize_opening_heights"
+    bl_label = "Equalize Opening Heights"
+    bl_description = (
+        "Lock every selected opening's height to the active opening's "
+        "height (openings stacked in a horizontal split)"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @staticmethod
+    def _is_h_split_child(cage):
+        parent = cage.parent
+        return (parent is not None
+                and hasattr(parent, 'face_frame_split')
+                and parent.get('IS_FACE_FRAME_SPLIT_NODE')
+                and parent.face_frame_split.axis == 'H')
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get('IS_FACE_FRAME_OPENING_CAGE'))
+
+    def execute(self, context):
+        cages = [o for o in context.selected_objects
+                 if o.get('IS_FACE_FRAME_OPENING_CAGE')]
+        active = context.active_object
+        if active is None or not active.get('IS_FACE_FRAME_OPENING_CAGE'):
+            self.report({'WARNING'}, "Active object is not an opening")
+            return {'CANCELLED'}
+        if active not in cages:
+            cages.append(active)
+        if len(cages) < 2:
+            self.report({'WARNING'}, "Select two or more openings")
+            return {'CANCELLED'}
+        if not self._is_h_split_child(active):
+            self.report(
+                {'WARNING'},
+                "The active opening has no height of its own (only "
+                "openings stacked in a horizontal split do)")
+            return {'CANCELLED'}
+        target = active.face_frame_opening.size
+        roots = []
+        skipped = 0
+        changed = 0
+        with types_face_frame.suspend_recalc():
+            for cage in cages:
+                if not self._is_h_split_child(cage):
+                    skipped += 1
+                    continue
+                fo = cage.face_frame_opening
+                fo.unlock_size = True
+                fo.size = target
+                changed += 1
+                root = types_face_frame.find_cabinet_root(cage)
+                if root is not None and root not in roots:
+                    roots.append(root)
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        msg = (f"Locked {changed} opening(s) at "
+               f"{meter_to_inch(target):.2f}\"")
+        if skipped:
+            msg += f" ({skipped} skipped: no height of their own)"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Selection mode application (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 # Module-level so non-operator callers (the live-preview appliance dialog)
@@ -635,6 +711,75 @@ def _selection_mode_toggle_one(obj, mode):
 
 
 # ---------------------------------------------------------------------------
+# Operator: wood top options popup (right-click -> Wood Top Options)
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
+    """Options dialog for a Wood Top (countertop part).
+
+    Construction label, slab thickness, and the four overhangs. The
+    overhangs refit the top from the cabinet it is parented to (the one
+    placement seated it on); a free-standing top edits its width and
+    depth directly instead. All rows are live-bound props, so edits
+    apply as they're made and OK just closes the dialog.
+    """
+    bl_idname = "hb_face_frame.wood_top_prompts"
+    bl_label = "Wood Top Options"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.WOOD_TOP_TAG))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        if obj is None or not obj.get(types_face_frame.WOOD_TOP_TAG):
+            layout.label(text="No wood top selected", icon='INFO')
+            return
+        wt = obj.wood_top
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(wt, 'top_type')
+        col.prop(wt, 'thickness')
+        col.separator()
+        # Nosing: edge profile from the shelf-nosing set; the
+        # extra-height styles take a height of their own. Side toggles
+        # pick which edges are milled (exposed sides, not walls).
+        col.prop(wt, 'nosing_style')
+        if wt.nosing_style != 'NONE':
+            if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
+                col.prop(wt, 'nosing_height')
+            row = col.row(align=True)
+            row.label(text="Nosing Sides:")
+            row = col.row(align=True)
+            row.prop(wt, 'nosing_front', text="Front", toggle=True)
+            row.prop(wt, 'nosing_back', text="Back", toggle=True)
+            row.prop(wt, 'nosing_left', text="Left", toggle=True)
+            row.prop(wt, 'nosing_right', text="Right", toggle=True)
+        col.separator()
+        anchor = obj.parent
+        anchored = (anchor is not None
+                    and bool(anchor.get(types_face_frame.TAG_CABINET_CAGE)))
+        if anchored:
+            col.label(text=f"Overhangs from {anchor.name}:")
+            col.prop(wt, 'overhang_front')
+            col.prop(wt, 'overhang_back')
+            col.prop(wt, 'overhang_left')
+            col.prop(wt, 'overhang_right')
+        else:
+            col.prop(wt, 'width')
+            col.prop(wt, 'depth')
+
+
+# ---------------------------------------------------------------------------
 # Operator: cabinet prompts popup (right-click -> Cabinet Prompts)
 # ---------------------------------------------------------------------------
 class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
@@ -698,18 +843,13 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             # dims above are the editor); multi-bay gets a compact box
             # per bay with editable size + an expand toggle for more.
             ui_face_frame.draw_bays_in_prompts(layout, root)
-            # Applied panels: surface the auto-openings toggle so a user
-            # can return a manually-pinned panel to width-driven openings,
-            # plus the vertical-divisions override (0 = width-driven).
-            # The override only applies while Auto Openings is on -- a
+            # Applied panels: the shared layout block (auto-openings
+            # toggle, column + row overrides, per-row heights, X frame).
+            # The overrides only apply while Auto Openings is on -- a
             # pinned panel keeps whatever tree the user built by hand.
             if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                     or types_face_frame._is_standalone_panel(root)):
-                layout.prop(cab_props, 'panel_split_auto')
-                row = layout.row()
-                row.enabled = cab_props.panel_split_auto
-                row.prop(cab_props, 'panel_vertical_bays')
-                layout.prop(cab_props, 'panel_x_frame')
+                ui_face_frame.draw_panel_layout(layout, root)
         elif self.active_tab == 'CONSTRUCTION':
             ui_face_frame.draw_construction(layout, cab_props)
             # Refrigerator opening height + per-side raise (self-gated
@@ -717,6 +857,623 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             ui_face_frame.draw_refrigerator_options(layout, root)
         elif self.active_tab == 'FACE_FRAME':
             ui_face_frame.draw_face_frame_defaults(layout, cab_props)
+
+
+def _owning_panel_root(obj):
+    """The applied / standalone panel root that owns ``obj`` (which may
+    be the root itself or any of its parts), or None."""
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+            or types_face_frame._is_standalone_panel(root)):
+        return root
+    return None
+
+
+class hb_face_frame_OT_panel_layout_prompts(bpy.types.Operator):
+    """Edit an applied panel's layout: columns, rows and row heights.
+    Reachable from the right-click menu of any of the panel's parts."""
+    bl_idname = "hb_face_frame.panel_layout_prompts"
+    bl_label = "Panel Layout"
+    bl_description = ("Edit this panel's openings: columns, rows and "
+                      "row heights")
+    bl_options = {'UNDO'}
+
+    # The panel root is resolved ONCE at invoke and held by name: the
+    # clicked part (e.g. a mid rail the edit removes) can die in a
+    # rebuild mid-dialog, and the active object with it - the root
+    # itself survives every rebuild.
+    panel_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _owning_panel_root(context.active_object) is not None
+
+    def invoke(self, context, event):
+        root = _owning_panel_root(context.active_object)
+        if root is None:
+            self.report({'WARNING'}, "Select a panel part first")
+            return {'CANCELLED'}
+        self.panel_name = root.name
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = bpy.data.objects.get(self.panel_name)
+        if root is None:
+            root = _owning_panel_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No panel selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_panel_layout(self.layout, root)
+
+
+# ---------------------------------------------------------------------------
+# Drawer Interior editor: one dialog to lay out everything inside a drawer.
+# A list box of the drawer's accessories with add / delete, and the selected
+# item's settings (quantity, orientation, position) below it, so multiple
+# accessories can be positioned without leaving the dialog. HB5 ships no
+# catalog - the add dropdown is filled from the accessory_registry providers
+# (drawer host), like every other accessory surface.
+# ---------------------------------------------------------------------------
+class AccessorySearchRow(bpy.types.PropertyGroup):
+    """One result row in an accessory search list."""
+    code: bpy.props.StringProperty()  # type: ignore
+    label: bpy.props.StringProperty()  # type: ignore
+    name: bpy.props.StringProperty()  # type: ignore
+    section: bpy.props.StringProperty()  # type: ignore
+    group: bpy.props.StringProperty()  # type: ignore
+    # Non-empty when the accessory builds geometry, so a search row can
+    # say up front whether picking it will show anything in the drawer.
+    render_kind: bpy.props.StringProperty()  # type: ignore
+
+
+def _populate_drawer_accessory_search(operator, context):
+    """Fill ``operator.matches`` with the host application's drawer
+    accessories, ordered by group then name and narrowed by
+    ``operator.filter_text``. The filter is split into space-separated
+    tokens; every token must appear (case-insensitively) in the item's
+    name, group or code, so "knife dbl" or "kbwd" both land on the
+    double tier block."""
+    operator.matches.clear()
+    tokens = operator.filter_text.lower().split()
+    found = []
+    for it in accessory_registry.all_items():
+        if it.get('host') != 'drawer_accessory':
+            continue
+        code = it.get('code')
+        if not code:
+            continue
+        name = it.get('name', code)
+        group = it.get('group', '')
+        if tokens:
+            hay = (" ".join((name, group, code))).lower()
+            if not all(tok in hay for tok in tokens):
+                continue
+        found.append((group.lower(), name.lower(), code, name, group,
+                      it.get('render') or ''))
+    for _g, _n, code, name, group, render in sorted(found):
+        row = operator.matches.add()
+        row.code = code
+        row.name = name
+        row.label = name
+        row.group = group
+        row.render_kind = types_face_frame.render_hint_kind(render.upper())
+    operator.match_index = min(operator.match_index,
+                               max(0, len(operator.matches) - 1))
+
+
+class HB_UL_face_frame_drawer_catalog(bpy.types.UIList):
+    """Search results for the drawer's Add list: the accessory, its
+    product code, and the group it belongs to. The code earns its
+    column - two different products can carry the same name, and it is
+    what gets quoted. Items that build real geometry are flagged so it
+    is obvious which ones will show up inside the drawer."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_propname):
+        split = layout.split(factor=0.52)
+        split.label(text=item.label,
+                    icon='MESH_GRID' if item.render_kind else 'DOT')
+        sub = split.split(factor=0.28)
+        sub.label(text=item.code)
+        sub.label(text=item.group)
+
+
+class HB_UL_face_frame_drawer_items(bpy.types.UIList):
+    """The drawer's accessories: label on the left, quantity on the
+    right. Non-accessory interior kinds are filtered out - this list is
+    about what goes INSIDE the drawer box."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_propname):
+        split = layout.split(factor=0.75)
+        split.label(text=item.accessory_label or item.accessory_code,
+                    icon='SNAP_VERTEX')
+        qty = getattr(item, 'accessory_qty', 1)
+        split.label(text=("x%d" % qty) if qty > 1 else "")
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        flt = [self.bitflag_filter_item if it.kind == 'ACCESSORY' else 0
+               for it in items]
+        return flt, []
+
+
+# ---------------------------------------------------------------------------
+# Drawer box construction: which box system a drawer / rollout is built
+# from. HB5 ships no list - the host application supplies the options
+# through the accessory registry, same as every other catalog-backed
+# surface. The pick lives on the owning opening (boxes are wiped and
+# rebuilt every recalc); blank = the project default.
+# ---------------------------------------------------------------------------
+DRAWER_BOX_CONSTRUCTION_HOST = 'drawer_box_construction'
+DRAWER_BOX_CONSTRUCTION_DEFAULT = 'DEFAULT'
+# Slides ride the same registry shape: the host supplies the options
+# (host 'drawer_slides'), the pick lives on the owning opening as pure
+# spec metadata for the odd heavy duty drawer.
+DRAWER_SLIDES_HOST = 'drawer_slides'
+
+_drawer_box_construction_items = []
+_drawer_slides_items = []
+
+
+def _opening_overlay_bucket(opening):
+    """The door-overlay bucket of the cabinet style governing an opening
+    (walk up to the cage, resolve STYLE_NAME), or None when unresolvable."""
+    if opening is None:
+        return None
+    cur = opening
+    while cur is not None:
+        if cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+            style_name = cur.get('STYLE_NAME')
+            if style_name:
+                ff = props_hb_face_frame.get_style_props()
+                for cs in ff.cabinet_styles:
+                    if cs.name == style_name:
+                        return cs.door_overlay_type
+            return None
+        cur = cur.parent
+    return None
+
+
+def drawer_box_construction_options(overlay=None):
+    """(code, name) for every box construction the host provides. Items may
+    declare overlays they are not offered for (excluded_overlays); those are
+    dropped when the caller passes the governing overlay bucket."""
+    out = []
+    for it in accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST):
+        if overlay and overlay in (it.get('excluded_overlays') or ()):
+            continue
+        code = it.get('code')
+        if code:
+            out.append((code, it.get('name', code)))
+    return out
+
+
+def drawer_box_construction_label(code):
+    """Display name for a construction code, falling back to the code."""
+    entry = accessory_registry.lookup(
+        DRAWER_BOX_CONSTRUCTION_HOST, code) or {}
+    return entry.get('name', code)
+
+
+def _drawer_box_construction_enum(self, context):
+    """Project Default plus every construction the host provides for the
+    opening's overlay."""
+    overlay = _opening_overlay_bucket(
+        bpy.data.objects.get(getattr(self, 'opening_name', '') or ''))
+    _drawer_box_construction_items.clear()
+    _drawer_box_construction_items.append(
+        (DRAWER_BOX_CONSTRUCTION_DEFAULT, "Project Default",
+         "Build these boxes to the project's default construction"))
+    for code, name in drawer_box_construction_options(overlay):
+        _drawer_box_construction_items.append((code, name, ""))
+    return _drawer_box_construction_items
+
+
+def _set_opening_construction(opening, code):
+    """Write a construction pick (code, '' = default) plus its cached
+    label onto an opening. The code prop's update runs the rebuild."""
+    props = opening.face_frame_opening
+    if code == DRAWER_BOX_CONSTRUCTION_DEFAULT:
+        code = ''
+    if (props.drawer_box_construction or '') == code:
+        return False
+    props.drawer_box_construction_label = (
+        drawer_box_construction_label(code) if code else '')
+    props.drawer_box_construction = code
+    return True
+
+
+def drawer_slides_options():
+    """(code, name) for every slide option the host provides."""
+    out = []
+    for it in accessory_registry.get_items(DRAWER_SLIDES_HOST):
+        code = it.get('code')
+        if code:
+            out.append((code, it.get('name', code)))
+    return out
+
+
+def drawer_slides_label(code):
+    """Display name for a slide code, falling back to the code."""
+    entry = accessory_registry.lookup(DRAWER_SLIDES_HOST, code) or {}
+    return entry.get('name', code)
+
+
+def _drawer_slides_enum(self, context):
+    """Project Default plus every slide option the host provides."""
+    _drawer_slides_items.clear()
+    _drawer_slides_items.append(
+        (DRAWER_BOX_CONSTRUCTION_DEFAULT, "Project Default",
+         "Use the project's slide selection for these drawers"))
+    for code, name in drawer_slides_options():
+        _drawer_slides_items.append((code, name, ""))
+    return _drawer_slides_items
+
+
+def _set_opening_slides(opening, code):
+    """Write a slide pick (code, '' = default) plus its cached label
+    onto an opening."""
+    props = opening.face_frame_opening
+    if code == DRAWER_BOX_CONSTRUCTION_DEFAULT:
+        code = ''
+    if (props.drawer_slides or '') == code:
+        return False
+    props.drawer_slides_label = (
+        drawer_slides_label(code) if code else '')
+    props.drawer_slides = code
+    return True
+
+
+class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
+    """Build the clicked drawer's / rollout's boxes to the chosen
+    construction. Stored on the owning opening, so it survives the
+    rebuild that wipes the boxes themselves."""
+    bl_idname = "hb_face_frame.set_drawer_box_construction"
+    bl_label = "Set Drawer Box Construction"
+    bl_description = ("Build this opening's drawer boxes with the chosen "
+                      "construction")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = (bpy.data.objects.get(self.opening_name)
+                   if self.opening_name
+                   else _find_owning_opening(context.active_object))
+        if opening is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        _set_opening_construction(opening, self.code)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_set_drawer_slides(bpy.types.Operator):
+    """Run the clicked drawer's / rollout's boxes on the chosen slide
+    hardware. Stored on the owning opening, so it survives the rebuild
+    that wipes the boxes themselves."""
+    bl_idname = "hb_face_frame.set_drawer_slides"
+    bl_label = "Set Drawer Slides"
+    bl_description = "Run this opening's drawers on the chosen slides"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = (bpy.data.objects.get(self.opening_name)
+                   if self.opening_name
+                   else _find_owning_opening(context.active_object))
+        if opening is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        _set_opening_slides(opening, self.code)
+        return {'FINISHED'}
+
+
+def _drawer_opening_for(obj):
+    """The opening cage owning ``obj`` when it carries a drawer-style
+    front (drawer box, front, divider, or the cage itself)."""
+    opening = _find_owning_opening(obj)
+    if opening is None:
+        return None
+    front = opening.face_frame_opening.front_type
+    if front in ('DRAWER_FRONT', 'PULLOUT', 'TILT_OUT'):
+        return opening
+    return None
+
+
+class hb_face_frame_OT_drawer_add_accessory(bpy.types.Operator):
+    """Append the chosen accessory to this drawer's item list."""
+    bl_idname = "hb_face_frame.drawer_add_accessory"
+    bl_label = "Add"
+    bl_description = "Add this accessory to the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None or not self.code or self.code == 'NONE':
+            return {'CANCELLED'}
+        entry = accessory_registry.find(self.code) or {}
+        props = opening.face_frame_opening
+        item = props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = entry.get('name', self.code)
+        item.accessory_code = self.code
+        item.accessory_render = (entry.get('render') or '').upper()
+        props.interior_items_index = len(props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_drawer_remove_accessory(bpy.types.Operator):
+    """Remove the selected accessory from this drawer."""
+    bl_idname = "hb_face_frame.drawer_remove_accessory"
+    bl_label = "Remove"
+    bl_description = "Remove the selected accessory from the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            return {'CANCELLED'}
+        props = opening.face_frame_opening
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            return {'CANCELLED'}
+        props.interior_items.remove(idx)
+        props.interior_items_index = min(idx,
+                                         len(props.interior_items) - 1)
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
+def _update_drawer_interior_construction(self, context):
+    """Live-bind the dialog's construction dropdown to the opening. The
+    no-op guard in _set_opening_construction keeps seeding the enum on
+    invoke from triggering a pointless rebuild."""
+    opening = bpy.data.objects.get(self.opening_name)
+    if opening is not None:
+        _set_opening_construction(opening, self.construction)
+
+
+def _update_drawer_interior_slides(self, context):
+    """Live-bind the dialog's slides dropdown to the opening; same
+    no-op-guard seeding contract as the construction dropdown."""
+    opening = bpy.data.objects.get(self.opening_name)
+    if opening is not None:
+        _set_opening_slides(opening, self.slides)
+
+
+class hb_face_frame_OT_drawer_interior(bpy.types.Operator):
+    """Lay out the inside of a drawer: add, remove and position the
+    accessories that live in the drawer box."""
+    bl_idname = "hb_face_frame.drawer_interior"
+    bl_label = "Drawer Interior"
+    bl_description = ("Design the inside of this drawer: add accessories "
+                      "and position them")
+    bl_options = {'UNDO'}
+
+    # Held by name so rebuilds (every accessory edit wipes and respawns
+    # the drawer box and its contents) can't blank the dialog.
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    filter_text: bpy.props.StringProperty(
+        name="Search",
+        description="Filter the accessory list by name, group or code",
+        options={'TEXTEDIT_UPDATE'},
+        update=lambda self, ctx: _populate_drawer_accessory_search(self, ctx),
+    )  # type: ignore
+    matches: bpy.props.CollectionProperty(type=AccessorySearchRow)  # type: ignore
+    match_index: bpy.props.IntProperty(default=0)  # type: ignore
+    construction: bpy.props.EnumProperty(
+        name="Box Construction", items=_drawer_box_construction_enum,
+        description="Construction this drawer's box is built to",
+        update=_update_drawer_interior_construction,
+    )  # type: ignore
+    slides: bpy.props.EnumProperty(
+        name="Slides", items=_drawer_slides_enum,
+        description="Slide hardware this drawer runs on",
+        update=_update_drawer_interior_slides,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _drawer_opening_for(context.active_object) is not None
+
+    def invoke(self, context, event):
+        opening = _drawer_opening_for(context.active_object)
+        if opening is None:
+            self.report({'WARNING'}, "Select a drawer first")
+            return {'CANCELLED'}
+        self.opening_name = opening.name
+        # Open the drawer so the user can see what they're laying out.
+        op_props = opening.face_frame_opening
+        if op_props.swing_percent < 0.5:
+            op_props.swing_percent = 1.0
+        # Seed the construction dropdown from the opening. A code the
+        # host no longer offers isn't in the enum - leave the dropdown
+        # on Project Default rather than raising; the stored pick is
+        # untouched unless the user picks something.
+        code = op_props.drawer_box_construction or ''
+        try:
+            self.construction = code or DRAWER_BOX_CONSTRUCTION_DEFAULT
+        except TypeError:
+            pass
+        slide_code = op_props.drawer_slides or ''
+        try:
+            self.slides = slide_code or DRAWER_BOX_CONSTRUCTION_DEFAULT
+        except TypeError:
+            pass
+        self.filter_text = ""
+        self.match_index = 0
+        _populate_drawer_accessory_search(self, context)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def check(self, context):
+        # Any edit in the dialog re-runs the filter and forces a redraw,
+        # so the list follows the search box keystroke by keystroke.
+        _populate_drawer_accessory_search(self, context)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            layout.label(text="No drawer selected", icon='INFO')
+            return
+        props = opening.face_frame_opening
+
+        # Box construction / slides sit above the accessory list:
+        # they're properties of the box itself, not of what goes in
+        # it. Each hidden when the host application offers no options.
+        has_construction = bool(drawer_box_construction_options())
+        has_slides = bool(drawer_slides_options())
+        if has_construction:
+            layout.prop(self, 'construction')
+        if has_slides:
+            layout.prop(self, 'slides')
+        if has_construction or has_slides:
+            layout.separator()
+
+        # Pick from the catalog: type to narrow, highlight, Add. The
+        # list is grouped the way the product data groups it, so
+        # browsing works as well as searching.
+        pick = layout.box()
+        pick.label(text="Add an accessory", icon='ADD')
+        pick.prop(self, 'filter_text', text="", icon='VIEWZOOM')
+        if len(self.matches) == 0:
+            pick.label(text="Nothing matches that search", icon='INFO')
+        else:
+            row = pick.row()
+            row.template_list(
+                "HB_UL_face_frame_drawer_catalog", "",
+                self, "matches",
+                self, "match_index",
+                rows=6,
+            )
+            side = row.column(align=True)
+            add = side.operator("hb_face_frame.drawer_add_accessory",
+                                text="", icon='ADD')
+            add.opening_name = self.opening_name
+            idx = max(0, min(self.match_index, len(self.matches) - 1))
+            add.code = self.matches[idx].code
+            note = pick.row()
+            note.enabled = False
+            note.label(text="Marked accessories are drawn in the drawer; "
+                            "the rest are listed only", icon='MESH_GRID')
+
+        layout.separator()
+        layout.label(text="In this drawer")
+        row = layout.row()
+        row.template_list(
+            "HB_UL_face_frame_drawer_items", "",
+            props, "interior_items",
+            props, "interior_items_index",
+            rows=4,
+        )
+        side = row.column(align=True)
+        rem = side.operator("hb_face_frame.drawer_remove_accessory",
+                            text="", icon='REMOVE')
+        rem.opening_name = self.opening_name
+
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            layout.label(text="Add an accessory to get started", icon='INFO')
+            return
+        item = props.interior_items[idx]
+        if item.kind != 'ACCESSORY':
+            return
+        from .. import ui_face_frame
+        box = layout.box()
+        box.label(text=item.accessory_label or item.accessory_code)
+        box.prop(item, 'accessory_qty', text="Quantity")
+        ui_face_frame.draw_drawer_insert_settings(box, item)
+
+
+class hb_face_frame_OT_toggle_front_open(bpy.types.Operator):
+    """Open or close the door / drawer the clicked part belongs to.
+    Right-click companion to Open Door Mode - resolves the owning
+    opening from any descendant (front, drawer box, divider, pull) and
+    flips its swing."""
+    bl_idname = "hb_face_frame.toggle_front_open"
+    bl_label = "Open / Close"
+    bl_description = "Open or close this door / drawer"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def _owning_opening(cls, obj):
+        cur = obj
+        while cur is not None:
+            if cur.get(types_face_frame.TAG_OPENING_CAGE):
+                return cur
+            cur = cur.parent
+        return None
+
+    @classmethod
+    def poll(cls, context):
+        opening = cls._owning_opening(context.active_object)
+        if opening is None:
+            return False
+        return opening.face_frame_opening.front_type in (
+            'DOOR', 'DRAWER_FRONT', 'PULLOUT', 'TILT_OUT')
+
+    def execute(self, context):
+        opening = self._owning_opening(context.active_object)
+        if opening is None:
+            return {'CANCELLED'}
+        op_props = opening.face_frame_opening
+        # The prop's update runs the recalc that moves the front.
+        op_props.swing_percent = (
+            0.0 if op_props.swing_percent > 0.5 else 1.0)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_panel_remove_stile(bpy.types.Operator):
+    """Merge a panel's columns into one opening (remove the mid
+    stile). Shortcut for Columns = 1 with Auto Openings on."""
+    bl_idname = "hb_face_frame.panel_remove_stile"
+    bl_label = "Remove Stile (Merge Openings)"
+    bl_description = ("Merge this panel's side-by-side openings into "
+                      "one full-width opening per row")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _owning_panel_root(context.active_object) is not None
+
+    def execute(self, context):
+        root = _owning_panel_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        # Order matters: the auto flag's update re-runs the split, so
+        # set the count first and let the toggle's rebuild see it. If
+        # auto is already on, the count write rebuilds by itself.
+        cab.panel_vertical_bays = 1
+        if not cab.panel_split_auto:
+            cab.panel_split_auto = True
+        return {'FINISHED'}
 
 
 # Maximum count of openings the split dialog can produce in one shot.
@@ -1178,6 +1935,60 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_sink_duo_drawer_prompts(bpy.types.Operator):
+    """Toggle / size the sink duo (U-shaped) option on a drawer box.
+
+    Right-click entry on a drawer box. The option lives on the owning
+    opening's props (boxes are wiped and rebuilt every recalc); the
+    props live-bind, so edits rebuild the box as the user types.
+    """
+    bl_idname = "hb_face_frame.sink_duo_drawer_prompts"
+    bl_label = "Sink Duo Drawer"
+    bl_description = ("Make this a U-shaped sink drawer: a centered "
+                      "notch from the back wraps the sink basin")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or not obj.get('IS_DRAWER_BOX'):
+            return False
+        return _find_owning_opening(obj) is not None
+
+    def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No owning opening found")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        layout = self.layout
+        opening_obj = bpy.data.objects.get(self.opening_name)
+        if opening_obj is None:
+            layout.label(text="Opening not found", icon='INFO')
+            return
+        op_props = opening_obj.face_frame_opening
+        col = layout.column(align=True)
+        col.prop(op_props, 'sink_duo')
+        sub = col.column(align=True)
+        sub.enabled = op_props.sink_duo
+        sub.prop(op_props, 'sink_duo_notch_width')
+        sub.prop(op_props, 'sink_duo_notch_depth')
+        col.separator()
+        col.label(text="Notch Depth 0 uses 2/3 of the box depth",
+                  icon='INFO')
+
+    def execute(self, context):
+        # Live-bound via the opening props' update callbacks.
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single bay.
 
@@ -1351,7 +2162,17 @@ def _interior_items_target(obj):
     - Opening cage with no tree: opening's flat interior_items.
     - Opening cage with a tree: None (the user must drill into a leaf).
     - Interior region (leaf): the leaf's interior_items.
+    - Any other descendant of an opening (drawer box, front, shelf,
+      divider, pull): the owning opening's collection, so right-
+      clicking the geometry works like right-clicking the cage.
     """
+    if obj is None:
+        return None
+    if not (obj.get(types_face_frame.TAG_OPENING_CAGE)
+            or obj.get(types_face_frame.TAG_INTERIOR_REGION)):
+        owner = _find_owning_opening(obj)
+        if owner is not None:
+            obj = owner
     if obj.get(types_face_frame.TAG_OPENING_CAGE):
         # When the opening has a tree, items live on leaves and the
         # opening's flat collection is dead. Block direct edits to
@@ -1375,9 +2196,9 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
     Face_Frame_Interior_Item supply the rest, and the user edits in
     the panel afterward.
 
-    The half_depth flag is a shortcut: when on, sets the new item's
-    kind to ADJUSTABLE_SHELF and bumps shelf_setback to 6" (a half-
-    depth shelf is just a deeper-setback adjustable shelf).
+    The half_depth flag is a shortcut: when on, the new item lands on
+    the HALF_DEPTH_SHELF kind regardless of the kind the operator was
+    called with (kept for callers predating the dedicated kind).
     """
     bl_idname = "hb_face_frame.add_interior_item"
     bl_label = "Add Interior Item"
@@ -1396,7 +2217,7 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
 
     half_depth: bpy.props.BoolProperty(
         name="Half Depth",
-        description="Create a half-depth adjustable shelf (kind = ADJUSTABLE_SHELF, shelf_setback = 6\")",
+        description="Create a half-depth shelf item (kind = HALF_DEPTH_SHELF)",
         default=False,
     )  # type: ignore
 
@@ -1430,10 +2251,10 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
         item = target_props.interior_items.add()
         if self.half_depth:
             # The half-depth preset is a kind override: regardless of
-            # what kind the operator was called with, we land on an
-            # adjustable shelf with the deeper setback.
-            item.kind = 'ADJUSTABLE_SHELF'
-            item.shelf_setback = inch(6.0)
+            # what kind the operator was called with, we land on the
+            # half-depth shelf kind (the solver computes the setback
+            # from the cavity depth).
+            item.kind = 'HALF_DEPTH_SHELF'
         else:
             item.kind = self.kind
             # Seed a couple of default boxes for a new rollout; the box
@@ -2013,8 +2834,8 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op = layout.operator(
                 "hb_face_frame.add_interior_item", text="Half-Depth Shelf",
             )
-            op.kind = 'ADJUSTABLE_SHELF'
-            op.half_depth = True
+            op.kind = 'HALF_DEPTH_SHELF'
+            op.half_depth = False
             op.target_name = target_name
 
             layout.separator()
@@ -2264,6 +3085,18 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
+    # Retracting mechanisms: regular door fronts plus the door_mechanism
+    # stamp (the solver applies the interior clearances; downstream 2D
+    # prints the labels). 'mechanism' is applied unconditionally in
+    # apply_opening_preset so plain presets clear a previous stamp.
+    'RETRACTING_DOOR':        {'front_type': 'DOOR', 'hinge_side': 'LEFT',
+                               'mechanism': 'RETRACTING'},
+    'RETRACTING_DOOR_PAIR':   {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'RETRACTING'},
+    'BIFOLD_RETRACTING_DOOR': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'RETRACTING_BIFOLD'},
+    'TOP_RETRACTING_DOOR':    {'front_type': 'DOOR', 'hinge_side': 'TOP',
+                               'mechanism': 'RETRACTING_TOP'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
     'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
@@ -2307,11 +3140,12 @@ def apply_opening_preset(opening_obj, config, **overrides):
     shelves = preset.get('shelves')
     if shelves == 'CLEAR':
         for i in range(len(op_props.interior_items) - 1, -1, -1):
-            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+            if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
+                                                   'HALF_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
     elif shelves == 'ENSURE':
         has_shelves = any(
-            item.kind == 'ADJUSTABLE_SHELF'
+            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
             for item in op_props.interior_items
         )
         if not has_shelves:
@@ -2330,6 +3164,9 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # Unconditional so re-applying any non-tilt-out preset (including
     # plain FALSE_FRONT) clears a previous tilt-out designation.
     op_props.is_tilt_out = bool(preset.get('tilt_out'))
+    # Same rule for the door mechanism: plain presets drop a previous
+    # retracting designation.
+    op_props.door_mechanism = preset.get('mechanism', 'NONE')
     if 'hinge_side' in preset:
         op_props.hinge_side = preset['hinge_side']
 
@@ -2343,7 +3180,8 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # re-seeds a shelf, so this must come after it).
     if overrides.get('no_shelves'):
         for i in range(len(op_props.interior_items) - 1, -1, -1):
-            if op_props.interior_items[i].kind == 'ADJUSTABLE_SHELF':
+            if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
+                                                   'HALF_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
 
     # Apply post-preset overrides. accessory_label targets the most
@@ -2384,6 +3222,10 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
+            ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
+            ('RETRACTING_DOOR_PAIR', "Retracting Doors (Pair)", "Pair of doors that open, then slide back into the cabinet"),
+            ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors", "Hinged pair that folds, then slides back into the cabinet"),
+            ('TOP_RETRACTING_DOOR', "Top-Mount Retracting Door", "Full-width door that retracts up into the cabinet"),
             ('DRAWER',            "Drawer",            "Drawer front"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
             ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),
@@ -2694,6 +3536,8 @@ class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
         item.kind = 'ACCESSORY'
         item.accessory_label = name
         item.accessory_code = self.product
+        item.accessory_render = ((entry.get('render') or '').upper()
+                                 if entry else '')
         target_props.interior_items_index = len(target_props.interior_items) - 1
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:
@@ -2824,6 +3668,8 @@ def _populate_accessory_search(operator, context):
         row.name = name
         row.section = sec
         row.group = grp
+        row.render_kind = types_face_frame.render_hint_kind(
+            (it.get('render') or '').upper())
         mw = it.get('min_opening_w')
         row.label = name if mw is None else "%s  (min %g\")" % (name, mw)
     operator.active_index = min(operator.active_index,
@@ -2955,6 +3801,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
                 new_item.kind = 'ACCESSORY'
                 new_item.accessory_label = name
                 new_item.accessory_code = self.product
+                new_item.accessory_render = (item.get('render') or '').upper()
                 region_props.interior_items_index = (
                     len(region_props.interior_items) - 1)
                 root = types_face_frame.find_cabinet_root(target)
@@ -2983,7 +3830,9 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
             self.report({'INFO'}, "Set pullout model: %s" % name)
             return {'FINISHED'}
 
-        # Every other host: a data-only ACCESSORY interior item.
+        # Every other host: an ACCESSORY interior item (data-only unless
+        # the catalog entry carries a render hint - dividers build real
+        # geometry inside the drawer box).
         target_props = _interior_items_target(target)
         if target_props is None:
             self.report({'WARNING'}, "Select an opening or interior region first")
@@ -2992,6 +3841,7 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
         new_item.kind = 'ACCESSORY'
         new_item.accessory_label = name
         new_item.accessory_code = self.product
+        new_item.accessory_render = (item.get('render') or '').upper()
         target_props.interior_items_index = len(target_props.interior_items) - 1
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:
@@ -3068,15 +3918,6 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
             op.group = grp
 
 
-class AccessorySearchRow(bpy.types.PropertyGroup):
-    """One result row in the accessory search dialog."""
-    code: bpy.props.StringProperty()  # type: ignore
-    label: bpy.props.StringProperty()  # type: ignore
-    name: bpy.props.StringProperty()  # type: ignore
-    section: bpy.props.StringProperty()  # type: ignore
-    group: bpy.props.StringProperty()  # type: ignore
-
-
 class HB_UL_face_frame_accessory_search(bpy.types.UIList):
     """Result list for the accessory search dialog: model name (with any
     minimum-width note) on the left, its catalog section / group on the
@@ -3084,7 +3925,8 @@ class HB_UL_face_frame_accessory_search(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data,
                   active_propname):
         split = layout.split(factor=0.55)
-        split.label(text=item.label, icon='DOT')
+        split.label(text=item.label,
+                    icon='MESH_GRID' if item.render_kind else 'DOT')
         loc = ("%s / %s" % (item.section, item.group)
                if item.group else item.section)
         split.label(text=loc)
@@ -3376,7 +4218,12 @@ class hb_face_frame_OT_toggle_flush_toe_kick(bpy.types.Operator):
                 # the lap drawer lift).
                 bp.kick_height = 0.0
                 bp.unlock_bottom_rail = True
-                bp.bottom_rail_width = FLUSH_KICK_BOTTOM_RAIL
+                # The wide rail covers the kick zone plus the rail itself,
+                # so it tracks the cabinet's toe kick height + bottom rail
+                # width; the constant only backstops degenerate values.
+                rail = cab.toe_kick_height + cab.bottom_rail_width
+                bp.bottom_rail_width = (rail if rail > _FLUSH_KICK_EPS
+                                        else FLUSH_KICK_BOTTOM_RAIL)
             else:
                 # Unlocking re-syncs the bay to the cabinet's
                 # toe_kick_height on the next recalc distribution.
@@ -4190,6 +5037,35 @@ class hb_face_frame_OT_floating_shelf_prompts(bpy.types.Operator):
         ui_face_frame.draw_floating_shelf(self.layout, root)
 
 
+class hb_face_frame_OT_mantle_prompts(bpy.types.Operator):
+    """Popup properties dialog for a mantle (right-click entry)."""
+    bl_idname = "hb_face_frame.mantle_prompts"
+    bl_label = "Mantle Properties"
+    bl_description = "Edit the mantle's style, dimensions, and finished ends"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and bool(root.get('IS_MANTLE_PRODUCT'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No mantle selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_mantle_product(self.layout, root)
+
+
 class hb_face_frame_OT_valance_prompts(bpy.types.Operator):
     """Popup properties dialog for a valance (right-click entry)."""
     bl_idname = "hb_face_frame.valance_prompts"
@@ -4315,6 +5191,21 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
 _appliance_dialog_session = [0]
 
 
+def _bay_layout_is_presetlike(bay_obj):
+    """True when the bay's current fronts are the door / false-front
+    layouts the sink and cooktop presets themselves produce, so the
+    dialog's immediate live preview loses nothing by rebuilding them.
+    Anything else (a drawer stack, pullouts, a split the user built)
+    must NOT be wiped by the seeded first execute -- those bays open
+    the dialog on Keep Existing instead."""
+    fronts = [c.face_frame_opening.front_type
+              for c in bay_obj.children_recursive
+              if c.get(types_face_frame.TAG_OPENING_CAGE)]
+    if len(fronts) > 2:
+        return False
+    return all(f in ('NONE', 'DOOR', 'FALSE_FRONT') for f in fronts)
+
+
 def _set_opening_interior(op_props, interior):
     """Set a door opening's interior to OPEN / SHELF / VANITY_SHELVES by
     rewriting only its shelf-type interior items (ADJUSTABLE_SHELF /
@@ -4323,7 +5214,8 @@ def _set_opening_interior(op_props, interior):
     """
     items = op_props.interior_items
     for i in range(len(items) - 1, -1, -1):
-        if items[i].kind in ('ADJUSTABLE_SHELF', 'VANITY_SHELVES'):
+        if items[i].kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                             'VANITY_SHELVES'):
             items.remove(i)
     if interior == 'SHELF':
         items.add()  # .add() picks up the EnumProperty default ADJUSTABLE_SHELF
@@ -4477,9 +5369,20 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             # Fresh bay: explicit defaults (REGISTER remembers last-used
             # values across invocations; the defaults should win here).
             # A vanity sink base is narrow (20"); kitchen sink / cooktop
-            # default to a 36" sink base.
-            self.config = 'FALSE_FRONT_DOORS'
-            self.width = (inch(20.0) if self.appliance_kind == 'VANITY_SINK'
+            # default to a 36" sink base. A bay whose fronts the user
+            # already customized (a drawer stack, pullouts, splits)
+            # opens on Keep Existing: the seeded execute below runs
+            # BEFORE the popup shows, and applying the false-front
+            # preset there would wipe a layout Keep Existing can never
+            # bring back.
+            presetlike = _bay_layout_is_presetlike(bay)
+            self.config = ('FALSE_FRONT_DOORS' if presetlike
+                           else 'KEEP_EXISTING')
+            # Keep Existing also keeps the bay's width; the sink-base
+            # width defaults only make sense when the preset rebuilds
+            # the fronts anyway.
+            self.width = (bp.width if not presetlike
+                          else inch(20.0) if self.appliance_kind == 'VANITY_SINK'
                           else inch(36.0))
         # Sinks default to an open interior (plumbing under the basin);
         # cooktop bays keep the shelf default. Still user-selectable in
@@ -4493,12 +5396,107 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         self.appliance_width = bp.front_drop_appliance_width
         self.left_filler_amount = bp.front_drop_left_filler
         self.right_filler_amount = bp.front_drop_right_filler
-        # Apply once with the seeded values, then keep the popup open --
-        # invoke_props_popup re-runs execute on every subsequent edit so
-        # the viewport tracks the dialog live.
-        if self.execute(context) == {'CANCELLED'}:
-            return {'CANCELLED'}
-        return context.window_manager.invoke_props_popup(self, event)
+        # Snapshot everything the live preview may touch so Cancel can
+        # put it back. (The front-layout preset is NOT previewed -- it
+        # only applies on OK -- so the snapshot stays scalar.)
+        self._revert = {
+            'appliance_bay': bay.get('APPLIANCE_BAY'),
+            'appliance_bay_kind': bay.get('APPLIANCE_BAY_KIND'),
+            'width': bp.width,
+            'unlock_width': bp.unlock_width,
+            'front_drop': bp.front_drop,
+            'include_fillers': bp.front_drop_include_fillers,
+            'set_appliance_width': bp.front_drop_set_appliance_width,
+            'appliance_width': bp.front_drop_appliance_width,
+            'left_filler': bp.front_drop_left_filler,
+            'right_filler': bp.front_drop_right_filler,
+        }
+        # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
+        # re-runs execute through the operator-repeat machinery, whose
+        # undo + re-execute rolled the bay back to its pre-dialog layout
+        # on every later edit (the last_preset guard then skipped the
+        # rebuild, so the viewport snapped back to the old fronts).
+        # check() live-previews the cheap reversible writes instead;
+        # the destructive front-layout preset waits for OK.
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def check(self, context):
+        """Live preview on each dialog edit: width / drop / fillers /
+        appliance stamp. Cheap prop writes + one recalc -- no front
+        layout rebuild (that happens on OK) so every edit is fully
+        reversible by Cancel."""
+        self._apply_scalars(context)
+        return True
+
+    def cancel(self, context):
+        """Dialog dismissed (Cancel / Esc / click-away): restore the
+        state the live preview touched."""
+        snap = getattr(self, '_revert', None)
+        bay = self._resolve_bay(context)
+        if snap is None or bay is None:
+            return
+        root = types_face_frame.find_cabinet_root(bay)
+        with types_face_frame.suspend_recalc():
+            for key, tag in (('appliance_bay', 'APPLIANCE_BAY'),
+                             ('appliance_bay_kind', 'APPLIANCE_BAY_KIND')):
+                if snap[key] is None:
+                    if tag in bay:
+                        del bay[tag]
+                else:
+                    bay[tag] = snap[key]
+            bp = bay.face_frame_bay
+            bp.width = snap['width']
+            bp.unlock_width = snap['unlock_width']
+            bp.front_drop = snap['front_drop']
+            bp.front_drop_include_fillers = snap['include_fillers']
+            bp.front_drop_set_appliance_width = snap['set_appliance_width']
+            bp.front_drop_appliance_width = snap['appliance_width']
+            bp.front_drop_left_filler = snap['left_filler']
+            bp.front_drop_right_filler = snap['right_filler']
+            if root is not None:
+                types_face_frame.recalculate_face_frame_cabinet(root)
+
+    def _apply_scalars(self, context):
+        """The reversible live-preview writes shared by check() and
+        execute(): appliance stamps, bay width, drop and fillers."""
+        if self.session_id and self.session_id != _appliance_dialog_session[0]:
+            return None
+        bay = self._resolve_bay(context)
+        if bay is None:
+            return None
+        root = types_face_frame.find_cabinet_root(bay)
+        if root is None or root.face_frame_cabinet.cabinet_type != 'BASE':
+            return None
+        with types_face_frame.suspend_recalc():
+            # Durable annotation signal: the bay cage persists across
+            # recalcs, so _apply_appliance_annotations can rebuild the
+            # square + word from this stamp every pass.
+            bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
+                                    else 'SINK')
+            # The annotation pass only needs SINK vs COOKTOP, but 2D
+            # consumers distinguish kitchen from vanity sinks (e.g.
+            # depth callout rules), so keep the specific kind too.
+            bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
+            bp = bay.face_frame_bay
+            # Width setter auto-locks unlock_width.
+            bp.width = self.width
+            # Drop: lower the bay's FRONT construction (top rail + front
+            # stretcher) by the amount. Only the front drops - the back,
+            # rear stretcher, sides and end / mid stiles stay full height
+            # to carry the countertop; the basin occupies the open band
+            # behind the dropped rail. Assigned (not added) so re-running
+            # the dialog replaces the drop instead of compounding it.
+            bp.front_drop = self.drop_bay_amount
+            # Drop-band fillers: written through even when the drop is 0
+            # or fillers are off - the solver gates on front_drop +
+            # include, so stale filler parts reconcile away.
+            bp.front_drop_include_fillers = self.include_fillers
+            bp.front_drop_set_appliance_width = self.set_appliance_width
+            bp.front_drop_appliance_width = self.appliance_width
+            bp.front_drop_left_filler = self.left_filler_amount
+            bp.front_drop_right_filler = self.right_filler_amount
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return bay, root
 
     def draw(self, context):
         layout = self.layout
@@ -4525,11 +5523,13 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         box.prop(self, 'config', expand=True)
         box.label(text="Interior:")
         box.prop(self, 'interior', expand=True)
+        # Width / drop / fillers preview live; the front-layout rebuild
+        # is deliberately deferred so Cancel can restore everything.
+        box.label(text="Configuration and Interior apply on OK",
+                  icon='INFO')
 
     def execute(self, context):
-        # Stale-popup guard: only the NEWEST dialog may touch the bay.
-        # A lingering popup from an earlier invocation re-executing with
-        # its frozen properties is what reverted configurations mid-edit.
+        # Stale-dialog guard: only the NEWEST dialog may touch the bay.
         # session_id 0 (direct EXEC / scripting, never invoked) is allowed.
         if self.session_id and self.session_id != _appliance_dialog_session[0]:
             return {'CANCELLED'}
@@ -4559,11 +5559,10 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             preset = 'DOUBLE_DOOR' if wide else 'LEFT_SWING_DOOR'
 
         with types_face_frame.suspend_recalc():
-            # Only rebuild the front layout when the resolved preset
-            # actually changed (config switch, or the width crossing the
-            # double-door threshold). Live-preview edits to width / drop /
-            # fillers / interior re-run execute constantly; rebuilding the
-            # opening tree each time would flicker and discard door styles.
+            # The destructive front-layout rebuild happens HERE (OK),
+            # never in the live preview -- so Cancel always has a bay
+            # layout to go back to. last_preset still guards a repeat
+            # execute (OK after OK via redo) from rebuilding twice.
             if (preset is not None and preset != self.last_preset
                     and not apply_bay_preset(bay, preset)):
                 self.report({'WARNING'},
@@ -4571,33 +5570,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                 return {'CANCELLED'}
             if preset is not None:
                 self.last_preset = preset
-            # Durable annotation signal: the bay cage persists across
-            # recalcs, so _apply_appliance_annotations can rebuild the
-            # square + word from this stamp every pass.
-            bay['APPLIANCE_BAY'] = ('COOKTOP' if self.appliance_kind == 'COOKTOP'
-                                    else 'SINK')
-            # The annotation pass only needs SINK vs COOKTOP, but 2D
-            # consumers distinguish kitchen from vanity sinks (e.g.
-            # depth callout rules), so keep the specific kind too.
-            bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
-            bp = bay.face_frame_bay
-            # Width setter auto-locks unlock_width.
-            bp.width = self.width
-            # Drop: lower the bay's FRONT construction (top rail + front
-            # stretcher) by the amount. Only the front drops - the back,
-            # rear stretcher, sides and end / mid stiles stay full height
-            # to carry the countertop; the basin occupies the open band
-            # behind the dropped rail. Assigned (not added) so re-running
-            # the dialog replaces the drop instead of compounding it.
-            bp.front_drop = self.drop_bay_amount
-            # Drop-band fillers: written through even when the drop is 0
-            # or fillers are off - the solver gates on front_drop +
-            # include, so stale filler parts reconcile away.
-            bp.front_drop_include_fillers = self.include_fillers
-            bp.front_drop_set_appliance_width = self.set_appliance_width
-            bp.front_drop_appliance_width = self.appliance_width
-            bp.front_drop_left_filler = self.left_filler_amount
-            bp.front_drop_right_filler = self.right_filler_amount
+        if self._apply_scalars(context) is None:
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
             # Interior on the door opening(s) only - skip the false-front
             # apron opening. Walk recursively since the preset nests the
             # openings under a vertical split cage.
@@ -4614,11 +5589,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             types_face_frame.recalculate_face_frame_cabinet(root)
 
         # Re-apply selection mode so the rebuilt cages render correctly.
-        # DIRECT call, not bpy.ops.hb_face_frame.toggle_mode: calling a
-        # registered operator from inside execute steals the "last redo"
-        # slot, which kills this dialog's invoke_props_popup live updates
-        # (edits stop re-executing and the property UI reverts to
-        # defaults -- the config snapping back to False Front with Doors).
+        # DIRECT call, not bpy.ops.hb_face_frame.toggle_mode: a nested
+        # operator call would steal the "last redo" slot.
         try:
             apply_face_frame_selection_mode(context, root)
         except Exception:
@@ -4861,16 +5833,31 @@ classes = (
     hb_face_frame_OT_break_cabinet_right,
     hb_face_frame_OT_break_cabinet_both,
     hb_face_frame_OT_equalize_bays,
+    hb_face_frame_OT_equalize_opening_heights,
+    hb_face_frame_OT_wood_top_prompts,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,
     hb_face_frame_OT_floating_shelf_prompts,
     hb_face_frame_OT_valance_prompts,
+    hb_face_frame_OT_mantle_prompts,
+    hb_face_frame_OT_panel_layout_prompts,
+    hb_face_frame_OT_panel_remove_stile,
+    hb_face_frame_OT_toggle_front_open,
+    AccessorySearchRow,
+    HB_UL_face_frame_drawer_items,
+    HB_UL_face_frame_drawer_catalog,
+    hb_face_frame_OT_drawer_add_accessory,
+    hb_face_frame_OT_drawer_remove_accessory,
+    hb_face_frame_OT_set_drawer_box_construction,
+    hb_face_frame_OT_set_drawer_slides,
+    hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
     hb_face_frame_OT_drawer_box_prompts,
+    hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
@@ -4888,7 +5875,6 @@ classes = (
     hb_face_frame_OT_add_interior_accessory,
     hb_face_frame_OT_add_accessory,
     hb_face_frame_OT_accessory_menu,
-    AccessorySearchRow,
     HB_UL_face_frame_accessory_search,
     hb_face_frame_OT_search_accessory,
     hb_face_frame_OT_add_appliance_to_bay,

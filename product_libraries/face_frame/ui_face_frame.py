@@ -368,6 +368,33 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_bottom_left', text="Extend Bottom Left X")
             col.prop(cab_props, 'extend_bottom_right', text="Extend Bottom Right X")
 
+    # Decorative corners: a milled post let into a vertical corner.
+    # Picking a style alone does nothing - the corners it goes on are
+    # chosen per corner below, so one cabinet can carry a post on just
+    # the exposed end of a run or on all four corners of an island.
+    dcbox = layout.box()
+    dcbox.prop(cab_props, 'show_decorative_corners', text="Decorative Corners",
+               icon='TRIA_DOWN' if cab_props.show_decorative_corners
+               else 'TRIA_RIGHT', emboss=False)
+    if cab_props.show_decorative_corners:
+        dcbox.prop(cab_props, 'decorative_corner_style', text="Style")
+        if cab_props.decorative_corner_style != 'NONE':
+            col = dcbox.column(align=True)
+            col.label(text="Corners")
+            row = col.row(align=True)
+            row.prop(cab_props, 'decorative_corner_front_left', toggle=True)
+            row.prop(cab_props, 'decorative_corner_front_right', toggle=True)
+            row = col.row(align=True)
+            row.prop(cab_props, 'decorative_corner_back_left', toggle=True)
+            row.prop(cab_props, 'decorative_corner_back_right', toggle=True)
+            col = dcbox.column(align=True)
+            col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
+            col.prop(cab_props, 'decorative_corner_top_detail',
+                     text="Top Transition Detail")
+            col.prop(cab_props, 'decorative_corner_size', text="Size")
+            col.prop(cab_props, 'decorative_corner_block_run',
+                     text="Square Block Run")
+
     # Furniture wood top sits at the bottom - a finishing option layered
     # on after the carcass, ends, and any extensions are set.
     box = layout.box()
@@ -497,6 +524,115 @@ def draw_floating_shelf(layout, root):
         gsub.prop(shelf, 'groove_distance_from_rear', text="Distance From Rear")
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
+
+
+def draw_panel_layout(layout, root):
+    """Layout controls for an applied / standalone panel: the openings
+    automation toggle, the column + row overrides with auto-calculated
+    sizes (checkbox unlocks a typed override), the mid rail / mid stile
+    widths and the X-frame switch. Shared by the cabinet prompts dialog
+    (panel roots) and the Panel Layout popup reached from a panel
+    part's right-click menu."""
+    cab_props = root.face_frame_cabinet
+
+    layout.prop(cab_props, 'panel_split_auto')
+    col = layout.column()
+    col.enabled = cab_props.panel_split_auto
+    col.prop(cab_props, 'panel_vertical_bays', text="Columns (0 = Auto)")
+    col.prop(cab_props, 'panel_horizontal_rows',
+             text="Rows (0 = Match Cabinet)")
+
+    rows = cab_props.panel_horizontal_rows
+    if rows > 1:
+        col.prop(cab_props, 'panel_row_rail_width',
+                 text="Default Mid Rail Width")
+    srow = col.row(align=True)
+    srow.prop(cab_props, 'panel_mid_stile_override', text="")
+    sub = srow.row(align=True)
+    sub.enabled = cab_props.panel_mid_stile_override
+    sub.prop(cab_props, 'panel_mid_stile_width', text="Mid Stile Width")
+
+    def _override_row(box, entry, flag_prop, value_prop, label):
+        row = box.row(align=True)
+        row.prop(entry, flag_prop, text="")
+        sub = row.row(align=True)
+        sub.enabled = getattr(entry, flag_prop)
+        sub.prop(entry, value_prop, text=label)
+
+    # Rows read TOP DOWN like the drawings, with each mid rail listed
+    # between the two rows it separates (storage is bottom-up; entry
+    # i's rail sits above row i, so display row k's following rail is
+    # storage entry j-1's).
+    entries = cab_props.panel_row_heights
+    n = len(entries)
+    if rows > 1 and n:
+        box = col.box()
+        box.label(text="Rows (top down, check to set)")
+        for k in range(n):
+            j = n - 1 - k     # storage index (0 = bottom row)
+            _override_row(box, entries[j], 'override', 'height',
+                          "Row %d Height" % (k + 1))
+            if j >= 1:
+                _override_row(box, entries[j - 1], 'rail_override',
+                              'rail_width', "Mid Rail %d" % (k + 1))
+    if len(cab_props.panel_col_widths) > 1:
+        box = col.box()
+        box.label(text="Column Widths (left to right, check to set)")
+        for i, entry in enumerate(cab_props.panel_col_widths):
+            _override_row(box, entry, 'override', 'width',
+                          "Column %d" % (i + 1))
+
+    if not cab_props.panel_split_auto:
+        layout.label(text="Openings are pinned to your manual edits",
+                     icon='INFO')
+    layout.prop(cab_props, 'panel_x_frame')
+
+
+def _is_mantle(obj):
+    """True when obj (or its cabinet root) is a mantle product."""
+    root = types_face_frame.find_cabinet_root(obj)
+    return root is not None and bool(root.get('IS_MANTLE_PRODUCT'))
+
+
+def draw_mantle_product(layout, root):
+    """Mantle prompts: style, dimensions, and finished ends. Shown in the
+    sidebar (HB_FACE_FRAME_PT_mantle) and the right-click popup. Height
+    (Dim Z) is the overall assembly height including the under-crown;
+    picking a style re-seeds it to that style's standard build."""
+    cab = root.face_frame_cabinet
+    mantle = root.mantle_product
+
+    layout.prop(mantle, 'mantle_style', text="Style")
+    if mantle.mantle_style != 'CONTEMPORARY':
+        layout.prop(mantle, 'crown_profile', text="Crown")
+
+    col = layout.column(align=True)
+    col.prop(cab, 'width', text="Width")
+    col.prop(cab, 'depth', text="Depth")
+    col.prop(cab, 'height', text="Height")
+
+    box = layout.box()
+    box.label(text="Finished Ends")
+    row = box.row(align=True)
+    row.prop(mantle, 'finish_left', text="Left", toggle=True)
+    row.prop(mantle, 'finish_right', text="Right", toggle=True)
+
+    box = layout.box()
+    box.prop(mantle, 'include_surround', text="Legs & Header")
+    if mantle.include_surround:
+        box.prop(mantle, 'surround_build', text="Build")
+        col = box.column(align=True)
+        col.prop(mantle, 'leg_width', text="Leg Width")
+        col.prop(mantle, 'leg_depth', text="Leg Depth")
+        col.prop(mantle, 'header_height', text="Header Height")
+        col.prop(mantle, 'header_depth', text="Header Depth")
+        box.prop(mantle, 'include_base_moulding', text="Base Moulding")
+        if mantle.include_base_moulding:
+            box.prop(mantle, 'base_profile', text="")
+
+    if mantle.mantle_style != 'CONTEMPORARY':
+        layout.prop(mantle, 'top_overhang', text="Top Overhang")
+    layout.prop(mantle, 'material_thickness', text="Material Thickness")
 
 
 def draw_valance_product(layout, root):
@@ -795,9 +931,12 @@ def draw_bay_properties(layout, bay_obj):
         col.prop(bp, 'floating_bay', text="Floating")
     col.prop(bp, 'finish_bay', text="Finish")
     if bp.finish_bay:
+        col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    if cab_type in ('BASE', 'UPPER'):
+        col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 
 
 def _root_opening_size(opening_obj):
@@ -861,6 +1000,11 @@ def draw_opening_properties(layout, opening_obj):
         fcol.prop(op, 'front_type', text="Front Type")
         if op.front_type in ('DOOR', 'PULLOUT'):
             fcol.prop(op, 'hinge_side', text="Hinge Side")
+        # Door mechanism (doors only): standard swing vs the retracting
+        # options. Retracting stamps cost interior clearance (solver)
+        # and print labels on 2D output.
+        if op.front_type == 'DOOR':
+            fcol.prop(op, 'door_mechanism', text="Mechanism")
 
         # Chase fit (drawer / pullout only): how this opening's drawer
         # box responds to the cabinet's pipe chase. Hidden unless the
@@ -927,6 +1071,7 @@ def draw_opening_properties(layout, opening_obj):
         ncol = nbox.column(align=True)
         ncol.prop(op, 'finish_opening', text="Finish Opening")
         if op.finish_opening:
+            ncol.prop(op, 'finish_opening_material', text="Finish Color")
             ncol.prop(op, 'finish_opening_flush', text="Finish Flush")
             if op.finish_opening_flush:
                 ncol.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
@@ -990,6 +1135,37 @@ def draw_opening_properties(layout, opening_obj):
             _draw_interior_tree_inline(ibox, opening_obj)
 
 
+def draw_drawer_insert_settings(layout, item, show_hint=True):
+    """Per-item settings for a drawer accessory that renders geometry.
+
+    Shared by the Drawer Interior dialog and the interior item rows so
+    an insert is edited the same way wherever it is reached. Accessories
+    without a render hint draw nothing but a note (when asked for one) -
+    they are quoted and scheduled, just not modeled.
+    """
+    kind = types_face_frame.render_hint_kind(item.accessory_render)
+    if not kind:
+        if show_hint:
+            layout.label(text="This accessory is listed, not modeled",
+                         icon='INFO')
+        return
+    if kind == 'DIVIDER':
+        layout.prop(item, 'divider_lengthwise')
+        row = layout.row()
+        row.enabled = item.accessory_qty == 1
+        row.prop(item, 'divider_offset', text="Position (0 = Auto)")
+        return
+    if kind in ('CUTLERY', 'TRAY', 'KNIFE_BLOCK'):
+        layout.prop(item, 'insert_slots', text="Compartments (0 = Auto)")
+    col = layout.column(align=True)
+    col.prop(item, 'insert_offset', text="From Left (0 = Auto)")
+    col.prop(item, 'insert_from_front', text="From Front")
+    col = layout.column(align=True)
+    col.prop(item, 'insert_width', text="Width (0 = Auto)")
+    col.prop(item, 'insert_depth', text="Depth (0 = Auto)")
+    col.prop(item, 'insert_height', text="Height (0 = Auto)")
+
+
 def _draw_interior_items_section(layout, target_props, target_name=""):
     """Add buttons + per-item rows for any object whose props expose an
     `interior_items` collection. Used by the opening panel (flat path),
@@ -1027,7 +1203,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         rm.index = i
         rm.target_name = target_name
 
-        if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF'}:
+        if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF',
+                         'HALF_DEPTH_SHELF'}:
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             # Greyed out when on auto - the recalc owns the value.
@@ -1035,8 +1212,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             field.prop(item, 'shelf_qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
-            sub.prop(item, 'shelf_setback', text="Setback")
-            if item.kind == 'ADJUSTABLE_SHELF':
+            if item.kind != 'HALF_DEPTH_SHELF':
+                # Half-depth shelves compute their own setback (half the
+                # cavity depth), so the field only shows where it acts.
+                sub.prop(item, 'shelf_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
+            if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF'}:
                 sub.prop(item, 'shelf_nosing_style', text="Nosing")
                 if item.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
                     sub.prop(item, 'shelf_nosing_height', text="Nosing Height")
@@ -1076,6 +1257,9 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'distance_between', text="Gap Between")
             sub.prop(item, 'bottom_gap', text="Bottom Gap")
             sub.prop(item, 'item_setback', text="Front Setback")
+            # 0 = fit the cavity; a typed depth shortens the boxes at
+            # the back (pipe / vent run behind the rollouts).
+            sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
                      text="Hide Rollout Spacers")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
@@ -1088,11 +1272,14 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
             sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
             sub.prop(item, 'tray_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
         elif item.kind == 'VANITY_SHELVES':
             sub.prop(item, 'vanity_z', text="Shelf Z")
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
+            sub.prop(item, 'accessory_qty', text="Qty")
+            draw_drawer_insert_settings(sub, item, show_hint=False)
         elif item.kind == 'CLOSET_ROD':
             sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:
@@ -1108,6 +1295,12 @@ def _walk_tree_leaves(opening_obj):
     """DFS yielder for leaf cages of the opening's interior tree.
     Yields (leaf_obj, parent_split, child_index, depth). Skips when
     no tree exists.
+
+    DISPLAY order only (generation indexes are untouched): children of
+    a horizontal split list TOP region first, matching how the user
+    reads the cabinet in the viewport and on drawings - the build
+    order (bottom = child 0) had users adding items to the wrong
+    region. Vertical splits keep left before right.
     """
     def _recurse(node, depth):
         if node.get(types_face_frame.TAG_INTERIOR_REGION):
@@ -1119,11 +1312,13 @@ def _walk_tree_leaves(opening_obj):
             return
         if not node.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
             return
+        top_first = node.face_frame_interior_split.axis == 'H'
         children = sorted(
             [c for c in node.children
              if c.get(types_face_frame.TAG_INTERIOR_REGION)
              or c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)],
             key=lambda c: c.get('hb_interior_child_index', 0),
+            reverse=top_first,
         )
         for c in children:
             yield from _recurse(c, depth + 1)
@@ -1396,13 +1591,15 @@ def draw_finished_ends(layout, cab_props):
         elif fin_type == 'UNFINISHED' and side != 'back':
             col.prop(cab_props, f'{side}_scribe', text="Scribe")
 
-        # Return closeout: only meaningful when a FINISHED or PANELED side is
-        # extended back past a FINISHED or PANELED back. Nonzero return width
-        # caps the exposed corner with a return panel + a rear stile that wide.
-        if (side in ('left', 'right') and fin_type in ('FINISHED', 'PANELED')
+        # Return closeout: only meaningful when a side with a finished
+        # surface (RETURN_SIDE_CONDITIONS) is extended back past a back
+        # with one too (RETURN_BACK_CONDITIONS). Nonzero return width
+        # caps the exposed corner with a return panel + a rear stile.
+        if (side in ('left', 'right')
+                and fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab_props, f'{side}_side_finished_extend_back') != 0.0
                 and getattr(cab_props, 'back_finished_end_condition')
-                in ('FINISHED', 'PANELED')):
+                in types_face_frame.RETURN_BACK_CONDITIONS):
             col.prop(cab_props, f'{side}_side_return_width', text="Return Width")
             # Per-member Finished / Paneled construction, once a return exists.
             if getattr(cab_props, f'{side}_side_return_width') != 0.0:
@@ -1532,9 +1729,12 @@ def draw_bay_in_prompts(layout, bay_obj):
         col.prop(bp, 'floating_bay', text="Floating")
     col.prop(bp, 'finish_bay', text="Finish")
     if bp.finish_bay:
+        col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    if cab_type in ('BASE', 'UPPER'):
+        col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 
 
 def draw_bays_in_prompts(layout, root):
@@ -1764,6 +1964,27 @@ class HB_FACE_FRAME_PT_floating_shelf(bpy.types.Panel):
         draw_floating_shelf(self.layout, root)
 
 
+class HB_FACE_FRAME_PT_mantle(bpy.types.Panel):
+    """Mantle options. Shown only when the active object is a mantle;
+    the bay/construction sub-panels are hidden for it."""
+    bl_label = "Mantle"
+    bl_idname = "HB_FACE_FRAME_PT_mantle"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Home Builder"
+    bl_parent_id = "HB_FACE_FRAME_PT_active_cabinet"
+
+    @classmethod
+    def poll(cls, context):
+        return _is_mantle(context.active_object)
+
+    def draw(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return
+        draw_mantle_product(self.layout, root)
+
+
 class HB_FACE_FRAME_PT_leg_product(bpy.types.Panel):
     """Leg product options. Shown only when the active object is a leg;
     the bay/construction sub-panels are hidden for legs (they have no
@@ -1790,6 +2011,7 @@ classes = (
     HB_FACE_FRAME_PT_active_cabinet,
     HB_FACE_FRAME_PT_leg_product,
     HB_FACE_FRAME_PT_floating_shelf,
+    HB_FACE_FRAME_PT_mantle,
     HB_FACE_FRAME_PT_dimensions,
     HB_FACE_FRAME_PT_construction,
     HB_FACE_FRAME_PT_face_frame_defaults,

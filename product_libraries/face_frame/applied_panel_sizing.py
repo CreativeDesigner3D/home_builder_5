@@ -20,6 +20,7 @@ import bpy
 
 from ... import hb_types
 from ... import hb_utils
+from ... import units
 from . import types_face_frame
 
 
@@ -50,16 +51,22 @@ def _resolve_door_style(cab_obj):
     return None
 
 
-def _toe_kick_band(cab):
+def _toe_kick_band(cab, side):
     """Bottom-rail growth needed for Base/Tall cabinets where the
     applied panel spans the full cabinet height (floor to top) and
     the bottom rail has to visually cover the toe-kick band so the
     panel's frame opening doesn't drop into the recess. Uppers and
-    PANEL cabinets have no toe kick.
+    PANEL cabinets have no toe kick. A side with an inset toe kick
+    holds its panel up at the bay bottom instead (see
+    applied_panel_geometry), so there is no kick band to cover.
     """
-    if cab.cabinet_type in ('BASE', 'TALL'):
-        return cab.toe_kick_height
-    return 0.0
+    if cab.cabinet_type not in ('BASE', 'TALL'):
+        return 0.0
+    if side == 'LEFT' and cab.inset_toe_kick_left > 0:
+        return 0.0
+    if side == 'RIGHT' and cab.inset_toe_kick_right > 0:
+        return 0.0
+    return cab.toe_kick_height
 
 
 def _stile_widths(cab, side):
@@ -99,7 +106,7 @@ def _match_cabinet_widths(cab, side):
     left_stile, right_stile = _stile_widths(cab, side)
     return {
         'top_rail_width':    cab.top_rail_width,
-        'bottom_rail_width': cab.bottom_rail_width + _toe_kick_band(cab),
+        'bottom_rail_width': cab.bottom_rail_width + _toe_kick_band(cab, side),
         'left_stile_width':  left_stile,
         'right_stile_width': right_stile,
     }
@@ -113,17 +120,32 @@ def _match_5_piece_door(cab, door_style, side):
     rail in panel-only form. Same logic for the bottom rail, plus
     the toe-kick band for Base/Tall.
 
-    Stiles: sourced from the cabinet face frame (not the door) since
-    what's visible at a corner is the face frame edge plus the panel
-    behind it. See _stile_widths for the per-side mapping.
+    Stiles: the panel reads as a door leaf on the cabinet side, sized
+    from the DOOR style's stile width (cabinet face-frame stiles vary
+    per side -- wall / end / refrigerator stiles -- and matching them
+    made the paneled end read wider than the doors next to it). The
+    panel's front edge stops face_frame_thickness short of the cabinet
+    front (the FF edge provides that last 3/4" -- see
+    applied_panel_geometry), so the FACING stile deducts fft and the
+    visible corner reads as the full door stile: a 3" door stile =
+    3/4" FF edge + 2.25" panel stile. The outer (wall-side) stile has
+    no FF in front of it and keeps the full door stile width.
     """
     rail = door_style.rail_width
     top_rail = cab.top_rail_width - cab.default_top_overlay + rail
     bottom_rail = (
         cab.bottom_rail_width - cab.default_bottom_overlay
-        + rail + _toe_kick_band(cab)
+        + rail + _toe_kick_band(cab, side)
     )
-    left_stile, right_stile = _stile_widths(cab, side)
+    stile = door_style.stile_width
+    fft = cab.face_frame_thickness
+    if side == 'LEFT':
+        left_stile, right_stile = stile, stile - fft
+    elif side == 'RIGHT':
+        left_stile, right_stile = stile - fft, stile
+    else:  # BACK: no face frame at either end (mid-stile rule
+        # overrides both in resolve_panel_sizing anyway).
+        left_stile = right_stile = stile
     return {
         'top_rail_width':    top_rail,
         'bottom_rail_width': bottom_rail,
@@ -435,10 +457,16 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     else:
         stile_to_floor = (cab.extend_left_stile_to_floor if side == 'LEFT'
                           else cab.extend_right_stile_to_floor)
+        # A side toe-kick inset holds the panel up at the bay bottom
+        # (applied_panel_geometry), so there is no kick recess for the
+        # panel's parts to clear on that side.
+        side_inset = (cab.inset_toe_kick_left if side == 'LEFT'
+                      else cab.inset_toe_kick_right)
         active = (
             cab.cabinet_type in ('BASE', 'TALL')
             and cab.toe_kick_type == 'NOTCH'
             and not stile_to_floor
+            and side_inset <= 0
         )
 
     facing_role = _FACING_STILE_ROLE.get(side)
@@ -454,11 +482,13 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         elif role == facing_role:
             facing_stile = c
 
-    # Facing stile width comes from the same per-side rule as the
-    # panel sizing - facing element is the second value for LEFT, the
-    # first for RIGHT.
-    left_stile, right_stile = _stile_widths(cab, side)
-    facing_width = right_stile if side == 'LEFT' else left_stile
+    # Facing stile width: read what apply_panel_sizing actually wrote
+    # to the panel (door-stile rule for 5-piece PANELED, cabinet-stile
+    # rule otherwise, plus any per-part user override) - facing element
+    # is the right stile for LEFT panels, the left stile for RIGHT.
+    panel_props = panel_obj.face_frame_cabinet
+    facing_width = (panel_props.right_stile_width if side == 'LEFT'
+                    else panel_props.left_stile_width)
     if is_leg:
         setback = cab_obj.leg_product.toe_kick_setback
         kick = (0.0 if cab_obj.leg_product.is_column
@@ -466,12 +496,22 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     else:
         setback = cab.toe_kick_setback
         kick = cab.toe_kick_height
+    # The panel's front edge stops face_frame_thickness short of the
+    # cabinet front (the FF edge covers that last 3/4" - see
+    # applied_panel_geometry), so the STILE's notch measured from the
+    # panel's own front is the setback LESS fft: its notch face lands
+    # exactly on the kick plane. The BOTTOM RAIL behind it cuts fft
+    # DEEPER (its share comes from the full setback), so the panel is
+    # notched behind the finish toe kick stock - the 3/4" kick board
+    # seats in front of the rail's notch face, flush with the stile's.
+    fft = cab.face_frame_thickness
+    stile_depth = max(0.0, setback - fft)
 
     # Axis mapping differs by part because their local rotations
-    # differ. Bottom rail: X = depth-into-the-rail (setback), Y = kick
-    # height. Facing stile: rotated such that X = kick height, Y =
-    # setback - the same notch corner but the part's local X axis
-    # points up the stile instead of along the rail.
+    # differ. Bottom rail: X = depth-into-the-rail, Y = kick height.
+    # Facing stile: rotated such that X = kick height, Y = depth - the
+    # same notch corner but the part's local X axis points up the
+    # stile instead of along the rail.
     parts = []
     if bottom_rail is not None:
         parts.append((
@@ -484,8 +524,8 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         parts.append((
             facing_stile,
             _NOTCH_FLIPS_FACING_STILE[side],
-            kick,      # X = height (stile runs vertically)
-            setback,   # Y = depth
+            kick,         # X = height (stile runs vertically)
+            stile_depth,  # Y = depth
         ))
 
     for part_obj, flips, x_val, y_val in parts:
@@ -613,6 +653,14 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
         return
 
     rails = _detect_panel_mid_rails(cab_obj, side, panel_bay_obj)
+    # Explicit row override: N stacked rows with mid rails between,
+    # replacing the cabinet's rail-matched rows. Row heights come from
+    # the panel's per-row list (bottom-up; the top row absorbs the
+    # remainder), so drafters can lay out wainscot-style ends that
+    # differ from the cabinet's own splits.
+    rows_override = getattr(panel_props, 'panel_horizontal_rows', 0)
+    if rows_override > 0:
+        rails = _manual_row_rails(panel_props, rows_override)
     wide = panel_props.width >= _MID_STILE_WIDTH_THRESHOLD
     # Openings scale with width when the panel splits into real bays
     # (no rail-matched H-split in play); see the width ladder above.
@@ -677,12 +725,61 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
         # match it to the door-style stile so a real-bay stile prints
         # at the same width the in-bay V-split used. A user-unlocked
         # entry (Set Width on the stile) holds its value, mirroring
-        # apply_panel_sizing's unlock_* gating.
+        # apply_panel_sizing's unlock_* gating. The panel-level mid
+        # stile override sets the stiles independent of the rails.
         stile_w = _mid_stile_width_for_panel(
             cab_obj, cab_obj.face_frame_cabinet, side)
+        if getattr(panel_props, 'panel_mid_stile_override', False):
+            stile_w = panel_props.panel_mid_stile_width
         for entry in panel_props.mid_stile_widths:
             if not entry.unlock:
                 entry.width = stile_w
+
+        # Manual rows: write the computed auto-equal heights (and the
+        # default rail widths) back so the dialog displays the
+        # calculated values next to the override checkboxes.
+        if rows_override > 0:
+            default_rail = panel_props.panel_row_rail_width
+            for e, v in zip(panel_props.panel_row_heights,
+                            _manual_row_heights(panel_props,
+                                                rows_override)):
+                if not e.override and abs(e.height - v) > 1e-6:
+                    e.height = v
+                if (not e.rail_override
+                        and abs(e.rail_width - default_rail) > 1e-6):
+                    e.rail_width = default_rail
+
+        # Column widths: sync the list to the built column count, then
+        # auto-equal / override exactly like the rows. Real-bay columns
+        # apply through the bay widths (the redistributor honors the
+        # locks); the in-bay V-split case sizes its first opening below.
+        n_cols = desired_qty if desired_qty > 1 else (
+            2 if add_mid_stile else 1)
+        col_entries = panel_props.panel_col_widths
+        while len(col_entries) < n_cols:
+            col_entries.add()
+        while len(col_entries) > n_cols:
+            col_entries.remove(len(col_entries) - 1)
+        vsplit_first_size = None
+        if n_cols > 1:
+            eff_cols = _manual_col_widths(panel_props, n_cols, stile_w)
+            for e, v in zip(col_entries, eff_cols):
+                if not e.override and abs(e.width - v) > 1e-6:
+                    e.width = v
+            if desired_qty > 1:
+                for bay_obj, e in zip(bays, col_entries):
+                    bp = bay_obj.face_frame_bay
+                    if e.override:
+                        if not bp.unlock_width:
+                            bp.unlock_width = True
+                        if abs(bp.width - e.width) > 1e-6:
+                            bp.width = e.width
+                    elif bp.unlock_width:
+                        bp.unlock_width = False
+            elif add_mid_stile and any(e.override for e in col_entries):
+                # Two V-split columns: sizing the first opening fixes
+                # both (the second takes the remainder).
+                vsplit_first_size = eff_cols[0]
 
         for bay_obj in bays:
             _wipe_bay_tree(bay_obj)
@@ -693,7 +790,8 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
                 continue
             _build_panel_tree(
                 bay_obj, rails, add_mid_stile, cab_obj, side,
-                front_type=default_front,
+                front_type=default_front, mid_stile_w=stile_w,
+                vsplit_first_size=vsplit_first_size,
             )
 
         # Reapply per-opening front overrides (same-condition rebuild
@@ -744,6 +842,88 @@ def _bay_top_child(bay_obj):
             if (c.get(types_face_frame.TAG_OPENING_CAGE)
                 or c.get(types_face_frame.TAG_SPLIT_NODE))]
     return kids[0] if len(kids) == 1 else None
+
+
+def _manual_rail_widths(panel_props, rows):
+    """Per-rail widths for an explicit row count, bottom-up: entry i's
+    rail sits ABOVE row i (rows 0..N-2). Rails without the override
+    follow the panel's default mid rail width."""
+    default_w = panel_props.panel_row_rail_width
+    entries = panel_props.panel_row_heights
+    out = []
+    for i in range(rows - 1):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.rail_override:
+            out.append(max(e.rail_width, units.inch(0.5)))
+        else:
+            out.append(default_w)
+    return out
+
+
+def _manual_row_heights(panel_props, rows):
+    """Effective bottom-up row opening heights for an explicit row
+    count: rows flagged override hold their typed height, the rest
+    share the remaining frame opening equally (auto-calculated)."""
+    min_h = units.inch(1.0)
+    open_h = (panel_props.height - panel_props.top_rail_width
+              - panel_props.bottom_rail_width
+              - sum(_manual_rail_widths(panel_props, rows)))
+    entries = panel_props.panel_row_heights
+    fixed = 0.0
+    n_auto = 0
+    vals = []
+    for i in range(rows):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.override:
+            v = max(e.height, min_h)
+            vals.append(v)
+            fixed += v
+        else:
+            vals.append(None)
+            n_auto += 1
+    share = max((open_h - fixed) / n_auto, min_h) if n_auto else min_h
+    return [share if v is None else v for v in vals]
+
+
+def _manual_col_widths(panel_props, n_cols, stile_w):
+    """Effective left-to-right column opening widths, same
+    auto/override model as the row heights."""
+    min_w = units.inch(1.0)
+    open_w = (panel_props.width - panel_props.left_stile_width
+              - panel_props.right_stile_width - (n_cols - 1) * stile_w)
+    entries = panel_props.panel_col_widths
+    fixed = 0.0
+    n_auto = 0
+    vals = []
+    for i in range(n_cols):
+        e = entries[i] if i < len(entries) else None
+        if e is not None and e.override:
+            v = max(e.width, min_w)
+            vals.append(v)
+            fixed += v
+        else:
+            vals.append(None)
+            n_auto += 1
+    share = max((open_w - fixed) / n_auto, min_w) if n_auto else min_w
+    return [share if v is None else v for v in vals]
+
+
+def _manual_row_rails(panel_props, rows):
+    """Synthesized mid-rail entries for an explicit row count, in the
+    same {'z_bottom', 'splitter_width'} shape _detect_panel_mid_rails
+    produces (panel-bay-local Z, sorted top to bottom). Rows are
+    measured bottom-up as opening heights; the topmost region closes
+    the frame so its rail entry is implicit."""
+    rail_ws = _manual_rail_widths(panel_props, rows)
+    heights = _manual_row_heights(panel_props, rows)
+    rails = []
+    z = 0.0
+    for h, rail_w in zip(heights[:-1], rail_ws):
+        z += h
+        rails.append({'z_bottom': z, 'splitter_width': rail_w})
+        z += rail_w
+    rails.sort(key=lambda r: r['z_bottom'], reverse=True)
+    return rails
 
 
 def _detect_panel_mid_rails(cab_obj, side, panel_bay_obj):
@@ -1022,7 +1202,8 @@ def _create_split_node_under(parent_obj, child_index, axis, splitter_width):
 
 
 def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
-                      front_type='INSET_PANEL'):
+                      front_type='INSET_PANEL', mid_stile_w=None,
+                      vsplit_first_size=None):
     """Construct the panel's opening tree.
 
     `rails` is a list of {'z_bottom', 'splitter_width'} dicts in
@@ -1041,7 +1222,8 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
     otherwise a single opening.
     """
     cab = cab_obj.face_frame_cabinet
-    mid_stile_w = _mid_stile_width_for_panel(cab_obj, cab, side)
+    if mid_stile_w is None:
+        mid_stile_w = _mid_stile_width_for_panel(cab_obj, cab, side)
 
     op_counter = [0]
     def next_op_idx():
@@ -1055,7 +1237,8 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
                                   mid_stile_w=mid_stile_w,
                                   size=size, unlock_size=unlock,
                                   next_op_idx=next_op_idx,
-                                  front_type=front_type)
+                                  front_type=front_type,
+                                  first_size=vsplit_first_size)
         else:
             _create_opening_under(parent, child_index=child_index,
                                   opening_index=next_op_idx(),
@@ -1103,11 +1286,12 @@ def _build_panel_tree(panel_bay_obj, rails, add_mid_stile, cab_obj, side,
 
 def _build_v_split_region(parent_obj, child_index, mid_stile_w,
                           size, unlock_size, next_op_idx,
-                          front_type='INSET_PANEL'):
-    """Build a V-split + 2 equal opening children, attached to
-    parent_obj at child_index. size + unlock_size are applied to the
-    SPLIT NODE (so the parent containing the V-split is sized correctly
-    when its container - e.g. H-split - decides positions).
+                          front_type='INSET_PANEL', first_size=None):
+    """Build a V-split + 2 opening children, attached to parent_obj at
+    child_index. size + unlock_size are applied to the SPLIT NODE (so
+    the parent containing the V-split is sized correctly when its
+    container - e.g. H-split - decides positions). ``first_size`` locks
+    the first (left) opening's width; the second takes the remainder.
     """
     v = _create_split_node_under(
         parent_obj, child_index=child_index,
@@ -1121,6 +1305,8 @@ def _build_v_split_region(parent_obj, child_index, mid_stile_w,
     sp.unlock_size = unlock_size
     sp.size = size
     _create_opening_under(v, child_index=0, opening_index=next_op_idx(),
+                          size=(first_size or 0.0),
+                          unlock_size=first_size is not None,
                           front_type=front_type)
     _create_opening_under(v, child_index=1, opening_index=next_op_idx(),
                           front_type=front_type)

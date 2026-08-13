@@ -106,6 +106,97 @@ def _floor_flush_spans(cage):
     return merged
 
 
+# Kick-face parts the base molding mounts against, front-most wins:
+# the finish kick skin sits on the subfront, a loose kick carries its
+# own front.
+_KICK_FACE_ROLES = ('FINISH_TOE_KICK', 'LOOSE_KICK_FRONT',
+                    'TOE_KICK_SUBFRONT')
+
+
+def _measured_kick_setback(cage, ffc):
+    """Setback from the CAGE front to the face the base molding mounts
+    on, read from the front-most built kick-face part. The
+    toe_kick_setback prop measures to the subfront from the CARCASS
+    front, so using it directly leaves the molding proud of the
+    finished kick by the face frame overhang minus the finish skin.
+    Falls back to the prop when no kick-face part is built."""
+    inv = cage.matrix_world.inverted()
+    best = None
+    for child in cage.children_recursive:
+        if child.get('hb_part_role') not in _KICK_FACE_ROLES:
+            continue
+        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
+                   for c in child.bound_box]
+        if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
+                or max(c.x for c in corners) - min(c.x for c in corners)
+                < 0.01):
+            continue  # dormant zero-size part
+        y = min(c.y for c in corners)
+        if best is None or y < best:
+            best = y
+    if best is None:
+        return ffc.toe_kick_setback
+    _width, depth, _height = engine.cage_dims(cage)
+    return max(depth + best, 0.0)
+
+
+def _rail_bays(cage):
+    """Per-zone light-rail data for an upper: sorted (x0, x1, dz)
+    zones partitioning the cabinet width. dz is the zone's bottom line
+    relative to the CABINET's bottom line - bay offsets are measured
+    from the bay level nearest the root line, so raised bays go
+    positive and dropped bays negative. The stile gap between two bays
+    goes to the LOWER zone (its stile runs down with it); end stiles
+    go to their end bay's zone."""
+    bays = []
+    for child in cage.children:
+        if not child.get('IS_FACE_FRAME_BAY_CAGE'):
+            continue
+        bp = getattr(child, 'face_frame_bay', None)
+        if bp is None or bp.width <= 1e-4:
+            continue
+        x = child.matrix_local.translation.x
+        bays.append([x, x + bp.width, child.matrix_local.translation.z])
+    if not bays:
+        return []
+    bays.sort()
+    ref = min((z for _x0, _x1, z in bays), key=abs)
+    width, _depth, _height = engine.cage_dims(cage)
+    zones = [[x0, x1, z - ref] for x0, x1, z in bays]
+    zones[0][0] = 0.0
+    zones[-1][1] = width
+    for a, b in zip(zones, zones[1:]):
+        if a[2] <= b[2]:
+            a[1] = b[0]
+        else:
+            b[0] = a[1]
+    return [tuple(z) for z in zones]
+
+
+def _rail_skip_spans(cage):
+    """Zones of an upper the BOTTOM-LINE light rail skips: bays whose
+    bottom line sits off the cabinet's bottom line, as
+    [(x0, x1, kind)]. kind says how the run line meets the zone:
+    'OPEN' (raised bay - nothing at the run line, the rail returns to
+    the wall at the zone edges) or 'BOX' (dropped bay - its box stands
+    across the run line, the rail dies flush into it). Either way the
+    zone carries its own rail at its own line - see
+    engine.raised_rail_runs."""
+    bays = _rail_bays(cage)
+    if len(bays) < 2:
+        return []
+    out = []
+    for x0, x1, dz in bays:
+        if abs(dz) <= 0.02:
+            continue
+        kind = 'OPEN' if dz > 0.0 else 'BOX'
+        if out and out[-1][2] == kind and x0 - out[-1][1] < 1e-4:
+            out[-1] = (out[-1][0], x1, kind)
+        else:
+            out.append((x0, x1, kind))
+    return out
+
+
 def _top_rail_width(cage):
     """Width of the built TOP_RAIL face-frame part, read from the
     geometry rather than the style props - it's exactly what's drawn."""
@@ -250,7 +341,7 @@ def build_facts(scene, members):
             else:
                 kick = {
                     'skip': False,
-                    'setback': ffc.toe_kick_setback,
+                    'setback': _measured_kick_setback(obj, ffc),
                     'stile_left': ffc.extend_left_stile_to_floor,
                     'stile_right': ffc.extend_right_stile_to_floor,
                     'stile_left_w': ffc.left_stile_width,
@@ -286,6 +377,11 @@ def build_facts(scene, members):
                               'crown_mount': crown_mount,
                               'finished_left': fin_l,
                               'finished_right': fin_r}
+            if ffc.cabinet_type == 'UPPER':
+                skips = _rail_skip_spans(obj)
+                if skips:
+                    facts[id(obj)]['rail_skips'] = skips
+                    facts[id(obj)]['rail_bays'] = _rail_bays(obj)
             continue
 
         # Frameless (cabinet or product cage).

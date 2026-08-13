@@ -321,46 +321,14 @@ class hb_frameless_OT_edit_crown_detail(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
-    """Assign the selected crown detail to selected cabinets"""
-    bl_idname = "hb_frameless.assign_crown_to_cabinets"
-    bl_label = "Assign Crown to Cabinets"
-    bl_description = "Create crown molding extrusions on selected cabinets using the active crown detail"
-    bl_options = {'REGISTER', 'UNDO'}
-    
-    @classmethod
-    def poll(cls, context):
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        if len(props.crown_details) == 0:
-            return False
-        # Check if any cabinets are selected
-        for obj in context.selected_objects:
-            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                return True
-        return False
-    
-    def execute(self, context):
-        # Collect unique cabinets from selection (only UPPER and TALL get crown)
-        cabinets = []
-        for obj in context.selected_objects:
-            cabinet_bp = None
-            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                cabinet_bp = obj
-            elif obj.parent:
-                if obj.parent.get('IS_CABINET_BP') or obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
-                    cabinet_bp = obj.parent
-
-            if cabinet_bp and cabinet_bp not in cabinets:
-                cab_type = cabinet_bp.get('CABINET_TYPE', '')
-                if cab_type in ('UPPER', 'TALL'):
-                    cabinets.append(cabinet_bp)
-
-        if not cabinets:
-            self.report({'WARNING'}, "No valid upper or tall cabinets selected")
-            return {'CANCELLED'}
-
-        return self._assign_crown(context, cabinets)
+class _crown_assign_machinery:
+    """Shared crown-assignment machinery (run grouping, wall-aligned
+    bounds, corner wrapping, profile extrusion) for the selection-based
+    and whole-room assign operators. Deliberately a plain mixin, NOT an
+    Operator subclass -- registering an Operator that subclasses an
+    already-registered Operator corrupts the parent's RNA callbacks
+    (its invoke/execute silently stop being called), so both operators
+    derive from this plus bpy.types.Operator."""
 
     def _assign_crown(self, context, cabinets):
         """Assign the active crown detail to the given cabinet roots.
@@ -1289,9 +1257,51 @@ class hb_frameless_OT_assign_crown_to_cabinets(bpy.types.Operator):
             context, world_points, first_cab, profile, target_scene)
 
 
-class hb_frameless_OT_assign_crown_to_room(hb_frameless_OT_assign_crown_to_cabinets):
+class hb_frameless_OT_assign_crown_to_cabinets(_crown_assign_machinery, bpy.types.Operator):
+    """Assign the selected crown detail to selected cabinets"""
+    bl_idname = "hb_frameless.assign_crown_to_cabinets"
+    bl_label = "Assign Crown to Cabinets"
+    bl_description = "Create crown molding extrusions on selected cabinets using the active crown detail"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        main_scene = hb_project.get_main_scene()
+        props = main_scene.hb_frameless
+        if len(props.crown_details) == 0:
+            return False
+        # Check if any cabinets are selected
+        for obj in context.selected_objects:
+            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                return True
+        return False
+
+    def execute(self, context):
+        # Collect unique cabinets from selection (only UPPER and TALL get crown)
+        cabinets = []
+        for obj in context.selected_objects:
+            cabinet_bp = None
+            if obj.get('IS_CABINET_BP') or obj.get('IS_FRAMELESS_CABINET_CAGE'):
+                cabinet_bp = obj
+            elif obj.parent:
+                if obj.parent.get('IS_CABINET_BP') or obj.parent.get('IS_FRAMELESS_CABINET_CAGE'):
+                    cabinet_bp = obj.parent
+
+            if cabinet_bp and cabinet_bp not in cabinets:
+                cab_type = cabinet_bp.get('CABINET_TYPE', '')
+                if cab_type in ('UPPER', 'TALL'):
+                    cabinets.append(cabinet_bp)
+
+        if not cabinets:
+            self.report({'WARNING'}, "No valid upper or tall cabinets selected")
+            return {'CANCELLED'}
+
+        return self._assign_crown(context, cabinets)
+
+
+class hb_frameless_OT_assign_crown_to_room(_crown_assign_machinery, bpy.types.Operator):
     """Assign the active crown detail to every upper and tall cabinet
-    in the room. Subclasses the selection operator for its grouping /
+    in the room. Shares the selection operator's grouping /
     path-building machinery; only the cabinet collection differs.
     """
     bl_idname = "hb_frameless.assign_crown_to_room"

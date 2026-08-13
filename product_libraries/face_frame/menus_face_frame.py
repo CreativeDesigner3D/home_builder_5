@@ -18,6 +18,46 @@ from .operators import ops_part_commands
 from ... import units
 
 
+def _has_drawer_box_construction_options():
+    """Whether the host application offers drawer box constructions. HB5
+    ships none, so the submenu simply doesn't appear on its own."""
+    from ... import accessory_registry
+    from .operators import ops_cabinet
+    return bool(accessory_registry.get_items(
+        ops_cabinet.DRAWER_BOX_CONSTRUCTION_HOST))
+
+
+def _draw_drawer_box_construction_menu(layout):
+    layout.menu("HOME_BUILDER_MT_face_frame_drawer_box_construction",
+                text="Drawer Box Construction", icon='SNAP_VOLUME')
+
+
+def _has_drawer_slides_options():
+    """Whether the host application offers drawer slide hardware. HB5
+    ships none, so the submenu simply doesn't appear on its own."""
+    from ... import accessory_registry
+    from .operators import ops_cabinet
+    return bool(accessory_registry.get_items(
+        ops_cabinet.DRAWER_SLIDES_HOST))
+
+
+def _draw_drawer_slides_menu(layout):
+    layout.menu("HOME_BUILDER_MT_face_frame_drawer_slides",
+                text="Drawer Slides", icon='MOD_ARRAY')
+
+
+def _is_drawer_opening(obj):
+    """True when obj is (or sits under) an opening whose front is a
+    drawer-style front - the ones with a drawer box to lay out."""
+    cur = obj
+    while cur is not None:
+        if cur.get(types_face_frame.TAG_OPENING_CAGE):
+            return cur.face_frame_opening.front_type in (
+                'DRAWER_FRONT', 'PULLOUT', 'TILT_OUT')
+        cur = cur.parent
+    return False
+
+
 class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
     """Right-click menu for a face frame cabinet root."""
     bl_label = "Face Frame Cabinet Commands"
@@ -261,12 +301,26 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                      else "Panel Properties...")
             layout.operator("hb_face_frame.cabinet_prompts",
                             text=ptext, icon='WINDOW')
+            # Focused openings editor: columns / rows / row heights.
+            layout.operator("hb_face_frame.panel_layout_prompts",
+                            text="Panel Layout...", icon='MESH_GRID')
+            # One-click merge on the stile the user is looking at.
+            if role in ('MID_STILE', 'BAY_MID_STILE'):
+                layout.operator("hb_face_frame.panel_remove_stile",
+                                icon='X')
             layout.separator()
 
         # 5-piece door / drawer front: stile / rail / mid rail editor.
         if ops_part_commands.has_door_style_modifier(obj):
             layout.operator("hb_face_frame.set_door_frame",
                             text="Set Door Frame...", icon='MOD_BEVEL')
+
+        # Doors: per-door hardware callout override (restrictor clips /
+        # touch latches / finger rout on THIS door instead of every door
+        # of the style).
+        if role == 'DOOR':
+            layout.operator("hb_face_frame.set_door_hardware",
+                            text="Set Door Hardware...", icon='TOOL_SETTINGS')
 
         # Door / drawer / pullout / tilt-out fronts: per-opening pull
         # override (applies to every selected front).
@@ -335,6 +389,17 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
             layout.operator("hb_face_frame.remove_bottom_rail",
                             text="Remove Bottom Rail", icon='X')
+            # Flush wide-bottom-rail toggle - base / tall cabinets only
+            # (uppers have no kick; corners carry their own kick frame).
+            _fr_root = ops_part_commands._flush_rail_root(obj)
+            if _fr_root is not None:
+                is_flush = (_fr_root.face_frame_cabinet.toe_kick_type
+                            == 'FLUSH')
+                layout.operator(
+                    "hb_face_frame.toggle_flush_bottom_rail",
+                    text=("Remove Flush Bottom Rail" if is_flush
+                          else "Make Flush Bottom Rail"),
+                    icon='TRIA_DOWN_BAR')
             layout.menu("HOME_BUILDER_MT_face_frame_bottom_rail_profile",
                         text="Bottom Rail Profile", icon='MOD_BEVEL')
 
@@ -409,8 +474,74 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        obj = context.active_object
+        if _is_drawer_opening(obj):
+            layout.operator("hb_face_frame.drawer_interior",
+                            text="Drawer Interior...", icon='MESH_GRID')
+        # Rollout boxes are drawer boxes on slides, so they carry the
+        # same construction / slide picks as the box behind a drawer
+        # front.
+        if (obj is not None
+                and obj.get('hb_part_role')
+                == types_face_frame.PART_ROLE_ROLLOUT_BOX):
+            if _has_drawer_box_construction_options():
+                _draw_drawer_box_construction_menu(layout)
+            if _has_drawer_slides_options():
+                _draw_drawer_slides_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+
+
+class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
+    """Which construction the clicked drawer's / rollout's boxes are
+    built to. The entries come from the host application's option list;
+    the pick is stored on the owning opening, so one job can mix
+    constructions cabinet by cabinet."""
+    bl_label = "Drawer Box Construction"
+
+    def draw(self, context):
+        from .operators import ops_cabinet
+        layout = self.layout
+        opening = ops_cabinet._find_owning_opening(context.active_object)
+        current = (opening.face_frame_opening.drawer_box_construction
+                   if opening is not None else '')
+        entries = [(ops_cabinet.DRAWER_BOX_CONSTRUCTION_DEFAULT,
+                    "Project Default", '')]
+        entries += [(code, name, code)
+                    for code, name in ops_cabinet.drawer_box_construction_options()]
+        for code, name, stored in entries:
+            op = layout.operator(
+                "hb_face_frame.set_drawer_box_construction", text=name,
+                icon=('RADIOBUT_ON' if stored == current else 'RADIOBUT_OFF'))
+            op.code = code
+            if opening is not None:
+                op.opening_name = opening.name
+
+
+class HOME_BUILDER_MT_face_frame_drawer_slides(bpy.types.Menu):
+    """Which slide hardware the clicked drawer's / rollout's boxes run
+    on. Same shape as the construction submenu: options come from the
+    host application, the pick stores on the owning opening, so the odd
+    heavy duty drawer can differ from the project's slides."""
+    bl_label = "Drawer Slides"
+
+    def draw(self, context):
+        from .operators import ops_cabinet
+        layout = self.layout
+        opening = ops_cabinet._find_owning_opening(context.active_object)
+        current = (opening.face_frame_opening.drawer_slides
+                   if opening is not None else '')
+        entries = [(ops_cabinet.DRAWER_BOX_CONSTRUCTION_DEFAULT,
+                    "Project Default", '')]
+        entries += [(code, name, code)
+                    for code, name in ops_cabinet.drawer_slides_options()]
+        for code, name, stored in entries:
+            op = layout.operator(
+                "hb_face_frame.set_drawer_slides", text=name,
+                icon=('RADIOBUT_ON' if stored == current else 'RADIOBUT_OFF'))
+            op.code = code
+            if opening is not None:
+                op.opening_name = opening.name
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
@@ -423,8 +554,19 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.drawer_interior",
+                        text="Drawer Interior...", icon='MESH_GRID')
+        layout.operator("hb_face_frame.toggle_front_open",
+                        text="Open / Close Drawer", icon='FULLSCREEN_ENTER')
+        layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
+        layout.operator("hb_face_frame.sink_duo_drawer_prompts",
+                        text="Sink Duo Drawer...", icon='SELECT_SUBTRACT')
+        if _has_drawer_box_construction_options():
+            _draw_drawer_box_construction_menu(layout)
+        if _has_drawer_slides_options():
+            _draw_drawer_slides_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -435,12 +577,22 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("hb_face_frame.toggle_front_open",
+                        text="Open / Close", icon='FULLSCREEN_ENTER')
+        # Drawer-style openings get the interior editor (self-polling:
+        # hidden on door / panel openings).
+        if _is_drawer_opening(context.active_object):
+            layout.operator("hb_face_frame.drawer_interior",
+                            text="Drawer Interior...", icon='MESH_GRID')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
                     text="Change Opening")
         layout.operator("hb_face_frame.accessory_menu",
                         text="Add Accessory...", icon='ADD')
+        layout.operator("hb_face_frame.equalize_opening_heights",
+                        text="Equalize Opening Heights",
+                        icon='ALIGN_JUSTIFY')
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Horizontal", icon='SNAP_EDGE')
@@ -469,6 +621,11 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('SEP',),
         ('FLIP_UP_DOOR',      "Flip Up Door"),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
+        ('SEP',),
+        ('RETRACTING_DOOR',        "Retracting Door"),
+        ('RETRACTING_DOOR_PAIR',   "Retracting Doors (Pair)"),
+        ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors"),
+        ('TOP_RETRACTING_DOOR',    "Top-Mount Retracting Door"),
         ('SEP',),
         ('DRAWER',            "Drawer"),
         ('FALSE_FRONT',       "False Front"),
@@ -654,14 +811,27 @@ class HOME_BUILDER_MT_face_frame_valance_commands(bpy.types.Menu):
                         text="Delete Valance", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
+    """Right-click menu for a mantle root."""
+    bl_label = "Mantle Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.mantle_prompts",
+                        text="Mantle Properties...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Mantle", icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
     """Right-click menu for a Misc Part - a bare GeoNodeCutpart with no
     cabinet cage. The cabinet / part-role menus don't apply, so this is
-    size, machining cutouts, Make Editable / Revert, and delete. Set
-    Dimensions and the cutout items edit the cutpart's GeoNode inputs, so
-    they hide once the part is made editable (GN applied); Delete routes
-    through the HB5-aware delete (which falls back to object.delete for a
-    cage-less part).
+    properties (size + panel type), machining cutouts, Make Editable /
+    Revert, and delete. Part Properties and the cutout items edit the
+    cutpart's GeoNode inputs, so they hide once the part is made editable
+    (GN applied); Delete routes through the HB5-aware delete (which falls
+    back to object.delete for a cage-less part).
     """
     bl_label = "Misc Part Commands"
 
@@ -671,7 +841,7 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
 
         if ops_part_commands._is_cutpart(obj):
             layout.operator("hb_face_frame.set_misc_part_dimensions",
-                            text="Set Dimensions...", icon='ARROW_LEFTRIGHT')
+                            text="Part Properties...", icon='WINDOW')
             # Machining cutout - same entries as the cabinet-part menu; a
             # Misc Part is itself a parametric cutpart so the operators
             # apply unchanged.
@@ -698,19 +868,42 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
         layout.operator("hb_general.delete", text="Delete Part", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_wood_top_commands(bpy.types.Menu):
+    """Right-click menu for a Wood Top (countertop part)."""
+    bl_label = "Wood Top Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.wood_top_prompts",
+                        text="Wood Top Options...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_general.delete", text="Delete Wood Top",
+                        icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_bottom_rail_profile(bpy.types.Menu):
-    """Pick the decorative bottom-rail profile for this cabinet. Lists None +
-    every '* Cutter' curve in face_frame_assets/profiles; the current choice is
-    marked. Each item sets the cabinet-level bottom_rail_profile enum."""
+    """Pick the decorative bottom-rail profile. Lists None + every
+    '* Cutter' curve in face_frame_assets/profiles; the current choice is
+    marked. On a bottom RAIL the pick (and the mark) is that rail's bay
+    override; elsewhere (valance board / cabinet menus) it is the
+    cabinet-level enum."""
     bl_label = "Bottom Rail Profile"
 
     def draw(self, context):
         import os
         layout = self.layout
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        active = context.active_object
+        root = types_face_frame.find_cabinet_root(active)
         current = ''
         if root is not None:
             current = getattr(root.face_frame_cabinet, 'bottom_rail_profile', 'NONE')
+        if (active is not None and active.get('hb_part_role')
+                == types_face_frame.PART_ROLE_BOTTOM_RAIL):
+            bay = types_face_frame.bay_cage_for_bottom_rail(active)
+            if bay is not None:
+                ov = getattr(bay.face_frame_bay, 'bottom_rail_profile', 'CABINET')
+                if ov and ov != 'CABINET':
+                    current = ov
         items = [('NONE', 'None'), ('ARCH', 'Arched')]
         d = types_face_frame.bottom_rail_profile_dir()
         if os.path.isdir(d):
@@ -729,6 +922,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_cabinet_commands,
     HOME_BUILDER_MT_face_frame_floating_shelf_commands,
     HOME_BUILDER_MT_face_frame_valance_commands,
+    HOME_BUILDER_MT_face_frame_mantle_commands,
     HOME_BUILDER_MT_face_frame_misc_part_commands,
     HOME_BUILDER_MT_face_frame_door_part_commands,
     HOME_BUILDER_MT_face_frame_leg_product_commands,
@@ -736,11 +930,14 @@ classes = (
     HOME_BUILDER_MT_face_frame_bay_commands,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
+    HOME_BUILDER_MT_face_frame_drawer_box_construction,
+    HOME_BUILDER_MT_face_frame_drawer_slides,
     HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,
     HOME_BUILDER_MT_face_frame_add_appliance,
+    HOME_BUILDER_MT_face_frame_wood_top_commands,
     HOME_BUILDER_MT_face_frame_bottom_rail_profile,
 )
 

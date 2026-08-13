@@ -158,6 +158,11 @@ class FaceFrameLayout:
         self.right_stile_type = cab.right_stile_type
         is_full_overlay = (
             types_face_frame._resolve_style_overlay(cabinet_obj) == 'FULL')
+        # Kept on the layout: the mid-stile step notches (and the flush
+        # finished division that goes with them) are FULL-overlay
+        # construction only -- standard overlays keep the plain stile +
+        # partition-skin build.
+        self.full_overlay = is_full_overlay
         self.corner_overlay_left = (
             is_full_overlay and cab.left_stile_type == 'BLIND')
         self.corner_overlay_right = (
@@ -2068,6 +2073,70 @@ def mid_stile_dims(layout, gap_index):
     return (length, ms['width'], layout.fft)
 
 
+def mid_stile_notches(layout, gap_index):
+    """Step notches for a mid stile whose adjacent bays differ in
+    vertical extent (the full-overlay height-change case).
+
+    The stile spans the UNION of both bays; where only ONE bay runs
+    beside it, the stile keeps just that bay's HALF of its width --
+    the absent bay's half is notched away from the stile's end up (or
+    down) to the absent bay's edge, so e.g. a 2-1/4" shared stile
+    reads 1-1/8" beside the single full-height door below a shortened
+    middle bay.
+
+    Returns a list of notch dicts: end ('BOTTOM' / 'TOP'), side
+    ('LEFT' / 'RIGHT' -- which adjacent bay's half is removed), span
+    (extent along the stile from that end) and width (the removed
+    width). Empty for standard overlays (FULL-overlay construction
+    only -- others keep the plain stile + partition skins), when the
+    bays align, or when the gap sits on a bend (the mitered halves
+    handle their own geometry).
+    """
+    if not getattr(layout, 'full_overlay', False):
+        return []
+    if gap_index >= len(layout.mid_stiles):
+        return []
+    if layout.angled_multi and mid_stile_bend_thetas(layout, gap_index):
+        return []
+    ms = layout.mid_stiles[gap_index]
+    a_bot = bay_bottom_z(layout, gap_index)
+    b_bot = bay_bottom_z(layout, gap_index + 1)
+    a_top = bay_top_z(layout, gap_index)
+    b_top = bay_top_z(layout, gap_index + 1)
+    # Physical stile extent -- mirrors mid_stile_position / _dims.
+    bottom_z = min(a_bot, b_bot)
+    if bottom_rail_passthrough(layout, gap_index):
+        bottom_z += layout.bays[gap_index]['bottom_rail_width']
+    bottom_z -= ms['extend_down_amount']
+    if ms.get('to_floor'):
+        bottom_z = 0.0
+    top_z = max(a_top, b_top)
+    if top_rail_passthrough(layout, gap_index):
+        top_z -= layout.bays[gap_index]['top_rail_width']
+    top_z += ms['extend_up_amount']
+
+    half = ms['width'] / 2.0
+    eps = inch(1.0 / 32.0)
+    out = []
+    hi_bot = max(a_bot, b_bot)      # the shallower-reaching bay's bottom
+    if hi_bot - bottom_z > eps:
+        out.append({
+            'end': 'BOTTOM',
+            'side': 'LEFT' if a_bot > b_bot else 'RIGHT',
+            'span': hi_bot - bottom_z,
+            'width': half,
+        })
+    lo_top = min(a_top, b_top)      # the shorter bay's top
+    if top_z - lo_top > eps:
+        out.append({
+            'end': 'TOP',
+            'side': 'LEFT' if a_top < b_top else 'RIGHT',
+            'span': top_z - lo_top,
+            'width': half,
+        })
+    return out
+
+
 def mid_stile_bend_thetas(layout, gap_index):
     """(theta_left_region, theta_right_region) of the front planes
     meeting at this gap's mid stile, or None when the gap is flat (no
@@ -2203,6 +2272,16 @@ def _mid_div_offset(layout, gap_index):
     not.
     """
     ms = layout.mid_stiles[gap_index]
+    # Bay-height STEP (full overlay): the whole division setup shifts
+    # so its void-side face lands on the stile's notch plane (the
+    # stile centerline) -- and every face-keyed consumer (carcass
+    # bottom / back segments, kick, skins) follows through the shared
+    # _mid_div_* helpers instead of poking through the moved panel.
+    step = mid_stile_notches(layout, gap_index)
+    if step and _epsilon_eq(layout.bays[gap_index]['depth'],
+                            layout.bays[gap_index + 1]['depth']):
+        dt = layout.division_thickness
+        return (-dt / 2.0 if step[0]['side'] == 'RIGHT' else dt / 2.0)
     loc = ms.get('division_location', 'CENTERED')
     if loc == 'CENTERED':
         return 0.0
@@ -2274,17 +2353,34 @@ def _carcass_meeting_x(layout, gap_index):
     return _mid_div_right_outer_x(layout, gap_index)
 
 
+def _step_gap(layout, gap_index):
+    """True when gap_index carries a same-depth bay-height STEP (the
+    full-overlay notched-stile + flush-division construction). The
+    dropped full-height division blocks the usual pass-under, so
+    carcass segments must stop at THEIR side's division face."""
+    return bool(
+        _epsilon_eq(layout.bays[gap_index]['depth'],
+                    layout.bays[gap_index + 1]['depth'])
+        and mid_stile_notches(layout, gap_index))
+
+
 def _segment_x_bounds(layout, start, end):
     """Left and right X for a segment that should fill from cabinet inner
     side wall to cabinet inner side wall, meeting adjacent segments at
-    the mid division on internal gaps.
+    the mid division on internal gaps. On a step gap the division runs
+    the full height flush with the stile notch plane, so nothing passes
+    under it -- each segment stops at its own side's division face.
     """
     if start == 0:
         left_x = carcass_inner_left_x(layout)
+    elif _step_gap(layout, start - 1):
+        left_x = _mid_div_right_outer_x(layout, start - 1)
     else:
         left_x = _carcass_meeting_x(layout, start - 1)
     if end == layout.bay_count - 1:
         right_x = carcass_inner_right_x(layout)
+    elif _step_gap(layout, end):
+        right_x = _mid_div_left_outer_x(layout, end)
     else:
         right_x = _carcass_meeting_x(layout, end)
     return left_x, right_x
@@ -2738,6 +2834,27 @@ def mid_division_panels(layout, gap_index):
             top_z = higher_top_z - layout.mt + ms['extend_up_amount']
         # Mirror Z=True extends in +X from origin, so origin x = panel's
         # left face = center - dt/2.
+        #
+        # Bay-height STEP at this gap (mid_stile_notches, full overlay
+        # only): the division becomes the void's finished surface. It
+        # extends to the face frame's own extent on the stepped end (no
+        # bottom-rail inset; the stile and panel bottoms align). The
+        # flush-with-the-notch-plane shift lives in _mid_div_offset so
+        # every face-keyed consumer follows; center_x already carries it.
+        step_flush = None
+        step_notches = mid_stile_notches(layout, gap_index)
+        if step_notches:
+            step_flush = step_notches[0]['side']
+            for n in step_notches:
+                if n['end'] == 'BOTTOM':
+                    bottom_z = (bay_bottom_z(layout, lower_idx)
+                                - ms['extend_down_amount'])
+                    if ms.get('to_floor'):
+                        bottom_z = 0.0
+                else:
+                    top_z = (max(bay_top_z(layout, gap_index),
+                                 bay_top_z(layout, gap_index + 1))
+                             + ms['extend_up_amount'])
         return [{
             'slot':      0,
             'bay_side':  'CENTER',
@@ -2747,6 +2864,7 @@ def mid_division_panels(layout, gap_index):
             'length':    top_z - bottom_z,
             'width':     _panel_width(bay_a['depth']),
             'thickness': dt,
+            'step_flush': step_flush,
             # Stretcher notches at top-front + top-back of the panel.
             # Active when stretchers actually cross this gap; sized to
             # the stretcher's own width and thickness for a flush fit.
@@ -2830,6 +2948,13 @@ def partition_skin_panels(layout, gap_index):
     """
     skins = []
     if gap_index >= len(layout.mid_stiles):
+        return skins
+    # A same-depth bay-height STEP is handled by the notched stile +
+    # the flush finished division (mid_stile_notches / the step_flush
+    # panel) -- the void surface IS the division, so no skin.
+    if (_epsilon_eq(layout.bays[gap_index]['depth'],
+                    layout.bays[gap_index + 1]['depth'])
+            and mid_stile_notches(layout, gap_index)):
         return skins
 
     bay_a = layout.bays[gap_index]
@@ -3449,13 +3574,30 @@ def _walk_tree(node, layout, bay_index,
             brw = bay.get('bottom_rail_width') or 0.0
             if brw > 0:
                 eff_widths[bottom_rail_splitter_index] = brw
-    splitter_total = sum(eff_widths)
+    # For size distribution a removed rail still consumes its FULL width
+    # from the pool; the freed space (full width minus the collapsed gap)
+    # is handed to the two adjacent openings below, half each. Without
+    # this the freed space went to whichever siblings were unlocked --
+    # and silently vanished when every sibling held a typed size, so the
+    # opening dims never summed back to the cabinet height.
+    dist_widths = list(eff_widths)
+    if node['axis'] == 'H':
+        for i in range(n_splitters):
+            if removes[i]:
+                dist_widths[i] = widths[i]
+    splitter_total = sum(dist_widths)
 
     if node['axis'] == 'H':
         ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
         sizes = _redistribute_sizes(
             children, ff_avail_z, splitter_total
         )
+        for i in range(n_splitters):
+            if removes[i]:
+                freed = dist_widths[i] - eff_widths[i]
+                if freed > 0:
+                    sizes[i] += freed / 2.0
+                    sizes[i + 1] += freed / 2.0
         ff_opening_top_z = cage_z + cage_dim_z - reveals['top']
         cur_z_top = ff_opening_top_z
         for i, child in enumerate(children):
@@ -4179,12 +4321,15 @@ def auto_shelf_qty(opening_height, depth):
 
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
                               kind, role, name_prefix,
-                              nosing_style='NONE', nosing_height=0.0):
+                              nosing_style='NONE', nosing_height=0.0,
+                              z0=0.0):
     """Stacked horizontal shelves filling a region. Geometry is
     identical for adjustable and glass shelves; the kind/role tag
     drives downstream material handling and selection. setback is
-    per-item so the half-depth preset (which bumps shelf_setback to
-    6") can request a deeper front gap on individual items.
+    per-item (half-depth shelves pass the mid-cavity line) so
+    individual items can request a deeper front gap. z0 lifts the
+    whole stack: shelves distribute evenly in [z0, region top], so
+    an item can sit above another insert sharing the opening.
 
     A nosing style other than NONE (adjustable shelves only) recesses
     the shelf board by the nosing stock depth and emits one
@@ -4197,7 +4342,8 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     cage_dim_x = rect['cage_dim_x']
     cage_dim_z = rect['cage_dim_z']
 
-    interior_h = cage_dim_z - qty * SHELF_THICKNESS
+    z0 = max(0.0, min(z0, cage_dim_z))
+    interior_h = (cage_dim_z - z0) - qty * SHELF_THICKNESS
     if interior_h <= 0:
         return []
     spacing = interior_h / (qty + 1)
@@ -4212,7 +4358,7 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     for k in range(qty):
         # Shelf k bottom-face Z: stack from the bottom with one spacing
         # gap before the first shelf and one after the last.
-        z = (k + 1) * spacing + k * SHELF_THICKNESS
+        z = z0 + (k + 1) * spacing + k * SHELF_THICKNESS
         items.append({
             'kind':     kind,
             'role':     role,
@@ -4239,18 +4385,20 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
 
 
 def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback,
-                                  nosing_style='NONE', nosing_height=0.0):
+                                  nosing_style='NONE', nosing_height=0.0,
+                                  z0=0.0):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Adjustable Shelf',
-        nosing_style, nosing_height,
+        nosing_style, nosing_height, z0,
     )
 
 
-def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback):
+def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'GLASS_SHELF', 'GLASS_SHELF', 'Glass Shelf',
+        z0=z0,
     )
 
 
@@ -4421,6 +4569,11 @@ def _rollout_descriptors(rect, cage_dim_y, item):
     box_x, box_dx, spacer_l, spacer_r = _assembly_side_geometry(
         rect, cage_dim_x)
     box_dy = max(0.0, cage_dim_y - setback)
+    # Explicit depth (0 = auto): shorten the boxes at the BACK so they
+    # clear a pipe / vent run behind them. Clamped to the auto fit.
+    typed_dy = getattr(item, 'rollout_depth', 0.0)
+    if typed_dy > 0.0:
+        box_dy = min(typed_dy, box_dy)
 
     out = []
     z = bottom_gap
@@ -4461,9 +4614,12 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
     setback = item.tray_setback
     remove_shelf = item.tray_remove_shelf
     opening_height = item.tray_opening_height
+    # Vertical anchor: the whole insert (dividers + locked shelf) rides
+    # up from the region bottom so it can sit above other items.
+    z0 = max(0.0, min(getattr(item, 'bottom_offset', 0.0), cage_dim_z))
 
     if remove_shelf:
-        div_length = cage_dim_z
+        div_length = max(0.0, cage_dim_z - z0)
     else:
         # Dividers stop just below the locked shelf's bottom face.
         div_length = max(0.0, opening_height - SHELF_THICKNESS)
@@ -4482,7 +4638,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'role':         'TRAY_DIVIDER',
             'name':         f'Tray Divider {k + 1}',
             'orientation':  'VERTICAL',
-            'position':     (x, cage_dim_y - SHELF_BACK_SETBACK, 0.0),
+            'position':     (x, cage_dim_y - SHELF_BACK_SETBACK, z0),
             'dims':         (div_length, div_width, div_thickness),
         })
 
@@ -4495,7 +4651,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'name':         'Tray Locked Shelf',
             'orientation':  'HORIZONTAL',
             'position':     (SHELF_X_CLEARANCE, setback,
-                             max(0.0, opening_height - SHELF_THICKNESS)),
+                             z0 + max(0.0, opening_height - SHELF_THICKNESS)),
             'dims':         (shelf_length, shelf_width, SHELF_THICKNESS),
         })
     return out
@@ -4628,7 +4784,31 @@ def _closet_rod_descriptor(rect, cage_dim_y, item):
     }
 
 
-def interior_item_descriptors(layout, rect, cab_props, opening_props):
+def _retracting_clearances(opening_ff):
+    """(left, right, front, top) interior clearances a retracting-door
+    mechanism costs, in meters. All zero when no mechanism applies.
+
+    Per the product spec: pocketed doors ride the side(s) they hinge
+    on, shelves between them narrow by a fixed amount per pocket side
+    and hold back from the front for hinge access; the top-mount door
+    eats a fixed height at the top of the opening.
+    """
+    if opening_ff is None:
+        return (0.0, 0.0, 0.0, 0.0)
+    mech = getattr(opening_ff, 'door_mechanism', 'NONE')
+    if mech == 'RETRACTING_TOP':
+        return (0.0, 0.0, 0.0, inch(2.0))
+    if mech not in ('RETRACTING', 'RETRACTING_BIFOLD'):
+        return (0.0, 0.0, 0.0, 0.0)
+    per_side = inch(3.25) if mech == 'RETRACTING' else inch(4.75)
+    hinge = getattr(opening_ff, 'hinge_side', 'RIGHT')
+    left = per_side if hinge in ('LEFT', 'DOUBLE') else 0.0
+    right = per_side if hinge in ('RIGHT', 'DOUBLE') else 0.0
+    return (left, right, inch(3.0), 0.0)
+
+
+def interior_item_descriptors(layout, rect, cab_props, opening_props,
+                              opening_ff=None):
     """Flatten one opening's interior_items collection into a list of
     geometry descriptors for the recalc to materialize. One InteriorItem
     can produce many descriptors (e.g., ADJUSTABLE_SHELF with qty=3 ->
@@ -4637,26 +4817,69 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props):
     Each descriptor carries a 'kind' field so the recalc can pick the
     right Blender object type (mesh part vs text object) without
     re-reading the source collection.
+
+    opening_ff is the OWNING OPENING's props even when opening_props is
+    an interior-region leaf - opening-level state (the door mechanism)
+    applies to every region the opening contains.
     """
     # Per-bay depth - threaded onto each leaf rect by bay_openings.
     # Used to be computed here from layout.dim_y, which broke when bay
     # depths diverged from the cabinet's overall depth.
     cage_dim_y = rect['cage_dim_y']
+
+    # Retracting-door clearances: shelf stacks narrow off the pocket
+    # side(s), hold back from the front, and lose the top-mount door's
+    # height. Other insert kinds are left as authored for now.
+    cl_l, cl_r, cl_f, cl_t = _retracting_clearances(opening_ff)
+    shelf_rect = rect
+    if cl_l or cl_r or cl_t:
+        shelf_rect = dict(rect)
+        shelf_rect['cage_dim_x'] = max(
+            0.0, rect['cage_dim_x'] - cl_l - cl_r)
+        shelf_rect['cage_dim_z'] = max(0.0, rect['cage_dim_z'] - cl_t)
+
+    def _pocket_shifted(descs):
+        # shelf_rect shrinks symmetrically off 0; the stack actually
+        # starts past the left pocket, so shift the emitted parts.
+        if cl_l:
+            for d in descs:
+                x, y, z = d['position']
+                d['position'] = (x + cl_l, y, z)
+        return descs
+
     out = []
     for item in opening_props.interior_items:
         if item.kind == 'ADJUSTABLE_SHELF':
             # getattr: tolerate item collections created before the
             # nosing props existed (e.g. a live session spanning an
             # addon update).
-            out.extend(_adjustable_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback,
+            out.extend(_pocket_shifted(_adjustable_shelf_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(item.shelf_setback, cl_f),
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
-            ))
+                getattr(item, 'bottom_offset', 0.0),
+            )))
+        elif item.kind == 'HALF_DEPTH_SHELF':
+            # Half-depth shelves: the front edge always sits at half the
+            # cavity depth, so the look holds across wall, base, and
+            # tall cabinet depths (a static setback would not). Parts
+            # emit as ADJUSTABLE_SHELF so downstream consumers treat
+            # them like any other adjustable shelf.
+            out.extend(_pocket_shifted(_shelf_stack_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(cage_dim_y / 2.0, cl_f),
+                'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Half-Depth Shelf',
+                getattr(item, 'shelf_nosing_style', 'NONE'),
+                getattr(item, 'shelf_nosing_height', 0.0),
+                z0=getattr(item, 'bottom_offset', 0.0),
+            )))
         elif item.kind == 'GLASS_SHELF':
-            out.extend(_glass_shelf_descriptors(
-                rect, cage_dim_y, item.shelf_qty, item.shelf_setback
-            ))
+            out.extend(_pocket_shifted(_glass_shelf_descriptors(
+                shelf_rect, cage_dim_y, item.shelf_qty,
+                max(item.shelf_setback, cl_f),
+                z0=getattr(item, 'bottom_offset', 0.0),
+            )))
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'ROLLOUT':
@@ -4734,19 +4957,20 @@ def _shifted_descriptor(desc, offset):
 
 
 def _walk_interior_node(node, rect, origin_offset,
-                        layout, cab_props, out):
+                        layout, cab_props, out, opening_ff=None):
     """Recurse the interior tree. rect is the region's local cage_dim_*;
     origin_offset is the (x, y, z) of this region's front-left-bottom
     corner in OPENING-local coords. Leaves emit interior items
     (translated by origin_offset); split nodes emit one divider
-    descriptor and recurse into children.
+    descriptor and recurse into children. opening_ff carries the owning
+    opening's props down to every leaf (see interior_item_descriptors).
     """
     from . import types_face_frame
 
     if node.get(types_face_frame.TAG_INTERIOR_REGION):
         rp = node.face_frame_interior_region
         leaf_descs = interior_item_descriptors(
-            layout, rect, cab_props, rp,
+            layout, rect, cab_props, rp, opening_ff,
         )
         for d in leaf_descs:
             out.append(_shifted_descriptor(d, origin_offset))
@@ -4831,10 +5055,10 @@ def _walk_interior_node(node, rect, origin_offset,
                       'reveal_left': rev_l, 'reveal_right': rev_r,
                       'reveal_top': rev_t, 'reveal_bottom': 0.0}
         _walk_interior_node(children[0], lower_rect, origin_offset,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
         upper_origin = (ox, oy, oz + size_a + div_t)
         _walk_interior_node(children[1], upper_rect, upper_origin,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
     else:
         # Vertical divider (division). Children stack in X.
         ox, oy, oz = origin_offset
@@ -4878,10 +5102,10 @@ def _walk_interior_node(node, rect, origin_offset,
                       'reveal_left': 0.0, 'reveal_right': rev_r,
                       'reveal_top': rev_t, 'reveal_bottom': rev_b}
         _walk_interior_node(children[0], left_rect, origin_offset,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
         right_origin = (ox + size_a + div_t, oy, oz)
         _walk_interior_node(children[1], right_rect, right_origin,
-                            layout, cab_props, out)
+                            layout, cab_props, out, opening_ff)
 
 
 def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
@@ -4889,12 +5113,13 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     one exists on `opening_obj`, else falls through to the flat path.
     """
     root = _interior_tree_root(opening_obj)
+    op_props = opening_obj.face_frame_opening
     if root is None:
-        op_props = opening_obj.face_frame_opening
-        return interior_item_descriptors(layout, rect, cab_props, op_props)
+        return interior_item_descriptors(layout, rect, cab_props,
+                                         op_props, op_props)
     out = []
     _walk_interior_node(root, rect, (0.0, 0.0, 0.0),
-                        layout, cab_props, out)
+                        layout, cab_props, out, op_props)
     return out
 
 

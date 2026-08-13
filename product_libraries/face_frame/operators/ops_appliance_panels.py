@@ -459,7 +459,8 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
         if obj:
             bp = hb_utils.get_appliance_bp(obj)
             if bp:
-                return bp.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR'}
+                return bp.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR',
+                                                    'UNDER_COUNTER'}
         return False
 
     def _reset_to_preset(self, config):

@@ -67,8 +67,10 @@ RENDERABLE_CATALOG = (
     "6 Drawer Dresser",
     "Night Stand",
     "3 Drawer Night Stand",
-    # Bare parts (no cage): a lone cutpart, and a door front + pull.
+    # Bare parts (no cage): a lone cutpart, a countertop slab, and a
+    # door front + pull.
     "Misc Part",
+    "Wood Top",
     "Door",
     # Misc products. Half Wall / Support Frame reuse the frameless
     # geometry (no bay preset applies; default_bay_config returns None).
