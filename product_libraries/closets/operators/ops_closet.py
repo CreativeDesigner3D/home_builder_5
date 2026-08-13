@@ -1870,6 +1870,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=3,
                                min=0, max=20)  # type: ignore
+    unlock_qty: bpy.props.BoolProperty(
+        name="Shelf Quantity",
+        description="Hold the count typed here instead of following "
+                    "the opening's height (one shelf per foot)",
+        default=False)  # type: ignore
     # A shelf on clips is cut narrower than the opening so it drops
     # in, and can be held back from the front edge. Both figures come
     # from the room until this opening takes one over.
@@ -1902,11 +1907,14 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     def invoke(self, context, event):
         opening = types_closets.find_opening_cage(context.active_object)
-        # Default to the computed count for this opening's height; keep
-        # an existing user setting if the opening already has shelves.
-        existing = int(opening.hb_closet_opening.adj_shelf_qty)
-        self.qty = existing or types_closets.default_adj_shelf_qty(opening)
+        # The count follows the opening's height until its padlock is
+        # closed on a typed figure; either way the field shows what
+        # the opening would get right now.
         op = opening.hb_closet_opening
+        self.unlock_qty = bool(op.unlock_adj_qty)
+        existing = int(op.adj_shelf_qty)
+        self.qty = (existing if self.unlock_qty and existing
+                    else types_closets.default_adj_shelf_qty(opening))
         room = context.scene.hb_closets
         # A figure the opening has not taken over reads back as the
         # room's, so there is something to see before unlocking it.
@@ -1922,7 +1930,8 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     def draw(self, context):
         col = self.layout.column(align=True)
-        col.prop(self, 'qty')
+        _locked_field(col, self, 'qty', 'unlock_qty',
+                      text="Shelf Quantity")
         col = self.layout.column(align=True)
         _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                       text="Clip Gap")
@@ -1934,7 +1943,10 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         if opening is None:
             return {'CANCELLED'}
         op = opening.hb_closet_opening
-        op.adj_shelf_qty = self.qty
+        op.unlock_adj_qty = self.unlock_qty
+        op.adj_shelf_qty = (
+            self.qty if self.unlock_qty
+            else types_closets.default_adj_shelf_qty(opening))
         op.unlock_shelf_clip_gap = self.unlock_clip_gap
         op.shelf_clip_gap = self.clip_gap
         op.unlock_shelf_setback = self.unlock_setback
@@ -3345,6 +3357,9 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
             return {'CANCELLED'}
         qty = int(opening.hb_closet_opening.adj_shelf_qty)
         opening.hb_closet_opening.adj_shelf_qty = max(0, qty + self.delta)
+        # Stepping the count by hand takes it over: the height rule
+        # would deal the step right back out on the next solve.
+        opening.hb_closet_opening.unlock_adj_qty = True
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
         _apply_selection_shading(context, root)

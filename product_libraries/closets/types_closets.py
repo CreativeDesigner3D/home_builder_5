@@ -2445,7 +2445,19 @@ class ClosetStarter(GeoNodeCage):
             inst.rotation_euler = rot
 
     def _reconcile_adj_shelves(self, opening):
-        qty = max(0, int(opening.hb_closet_opening.adj_shelf_qty))
+        op = opening.hb_closet_opening
+        qty = max(0, int(op.adj_shelf_qty))
+        # An opening that has shelves deals them by its height - one
+        # per foot, the prior library's rule - so a resize re-deals
+        # the count. A count someone has taken over (the dialog's
+        # padlock, or stepping the count by hand) holds instead. An
+        # opening with no shelves stays empty either way.
+        # getattr: the padlock is a newer setting than some running
+        # sessions' property group - absent reads as following.
+        if qty and not getattr(op, 'unlock_adj_qty', False):
+            qty = default_adj_shelf_qty(opening)
+            if qty != int(op.adj_shelf_qty):
+                op.adj_shelf_qty = qty
         existing = [c for c in opening.children
                     if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF]
         existing.sort(key=lambda o: o.get('hb_adj_index', 0))
@@ -6224,6 +6236,7 @@ def serialize_opening(opening):
     their opening-local offsets)."""
     return {
         'adj': int(opening.hb_closet_opening.adj_shelf_qty),
+        'adj_lk': int(bool(opening.hb_closet_opening.unlock_adj_qty)),
         'drawer_qty': int(opening.hb_closet_opening.drawer_qty),
         'rollout_qty': int(opening.hb_closet_opening.rollout_qty),
         'rollout_h': float(opening.hb_closet_opening.rollout_height),
@@ -6315,6 +6328,8 @@ def apply_opening_data(opening, data, recalc=True):
     clear_opening_contents(opening)
     if data.get('adj'):
         opening.hb_closet_opening.adj_shelf_qty = data['adj']
+        opening.hb_closet_opening.unlock_adj_qty = bool(
+            data.get('adj_lk', 0))
     if data.get('drawer_qty'):
         opening.hb_closet_opening.drawer_qty = data['drawer_qty']
         opening.hb_closet_opening.drawer_front_height = data['drawer_fh']
