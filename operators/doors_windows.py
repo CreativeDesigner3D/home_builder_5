@@ -1679,7 +1679,10 @@ def _copy_geo_value_inputs(src_geo, dst_geo):
     """Copy every parametric (non-geometry) input from one GeoNode object onto
     another, matched by socket name. Geometry sockets and sockets missing on
     either node group are skipped. Clones a placed door/window's edited state
-    onto its duplicate."""
+    onto its duplicate.
+
+    The item list is materialized: set_input's interface_update rebuilds it.
+    """
     try:
         src_mod = src_geo.obj.modifiers[src_geo.obj.home_builder.mod_name]
         dst_mod = dst_geo.obj.modifiers[dst_geo.obj.home_builder.mod_name]
@@ -1688,9 +1691,6 @@ def _copy_geo_value_inputs(src_geo, dst_geo):
     if not src_mod.node_group or not dst_mod.node_group:
         return
     src_tree = src_mod.node_group.interface.items_tree
-    # Materialized: set_input runs interface_update on the first write of an
-    # input name, which rebuilds the interface item list and invalidates a live
-    # iterator over it - inputs after that point are skipped or the walk dies.
     for item in list(dst_mod.node_group.interface.items_tree):
         if getattr(item, 'item_type', '') != 'SOCKET':
             continue
