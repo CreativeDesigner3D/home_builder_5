@@ -328,16 +328,6 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_front_pull",
                             text="Set Pull...", icon='TOOL_SETTINGS')
 
-        # Drawer / pullout fronts reach their box's construction and
-        # slides from the front itself - the box is usually hidden
-        # behind it.
-        if role in (types_face_frame.PART_ROLE_DRAWER_FRONT,
-                    types_face_frame.PART_ROLE_PULLOUT_FRONT):
-            if _has_drawer_box_construction_options():
-                _draw_drawer_box_construction_menu(layout)
-            if _has_drawer_slides_options():
-                _draw_drawer_slides_menu(layout)
-
         # Face frame members (stiles / rails / splitters) keep their role-aware
         # Set Width. Every other cabinet part adjusts its size via Make
         # Editable (below) - there is no direct Set Size command.
@@ -594,10 +584,6 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         if _is_drawer_opening(context.active_object):
             layout.operator("hb_face_frame.drawer_interior",
                             text="Drawer Interior...", icon='MESH_GRID')
-        if _has_drawer_box_construction_options():
-            _draw_drawer_box_construction_menu(layout)
-        if _has_drawer_slides_options():
-            _draw_drawer_slides_menu(layout)
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
