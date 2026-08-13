@@ -112,12 +112,6 @@ def _draw_add_part_entries(layout):
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
-    layout.operator("hb_closets.add_cubbies",
-                    text="Cubbies...", icon='MESH_GRID')
-    layout.operator("hb_closets.add_rollouts",
-                    text="Rollout Trays...", icon='MESH_PLANE')
-    layout.operator("hb_closets.add_slanted_shelves",
-                    text="Slanted Shoe Shelves...", icon='SORTBYEXT')
     layout.menu("HOME_BUILDER_MT_closet_accessories",
                 text="Add Accessory",
                 icon='OUTLINER_OB_GROUP_INSTANCE')
@@ -137,22 +131,21 @@ class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
         from . import accessories_closets as acc
         layout = self.layout
         offered = acc.catalog_items()
-        if not offered:
-            layout.label(text="No accessories are available",
-                         icon='INFO')
-            layout.label(text="They come with the product catalog")
-            return
         families = {d.family for d in offered}
         for family, menu_id in (
                 (acc.FAMILY_OPENING,
                  "HOME_BUILDER_MT_closet_accessories_opening"),
                 (acc.FAMILY_PANEL,
-                 "HOME_BUILDER_MT_closet_accessories_panel"),
-                (acc.FAMILY_INSERT,
-                 "HOME_BUILDER_MT_closet_accessories_insert")):
+                 "HOME_BUILDER_MT_closet_accessories_panel")):
             if family in families:
                 layout.menu(menu_id,
                             text=acc.FAMILY_LABELS.get(family, family))
+        # Insert is always offered: alongside whatever the catalog
+        # carries, it is where the built-in inserts - rollouts, shoe
+        # shelves, cubbies - live.
+        layout.menu("HOME_BUILDER_MT_closet_accessories_insert",
+                    text=acc.FAMILY_LABELS.get(acc.FAMILY_INSERT,
+                                               "Insert"))
 
 
 class _closet_accessory_family_menu(bpy.types.Menu):
@@ -184,9 +177,24 @@ class HOME_BUILDER_MT_closet_accessories_panel(
 
 class HOME_BUILDER_MT_closet_accessories_insert(
         _closet_accessory_family_menu):
+    """The insert family: the built-in opening fills first, then
+    whatever insert accessories the catalog carries."""
     bl_idname = "HOME_BUILDER_MT_closet_accessories_insert"
     bl_label = "Insert"
     family = 'INSERT'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_closets.add_rollouts",
+                        text="Rollout Trays...", icon='MESH_PLANE')
+        layout.operator("hb_closets.add_slanted_shelves",
+                        text="Slanted Shoe Shelves...", icon='SORTBYEXT')
+        layout.operator("hb_closets.add_cubbies",
+                        text="Cubbies...", icon='MESH_GRID')
+        from . import accessories_closets as acc
+        if acc.catalog_items(family=self.family):
+            layout.separator()
+        _closet_accessory_family_menu.draw(self, context)
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
