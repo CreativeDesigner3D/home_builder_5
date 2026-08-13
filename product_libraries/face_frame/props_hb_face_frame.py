@@ -25,6 +25,7 @@ from ... import units
 from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import decorative_corner
+from . import cabinet_column
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -2283,6 +2284,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # standing in the cabinet's own corner,
                                  # so always the exterior finish.
                                  'DECORATIVE_CORNER',
+                                 # Cabinet column turnings: purchased
+                                 # split turnings applied over stiles,
+                                 # finished to match the exterior.
+                                 'CABINET_COLUMN',
                                  # Mantle moulding sweeps: curve objects
                                  # whose bevel geometry renders the
                                  # curve's material slot.
@@ -5048,6 +5053,59 @@ class Face_Frame_Mid_Stile_Width(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Cabinet_Column(PropertyGroup):
+    """One cabinet column applied over a face frame stile: a split
+    turning (end blocks, spools, styled shaft) standing proud of the
+    frame face. Lives in a CollectionProperty on
+    Face_Frame_Cabinet_Props keyed by stile_key; edited via the
+    Cabinet Column dialog on the stile's right-click menu. No update
+    callbacks - the operator runs one recalc after writing the entry
+    (see cabinet_column.py and types_face_frame._apply_cabinet_columns).
+    """
+    stile_key: StringProperty(
+        name="Stile Key",
+        description="Which stile carries this column: LEFT, RIGHT, or "
+                    "MID_<gap index>",
+    )  # type: ignore
+    style: EnumProperty(
+        name="Column Style",
+        items=cabinet_column.STYLE_ITEMS,
+        default='SMOOTH',
+    )  # type: ignore
+    size: EnumProperty(
+        name="Column Size",
+        items=cabinet_column.SIZE_ITEMS,
+        default='LARGE',
+    )  # type: ignore
+    top_block: BoolProperty(
+        name="Top End Block", default=True,
+    )  # type: ignore
+    top_block_height: FloatProperty(
+        name="Top Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the top rail)",
+    )  # type: ignore
+    bottom_block: BoolProperty(
+        name="Bottom End Block", default=True,
+    )  # type: ignore
+    bottom_block_height: FloatProperty(
+        name="Bottom Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the bottom rail)",
+    )  # type: ignore
+    floor_block: BoolProperty(
+        name="Bottom Block at Floor", default=False,
+        description="Plain plinth block at the floor (for a flush kick "
+                    "or a stile extended to the floor)",
+    )  # type: ignore
+    floor_block_height: FloatProperty(
+        name="Floor Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (fills the kick recess, or 4\" on a "
+                    "flush kick)",
+    )  # type: ignore
+
+
 # ---------------------------------------------------------------------------
 # Corner cabinet exterior configuration
 # ---------------------------------------------------------------------------
@@ -6922,6 +6980,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
 
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
+    # Cabinet columns: split turnings applied over stiles, keyed by
+    # stile (LEFT / RIGHT / MID_<gap>). See cabinet_column.py.
+    cabinet_columns: CollectionProperty(type=Face_Frame_Cabinet_Column)  # type: ignore
     corner_sections: CollectionProperty(type=Face_Frame_Corner_Section)  # type: ignore
     pie_drawer_qty: IntProperty(
         name="Drawer Qty",
@@ -10262,6 +10323,7 @@ classes = (
     Face_Frame_Panel_Row_Height,
     Face_Frame_Panel_Col_Width,
     Face_Frame_Mid_Stile_Width,
+    Face_Frame_Cabinet_Column,
     Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,

@@ -34,6 +34,7 @@ from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
 from . import decorative_corner
+from . import cabinet_column
 from . import bar_storage
 from . import pulls
 
@@ -2884,6 +2885,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # above have already reshaped (back extension, extended bottom,
         # finished bottom). No-op + cleanup when no corner is on.
         self._apply_decorative_corners(layout)
+
+        # Cabinet columns: split turnings applied over stiles, proud of
+        # the frame face. Nothing to cut, so ordering only needs the
+        # frame's final geometry. No-op + cleanup when none assigned.
+        self._apply_cabinet_columns(layout)
 
     def _part_ff_theta(self, layout, role, child):
         """Z rotation added to a FF part's baseline. Single-plane cabinets
@@ -5754,6 +5760,93 @@ class FaceFrameCabinet(GeoNodeCage):
         spec = decorative_corner.spec_from_props(cab, self._has_toe_kick())
         decorative_corner.apply_corners(
             self.obj, cab.width, cab.depth, cab.height, spec)
+
+    # =====================================================================
+    # Cabinet columns (split turnings over stiles)
+    # =====================================================================
+    def _apply_cabinet_columns(self, layout):
+        """Build / position / remove the split-turned columns applied
+        over this cabinet's stiles. Placement math (which stile, frame
+        extent, plane angle) is resolved here from the solver layout;
+        the geometry, stacking, and object management live in
+        cabinet_column.py.
+
+        v1 covers straight and single-angled fronts on standard
+        cabinets. Corner types and piecewise (multi-bay angled) fronts
+        only clean up - the FF-plane parameterization of a column
+        centered on a bend isn't defined yet.
+        """
+        cab = self.obj.face_frame_cabinet
+        entries = list(getattr(cab, 'cabinet_columns', ()))
+        if (not entries or cab.corner_type != 'NONE'
+                or layout.angled_multi):
+            cabinet_column.apply_columns(self.obj, [])
+            return
+
+        flush_floor = (layout.has_toe_kick
+                       and layout.toe_kick_type == 'FLUSH')
+        theta = solver.face_frame_angle(layout)
+
+        placements = []
+        for entry in entries:
+            key = entry.stile_key
+            if key == 'LEFT':
+                ffx = layout.lsw / 2.0
+                bay_lo = bay_hi = 0
+                label = "Left"
+            elif key == 'RIGHT':
+                ffx = solver.face_frame_length(layout) - layout.rsw / 2.0
+                bay_lo = bay_hi = layout.bay_count - 1
+                label = "Right"
+            elif key.startswith('MID_'):
+                try:
+                    gap = int(key[4:])
+                except ValueError:
+                    continue
+                if gap >= len(layout.mid_stiles):
+                    # Bay layout changed under the assignment; keep the
+                    # entry (it revives if the gap returns) but build
+                    # nothing.
+                    continue
+                ms_width = layout.mid_stiles[gap]['width']
+                ffx = (solver.bay_x_position(layout, gap)
+                       + layout.bays[gap]['width'] + ms_width / 2.0)
+                bay_lo, bay_hi = gap, gap + 1
+                label = "Mid %d" % (gap + 1)
+            else:
+                continue
+
+            z_bottom = min(solver.bay_bottom_z(layout, bay_lo),
+                           solver.bay_bottom_z(layout, bay_hi))
+            z_top = max(solver.bay_top_z(layout, bay_lo),
+                        solver.bay_top_z(layout, bay_hi))
+            bay = layout.bays[bay_lo]
+            bottom_rail = bay['bottom_rail_width']
+            if flush_floor:
+                # Flush kick: the frame runs to the floor and the wide
+                # rail is kick + rail, so the column and its default
+                # bottom block follow it down.
+                bottom_rail += bay['kick_height']
+                z_bottom = 0.0
+
+            x, y, _z = solver.ff_outer_world_pos(layout, ffx, 0.0)
+            placements.append({
+                'key': key,
+                'label': label,
+                'x': x, 'y': y, 'theta': theta,
+                'z_bottom': z_bottom, 'z_top': z_top,
+                'style': entry.style,
+                'size': entry.size,
+                'top_block': entry.top_block,
+                'top_block_height': entry.top_block_height,
+                'bottom_block': entry.bottom_block,
+                'bottom_block_height': entry.bottom_block_height,
+                'floor_block': entry.floor_block,
+                'floor_block_height': entry.floor_block_height,
+                'top_rail_width': bay['top_rail_width'],
+                'bottom_rail_width': bottom_rail,
+            })
+        cabinet_column.apply_columns(self.obj, placements)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)
