@@ -25,6 +25,7 @@ from bpy.props import (BoolProperty, BoolVectorProperty, EnumProperty,
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
+from .. import cabinet_column
 from ....hb_types import GeoNodeCutpart, CabinetPartModifier
 from .... import units
 from .... import hb_utils
@@ -647,6 +648,156 @@ class hb_face_frame_OT_toggle_stile_to_floor(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
+    """Apply, edit, or remove the cabinet column on the selected stile.
+
+    A cabinet column is a split turning (end blocks, spools, styled
+    shaft) applied over the frame face, centered on a stile. The
+    assignment lives in the cabinet's cabinet_columns collection keyed
+    by stile; this dialog is its only editor. Also reachable by
+    right-clicking a built column component (the key rides on it).
+    """
+    bl_idname = "hb_face_frame.set_cabinet_column"
+    bl_label = "Cabinet Column"
+    bl_description = ("Apply or edit the split-turned cabinet column "
+                      "on this stile")
+    bl_options = {'UNDO'}
+
+    style: EnumProperty(
+        name="Style", items=cabinet_column.STYLE_ITEMS,
+        default='SMOOTH')  # type: ignore
+    size: EnumProperty(
+        name="Size", items=cabinet_column.SIZE_ITEMS,
+        default='LARGE')  # type: ignore
+    top_block: BoolProperty(
+        name="Top End Block", default=True)  # type: ignore
+    top_block_height: FloatProperty(
+        name="Height", default=0.0, unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the top rail)",
+    )  # type: ignore
+    bottom_block: BoolProperty(
+        name="Bottom End Block", default=True)  # type: ignore
+    bottom_block_height: FloatProperty(
+        name="Height", default=0.0, unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the bottom rail)",
+    )  # type: ignore
+    floor_block: BoolProperty(
+        name="Bottom Block at Floor", default=False,
+        description="Plain plinth block at the floor (for a flush kick "
+                    "or a stile extended to the floor)")  # type: ignore
+    floor_block_height: FloatProperty(
+        name="Height", default=0.0, unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (fills the kick recess, or 4\" on a "
+                    "flush kick)",
+    )  # type: ignore
+    remove: BoolProperty(
+        name="Remove Column", default=False)  # type: ignore
+
+    @staticmethod
+    def _stile_key(obj):
+        if obj is None:
+            return None
+        role = obj.get('hb_part_role')
+        if role == types_face_frame.PART_ROLE_LEFT_STILE:
+            return 'LEFT'
+        if role == types_face_frame.PART_ROLE_RIGHT_STILE:
+            return 'RIGHT'
+        if role == types_face_frame.PART_ROLE_MID_STILE:
+            return 'MID_%d' % obj.get('hb_mid_stile_index', 0)
+        if role == cabinet_column.PART_ROLE:
+            return obj.get('hb_column_key')
+        return None
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if cls._stile_key(obj) is None:
+            return False
+        root = types_face_frame.find_cabinet_root(obj)
+        return (root is not None
+                and root.face_frame_cabinet.corner_type == 'NONE')
+
+    def _existing(self, root, key):
+        for i, entry in enumerate(root.face_frame_cabinet.cabinet_columns):
+            if entry.stile_key == key:
+                return i
+        return -1
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        self._key = self._stile_key(obj)
+        self._root = types_face_frame.find_cabinet_root(obj)
+        self.remove = False
+        idx = self._existing(self._root, self._key)
+        self._had_entry = idx >= 0
+        if self._had_entry:
+            entry = self._root.face_frame_cabinet.cabinet_columns[idx]
+            self.style = entry.style
+            self.size = entry.size
+            self.top_block = entry.top_block
+            self.top_block_height = entry.top_block_height
+            self.bottom_block = entry.bottom_block
+            self.bottom_block_height = entry.bottom_block_height
+            self.floor_block = entry.floor_block
+            self.floor_block_height = entry.floor_block_height
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column()
+        col.prop(self, 'style')
+        col.prop(self, 'size')
+        row = col.row(align=True)
+        row.prop(self, 'top_block')
+        sub = row.row(align=True)
+        sub.enabled = self.top_block
+        sub.prop(self, 'top_block_height', text="")
+        row = col.row(align=True)
+        row.prop(self, 'bottom_block')
+        sub = row.row(align=True)
+        sub.enabled = self.bottom_block
+        sub.prop(self, 'bottom_block_height', text="")
+        row = col.row(align=True)
+        row.prop(self, 'floor_block')
+        sub = row.row(align=True)
+        sub.enabled = self.floor_block
+        sub.prop(self, 'floor_block_height', text="")
+        if self._had_entry:
+            col.separator()
+            col.prop(self, 'remove', icon='X')
+
+    def execute(self, context):
+        root = getattr(self, '_root', None)
+        key = getattr(self, '_key', None)
+        if root is None or key is None:
+            # Called without invoke (scripted EXEC_DEFAULT): resolve
+            # from the active object directly.
+            obj = context.active_object
+            key = self._stile_key(obj)
+            root = types_face_frame.find_cabinet_root(obj)
+        if root is None or key is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        idx = self._existing(root, key)
+        if self.remove:
+            if idx >= 0:
+                cab.cabinet_columns.remove(idx)
+        else:
+            entry = (cab.cabinet_columns[idx] if idx >= 0
+                     else cab.cabinet_columns.add())
+            entry.stile_key = key
+            entry.style = self.style
+            entry.size = self.size
+            entry.top_block = self.top_block
+            entry.top_block_height = self.top_block_height
+            entry.bottom_block = self.bottom_block
+            entry.bottom_block_height = self.bottom_block_height
+            entry.floor_block = self.floor_block
+            entry.floor_block_height = self.floor_block_height
+        types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_remove_bottom_rail(bpy.types.Operator):
     """Remove the bottom rail the user clicked.
 
@@ -854,6 +1005,8 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
              "Vertical quirk-bead grooves carved across the face"),
             ('SHIPLAP', "Shiplap",
              "Nickel-gap plank reveals carved across the face"),
+            ('SLOTTED_SHELF', "Slotted Shelf",
+             "Equally spaced slats set flush in a solid perimeter frame"),
         ],
         default='PANEL',
         update=_on_misc_panel_type_update)  # type: ignore
@@ -2868,6 +3021,7 @@ classes = (
     hb_face_frame_OT_apply_finished_end_to_other_side,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_toggle_stile_to_floor,
+    hb_face_frame_OT_set_cabinet_column,
     hb_face_frame_OT_remove_bottom_rail,
     hb_face_frame_OT_toggle_flush_bottom_rail,
     hb_face_frame_OT_remove_mid_rail,

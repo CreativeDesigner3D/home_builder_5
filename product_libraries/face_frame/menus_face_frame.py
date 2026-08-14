@@ -12,6 +12,7 @@ later pass once those operators are implemented.
 import bpy
 
 from . import bay_presets
+from . import cabinet_column
 from . import types_face_frame
 from . import types_face_frame_corner
 from .operators import ops_part_commands
@@ -112,8 +113,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         # menu surfaces correctly whether the user picked roots, bays, or
         # individual face frame parts.
         selected_roots = set()
+        from .operators import ops_cabinet
         for obj in context.selected_objects:
-            root = types_face_frame.find_cabinet_root(obj)
+            root = ops_cabinet._find_group_member_root(obj)
             if root is not None:
                 selected_roots.add(root.name)
         if len(selected_roots) >= 1:
@@ -355,6 +357,17 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.toggle_stile_to_floor",
                             text="Toggle Stile to Floor",
                             icon='TRIA_DOWN_BAR')
+
+        # Cabinet column: split turning applied over the stile. Also
+        # offered on a built column component (the stile key rides on
+        # it), so an existing column re-opens its own dialog.
+        if role in (types_face_frame.PART_ROLE_LEFT_STILE,
+                    types_face_frame.PART_ROLE_RIGHT_STILE,
+                    types_face_frame.PART_ROLE_MID_STILE,
+                    cabinet_column.PART_ROLE):
+            layout.operator("hb_face_frame.set_cabinet_column",
+                            text="Cabinet Column...",
+                            icon='MESH_CYLINDER')
 
         # Finished bottom - on the carcass bottom (or the finished
         # bottom panel itself) of a standard upper. The dialog binds

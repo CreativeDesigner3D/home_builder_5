@@ -169,7 +169,7 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
 
     def add_interior_to_opening(self, opening_obj, interior):
         """Add an interior to an opening with proper drivers."""
-        interior.create()
+        interior.create('Interior')
         interior.obj.parent = opening_obj
         
         if 'IS_FRAMELESS_OPENING_CAGE' in opening_obj:
@@ -232,7 +232,17 @@ class hb_frameless_OT_interior_part_prompts(bpy.types.Operator):
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
+    def tag_part(self, context):
+        """5.2 modifier-input writes don't tag; rebuild the part."""
+        if context.object:
+            context.object.update_tag()
+
+    def check(self, context):
+        self.tag_part(context)
+        return True
+
     def execute(self, context):
+        self.tag_part(context)
         return {'FINISHED'}
 
     def draw(self, context):

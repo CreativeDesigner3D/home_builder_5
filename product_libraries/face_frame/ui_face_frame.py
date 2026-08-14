@@ -357,6 +357,7 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_sides_down', text="Extend Sides Down")
             if cab_props.extend_sides_down:
                 col.prop(cab_props, 'extend_sides_down_amount', text="Sides Drop")
+                col.prop(cab_props, 'overall_height', text="Overall Height")
                 col.prop(cab_props, 'side_front_profile', text="Front Profile")
                 col.prop(cab_props, 'overstool_accessory', text="Accessory")
 
@@ -1005,6 +1006,8 @@ def draw_opening_properties(layout, opening_obj):
         # and print labels on 2D output.
         if op.front_type == 'DOOR':
             fcol.prop(op, 'door_mechanism', text="Mechanism")
+            if op.door_mechanism in ('LIFT_UP_DELUXE', 'LIFT_UP_BIFOLD'):
+                fcol.prop(op, 'lift_up_servo', text="Servo Drive")
 
         # Chase fit (drawer / pullout only): how this opening's drawer
         # box responds to the cabinet's pipe chase. Hidden unless the
@@ -1043,6 +1046,10 @@ def draw_opening_properties(layout, opening_obj):
         # prints TILT-OUT instead of FALSE. No geometry change.
         if op.front_type == 'FALSE_FRONT':
             fcol.prop(op, 'is_tilt_out', text="Tilt-Out")
+
+        # Inset panel texture (plain / beadboard / shiplap).
+        if op.front_type == 'INSET_PANEL':
+            fcol.prop(op, 'inset_panel_type', text="Panel Type")
 
         # Appliance: filler stiles fitting an appliance. Two input modes
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
