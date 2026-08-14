@@ -6203,6 +6203,11 @@ def clear_opening_contents(opening):
             # rods carry hanger children; accessories carry their model
             # and any melamine cut for them
             _remove_part_tree(child)
+        elif child.get('hb_curate_test'):
+            # The evaluation line stands outside the part roles while
+            # it is being tried, but clearing an opening still means
+            # everything in it.
+            _remove_part_tree(child)
 
 
 def clear_bay_contents(bay_obj):

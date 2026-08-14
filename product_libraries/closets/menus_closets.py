@@ -146,6 +146,14 @@ class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
         layout.menu("HOME_BUILDER_MT_closet_accessories_insert",
                     text=acc.FAMILY_LABELS.get(acc.FAMILY_INSERT,
                                                "Insert"))
+        # The Curate line stands apart while it is being evaluated;
+        # the guard lets this menu draw even where that module is
+        # not registered.
+        if hasattr(bpy.types,
+                   'HOME_BUILDER_MT_closet_accessories_curate'):
+            layout.separator()
+            layout.menu("HOME_BUILDER_MT_closet_accessories_curate",
+                        text="Curate")
 
 
 class _closet_accessory_family_menu(bpy.types.Menu):
