@@ -1005,6 +1005,8 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
              "Vertical quirk-bead grooves carved across the face"),
             ('SHIPLAP', "Shiplap",
              "Nickel-gap plank reveals carved across the face"),
+            ('SLOTTED_SHELF', "Slotted Shelf",
+             "Equally spaced slats set flush in a solid perimeter frame"),
         ],
         default='PANEL',
         update=_on_misc_panel_type_update)  # type: ignore

@@ -12275,6 +12275,63 @@ class MiscPart(CabinetPart):
         self.set_input('Length', width)
         self.rebuild()
 
+    # Slotted-shelf construction (production spec): slats set in a
+    # solid perimeter frame, slat faces flush with the frame top.
+    SLOTTED_FRAME_WIDTH = inch(4.0)
+    SLOTTED_SLAT_WIDTH = inch(3.0)
+    SLOTTED_SLAT_THICKNESS = inch(0.625)
+    SLOTTED_TARGET_GAP = inch(1.5)
+    SLOTTED_MIN_GAP = inch(0.5)
+
+    def _slotted_shelf_mesh(self, length, width, t):
+        """Write a static slotted-shelf mesh: a perimeter frame of
+        SLOTTED_FRAME_WIDTH members at full thickness with equally
+        spaced slats spanning front-to-back, tops flush with the frame.
+        Same local space as the flat cutpart: x 0..length, y 0..-width
+        (Mirror Y), z 0..t. Falls back to a plain slab footprint when
+        the part is too small to carry a frame."""
+        import bmesh
+        fw = self.SLOTTED_FRAME_WIDTH
+        sw = self.SLOTTED_SLAT_WIDTH
+        st = min(self.SLOTTED_SLAT_THICKNESS, t)
+        boxes = []
+        if length <= 2.0 * fw + sw or width <= 2.0 * fw:
+            boxes.append((0.0, length, -width, 0.0, 0.0, t))
+        else:
+            # Perimeter frame: back, front, left, right members.
+            boxes.append((0.0, length, -fw, 0.0, 0.0, t))
+            boxes.append((0.0, length, -width, -width + fw, 0.0, t))
+            boxes.append((0.0, fw, -width + fw, -fw, 0.0, t))
+            boxes.append((length - fw, length, -width + fw, -fw, 0.0, t))
+            # Slats across the interior, equal gaps both sides.
+            interior = length - 2.0 * fw
+            g0 = self.SLOTTED_TARGET_GAP
+            n = max(1, int(round((interior + g0) / (sw + g0))))
+            while n > 1 and (interior - n * sw) / (n + 1) < self.SLOTTED_MIN_GAP:
+                n -= 1
+            gap = (interior - n * sw) / (n + 1)
+            for i in range(n):
+                x0 = fw + gap + i * (sw + gap)
+                boxes.append((x0, x0 + sw, -width + fw, -fw, t - st, t))
+        bm = bmesh.new()
+        for (x0, x1, y0, y1, z0, z1) in boxes:
+            vs = [bm.verts.new((x, y, z))
+                  for z in (z0, z1) for y in (y0, y1) for x in (x0, x1)]
+            # verts ordered: z0(y0(x0,x1), y1(x0,x1)), z1(...)
+            faces = ((0, 1, 3, 2), (4, 6, 7, 5), (0, 2, 6, 4),
+                     (1, 5, 7, 3), (0, 4, 5, 1), (2, 3, 7, 6))
+            for f in faces:
+                bm.faces.new([vs[i] for i in f])
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(self.obj.data)
+        bm.free()
+        mod_name = getattr(self.obj.home_builder, 'mod_name', '')
+        mod = self.obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        self.obj[TAG_STATIC_TEXTURED] = True
+
     def rebuild(self):
         """Sync the board's display with its panel type (stored on the
         object as HB_MISC_PANEL_TYPE). PANEL is the live GN cutpart;
@@ -12282,9 +12339,23 @@ class MiscPart(CabinetPart):
         builder the finished-end applied panels use, sized from the
         cutpart's own Length / Width / Thickness inputs so size edits
         re-carve in place. The carved (exterior) face lands on the
-        board's TOP face -- the finish face of the flat-lying part."""
+        board's TOP face -- the finish face of the flat-lying part.
+        SLOTTED_SHELF builds a frame-and-slats static mesh instead."""
         obj = self.obj
         ptype = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
+        if ptype == 'SLOTTED_SHELF':
+            self._slotted_shelf_mesh(
+                self.get_input('Length'),
+                self.get_input('Width'),
+                self.get_input('Thickness'))
+            if obj.data is not None and not obj.data.materials:
+                try:
+                    surf = self.get_input('Top Surface')
+                except Exception:
+                    surf = None
+                if surf is not None:
+                    obj.data.materials.append(surf)
+            return
         if ptype not in ('BEADBOARD', 'SHIPLAP'):
             mod_name = getattr(obj.home_builder, 'mod_name', '')
             mod = obj.modifiers.get(mod_name) if mod_name else None
