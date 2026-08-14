@@ -4674,12 +4674,18 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 def _find_group_member_root(obj):
     """Walk obj's parent chain to find the root that belongs in a
-    cabinet group: a face-frame cabinet cage or an appliance.
+    cabinet group: a face-frame cabinet cage, a bare product cage
+    (Support Frame, Half Wall, ...), a misc part, or an appliance.
     Returns the root Object or None.
     """
     cur = obj
     while cur is not None:
         if cur.get(types_face_frame.TAG_CABINET_CAGE):
+            return cur
+        if (cur.get(types_face_frame.TAG_PRODUCT_CAGE)
+                or cur.get('IS_FRAMELESS_PRODUCT_CAGE')):
+            return cur
+        if cur.get('IS_FACE_FRAME_MISC_PART'):
             return cur
         if cur.get('IS_APPLIANCE'):
             return cur
@@ -4836,10 +4842,13 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
         world_matrix = root.matrix_world.copy()
         root.parent = group.obj
         root.matrix_world = world_matrix
-        # Cabinet cages get hidden so only the group cage shows;
-        # appliances keep their visible geometry on the root, so
-        # hiding them would make the dishwasher / range disappear.
-        if root.get(types_face_frame.TAG_CABINET_CAGE):
+        # Cabinet / product cages get hidden so only the group cage
+        # shows (their part children stay visible); appliances keep
+        # their visible geometry on the root, so hiding them would
+        # make the dishwasher / range disappear.
+        if (root.get(types_face_frame.TAG_CABINET_CAGE)
+                or root.get(types_face_frame.TAG_PRODUCT_CAGE)
+                or root.get('IS_FRAMELESS_PRODUCT_CAGE')):
             root.hide_viewport = True
 
     # Shade the group cage like a cabinet (solid, addon's cabinet
@@ -4953,10 +4962,12 @@ class hb_face_frame_OT_ungroup_cabinet(bpy.types.Operator):
             world_matrix = m.matrix_world.copy()
             m.parent = None
             m.matrix_world = world_matrix
-            # Cabinet cages were hidden when grouped; show them again so the
-            # freed cabinet is selectable. The selection-mode re-apply below
-            # then puts them in their correct per-mode state.
-            if m.get(types_face_frame.TAG_CABINET_CAGE):
+            # Cabinet / product cages were hidden when grouped; show them
+            # again so the freed member is selectable. The selection-mode
+            # re-apply below then puts them in their correct per-mode state.
+            if (m.get(types_face_frame.TAG_CABINET_CAGE)
+                    or m.get(types_face_frame.TAG_PRODUCT_CAGE)
+                    or m.get('IS_FRAMELESS_PRODUCT_CAGE')):
                 m.hide_viewport = False
 
         # Delete the now-childless group cage (and its cage data). Members

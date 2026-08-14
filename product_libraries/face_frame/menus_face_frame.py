@@ -113,8 +113,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         # menu surfaces correctly whether the user picked roots, bays, or
         # individual face frame parts.
         selected_roots = set()
+        from .operators import ops_cabinet
         for obj in context.selected_objects:
-            root = types_face_frame.find_cabinet_root(obj)
+            root = ops_cabinet._find_group_member_root(obj)
             if root is not None:
                 selected_roots.add(root.name)
         if len(selected_roots) >= 1:
