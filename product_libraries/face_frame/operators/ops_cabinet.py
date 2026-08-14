@@ -3592,8 +3592,13 @@ def _valid_accessory_hosts(opening_obj):
         return {'drawer_accessory'}
     root = types_face_frame.find_cabinet_root(opening)
     cab = getattr(root, 'face_frame_cabinet', None) if root is not None else None
-    if cab is not None and (getattr(cab, 'blind_left', False)
-                            or getattr(cab, 'blind_right', False)):
+    if (cab is not None and (getattr(cab, 'blind_left', False)
+                             or getattr(cab, 'blind_right', False))
+            # The garage bottom opening is ordinary garage storage even
+            # on a blind cabinet (the blind zone is handled by the
+            # section treatment, not by corner hardware in THIS
+            # opening) - it keeps the standard host set.
+            and opening.get('SIZE_ROLE') != 'GARAGE_BOTTOM'):
         return {'blind_corner_hardware'}
     hosts = {'opening_interior_pullout', 'opening_interior_accessory',
              'tall_pantry', 'behind_door_rollout', 'pullout_board',

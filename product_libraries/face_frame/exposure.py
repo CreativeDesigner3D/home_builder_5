@@ -682,6 +682,145 @@ def auto_floating_shelf_finish(shelf_obj):
     return (left_finished, right_finished)
 
 
+# ---------------------------------------------------------------------------
+# In-line blind detection (straight runs)
+# ---------------------------------------------------------------------------
+# A garage-extended upper flanked by a much deeper full-height neighbor
+# on the SAME wall run (tall pantry / refrigerator cabinet / built-in
+# column) reads as a blind condition: the strip of front tucked against
+# the protruding neighbor is unusable, so the face frame pulls in by the
+# blind amount and the 1/4" blind panel closes the dead zone against the
+# neighbor. This is the straight-run sibling of the blind-corner
+# placement flow - but deliberately NOT built on that flow's
+# HB_BLIND_VOID_* / HB_BLIND_PAIR machinery. It follows this module's
+# finished-end pattern instead: a per-side scan writing the condition
+# props, guarded by a per-side _auto flag (blind_left_auto /
+# blind_right_auto) that any manual edit disarms.
+
+# Minimum depth the neighbor must protrude past this cabinet's front for
+# the flanked strip to count as dead. Filters ordinary depth jitter
+# (12" vs 13" uppers) while catching talls / fridge cabinets (~12"+).
+_INLINE_BLIND_MIN_PROTRUSION = units.inch(6.0)
+
+# The neighbor must cover this cabinet's FULL height band (within this
+# tolerance). A partial-height neighbor (bare refrigerator, standard
+# upper beside the garage zone) leaves the uncovered strip open to the
+# room, where a full-height blind pull-in would read as a mistake.
+_INLINE_BLIND_Z_TOL = units.inch(1.0)
+
+# Breadcrumb marking a side whose blind state THIS detector applied.
+# Revert only ever touches marked sides, so blind setups that predate
+# the detector (or were built manually with auto still armed) are never
+# torn down by a passing recalc.
+_INLINE_BLIND_MARKER = {
+    'left': 'HB_INLINE_BLIND_LEFT',
+    'right': 'HB_INLINE_BLIND_RIGHT',
+}
+
+
+def _neighbor_depth(obj):
+    """Front-to-back depth of a sibling, or None if unreadable.
+    Cabinets read their prop; appliances read the Dim Y input."""
+    if _is_face_frame_carcass(obj):
+        return obj.face_frame_cabinet.depth
+    if obj.get('IS_APPLIANCE'):
+        try:
+            return hb_types.GeoNodeObject(obj).get_input('Dim Y')
+        except Exception:
+            return None
+    return None
+
+
+def _inline_blind_neighbor(cab_obj, side):
+    """The same-wall sibling that establishes an in-line blind
+    condition on this side, or None. Same abutment scan as
+    _side_exposure, narrowed to neighbors that (a) protrude at least
+    _INLINE_BLIND_MIN_PROTRUSION deeper than this cabinet and (b)
+    cover this cabinet's full height band.
+    """
+    parent = cab_obj.parent
+    if parent is None:
+        return None
+    cab = cab_obj.face_frame_cabinet
+    cab_x = cab_obj.location.x
+    cab_z0 = cab_obj.location.z
+    cab_z1 = cab_z0 + cab.height
+    target_x = cab_x if side == 'left' else cab_x + cab.width
+
+    for sib in parent.children:
+        if sib is cab_obj:
+            continue
+        xspan = _neighbor_xspan(sib)
+        if xspan is None:
+            continue
+        sib_near_x = xspan[1] if side == 'left' else xspan[0]
+        if abs(sib_near_x - target_x) > EPS:
+            continue
+        # Corner cabinets resolve their junction geometrically; their
+        # straight arm butting this cabinet is not a blind condition.
+        if (_is_face_frame_carcass(sib)
+                and sib.face_frame_cabinet.corner_type != 'NONE'):
+            continue
+        depth = _neighbor_depth(sib)
+        if depth is None or depth < cab.depth + _INLINE_BLIND_MIN_PROTRUSION:
+            continue
+        zspan = _neighbor_zspan(sib)
+        if zspan is None:
+            continue
+        if (zspan[0] > cab_z0 + _INLINE_BLIND_Z_TOL
+                or zspan[1] < cab_z1 - _INLINE_BLIND_Z_TOL):
+            continue
+        return sib
+    return None
+
+
+def recalc_cabinet_inline_blind(cab_obj):
+    """Apply / retire the in-line blind condition on both sides of one
+    cabinet. Only garage-extended cabinets acquire the condition (the
+    dead strip is a garage-level concern); a side is only ever reverted
+    when this detector's own marker says it applied it. Sides whose
+    auto flag was disarmed by a manual edit, and sides owned by the
+    blind-corner placement flow (HB_BLIND_VOID_* / HB_BLIND_PAIR), are
+    left alone entirely. Manual blind setup via the props/dialog needs
+    none of this and keeps working unchanged.
+    """
+    if not _is_face_frame_carcass(cab_obj):
+        return
+    cab = cab_obj.face_frame_cabinet
+    if cab.corner_type != 'NONE':
+        return
+    if ('HB_BLIND_VOID_LEFT' in cab_obj or 'HB_BLIND_VOID_RIGHT' in cab_obj
+            or 'HB_BLIND_PAIR' in cab_obj):
+        return
+    garage_ext = float(cab_obj.get('hb_garage_extension', 0.0))
+
+    with types_face_frame.suspend_recalc():
+        for side in ('left', 'right'):
+            if not getattr(cab, f'blind_{side}_auto'):
+                continue
+            marker = _INLINE_BLIND_MARKER[side]
+            neighbor = (_inline_blind_neighbor(cab_obj, side)
+                        if garage_ext > 0.0 else None)
+            if neighbor is not None:
+                if (getattr(cab, f'{side}_stile_type') != 'BLIND'
+                        or not getattr(cab, f'blind_{side}')):
+                    setattr(cab, f'{side}_stile_type', 'BLIND')
+                    setattr(cab, f'blind_{side}', True)
+                cab_obj[marker] = True
+            elif marker in cab_obj:
+                if getattr(cab, f'{side}_stile_type') == 'BLIND':
+                    setattr(cab, f'{side}_stile_type', 'STANDARD')
+                if getattr(cab, f'blind_{side}'):
+                    setattr(cab, f'blind_{side}', False)
+                del cab_obj[marker]
+            else:
+                continue
+            # Writing the blind flag disarmed auto via its callback;
+            # re-arm last, exactly like _apply_side does for the
+            # finished-end conditions.
+            setattr(cab, f'blind_{side}_auto', True)
+
+
 def recalc_with_neighbors(cab_obj):
     """Placement convenience: recalc this cabinet, the immediate L/R
     face-frame neighbors whose facing side just changed coverage, and
@@ -693,11 +832,14 @@ def recalc_with_neighbors(cab_obj):
     bpy.context.view_layer.update()
     with types_face_frame.suspend_recalc():
         recalc_cabinet_exposure(cab_obj)
+        recalc_cabinet_inline_blind(cab_obj)
         left, right = _find_immediate_face_frame_neighbors(cab_obj)
         if left is not None:
             recalc_cabinet_exposure(left)
+            recalc_cabinet_inline_blind(left)
         if right is not None:
             recalc_cabinet_exposure(right)
+            recalc_cabinet_inline_blind(right)
         for back_neighbor in _find_back_abutting_cabinets(cab_obj):
             recalc_cabinet_exposure(back_neighbor)
         # 45-degree corner sink adjacency runs outside the sibling
@@ -734,6 +876,7 @@ def recalc_after_appliance_placement(app_obj):
     with types_face_frame.suspend_recalc():
         for sib in touched:
             recalc_cabinet_exposure(sib)
+            recalc_cabinet_inline_blind(sib)
 
 
 def recalc_all_cabinet_exposure(context):
@@ -752,3 +895,8 @@ def recalc_all_cabinet_exposure(context):
             cp.back_finish_end_auto = True
         for obj in cabs:
             recalc_cabinet_exposure(obj)
+            # Blind autos are deliberately NOT re-armed here: reverting
+            # a manually configured blind side on a user-initiated
+            # exposure recalc would destroy real setup, unlike the
+            # cheap-to-redo finished-end picks.
+            recalc_cabinet_inline_blind(obj)

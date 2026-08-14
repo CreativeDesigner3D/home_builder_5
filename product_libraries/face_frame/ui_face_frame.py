@@ -907,6 +907,8 @@ def draw_bay_properties(layout, bay_obj):
         # Per-bay appliance garage: this bay drops to the countertop
         # with a garage opening; the rest of the cabinet stays put.
         col.prop(bp, 'appliance_garage', text="Appliance Garage")
+        if bp.appliance_garage:
+            _draw_bay_garage_options(col, bay_obj)
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:
@@ -1540,6 +1542,62 @@ def draw_rail_properties(layout, root, rail_obj, role):
                         text="Remove Bottom Rail", icon='X')
 
 
+def _draw_bay_garage_options(layout, bay_obj):
+    """Garage options drawn right under the bay's Appliance Garage
+    toggle: the blind-section treatment (when the cabinet carries a
+    blind side, so the user picks how the uncovered garage-level
+    section is closed) and the garage opening's interior items. Shared
+    by draw_bay_properties and draw_bay_in_prompts so the N-panel and
+    the popup stay identical.
+    """
+    root = bay_obj.parent
+    if root is None:
+        return
+    cab_props = root.face_frame_cabinet
+    box = layout.box()
+    box.label(text="Appliance Garage", icon='SNAP_EDGE')
+    if root.get('hb_garage_extension', 0.0):
+        has_blind = (
+            (cab_props.left_stile_type == 'BLIND' and cab_props.blind_left)
+            or (cab_props.right_stile_type == 'BLIND'
+                and cab_props.blind_right))
+        if has_blind:
+            # 4-opening: separate blind section beside the garage
+            # front, treatment picked per section. 3-opening: one
+            # front spans the entire bottom, dead zone included.
+            box.prop(cab_props, 'garage_bottom_full',
+                     text="Full-Width Bottom")
+            if cab_props.garage_bottom_full:
+                box.prop(cab_props, 'garage_bottom_front',
+                         text="Bottom Front")
+            else:
+                box.prop(cab_props, 'garage_blind_section',
+                         text="Blind Section")
+    garage_op = None
+    for child in bay_obj.children_recursive:
+        if (child.get(types_face_frame.TAG_OPENING_CAGE)
+                and child.get('SIZE_ROLE') == 'GARAGE_BOTTOM'):
+            garage_op = child
+            break
+    if garage_op is None:
+        return
+    ibox = box.box()
+    ibox.label(text="Garage Interior")
+    has_tree = any(
+        c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+        or c.get(types_face_frame.TAG_INTERIOR_REGION)
+        for c in garage_op.children
+    )
+    if not has_tree:
+        # target_name keeps the add/remove buttons addressing the
+        # garage opening regardless of the active object - same
+        # indirection the opening popup relies on.
+        _draw_interior_items_section(ibox, garage_op.face_frame_opening,
+                                     target_name=garage_op.name)
+    else:
+        _draw_interior_tree_inline(ibox, garage_op)
+
+
 def draw_blind_corners(layout, cab_props):
     """Per-side stile type plus blind flag and depth.
 
@@ -1552,6 +1610,7 @@ def draw_blind_corners(layout, cab_props):
     back to close off the dead corner.
     """
     col = layout.column(align=True)
+    blind_active = False
     for side, label in (('left', 'Left'), ('right', 'Right')):
         row = col.row(align=True)
         row.label(text=label)
@@ -1560,11 +1619,17 @@ def draw_blind_corners(layout, cab_props):
             row.prop(cab_props, f'blind_{side}', text="")
             if getattr(cab_props, f'blind_{side}'):
                 row.prop(cab_props, f'blind_amount_{side}', text="")
-                # Garage-level blind opening: only meaningful while a
-                # bay's appliance garage has extended this cabinet.
-                if cab_props.id_data.get('hb_garage_extension', 0.0):
-                    layout.prop(cab_props, 'garage_blind_opening',
-                                text="Open Blind Section Below")
+                blind_active = True
+    # Garage-level blind section treatment: only meaningful while a
+    # bay's appliance garage has extended this cabinet. Cabinet-wide,
+    # so drawn once below the per-side rows. Same props the bay
+    # panel's garage box exposes.
+    if blind_active and cab_props.id_data.get('hb_garage_extension', 0.0):
+        col.prop(cab_props, 'garage_bottom_full', text="Full-Width Bottom")
+        if cab_props.garage_bottom_full:
+            col.prop(cab_props, 'garage_bottom_front', text="Bottom Front")
+        else:
+            col.prop(cab_props, 'garage_blind_section', text="Blind Section")
 
 
 def draw_finished_ends(layout, cab_props):
@@ -1711,6 +1776,8 @@ def draw_bay_in_prompts(layout, bay_obj):
         # Per-bay appliance garage: this bay drops to the countertop
         # with a garage opening; the rest of the cabinet stays put.
         col.prop(bp, 'appliance_garage', text="Appliance Garage")
+        if bp.appliance_garage:
+            _draw_bay_garage_options(col, bay_obj)
     if cab_type in ('BASE', 'LAP_DRAWER'):
         col.prop(bp, 'front_drop', text="Front Drop")
         if bp.front_drop > 0.0:

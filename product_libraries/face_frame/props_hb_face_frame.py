@@ -1857,6 +1857,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'MID_STILE_BEND_HALF',
         'MID_RAIL', 'BAY_MID_RAIL', 'BAY_MID_STILE',
         'INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE',
+        # Garage-level dead-zone frame (blind appliance garage)
+        'BLIND_GARAGE_STILE', 'BLIND_GARAGE_RAIL',
         # Fronts
         'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'TILT_OUT', 'INSET_PANEL',
         # Furniture / veneer wood top (dresser products) + the
@@ -2279,6 +2281,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 slot_role = child.get('hb_part_role')
                 slot_mat = None
                 if slot_role in ('SHELF_NOSING', 'BAR_STORAGE',
+                                 # Blind-section tambour: purchased slat
+                                 # stock over the garage-level blind
+                                 # section, finished to match exterior.
+                                 'BLIND_SECTION_TAMBOUR',
                                  'LEG_CURVED_PANEL',
                                  # Decorative corner posts: milled stock
                                  # standing in the cabinet's own corner,
@@ -5493,6 +5499,12 @@ def _update_bay_appliance_garage(self, context):
                if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
                else 'LEFT_SWING_DOOR')
         ops_cabinet.apply_bay_preset(obj, cfg)
+    # A deep in-line neighbor (tall / refrigerator cabinet flanking the
+    # garage zone) may already be in place when the garage turns on -
+    # and turning the last garage off retires any auto-applied blind
+    # side. Runs before the final recalc so it picks the result up.
+    from . import exposure
+    exposure.recalc_cabinet_inline_blind(root)
     types_face_frame.recalculate_face_frame_cabinet(root)
 
 
@@ -5631,12 +5643,76 @@ def _update_right_stile_type(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _update_garage_bottom(self, context):
+    """Full-width garage bottom sync (blind appliance garage, the
+    "3-opening" configuration): one front spans the entire garage
+    level, dead zone included, instead of a separate blind-section
+    treatment beside the garage doors. DOORS extends the garage
+    opening's real leaves across the dead zone via the blind-side
+    overlay (they stay opening-backed, so open-door mode still works);
+    TAMBOUR / RETRACTING / SWING_UP blank the opening's own front and
+    let the blind-section part builder draw one full-span front
+    instead. Turning full-width off restores the opening's door front
+    and cabinet-default overlays.
+    """
+    cab_obj = self.id_data
+    from . import types_face_frame
+    garage_op = None
+    for child in cab_obj.children_recursive:
+        if (child.get(types_face_frame.TAG_OPENING_CAGE)
+                and child.get('SIZE_ROLE') == 'GARAGE_BOTTOM'):
+            garage_op = child
+            break
+    if garage_op is None:
+        _update_cabinet_dim(self, context)
+        return
+    op = garage_op.face_frame_opening
+    full = self.garage_bottom_full
+    front = self.garage_bottom_front
+    # The garage bay's position decides which blind side the bottom can
+    # extend toward: only the end whose bay IS the garage bay has a
+    # garage-level dead zone. A run blind at both corners with the
+    # garage at one end must not stretch the doors toward the other.
+    bay = garage_op
+    while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
+        bay = bay.parent
+    bay_idx = bay.get('hb_bay_index', 0) if bay is not None else 0
+    bay_count = sum(1 for c in cab_obj.children
+                    if c.get(types_face_frame.TAG_BAY_CAGE))
+    with types_face_frame.suspend_recalc():
+        for side in ('left', 'right'):
+            is_blind = (getattr(self, f'{side}_stile_type') == 'BLIND'
+                        and getattr(self, f'blind_{side}'))
+            at_garage_end = (bay_idx == 0 if side == 'left'
+                             else bay_idx == max(bay_count - 1, 0))
+            if full and front == 'DOORS' and is_blind and at_garage_end:
+                # Door edge lands 1/8" off the cabinet end: overlay =
+                # dead zone + end stile, less the reveal.
+                setattr(op, f'unlock_{side}_overlay', True)
+                setattr(op, f'{side}_overlay',
+                        getattr(self, f'blind_amount_{side}')
+                        + getattr(self, f'{side}_stile_width')
+                        - units.inch(0.125))
+            elif getattr(op, f'unlock_{side}_overlay'):
+                setattr(op, f'unlock_{side}_overlay', False)
+        want_front = 'NONE' if (full and front != 'DOORS') else 'DOOR'
+        if op.front_type != want_front:
+            op.front_type = want_front
+    _update_cabinet_dim(self, context)
+
+
 def _update_blind_left(self, context):
+    # Any write - user edit, corner dialog, mirror - disarms the
+    # in-line auto detection so it never clobbers explicit state.
+    # The detector itself re-arms the flag after its own writes,
+    # mirroring the finished-end _auto idiom (exposure._apply_side).
+    self.blind_left_auto = False
     _recompute_blind_stile_width(self, 'LEFT')
     _update_cabinet_dim(self, context)
 
 
 def _update_blind_right(self, context):
+    self.blind_right_auto = False
     _recompute_blind_stile_width(self, 'RIGHT')
     _update_cabinet_dim(self, context)
 
@@ -6007,17 +6083,75 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
-    # With a garage extension active and a blind side set, opens the
-    # blind section BELOW (garage level): the blind panel stops at the
-    # top of the garage zone instead of running to the countertop, so
-    # the garage interior stays accessible into the corner.
-    garage_blind_opening: BoolProperty(
-        name="Open Blind Section Below",
-        default=False,
-        description="Leave the blind section open at appliance-garage "
-                    "level: the blind panel stops above the garage zone "
-                    "instead of running down to the countertop",
+    # In-line blind auto-detection guard, one per side (the finished-end
+    # _auto idiom): armed by default, disarmed by any write to that
+    # side's blind flag (see _update_blind_left/right), re-armed by the
+    # detector after its own writes. While disarmed the detector leaves
+    # the side alone entirely. Defined AFTER blind_left/blind_right so
+    # _swap_lr_props swaps the flags first (disarming both autos via
+    # their callbacks) and then restores the mirrored auto pair.
+    blind_left_auto: BoolProperty(
+        name="Blind Left Auto", default=True,
+    )  # type: ignore
+    blind_right_auto: BoolProperty(
+        name="Blind Right Auto", default=True,
+    )  # type: ignore
+    # With a garage extension active and a blind side set, how the
+    # garage-level blind section (the strip of front the neighbor does
+    # not cover, from the countertop to the top of the garage zone) is
+    # treated. PANEL keeps the 1/4" blind panel running to the counter;
+    # every other choice stops the panel at the top of the garage zone
+    # and either leaves the section open into the corner or fronts it
+    # with a door so the corner countertop stays usable garage space.
+    GARAGE_BLIND_SECTION_ITEMS = [
+        ('PANEL', "Blind Panel",
+         "Close the section with the blind panel down to the countertop"),
+        ('OPEN', "Open",
+         "Leave the section open into the corner at garage level"),
+        ('DOOR', "Hinged Door",
+         "Hinged door on the section, hinged at the corner end"),
+        ('TAMBOUR', "Tambour Door",
+         "Vertical-travel tambour across the section"),
+        ('RETRACTING', "Top Retracting Door",
+         "Top-mounted retracting door (drawn closed)"),
+        ('SWING_UP', "Swing-Up Door",
+         "Swing-up door hinged at the top (drawn closed)"),
+    ]
+    garage_blind_section: EnumProperty(
+        name="Blind Section",
+        items=GARAGE_BLIND_SECTION_ITEMS,
+        default='PANEL',
+        description="Treatment of the garage-level blind section not "
+                    "covered by the adjacent cabinet",
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # "3-opening" alternative to the split blind-section treatment: the
+    # entire garage level - dead zone included - carries ONE front.
+    garage_bottom_full: BoolProperty(
+        name="Full-Width Bottom",
+        default=False,
+        description="Run one front across the entire garage level, "
+                    "dead zone included, instead of a separate blind "
+                    "section beside the garage doors",
+        update=_update_garage_bottom,
+    )  # type: ignore
+    garage_bottom_front: EnumProperty(
+        name="Bottom Front",
+        items=[
+            ('DOORS', "Doors",
+             "The garage opening's own doors extend across the dead "
+             "zone (still open in open-door mode)"),
+            ('TAMBOUR', "Tambour Door",
+             "One tambour across the entire garage level"),
+            ('RETRACTING', "Top Retracting Door",
+             "One top-mounted retracting door across the garage level "
+             "(drawn closed)"),
+            ('SWING_UP', "Swing-Up Door",
+             "One swing-up door across the garage level (drawn "
+             "closed)"),
+        ],
+        default='DOORS',
+        update=_update_garage_bottom,
     )  # type: ignore
     blind_reveal: FloatProperty(
         name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4,

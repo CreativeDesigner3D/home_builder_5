@@ -216,6 +216,17 @@ PART_ROLE_BLIND_PANEL_RIGHT = 'BLIND_PANEL_RIGHT'
 # the cabinet sits next to a perpendicular cabinet on an adjacent wall.
 BLIND_PANEL_THICKNESS = inch(0.25)
 
+# Slat-stack tambour over the garage-level blind section (the straight
+# sibling of the corner garage tambour). Plain purchased-stock mesh, not
+# a CABINET_PART - the material walk's plain-mesh branch finishes it.
+PART_ROLE_BLIND_SECTION_TAMBOUR = 'BLIND_SECTION_TAMBOUR'
+
+# Garage-level dead-zone face frame (blind appliance garage): a stile at
+# the cabinet end plus bottom / garage-top rail extensions across the
+# dead zone, so the garage-level blind section is a real framed opening.
+PART_ROLE_BLIND_GARAGE_STILE = 'BLIND_GARAGE_STILE'
+PART_ROLE_BLIND_GARAGE_RAIL = 'BLIND_GARAGE_RAIL'
+
 # Face frame member roles (rails and stiles). Phase 3a doesn't create any
 # of these yet; defined here so the "Face Frame" selection mode has a known
 # set of roles to filter on once Phase 3b builds them.
@@ -254,6 +265,7 @@ FACE_FRAME_PART_ROLES = frozenset({
     PART_ROLE_MID_STILE, PART_ROLE_MID_STILE_HALF, PART_ROLE_MID_RAIL,
     PART_ROLE_BAY_MID_RAIL, PART_ROLE_BAY_MID_STILE,
     PART_ROLE_FRONT_DROP_FILLER,
+    PART_ROLE_BLIND_GARAGE_STILE, PART_ROLE_BLIND_GARAGE_RAIL,
 })
 
 BAY_SPLITTER_ROLES = frozenset({
@@ -2629,7 +2641,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 child.hide_render = not visible
                 if not visible:
                     continue
-                z_origin, z_height = self._blind_panel_z_range()
+                z_origin, z_height = self._blind_panel_z_range('LEFT')
                 # Anchored at the LEFT endpoint of the FF outer plane,
                 # offset back by face_frame_thickness so the panel sits
                 # just behind the face frame. Length runs vertically
@@ -2651,7 +2663,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 child.hide_render = not visible
                 if not visible:
                     continue
-                z_origin, z_height = self._blind_panel_z_range()
+                z_origin, z_height = self._blind_panel_z_range('RIGHT')
                 # Anchored at the RIGHT endpoint of the FF outer plane.
                 # Mirror Y=False makes Width grow -X from this anchor
                 # (matches right stile), so the panel reaches inboard
@@ -2781,6 +2793,7 @@ class FaceFrameCabinet(GeoNodeCage):
             self._reconcile_finished_back(layout)
             self._reconcile_flush_x_strips(layout)
             self._reconcile_full_overlay_stiles(layout)
+            self._update_blind_section_parts(layout)
             self._reconcile_textured_panels(layout)
             self._reconcile_bay_finish_panels(layout)
             # Run a FINISHED carcass side past the cabinet back by its
@@ -7648,23 +7661,404 @@ class FaceFrameCabinet(GeoNodeCage):
         panel.set_input('Mirror Z', False)
         return panel.obj
 
-    def _blind_panel_z_range(self):
-        """Return (z_origin, z_height) for blind panel placement.
-        Sits above the toe kick recess (or directly on the floor for
-        upper / panel cabinets) and runs to the top of the cabinet.
-        Subclasses can override if a class needs a different baseline
-        (e.g. lap drawer wanting to sit above the lap reveal).
+    def _find_blind_section_part(self, role, side):
+        """Existing blind-section part of the given role/side, or None.
+        Blind-section parts share hb_part_role with regular parts (DOOR
+        leaves must, so the style + material walks dress them), so they
+        carry hb_blind_section_side as the discriminating key.
+        """
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get('hb_blind_section_side') == side):
+                return child
+        return None
+
+    def _ensure_blind_section_door(self, side):
+        """Lazy-create the blind-section door leaf for one end - the
+        hinged / top-retracting / swing-up front over the garage-level
+        blind section. Same conventions as _create_front_part (rotation
+        y=-90 z=90, Mirror Y=True, role DOOR) so _reapply_cabinet_style
+        applies the cabinet's door style and front material for free.
+        Persistent across recalcs (hidden when the treatment doesn't
+        want it), unlike opening fronts which are wiped and rebuilt.
+        """
+        existing = self._find_blind_section_part(PART_ROLE_DOOR, side)
+        if existing is not None:
+            return existing
+        door = CabinetPart()
+        door.create(f'Blind Section Door {side.capitalize()}')
+        door.obj.parent = self.obj
+        door.obj['hb_part_role'] = PART_ROLE_DOOR
+        door.obj['hb_blind_section_side'] = side
+        door.obj['CABINET_PART'] = True
+        door.obj.rotation_euler.y = math.radians(-90)
+        door.obj.rotation_euler.z = math.radians(90)
+        door.set_input('Mirror Y', True)
+        return door.obj
+
+    def _ensure_blind_section_tambour(self, side):
+        """Lazy-create the blind-section tambour - a plain slat-stack
+        mesh like the corner garage tambour. Deliberately NOT a
+        CABINET_PART: it's purchased tambour stock, and the material
+        walk's plain-mesh branch puts the exterior finish on the mesh
+        slot via its role.
+        """
+        existing = self._find_blind_section_part(
+            PART_ROLE_BLIND_SECTION_TAMBOUR, side)
+        if existing is not None:
+            return existing
+        mesh = bpy.data.meshes.new('Blind Section Tambour')
+        tam = bpy.data.objects.new(
+            f'Blind Section Tambour {side.capitalize()}', mesh)
+        for coll in self.obj.users_collection:
+            coll.objects.link(tam)
+        tam.parent = self.obj
+        tam['hb_part_role'] = PART_ROLE_BLIND_SECTION_TAMBOUR
+        tam['hb_blind_section_side'] = side
+        return tam
+
+    def _clear_part_pulls(self, part_obj):
+        """Remove pull instances under a persistent part. Needed because
+        blind-section doors survive recalc (opening fronts are wiped
+        wholesale, pulls included), so pulls would accumulate.
+        """
+        for child in list(part_obj.children):
+            if child.get('hb_part_role') == 'PULL':
+                bpy.data.objects.remove(child, do_unlink=True)
+
+    def _ensure_blind_garage_frame_part(self, role, side, pos, name,
+                                        kind):
+        """Lazy-create one member of the garage-level dead-zone face
+        frame. kind 'STILE': end-stile orientation (rot y=-90 z=90,
+        Mirror Y by side, Mirror Z); kind 'RAIL': rail orientation
+        (rot x=90, Mirror Z). Keyed (role, side, pos) - pos separates
+        the BOTTOM and MID rails.
+        """
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == role
+                    and child.get('hb_blind_section_side') == side
+                    and child.get('hb_blind_rail_pos') == pos):
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['hb_blind_section_side'] = side
+        part.obj['hb_blind_rail_pos'] = pos
+        part.obj['CABINET_PART'] = True
+        if kind == 'STILE':
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.obj.rotation_euler.z = math.radians(90)
+            part.set_input('Mirror Y', side == 'LEFT')
+            part.set_input('Mirror Z', True)
+        else:
+            part.obj.rotation_euler.x = math.radians(90)
+            part.set_input('Mirror Z', True)
+        return part.obj
+
+    def _update_blind_garage_frame(self, side, active, full, ext,
+                                   amount):
+        """Garage-level dead-zone face frame for one side: a stile at
+        the cabinet end plus bottom and garage-top rail extensions, so
+        the blind section reads as a real framed opening. Skipped for
+        the flush PANEL treatment (the panel closes the section with
+        no frame, the pre-existing look). In full-width mode the rails
+        run through to the bay's own frame edge because the butt-line
+        stile above no longer reaches the garage level.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        fft = cab_props.face_frame_thickness
+        from . import props_hb_face_frame as ff_props
+        stile_w = (ff_props._style_stile_width_for(cab_props, 'STANDARD')
+                   or inch(2.0))
+        low = side.lower()
+        end_stile_w = getattr(cab_props, f'{low}_stile_width')
+        rail_w = cab_props.bottom_rail_width
+        mid_rail_w = cab_props.bay_mid_rail_width
+
+        def _find(role, pos):
+            for child in self.obj.children:
+                if (child.get('hb_part_role') == role
+                        and child.get('hb_blind_section_side') == side
+                        and child.get('hb_blind_rail_pos') == pos):
+                    return child
+            return None
+
+        # Never grow the objects on a cabinet that doesn't use the
+        # frame: find-only when inactive, ensure when active.
+        stile = _find(PART_ROLE_BLIND_GARAGE_STILE, 'STILE')
+        rails = {pos: _find(PART_ROLE_BLIND_GARAGE_RAIL, pos)
+                 for pos in ('BOTTOM', 'MID')}
+        if active:
+            if stile is None:
+                stile = self._ensure_blind_garage_frame_part(
+                    PART_ROLE_BLIND_GARAGE_STILE, side, 'STILE',
+                    f'Garage End Stile {side.capitalize()}', 'STILE')
+            for pos in ('BOTTOM', 'MID'):
+                if rails[pos] is None:
+                    rails[pos] = self._ensure_blind_garage_frame_part(
+                        PART_ROLE_BLIND_GARAGE_RAIL, side, pos,
+                        f'Garage {pos.capitalize()} Rail '
+                        f'{side.capitalize()}', 'RAIL')
+        for obj_ in (stile, *rails.values()):
+            if obj_ is not None:
+                obj_.hide_viewport = not active
+                obj_.hide_render = not active
+        if not active:
+            return
+
+        if side == 'LEFT':
+            stile.location = (0.0, -cab_props.depth, 0.0)
+            rail_x0 = stile_w
+            rail_x1 = amount + (end_stile_w if full else 0.0)
+        else:
+            stile.location = (cab_props.width, -cab_props.depth, 0.0)
+            rail_x0 = (cab_props.width - amount
+                       - (end_stile_w if full else 0.0))
+            rail_x1 = cab_props.width - stile_w
+        sp = CabinetPart(stile)
+        sp.set_input('Length', ext)
+        sp.set_input('Width', stile_w)
+        sp.set_input('Thickness', fft)
+
+        length = max(rail_x1 - rail_x0, 0.0)
+        for pos, z, w in (('BOTTOM', 0.0, rail_w),
+                          ('MID', ext - mid_rail_w, mid_rail_w)):
+            rail = rails[pos]
+            rail.location = (rail_x0, -cab_props.depth, z)
+            rp = CabinetPart(rail)
+            rp.set_input('Length', length)
+            rp.set_input('Width', w)
+            rp.set_input('Thickness', fft)
+
+    def _raise_blind_end_stile(self, side, ext):
+        """Full-width bottom: the butt-line end stile stops at the
+        garage top instead of running to the counter, so the garage
+        level carries no mid stile and the bottom reads as ONE framed
+        opening. Runs after the dispatch loop wrote the solver's
+        full-band geometry; manual parts are left alone.
+        """
+        role = (PART_ROLE_LEFT_STILE if side == 'LEFT'
+                else PART_ROLE_RIGHT_STILE)
+        for child in self.obj.children:
+            if child.get('hb_part_role') != role:
+                continue
+            if child.get('IS_MANUAL_PART'):
+                return
+            delta = ext - child.location.z
+            if delta <= 0.0:
+                return
+            part = GeoNodeCutpart(child)
+            try:
+                cur = part.get_input('Length')
+            except Exception:
+                return
+            child.location.z = ext
+            part.set_input('Length', max(cur - delta, 0.0))
+            return
+
+    def _garage_opening_span_x(self):
+        """Cabinet-local (x0, x1) of the garage bottom opening's FF
+        opening, or None when the cabinet has no garage opening. Read
+        off the solved opening cage transform - valid because the
+        bay-cage pass runs before the blind-section pass each recalc.
+        """
+        for child in self.obj.children_recursive:
+            if (child.get(TAG_OPENING_CAGE)
+                    and child.get('SIZE_ROLE') == 'GARAGE_BOTTOM'):
+                x0 = 0.0
+                o = child
+                while o is not None and o is not self.obj:
+                    x0 += o.location.x
+                    o = o.parent
+                try:
+                    dim_x = GeoNodeCage(child).get_input('Dim X')
+                except Exception:
+                    return None
+                return (x0, x0 + dim_x)
+        return None
+
+    def _update_blind_section_parts(self, layout):
+        """Build / hide the garage-level blind-section treatment parts
+        per side. Split mode (cab_props.garage_blind_section): PANEL
+        and OPEN need no parts here (the blind panel's own z-range
+        handles them); DOOR / RETRACTING / SWING_UP carry a styled
+        leaf, TAMBOUR a slat stack, each spanning just the dead zone.
+        Full-width mode (cab_props.garage_bottom_full, the "3-opening"
+        configuration): the section part spans from the cabinet end
+        across the garage opening (TAMBOUR / RETRACTING / SWING_UP),
+        or no part at all for DOORS - the opening's own overlay-
+        extended leaves cover the whole bottom.
+        """
+        from types import SimpleNamespace
+        cab_props = self.obj.face_frame_cabinet
+        ext = float(self.obj.get('hb_garage_extension', 0.0))
+        treatment = getattr(cab_props, 'garage_blind_section', 'PANEL')
+        full = getattr(cab_props, 'garage_bottom_full', False)
+        bottom_front = getattr(cab_props, 'garage_bottom_front', 'DOORS')
+        reveal = inch(0.125)
+        dt = cab_props.door_thickness
+        standoff = (solver.DOOR_TO_FRAME_GAP
+                    - cab_props.default_door_inset_amount)
+        scene_props = bpy.context.scene.hb_face_frame
+        garage_span = self._garage_opening_span_x() if full else None
+
+        # A blind side only carries garage-level treatments when THAT
+        # end's bay is the garage bay (its bottom reaches the counter).
+        # A cabinet blind on both ends with the garage at one end - two
+        # blind corners on one run - must leave the other end alone:
+        # its dead zone exists only at upper level, where the blind
+        # panel closes it.
+        bays = sorted(
+            [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+            key=lambda c: c.get('hb_bay_index', 0),
+        )
+
+        def side_garage_active(side):
+            if ext <= 0.0 or not bays:
+                return False
+            bp = (bays[0] if side == 'LEFT' else bays[-1]).face_frame_bay
+            bay_bottom = cab_props.height - bp.top_offset - bp.height
+            return bay_bottom <= inch(0.25)
+
+        for side in ('LEFT', 'RIGHT'):
+            low = side.lower()
+            amount = getattr(cab_props, f'blind_amount_{low}')
+            is_blind = (getattr(cab_props, f'{low}_stile_type') == 'BLIND'
+                        and getattr(cab_props, f'blind_{low}')
+                        and amount > 0)
+            active = is_blind and side_garage_active(side)
+            if full:
+                merged = active and garage_span is not None
+                want_door = (merged
+                             and bottom_front in ('RETRACTING', 'SWING_UP'))
+                want_tambour = merged and bottom_front == 'TAMBOUR'
+                # Section rect runs from the cabinet end across the
+                # garage opening to its far FF edge.
+                if side == 'LEFT':
+                    sec_x0, sec_x1 = 0.0, (garage_span[1]
+                                           if garage_span else amount)
+                else:
+                    sec_x0, sec_x1 = ((garage_span[0]
+                                       if garage_span else
+                                       cab_props.width - amount),
+                                      cab_props.width)
+            else:
+                want_door = (active
+                             and treatment in ('DOOR', 'RETRACTING',
+                                               'SWING_UP'))
+                want_tambour = active and treatment == 'TAMBOUR'
+                if side == 'LEFT':
+                    sec_x0, sec_x1 = 0.0, amount
+                else:
+                    sec_x0, sec_x1 = cab_props.width - amount, cab_props.width
+
+            # Only ensure a part the treatment actually wants; a side
+            # that never uses a treatment never grows the objects.
+            door = self._find_blind_section_part(PART_ROLE_DOOR, side)
+            if door is None and want_door:
+                door = self._ensure_blind_section_door(side)
+            if door is not None:
+                door.hide_viewport = not want_door
+                door.hide_render = not want_door
+                self._clear_part_pulls(door)
+                if want_door:
+                    length = max(ext - 2.0 * reveal, 0.0)
+                    width = max(sec_x1 - sec_x0 - 2.0 * reveal, 0.0)
+                    door.location = (
+                        sec_x0 + reveal, -cab_props.depth - standoff,
+                        reveal)
+                    part = CabinetPart(door)
+                    part.set_input('Length', length)
+                    part.set_input('Width', width)
+                    part.set_input('Thickness', dt)
+                    if full or treatment in ('RETRACTING', 'SWING_UP'):
+                        # Flip-style pull: flat bar near the door
+                        # bottom, same routing the corner garage uses.
+                        self._create_pull_for_front(
+                            SimpleNamespace(obj=door), PART_ROLE_DOOR,
+                            {'part_dims': (length, width, dt),
+                             'hinge': 'TOP'})
+                    else:
+                        # Hinged: standard vertical pull; hinge sits at
+                        # the corner end, pull at the inner (blind
+                        # stile) edge. The helper's hinge-side
+                        # heuristic reads location.x, meaningless
+                        # here, so override Y like the corner side
+                        # doors do.
+                        pull = self._create_pull_for_front(
+                            SimpleNamespace(obj=door), PART_ROLE_DOOR,
+                            {'part_dims': (length, width, dt)})
+                        if pull is not None:
+                            h_off = scene_props.pull_horizontal_offset
+                            if side == 'LEFT':
+                                pull.location.y = -(width - h_off)
+                            else:
+                                pull.location.y = -h_off
+
+            tam = self._find_blind_section_part(
+                PART_ROLE_BLIND_SECTION_TAMBOUR, side)
+            if tam is None and want_tambour:
+                tam = self._ensure_blind_section_tambour(side)
+            if tam is not None:
+                tam.hide_viewport = not want_tambour
+                tam.hide_render = not want_tambour
+                if want_tambour:
+                    from . import types_face_frame_corner as corner
+                    tam.location = (sec_x0, -cab_props.depth, 0.0)
+                    corner._rebuild_tambour_slats(
+                        tam, sec_x1 - sec_x0, ext,
+                        cab_props.face_frame_thickness
+                        + corner.TAMBOUR_INSET)
+
+            # Garage-level dead-zone face frame: every treatment except
+            # the flush blind panel gets the cabinet-end stile + rail
+            # extensions; full-width mode additionally pulls the butt-
+            # line end stile up to the garage top so the bottom carries
+            # no mid stile.
+            frame_active = active and (full or treatment != 'PANEL')
+            self._update_blind_garage_frame(side, frame_active, full,
+                                            ext, amount)
+            if full and active:
+                self._raise_blind_end_stile(side, ext)
+
+    def _blind_panel_z_range(self, side='LEFT'):
+        """Return (z_origin, z_height) for blind panel placement on the
+        given end ('LEFT' / 'RIGHT'). Sits above the toe kick recess (or
+        directly on the floor for upper / panel cabinets) and runs to
+        the top of the cabinet. On uppers the panel follows the blind
+        end BAY's vertical band: with an appliance-garage extension the
+        garage bay drops to the counter while locked bays keep the old
+        mount, so a panel on a non-garage end must not hang below its
+        bay. Subclasses can override if a class needs a different
+        baseline (e.g. lap drawer wanting to sit above the lap reveal).
         """
         cab_props = self.obj.face_frame_cabinet
         z_origin = cab_props.toe_kick_height if self._has_toe_kick() else 0.0
-        # Appliance-garage extension with the blind section opted OPEN
-        # below: the panel starts above the garage zone so the garage
-        # interior stays accessible into the corner.
+        z_top = cab_props.height
+        if cab_props.cabinet_type == 'UPPER':
+            bays = sorted(
+                [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+                key=lambda c: c.get('hb_bay_index', 0),
+            )
+            if bays:
+                bp = (bays[0] if side == 'LEFT' else bays[-1]).face_frame_bay
+                # Mirrors solver bay_bottom_z for UPPER:
+                # dim_z - top_offset - height.
+                z_top = cab_props.height - bp.top_offset
+                z_origin = max(z_origin, z_top - bp.height)
+        # Appliance-garage extension with the blind section treated as
+        # anything but the closed panel (open / door / tambour /
+        # retracting / swing-up): the panel starts above the garage
+        # zone; the treatment part covers (or deliberately opens) the
+        # section below.
         garage_ext = float(self.obj.get('hb_garage_extension', 0.0))
-        if garage_ext > 0.0 and getattr(cab_props, 'garage_blind_opening',
-                                        False):
-            z_origin += garage_ext
-        z_height = max(cab_props.height - z_origin, 0.0)
+        if (garage_ext > 0.0
+                and (getattr(cab_props, 'garage_blind_section',
+                             'PANEL') != 'PANEL'
+                     or getattr(cab_props, 'garage_bottom_full', False))):
+            z_origin = max(z_origin, garage_ext)
+        z_height = max(z_top - z_origin, 0.0)
         return (z_origin, z_height)
 
     def _reconcile_carcass_backs(self, segments):
