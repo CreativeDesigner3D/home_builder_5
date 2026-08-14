@@ -357,6 +357,7 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_sides_down', text="Extend Sides Down")
             if cab_props.extend_sides_down:
                 col.prop(cab_props, 'extend_sides_down_amount', text="Sides Drop")
+                col.prop(cab_props, 'overall_height', text="Overall Height")
                 col.prop(cab_props, 'side_front_profile', text="Front Profile")
                 col.prop(cab_props, 'overstool_accessory', text="Accessory")
 

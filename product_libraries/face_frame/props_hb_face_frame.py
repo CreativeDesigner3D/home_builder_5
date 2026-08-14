@@ -4455,6 +4455,19 @@ def _update_overstool_accessory(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _overall_height_get(self):
+    """Box height plus the leg drop when the sides extend down - the
+    catalog's overall height for over-stool style cabinets."""
+    drop = self.extend_sides_down_amount if self.extend_sides_down else 0.0
+    return self.height + drop
+
+
+def _overall_height_set(self, value):
+    drop = self.extend_sides_down_amount if self.extend_sides_down else 0.0
+    # Writing height runs its own update / recalc.
+    self.height = max(value - drop, units.inch(1.0))
+
+
 def _update_cabinet_width(self, context):
     """Width update: honor the cabinet's anchor side, then recalc.
 
@@ -6592,6 +6605,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         unit='LENGTH', precision=4,
         description="How far both side panels drop below the box bottom",
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # Derived, not stored: box height + leg drop. Lets the user type the
+    # catalog's overall height directly instead of doing the drop math.
+    overall_height: FloatProperty(
+        name="Overall Height",
+        unit='LENGTH', precision=4,
+        description="Total height including the extended legs; writing it "
+                    "sets the box height to this value minus the leg drop",
+        get=_overall_height_get, set=_overall_height_set,
     )  # type: ignore
     side_front_profile: BoolProperty(
         name="Side Front Profile",

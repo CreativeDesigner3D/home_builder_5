@@ -795,7 +795,8 @@ PART_ROLE_OVERSTOOL_TOWEL_BAR = 'OVERSTOOL_TOWEL_BAR'
 # opening height, 3/4" round towel bar). The shelf is back-aligned against
 # the full-height back and hangs so the clear opening between the box
 # bottom and the shelf top is exactly the spec opening.
-OVERSTOOL_SHELF_DEPTH = inch(6.0)
+OVERSTOOL_SHELF_FRONT_SETBACK = inch(2.75)  # leg front to shelf front (6" shelf at the default 9" depth)
+OVERSTOOL_SHELF_MIN_DEPTH = inch(2.0)
 OVERSTOOL_SHELF_THICKNESS = inch(0.75)
 OVERSTOOL_CLEAR_OPENING = inch(6.0)  # box bottom down to shelf top
 OVERSTOOL_TOWEL_BAR_DIAMETER = inch(0.75)
@@ -5259,8 +5260,13 @@ class FaceFrameCabinet(GeoNodeCage):
         drop is too small to fit opening + shelf."""
         left_inner, right_inner, _front_y, leg_bottom = self._overstool_interior(layout)
         part = GeoNodeCutpart(shelf_obj)
+        # Shelf depth follows the cabinet depth: from the full-height back
+        # forward to a fixed setback behind the leg fronts.
+        shelf_depth = max(layout.dim_y - solver.back_thickness(layout)
+                          - OVERSTOOL_SHELF_FRONT_SETBACK,
+                          OVERSTOOL_SHELF_MIN_DEPTH)
         part.set_input('Length', right_inner - left_inner)
-        part.set_input('Width', OVERSTOOL_SHELF_DEPTH)
+        part.set_input('Width', shelf_depth)
         part.set_input('Thickness', OVERSTOOL_SHELF_THICKNESS)
         drop = solver.side_extend_down(layout)
         z = max(leg_bottom + drop - OVERSTOOL_CLEAR_OPENING
