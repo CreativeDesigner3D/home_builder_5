@@ -1340,7 +1340,12 @@ class FaceFrameCabinet(GeoNodeCage):
             # 3) Insert mid_stile_widths entry at new_gap_index by
             #    add()-then-shuffle, since CollectionProperty has no
             #    insert(at). Shift values from new_gap_index forward.
-            self._insert_mid_stile_width_entry(new_gap_index, inch(2.0))
+            #    Seed from the cabinet's default (style-synced) rather
+            #    than a constant: a hardcoded seed left inserted gaps at
+            #    2" on styled cabinets whose stiles are 1.5", with no
+            #    override flag to explain it.
+            self._insert_mid_stile_width_entry(
+                new_gap_index, cab_props.bay_mid_stile_width)
 
             # 4) Build the new bay object + opening.
             new_bay = self._create_bay_at(new_bay_index)
@@ -1661,7 +1666,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cab_props.width
             - cab_props.left_stile_width
             - cab_props.right_stile_width
-            - (bay_qty - 1) * inch(2.0)
+            - (bay_qty - 1) * cab_props.bay_mid_stile_width
         ) / bay_qty
 
         for i in range(bay_qty):
@@ -1701,7 +1706,7 @@ class FaceFrameCabinet(GeoNodeCage):
         cab_props.mid_stile_widths.clear()
         for i in range(bay_qty - 1):
             ms_entry = cab_props.mid_stile_widths.add()
-            ms_entry.width = inch(2.0)
+            ms_entry.width = cab_props.bay_mid_stile_width
 
             mid_stile = CabinetPart()
             mid_stile.create(f'Mid Stile {i + 1}')
