@@ -55,6 +55,12 @@ def hide():
         _handle = None
 
 
+def unregister():
+    """Extension teardown: a handler left behind here would outlive
+    the module it draws from and could never be removed again."""
+    hide()
+
+
 def label_for(value):
     """A distance written the way the rest of the library writes one -
     in the room's own units, rounded the way a cabinet is."""
@@ -105,29 +111,36 @@ def _draw():
         tick = TICK * scale
         gpu.state.blend_set('ALPHA')
         gpu.state.line_width_set(2.0)
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        shader.bind()
-        for start, end, text, snapped in _entries:
-            a = view3d_utils.location_3d_to_region_2d(region, rv3d,
-                                                      start)
-            b = view3d_utils.location_3d_to_region_2d(region, rv3d, end)
-            if a is None or b is None:
-                continue
-            color = SNAP_COLOR if snapped else LINE_COLOR
-            dx, dy = b.x - a.x, b.y - a.y
-            length = (dx * dx + dy * dy) ** 0.5
-            if length < 1.0:
-                continue
-            # ticks square to the line, so it reads as a dimension
-            nx, ny = -dy / length * tick, dx / length * tick
-            _line(shader, [(a.x, a.y), (b.x, b.y)], color)
-            _line(shader, [(a.x - nx, a.y - ny), (a.x + nx, a.y + ny)],
-                  color)
-            _line(shader, [(b.x - nx, b.y - ny), (b.x + nx, b.y + ny)],
-                  color)
-            _text((a.x + b.x) / 2.0 + nx * 2.4,
-                  (a.y + b.y) / 2.0 + ny * 2.4, size, text)
-        gpu.state.line_width_set(1.0)
-        gpu.state.blend_set('NONE')
+        try:
+            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            shader.bind()
+            for start, end, text, snapped in _entries:
+                a = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                          start)
+                b = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                          end)
+                if a is None or b is None:
+                    continue
+                color = SNAP_COLOR if snapped else LINE_COLOR
+                dx, dy = b.x - a.x, b.y - a.y
+                length = (dx * dx + dy * dy) ** 0.5
+                if length < 1.0:
+                    continue
+                # ticks square to the line, so it reads as a dimension
+                nx, ny = -dy / length * tick, dx / length * tick
+                _line(shader, [(a.x, a.y), (b.x, b.y)], color)
+                _line(shader,
+                      [(a.x - nx, a.y - ny), (a.x + nx, a.y + ny)],
+                      color)
+                _line(shader,
+                      [(b.x - nx, b.y - ny), (b.x + nx, b.y + ny)],
+                      color)
+                _text((a.x + b.x) / 2.0 + nx * 2.4,
+                      (a.y + b.y) / 2.0 + ny * 2.4, size, text)
+        finally:
+            # Whatever happens per entry, the state this drew with
+            # must not leak into whoever draws next.
+            gpu.state.line_width_set(1.0)
+            gpu.state.blend_set('NONE')
     except Exception:
         pass

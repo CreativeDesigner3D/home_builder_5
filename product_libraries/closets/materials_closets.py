@@ -314,12 +314,13 @@ def resolve_countertop_material(carcass=None):
 
 def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     """Grain-correct materials on a styled front's Door Style modifier:
-    stiles (vertical members) carry vertical grain (the in-plane
-    variant - the textures read horizontal as authored), rails the
-    material as-is, and the panel follows the front's grain setting.
-    The fronts route the builder through a rotation wrapper (see
-    fronts_closets), so the sockets keep their plain meaning. No-op for
-    slab fronts (no modifier)."""
+    stiles (vertical members) carry vertical grain, rails horizontal,
+    and the panel follows the front's grain setting. The textures read
+    along the part's length, so which material reads vertical depends
+    on the way the front is cut: a length-up front (see fronts_closets)
+    reads the plain material up itself and the rotated variant across,
+    a length-across front the reverse. No-op for slab fronts (no
+    modifier)."""
     mod = next((m for m in front_obj.modifiers
                 if m.type == 'NODES' and 'Door Style' in m.name), None)
     if mod is None or mod.node_group is None:
@@ -329,9 +330,13 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
         front_mat = resolve_front_material()
     if front_mat is None:
         return
-    vertical = vertical_variant(front_mat)
+    rotated = vertical_variant(front_mat)
+    if front_obj.get('hb_front_length_up'):
+        vert_mat, horiz_mat = front_mat, rotated
+    else:
+        vert_mat, horiz_mat = rotated, front_mat
     grain = front_grain(front_obj, is_drawer)
-    panel = front_mat if grain == 'HORIZONTAL' else vertical
+    panel = horiz_mat if grain == 'HORIZONTAL' else vert_mat
     # Door panel type: glass selections replace the wood panel (drawer
     # fronts always keep the wood panel). Clear Glass reuses the shared
     # generated door-panel glass (Glass BSDF + Transparent mix - the
@@ -359,8 +364,8 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
                 is_glass = True
         front_obj['hb_panel_type'] = panel_type
     front_obj['IS_PREP_FOR_GLASS'] = is_glass
-    _set_modifier_material(mod, 'Stile Material', vertical)
-    _set_modifier_material(mod, 'Rail Material', front_mat)
+    _set_modifier_material(mod, 'Stile Material', vert_mat)
+    _set_modifier_material(mod, 'Rail Material', horiz_mat)
     _set_modifier_material(mod, 'Panel Material', panel)
     front_obj.update_tag()
 

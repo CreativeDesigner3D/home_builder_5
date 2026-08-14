@@ -1675,55 +1675,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             return 0.0
 
     def _resolve_opening_under_cursor(self, context):
-        """(opening, local_z, interior_h) for the opening under the mouse.
-
-        Closet interiors are open-backed, so a scene raycast usually
-        sails THROUGH an opening and hits the wall/floor behind it (and
-        in Starters mode the highlighted root cage eats the hit) - so
-        don't depend on geometry at all: intersect the mouse ray with
-        every opening cage's user-facing plane (front face; y=0 face for
-        a double island's BACK openings) and take the nearest hit that
-        lands inside the opening rectangle."""
-        from bpy_extras import view3d_utils
-        from ...face_frame import split_preview
-        region = self.region
-        rv3d = region.data if region is not None else None
-        if rv3d is None or self.mouse_pos is None:
-            return None
-        origin = view3d_utils.region_2d_to_origin_3d(
-            region, rv3d, self.mouse_pos)
-        direction = view3d_utils.region_2d_to_vector_3d(
-            region, rv3d, self.mouse_pos)
-        best = None
-        for obj in context.scene.objects:
-            if not obj.get(types_closets.TAG_OPENING_CAGE):
-                continue
-            try:
-                cage = hb_types.GeoNodeCage(obj)
-                o_w = cage.get_input('Dim X')
-                o_d = cage.get_input('Dim Y')
-                o_h = cage.get_input('Dim Z')
-            except Exception:
-                continue
-            if o_w <= 0.0 or o_h <= 0.0:
-                continue
-            inv = split_preview._world_matrix(obj).inverted()
-            o_l = inv @ origin
-            d_l = inv.to_3x3() @ direction
-            if abs(d_l.y) < 1e-8:
-                continue
-            side = obj.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-            plane_y = 0.0 if side == 'BACK' else -o_d
-            t = (plane_y - o_l.y) / d_l.y
-            if t <= 0.0:
-                continue
-            p = o_l + d_l * t
-            if -0.001 <= p.x <= o_w + 0.001 and -0.001 <= p.z <= o_h + 0.001:
-                if best is None or t < best[0]:
-                    best = (t, obj, p.z, o_h)
-        if best is None:
-            return None
-        return best[1], best[2], best[3]
+        return _opening_under_cursor(context, self.region,
+                                     self.mouse_pos)
 
     def _update_preview(self, context):
         """Move the preview into the opening under the cursor at the
@@ -2054,11 +2007,13 @@ class _ClosetInsertDialog:
 
 
 def _drawer_fronts(opening):
-    """A drawer bank's fronts, bottom drawer first."""
+    """A drawer bank's fronts, bottom drawer first. Rollout tray
+    fronts share the role but not the bank."""
     return sorted(
         [c for c in opening.children
          if c.get('hb_part_role')
-         == types_closets.PART_ROLE_DRAWER_FRONT],
+         == types_closets.PART_ROLE_DRAWER_FRONT
+         and not c.get('hb_rollout')],
         key=lambda o: o.get('hb_drawer_index', 0))
 
 
@@ -3412,20 +3367,28 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             if obj.parent is not wall:
                 obj.parent = wall
                 obj.matrix_parent_inverse.identity()
-            obj.rotation_euler = (0.0, 0.0, 0.0)
+            # Square up to the wall, keeping the stance the part was
+            # cut with (an upright back or cleat stays stood up).
+            obj.rotation_euler = (obj.rotation_euler.x, 0.0, 0.0)
             obj.location = (wall.matrix_world.inverted()
                             @ Vector(self.hit_location))
             return
         if obj.parent is not None:
             obj.parent = None
             obj.matrix_parent_inverse.identity()
-        obj.rotation_euler = (0.0, 0.0, 0.0)
+        obj.rotation_euler = (obj.rotation_euler.x, 0.0, 0.0)
         obj.location = hb_snap.snap_vector_to_grid(
             Vector(self.hit_location))
 
     def _end(self, context):
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
+
+    def cancel(self, context):
+        # The window manager can end a modal without an event (file
+        # load, window closed); clean up the same as Esc.
+        self._delete_part()
+        self._end(context)
 
     def modal(self, context, event):
         if self._part_obj is None:
@@ -3733,6 +3696,57 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _opening_under_cursor(context, region, mouse_pos):
+    """(opening, local_z, interior_h) for the opening under the mouse.
+
+    Closet interiors are open-backed, so a scene raycast usually
+    sails THROUGH an opening and hits the wall/floor behind it (and
+    in Starters mode the highlighted root cage eats the hit) - so
+    don't depend on geometry at all: intersect the mouse ray with
+    every opening cage's user-facing plane (front face; y=0 face for
+    a double island's BACK openings) and take the nearest hit that
+    lands inside the opening rectangle."""
+    from bpy_extras import view3d_utils
+    from ...face_frame import split_preview
+    rv3d = region.data if region is not None else None
+    if rv3d is None or mouse_pos is None:
+        return None
+    origin = view3d_utils.region_2d_to_origin_3d(
+        region, rv3d, mouse_pos)
+    direction = view3d_utils.region_2d_to_vector_3d(
+        region, rv3d, mouse_pos)
+    best = None
+    for obj in context.scene.objects:
+        if not obj.get(types_closets.TAG_OPENING_CAGE):
+            continue
+        try:
+            cage = hb_types.GeoNodeCage(obj)
+            o_w = cage.get_input('Dim X')
+            o_d = cage.get_input('Dim Y')
+            o_h = cage.get_input('Dim Z')
+        except Exception:
+            continue
+        if o_w <= 0.0 or o_h <= 0.0:
+            continue
+        inv = split_preview._world_matrix(obj).inverted()
+        o_l = inv @ origin
+        d_l = inv.to_3x3() @ direction
+        if abs(d_l.y) < 1e-8:
+            continue
+        side = obj.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+        plane_y = 0.0 if side == 'BACK' else -o_d
+        t = (plane_y - o_l.y) / d_l.y
+        if t <= 0.0:
+            continue
+        p = o_l + d_l * t
+        if -0.001 <= p.x <= o_w + 0.001 and -0.001 <= p.z <= o_h + 0.001:
+            if best is None or t < best[0]:
+                best = (t, obj, p.z, o_h)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
 class hb_closets_OT_place_accessory(bpy.types.Operator,
                                     hb_placement.PlacementMixin):
     """Put an accessory in an opening with the mouse.
@@ -3822,7 +3836,11 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         cage = types_closets.add_accessory(opening, self.accessory)
         if cage is None:
             return False
-        if self.model != 'NONE':
+        # Only a width somebody actually chose overrides the band
+        # add_accessory picked to fit the opening - the enum's resting
+        # value is just the first band in the list.
+        if (self.properties.is_property_set('model')
+                and self.model != 'NONE'):
             cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
         acc_def = acc.get(self.accessory)
         if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
@@ -3837,20 +3855,17 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         """Put the carried accessory where the cursor says, by the
         rules that decide where one actually lands."""
         from .. import accessories_closets as acc
-        if self.hit_location is None:
-            return
-        opening = (types_closets.find_opening_cage(self.hit_object)
-                   if self.hit_object is not None else None)
-        if opening is None:
+        resolved = _opening_under_cursor(context, self.region,
+                                         self.mouse_pos)
+        if resolved is None:
             self._drop()
             drop_dims_closets.hide()
             self._note = "Move over an opening to place the accessory"
             return
+        opening, raw, _interior = resolved
         if not self._carry_into(opening):
             return
         acc_def = acc.get(self.accessory)
-        raw = (self.hit_location[2]
-               - opening.matrix_world.translation[2])
         z = types_closets.accessory_drop_height(
             opening, acc_def, raw, skip=self._cage)
         self._cage[types_closets.PROP_ACCESSORY_Z] = z
@@ -3942,6 +3957,15 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
 
+    def cancel(self, context):
+        # The window manager can end a modal without an event (file
+        # load, window closed); clean up the same as Esc.
+        root = self._root
+        self._drop()
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        self._end(context)
+
     def modal(self, context, event):
         from .. import accessories_closets as acc
         if context.area is not None:
@@ -3977,17 +4001,10 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             return {'RUNNING_MODAL'}
 
         if event.type == 'MOUSEMOVE':
-            hidden = self._cage
-            if hidden is not None:
-                hidden.hide_set(True)
-            try:
-                self.update_snap(context, event)
-            finally:
-                if hidden is not None:
-                    try:
-                        hidden.hide_set(False)
-                    except ReferenceError:
-                        pass
+            # Plane-based resolution only needs the mouse position; no
+            # raycast, so no hide/unhide dance around the carried cage.
+            self.mouse_pos = Vector((event.mouse_region_x,
+                                     event.mouse_region_y))
             self._follow(context)
             hb_placement.draw_header_text(context, self._note)
             return {'RUNNING_MODAL'}
@@ -4466,6 +4483,12 @@ class hb_closets_OT_place_continuous_top(bpy.types.Operator,
     def _end(self, context):
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
+
+    def cancel(self, context):
+        # The window manager can end a modal without an event (file
+        # load, window closed); clean up the same as Esc.
+        self._delete_part()
+        self._end(context)
 
     def modal(self, context, event):
         if self._part_obj is None:

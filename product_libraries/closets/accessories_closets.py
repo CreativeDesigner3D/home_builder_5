@@ -150,7 +150,11 @@ def load_accessory_model(path):
             dst.objects = list(src.objects)
     except Exception:
         return None
-    obj = next((o for o in dst.objects if o is not None), None)
+    # The model is the first MESH - a file can carry empties or lights
+    # that sort ahead of it, and handing one of those back would skip
+    # the red not-installed block without drawing anything.
+    obj = next((o for o in dst.objects
+                if o is not None and o.type == 'MESH'), None)
     if obj is None:
         return None
     _accessory_models[path] = obj

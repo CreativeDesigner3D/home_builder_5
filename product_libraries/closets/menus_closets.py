@@ -142,7 +142,7 @@ class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
             return
         first = True
         for family in (acc.FAMILY_OPENING, acc.FAMILY_PANEL,
-                       acc.FAMILY_INSERT):
+                       acc.FAMILY_INSERT, acc.FAMILY_CLEAT):
             in_family = [d for d in offered if d.family == family]
             if not in_family:
                 continue
