@@ -169,7 +169,7 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
 
     def add_interior_to_opening(self, opening_obj, interior):
         """Add an interior to an opening with proper drivers."""
-        interior.create()
+        interior.create('Interior')
         interior.obj.parent = opening_obj
         
         if 'IS_FRAMELESS_OPENING_CAGE' in opening_obj:
