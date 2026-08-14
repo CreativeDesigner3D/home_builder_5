@@ -2315,7 +2315,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # visible geometry (GN cutpart display hidden), so the
             # finish goes on the mesh slot directly - cutpart surface
             # inputs are inert here.
-            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP')
+            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP', 'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 if finish_mat is not None:
@@ -7682,6 +7682,21 @@ class Face_Frame_Opening_Props(PropertyGroup):
     front_type: EnumProperty(
         name="Front Type", items=FRONT_TYPE_ITEMS, default='NONE',
         update=_update_front_type,
+    )  # type: ignore
+
+    # INSET_PANEL fronts: optional carved texture on the panel face,
+    # mirroring the Misc Part panel types (plain / beadboard / shiplap).
+    inset_panel_type: EnumProperty(
+        name="Panel Type",
+        items=[
+            ('PANEL', "Panel", "Plain flat panel"),
+            ('BEADBOARD', "Beadboard",
+             "Vertical quirk-bead grooves carved across the face"),
+            ('SHIPLAP', "Shiplap",
+             "Nickel-gap plank reveals carved across the face"),
+        ],
+        default='PANEL',
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # ---- APPLIANCE front type: filler stiles fitting an appliance ----

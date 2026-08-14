@@ -1045,6 +1045,10 @@ def draw_opening_properties(layout, opening_obj):
         if op.front_type == 'FALSE_FRONT':
             fcol.prop(op, 'is_tilt_out', text="Tilt-Out")
 
+        # Inset panel texture (plain / beadboard / shiplap).
+        if op.front_type == 'INSET_PANEL':
+            fcol.prop(op, 'inset_panel_type', text="Panel Type")
+
         # Appliance: filler stiles fitting an appliance. Two input modes
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
         if op.front_type == 'APPLIANCE':

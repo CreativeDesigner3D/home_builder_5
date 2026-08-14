@@ -8314,6 +8314,20 @@ class FaceFrameCabinet(GeoNodeCage):
             front.set_input('Width', width)
             front.set_input('Thickness', thickness)
 
+            # Textured inset panel (beadboard / shiplap): carve the
+            # static mesh in place of the plain slab. The carve puts the
+            # grooves on the part's local z=0 face with the material
+            # extending -z (mirror_z), so shift the part back one
+            # thickness along the pivot's front axis: the panel body
+            # lands where the slab sat and the grooves face the room.
+            if leaf['role'] == PART_ROLE_INSET_PANEL:
+                tex = getattr(op_props, 'inset_panel_type', 'PANEL')
+                if tex in ('BEADBOARD', 'SHIPLAP'):
+                    front.obj.location.y = (
+                        leaf['part_position'][1] - thickness)
+                    self._textured_panel_mesh(
+                        front.obj, length, width, thickness, tex, True)
+
             # Per-leaf frame-width override (tri-view mirror doors zero the
             # interior stiles where mirrors meet). Stamped onto the door
             # object so assign_style_to_front sets these per-side widths
