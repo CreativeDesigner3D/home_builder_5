@@ -118,6 +118,42 @@ def _draw_add_part_entries(layout):
                     text="Rollout Trays...", icon='MESH_PLANE')
     layout.operator("hb_closets.add_slanted_shelves",
                     text="Slanted Shoe Shelves...", icon='SORTBYEXT')
+    layout.menu("HOME_BUILDER_MT_closet_accessories",
+                text="Add Accessory",
+                icon='OUTLINER_OB_GROUP_INSTANCE')
+
+
+class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
+    """What can be hung in a closet, grouped the way it mounts.
+
+    Picking one starts placing it, so the choice and the placing are
+    one action rather than a dialog and then a height typed in."""
+    bl_idname = "HOME_BUILDER_MT_closet_accessories"
+    bl_label = "Add Accessory"
+
+    def draw(self, context):
+        from . import accessories_closets as acc
+        layout = self.layout
+        offered = acc.catalog_items()
+        if not offered:
+            layout.label(text="No accessories are available",
+                         icon='INFO')
+            layout.label(text="They come with the product catalog")
+            return
+        first = True
+        for family in (acc.FAMILY_OPENING, acc.FAMILY_PANEL,
+                       acc.FAMILY_INSERT, acc.FAMILY_CLEAT):
+            in_family = [d for d in offered if d.family == family]
+            if not in_family:
+                continue
+            if not first:
+                layout.separator()
+            first = False
+            layout.label(text=acc.FAMILY_LABELS.get(family, family))
+            for acc_def in in_family:
+                op = layout.operator("hb_closets.place_accessory",
+                                     text=acc_def.label)
+                op.accessory = acc_def.key
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
@@ -220,6 +256,26 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             op.delta = -1
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_MISC):
+            layout.operator("hb_closets.misc_part_prompts",
+                            text="Part Properties...", icon='WINDOW')
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_CONTINUOUS_TOP):
+            layout.operator("hb_closets.continuous_top_prompts",
+                            text="Top Properties...", icon='WINDOW')
+            layout.separator()
+        if types_closets.find_accessory_cage(obj) is not None:
+            layout.operator("hb_closets.accessory_prompts",
+                            text="Accessory Properties...",
+                            icon='WINDOW')
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                in (types_closets.PART_ROLE_DOOR,
+                    types_closets.PART_ROLE_DRAWER_FRONT)):
+            layout.operator("hb_closets.front_style",
+                            text="Front Style...", icon='SHADERFX')
+        if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_DRAWER_FRONT):
             layout.operator("hb_closets.drawer_accessory",
                             text="Drawer Options...", icon='MODIFIER')
@@ -227,6 +283,16 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 layout.operator("hb_closets.resize_drawer_for_tray",
                                 text="Resize Drawer to Fit Tray",
                                 icon='FULLSCREEN_ENTER')
+            layout.separator()
+        if (obj is not None and obj.get('hb_l_index') is not None
+                and not obj.get('hb_l_carcass')):
+            locked = bool(obj.get(types_closets.PROP_L_LOCKED))
+            op = layout.operator(
+                "hb_closets.lock_l_shelf",
+                text="Unlock Shelf" if locked else "Lock Shelf",
+                icon='DECORATE_UNLOCKED' if locked
+                else 'DECORATE_LOCKED')
+            op.lock = not locked
             layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')
@@ -240,6 +306,7 @@ classes = (
     HOME_BUILDER_MT_closet_change_bay,
     HOME_BUILDER_MT_closet_change_opening,
     HOME_BUILDER_MT_closet_doors_drawers,
+    HOME_BUILDER_MT_closet_accessories,
     HOME_BUILDER_MT_closet_part_commands,
 )
 

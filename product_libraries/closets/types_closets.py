@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
                          GeoNodeDrawerBox, CabinetPartModifier)
+from mathutils import Matrix, Vector
+
 from ...units import inch, millimeter
 from ..frameless.types_frameless import CabinetPart
 from . import solver_closets as solver
@@ -47,6 +49,12 @@ PART_ROLE_TOP_SHELF = 'CLOSET_TOP_SHELF'
 PART_ROLE_TOE_KICK = 'CLOSET_TOE_KICK'
 PART_ROLE_CLEAT = 'CLOSET_CLEAT'
 PART_ROLE_HANG_RAIL = 'CLOSET_HANG_RAIL'
+# The cover clipped over a rail end. A bought part, not a cut one: it
+# wears the negative material (see materials_closets) so nothing about
+# the run's finish paints it, and whatever processes hardware
+# downstream counts it there. Each one carries 'hb_clip_on_left', the
+# hand of the claw it covers.
+PART_ROLE_HANG_RAIL_COVER = 'CLOSET_HANG_RAIL_COVER'
 PART_ROLE_BATTEN = 'CLOSET_BATTEN'
 PART_ROLE_COUNTERTOP = 'CLOSET_COUNTERTOP'
 PART_ROLE_BACKSPLASH = 'CLOSET_BACKSPLASH'
@@ -65,6 +73,70 @@ PART_ROLE_APPLIED_BACK = 'CLOSET_APPLIED_BACK'
 PART_ROLE_FIXED_SHELF = 'CLOSET_FIXED_SHELF'
 PART_ROLE_ADJ_SHELF = 'CLOSET_ADJ_SHELF'
 PART_ROLE_ROD = 'CLOSET_ROD'
+# The part the library does not name: a nailer, a valance, a strip of
+# filler. It is dropped on its own rather than built into a run, so
+# nothing sizes it and nothing moves it. Its size sits on its own
+# geometry inputs and its place sits on its own transform, and it
+# keeps both until the person changes them.
+PART_ROLE_MISC = 'CLOSET_MISC_PART'
+# The top laid across a whole run at once, rather than the piece
+# per bay a run works out for itself. It is dropped rather than
+# prompted, so it is sized and placed once, at the drop, and left
+# alone after: a run resized later keeps the top it was given.
+PART_ROLE_CONTINUOUS_TOP = 'CLOSET_CONTINUOUS_TOP'
+# A bought item that hangs in the closet: a valet rod, a wire basket,
+# an ironing board. The cage carries the choice; what hangs under it
+# depends on the accessory. Three children are possible:
+#   ..._ACCESSORY_MODEL  the bought model itself, instanced from the
+#                        companion add-on. Absent when that add-on is
+#                        not installed - the accessory still holds its
+#                        space and still reports its size.
+#   ..._ACCESSORY_PART   melamine the library cuts for it (the ironing
+#                        board drawer's mount plate and cap shelf).
+#   a front              for the insert family, built by the normal
+#                        front path so it opens and takes a pull.
+# Which accessory this is sits in PROP_ACCESSORY_KEY, matched against
+# accessories_closets.CATALOG.
+PART_ROLE_ACCESSORY = 'CLOSET_ACCESSORY'
+PART_ROLE_ACCESSORY_PART = 'CLOSET_ACCESSORY_PART'
+PART_ROLE_ACCESSORY_MODEL = 'CLOSET_ACCESSORY_MODEL'
+# Accessory idprops, on the accessory cage:
+#   key      catalog key (see accessories_closets.CATALOG)
+#   color    finish name, '' = as it comes
+#   fabric   fabric name, '' = none offered
+#   z        distance (m) from the opening bottom to the accessory
+#   warning  why this accessory does not fit where it was put; empty
+#            or absent means there is nothing to say
+PROP_ACCESSORY_KEY = 'hb_accessory_key'
+PROP_ACCESSORY_COLOR = 'hb_accessory_color'
+PROP_ACCESSORY_FABRIC = 'hb_accessory_fabric'
+PROP_ACCESSORY_Z = 'hb_accessory_z'
+PROP_ACCESSORY_WARNING = 'hb_accessory_warning'
+PROP_ACCESSORY_MODEL = 'hb_accessory_model'
+PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
+PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
+PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# A corner shelf that has been locked. Lock and adjustable are the
+# same board cut the same way - what differs is how it is held: pins
+# in routed notches, or cams into the wings. So it is a flag on the
+# shelf rather than a part of its own, which is how the prior library
+# had it too.
+PROP_L_LOCKED = 'hb_l_locked'
+# A front told to be a style of its own rather than the room's. Unset
+# is the ordinary case: the front follows whatever the room is set to,
+# so changing the room still changes every front that has not been
+# spoken for.
+PROP_FRONT_STYLE = 'hb_front_style'
+PROP_BASKET_W = 'hb_basket_width'
+PROP_BASKET_H = 'hb_basket_height'
+PROP_BASKET_D = 'hb_basket_depth'
+PROP_CLEAT_LENGTH = 'hb_cleat_length'
+PROP_CLEAT_X = 'hb_cleat_x'
+PROP_CLEAT_HEIGHT = 'hb_cleat_height'
+PROP_HOOK_QTY = 'hb_hook_qty'
+PROP_HOOK_INSET = 'hb_hook_inset'
+PROP_HOOK_INDEX = 'hb_hook_index'
+PART_ROLE_ACCESSORY_BLOCK = 'CLOSET_ACCESSORY_BLOCK'
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -143,7 +215,34 @@ PROP_BOX_DEPTH_OVERRIDE = 'hb_box_depth_override'
 PROP_BOX_HEIGHT_OVERRIDE = 'hb_box_height_override'
 PROP_BOX_TYPE_RESOLVED = 'hb_box_type'
 PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
+# Why this drawer box is not a size that can be bought, carried on the
+# box and on its front so the panels can read it without working it
+# out again. Empty/absent means there is nothing to say.
+PROP_BOX_WARNING = 'hb_box_warning'
 PROP_OPEN_HEIGHT = 'hb_open_height'
+# Marks the shelf a drawer bank carries on top of itself. It is a fixed
+# shelf like any other, but it is placed by the bank rather than by
+# what it was given, because only the bank knows where it stops.
+PROP_DRAWER_CAP = 'hb_drawer_cap'
+# Marks a front that is cut with its length running UP it rather than
+# across. Length is the grain axis - every nester places a grained part
+# unrotated, so a part cut across its length reads its grain sideways -
+# and a door's grain runs down the door. Standing the part up in its
+# own frame leaves the door exactly where it was: only which side is
+# called the length changes. Swinging doors carry this; a lift-up and
+# a tilt-out hamper still pivot about their own edges in the old frame
+# and are pending.
+PROP_FRONT_LENGTH_UP = 'hb_front_length_up'
+
+
+def front_size(front):
+    """(width across, height up) of a front, whichever way it is cut."""
+    part = GeoNodeCutpart(front)
+    length = part.get_input('Length')
+    width = part.get_input('Width')
+    if front.get(PROP_FRONT_LENGTH_UP):
+        return width, length
+    return length, width
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills
 # its opening: the fronts the stack owns share the remaining span
 # equally. Typing a front's height hands that front its own
@@ -234,12 +333,16 @@ def suspend_recalc():
 
 
 def _apply_front_style(front_obj, is_drawer):
-    """Apply the scene's front-style selection to one front (see
-    fronts_closets). Best-effort: a missing module/selection leaves the
-    front a slab rather than failing the recalc."""
+    """Apply a front's style: its own if it has been given one, and
+    the room's if it has not.
+
+    Best-effort - a missing module or selection leaves the front a
+    slab rather than failing the recalc."""
     try:
         from . import fronts_closets
-        fronts_closets.apply_style_to_front(front_obj, is_drawer)
+        own = front_obj.get(PROP_FRONT_STYLE) or None
+        fronts_closets.apply_style_to_front(front_obj, is_drawer,
+                                            style=own)
     except Exception:
         pass
 
@@ -255,9 +358,30 @@ def _remove_part_tree(obj):
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def _stamp_warning(obj, message):
+    """Carry a design warning on the part it belongs to, and take it
+    off again the moment the part fits, so what the panels find is
+    only ever what is wrong now."""
+    if message:
+        obj[PROP_BOX_WARNING] = message
+    elif PROP_BOX_WARNING in obj:
+        del obj[PROP_BOX_WARNING]
+
+
 def _set_part_hidden(obj, hidden):
     obj.hide_viewport = hidden
     obj.hide_render = hidden
+
+
+def _hang_rail_cover_z(rail_z, shelf_thickness):
+    """Bottom of a rail cover, given the bottom of the rail it covers.
+    The cover's top sits an inch below the underside of the shelf the
+    rail drops from, which leaves it standing a little proud of the
+    rail at both ends - it wraps the claw rather than sitting beside
+    it."""
+    return (rail_z + const.HANG_RAIL_DROP - shelf_thickness
+            - const.HANG_RAIL_COVER_TOP_OFFSET
+            - const.HANG_RAIL_COVER_WIDTH)
 
 
 # Every surface and edge slot on a cutpart. A purchased metal rail is one
@@ -467,7 +591,7 @@ class ClosetRod(GeoNodeObject):
 # Interior part builders (module-level: operators call these directly)
 # ---------------------------------------------------------------------------
 def add_fixed_shelf(opening_obj, z_offset, anchor_top=False,
-                    role=PART_ROLE_FIXED_SHELF):
+                    role=PART_ROLE_FIXED_SHELF, cleat=False):
     """Create a shelf part under an opening. Position/size are written by
     the next recalculate(); only static orientation is set here."""
     shelf = CabinetPart()
@@ -479,7 +603,22 @@ def add_fixed_shelf(opening_obj, z_offset, anchor_top=False,
     shelf.obj['hb_anchor_top'] = 1 if anchor_top else 0
     shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
     shelf.set_input('Mirror Y', True)
+    if cleat:
+        add_shelf_cleat(shelf.obj)
     return shelf.obj
+
+
+def add_shelf_cleat(shelf_obj):
+    """Create the cleat that stiffens the wall behind a shelf. It rides
+    under the shelf as a child, so it keeps its place when the shelf
+    moves and it goes when the shelf goes."""
+    cleat = CabinetPart()
+    cleat.create('Cleat')
+    cleat.obj.parent = shelf_obj
+    cleat.obj['hb_part_role'] = PART_ROLE_CLEAT
+    cleat.obj.rotation_euler.x = math.radians(90)
+    shelf_obj['hb_shelf_cleat'] = 1
+    return cleat.obj
 
 
 def add_rod(opening_obj, z_offset):
@@ -492,6 +631,123 @@ def add_rod(opening_obj, z_offset):
     rod.obj['hb_z_offset'] = float(z_offset)
     rod.obj['hb_anchor_top'] = 1
     return rod.obj
+
+
+# The loose parts, and the size and stance each one starts at. A part
+# dropped on its own is not worked out by anything afterwards, so what
+# it arrives as is all the help there is - a cleat should arrive lying
+# like a cleat and a back standing like a back, rather than every one
+# of them arriving as the same flat rectangle to be turned by hand.
+#   (label, length, width, thickness, upright)
+LOOSE_PARTS = {
+    'MISC': ("Misc Part", inch(30), inch(18), inch(0.75), False),
+    'BACK': ("Back", inch(30), inch(30), const.APPLIED_BACK_THICKNESS,
+             True),
+    'CLEAT': ("Cleat", inch(30), const.CLEAT_WIDTH,
+              const.SHELF_THICKNESS, True),
+    'SHELF': ("Shelf", inch(30), inch(12), const.SHELF_THICKNESS,
+              False),
+}
+
+
+def add_misc_part(name='Misc Part', kind='MISC'):
+    """Create a part the library does not size and does not place.
+
+    It stands on its own rather than inside an opening, so no recalc
+    ever reaches it: it is the size it was cut and it stays where it
+    was put until the person moves it. Starts at the size and the
+    stance most of that kind want, which the person then changes.
+    """
+    label, length, width, thickness, upright = LOOSE_PARTS.get(
+        kind, LOOSE_PARTS['MISC'])
+    part = CabinetPart()
+    part.create(name if name != 'Misc Part' else label)
+    part.obj['hb_part_role'] = PART_ROLE_MISC
+    part.obj['hb_loose_kind'] = kind
+    part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    part.set_input('Length', length)
+    part.set_input('Width', width)
+    part.set_input('Thickness', thickness)
+    part.set_input('Mirror Y', True)
+    if upright:
+        # Stood on its long edge, the way it is fixed - a back against
+        # the wall, a cleat along it.
+        part.obj.rotation_euler.x = math.radians(90)
+    return part.obj
+
+
+def add_continuous_top(name='Continuous Top'):
+    """Create a top meant to be laid across a whole run at once.
+
+    Comes out the size any loose part comes out; the drop sizes it
+    to whatever run it lands on. Nothing sizes it after that, so a
+    run resized later keeps the top it was given until the person
+    changes it.
+    """
+    part = CabinetPart()
+    part.create(name)
+    part.obj['hb_part_role'] = PART_ROLE_CONTINUOUS_TOP
+    part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    part.set_input('Thickness',
+                   bpy.context.scene.hb_closets.shelf_thickness)
+    part.set_input('Mirror Y', True)
+    return part.obj
+
+
+def fit_continuous_top(top_obj, root, x_offset=0.0, length=None):
+    """Lay a top across a run: sitting on the panel tops, running
+    the length of the run, and one projection deeper so it covers
+    the front edges. Takes a length of its own when the top is one
+    piece of a top that had to be split.
+    """
+    sp = root.hb_closet_starter
+    sizes = run_sizes(root)
+    if top_obj.parent is not root:
+        top_obj.parent = root
+        top_obj.matrix_parent_inverse.identity()
+    top_obj.rotation_euler = (0.0, 0.0, 0.0)
+    top_obj.location = (x_offset, 0.0, sp.height)
+    part = GeoNodeCutpart(top_obj)
+    part.set_input(
+        'Length',
+        (sp.width - x_offset) if length is None else length)
+    part.set_input('Width',
+                   sp.depth + const.CONTINUOUS_TOP_PROJECTION)
+    part.set_input('Thickness', sizes.shelf_thickness)
+    part.set_input('Mirror Y', True)
+    return part
+
+
+def split_continuous_top(top_obj):
+    """A top longer than one length of material comes in two.
+
+    Cuts the first piece at the length that can be cut and lays the
+    rest of it beside, end to end, so what is seen is one top
+    across the run and what is made is two parts. Hands back the
+    second piece, or nothing when the top fits in one.
+    """
+    root = find_starter_root(top_obj)
+    if root is None:
+        return None
+    part = GeoNodeCutpart(top_obj)
+    total = float(part.get_input('Length'))
+    limit = const.CONTINUOUS_TOP_MAX_LENGTH
+    if total <= limit:
+        return None
+    part.set_input('Length', limit)
+    second = add_continuous_top()
+    second.parent = root
+    second.matrix_parent_inverse.identity()
+    second.rotation_euler = (0.0, 0.0, 0.0)
+    second.location = (top_obj.location.x + limit,
+                       top_obj.location.y, top_obj.location.z)
+    second_part = GeoNodeCutpart(second)
+    second_part.set_input('Length', total - limit)
+    second_part.set_input('Width', part.get_input('Width'))
+    second_part.set_input('Thickness',
+                          part.get_input('Thickness'))
+    second_part.set_input('Mirror Y', True)
+    return second
 
 
 def add_division(opening_obj, x_offset):
@@ -777,6 +1033,30 @@ class ClosetStarter(GeoNodeCage):
             if c.get('hb_part_role') == role:
                 return c
         return None
+
+    def _bay_cover(self, bay_obj, side):
+        """The cover clipped over one end of this bay's hang rail.
+        Made on demand, so a run built before covers landed gains them
+        on its next recalculation. A bay has two ends, so they are told
+        apart by the end they sit at rather than by role alone."""
+        for c in bay_obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_HANG_RAIL_COVER
+                    and c.get('hb_cover_side') == side):
+                return c
+        if not self.has_hang_rail:
+            return None
+        part = CabinetPart()
+        part.create('Hang Rail Cover')
+        part.obj.parent = bay_obj
+        part.obj['hb_part_role'] = PART_ROLE_HANG_RAIL_COVER
+        part.obj['hb_cover_side'] = side
+        # The claw is screwed to the face of the panel its cover sits
+        # against, so the hand follows the end: a cover at the LEFT end
+        # of a rail is on the right face of the panel there, one at the
+        # RIGHT end is on the left face of the next panel along.
+        part.obj['hb_clip_on_left'] = 1 if side == 'RIGHT' else 0
+        part.obj.rotation_euler.x = math.radians(90)
+        return part.obj
 
     # -----------------------------------------------------------------
     # Layout
@@ -1171,6 +1451,39 @@ class ClosetStarter(GeoNodeCage):
                     rail, (not self.has_hang_rail)
                     or sp.remove_hang_rail)
 
+                # A cover clips over each rail end that lands on a
+                # panel. Two bays side by side share the panel between
+                # them and so share the one claw, which is why a bay
+                # covers its left end only - the last bay in the run
+                # covers its right end as well. An end lengthened
+                # toward the wall runs out past the last panel, so its
+                # cover stays back at the panel. It sits an inch out
+                # from the wall, in front of the rail rather than
+                # around it, because the claw is what it covers.
+                cover_z = _hang_rail_cover_z(local_z, st)
+                hide_cover = ((not self.has_hang_rail)
+                              or sp.remove_hang_rail)
+                for side in ('LEFT', 'RIGHT'):
+                    cover = self._bay_cover(bay_obj, side)
+                    if cover is None:
+                        continue
+                    cover_x = (0.0 if side == 'LEFT'
+                               else bay['width']
+                               - const.HANG_RAIL_COVER_LENGTH)
+                    cover.location = (
+                        cover_x,
+                        -const.HANG_RAIL_COVER_STANDOFF, cover_z)
+                    cpart = GeoNodeCutpart(cover)
+                    cpart.set_input('Length',
+                                    const.HANG_RAIL_COVER_LENGTH)
+                    cpart.set_input('Width',
+                                    const.HANG_RAIL_COVER_WIDTH)
+                    cpart.set_input('Thickness',
+                                    const.HANG_RAIL_COVER_DEPTH)
+                    _set_part_hidden(
+                        cover, hide_cover
+                        or (side == 'RIGHT' and bay_i != n_bays - 1))
+
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
                 # The back laps onto the panels and shelves around its
@@ -1236,6 +1549,7 @@ class ClosetStarter(GeoNodeCage):
                     part.set_input('Thickness', st)
                     _set_part_hidden(sh, False)
                     boundaries.append(z_off)
+                    self._lay_out_shelf_cleat(sh, bay_obj, bay, st)
 
                 bottoms = [0.0] + [b + st for b in boundaries]
                 tops = boundaries + [bay['interior_h']]
@@ -1321,7 +1635,7 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_slanted_shelves(opening)
         self._reconcile_doors(opening, side)
         self._reconcile_drawers(opening, side)
-        self._reconcile_rollouts(opening)
+        self._reconcile_rollouts(opening, side)
         self._reconcile_captured_back(opening)
         self._reconcile_cubbies(opening)
 
@@ -1334,9 +1648,25 @@ class ClosetStarter(GeoNodeCage):
         else:
             front_y = -depth - sp.door_to_cabinet_gap
 
+        # Blender works out an object's children by walking every
+        # object in the file, so the list is taken once here and shared
+        # by everything below rather than asked for again each time.
+        children = list(opening.children)
+
         groups = {}
-        for child in list(opening.children):
+        for child in children:
             role = child.get('hb_part_role')
+            if role == PART_ROLE_ACCESSORY:
+                # Laid out just above, cage and all. It is skipped here
+                # rather than falling into groups so nothing downstream
+                # mistakes an accessory's front for a drawer's.
+                continue
+            if role == PART_ROLE_FIXED_SHELF and child.get(PROP_DRAWER_CAP):
+                # The shelf that caps a drawer bank goes where the bank
+                # stops, and the bank is the only thing that knows
+                # where that is, so it is left for the stack below.
+                groups.setdefault(role, []).append(child)
+                continue
             if role == PART_ROLE_FIXED_SHELF:
                 z_off = child.get('hb_z_offset', 0.0)
                 z = (interior_h - z_off if child.get('hb_anchor_top')
@@ -1450,10 +1780,17 @@ class ClosetStarter(GeoNodeCage):
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
         if adj:
             adj.sort(key=lambda o: o.get('hb_adj_index', 0))
-            spacing = interior_h / (len(adj) + 1)
+            # The prior library took every shelf's own thickness out
+            # of the opening first, shared what was left between the
+            # shelves and the space above and below them, then added a
+            # thickness back for each shelf underneath. The clear space
+            # between one shelf and the next is the same the whole way
+            # up, which is what a shelf is set by.
+            spacing = (interior_h - st * len(adj)) / (len(adj) + 1)
             adj_depth = max(depth - adj_setback, inch(1.0))
             for i, child in enumerate(adj):
-                z = max(0.0, min(spacing * (i + 1), interior_h - st))
+                z = max(0.0, min(spacing * (i + 1) + st * i,
+                                 interior_h - st))
                 child.location = (clip, 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
@@ -1480,6 +1817,13 @@ class ClosetStarter(GeoNodeCage):
             # opening floor instead of hanging through it, which is
             # where the prior library's stack started.
             rise = shelf_depth * math.sin(angle)
+            # Tipping about the rear edge also swings the front edge
+            # back, by a shelf depth less its own run once tilted. The
+            # prior library pivoted about the FRONT edge instead, its
+            # shelves reaching the opening face. Carry the stack forward
+            # by that difference so the front lip lands on the face here
+            # too, rather than standing off it by the tilt.
+            y_slant = -shelf_depth * (1.0 - math.cos(angle))
             fence_mat = shoe_fence_material(
                 opening.hb_closet_opening.slant_color)
             # The fence is held in from each end of the shelf and can
@@ -1488,14 +1832,16 @@ class ClosetStarter(GeoNodeCage):
             # too big leaves a fence rather than nothing.
             f_inset = min(max(float(_shp.slant_fence_inset), 0.0),
                           max((shelf_w - inch(1.0)) / 2.0, 0.0))
+            f_room = (shelf_depth - const.SHOE_FENCE_DEPTH
+                      - const.SHOE_FENCE_STANDOFF)
             f_back = min(max(float(_shp.slant_back_inset), 0.0),
-                         max(shelf_depth - const.SHOE_FENCE_DEPTH, 0.0))
+                         max(f_room, 0.0))
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 # These rest on clips too, so they take the opening's
                 # clip gap. Their setback is the fence's, not the
                 # room's, which is why it is worked out above.
-                child.location = (clip, 0.0, z)
+                child.location = (clip, y_slant, z)
                 child.rotation_euler = (angle, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
@@ -1508,7 +1854,8 @@ class ClosetStarter(GeoNodeCage):
                     # Sit on the shelf top, frontmost strip, inset each side.
                     fence.location = (
                         f_inset,
-                        y_front + const.SHOE_FENCE_DEPTH + f_back, st)
+                        y_front + const.SHOE_FENCE_STANDOFF
+                        + const.SHOE_FENCE_DEPTH + f_back, st)
                     fpart = GeoNodeCutpart(fence)
                     fpart.set_input(
                         'Length',
@@ -1527,16 +1874,34 @@ class ClosetStarter(GeoNodeCage):
                 leaf = (full - h_gap) / 2.0
             else:
                 leaf = full
+            d_h = interior_h + to + bo
             for i, child in enumerate(doors):
                 x = -lo + i * (leaf + h_gap)
-                child.location = (x, front_y, -bo)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', leaf)
-                part.set_input('Width', interior_h + to + bo)
+                # A swinging door is cut with its length running up it,
+                # so the grain runs down the door on a grained sheet.
+                # A lift-up or a tilt-out pivots about an edge in the
+                # old frame and is left in it.
+                up = child.get('hb_hinge', 'LEFT') in ('LEFT', 'RIGHT')
+                if up:
+                    child[PROP_FRONT_LENGTH_UP] = 1
+                    child.location = (x, front_y, -bo + d_h)
+                    child.rotation_euler = (math.radians(90),
+                                            math.radians(90), 0.0)
+                    part.set_input('Length', d_h)
+                    part.set_input('Width', leaf)
+                else:
+                    if PROP_FRONT_LENGTH_UP in child:
+                        del child[PROP_FRONT_LENGTH_UP]
+                    child.location = (x, front_y, -bo)
+                    child.rotation_euler = (math.radians(90), 0.0, 0.0)
+                    part.set_input('Length', leaf)
+                    part.set_input('Width', d_h)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 _apply_front_style(child, is_drawer=False)
-                _stash_door_closed(child, x, front_y, -bo, leaf, side,
-                                   height=interior_h + to + bo)
+                _stash_door_closed(child, x, front_y,
+                                   (-bo + d_h) if up else -bo,
+                                   leaf, side, height=d_h)
                 self._position_front_pull(
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
@@ -1548,7 +1913,8 @@ class ClosetStarter(GeoNodeCage):
         # (interior_h + to + bo) less the inter-front gaps. The fronts the
         # stack owns share the remainder equally; a front the user has
         # pinned holds its height while the rest absorb the difference.
-        fronts = groups.get(PART_ROLE_DRAWER_FRONT, [])
+        fronts = [c for c in groups.get(PART_ROLE_DRAWER_FRONT, [])
+                  if not c.get('hb_rollout')]
         boxes = {c.get('hb_drawer_index', 0): c
                  for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                  if not c.get('hb_rollout')}
@@ -1567,7 +1933,6 @@ class ClosetStarter(GeoNodeCage):
             _ovr = opening.hb_closet_opening.drawer_box_override
             default_box_type = (_ovr if _ovr and _ovr != 'DEFAULT'
                                 else dbx.current_type())
-            box_w = max(width - 2 * const.DRAWER_SLIDE_GAP, inch(2.0))
             wood_d = max(depth - const.DRAWER_BOX_DEPTH_DEDUCT, inch(2.0))
             # A stretcher stands in the gap between one drawer and
             # the next, running back from the face by its own width
@@ -1584,6 +1949,19 @@ class ClosetStarter(GeoNodeCage):
             z = -bo
             for i, child in enumerate(fronts):
                 dh = heights[i]
+                # A front laps whatever it meets above and below
+                # it - the overlay at the ends of the stack, half
+                # of what the gap leaves over a stretcher in
+                # between - so the opening left clear behind it is
+                # its height less both laps. Every box system is
+                # sized from that and stands on the floor of it,
+                # the way the prior library sized and stood one.
+                lap = max(st - v_gap, 0.0) / 2.0
+                lap_dn = bo if i == 0 else lap
+                lap_up = to if i == n - 1 else lap
+                avail_h = max(dh - lap_dn - lap_up, 0.0)
+                z_bot = z + lap_dn
+                room = max(avail_h, inch(1.0))
                 # Persist the resolved height so overlay labels read it.
                 child[PROP_FRONT_HEIGHT] = dh
                 child.location = (-lo, front_y, z)
@@ -1603,7 +1981,7 @@ class ClosetStarter(GeoNodeCage):
                 _inside = drawer_inside_width(width + lo + ro, box_type)
                 child['hb_inside_w'] = _inside
                 child['hb_open_depth'] = depth
-                child[PROP_OPEN_HEIGHT] = dh
+                child[PROP_OPEN_HEIGHT] = avail_h
                 child[PROP_BOX_TYPE_RESOLVED] = box_type
                 _tray = child.get(PROP_JEWELRY_TRAY, '')
                 if _tray and _tray != 'NONE':
@@ -1618,17 +1996,13 @@ class ClosetStarter(GeoNodeCage):
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                # A front laps the part above it, so the top drawer of a
-                # stack has less room behind the front than the front is
-                # tall. Size the box to the clear space that is really
-                # there, or it runs up through the shelf above.
-                z_bot = max(z, 0.0)
-                room = max(interior_h - z_bot, inch(1.0))
-                avail_h = min(dh, room)
                 wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
                 spec = dbx.size_box(box_type, avail_h, depth, wood_h,
                                     wood_d)
+                warn = dbx.box_warning(box_type, avail_h, depth,
+                                       wood_d)
+                _stamp_warning(child, warn)
                 # Explicit per-front size overrides (0 = system size).
                 _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
                 _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
@@ -1640,6 +2014,7 @@ class ClosetStarter(GeoNodeCage):
                     box['hb_drawer_box_type'] = box_type
                     box['hb_drawer_box_size'] = (spec[2] if spec
                                                  else 'NONE')
+                    _stamp_warning(box, warn)
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
                     box_h = _hov if _hov > 0.0 else spec[0]
@@ -1648,12 +2023,16 @@ class ClosetStarter(GeoNodeCage):
                     # box spans [y_box, y_box + box_d], front edge flush
                     # with the opening face, clearance at the rear.
                     y_box = (-box_d if side == 'BACK' else -depth)
-                    # Stand the box off the drawer's floor, giving the
-                    # lift up when the remaining room is tighter than it.
-                    lift = min(const.DRAWER_BOX_Z_LIFT,
+                    # Each system holds its box in from the panel
+                    # beside it and stands it off the floor of the
+                    # clear opening by its own figures. The stand
+                    # off gives way when what is left is tighter
+                    # than it.
+                    lift = min(dbx.floor_gap(box_type),
                                max(0.0, room - box_h))
-                    box.location = (const.DRAWER_SLIDE_GAP, y_box,
-                                    z_bot + lift)
+                    s_gap = dbx.side_gap(box_type)
+                    box_w = max(width - 2 * s_gap, inch(2.0))
+                    box.location = (s_gap, y_box, z_bot + lift)
                     gb = GeoNodeObject(box)
                     gb.set_input('Dim X', box_w)
                     gb.set_input('Dim Y', box_d)
@@ -1683,25 +2062,83 @@ class ClosetStarter(GeoNodeCage):
                     s_part.set_input('Length', width)
                     s_part.set_input('Width', s_w)
                     s_part.set_input('Thickness', st)
+                if i == n - 1:
+                    # The bank's own shelf, lapped by the top front the
+                    # same way a stretcher is. Where the bank fills the
+                    # opening there is nothing for it to cap and the
+                    # opening's own top shelf is already there, so it
+                    # steps aside rather than doubling it.
+                    cap_z = z + dh - (st - v_gap) / 2.0
+                    for cap in groups.get(PART_ROLE_FIXED_SHELF, []):
+                        if not cap.get(PROP_DRAWER_CAP):
+                            continue
+                        room = cap_z + st <= interior_h + inch(0.01)
+                        _set_part_hidden(cap, not room)
+                        cap.location = (0.0, 0.0, cap_z)
+                        c_part = GeoNodeCutpart(cap)
+                        c_part.set_input('Length', width)
+                        c_part.set_input('Width', depth)
+                        c_part.set_input('Thickness', st)
                 z += dh + v_gap
 
         # ----- Rollout trays -----
         # A tray stands the opening's Rollout Height (default 4") and
         # the stack is spaced with equal gaps above, below and between
         # (sizing from the prior library: 4" tray, 0.327" side clearance
-        # for the slides, full opening depth). A tray can be given a
-        # height of its own, or a location of its own, in which case it
-        # is held at what it was given and the rest of the stack carries
-        # on sharing.
+        # for the slides). A tray can be given a height of its own, or a
+        # location of its own, in which case it is held at what it was
+        # given and the rest of the stack carries on sharing.
         rollouts = [c for c in groups.get(PART_ROLE_DRAWER_BOX, [])
                     if c.get('hb_rollout')]
         if rollouts:
             rollouts.sort(key=lambda o: o.get('hb_rollout_index', 0))
             from . import drawer_boxes_closets as dbx
-            box_type = dbx.current_type()
-            box_mat = dbx.box_material(box_type)
-            box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
-            box_d = max(depth, inch(2.0))
+            # A tray is a wood box on slides, which is what the prior
+            # library built every one of them out of, so it is built
+            # to the standard sizes a wood box is bought in. The
+            # Rollout Height the opening is given is the room a tray
+            # is allotted in the stack; the tray steps down to the
+            # largest standard height that room takes.
+            # A tray carries a front, the way the prior library built
+            # every one of them. Lapped, the front stands proud of the
+            # face and laps the opening the way a drawer front does.
+            # Set inside instead, it is held back from each side by
+            # the inset reveal and fills the front of the opening
+            # depth with its own thickness, and the box behind it
+            # gives that thickness up. Either way the box is held in
+            # from each side by the overlay as well as the clearance
+            # the slides want, so the front has the room it laps
+            # clear of it.
+            inset = bool(opening.hb_closet_opening.rollout_inset_front)
+            ir = float(opening.hb_closet_opening.rollout_inset_reveal)
+            ft = const.FRONT_THICKNESS
+            f_off = ft if inset else 0.0
+            box_x = lo + const.ROLLOUT_SLIDE_GAP
+            box_w = max(width - lo - ro - 2 * const.ROLLOUT_SLIDE_GAP,
+                        inch(2.0))
+            # The depth steps down the same way, from what the opening
+            # has left once an inset front has taken its own thickness
+            # off the front of it. The tray is held at the face it
+            # serves, so what it gives up comes off the back.
+            d_avail = max(depth - f_off, inch(2.0))
+            _bd = dbx.wood_depth(d_avail)
+            box_d = max(d_avail if _bd is None else _bd, inch(2.0))
+            if side == 'BACK':
+                y_box = -box_d - f_off
+                front_y_t = -f_off
+            else:
+                y_box = -depth + f_off
+                front_y_t = -depth + f_off
+            if inset:
+                f_x = ir
+                f_len = max(width - 2 * ir, inch(1.0))
+            else:
+                f_x = -lo
+                f_len = width + lo + ro
+            tfronts = sorted(
+                (c for c in groups.get(PART_ROLE_DRAWER_FRONT, [])
+                 if c.get('hb_rollout')),
+                key=lambda o: o.get('hb_rollout_index', 0))
             n = len(rollouts)
             stack_h = float(opening.hb_closet_opening.rollout_height)
             heights = [tray_height(b, stack_h) for b in rollouts]
@@ -1726,7 +2163,6 @@ class ClosetStarter(GeoNodeCage):
                     scale = room / (sum(heights) or 1.0)
                     heights = [max(h * scale, const.ROLLOUT_MIN_HEIGHT)
                                for h in heights]
-            y_box = (-box_d if side == 'BACK' else -depth)
             z = gap
             for i, box in enumerate(rollouts):
                 h = heights[i]
@@ -1737,22 +2173,44 @@ class ClosetStarter(GeoNodeCage):
                                  max(interior_h - h, 0.0))
                 else:
                     z_tray = z
-                box['hb_drawer_box_type'] = box_type
-                box['hb_drawer_box_size'] = 'ROLLOUT'
+                # A tray steps down to the largest standard wood box
+                # the room the stack set aside for it takes, and
+                # stands off the floor of that room the way a wood box
+                # stands off the floor of a drawer opening. Where the
+                # room is smaller than the smallest standard the tray
+                # keeps the parametric height so there is still one
+                # that fits, and the warning gives the reason in the
+                # words the prior library used for it.
+                bh = dbx.wood_height(h)
+                bh = h if bh is None else bh
+                lift = min(dbx.floor_gap('WOOD'), max(0.0, h - bh))
+                box['hb_drawer_box_type'] = 'WOOD'
+                box['hb_drawer_box_size'] = 'WOOD'
+                _stamp_warning(box, dbx.box_warning('WOOD', h,
+                                                    d_avail, d_avail))
                 _set_part_hidden(box, False)
                 # Persist what the tray resolved to, so a dialog opens
                 # on what is on screen rather than on a default.
                 box[PROP_TRAY_HEIGHT] = h
                 box[PROP_TRAY_Z] = z_tray
-                box.location = (const.ROLLOUT_SLIDE_GAP, y_box, z_tray)
+                # The tray is anchored at the face it serves and
+                # runs back from it to the rear of the opening.
+                box.location = (box_x, y_box, z_tray + lift)
                 gb = GeoNodeObject(box)
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
-                gb.set_input('Dim Z', h)
-                try:
-                    gb.set_input('Material', box_mat)
-                except Exception:
-                    pass
+                gb.set_input('Dim Z', bh)
+                # The front stands the whole of the room the stack set
+                # aside for the tray, so a stack of them reads as a
+                # bank of fronts with the gaps between them showing.
+                fr = tfronts[i] if i < len(tfronts) else None
+                if fr is not None:
+                    fr.location = (f_x, front_y_t, z_tray)
+                    fp = GeoNodeCutpart(fr)
+                    fp.set_input('Length', f_len)
+                    fp.set_input('Width', h)
+                    fp.set_input('Thickness', ft)
+                    _apply_front_style(fr, is_drawer=True)
                 z += h + gap
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
@@ -1790,6 +2248,11 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width)
                 part.set_input('Width', cub_depth)
                 part.set_input('Thickness', st)
+
+        # Last, so that everything an accessory has to keep clear of
+        # has already been put where it goes.
+        self._accessories(children, width, depth, interior_h, side,
+                          front_y, lo, ro, to, bo, scene_props)
 
     # ----- regenerators (create/remove children to match config) -----
 
@@ -1849,9 +2312,12 @@ class ClosetStarter(GeoNodeCage):
         pull_spacing = (float(op.distance_between_pulls) if op is not None
                         else const.DISTANCE_BETWEEN_PULLS)
         part = GeoNodeCutpart(front)
-        width = part.get_input('Length')
-        height = part.get_input('Width')
+        width, height = front_size(front)
         thickness = part.get_input('Thickness')
+        # A front cut length-up sits in a frame turned a quarter about
+        # its own face, so what is worked out below in face terms -
+        # across, up, out - is turned the same way on the way in.
+        length_up = bool(front.get(PROP_FRONT_LENGTH_UP))
         half = pulls_closets.pull_length(pull_obj) / 2.0
         z = thickness
 
@@ -1893,19 +2359,33 @@ class ClosetStarter(GeoNodeCage):
                 x = width - offset
             else:
                 x = offset
-            # Base / Tall / Upper rule, floor-referenced: hold the pull
-            # at the TALL height off the floor; when the door bottom is
-            # already above that height use the UPPER convention (near
-            # the bottom edge); when the tall height would land past
-            # the door top use the BASE convention (near the top edge).
+            # Base / Tall / Upper, floor-referenced. On Auto the rule
+            # is read off the door: hold the pull at the TALL height
+            # off the floor; when the door bottom is already above that
+            # height use the UPPER convention (near the bottom edge);
+            # when the tall height would land past the door top use the
+            # BASE convention (near the top edge). Naming one instead
+            # holds the door to it, clamped to stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
+            if length_up:
+                # A length-up front carries its origin at the top
+                # edge, so the bottom is a door height below it.
+                bottom_w -= height
             tall_target = v_tall
-            if bottom_w >= tall_target:
+            rule = (op.door_pull_location if op is not None else 'AUTO')
+            base_y = height - v_base - half
+            if rule == 'BASE':
+                y = base_y
+            elif rule == 'UPPER':
+                y = v_upper + half
+            elif rule == 'TALL':
+                y = (tall_target - bottom_w) + half
+            elif bottom_w >= tall_target:
                 y = v_upper + half
             else:
                 tall_y = (tall_target - bottom_w) + half
-                base_y = height - v_base - half
                 y = tall_y if tall_y <= base_y else base_y
+            y = min(max(y, half), max(height - half, half))
             rot = (math.radians(-90.0), 0.0, math.radians(90.0))
 
         # One pull, or a pair straddling the middle of the front where
@@ -1925,6 +2405,14 @@ class ClosetStarter(GeoNodeCage):
             inst['hb_part_role'] = 'PULL'
             inst['IS_CABINET_PULL'] = True
             existing.append(inst)
+        # Everything above is worked out in the face's own terms -
+        # across, up, out. A front cut length-up sits in a frame turned
+        # a quarter about that face, so the answer is turned with it on
+        # the way out rather than worked out twice.
+        if length_up:
+            from mathutils import Euler, Matrix
+            turn = Matrix.Rotation(math.radians(90.0), 3, 'Z')
+            rot = (turn @ Euler(rot).to_matrix()).to_euler()
         for i, dx in enumerate(offsets):
             inst = existing[i]
             if inst.data is not pull_obj.data:
@@ -1933,7 +2421,11 @@ class ClosetStarter(GeoNodeCage):
             # the asset's internal name) - downstream reports key on it.
             inst['hb_pull_index'] = i
             inst['hb_pull_name'] = pulls_closets.current_pull_stem()
-            inst.location = (x + dx, y, z)
+            across, up = x + dx, y
+            if length_up:
+                inst.location = (height - up, across, z)
+            else:
+                inst.location = (across, up, z)
             inst.rotation_euler = rot
 
     def _reconcile_adj_shelves(self, opening):
@@ -2112,7 +2604,8 @@ class ClosetStarter(GeoNodeCage):
     def _reconcile_drawers(self, opening, side):
         qty = max(0, int(opening.hb_closet_opening.drawer_qty))
         fronts = [c for c in opening.children
-                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
+                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                  and not c.get('hb_rollout')]
         boxes = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
                  and not c.get('hb_rollout')]
@@ -2145,6 +2638,23 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
             box.obj['hb_drawer_index'] = len(boxes)
             boxes.append(box.obj)
+        # The bank carries its own shelf on top. The prior library
+        # capped a stack that way, and a bank that stops short of the
+        # top of its opening needs it: without one the drawers are open
+        # to whatever is above them.
+        caps = [c for c in opening.children if c.get(PROP_DRAWER_CAP)]
+        want_cap = 1 if qty else 0
+        while len(caps) > want_cap:
+            bpy.data.objects.remove(caps.pop(), do_unlink=True)
+        while len(caps) < want_cap:
+            cap = CabinetPart()
+            cap.create('Drawer Cap Shelf')
+            cap.obj.parent = opening
+            cap.obj['hb_part_role'] = PART_ROLE_FIXED_SHELF
+            cap.obj[PROP_DRAWER_CAP] = 1
+            cap.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            cap.set_input('Mirror Y', True)
+            caps.append(cap.obj)
         # One stretcher between each drawer and the next, so a stack
         # of n carries n-1 of them: the shelf above the stack caps
         # the top and the opening carries the bottom drawer.
@@ -2164,10 +2674,11 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Mirror Y', True)
             strchs.append(part.obj)
 
-    def _reconcile_rollouts(self, opening):
-        """Pullout trays: drawer boxes with no fronts. Same box part and
-        role as a drawer box (tagged hb_rollout so the drawer reconciler
-        leaves them alone); laid out evenly by the opening layout."""
+    def _reconcile_rollouts(self, opening, side):
+        """Pullout trays: a drawer box on slides with a front on it.
+        Box and front carry the same roles a drawer's do, tagged
+        hb_rollout so the drawer reconciler leaves them alone; the
+        opening layout spaces them."""
         qty = max(0, int(opening.hb_closet_opening.rollout_qty))
         boxes = [c for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX
@@ -2183,6 +2694,819 @@ class ClosetStarter(GeoNodeCage):
             box.obj['hb_rollout'] = 1
             box.obj['hb_rollout_index'] = len(boxes)
             boxes.append(box.obj)
+        fronts = [c for c in opening.children
+                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                  and c.get('hb_rollout')]
+        fronts.sort(key=lambda o: o.get('hb_rollout_index', 0))
+        while len(fronts) > qty:
+            _remove_part_tree(fronts.pop())
+        while len(fronts) < qty:
+            obj = self._make_front(opening, 'Rollout Front',
+                                   PART_ROLE_DRAWER_FRONT, side)
+            obj['hb_rollout'] = 1
+            obj['hb_rollout_index'] = len(fronts)
+            fronts.append(obj)
+
+    # -------------------------------------------------------------
+    # Accessories
+    # -------------------------------------------------------------
+    def _acc_part(self, cage, name, role, kids, rotate_x=False):
+        """Find-or-create one melamine child under an accessory cage,
+        matched on role + name so an accessory can carry several."""
+        for c in kids.get(role, ()):
+            if c.get('hb_acc_part') == name:
+                return c
+        part = CabinetPart()
+        part.create(name)
+        part.set_input('Mirror Y', True)
+        part.obj.parent = cage
+        part.obj['hb_part_role'] = role
+        part.obj['hb_acc_part'] = name
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        if rotate_x:
+            part.obj.rotation_euler.x = math.radians(90)
+        kids.setdefault(role, []).append(part.obj)
+        return part.obj
+
+    def _placeholder_material(self):
+        """The one red material every placeholder shares."""
+        name = const.ACCESSORY_PLACEHOLDER_MATERIAL
+        mat = bpy.data.materials.get(name)
+        if mat is None:
+            mat = bpy.data.materials.new(name)
+            mat.use_nodes = True
+            mat.diffuse_color = const.ACCESSORY_PLACEHOLDER_COLOR
+            bsdf = mat.node_tree.nodes.get('Principled BSDF')
+            if bsdf is not None:
+                bsdf.inputs['Base Color'].default_value = (
+                    const.ACCESSORY_PLACEHOLDER_COLOR)
+                if 'Roughness' in bsdf.inputs:
+                    bsdf.inputs['Roughness'].default_value = 0.9
+        return mat
+
+    def _acc_placeholder(self, cage, want, kids):
+        """A red block standing in for a model that is not installed.
+
+        It is drawn at the size the accessory claims rather than at
+        the shape of the thing, because the shape is exactly what is
+        not known here. What it is good for is seeing that the space
+        has been taken and by roughly what - and seeing, plainly, that
+        a model is missing."""
+        found = kids.get(PART_ROLE_ACCESSORY_BLOCK) or ()
+        block = found[0] if found else None
+        if not want:
+            if block is not None:
+                _remove_part_tree(block)
+                kids.pop(PART_ROLE_ACCESSORY_BLOCK, None)
+            return None
+        if block is None:
+            mesh = bpy.data.meshes.new('Accessory Placeholder')
+            block = bpy.data.objects.new('Accessory Placeholder', mesh)
+            bpy.context.scene.collection.objects.link(block)
+            block.parent = cage
+            block.matrix_parent_inverse.identity()
+            block['hb_part_role'] = PART_ROLE_ACCESSORY_BLOCK
+            block['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            block.data.materials.append(self._placeholder_material())
+            kids.setdefault(PART_ROLE_ACCESSORY_BLOCK,
+                            []).append(block)
+        # Red twice over: the material for a lit view, and the object
+        # colour for the solid one. Most of the time a closet is drawn
+        # in solid shading, where the material is not what is shown,
+        # and a stand-in that reads as ordinary melamine is worse than
+        # no stand-in at all.
+        block.color = const.ACCESSORY_PLACEHOLDER_COLOR
+        return block
+
+    def _stretch_model(self, model, width):
+        """Pull a telescoping model out to a width.
+
+        The markers are what the mesh is hung off: the far one goes to
+        the width and the middle one to half of it, and the ends keep
+        their own shape rather than being stretched along with
+        everything between them. Only how far along they sit is
+        touched - across and up they stay where the model was drawn
+        with them, or the mesh is pulled out of shape. Says whether it
+        found a rig to pull."""
+        markers = [c for c in model.children
+                   if c.get('hb_part_role') == PART_ROLE_ACCESSORY_RIG]
+        if not markers:
+            return False
+        far = max(markers, key=lambda o: o.get('hb_rig_x', 0.0))
+        for marker in markers:
+            marker.location.x = (width if marker is far
+                                 else width / 2.0)
+        return True
+
+    def _fit_cage_to_model(self, cage, kids, span_x=0.0):
+        """Pull the cage in around the model it is showing.
+
+        The cage is what a person clicks on and what they see selected,
+        so it wants to be the box the thing actually fills. Sized to
+        the space the accessory reserves instead, it reads wrong: a
+        shoe organizer floats in the middle of a box half again its
+        height, and a mirror gets a box around its bottom two inches.
+
+        Where the cage sits is also where the accessory sits, so the
+        model is moved back by exactly as much as the cage moves and
+        stays where it was put. The space the accessory reserves is
+        still what the fit warnings are worked out from - that is a
+        different question from what is drawn round it."""
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        if not found:
+            return False
+        model = found[0]
+        # Built from what has just been set rather than read off the
+        # object: matrix_local is worked out by the depsgraph and is
+        # still a step behind at this point in the pass.
+        mat = Matrix.LocRotScale(model.location, model.rotation_euler,
+                                 model.scale)
+        corners = [mat @ Vector(c) for c in model.bound_box]
+        lo_x = min(c.x for c in corners)
+        lo_y = min(c.y for c in corners)
+        lo_z = min(c.z for c in corners)
+        hi_x = max(c.x for c in corners)
+        hi_y = max(c.y for c in corners)
+        hi_z = max(c.z for c in corners)
+        if span_x > 0.0:
+            # A telescoping model is pulled out by its markers, and a
+            # bounding box is read off the mesh before that happens -
+            # so how wide it has ended up is known here rather than
+            # measured. Across and up it does not change, so those are
+            # still read off the box.
+            hi_x = lo_x + span_x
+        if hi_x - lo_x <= 0.0 or hi_z - lo_z <= 0.0:
+            return False
+        # The cage runs +X, -Y and +Z from its own origin, so its
+        # corner is the model's low X, high Y, low Z.
+        shift = Vector((lo_x, hi_y, lo_z))
+        cage.location = cage.location + shift
+        model.location = model.location - shift
+        geo = GeoNodeCage(cage)
+        geo.set_input('Dim X', hi_x - lo_x)
+        geo.set_input('Dim Y', hi_y - lo_y)
+        geo.set_input('Dim Z', hi_z - lo_z)
+        return True
+
+    def _size_placeholder(self, kids, width, depth, height):
+        """Rewrite the block to fill the space it stands for.
+
+        The mesh is rebuilt rather than scaled, so the cage and the
+        block read the same size in every list that measures them -
+        but only when the size has actually changed. Rebuilding eight
+        vertices is cheap; rebuilding them for every accessory on
+        every recalculation is not."""
+        found = kids.get(PART_ROLE_ACCESSORY_BLOCK) or ()
+        block = found[0] if found else None
+        if block is None:
+            return
+        size = (round(width, 7), round(depth, 7), round(height, 7))
+        if tuple(block.get('hb_block_size', ())) == size:
+            return
+        block['hb_block_size'] = size
+        verts = [(0.0, 0.0, 0.0), (width, 0.0, 0.0),
+                 (width, -depth, 0.0), (0.0, -depth, 0.0),
+                 (0.0, 0.0, height), (width, 0.0, height),
+                 (width, -depth, height), (0.0, -depth, height)]
+        faces = [(0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+                 (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+        mesh = block.data
+        mesh.clear_geometry()
+        mesh.from_pydata(verts, [], faces)
+        mesh.update()
+
+    def _acc_model(self, cage, acc_def, kids):
+        """The bought model under an accessory cage, or None.
+
+        The catalog says which model an accessory should be showing
+        and where that model is on this machine. When it is not here -
+        nothing is offering closet accessories, or this particular one
+        has not been installed - any model already hanging is taken
+        off and a block is drawn in its place. The accessory still
+        holds its space and still measures either way."""
+        from . import accessories_closets as acc
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        existing = found[0] if found else None
+        want = accessory_model_path_for(cage, acc_def)
+        if not acc.model_is_installed(want):
+            if existing is not None:
+                _remove_part_tree(existing)
+                kids.pop(PART_ROLE_ACCESSORY_MODEL, None)
+            # Nothing to draw, so the space is drawn instead.
+            self._acc_placeholder(cage, True, kids)
+            return None
+        name = accessory_model_name(cage, acc_def)
+        if existing is not None:
+            if existing.get(PROP_ACCESSORY_MODEL) == name:
+                # Squared up on the way past, so a model that
+                # was brought in turned - by an older build of
+                # this library, or by hand - comes back straight.
+                existing.rotation_euler = (0.0, 0.0, 0.0)
+                self._acc_placeholder(cage, False, kids)
+                return existing
+            # The width was changed under it. These are bought at a
+            # set size rather than stretched, so a different width is
+            # a different thing and the old one comes out.
+            _remove_part_tree(existing)
+            kids.pop(PART_ROLE_ACCESSORY_MODEL, None)
+        markers = ()
+        if acc_def.stretch:
+            obj, markers = acc.instance_stretch_model(want,
+                                                      acc_def.label)
+        else:
+            obj = acc.instance_accessory_model(want, acc_def.label)
+        if obj is None:
+            # Named but not there: the catalog offers it, it just has
+            # not been installed. That reads the same to a person as
+            # nothing being offered at all, so it draws the same.
+            self._acc_placeholder(cage, True, kids)
+            return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = cage
+        obj.matrix_parent_inverse.identity()
+        # No turning. A model's depth runs back down +Y and so does
+        # this library's; it is placed at the front and runs back from
+        # there. Turning one end for end would stand it out in front
+        # of the closet, which is a mistake worth not repeating.
+        obj.rotation_euler.z = 0.0
+        obj['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
+        obj[PROP_ACCESSORY_MODEL] = name
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        for marker in markers:
+            # The markers hang off the model rather than off the cage,
+            # so moving the model takes them with it. Hung off the
+            # cage instead they would stay behind and drag the mesh
+            # out of shape. Where one started tells the two apart: the
+            # far one is what the width is set on, the middle one
+            # rides at half of it.
+            marker['hb_rig_x'] = float(marker.location.x)
+            marker['hb_part_role'] = PART_ROLE_ACCESSORY_RIG
+            bpy.context.scene.collection.objects.link(marker)
+            marker.parent = obj
+            marker.matrix_parent_inverse.identity()
+        kids.setdefault(PART_ROLE_ACCESSORY_MODEL, []).append(obj)
+        # The real thing turned up, so the stand-in comes off.
+        self._acc_placeholder(cage, False, kids)
+        return obj
+
+    def _accessories(self, children, width, depth, interior_h, side,
+                     front_y, lo, ro, to, bo, scene_props):
+        """Bring every accessory in one opening into line, and place
+        it, in a single pass.
+
+        Reconciling and placing want exactly the same two things - the
+        same catalog line and the same set of children - so they are
+        done together. Asking Blender twice for an object's children
+        is the expensive way to do nothing: it works them out by
+        walking every object in the file, so each ask costs the whole
+        scene. Here each cage is read once.
+
+        An accessory whose catalog key is no longer offered is left
+        standing but emptied, so a file saved against a fuller catalog
+        opens rather than losing the person's work."""
+        from . import accessories_closets as acc
+        st = scene_props.shelf_thickness
+        cages = [c for c in children
+                 if c.get('hb_part_role') == PART_ROLE_ACCESSORY]
+        for cage in cages:
+            kids = {}
+            for child in cage.children:
+                kids.setdefault(child.get('hb_part_role'),
+                                []).append(child)
+            acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+            if acc_def is None:
+                for group in kids.values():
+                    for child in group:
+                        _remove_part_tree(child)
+                continue
+
+            # What it is, and what it is showing. A cleat carries a
+            # row of hooks rather than one model, so its models are
+            # left to the layout below.
+            if acc_def.family != acc.FAMILY_CLEAT \
+                    and not acc_def.is_sized:
+                self._acc_model(cage, acc_def, kids)
+            if acc_def.family == acc.FAMILY_INSERT:
+                self._acc_part(cage, 'Ironing Board Mount',
+                               PART_ROLE_ACCESSORY_PART, kids)
+                self._acc_part(cage, 'Accessory Shelf',
+                               PART_ROLE_ACCESSORY_PART, kids)
+                if not kids.get(PART_ROLE_DRAWER_FRONT):
+                    front = self._make_front(
+                        cage, 'Ironing Board Front',
+                        PART_ROLE_DRAWER_FRONT, side)
+                    front['hb_accessory_front'] = 1
+                    kids.setdefault(PART_ROLE_DRAWER_FRONT,
+                                    []).append(front)
+
+            # Where it sits. A height set close to the floor is taken
+            # to mean the floor.
+            z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+            if z < const.ACCESSORY_BOTTOM_SNAP_TOL:
+                z = 0.0
+            z = max(0.0, min(z, max(interior_h - acc_def.height, 0.0)))
+            cage[PROP_ACCESSORY_Z] = z
+
+            band = accessory_band(cage, acc_def, width)
+            want_w = acc_def.band_width(band)
+            want_d = acc_def.band_depth(band)
+            if acc_def.is_sized:
+                want_w, want_d = 0.0, 0.0
+            geo = GeoNodeCage(cage)
+
+            if acc_def.family == acc.FAMILY_PANEL:
+                # It hangs off a panel, so it claims that panel's
+                # thickness across, what it reaches back, and a hand's
+                # height - enough to take hold of, not enough to
+                # pretend it fills the opening.
+                cage.location = (0.0, 0.0, z)
+                cage_d = min(want_d or depth, depth)
+                geo.set_input('Dim X', scene_props.panel_thickness)
+                geo.set_input('Dim Y', cage_d)
+                geo.set_input('Dim Z', const.ACCESSORY_PANEL_CAGE_H)
+                self._layout_panel_accessory(
+                    cage, acc_def, kids, width, depth,
+                    scene_props.panel_thickness)
+                if not self._fit_cage_to_model(cage, kids):
+                    self._size_placeholder(
+                        kids, scene_props.panel_thickness, cage_d,
+                        const.ACCESSORY_PANEL_CAGE_H)
+            elif acc_def.is_sized:
+                # A basket is drawn to a size chosen on three axes
+                # rather than bought whole, so how big it is is known
+                # exactly and the cage is set to it rather than felt
+                # for around a model.
+                b_w, b_h, b_d = basket_values(cage, acc_def, width)
+                cage_d = min(b_d, depth)
+                cage.location = (max((width - b_w) / 2.0, 0.0),
+                                 -(depth - cage_d), z)
+                geo.set_input('Dim X', b_w)
+                geo.set_input('Dim Y', cage_d)
+                geo.set_input('Dim Z', b_h)
+                if not self._acc_basket(cage, acc_def, kids, cage_d,
+                                        (b_w, b_h, b_d)):
+                    self._acc_placeholder(cage, True, kids)
+                    self._size_placeholder(kids, b_w, cage_d, b_h)
+                else:
+                    self._acc_placeholder(cage, False, kids)
+                want_w, want_d = b_w, b_d
+            elif acc_def.family == acc.FAMILY_OPENING:
+                # A pull-out is fitted at the front of the opening and
+                # runs back its own depth, so the cage does the same.
+                cage_d = min(acc_def.depth or depth, depth)
+                cage.location = (0.0, -(depth - cage_d), z)
+                geo.set_input('Dim X', width)
+                geo.set_input('Dim Y', cage_d)
+                geo.set_input('Dim Z', acc_def.reserved_height
+                              or interior_h)
+                span_x = self._layout_opening_accessory(
+                    cage, acc_def, kids, width, cage_d)
+                if not self._fit_cage_to_model(cage, kids, span_x):
+                    self._size_placeholder(
+                        kids, width, cage_d,
+                        acc_def.reserved_height or interior_h)
+            elif acc_def.family == acc.FAMILY_CLEAT:
+                # A board across the back of the opening. It is as
+                # long as the opening unless a length has been asked
+                # for, and then it can be slid left and right.
+                c_len, c_x, c_h, qty, inset = cleat_hook_values(
+                    cage, width)
+                pt = scene_props.panel_thickness
+                # It stands its own height rather than the catalog's,
+                # so how far up it can go is settled here.
+                z = max(0.0, min(z, max(interior_h - c_h, 0.0)))
+                cage[PROP_ACCESSORY_Z] = z
+                cage.location = (c_x, 0.0, z)
+                geo.set_input('Dim X', c_len)
+                geo.set_input('Dim Y', pt)
+                geo.set_input('Dim Z', c_h)
+                self._acc_cleat_hooks(cage, acc_def, kids, width, c_h,
+                                      c_len, qty, inset, pt)
+            else:
+                cage.location = (0.0, 0.0, z)
+                geo.set_input('Dim X', acc_def.width or width)
+                geo.set_input('Dim Y', acc_def.depth or depth)
+                geo.set_input('Dim Z', acc_def.reserved_height
+                              or interior_h)
+                self._acc_ironing_board_drawer(
+                    cage, acc_def, kids, width, depth, interior_h,
+                    side, front_y, lo, ro, to, bo, scene_props)
+                self._size_placeholder(
+                    kids, acc_def.width or width,
+                    acc_def.depth or depth,
+                    acc_def.reserved_height or interior_h)
+
+            self._warn_accessory_fit(
+                cage, acc_def, want_w, want_d, width, depth,
+                interior_h, z,
+                opening_spans(children, st, cage))
+
+    def _warn_accessory_fit(self, cage, acc_def, want_w, want_d,
+                            width, depth, interior_h, z, spans=()):
+        """What is wrong with where this accessory has been put, in the
+        words the prior library used. One message, the first thing that
+        does not fit, carried on the cage so the overlay and the report
+        both read the same line."""
+        msg = ''
+        need_h = acc_def.reserved_height
+        # One drawn to the opening reaches only so far either way, and
+        # outside that it is not made - which the prior library said
+        # by naming it too small or too large rather than by drawing
+        # something that cannot be bought.
+        if acc_def.min_width > 0.0 and width + 0.0005 < acc_def.min_width:
+            msg = ("%s does not go narrower than %s; this opening is "
+                   "%s" % (acc_def.label, _in_str(acc_def.min_width),
+                           _in_str(width)))
+        elif acc_def.max_width > 0.0 and width > acc_def.max_width + 0.0005:
+            msg = ("%s does not reach past %s; this opening is %s"
+                   % (acc_def.label, _in_str(acc_def.max_width),
+                      _in_str(width)))
+        elif want_w > 0.0 and width + 0.0005 < want_w:
+            msg = ("%s needs %s of width; this opening is %s"
+                   % (acc_def.label, _in_str(want_w), _in_str(width)))
+        elif want_d > 0.0 and depth + 0.0005 < want_d:
+            msg = ("%s needs %s of depth; this opening is %s"
+                   % (acc_def.label, _in_str(want_d), _in_str(depth)))
+        elif need_h > 0.0 and interior_h + 0.0005 < need_h:
+            msg = ("%s needs %s of height with its clearances; this "
+                   "opening is %s" % (acc_def.label, _in_str(need_h),
+                                      _in_str(interior_h)))
+        elif spans and need_h > 0.0 and _clashes_with(
+                z, z + need_h, spans):
+            msg = ("%s is too close to %s; it needs %s clear"
+                   % (acc_def.label,
+                      _clashes_with(z, z + need_h, spans),
+                      _in_str(need_h)))
+        elif (need_h > 0.0 and z + need_h > interior_h + 0.0005):
+            msg = ("%s does not clear the top of the opening where it "
+                   "is set" % acc_def.label)
+        if msg:
+            cage[PROP_ACCESSORY_WARNING] = msg
+        elif PROP_ACCESSORY_WARNING in cage:
+            del cage[PROP_ACCESSORY_WARNING]
+        _stamp_warning(cage, msg)
+        return msg
+
+    def _acc_ironing_board_drawer(self, cage, acc_def, kids, width,
+                                  depth, interior_h, side, front_y,
+                                  lo, ro, to, bo, scene_props):
+        """The one accessory the library builds parts for.
+
+        A compartment at the floor of the opening holds the folded
+        board: a melamine plate it bolts to, a front that drops to open
+        it, and a shelf capping the compartment. Everything above that
+        shelf is left alone - a bay can carry the drawer at the bottom
+        and shelves the rest of the way up, which is how it was drawn
+        in the prior library.
+
+        The plate is a fixed size (the board is bought at one size), so
+        it is centered rather than stretched. The shelf and the front
+        take the opening's width."""
+        st = scene_props.shelf_thickness
+        plat_t = const.IRONING_BOARD_PLATFORM_THICKNESS
+        open_h = const.IRONING_BOARD_OPENING_HEIGHT
+        # The plate the board bolts to: flush to the front edge, its
+        # underside on the opening floor, centered left to right.
+        plate = self._acc_part(cage, 'Ironing Board Mount',
+                               PART_ROLE_ACCESSORY_PART, kids)
+        p_w = min(const.IRONING_BOARD_PLATFORM_WIDTH, width)
+        p_d = min(const.IRONING_BOARD_PLATFORM_DEPTH, depth)
+        plate.location = ((width - p_w) / 2.0, -(depth - p_d), 0.0)
+        pg = GeoNodeCutpart(plate)
+        pg.set_input('Length', p_w)
+        pg.set_input('Width', p_d)
+        pg.set_input('Thickness', plat_t)
+        # The shelf that caps the compartment. Its underside sits the
+        # compartment height above the plate, so raising the plate
+        # thickness raises the shelf with it.
+        cap_z = min(open_h + plat_t, max(interior_h - st, 0.0))
+        shelf = self._acc_part(cage, 'Accessory Shelf',
+                               PART_ROLE_ACCESSORY_PART, kids)
+        shelf.location = (0.0, 0.0, cap_z)
+        sg = GeoNodeCutpart(shelf)
+        sg.set_input('Length', width)
+        sg.set_input('Width', depth)
+        sg.set_input('Thickness', st)
+        # The front covers the compartment and laps the shelf above it
+        # by the standard overlay, the way a drawer front laps what it
+        # meets. It opens on its bottom edge (the board folds down out
+        # of it), which is the hinge HB5 already builds for a hamper.
+        found = kids.get(PART_ROLE_DRAWER_FRONT) or ()
+        front = found[0] if found else None
+        if front is not None:
+            f_h = cap_z + bo
+            front.location = (-lo, front_y, -bo)
+            fg = GeoNodeCutpart(front)
+            fg.set_input('Length', width + lo + ro)
+            fg.set_input('Width', f_h)
+            fg.set_input('Thickness', const.FRONT_THICKNESS)
+            front[PROP_FRONT_HEIGHT] = f_h
+            front[PROP_OPEN_HEIGHT] = cap_z
+            # Tilt-out, pivoting on its bottom edge: the hinge HB5
+            # already builds for a hamper front, and the same motion
+            # the prior library gave this front.
+            front['hb_hinge'] = 'BOTTOM'
+            _apply_front_style(front, is_drawer=True)
+            # The pull follows the OPENING's settings (no pulls, 
+            # location, doubles), not the cage's.
+            self._position_front_pull(front, 'drawer', side,
+                                      cage.parent)
+            # An accessory front hangs off its own cage rather than off
+            # an opening, so the shared open-fraction lookup does not
+            # reach it. It carries its own figure instead.
+            _stash_door_closed(front, -lo, front_y, -bo,
+                               width + lo + ro, side, f_h)
+            apply_door_open(front, float(front.get('hb_drawer_open',
+                                                   0.0)))
+        # The board itself stands on the plate.
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        model = found[0] if found else None
+        if model is not None:
+            model.location = (width / 2.0, -depth, plat_t)
+        return cap_z + st
+
+    def _layout_opening_accessory(self, cage, acc_def, kids, width,
+                                  cage_d):
+        """Seat one pull-out inside its cage.
+
+        These are bought whole and are not cut to fit, so the model is
+        centred across the opening rather than stretched, and it is
+        pushed to the front where its runners land. Up and down, its
+        own origin is the mounting line: the room the accessory wants
+        below that line is what lifts it off the bottom of its cage,
+        which is how the prior library sat them.
+
+        A telescoping one is the exception across: it starts at the
+        left of the opening and is pulled out to the width. A few also
+        stand back from the front or up off the mounting line by an
+        amount of their own, which the catalog carries.
+
+        Says how wide the model ended up, for the cage to be drawn
+        around - nothing for one that takes its own size."""
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        if not found:
+            return 0.0
+        stretched = (acc_def.stretch
+                     and self._stretch_model(found[0], width))
+        x = 0.0 if stretched else width / 2.0
+        found[0].location = (
+            x, -cage_d + acc_def.model_y,
+            acc_def.space_below - acc_def.model_drop + acc_def.model_z)
+        return width if stretched else 0.0
+
+    def _basket_rig_root(self, kids):
+        """The root a basket's meshes and markers hang off."""
+        for obj in kids.get(PART_ROLE_ACCESSORY_RIG) or ():
+            if obj.get('hb_rig_root'):
+                return obj
+        return None
+
+    def _acc_basket(self, cage, acc_def, kids, cage_d, want):
+        """A wire basket, drawn to the size it has been made.
+
+        It is not one model per size - it is a frame with its wires
+        hung off four markers, and moving the markers makes any of the
+        sizes it is sold in. The wires are laid one to the inch, so
+        how many there are follows how big it has been made: the
+        counts the prior library drove them by.
+
+        Everything is hung off a root of its own rather than off the
+        cage, so the meshes keep the positions they were drawn at and
+        only the root moves. Hung off the cage they would each have to
+        be moved, and moving a mesh out from under its markers pulls
+        it out of shape.
+
+        Bought at a size rather than cut to fit, so it is centred
+        across the opening - which the cage carries - and stood at
+        its front, which is what the root is moved for: the basket is
+        drawn running back from its own front edge, so its front edge
+        is what has to land on the front of the opening."""
+        from . import accessories_closets as acc
+        b_w, b_h, b_d = want
+        root = self._basket_rig_root(kids)
+        if root is None:
+            path = accessory_model_path_for(cage, acc_def)
+            if not acc.model_is_installed(path):
+                return False
+            meshes, markers = acc.instance_rig_model(path,
+                                                     acc_def.label)
+            if not meshes:
+                return False
+            root = bpy.data.objects.new(acc_def.label + ' Rig', None)
+            bpy.context.scene.collection.objects.link(root)
+            root.parent = cage
+            root.matrix_parent_inverse.identity()
+            root['hb_part_role'] = PART_ROLE_ACCESSORY_RIG
+            root['hb_rig_root'] = 1
+            name = accessory_model_name(cage, acc_def)
+            for mesh in meshes:
+                bpy.context.scene.collection.objects.link(mesh)
+                mesh.parent = root
+                mesh.matrix_parent_inverse.identity()
+                mesh['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
+                mesh[PROP_ACCESSORY_MODEL] = name
+                mesh['MENU_ID'] = (
+                    'HOME_BUILDER_MT_closet_part_commands')
+            for marker in markers:
+                bpy.context.scene.collection.objects.link(marker)
+                marker.parent = root
+                marker.matrix_parent_inverse.identity()
+                marker['hb_part_role'] = PART_ROLE_ACCESSORY_RIG
+            kids.setdefault(PART_ROLE_ACCESSORY_RIG, []).append(root)
+        # Everything hangs off the root rather than off the cage, so
+        # it is the root that is asked what it is carrying - the cage
+        # only knows about the root itself.
+        meshes = [o for o in root.children
+                  if o.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL]
+        markers = [o for o in root.children
+                   if o.get('hb_part_role') == PART_ROLE_ACCESSORY_RIG]
+        # The size it was drawn at is read off the markers themselves,
+        # so a marker that sat halfway along still sits halfway along
+        # whatever size it is made now.
+        base = [max([abs(m.get('hb_rig_at', (0, 0, 0))[i])
+                     for m in markers] or [0.0]) for i in range(3)]
+        for marker in markers:
+            at = tuple(marker.get('hb_rig_at', (0.0, 0.0, 0.0)))
+            marker.location = (
+                at[0] / base[0] * b_w if base[0] else at[0],
+                at[1] / base[1] * b_d if base[1] else at[1],
+                at[2] / base[2] * b_h if base[2] else at[2])
+        root.location = (0.0, -cage_d, 0.0)
+        self._size_basket_wires(meshes, b_h, b_d)
+        return True
+
+    def _size_basket_wires(self, meshes, b_h, b_d):
+        """How many wires a basket has. They are laid one to the inch,
+        so the count follows how tall and how deep it has been
+        made - which is what the prior library drove them by."""
+        per_inch = 1.0 / 0.0254
+        for mesh in meshes:
+            array = next((m for m in mesh.modifiers
+                          if m.type == 'ARRAY'), None)
+            if array is None:
+                continue
+            if const.BASKET_MESH_BACK in mesh.name:
+                n = round(b_h * per_inch) + const.BASKET_BACK_WIRE_OFFSET
+            elif const.BASKET_MESH_FRONT in mesh.name:
+                n = (round(b_h * per_inch)
+                     + const.BASKET_FRONT_WIRE_OFFSET)
+            elif const.BASKET_MESH_BOTTOM in mesh.name:
+                n = round(b_d * per_inch)
+            else:
+                continue
+            array.count = max(1, int(n))
+
+    def _acc_hooks(self, cage, acc_def, kids, length, height, qty,
+                   inset, pt):
+        """The hooks along a cleat: as many as were asked for, spread
+        between an inset at each end.
+
+        One model, shared. A hook is the same object over and over, so
+        the mesh is loaded once and every hook on the cleat points at
+        it - which is how this library already draws a row of pulls.
+        The first sits an inset in from the left end and the last the
+        same in from the right; a single hook goes in the middle.
+
+        The hooks stand off the face of the cleat rather than in it,
+        and they are turned a quarter turn: a hook model is drawn
+        reaching off the side of a panel, and here it has to reach out
+        of the front of a board instead."""
+        from . import accessories_closets as acc
+        existing = list(kids.get(PART_ROLE_ACCESSORY_MODEL) or ())
+        existing.sort(key=lambda o: o.get(PROP_HOOK_INDEX, 0))
+        path = accessory_model_path_for(cage, acc_def)
+        src = (acc.load_accessory_model(path)
+               if acc.model_is_installed(path) else None)
+        if src is None:
+            for obj in existing:
+                _remove_part_tree(obj)
+            kids.pop(PART_ROLE_ACCESSORY_MODEL, None)
+            return 0
+        name = accessory_model_name(cage, acc_def)
+        while len(existing) > qty:
+            _remove_part_tree(existing.pop())
+        while len(existing) < qty:
+            obj = bpy.data.objects.new(acc_def.label, src.data)
+            bpy.context.scene.collection.objects.link(obj)
+            obj.parent = cage
+            obj.matrix_parent_inverse.identity()
+            obj['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            existing.append(obj)
+        # A different hook was chosen: the row points at the new mesh
+        # rather than being torn down and built again.
+        for i, obj in enumerate(existing):
+            if obj.data is not src.data:
+                obj.data = src.data
+            obj[PROP_HOOK_INDEX] = i
+            obj[PROP_ACCESSORY_MODEL] = name
+            if qty > 1:
+                span = max(length - 2.0 * inset, 0.0)
+                x = inset + span * i / float(qty - 1)
+            else:
+                x = length / 2.0
+            # Halfway up the board, standing on its front face. A
+            # hook model hangs below its own origin, which is why the
+            # middle of the board is where it is hung from.
+            obj.location = (x, -pt, height / 2.0)
+            obj.rotation_euler = (0.0, 0.0, math.radians(90))
+            obj.scale = (1.0, 1.0, 1.0)
+        kids[PART_ROLE_ACCESSORY_MODEL] = existing
+        return len(existing)
+
+    def _acc_cleat_hooks(self, cage, acc_def, kids, width, height,
+                         length, qty, inset, pt):
+        """A board across the back of the opening, with hooks on it.
+
+        The board is cut here rather than bought, so it is a part of
+        the run like any other: its length is whatever the opening is
+        unless a length has been asked for, it stands a hand high, and
+        it is the thickness of a panel. It sits flush against the back
+        of the opening and the hooks come forward off its face."""
+        cleat = self._acc_part(cage, 'Hook Cleat',
+                               PART_ROLE_ACCESSORY_PART, kids,
+                               rotate_x=True)
+        # A board turned on its edge is drawn downward from where it
+        # is put, so it is hung from its own top edge to stand in the
+        # space the cage marks out.
+        cleat.location = (0.0, 0.0, height)
+        geo = GeoNodeCutpart(cleat)
+        geo.set_input('Length', length)
+        geo.set_input('Width', height)
+        geo.set_input('Thickness', pt)
+        drawn = self._acc_hooks(cage, acc_def, kids, length, height,
+                                qty, inset, pt)
+        # Nothing to hang: the board still draws, and the row of hooks
+        # that is missing is drawn as the space it would take.
+        self._acc_placeholder(cage, not drawn, kids)
+        if not drawn:
+            self._size_placeholder(kids, length, pt, height)
+            found = kids.get(PART_ROLE_ACCESSORY_BLOCK) or ()
+            if found:
+                found[0].location = (0.0, -pt, 0.0)
+        return cleat
+
+    def _model_front_reach(self, model):
+        """How far a model reaches in front of its own origin.
+
+        Read off the model rather than written down, because it is
+        different for every one of them - the six hooks alone run from
+        seven tenths of an inch to nearly two. Anything that has to
+        land its front edge somewhere has to know this first."""
+        try:
+            return max(0.0, -min(c[1] for c in model.bound_box))
+        except Exception:
+            return 0.0
+
+    def _accessory_setback(self, cage, acc_def):
+        """How far back from the front of the opening this accessory
+        is mounted, measured to its own front edge. What the catalog
+        says unless this one has been given a figure of its own."""
+        given = cage.get(PROP_ACCESSORY_SETBACK)
+        if given is None:
+            return acc_def.setback
+        return max(0.0, float(given))
+
+    def _layout_panel_accessory(self, cage, acc_def, kids, width,
+                                depth, pt):
+        """Hang one accessory off the face of a panel.
+
+        There are four faces to choose from - either side of the panel
+        at each end of the opening - and the model is drawn to hang
+        off one of them, reaching out in one direction only. Rather
+        than keep four models, the one is mirrored to face the other
+        way, which is what the prior library did.
+
+        Front to back it sits at the front of the opening and reaches
+        back, the way a rack pulls out."""
+        from . import accessories_closets as acc
+        loc = cage.get(PROP_ACCESSORY_PANEL_LOC,
+                       acc.PANEL_DEFAULT_LOCATION)
+        if loc not in acc.PANEL_LOCATION_KEYS:
+            loc = acc.PANEL_DEFAULT_LOCATION
+            cage[PROP_ACCESSORY_PANEL_LOC] = loc
+        # x is the face it screws to; mirrored means it reaches the
+        # other way, so that an inside face always reaches inward and
+        # an outside face always reaches away.
+        if loc == acc.PANEL_OUTSIDE_LEFT:
+            x, mirror = -pt, False
+        elif loc == acc.PANEL_INSIDE_LEFT:
+            x, mirror = 0.0, True
+        elif loc == acc.PANEL_INSIDE_RIGHT:
+            x, mirror = width, False
+        else:
+            x, mirror = width + pt, True
+        found = kids.get(PART_ROLE_ACCESSORY_MODEL) or ()
+        if found:
+            # Placed by its front edge rather than by its origin, so
+            # that a hook drawn reaching forward off its mounting
+            # plate lands where it was asked for instead of hanging
+            # out through the front of the closet.
+            reach = self._model_front_reach(found[0])
+            back = self._accessory_setback(cage, acc_def)
+            found[0].location = (x, -depth + reach + back, 0.0)
+            found[0].scale.x = -1.0 if mirror else 1.0
+        return x, mirror
 
     def _reconcile_captured_back(self, opening):
         """One captured back per opening, carrying a corner relief at
@@ -2248,6 +3572,27 @@ class ClosetStarter(GeoNodeCage):
             obj['hb_cubby_index'] = len(shelves)
             shelves.append(obj)
 
+    def _lay_out_shelf_cleat(self, shelf, bay_obj, bay, st):
+        """Size and place the cleat under a shelf that carries one. It
+        hangs from the shelf's underside at the back of the bay, the
+        same four inches deep as the wall cleat above it."""
+        cleat = next((c for c in shelf.children
+                      if c.get('hb_part_role') == PART_ROLE_CLEAT), None)
+        if cleat is None:
+            return
+        # Turned on its edge the cleat stands up from its origin, so
+        # it is dropped its own width to hang under the shelf instead.
+        cleat.location = (0.0, 0.0, -const.CLEAT_WIDTH)
+        cleat.rotation_euler = (math.radians(90), 0.0, 0.0)
+        part = GeoNodeCutpart(cleat)
+        part.set_input('Length', bay['width'])
+        part.set_input('Width', const.CLEAT_WIDTH)
+        part.set_input('Thickness', st)
+        # A double island has no wall behind the shelf to cleat to.
+        _set_part_hidden(
+            cleat,
+            self.is_double or bay_obj.hb_closet_bay.remove_shelf_cleat)
+
     def _bay_split_shelves(self, bay_obj, side):
         """Committed splitting shelves of one side, bottom-up."""
         shelves = [c for c in bay_obj.children
@@ -2282,6 +3627,11 @@ class ClosetStarter(GeoNodeCage):
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
             side = opening.get(PROP_OPENING_SIDE, 'FRONT')
             for child in list(opening.children):
+                # The shelf a drawer bank carries on top of itself is
+                # part of the bank, not a shelf someone put in to split
+                # the bay. It stays where it is.
+                if child.get(PROP_DRAWER_CAP):
+                    continue
                 if (child.get('hb_part_role') == PART_ROLE_FIXED_SHELF
                         and not child.get('hb_preview')):
                     child.parent = bay_obj
@@ -2339,17 +3689,34 @@ class ClosetStarter(GeoNodeCage):
             # openings around it stay as they are. A division reads
             # across instead of up and merges the same way when it goes.
             slots = {cell: [] for cell in cells}
-            for op_obj in openings:
-                bottom = float(op_obj.get('hb_seg_bottom', 0.0))
-                left = float(op_obj.get('hb_seg_left', 0.0))
+
+            def _standing(op_obj):
                 try:
                     seg_h = float(GeoNodeCage(op_obj).get_input('Dim Z'))
                 except Exception:
                     seg_h = 0.0
-                k = min(sum(1 for c in cuts if c < bottom), rows - 1)
-                j = min(sum(1 for x in row_cuts[k] if x < left),
-                        len(row_cuts[k]))
-                slots[(k, j)].append((bottom, left, seg_h, op_obj))
+                return (float(op_obj.get('hb_seg_bottom', 0.0)),
+                        float(op_obj.get('hb_seg_left', 0.0)),
+                        seg_h, op_obj)
+
+            if len(openings) == len(cells):
+                # Nothing was put in or taken out, so every opening is
+                # the segment it always was, in the order it always
+                # was. Counting cuts would be wrong here: a shelf that
+                # has MOVED reads as one that has gone, and the opening
+                # above it would be merged into the one below and come
+                # back empty. This is what lets a shelf be raised or
+                # lowered without it taking the contents of the opening
+                # above it along with it.
+                for cell, op_obj in zip(cells, openings):
+                    slots[cell].append(_standing(op_obj))
+            else:
+                for op_obj in openings:
+                    bottom, left, seg_h, _o = _standing(op_obj)
+                    k = min(sum(1 for c in cuts if c < bottom), rows - 1)
+                    j = min(sum(1 for x in row_cuts[k] if x < left),
+                            len(row_cuts[k]))
+                    slots[(k, j)].append((bottom, left, seg_h, op_obj))
 
             for k, j in cells:
                 members = slots[(k, j)]
@@ -2931,10 +4298,95 @@ class LShelfClosetStarter(GeoNodeCage):
         part.obj.rotation_euler.z = math.radians(rot_z)
         return part.obj
 
+    def _l_shelf_wanted(self):
+        """How many shelves a corner unit holds, top and bottom in.
+
+        A unit hung with rods keeps its top and bottom - they are the
+        carcass, not shelves someone asked for - and the double hang
+        adds the one between the rods, which is always fixed."""
+        sp = self.obj.hb_closet_starter
+        if sp.l_interior == 'ROD':
+            return 2
+        if sp.l_interior == 'DOUBLE':
+            return 3
+        return max(0, int(sp.l_shelf_qty)) + 2
+
+    def _reconcile_l_rods(self, want):
+        """The rods in a corner unit: none, one, or two.
+
+        A rod does not turn the corner - the hardware will not do it
+        and the prior library never tried. It runs along one wing and
+        stops, and which wing is a choice."""
+        rods = [c for c in self.obj.children
+                if c.get('hb_part_role') == PART_ROLE_ROD]
+        rods.sort(key=lambda o: o.get('hb_l_index', 0))
+        while len(rods) > want:
+            _remove_part_tree(rods.pop())
+        while len(rods) < want:
+            rod = ClosetRod()
+            rod.create()
+            rod.obj.parent = self.obj
+            rod.obj['hb_part_role'] = PART_ROLE_ROD
+            rod.obj['hb_l_index'] = len(rods)
+            rods.append(rod.obj)
+        return rods
+
+    def _layout_l_rods(self, rods, W, D, LD, RD, l_pt, r_pt, z_tops):
+        """Stand each rod along its wing, a foot out from the wall it
+        does not run along and clear of the one it does.
+
+        The figures are the prior library's: twelve inches off the
+        opposite wall, three quarters of an inch clear at each end,
+        and hung the standard drop below whatever is above it."""
+        sp = self.obj.hb_closet_starter
+        on_left = bool(sp.l_rod_on_left)
+        out = const.L_ROD_FROM_WALL
+        gap = const.L_ROD_END_GAP
+        for rod, z_top in zip(rods, z_tops):
+            geo = GeoNodeObject(rod)
+            if on_left:
+                # Along the side wall: runs back down -Y.
+                length = max(D - l_pt - gap, 0.001)
+                rod.rotation_euler.z = math.radians(-90)
+                rod.location = (out, -gap, z_top - const.ROD_TOP_OFFSET)
+            else:
+                # Along the back wall: runs across +X.
+                length = max(W - r_pt - gap, 0.001)
+                rod.rotation_euler.z = 0.0
+                rod.location = (gap, -out, z_top - const.ROD_TOP_OFFSET)
+            geo.set_input('Dim X', length)
+            rod['hb_l_on_left'] = 1 if on_left else 0
+
+    def _warn_l_rod(self, W, D):
+        """A rod needs the wing it does not run along to be deep
+        enough for the clothes on it to clear - two feet, the way the
+        prior library had it. Said rather than prevented."""
+        sp = self.obj.hb_closet_starter
+        if sp.l_interior not in ('ROD', 'DOUBLE'):
+            if PROP_ACCESSORY_WARNING in self.obj:
+                del self.obj[PROP_ACCESSORY_WARNING]
+            return ''
+        # The rod on the side wall hangs its clothes across the back
+        # wall's run (X), the back-wall rod across the side's (Y).
+        across = W if sp.l_rod_on_left else D
+        msg = ''
+        if across + 0.0005 < const.L_ROD_MIN_CLEAR:
+            wall = "back" if sp.l_rod_on_left else "side"
+            msg = ("A rod needs %s across the %s wall for the clothes "
+                   "to clear; this corner is %s"
+                   % (_in_str(const.L_ROD_MIN_CLEAR), wall,
+                      _in_str(across)))
+        if msg:
+            self.obj[PROP_ACCESSORY_WARNING] = msg
+        elif PROP_ACCESSORY_WARNING in self.obj:
+            del self.obj[PROP_ACCESSORY_WARNING]
+        return msg
+
     def _reconcile_l_shelves(self):
-        want = max(0, int(self.obj.hb_closet_starter.l_shelf_qty)) + 2
+        want = self._l_shelf_wanted()
         shelves = [c for c in self.obj.children
-                   if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF]
+                   if c.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
+                                                PART_ROLE_ADJ_SHELF)]
         shelves.sort(key=lambda o: o.get('hb_l_index', 0))
         while len(shelves) > want:
             bpy.data.objects.remove(shelves.pop(), do_unlink=True)
@@ -2984,8 +4436,17 @@ class LShelfClosetStarter(GeoNodeCage):
             st = scene_props.shelf_thickness
             pt = scene_props.panel_thickness
             W, D, H = sp.width, sp.depth, sp.height
-            LD = min(sp.l_left_depth, W - pt)
-            RD = min(sp.l_right_depth, D - pt)
+            # An end panel turned off gives its thickness back to the
+            # wing it stood at the end of: the shelves, that wing's toe
+            # kick and the wing depth all reach out to where it was.
+            # Left is the wing along the side wall, right the one along
+            # the back wall - the pairing the covers already follow.
+            left_off = bool(sp.turn_off_left_panel)
+            right_off = bool(sp.turn_off_right_panel)
+            l_pt = 0.0 if left_off else pt
+            r_pt = 0.0 if right_off else pt
+            LD = min(sp.l_left_depth, W - r_pt)
+            RD = min(sp.l_right_depth, D - l_pt)
             bw = sp.l_back_width
             flip = sp.l_flip_partition
             use_radius = bool(sp.l_use_radius)
@@ -3013,6 +4474,15 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Length', H)
                 gp.set_input('Width', RD)
                 gp.set_input('Thickness', pt)
+                # The end flags a run records on its own end panels,
+                # recorded here the same way: whether the end is
+                # exposed, and whether its system holes run all the
+                # way through. Flags only - they carry no geometry.
+                p['hb_panel_off'] = 1 if right_off else 0
+                p['hb_finished_end'] = 1 if sp.right_finished_end else 0
+                p['hb_drill_through'] = (
+                    1 if sp.drill_through_right else 0)
+                _set_part_hidden(p, right_off)
                 # Left wing end panel: plane faces Y at y = -(D - pt),
                 # spanning the left wing depth (rotate the vertical
                 # panel 90 about Z so its Width runs along +X).
@@ -3024,6 +4494,10 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Width', LD)
                 gp.set_input('Thickness', pt)
                 gp.set_input('Mirror Z', False)
+                p['hb_panel_off'] = 1 if left_off else 0
+                p['hb_finished_end'] = 1 if sp.left_finished_end else 0
+                p['hb_drill_through'] = 1 if sp.drill_through_left else 0
+                _set_part_hidden(p, left_off)
 
             # Back Partition (defaults, verified against a live
             # corner build): unflipped it lies parallel to the
@@ -3112,6 +4586,49 @@ class LShelfClosetStarter(GeoNodeCage):
             gp.set_input('Mirror Z', True)
             _set_part_hidden(part, hide_rail)
 
+            # ----- Hang rail covers -----
+            # A cover over each rail end that lands on a panel. The two
+            # outer ends always do. At the corner the rails meet, and
+            # the one stopped by the back partition is the one clipped
+            # to it - so which of the two inner covers shows follows
+            # the wall the partition stands against.
+            #
+            # Every cover stands off its wall the inch a run's does.
+            # The two inner ones sit against the partition's room-side
+            # face, which the wall offset holds clear of the wall - so
+            # they measure from wo + pt, not from where the rail was
+            # cut short. The hand recorded on each is the side of the
+            # panel the claw is screwed to.
+            cover_z = _hang_rail_cover_z(rail_z, st)
+            cl = const.HANG_RAIL_COVER_LENGTH
+            so = const.HANG_RAIL_COVER_STANDOFF
+            covers = (
+                ('Back Cover', 'Hang Rail Cover Back', 0.0, True,
+                 (W - pt - cl, -so, cover_z), False,
+                 hide_rail or bool(sp.turn_off_right_panel)),
+                ('Back Corner Cover', 'Hang Rail Cover Back Corner',
+                 0.0, False, (wo + pt, -so, cover_z), False,
+                 hide_rail or not flip),
+                ('Side Cover', 'Hang Rail Cover Side', -90.0, False,
+                 (so, -(D - pt - cl), cover_z), True,
+                 hide_rail or bool(sp.turn_off_left_panel)),
+                ('Side Corner Cover', 'Hang Rail Cover Side Corner',
+                 -90.0, True, (so, -(wo + pt), cover_z), True,
+                 hide_rail or bool(flip)),
+            )
+            for key, nm, rot_z, on_left, loc, mirror, hide in covers:
+                part = self._corner_wall_part(
+                    key, nm, PART_ROLE_HANG_RAIL_COVER, rot_z)
+                part['hb_clip_on_left'] = 1 if on_left else 0
+                part.location = loc
+                gp = GeoNodeCutpart(part)
+                gp.set_input('Length', cl)
+                gp.set_input('Width', const.HANG_RAIL_COVER_WIDTH)
+                gp.set_input('Thickness', const.HANG_RAIL_COVER_DEPTH)
+                if mirror:
+                    gp.set_input('Mirror Z', True)
+                _set_part_hidden(part, hide)
+
             for c in self.obj.children:
                 if c.get('hb_l_kick'):
                     # corner kick pair (receiver/mate butt
@@ -3129,12 +4646,14 @@ class LShelfClosetStarter(GeoNodeCage):
                         # (width - ld - pt + tks).
                         c.location = (LD - setback, -RD + setback, 0.0)
                         gp.set_input('Length',
-                                     max(W - pt - (LD - setback), 0.001))
+                                     max(W - r_pt - (LD - setback),
+                                         0.001))
                     else:
                         # Receiver: full side wall span
                         # (fabs(depth) - pt*2 from -depth + pt).
                         c.location = (LD - setback, -pt, 0.0)
-                        gp.set_input('Length', max(D - 2.0 * pt, 0.001))
+                        gp.set_input('Length',
+                                     max(D - pt - l_pt, 0.001))
                     gp.set_input('Width', kick)
                     gp.set_input('Thickness', st)
                     _set_part_hidden(c, (not floor) or kick <= 0.0)
@@ -3147,19 +4666,49 @@ class LShelfClosetStarter(GeoNodeCage):
             z_bottom = kick
             z_top = H - st
             n_mid = max(0, len(shelves) - 2)
+            n = len(shelves)
+            mode = sp.l_interior
             for i, shelf in enumerate(shelves):
+                carcass = i == 0 or i == n - 1
                 if i == 0:
                     z = z_bottom
-                elif i == len(shelves) - 1:
+                elif i == n - 1:
                     z = z_top
+                elif mode == 'DOUBLE':
+                    # The one shelf a double hang has is the one
+                    # between its two rods, and where it sits is what
+                    # divides the hanging into a long half and a short
+                    # one - so it is set rather than spaced.
+                    z = min(max(sp.l_top_opening_height, z_bottom + st),
+                            z_top - st)
                 else:
-                    z = z_bottom + (z_top - z_bottom) * i / (len(shelves) - 1)
+                    z = z_bottom + (z_top - z_bottom) * i / (n - 1)
+                # Top and bottom are the carcass and are always fixed.
+                # In between, a shelf is adjustable or locked - the
+                # same board either way, held on pins or on cams, so
+                # it is the same part carrying a flag.
+                # Only a shelf someone could have locked by hand
+                # remembers being locked. A unit set to lock all of
+                # them, or the shelf between two rods, is locked by
+                # what the unit is - written down it would still be
+                # locked after the unit was set back to adjustable,
+                # which is not what anyone asked for.
+                chosen = bool(shelf.get(PROP_L_LOCKED, False))
+                if carcass or mode in ('LOCK', 'DOUBLE'):
+                    locked = True
+                else:
+                    locked = chosen
+                shelf['hb_part_role'] = (PART_ROLE_FIXED_SHELF if locked
+                                         else PART_ROLE_ADJ_SHELF)
+                shelf['hb_l_carcass'] = 1 if carcass else 0
+                shelf.color = (const.L_LOCK_SHELF_COLOR if locked
+                               and not carcass else (1.0, 1.0, 1.0, 1.0))
                 # shelves are held off both walls by the wall
                 # offset (the partition and shelf formulas assume it).
                 shelf.location = (wo, -wo, z)
                 gp = GeoNodeCutpart(shelf)
-                gp.set_input('Length', max(W - pt - wo, 0.001))
-                gp.set_input('Width', max(D - pt - wo, 0.001))
+                gp.set_input('Length', max(W - r_pt - wo, 0.001))
+                gp.set_input('Width', max(D - l_pt - wo, 0.001))
                 gp.set_input('Thickness', st)
                 # The front corner comes away either square or
                 # rounded, and which of the two a shelf takes is set
@@ -3174,8 +4723,11 @@ class LShelfClosetStarter(GeoNodeCage):
                     round_it = use_radius and bool(sp.l_radius_top)
                 else:
                     round_it = use_radius and bool(sp.l_radius_shelves)
-                cut_x = max(W - pt - LD, 0.001)
-                cut_y = max(D - pt - RD, 0.001)
+                # The wings are measured from the walls, so the
+                # corner the notch leaves stays put when a shelf grows
+                # into the space an end panel gave up.
+                cut_x = max(W - r_pt - LD, 0.001)
+                cut_y = max(D - l_pt - RD, 0.001)
                 notch = shelf.modifiers.get('L Notch')
                 if notch is not None:
                     cpm = CabinetPartModifier(shelf)
@@ -3231,6 +4783,142 @@ class LShelfClosetStarter(GeoNodeCage):
                     bnotch.show_viewport = True
                     bnotch.show_render = True
 
+            # ----- Rods -----
+            # A single hang gets one rod under the top; a double hang
+            # gets a second under the shelf between them. Each hangs
+            # the standard drop below whatever is over it, which is
+            # how the prior library measured them.
+            if mode == 'ROD':
+                tops = [z_top]
+            elif mode == 'DOUBLE':
+                middle = [s for s in shelves
+                          if not s.get('hb_l_carcass')]
+                under = (middle[0].location.z if middle
+                         else (z_top + z_bottom) / 2.0)
+                tops = [z_top, under]
+            else:
+                tops = []
+            rods = self._reconcile_l_rods(len(tops))
+            self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, tops)
+            self._warn_l_rod(W, D)
+
+            self.set_input('Dim X', W)
+            self.set_input('Dim Y', D)
+            self.set_input('Dim Z', H)
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+
+
+class CornerFillerStarter(GeoNodeCage):
+    """The filler that closes an inside corner.
+
+    Where two runs meet at a right angle there is a square of nothing
+    between their ends. This fills it: a board on edge against each
+    wall, the second lapping the first so the joint reads closed from
+    the room, and a top laid over both.
+
+    It is not fixed to the runs either side and does not read them.
+    That is how the prior library had it, and it is the honest
+    arrangement - a filler is cut on site to whatever gap is left, and
+    the two widths are what gets cut.
+    """
+    default_closet_type = 'BASE'
+    has_toe_kick = False
+    floor_mounted = True
+    has_countertop = True
+    # A corner product: no bays, no openings, and placed on its own
+    # rather than filled along a wall.
+    is_corner = True
+    is_filler = True
+
+    def default_height(self, scene_props):
+        return const.BASE_PANEL_HEIGHT
+
+    def create_starter(self, name, bay_qty=1):
+        self.create(name)
+        self.obj[TAG_STARTER_CAGE] = True
+        self.obj['CLASS_NAME'] = self.__class__.__name__
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_starter_commands'
+        self.set_input('Mirror Y', True)
+        sp = self.obj.hb_closet_starter
+        scene_props = bpy.context.scene.hb_closets
+        sp.closet_type = self.default_closet_type
+        # Deep enough to close the corner two runs of the room's own
+        # depth leave between them, plus the board that faces it.
+        reach = (float(scene_props.default_panel_depth)
+                 + const.CORNER_FILLER_WIDTH)
+        sp.width = reach
+        sp.depth = reach
+        sp.height = self.default_height(scene_props)
+        sp.include_countertop = True
+        recalculate_closet_starter(self.obj)
+        return self
+
+    def _reconcile(self, role, name, want):
+        """Find or make the parts of one kind under this filler."""
+        found = [c for c in self.obj.children
+                 if c.get('hb_part_role') == role]
+        found.sort(key=lambda o: o.get('hb_filler_index', 0))
+        while len(found) > want:
+            _remove_part_tree(found.pop())
+        while len(found) < want:
+            part = CabinetPart()
+            part.create(name)
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = role
+            part.obj['hb_filler_index'] = len(found)
+            part.obj['MENU_ID'] = (
+                'HOME_BUILDER_MT_closet_part_commands')
+            found.append(part.obj)
+        return found
+
+    def recalculate(self):
+        cabinet_id = id(self.obj)
+        if cabinet_id in _RECALCULATING:
+            return
+        _RECALCULATING.add(cabinet_id)
+        try:
+            scene_props = run_sizes(self.obj)
+            sp = self.obj.hb_closet_starter
+            pt = scene_props.panel_thickness
+            W, D, H = sp.width, sp.depth, sp.height
+            lw = max(float(sp.filler_left_width), 0.0)
+            rw = max(float(sp.filler_right_width), 0.0)
+            boards = self._reconcile(PART_ROLE_FILLER, 'Filler', 2)
+            # Against the side wall, standing on edge: its face looks
+            # down the run that meets it there.
+            left = boards[0]
+            left.rotation_euler = (0.0, math.radians(-90), 0.0)
+            left.location = (max(W - rw, 0.0), -D, 0.0)
+            gl = GeoNodeCutpart(left)
+            gl.set_input('Length', H)
+            gl.set_input('Width', max(lw, 0.001))
+            gl.set_input('Thickness', pt)
+            # Against the back wall, lapping the first board's edge by
+            # a panel thickness so the joint reads closed from the
+            # room rather than showing end grain.
+            right = boards[1]
+            right.rotation_euler = (0.0, math.radians(-90),
+                                    math.radians(90))
+            right.location = (W, -D + lw, 0.0)
+            gr = GeoNodeCutpart(right)
+            gr.set_input('Length', H)
+            gr.set_input('Width', max(rw + pt, 0.001))
+            gr.set_input('Thickness', pt)
+            gr.set_input('Mirror Z', True)
+            # A top over the corner, so the two runs' tops are joined
+            # rather than stopping either side of a hole. Only where
+            # the runs have tops to join.
+            tops = self._reconcile(PART_ROLE_COUNTERTOP, 'Countertop',
+                                   1 if sp.include_countertop else 0)
+            if tops:
+                top = tops[0]
+                top.rotation_euler = (0.0, 0.0, math.radians(-90))
+                top.location = (0.0, 0.0, H)
+                gt = GeoNodeCutpart(top)
+                gt.set_input('Length', abs(D))
+                gt.set_input('Width', W)
+                gt.set_input('Thickness', sp.countertop_thickness)
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)
             self.set_input('Dim Z', H)
@@ -3261,6 +4949,7 @@ CLOSET_NAME_DISPATCH = {
     'L Shelf Base': LShelfBaseStarter,
     'L Shelf Tall': LShelfTallStarter,
     'L Shelf Upper': LShelfUpperStarter,
+    'Corner Filler': CornerFillerStarter,
 }
 
 WRAP_CLASS_REGISTRY = {cls.__name__: cls for cls in CLOSET_NAME_DISPATCH.values()}
@@ -3366,7 +5055,11 @@ def apply_door_open(door, frac):
         off_y = math.sin(ez) * (-leaf)
         loc = (cx + leaf + off_x, cy + off_y, cz)
     door.location = loc
-    door.rotation_euler = (math.radians(90.0), 0.0, ez)
+    # A door cut length-up stands in a frame turned a quarter about its
+    # own face. The swing is the same turn about the room's Z either
+    # way; only the base the swing is added to differs.
+    ry = math.radians(90.0) if door.get(PROP_FRONT_LENGTH_UP) else 0.0
+    door.rotation_euler = (math.radians(90.0), ry, ez)
 
 
 def _stash_door_closed(door, cx, cy, cz, leaf, side, height=0.0):
@@ -3431,12 +5124,23 @@ def tray_height(tray, stack_h):
 
 
 def _distribute_front_heights(avail, fronts):
-    """Split the available front span among a drawer stack so it fills the
-    opening. `fronts` is a list of (height, locked) per front, bottom-up.
-    Locked fronts keep their height; unlocked fronts share the remainder
-    equally (floored at MIN_DRAWER_FRONT). If every front is locked, scale
-    them proportionally to fit. Vertical analog of the bay-width solver."""
-    out = [h for h, _l in fronts]
+    """How tall each front in a drawer bank stands.
+
+    `fronts` is (height, pinned) per front, bottom-up. A bank is a bank
+    rather than a fill: a front nobody has pinned stands at the standard
+    drawer height, the bank stops where it stops, and its own shelf caps
+    it - which is what the prior library built, and what a closet drawer
+    bank is. Dividing a full-height opening between three fronts gives
+    three fronts two feet tall, which is not a drawer.
+
+    A pinned front holds the height it was given. Only when the bank
+    would not fit does the opening take over: the fronts still sharing
+    give up what is over, down to MIN_DRAWER_FRONT, and if every front
+    is pinned they scale together.
+    """
+    out = [h if lk else const.DRAWER_FRONT_HEIGHT for h, lk in fronts]
+    if sum(out) <= avail:
+        return out
     unlocked = [i for i, (_h, lk) in enumerate(fronts) if not lk]
     if unlocked:
         locked_sum = sum(h for h, lk in fronts if lk)
@@ -3517,6 +5221,23 @@ def default_adj_shelf_qty(opening):
     except Exception:
         interior_h = 0.0
     return max(1, min(12, int(interior_h / inch(12.0))))
+
+
+def find_accessory_cage(obj):
+    """The accessory an object belongs to, or None.
+
+    An accessory is a cage carrying a model, its own parts, and - when
+    the model is not installed - a red block. The cage is what the
+    accessory IS as far as the rest of the library is concerned, but
+    what a person clicks on is whichever of those children they can
+    see. So a click anywhere under it reads as the accessory itself.
+    """
+    current = obj
+    while current is not None:
+        if current.get('hb_part_role') == PART_ROLE_ACCESSORY:
+            return current
+        current = current.parent
+    return None
 
 
 def find_opening_cage(obj):
@@ -3827,6 +5548,526 @@ def recalculate_closet_starter(obj):
     _wrap_starter(root).recalculate()
 
 
+def _recalculate_now(obj):
+    """Solve a run this instant, even inside a suspend_recalc() block.
+
+    Nearly everything is happy to have its recalc held to the end of
+    the block. Splitting an opening is not: the segment above a new
+    shelf does not exist until the run has been solved, so anything
+    that needs to be put in it has to solve first and read after.
+    """
+    global _RECALC_SUSPEND_DEPTH
+    held, _RECALC_SUSPEND_DEPTH = _RECALC_SUSPEND_DEPTH, 0
+    try:
+        recalculate_closet_starter(obj)
+    finally:
+        _RECALC_SUSPEND_DEPTH = held
+
+
+def _in_str(value):
+    """A metre figure in the inches the accessory is sold in, rounded
+    the way a tape reads it."""
+    return '%g"' % round(value / 0.0254, 2)
+
+
+def _clashes_with(lo, hi, spans):
+    """What the band from lo to hi runs into, or '' if it is clear."""
+    for s_lo, s_hi, what in spans:
+        if lo < s_hi - 1e-6 and hi > s_lo + 1e-6:
+            return what
+    return ''
+
+
+def _part_span(obj, st):
+    """The band of an opening a part takes up, or None for the ones
+    that block nothing vertically - panels, backs, cleats and the
+    like, which run the whole height anyway."""
+    role = obj.get('hb_part_role')
+    z = obj.location.z
+    if role in (PART_ROLE_FIXED_SHELF, PART_ROLE_ADJ_SHELF,
+                PART_ROLE_CUBBY_SHELF, PART_ROLE_SLANTED_SHELF):
+        return (z, z + st, "a shelf")
+    if role == PART_ROLE_ROD:
+        return (z - const.ROD_RADIUS, z + const.ROD_RADIUS, "the rod")
+    if role == PART_ROLE_DRAWER_FRONT and not obj.get(
+            'hb_accessory_front'):
+        h = float(obj.get(PROP_FRONT_HEIGHT, 0.0))
+        return (z, z + h, "a drawer") if h > 0.0 else None
+    return None
+
+
+def accessory_stack_height(cage, acc_def):
+    """How much of an opening's height one accessory takes up.
+
+    Nearly always what the catalog says it needs. A cleat is the
+    exception: how tall it stands is chosen rather than bought, so it
+    is read off the cleat itself."""
+    from . import accessories_closets as acc
+    if acc_def.family == acc.FAMILY_CLEAT:
+        return cleat_hook_height(cage)
+    if acc_def.is_sized:
+        b_h = basket_values(cage, acc_def)[1]
+        room = acc_def.space_above + acc_def.space_below
+        return b_h + room
+    return acc_def.reserved_height
+
+
+def accessory_span(cage, acc_def):
+    """The band an accessory claims: the room it wants below its
+    mounting line, the line itself, and the room it wants above. This
+    is what the manufacturer says has to be left for it to work, which
+    is more than the thing physically fills."""
+    z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+    return (z, z + accessory_stack_height(cage, acc_def))
+
+
+def opening_spans(children, st, skip=None):
+    """Everything in an opening that an accessory has to keep clear
+    of, as (bottom, top, what it is)."""
+    from . import accessories_closets as acc
+    out = []
+    for child in children:
+        if child is skip:
+            continue
+        if child.get('hb_part_role') == PART_ROLE_ACCESSORY:
+            acc_def = acc.get(child.get(PROP_ACCESSORY_KEY, ''))
+            if acc_def is None or accessory_stack_height(
+                    child, acc_def) <= 0.0:
+                continue
+            top, bottom = accessory_span(child, acc_def)
+            out.append((top, bottom, acc_def.label))
+            continue
+        span = _part_span(child, st)
+        if span is not None:
+            out.append(span)
+    return out
+
+
+def _opening_at_height(bay, world_z, tol):
+    """The opening in a bay whose floor is at a given height."""
+    best, gap = None, tol
+    for child in (bay.children if bay is not None else ()):
+        if not child.get(TAG_OPENING_CAGE):
+            continue
+        d = abs(child.matrix_world.translation.z - world_z)
+        if d < gap:
+            best, gap = child, d
+    return best
+
+
+def _run_bays(root):
+    """The bays of a run, in no particular order."""
+    return [b for b in root.children if b.get(TAG_BAY_CAGE)]
+
+
+def _fit_width(root, bay, cage, acc_def, band):
+    """Give the opening the width the accessory is bought at.
+
+    A run with one bay grows or shrinks as a whole, so the width it is
+    given is the accessory plus a panel at each end. A run with more
+    than one takes the width out of that bay alone, unlocking it from
+    the equal share, and the rest of the run makes up the difference -
+    as the prior library did. Set rather than grown: an accessory
+    rattling around in an opening too wide for it is as wrong as one
+    that will not fit."""
+    want = accessory_wanted_width(cage, acc_def)
+    if want <= 0.0:
+        return 0.0
+    pt = bpy.context.scene.hb_closets.panel_thickness
+    if len(_run_bays(root)) <= 1:
+        root.hb_closet_starter.width = want + 2.0 * pt
+    else:
+        bay.hb_closet_bay.unlock_width = True
+        bay.hb_closet_bay.width = want
+    return want
+
+
+def _fit_depth(root, bay, opening, cage, acc_def, band):
+    """Give the opening the depth the accessory needs.
+
+    Grown only, never taken back in: depth is shared with everything
+    else in the bay, and a pull-out in an opening deeper than it needs
+    is perfectly happy - it just sits at the front. A double island
+    splits its bay depth between two faces, so the bay grows by twice
+    what one face is short."""
+    want = (basket_values(cage, acc_def)[2] if acc_def.is_sized
+            else acc_def.band_depth(band))
+    have = _cage_dim_y(opening)
+    if want <= 0.0 or have + 0.0005 >= want:
+        return 0.0
+    share = 2.0 if _wrap_starter(root).is_double else 1.0
+    bp = bay.hb_closet_bay
+    new_d = bp.depth + (want - have) * share
+    if len(_run_bays(root)) <= 1:
+        root.hb_closet_starter.depth = new_d
+    else:
+        bp.unlock_depth = True
+        bp.depth = new_d
+    return want
+
+
+def _fit_height(root, bay, opening, cage, acc_def):
+    """Give the opening the height the accessory needs.
+
+    Height is the awkward one, because an opening does not own its
+    height: it is the gap between the shelves either side of it. The
+    room is taken off the top of the run rather than out of the
+    neighbour - every splitting shelf at or above this opening goes up
+    by the same amount - so no other opening loses the height it was
+    given and only the run gets taller. Grown only; a short accessory
+    is not a reason to cut a closet down."""
+    need = accessory_stack_height(cage, acc_def)
+    have = _cage_dim_z(opening)
+    if need <= 0.0 or have <= 0.0:
+        return 0.0
+    # Both ways an accessory runs out of height: too tall for the
+    # opening at all, and too tall for the opening from where it sits.
+    z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+    delta = max(0.0, z) + need - have
+    if delta <= 0.0005:
+        return 0.0
+    seg_top = float(opening.get('hb_seg_bottom', 0.0)) + have
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    for shelf in bay.children:
+        if shelf.get('hb_part_role') != PART_ROLE_FIXED_SHELF:
+            continue
+        if shelf.get(PROP_OPENING_SIDE, 'FRONT') != side:
+            continue
+        if shelf.get('hb_preview'):
+            continue
+        at = float(shelf.get('hb_z_offset', 0.0))
+        if at >= seg_top - 1e-6:
+            shelf['hb_z_offset'] = at + delta
+    bp = bay.hb_closet_bay
+    if len(_run_bays(root)) <= 1:
+        sp = root.hb_closet_starter
+        sp.height = sp.height + delta
+    else:
+        bp.unlock_height = True
+        bp.height = bp.height + delta
+    return have + delta
+
+
+def fit_opening_to_accessory(cage):
+    """Move the closet to the accessory instead of the other way.
+
+    These are bought at set sizes rather than cut to fit, so an
+    accessory in an opening that is not one of those sizes is a
+    warning. This answers the warning: leave the accessory alone and
+    give the opening what it asked for - the width it is bought at,
+    the depth it needs to sit in, and the height it needs once its
+    clearances are counted. This is what the prior library's Update
+    Opening Width did, on all three axes rather than the one.
+
+    Returns what the opening measures afterwards on each axis, with
+    0.0 for an axis that was already right and was left alone."""
+    from . import accessories_closets as acc
+    opening = cage.parent
+    acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+    got = {'width': 0.0, 'depth': 0.0, 'height': 0.0}
+    if opening is None or acc_def is None:
+        return got
+    root = find_starter_root(opening)
+    bay = opening.parent
+    if root is None or bay is None:
+        return got
+    band = accessory_band(cage, acc_def)
+    # One solve at the end rather than one per axis: each of these
+    # writes a property that would otherwise set the whole run going
+    # again, and the three are read off the opening as it stands now.
+    with suspend_recalc():
+        got['width'] = _fit_width(root, bay, cage, acc_def, band)
+        got['depth'] = _fit_depth(root, bay, opening, cage, acc_def,
+                                  band)
+        got['height'] = _fit_height(root, bay, opening, cage, acc_def)
+    recalculate_closet_starter(root)
+    return got
+
+
+def seat_insert_on_shelf(cage, z):
+    """Give an accessory that stands on something a floor to stand on.
+
+    The ironing board drawer is built on a plate that bolts down, so
+    it wants a shelf under it rather than air. Put in at the bottom of
+    an opening it has one already. Put in higher up it does not, so a
+    fixed shelf goes in at that height and the drawer sits on it.
+
+    A shelf across an opening is bay structure here rather than
+    something in the opening, so putting one in divides the opening in
+    two. The drawer belongs in the upper half, standing on the new
+    shelf - which is the height it was asked for. If a shelf is
+    already there it is used rather than a second one added."""
+    opening = cage.parent
+    if opening is None:
+        return cage
+    scene_props = bpy.context.scene.hb_closets
+    st = scene_props.shelf_thickness
+    if z <= const.ACCESSORY_BOTTOM_SNAP_TOL:
+        # The floor of the opening is its shelf.
+        cage[PROP_ACCESSORY_Z] = 0.0
+        return cage
+    root = find_starter_root(opening)
+    bay = opening.parent
+    bpy.context.view_layer.update()
+    want_floor = opening.matrix_world.translation.z + z + st
+    above = _opening_at_height(bay, want_floor, st)
+    if above is None:
+        add_fixed_shelf(opening, z)
+        # The opening above a new shelf is made by the recalc that
+        # adopts the shelf as a splitter, so that recalc has to have
+        # run before there is anywhere to put the accessory. Held-back
+        # recalcs would leave it homeless: call this one straight.
+        if root is not None:
+            _recalculate_now(root)
+        bpy.context.view_layer.update()
+        above = _opening_at_height(bay, want_floor, st)
+    if above is None:
+        # Nothing came of it. Leave the accessory at the height it was
+        # asked for rather than dropping it to the floor of an opening
+        # that has no shelf in it.
+        return cage
+    if above is not opening:
+        cage.parent = above
+        cage.matrix_parent_inverse.identity()
+    cage[PROP_ACCESSORY_Z] = 0.0
+    if root is not None:
+        _recalculate_now(root)
+    bpy.context.view_layer.update()
+    return cage
+
+
+def basket_values(cage, acc_def, width=0.0):
+    """How big a wire basket has been made: across, up and back.
+
+    Each is picked from the sizes it is made in rather than typed, and
+    one that has not been picked is the nearest made size to the
+    opening it went into - so a basket dropped in a 24" opening
+    arrives 24" wide rather than at whatever the list starts with."""
+    def _pick(sizes, asked, fallback):
+        # Matched by measure rather than by being the same number:
+        # a size written down in one place and worked out in another
+        # will not compare equal, and a basket that quietly resized
+        # itself every pass would be worse than useless.
+        for size in sizes:
+            if abs(size - asked) < 1e-6:
+                return size
+        return fallback
+    w = _pick(acc_def.widths, float(cage.get(PROP_BASKET_W, 0.0) or 0.0),
+              acc_def.nearest(acc_def.widths,
+                              width or acc_def.widths[0]))
+    h = _pick(acc_def.heights,
+              float(cage.get(PROP_BASKET_H, 0.0) or 0.0),
+              acc_def.heights[0])
+    d = _pick(acc_def.depths,
+              float(cage.get(PROP_BASKET_D, 0.0) or 0.0),
+              acc_def.depths[0])
+    return w, h, d
+
+
+def accessory_wanted_width(cage, acc_def):
+    """The width an accessory is made at, whichever way it says so."""
+    if acc_def.is_sized:
+        return basket_values(cage, acc_def)[0]
+    return acc_def.band_width(accessory_band(cage, acc_def))
+
+
+def cleat_hook_values(cage, width):
+    """What a cleat is: how long, where across the opening, how tall,
+    how many hooks and how far in from each end they start.
+
+    Every one of them can be left unsaid, and one that has not been
+    said is worked out from the opening rather than written down - so
+    a cleat nobody has touched is as long as the opening it is in and
+    re-cuts when that changes, while one that has been given a length
+    keeps it."""
+    length = float(cage.get(PROP_CLEAT_LENGTH, 0.0) or 0.0)
+    if length <= 0.0 or length > width:
+        length = width
+    x = float(cage.get(PROP_CLEAT_X, -1.0))
+    if x < 0.0:
+        x = (width - length) / 2.0
+    x = max(0.0, min(x, max(width - length, 0.0)))
+    height = float(cage.get(PROP_CLEAT_HEIGHT, 0.0) or 0.0)
+    if height <= 0.0:
+        height = const.CLEAT_HOOK_HEIGHT
+    qty = max(0, int(cage.get(PROP_HOOK_QTY, const.CLEAT_HOOK_QTY)))
+    inset = float(cage.get(PROP_HOOK_INSET, -1.0))
+    if inset < 0.0:
+        inset = const.CLEAT_HOOK_END_INSET
+    # The prior library let the inset run past the middle, which turns
+    # the row inside out and stacks the hooks backwards. It cannot say
+    # anything useful, so it stops at the middle.
+    inset = max(0.0, min(inset, length / 2.0))
+    return length, x, height, qty, inset
+
+
+def cleat_hook_height(cage):
+    """How tall a cleat stands, without needing its opening."""
+    height = float(cage.get(PROP_CLEAT_HEIGHT, 0.0) or 0.0)
+    return height if height > 0.0 else const.CLEAT_HOOK_HEIGHT
+
+
+def accessory_drop_height(opening, acc_def, raw_z, skip=None):
+    """Where an accessory actually lands when it is dropped at a
+    given height in an opening.
+
+    The rules the prior library dropped them by, in the order it
+    applied them. Heights land on a one inch grid. An accessory that
+    hangs down to the floor sits on it when dropped within an inch of
+    it; every other one is taken to belong on the floor from the room
+    it wants below it plus five inches up, which is why a drawer let
+    go low in an opening drops rather than floats. Then it is held
+    back from the top so the room it wants above it still fits, and
+    last it is put clear of whatever else is in the opening."""
+    from . import accessories_closets as acc
+    grid = const.ACCESSORY_DROP_GRID
+    z = round(raw_z / grid) * grid if grid > 0.0 else raw_z
+    if acc_def.family == acc.FAMILY_CLEAT:
+        # A cleat is dropped by two snaps rather than by clearances:
+        # low in the opening it is taken to belong on the floor, and
+        # near the top to belong flush with it. Both are the prior
+        # library's, and both are how a cleat is actually used - down
+        # for boots, up for coats.
+        interior_h = _cage_dim_z(opening)
+        height = (cleat_hook_height(skip) if skip is not None
+                  else const.CLEAT_HOOK_HEIGHT)
+        # Read off where the cursor actually is rather than off the
+        # gridded figure: a cleat let go just under the reach would
+        # otherwise round up out of it and stay hanging there.
+        if raw_z < const.CLEAT_HOOK_FLOOR_REACH:
+            return 0.0
+        if raw_z > interior_h - const.CLEAT_HOOK_TOP_REACH:
+            return max(0.0, interior_h - height)
+        return max(0.0, min(z, max(interior_h - height, 0.0)))
+    if acc_def.floor_snap:
+        if z <= const.ACCESSORY_FLOOR_SNAP:
+            z = 0.0
+    elif z - const.ACCESSORY_FLOOR_REACH < acc_def.space_below:
+        z = 0.0
+    need = acc_def.reserved_height
+    interior_h = _cage_dim_z(opening)
+    if need > 0.0 and z + need > interior_h:
+        z = interior_h - need
+    z = max(0.0, z)
+    return clear_height_for(opening, acc_def, z, skip)
+
+
+def clear_height_for(opening, acc_def, wanted, skip=None):
+    """The nearest height at or above the one asked for where this
+    accessory's clearance runs into nothing.
+
+    Used when one is added, which is the moment the person has not
+    said anything precise yet. A height typed in afterwards is left
+    alone and warned about instead - being moved after saying exactly
+    where you want something is worse than being told it is tight."""
+    need = acc_def.reserved_height
+    if need <= 0.0:
+        return wanted
+    interior_h = _cage_dim_z(opening)
+    props = bpy.context.scene.hb_closets
+    spans = opening_spans(list(opening.children),
+                          props.shelf_thickness, skip)
+    tops = sorted({s[1] for s in spans if s[1] >= wanted - 1e-9})
+    for start in [wanted] + tops + [0.0]:
+        if start < -1e-9 or start + need > interior_h + 0.0005:
+            continue
+        if not any(start < hi - 1e-6 and start + need > lo + 1e-6
+                   for lo, hi, _ in spans):
+            return start
+    return wanted
+
+
+def _cage_dim_y(obj):
+    """One cage's depth, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim Y') or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _cage_dim_z(obj):
+    """One cage's height, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim Z') or 0.0)
+    except Exception:
+        return 0.0
+
+
+def accessory_band(cage, acc_def, width=0.0):
+    """The width band this accessory was bought at.
+
+    What the person chose is remembered on the cage. If the catalog
+    has since stopped offering that width the nearest one stands in,
+    so an older file still draws rather than coming up empty."""
+    if not acc_def.bands:
+        return None
+    band = acc_def.band_by_model(cage.get(PROP_ACCESSORY_MODEL, ''))
+    if band is None:
+        band = acc_def.band_for_width(width or _cage_dim_x(cage))
+    return band
+
+
+def accessory_model_name(cage, acc_def):
+    """What the drawing remembers this accessory being - the model's
+    name, which means the same thing on any machine."""
+    band = accessory_band(cage, acc_def)
+    return band[2] if band else acc_def.model
+
+
+def accessory_model_path_for(cage, acc_def):
+    """Where that model is on this machine, or '' if it is not here."""
+    band = accessory_band(cage, acc_def)
+    return acc_def.path_for(band)
+
+
+def _cage_dim_x(obj):
+    """One cage's width, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim X') or 0.0)
+    except Exception:
+        return 0.0
+
+
+def add_accessory(opening, key):
+    """Hang one accessory in an opening and hand back its cage.
+
+    Only the choice is stored - what gets built under it, and whether
+    a model shows up at all, is worked out on the next recalculation.
+    That keeps a saved file honest when the companion add-on is
+    installed, removed or updated underneath it."""
+    from . import accessories_closets as acc
+    acc_def = acc.get(key)
+    if acc_def is None:
+        return None
+    cage = GeoNodeCage()
+    cage.create(acc_def.label)
+    # The closet is built with its back at y=0 and its front at
+    # -depth, so the cage has to run that way too or the accessory is
+    # drawn out through the wall.
+    cage.set_input('Mirror Y', True)
+    cage.obj.parent = opening
+    cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
+    cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
+    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
+                                      if acc_def.colors else '')
+    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
+                                       if acc_def.fabrics else '')
+    cage.obj[PROP_ACCESSORY_Z] = 0.0
+    # An accessory sold in widths arrives as the one nearest the
+    # opening it was dropped in; the person can change it after.
+    from . import accessories_closets as acc
+    if acc_def.family == acc.FAMILY_PANEL:
+        cage.obj[PROP_ACCESSORY_PANEL_LOC] = acc.PANEL_DEFAULT_LOCATION
+        band = acc_def.bands[0] if acc_def.bands else None
+    else:
+        band = acc_def.band_for_width(_cage_dim_x(opening))
+    if band is not None:
+        cage.obj[PROP_ACCESSORY_MODEL] = band[2]
+    cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    cage.obj['PROMPT_ID'] = 'hb_closets.accessory_prompts'
+    return cage.obj
+
+
 def clear_opening_contents(opening):
     """Strip one opening back to empty: put every insert setting back to
     its default (the regenerators remove their parts on the next recalc)
@@ -3835,8 +6076,11 @@ def clear_opening_contents(opening):
     opening.hb_closet_opening.clear_contents()
     for child in list(opening.children):
         if child.get('hb_part_role') in (PART_ROLE_ROD,
-                                         PART_ROLE_FIXED_SHELF):
-            _remove_part_tree(child)  # rods carry hanger children
+                                         PART_ROLE_FIXED_SHELF,
+                                         PART_ROLE_ACCESSORY):
+            # rods carry hanger children; accessories carry their model
+            # and any melamine cut for them
+            _remove_part_tree(child)
 
 
 def clear_bay_contents(bay_obj):
@@ -3852,6 +6096,10 @@ def clear_bay_contents(bay_obj):
     for child in list(bay_obj.children):
         if child.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
                                          PART_ROLE_DIVISION):
+            # A shelf can carry a cleat of its own; that goes with the
+            # shelf rather than being left standing on nothing.
+            for sub in list(child.children):
+                bpy.data.objects.remove(sub, do_unlink=True)
             bpy.data.objects.remove(child, do_unlink=True)
     for opening in [c for c in bay_obj.children if c.get(TAG_OPENING_CAGE)]:
         clear_opening_contents(opening)
@@ -3869,6 +6117,10 @@ def serialize_opening(opening):
         'drawer_qty': int(opening.hb_closet_opening.drawer_qty),
         'rollout_qty': int(opening.hb_closet_opening.rollout_qty),
         'rollout_h': float(opening.hb_closet_opening.rollout_height),
+        'rollout_inset': int(
+            bool(opening.hb_closet_opening.rollout_inset_front)),
+        'rollout_ir': float(
+            opening.hb_closet_opening.rollout_inset_reveal),
         'slant_qty': int(opening.hb_closet_opening.slant_qty),
         'slant_spacing': float(opening.hb_closet_opening.slant_spacing),
         'slant_angle': float(opening.hb_closet_opening.slant_angle),
@@ -3888,7 +6140,8 @@ def serialize_opening(opening):
              int(bool(c.get(PROP_UNLOCK_FRONT_HEIGHT, 0)))]
             for c in sorted(
                 (c for c in opening.children
-                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT),
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                 and not c.get('hb_rollout')),
                 key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
         # How far the fronts here are drawn standing open, so a copy
@@ -3930,7 +6183,8 @@ def serialize_opening(opening):
             int(opening.hb_closet_opening.unlock_pull_location),
             float(opening.hb_closet_opening.drawer_pull_vertical_location),
             int(opening.hb_closet_opening.double_pull_on_front),
-            float(opening.hb_closet_opening.distance_between_pulls)],
+            float(opening.hb_closet_opening.distance_between_pulls),
+            opening.hb_closet_opening.door_pull_location],
         # Whether this opening is closed at the back, and how, so a
         # copy is backed the way the original was.
         'back': [int(opening.hb_closet_opening.add_back),
@@ -3969,6 +6223,10 @@ def apply_opening_data(opening, data, recalc=True):
         opening.hb_closet_opening.rollout_qty = data['rollout_qty']
         opening.hb_closet_opening.rollout_height = data.get('rollout_h',
                                                 const.ROLLOUT_HEIGHT)
+        opening.hb_closet_opening.rollout_inset_front = bool(
+            data.get('rollout_inset', 0))
+        opening.hb_closet_opening.rollout_inset_reveal = data.get(
+            'rollout_ir', const.ROLLOUT_INSET_REVEAL)
     if data.get('slant_qty'):
         opening.hb_closet_opening.slant_qty = data['slant_qty']
         opening.hb_closet_opening.slant_spacing = data.get('slant_spacing',
@@ -4009,6 +6267,9 @@ def apply_opening_data(opening, data, recalc=True):
         _op.drawer_pull_vertical_location = float(pulls[4])
         _op.double_pull_on_front = bool(pulls[5])
         _op.distance_between_pulls = float(pulls[6])
+        # Copies taken before the door rule was a setting carry six.
+        if len(pulls) > 7:
+            _op.door_pull_location = str(pulls[7])
     if data.get('door_swing'):
         # A copy taken before the tilt-out hamper became a front of its
         # own carries the old flag, so it reads back as that front.
@@ -4066,9 +6327,18 @@ def serialize_bay(bay_obj):
     return {
         'remove_bottom': bool(bp.remove_bottom),
         'remove_cleat': bool(bp.remove_cleat),
+        'remove_shelf_cleat': bool(bp.remove_shelf_cleat),
         'bay_door_swing': bp.door_swing,
         'bay_open_door': float(bp.open_door),
         'shelves': list(shelves),
+        # Which of those shelves carry a cleat of their own, held by the
+        # same offsets so a paste puts one back under the same shelf.
+        'shelf_cleats': sorted(
+            c.get('hb_z_offset', 0.0) for c in bay_obj.children
+            if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+            and c.get('hb_shelf_cleat')
+            and not c.get('hb_preview')
+            and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
         # A division travels as the segment it is in and how far across
         # the bay it stands, which is what puts it back where it was in
         # a bay of the same width.
@@ -4095,8 +6365,9 @@ def apply_bay_data(bay_obj, data):
                   and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'), None)
     if front is None:
         return False
+    cleats = list(data.get('shelf_cleats', ()))
     for z in data.get('shelves', ()):
-        add_fixed_shelf(front, z)
+        add_fixed_shelf(front, z, cleat=z in cleats)
     recalculate_closet_starter(root)   # adopt shelves -> segments
 
     # Divisions go in against the segments the shelves have just made,
@@ -4118,6 +6389,7 @@ def apply_bay_data(bay_obj, data):
         bp = bay_obj.hb_closet_bay
         bp.remove_bottom = data.get('remove_bottom', False)
         bp.remove_cleat = data.get('remove_cleat', False)
+        bp.remove_shelf_cleat = data.get('remove_shelf_cleat', False)
         bp.open_door = float(data.get('bay_open_door', 0.0))
         if data.get('bay_door_swing'):
             bp.door_swing = ('TILT_OUT' if data.get('bay_is_hamper')
@@ -4161,17 +6433,26 @@ BAY_CONFIGS = [item for group in BAY_CONFIG_GROUPS for item in group]
 
 def seed_door_shelves(opening):
     """Door openings include adjustable shelves behind the doors by
-    default. Seeds the opening's shelf count unless something else
-    already occupies it (an existing shelf count, drawers, cubbies, or
-    a rod) - adding doors over an existing interior never overwrites
-    it. Callers skip this for a tilt-out hamper, whose basket stands
-    in the whole opening; clear_hamper_shelves below takes the shelves
-    back out of one whose front is changed to a hamper."""
+    default. Seeds the opening's shelf count where the opening is
+    still empty - an existing shelf count, drawers, trays, shoe
+    shelves, cubbies or a rod all mean something is already there, and
+    adding doors over an interior never overwrites it. Callers skip
+    this for a tilt-out hamper, whose basket stands in the whole
+    opening; clear_hamper_shelves below takes the shelves back out of
+    one whose front is changed to a hamper.
+
+    The room can turn it off. The prior library added a door and
+    nothing else, so a job carried over from it - or quoted against it
+    - wants the shelves left out until they are asked for.
+    """
+    props = bpy.context.scene.hb_closets
+    if not getattr(props, 'closet_seed_door_shelves', True):
+        return
     op = opening.hb_closet_opening
     # One column by one row is the empty state, not a cubby grid, so it
     # does not count as an interior.
-    if (op.adj_shelf_qty or op.drawer_qty
-            or op.cubby_cols > 1 or op.cubby_rows > 1):
+    if (op.adj_shelf_qty or op.drawer_qty or op.rollout_qty
+            or op.slant_qty or op.cubby_cols > 1 or op.cubby_rows > 1):
         return
     for c in opening.children:
         if c.get('hb_part_role') == PART_ROLE_ROD:
@@ -4323,6 +6604,8 @@ def apply_bay_config(bay_obj, config):
 
     splits = []
     actions = []
+    # Which split, if any, carries a cleat behind it.
+    cleat_at = None
     bay_door = None           # FULL_HEIGHT_DOORS -> bay-wide double door
     if config == 'ADJ_SHELVES':
         opening.hb_closet_opening.adj_shelf_qty = max(
@@ -4347,6 +6630,9 @@ def apply_bay_config(bay_obj, config):
         if top - low < st + inch(1.0):
             top = low + st + inch(1.0)
         splits = [low, top]
+        # The shelf under the upper hang takes a cleat behind it, the
+        # way the prior library built this configuration.
+        cleat_at = top
         actions = [(0, _cfg_rod), (2, _cfg_rod)]
     elif drawer_qty is not None:
         qty = drawer_qty
@@ -4382,7 +6668,7 @@ def apply_bay_config(bay_obj, config):
         return False
 
     for z in splits:
-        add_fixed_shelf(opening, z)
+        add_fixed_shelf(opening, z, cleat=(z == cleat_at))
     recalculate_closet_starter(root)   # adopt splits -> segments
 
     openings = sorted(

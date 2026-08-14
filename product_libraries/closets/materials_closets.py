@@ -48,6 +48,16 @@ COUNTERTOP_ORDER = (
 # material selection instead of picking an explicit one.
 MATCH = 'MATCH'
 
+# Bought parts - the hang rail covers - wear this instead of the run's
+# finish. It is a negative material: it says the part never comes off a
+# sheet, so nothing that paints the closet touches it and whatever
+# processes hardware downstream counts it there instead. Kept in the
+# file under a known name and marked with an idprop as well, so a
+# rename does not lose track of it.
+NEGATIVE_MATERIAL = 'Negative'
+NEGATIVE_MATERIAL_KEY = 'hb_negative_material'
+NEGATIVE_MATERIAL_COLOR = (0.05, 0.05, 0.06, 1.0)
+
 # Door panel types: Vertical Grain = the front material (doors always
 # run vertical grain); the rest are glass materials that live in
 # the library blend (not asset-marked - they only make sense as door
@@ -165,6 +175,23 @@ def load_material(name, blend=None):
     except Exception:
         return None
     return bpy.data.materials.get(name)
+
+
+def load_negative_material():
+    """The material a bought part wears. Taken from the bundled blend
+    when it holds one by that name, and made here when it does not, so
+    a run always has one to hand its covers."""
+    mat = load_material(NEGATIVE_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(NEGATIVE_MATERIAL)
+        mat.use_nodes = True
+        mat.diffuse_color = NEGATIVE_MATERIAL_COLOR
+        bsdf = mat.node_tree.nodes.get('Principled BSDF')
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = (
+                NEGATIVE_MATERIAL_COLOR)
+    mat[NEGATIVE_MATERIAL_KEY] = True
+    return mat
 
 
 def _mapping_variant(mat, suffix, rot_x=0.0, rot_z=0.0):
@@ -287,12 +314,13 @@ def resolve_countertop_material(carcass=None):
 
 def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     """Grain-correct materials on a styled front's Door Style modifier:
-    stiles (vertical members) carry vertical grain (the in-plane
-    variant - the textures read horizontal as authored), rails the
-    material as-is, and the panel follows the front's grain setting.
-    The fronts route the builder through a rotation wrapper (see
-    fronts_closets), so the sockets keep their plain meaning. No-op for
-    slab fronts (no modifier)."""
+    stiles (vertical members) carry vertical grain, rails horizontal,
+    and the panel follows the front's grain setting. The textures read
+    along the part's length, so which material reads vertical depends
+    on the way the front is cut: a length-up front (see fronts_closets)
+    reads the plain material up itself and the rotated variant across,
+    a length-across front the reverse. No-op for slab fronts (no
+    modifier)."""
     mod = next((m for m in front_obj.modifiers
                 if m.type == 'NODES' and 'Door Style' in m.name), None)
     if mod is None or mod.node_group is None:
@@ -302,9 +330,13 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
         front_mat = resolve_front_material()
     if front_mat is None:
         return
-    vertical = vertical_variant(front_mat)
+    rotated = vertical_variant(front_mat)
+    if front_obj.get('hb_front_length_up'):
+        vert_mat, horiz_mat = front_mat, rotated
+    else:
+        vert_mat, horiz_mat = rotated, front_mat
     grain = front_grain(front_obj, is_drawer)
-    panel = front_mat if grain == 'HORIZONTAL' else vertical
+    panel = horiz_mat if grain == 'HORIZONTAL' else vert_mat
     # Door panel type: glass selections replace the wood panel (drawer
     # fronts always keep the wood panel). Clear Glass reuses the shared
     # generated door-panel glass (Glass BSDF + Transparent mix - the
@@ -332,8 +364,8 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
                 is_glass = True
         front_obj['hb_panel_type'] = panel_type
     front_obj['IS_PREP_FOR_GLASS'] = is_glass
-    _set_modifier_material(mod, 'Stile Material', vertical)
-    _set_modifier_material(mod, 'Rail Material', front_mat)
+    _set_modifier_material(mod, 'Stile Material', vert_mat)
+    _set_modifier_material(mod, 'Rail Material', horiz_mat)
     _set_modifier_material(mod, 'Panel Material', panel)
     front_obj.update_tag()
 
@@ -402,6 +434,7 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     role_door = types_closets.PART_ROLE_DOOR
     role_drawer = types_closets.PART_ROLE_DRAWER_FRONT
     role_fence = types_closets.PART_ROLE_SHOE_FENCE
+    role_cover = types_closets.PART_ROLE_HANG_RAIL_COVER
     # A top and its upstands are one surface, banded all the way round
     # in the same material.
     ctop_roles = (types_closets.PART_ROLE_COUNTERTOP,
@@ -413,13 +446,30 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        if role == types_closets.PART_ROLE_ACCESSORY_BLOCK:
+            # A stand-in for something missing. It is meant to look
+            # nothing like the room, so it keeps its red.
+            continue
+        if role == types_closets.PART_ROLE_ACCESSORY_MODEL:
+            # A bought accessory arrives already finished, in whatever
+            # it was ordered in. Painting it the closet material would
+            # be wrong twice over - it is not a sheet good, and its
+            # finish is a line on the order.
+            continue
         if role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated
             # material while its neighbours do not.
-            mat = (front_v
-                   if front_grain(child, role == role_drawer) == 'VERTICAL'
-                   else front)
+            #
+            # The library textures read along the part's length. A
+            # front cut length-up already has its length running up
+            # it, so vertical grain is the plain material there and
+            # the rotated one is what turns it sideways.
+            want = front_grain(child, role == role_drawer)
+            if child.get('hb_front_length_up'):
+                mat = front if want == 'VERTICAL' else front_v
+            else:
+                mat = front_v if want == 'VERTICAL' else front
             edge = front_edge
         elif role in ctop_roles:
             mat, edge = ctop, ctop_edge
@@ -432,6 +482,12 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             mat = _fence_finish(child, fence_cache)
             if mat is None:
                 continue
+            edge = mat
+        elif role == role_cover:
+            # A bought clip cover. Its material is what says so, and it
+            # is the same all the way round - there is no banding on a
+            # part that never sees a sheet.
+            mat = load_negative_material()
             edge = mat
         else:
             mat, edge = carcass, carcass_edge
@@ -453,10 +509,42 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     return True
 
 
+def apply_to_part(obj, carcass_name=None):
+    """Assign the closet material and its edgebanding to one loose part
+    standing outside a starter, so a part dropped on its own reads the
+    same as the run beside it. Returns True when it took.
+    """
+    from ... import hb_types
+    props = bpy.context.scene.hb_closets
+    if carcass_name is None:
+        carcass_name = getattr(props, 'closet_material', DEFAULT_MATERIAL)
+    carcass = load_material(carcass_name)
+    if carcass is None:
+        return False
+    edge = rotated_variant(
+        _resolve_edge_base('closet_edge_material', carcass))
+    try:
+        part = hb_types.GeoNodeCutpart(obj)
+        part.set_input('Top Surface', carcass)
+        part.set_input('Bottom Surface', carcass)
+        part.set_input('Edge W1', edge)
+        part.set_input('Edge W2', edge)
+        part.set_input('Edge L1', edge)
+        part.set_input('Edge L2', edge)
+    except Exception:
+        return False
+    return True
+
+
 def update_room(self=None, context=None):
-    """Dropdown update callback: re-apply to every starter in the scene."""
+    """Dropdown update callback: re-apply to every starter in the
+    scene, and to any loose part standing on its own outside one."""
     scene = getattr(context, 'scene', None) or bpy.context.scene
     from . import types_closets
     for obj in scene.objects:
         if obj.get(types_closets.TAG_STARTER_CAGE):
             apply_to_starter(obj)
+        elif obj.get('hb_part_role') in (
+                types_closets.PART_ROLE_MISC,
+                types_closets.PART_ROLE_CONTINUOUS_TOP):
+            apply_to_part(obj)

@@ -72,10 +72,39 @@ def user_hangers_dir(create=False):
     return d
 
 
+# The models a companion add-on offers. Hangers are product assets
+# like the accessory models are, so they are asked for through the
+# same door rather than carried here: the host registers where its
+# models are and this library reads them without knowing what the host
+# is or whether it is there at all.
+HANGER_HOST = 'closet_hanger'
+
+
+def _host_hanger_dirs():
+    """Folders a host add-on is offering hanger models from."""
+    try:
+        from ... import accessory_registry
+    except Exception:
+        return ()
+    out = []
+    for item in accessory_registry.get_items(HANGER_HOST):
+        folder = (item or {}).get('folder')
+        if folder and os.path.isdir(folder):
+            out.append(folder)
+    return tuple(out)
+
+
+def hanger_dirs():
+    """Everywhere a hanger model can come from, in the order a name
+    clash is settled: what ships with the library, then what a host
+    add-on offers, then what the person installed themselves."""
+    return (HANGERS_DIR,) + _host_hanger_dirs() + (user_hangers_dir(),)
+
+
 def _hanger_path(filename):
-    """Resolve a hanger blend across the bundled folder and the
-    user-installed pack (bundled wins on a name clash)."""
-    for folder in (HANGERS_DIR, user_hangers_dir()):
+    """Resolve a hanger blend across everywhere they come from (the
+    first folder wins on a name clash)."""
+    for folder in hanger_dirs():
         p = os.path.join(folder, filename)
         if os.path.exists(p):
             return p
@@ -83,6 +112,17 @@ def _hanger_path(filename):
 
 _hanger_enum_cache = None
 _hanger_override_enum_cache = None
+
+
+def clear_hanger_cache():
+    """Forget what models are about. Asked for when a host add-on
+    registers after this library has already looked - otherwise the
+    dropdown would keep showing the one hanger that ships here."""
+    global _hanger_enum_cache, _hanger_override_enum_cache
+    _hanger_enum_cache = None
+    _hanger_override_enum_cache = None
+    _hanger_models.clear()
+    _hanger_drops.clear()
 # One loaded source object per model file (several can be live at once
 # when hangers carry per-object overrides).
 _hanger_models = {}
@@ -91,11 +131,10 @@ _hanger_drops = {}
 
 
 def get_hanger_files():
-    """Sorted hanger model blends from the bundled folder AND the
-    user-installed pack, the bare hanger hoisted first (= dynamic-enum
-    default)."""
+    """Sorted hanger model blends from everywhere they come from, the
+    bare hanger hoisted first (= dynamic-enum default)."""
     names = set()
-    for folder in (HANGERS_DIR, user_hangers_dir()):
+    for folder in hanger_dirs():
         if os.path.isdir(folder):
             names.update(f for f in os.listdir(folder)
                          if f.lower().endswith('.blend'))

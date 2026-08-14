@@ -51,6 +51,20 @@ RUN_THICKNESSES = (
 HANG_RAIL_WIDTH = inch(1.125)
 HANG_RAIL_THICKNESS = inch(0.25)
 HANG_RAIL_DROP = inch(3.3125)
+# The cover clipped over a rail end where it lands on a panel. It is
+# bought rather than cut, so it wears a material of its own and is
+# counted with the hardware. The prior library's block: 0.5 in along
+# the rail, 1.75 in tall, 2.25 in out from the wall, its top an inch
+# below the underside of the shelf the rail drops from.
+HANG_RAIL_COVER_LENGTH = inch(0.5)
+HANG_RAIL_COVER_WIDTH = inch(1.75)
+HANG_RAIL_COVER_DEPTH = inch(2.25)
+HANG_RAIL_COVER_TOP_OFFSET = inch(1.0)
+# The cover stands clear of the wall rather than against it. What
+# it wraps is the claw, which hangs off the front of the rail, so
+# it starts an inch out from the wall and reaches back into the
+# room from there - the rail itself is left alone behind it.
+HANG_RAIL_COVER_STANDOFF = inch(1.0)
 
 # ---------------------------------------------------------------------------
 # Starter defaults
@@ -188,6 +202,13 @@ BRIDGE_SHELF_WIDTH = inch(14.0)
 # forward (and past finished ends) by the overhang. Default 1".
 TOP_ACCENT_OVERHANG = inch(1.0)
 
+# Continuous top: one top laid across a whole run rather than the
+# piece per bay a run works out for itself. It reaches past the
+# front of what it caps, and a top longer than can be cut from one
+# length of material comes in two pieces meeting at the cut length.
+CONTINUOUS_TOP_PROJECTION = inch(1.0)
+CONTINUOUS_TOP_MAX_LENGTH = inch(95.0)
+
 # Minimum bay width the redistributor will assign to an unlocked bay.
 MIN_BAY_WIDTH = inch(1.0)
 
@@ -254,14 +275,26 @@ DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
 # library had them and what gets measured on the floor, so it is kept.
 DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
 DISTANCE_BETWEEN_PULLS = inch(6.0)
+# Where a door's pull sits on it. Three conventions, each measured from
+# somewhere different: Base holds the pull down from the top edge of the
+# door, Upper holds it up from the bottom edge, and Tall holds it at a
+# height off the floor whatever the door is doing. Auto reads the door's
+# own place in the run and picks the one that suits it, which is what an
+# opening starts on; naming one holds the door to it.
+DOOR_PULL_LOCATION_ITEMS = [
+    ('AUTO', "Auto",
+     "Pick the convention from where the door sits in the run"),
+    ('BASE', "Base", "Hold the pull down from the top edge of the door"),
+    ('TALL', "Tall", "Hold the pull at the tall height off the floor"),
+    ('UPPER', "Upper",
+     "Hold the pull up from the bottom edge of the door"),
+]
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
 MIN_DRAWER_FRONT = inch(2.0)
-DRAWER_SLIDE_GAP = inch(0.5)        # per side, drawer box to panel
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
-DRAWER_BOX_DEPTH_DEDUCT = inch(0.5)
-DRAWER_BOX_Z_LIFT = inch(0.5)       # box bottom above front bottom edge
+DRAWER_BOX_DEPTH_DEDUCT = inch(0.875)  # wood box, back of opening
 # How far back from the face the stretcher between one drawer and
 # the next runs. The prior library's figure.
 DRAWER_STRETCHER_WIDTH = inch(6.0)
@@ -309,6 +342,28 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # Corner construction: shelves and the back partition are held
 # off the walls by the wall offset; the shelves' partition notch clears
 # the partition by the router tool radius.
+# A corner unit's rod runs along one wing rather than turning the
+# corner - which is what the prior library did, and what the hardware
+# allows. It stands this far off the wall it does not run along, and
+# clear of the one it does.
+# A locked shelf reads orange in the viewport, the way the prior
+# library marked them, so a stack of shelves says at a glance which
+# of them is holding the unit square.
+L_LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+
+# The filler that closes an inside corner: two boards standing on
+# edge, one lapping the other, and a top laid over both. The widths
+# are what the prior library started them at.
+CORNER_FILLER_WIDTH = inch(1.5)
+
+L_ROD_FROM_WALL = inch(12.0)
+L_ROD_END_GAP = inch(0.75)
+# The other wing has to be at least this deep for clothes on the rod
+# to clear it.
+L_ROD_MIN_CLEAR = inch(24.0)
+# Double hang: how far up the shelf between the two rods sits.
+L_DOUBLE_TOP_OPENING = inch(40.8248)
+
 L_WALL_OFFSET = inch(0.5)
 L_NOTCH_TOOL_RADIUS = inch(0.25)
 # The inside front corner of an L shelf is rounded by default
@@ -338,12 +393,20 @@ ROLLOUT_MIN_GAP = inch(1.0)
 # A tray shorter than this is not worth building, so a stack that is
 # squeezed for room stops shrinking its trays here.
 ROLLOUT_MIN_HEIGHT = inch(2.0)
+# A tray carries a front. Lapped, the front stands proud of the face and
+# laps the opening the way a drawer front does; set inside instead, it
+# is held back from each side of the opening by this reveal and fills
+# the front of the opening depth with its own thickness. The prior
+# library carried the reveal at an eighth.
+ROLLOUT_INSET_REVEAL = inch(0.125)
 # Dividing an opening left and right. A column narrower than this is
 # not worth building, so a division that would leave one is refused.
 DIVISION_MIN_WIDTH = inch(3.0)
-# Cubbies: a grid of divisions and shelves filling an opening. Both are
-# held back from the front edge by the setback.
-CUBBY_SETBACK = inch(0.25)
+# Cubbies: a grid of divisions and shelves filling an opening. Both can
+# be held back from the front edge by the setback. The prior library ran
+# both of them the full depth of the opening, so that is where this
+# starts; the setback is here as a setting for anyone who wants one.
+CUBBY_SETBACK = inch(0.0)
 # A grid can take a band at the bottom or the top of an opening instead
 # of the whole of it, capped by a shelf, which leaves the rest of the
 # opening free for something else. This is how tall that band stands
@@ -372,6 +435,10 @@ SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
 # library carried this as its own setting and shipped it at zero, the
 # fence flush with the front, so that is where it starts here too.
 SHOE_FENCE_BACK_INSET = inch(0.0)
+# The fence does not sit on the very lip of the shelf. It stands off the
+# front edge by this much before the back inset is counted on top, which
+# is the stand-off the prior library built the rail in at.
+SHOE_FENCE_STANDOFF = millimeter(20.0)
 # Modal add-part height snapping increment (fallback only; the 32mm
 # system lattice below is what placement actually snaps to).
 PART_Z_SNAP = inch(0.25)
@@ -398,3 +465,64 @@ def snap_system_hole(value):
     """Nearest system hole (12.95 + n*32 mm from the interior bottom)."""
     n = round((value - SYSTEM_HOLE_BASE) / SYSTEM_PITCH)
     return SYSTEM_HOLE_BASE + max(0, int(n)) * SYSTEM_PITCH
+
+
+# ---------------------------------------------------------------------------
+# Accessories. Bought items that hang in a closet; the library places
+# the model and holds the space, the companion add-on carries the
+# models, the finishes and the part numbers. See accessories_closets.
+# ---------------------------------------------------------------------------
+# How close to the opening floor an accessory has to land before it is
+# treated as sitting ON the floor rather than floating above it.
+ACCESSORY_BOTTOM_SNAP_TOL = inch(0.5)
+# Ironing Board Drawer: the melamine plate the board bolts to, and the
+# compartment it folds into. Fixed sizes - the board is bought at one
+# size and the plate is cut to suit it, so neither follows the opening.
+IRONING_BOARD_PLATFORM_WIDTH = inch(12.0)
+IRONING_BOARD_PLATFORM_DEPTH = inch(13.625)
+IRONING_BOARD_PLATFORM_THICKNESS = inch(0.75)
+# Clear height of the compartment the board lives in, measured from the
+# opening floor to the underside of the shelf that caps it.
+IRONING_BOARD_OPENING_HEIGHT = inch(5.0)
+
+# How tall an accessory that hangs off a panel face draws its cage.
+# It is a handle to take hold of, not a claim on the opening.
+# Cleat hooks: a board across the back of the opening with hooks
+# along it. The board is a hand's height, the hooks stand off its face
+# by the thickness of the board, and they are spread between an inset
+# at each end - all as the prior library had them.
+# A wire basket is drawn from a rig rather than bought whole: its
+# wires are laid out one to the inch, and how many there are follows
+# how big it has been made. The counts the prior library drove them
+# by, one per mesh.
+BASKET_BACK_WIRE_OFFSET = -1
+BASKET_FRONT_WIRE_OFFSET = -4
+BASKET_MESH_BACK = 'Back Wire'
+BASKET_MESH_FRONT = 'Front Wire'
+BASKET_MESH_BOTTOM = 'Bottom Wire'
+
+CLEAT_HOOK_HEIGHT = inch(4.0)
+CLEAT_HOOK_QTY = 6
+CLEAT_HOOK_END_INSET = inch(2.0)
+# Where a cleat lands when it is let go. Low in the opening it is
+# taken to belong on the floor, and near the top to belong flush with
+# it - the two snaps the prior library dropped one by.
+CLEAT_HOOK_FLOOR_REACH = inch(10.0)
+CLEAT_HOOK_TOP_REACH = inch(5.0)
+
+ACCESSORY_PANEL_CAGE_H = inch(2.0)
+
+# An accessory with no model to show is drawn as a block of the space
+# it claims, in a red nothing else in the room is, so it reads as
+# something missing rather than something built.
+ACCESSORY_PLACEHOLDER_COLOR = (0.8, 0.05, 0.05, 1.0)
+ACCESSORY_PLACEHOLDER_MATERIAL = 'Accessory Placeholder'
+
+# Dropping an accessory with the mouse. Heights land on a one inch
+# grid. An accessory that hangs to the floor sits on it when dropped
+# within an inch; everything else is taken to belong on the floor from
+# the room it wants below it plus five inches up, which is the rule the
+# prior library dropped them by.
+ACCESSORY_DROP_GRID = inch(1.0)
+ACCESSORY_FLOOR_SNAP = inch(1.0)
+ACCESSORY_FLOOR_REACH = inch(5.0)

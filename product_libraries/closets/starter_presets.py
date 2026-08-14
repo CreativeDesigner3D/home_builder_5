@@ -19,9 +19,39 @@ STARTER_SECTIONS = [
         ('L Shelf Tall', "Tall", "Floor-mounted full-height corner L-shelf unit"),
         ('L Shelf Upper', "Hanging", "Wall-mounted corner L-shelf unit"),
     ]),
+    ("Fillers", [
+        ('Corner Filler', "Corner",
+         "Closes the corner where two runs meet at a right angle"),
+    ]),
     ("Islands", [
         ('Island', "Single", "Single-sided island with countertop and applied back"),
         ('Island Double', "Double", "Double-sided island with center back"),
+    ]),
+]
+
+# Loose parts: dropped on their own rather than built into a run, so
+# each entry names the operator that places it instead of resolving
+# through the starter dispatch, and carries whatever that operator
+# needs to be told. Same shape otherwise, so the library UI draws
+# these rows exactly like the starter rows above them.
+PART_SECTIONS = [
+    ("Parts", [
+        ('Misc Part', "Misc Part",
+         "A part you size and place yourself",
+         'hb_closets.place_misc_part', {'kind': 'MISC'}),
+        ('Back', "Back",
+         "A back panel on its own, for a site fix",
+         'hb_closets.place_misc_part', {'kind': 'BACK'}),
+        ('Cleat', "Cleat",
+         "A cleat on its own, for fixing to a wall",
+         'hb_closets.place_misc_part', {'kind': 'CLEAT'}),
+        ('Shelf', "Shelf",
+         "A shelf on its own, outside any opening",
+         'hb_closets.place_misc_part', {'kind': 'SHELF'}),
+        ('Continuous Top', "Continuous Top",
+         "One top across a whole run, in two pieces when it is "
+         "longer than can be cut from one length of material",
+         'hb_closets.place_continuous_top', {}),
     ]),
 ]
 
@@ -39,4 +69,5 @@ BAY_PROP_DEFAULTS = {
     'unlock_depth': False,
     'remove_bottom': False,
     'remove_cleat': False,
+    'remove_shelf_cleat': False,
 }

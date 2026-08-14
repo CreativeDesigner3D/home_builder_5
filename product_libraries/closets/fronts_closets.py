@@ -168,9 +168,17 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     rail = inch(rail_in)
 
     part = hb_types.GeoNodeCutpart(front_obj)
+    # A front cut length-up already runs its length the way the door
+    # builder was authored for; one cut length-across does not, and
+    # is turned into the builder's axis and back by the wrapper below.
+    length_up = bool(front_obj.get('hb_front_length_up'))
     try:
-        f_width = part.get_input('Length')   # across
-        f_height = part.get_input('Width')   # up
+        if length_up:
+            f_width = part.get_input('Width')    # across
+            f_height = part.get_input('Length')  # up
+        else:
+            f_width = part.get_input('Length')   # across
+            f_height = part.get_input('Width')   # up
     except Exception:
         return
     min_h, min_w = _MIN_SIZES.get(style, (0.0, 0.0))
@@ -201,7 +209,18 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     mod = style_mod.mod
     ngroup = mod.node_group
     if ngroup is not None:
-        if ngroup.name.startswith('CPM_5PIECEDOOR'):
+        if length_up:
+            # Already running its length the way the builder was
+            # authored for, so it goes straight through it. A front
+            # that was wrapped before it was stood up is handed back
+            # the plain builder.
+            if ngroup.name == WRAP_GROUP_NAME:
+                base = next((n.node_tree for n in ngroup.nodes
+                             if n.type == 'GROUP' and n.node_tree
+                             is not None), None)
+                if base is not None:
+                    mod.node_group = base
+        elif ngroup.name.startswith('CPM_5PIECEDOOR'):
             mod.node_group = _wrapped_door_group(ngroup)
         elif (ngroup.name == WRAP_GROUP_NAME
                 and ngroup.get('hb_wrap_version') != _WRAP_VERSION):

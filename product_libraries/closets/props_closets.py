@@ -726,6 +726,48 @@ class Closet_Starter_Props(PropertyGroup):
         name="Right Depth", description="Right wing panel depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    filler_left_width: FloatProperty(
+        name="Left Filler Width",
+        description="How wide the board against the side wall is cut",
+        default=const.CORNER_FILLER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    filler_right_width: FloatProperty(
+        name="Right Filler Width",
+        description="How wide the board against the back wall is cut",
+        default=const.CORNER_FILLER_WIDTH, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
+    l_interior: EnumProperty(
+        name="Corner Holds",
+        description="What goes inside the corner unit",
+        items=[
+            ('ADJ', "Adjustable Shelves",
+             "Shelves on pins, moved by hand. Any one of them can be "
+             "locked afterwards"),
+            ('LOCK', "Lock Shelves",
+             "Shelves fixed on cams, holding the unit square"),
+            ('ROD', "Single Hanging Rod",
+             "One rod along a wing, for full-length hanging"),
+            ('DOUBLE', "Double Hang",
+             "Two rods with a fixed shelf between them"),
+        ],
+        default='ADJ', update=_update_starter_prop)  # type: ignore
+    l_rod_on_left: BoolProperty(
+        name="Rod On The Side Wall",
+        description="Hang the rod along the side wall rather than the "
+                    "back wall. A rod needs the other wing to be at "
+                    "least two feet for the clothes to clear",
+        default=True, update=_update_starter_prop)  # type: ignore
+    l_top_opening_height: FloatProperty(
+        name="Top Opening Height",
+        description="Floor to the underside of the shelf between the "
+                    "two rods",
+        default=const.L_DOUBLE_TOP_OPENING, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
     l_shelf_qty: IntProperty(
         name="Shelf Quantity",
         description="Interior L shelves between the bottom and top",
@@ -845,6 +887,12 @@ class Closet_Bay_Props(PropertyGroup):
         name="Remove Cleat",
         description="Leave this bay's wall cleat out",
         default=starter_presets.BAY_PROP_DEFAULTS['remove_cleat'],
+        update=_update_bay_prop)  # type: ignore
+    remove_shelf_cleat: BoolProperty(
+        name="Remove Shelf Cleat",
+        description="Leave out the cleat that stands behind this bay's "
+                    "mid shelf",
+        default=starter_presets.BAY_PROP_DEFAULTS['remove_shelf_cleat'],
         update=_update_bay_prop)  # type: ignore
     bottom_shelf_inset: FloatProperty(
         name="Bottom Shelf Inset",
@@ -998,6 +1046,17 @@ class Closet_Opening_Props(PropertyGroup):
     rollout_height: FloatProperty(
         name="Rollout Height", description="Height of each tray",
         default=const.ROLLOUT_HEIGHT,
+        unit='LENGTH', precision=4)  # type: ignore
+    rollout_inset_front: BoolProperty(
+        name="Inset Front",
+        description="Set the tray fronts inside the opening instead "
+                    "of lapping them over it",
+        default=False)  # type: ignore
+    rollout_inset_reveal: FloatProperty(
+        name="Inset Reveal",
+        description="How far an inset tray front is held back from "
+                    "each side of the opening",
+        default=const.ROLLOUT_INSET_REVEAL, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Slanted shoe shelves -----
@@ -1190,6 +1249,12 @@ class Closet_Opening_Props(PropertyGroup):
         description="Top of the drawer front to the middle of the pull",
         default=const.DRAWER_PULL_VERTICAL_LOCATION,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    door_pull_location: EnumProperty(
+        name="Door Pull Location",
+        description="Which convention holds the pulls on this opening's "
+                    "doors. Auto reads it off where the door sits",
+        items=const.DOOR_PULL_LOCATION_ITEMS,
+        default='AUTO')  # type: ignore
     double_pull_on_front: BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "
@@ -1274,6 +1339,7 @@ class Closet_Opening_Props(PropertyGroup):
         'drawer_qty', 'drawer_front_height', 'drawer_box_override',
         'drawer_stretcher_width',
         'rollout_qty', 'rollout_height',
+        'rollout_inset_front', 'rollout_inset_reveal',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'slant_fence_inset', 'slant_back_inset',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
@@ -1528,6 +1594,14 @@ class Closets_Scene_Props(PropertyGroup):
         default='SLAB',
         update=fronts_closets.update_room)  # type: ignore
 
+    closet_seed_door_shelves: BoolProperty(
+        name="Shelves Behind Doors",
+        description="Put adjustable shelves into an opening when a "
+                    "door is added to it, where the opening is still "
+                    "empty. Turn this off to add a door and nothing "
+                    "else, the way the prior library did",
+        default=True)  # type: ignore
+
     closet_crown_profile: EnumProperty(
         name="Crown Profile",
         description="Profile used by Add Crown Molding",
@@ -1584,6 +1658,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Countertops", default=False)  # type: ignore
     show_molding_options: BoolProperty(
         name="Show Molding", default=False)  # type: ignore
+    show_design_warnings: BoolProperty(
+        name="Show Design Warnings", default=True)  # type: ignore
 
     # =====================================================================
     # UI: closet sizes (Library tab)
@@ -1682,6 +1758,18 @@ class Closets_Scene_Props(PropertyGroup):
                         cell.template_icon(icon_value=icon_id, scale=4.0)
                 op = cell.operator('hb_closets.place_starter', text=label)
                 op.starter_name = name
+        for sec_label, entries in starter_presets.PART_SECTIONS:
+            row = layout.row(align=True)
+            row.label(text=sec_label)
+            for name, label, _desc, op_id, op_props in entries:
+                cell = row.column(align=True)
+                if self.library_view_mode == 'THUMBNAIL':
+                    icon_id = load_starter_thumbnail(name)
+                    if icon_id:
+                        cell.template_icon(icon_value=icon_id, scale=4.0)
+                op = cell.operator(op_id, text=label)
+                for key, value in (op_props or {}).items():
+                    setattr(op, key, value)
 
     # =====================================================================
     # UI: materials (Options tab)
@@ -1703,6 +1791,10 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.prop(self, 'closet_front_style', text="Front Style")
         col.prop(self, 'closet_panel_type', text="Door Panel")
+
+        col.separator()
+        col.prop(self, 'closet_seed_door_shelves',
+                 text="Shelves Behind Doors")
 
     # =====================================================================
     # UI: pulls (Options tab)
@@ -1728,6 +1820,29 @@ class Closets_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: drawers (Options tab)
     # =====================================================================
+    def draw_design_warnings_ui(self, layout, context):
+        """What the room has been asked to build that cannot be built
+        at the size it has been given. Each part carries its own
+        warning, written when it was last drawn, so this gathers what
+        is already there rather than working anything out again."""
+        from . import types_closets
+        col = layout.column(align=True)
+        found = []
+        for obj in context.scene.objects:
+            message = obj.get(types_closets.PROP_BOX_WARNING, '')
+            if message:
+                found.append((obj.name, message))
+        if not found:
+            col.label(text="No design warnings.")
+            return
+        col.label(text=str(len(found)) + " Design Warnings Found",
+                  icon='ERROR')
+        col.separator()
+        for name, message in sorted(found):
+            row = col.row()
+            row.label(text=message)
+            row.label(text=name)
+
     def draw_drawer_box_options_ui(self, layout, context):
         col = layout.column(align=True)
         col.prop(self, 'closet_drawer_box', text="Drawer Box")
@@ -1816,6 +1931,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_closet_sizes_ui),
                 ('show_starter_library', "Closet Starters",
                  self.draw_starter_library_ui),
+                ('show_design_warnings', "Design Warnings",
+                 self.draw_design_warnings_ui),
             ]
         else:
             # Dropdown changes on this tab re-apply room-wide.
@@ -1834,6 +1951,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_countertop_options_ui),
                 ('show_molding_options', "Molding",
                  self.draw_molding_options_ui),
+                ('show_design_warnings', "Design Warnings",
+                 self.draw_design_warnings_ui),
             ]
 
         for prop_name, label, draw_fn in sections:
