@@ -7926,9 +7926,26 @@ class Face_Frame_Opening_Props(PropertyGroup):
          "Hinged door pairs fold, then slide back into the cabinet"),
         ('RETRACTING_TOP', "Top-Mount Retracting",
          "Full-width door that retracts up into the cabinet"),
+        # Lift-up family (top-hinged uppers). A plain TOP hinge is the
+        # tilt-up door; these pick the stay-open lift hardware instead.
+        ('LIFT_UP', "Lift-Up",
+         "Top-hinged door on lift stays; opens effortlessly and holds "
+         "any position"),
+        ('LIFT_UP_DELUXE', "Deluxe Lift-Up",
+         "Parallel-arm lift-up hardware; holds any position, deeper "
+         "cabinet required"),
+        ('LIFT_UP_BIFOLD', "Deluxe Bi-fold Lift-Up",
+         "Two-panel door that folds as it lifts; for taller openings"),
     ]
     door_mechanism: EnumProperty(
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Powered opener option for the deluxe lift-up mechanisms.
+    lift_up_servo: BoolProperty(
+        name="Servo Drive",
+        description="Electric-assist opener on the lift-up door",
+        default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
 

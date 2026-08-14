@@ -1006,6 +1006,8 @@ def draw_opening_properties(layout, opening_obj):
         # and print labels on 2D output.
         if op.front_type == 'DOOR':
             fcol.prop(op, 'door_mechanism', text="Mechanism")
+            if op.door_mechanism in ('LIFT_UP_DELUXE', 'LIFT_UP_BIFOLD'):
+                fcol.prop(op, 'lift_up_servo', text="Servo Drive")
 
         # Chase fit (drawer / pullout only): how this opening's drawer
         # box responds to the cabinet's pipe chase. Hidden unless the
