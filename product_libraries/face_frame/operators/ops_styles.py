@@ -79,9 +79,14 @@ def _copy_cabinet_style(src, dst):
     # user's explicit picks and stay shared.
     own_materials = ('material', 'material_rotated',
                      'interior_material', 'interior_material_rotated')
+    # rename_anchor is the style's OWN previous name, used to re-tag
+    # assigned cabinets when it is renamed. Copying it would point the
+    # new style back at the source's name, so the first rename of the
+    # copy would silently re-stamp every cabinet assigned to the SOURCE
+    # style -- invisible until the next rebuild repainted them.
     for prop in src.bl_rna.properties:
         pid = prop.identifier
-        if (pid in ('rna_type', 'name') or pid in cascade
+        if (pid in ('rna_type', 'name', 'rename_anchor') or pid in cascade
                 or pid in own_materials or prop.is_readonly):
             continue
         if prop.type == 'COLLECTION':
@@ -113,6 +118,9 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         new_style.name = _next_unique_name(base, existing)
         if src is not None:
             _copy_cabinet_style(src, new_style)
+        # Anchor the copy to its OWN name so its first rename only
+        # re-tags cabinets assigned to IT, never the style it came from.
+        new_style.rename_anchor = new_style.name
         ff.active_cabinet_style_index = len(ff.cabinet_styles) - 1
         self.report({'INFO'}, f"Added cabinet style: {new_style.name}")
         return {'FINISHED'}
