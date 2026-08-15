@@ -5499,12 +5499,6 @@ def _update_bay_appliance_garage(self, context):
                if self.width > bay_presets.DOUBLE_DOOR_WIDTH_THRESHOLD
                else 'LEFT_SWING_DOOR')
         ops_cabinet.apply_bay_preset(obj, cfg)
-    # A deep in-line neighbor (tall / refrigerator cabinet flanking the
-    # garage zone) may already be in place when the garage turns on -
-    # and turning the last garage off retires any auto-applied blind
-    # side. Runs before the final recalc so it picks the result up.
-    from . import exposure
-    exposure.recalc_cabinet_inline_blind(root)
     types_face_frame.recalculate_face_frame_cabinet(root)
 
 
@@ -5702,17 +5696,11 @@ def _update_garage_bottom(self, context):
 
 
 def _update_blind_left(self, context):
-    # Any write - user edit, corner dialog, mirror - disarms the
-    # in-line auto detection so it never clobbers explicit state.
-    # The detector itself re-arms the flag after its own writes,
-    # mirroring the finished-end _auto idiom (exposure._apply_side).
-    self.blind_left_auto = False
     _recompute_blind_stile_width(self, 'LEFT')
     _update_cabinet_dim(self, context)
 
 
 def _update_blind_right(self, context):
-    self.blind_right_auto = False
     _recompute_blind_stile_width(self, 'RIGHT')
     _update_cabinet_dim(self, context)
 
@@ -6082,19 +6070,6 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     blind_amount_right: FloatProperty(
         name="Blind Amount Right", default=units.inch(24.0), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
-    )  # type: ignore
-    # In-line blind auto-detection guard, one per side (the finished-end
-    # _auto idiom): armed by default, disarmed by any write to that
-    # side's blind flag (see _update_blind_left/right), re-armed by the
-    # detector after its own writes. While disarmed the detector leaves
-    # the side alone entirely. Defined AFTER blind_left/blind_right so
-    # _swap_lr_props swaps the flags first (disarming both autos via
-    # their callbacks) and then restores the mirrored auto pair.
-    blind_left_auto: BoolProperty(
-        name="Blind Left Auto", default=True,
-    )  # type: ignore
-    blind_right_auto: BoolProperty(
-        name="Blind Right Auto", default=True,
     )  # type: ignore
     # With a garage extension active and a blind side set, how the
     # garage-level blind section (the strip of front the neighbor does
