@@ -151,11 +151,14 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.show_applied_panels",
                             text="Show Applied Panels", icon='HIDE_OFF')
 
-        # Tip-up wedge calculator - refrigerator cabinets only. The root
-        # carries this menu's MENU_ID, so the right-clicked active object
-        # is the cabinet root; find_cabinet_root is used anyway for safety.
+        # Tip-up wedge calculator - refrigerator and tall cabinets (a
+        # walk-through pantry is built from the tall products and tips up
+        # into place the same way). The root carries this menu's MENU_ID,
+        # so the right-clicked active object is the cabinet root;
+        # find_cabinet_root is used anyway for safety.
+        from .operators import ops_wedge
         root = types_face_frame.find_cabinet_root(context.active_object)
-        if root is not None and root.get('CLASS_NAME') == 'RefrigeratorCabinet':
+        if root is not None and ops_wedge.is_wedge_cabinet(root):
             layout.separator()
             layout.operator("hb_face_frame.add_refrigerator_wedge",
                             text="Wedge Calculator...", icon='MOD_BEVEL')

@@ -15,9 +15,23 @@ from .. import solver_face_frame as solver
 from ....units import inch, meter_to_inch
 
 
-def is_refrigerator_cabinet(obj):
-    """True for a face-frame refrigerator cabinet root."""
-    return obj is not None and obj.get('CLASS_NAME') == 'RefrigeratorCabinet'
+# Cabinet classes tall enough to need a tip-up chamfer. Refrigerator
+# cabinets started the list; walk-through pantries are built from the
+# plain tall products and hit the ceiling the same way going in.
+WEDGE_CABINET_CLASSES = frozenset({
+    'RefrigeratorCabinet',
+    'TallFaceFrameCabinet',
+    'BuiltInTallFaceFrameCabinet',
+})
+
+
+def is_wedge_cabinet(obj):
+    """True for a face-frame cabinet root that can carry a tip-up wedge."""
+    return obj is not None and obj.get('CLASS_NAME') in WEDGE_CABINET_CLASSES
+
+
+# Back-compat alias: the original name when the wedge was refrigerator-only.
+is_refrigerator_cabinet = is_wedge_cabinet
 
 
 def _fmt(meters):
@@ -54,7 +68,7 @@ class HB_FACE_FRAME_OT_add_refrigerator_wedge(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return is_refrigerator_cabinet(context.active_object)
+        return is_wedge_cabinet(context.active_object)
 
     def invoke(self, context, event):
         cab = context.active_object.face_frame_cabinet
@@ -138,7 +152,7 @@ class HB_FACE_FRAME_OT_remove_refrigerator_wedge(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return (is_refrigerator_cabinet(obj)
+        return (is_wedge_cabinet(obj)
                 and obj.face_frame_cabinet.wedge_enabled)
 
     def execute(self, context):
