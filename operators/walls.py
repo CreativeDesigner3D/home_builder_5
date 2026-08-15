@@ -3781,15 +3781,100 @@ class home_builder_walls_OT_add_ceiling(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+# Recessed-downlight model for Add Room Lights. Lights are downward-facing
+# AREA discs (a can light), not point lights: point lights an inch under
+# the ceiling blow out the drywall directly above them and throw hard
+# shadows, which is what made the old defaults look harsh. Power is sized
+# to the room by default so a small bath and a big kitchen both come out
+# at the same brightness: watts per light scale with the floor area each
+# light covers and with the square of the ceiling height (inverse-square
+# falloff to the floor). LIGHT_WATTS_PER_M2 was tuned by eye in EEVEE /
+# AgX at 8' ceilings on a full kitchen; ceiling-height rules of thumb
+# (spacing = ceiling / 2, wall offset = spacing / 2) are the
+# recessed-lighting standard.
+#
+# Downlights alone leave any surface that faces away from every fixture
+# black -- there is no bounce off a black world. Real rooms are full of
+# ambient fill, so the operator also gives a plain-color world a soft
+# neutral background (never touching an HDRI / sky world).
+LIGHT_WATTS_PER_M2 = 12.5
+LIGHT_REFERENCE_CEILING = 2.4384   # 8'
+LIGHT_MIN_WATTS = 8.0
+LIGHT_MAX_WATTS = 400.0
+AMBIENT_FILL_COLOR = (0.5, 0.5, 0.5, 1.0)
+AMBIENT_FILL_STRENGTH = 0.45
+
+
+def _apply_ambient_fill(scene):
+    """Soft neutral world background for bounce-less renderers. Only when
+    the world is a plain color (Background node with an unlinked Color);
+    HDRI / sky setups from Setup World Lighting are left alone. Returns
+    True if the world was changed."""
+    world = scene.world
+    if world is None:
+        world = bpy.data.worlds.new("World")
+        scene.world = world
+    world.use_nodes = True
+    nt = world.node_tree
+    bg = nt.nodes.get("Background")
+    if bg is None:
+        bg = next((n for n in nt.nodes if n.type == 'BACKGROUND'), None)
+    if bg is None:
+        bg = nt.nodes.new('ShaderNodeBackground')
+        out = next((n for n in nt.nodes if n.type == 'OUTPUT_WORLD'), None)
+        if out is None:
+            out = nt.nodes.new('ShaderNodeOutputWorld')
+        nt.links.new(bg.outputs['Background'], out.inputs['Surface'])
+    if bg.inputs['Color'].is_linked:
+        return False   # HDRI / sky texture drives it -- keep
+    bg.inputs['Color'].default_value = AMBIENT_FILL_COLOR
+    bg.inputs['Strength'].default_value = AMBIENT_FILL_STRENGTH
+    return True
+
+
+def _light_watts_for_room(area_m2, light_count, ceiling_height):
+    """Per-light watts so the room reads evenly lit regardless of size."""
+    if light_count <= 0:
+        return LIGHT_MIN_WATTS
+    height_scale = (max(ceiling_height, 1.0) / LIGHT_REFERENCE_CEILING) ** 2
+    watts = LIGHT_WATTS_PER_M2 * area_m2 * height_scale / light_count
+    return max(LIGHT_MIN_WATTS, min(LIGHT_MAX_WATTS, watts))
+
+
+def _polygon_area(points):
+    """Shoelace area of a closed 2D boundary (last point may repeat first)."""
+    n = len(points)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        p = points[i]
+        q = points[(i + 1) % n]
+        area += p.x * q.y - q.x * p.y
+    return abs(area) * 0.5
+
+
+def _apply_light_color(light_data, kelvin, fallback_rgb):
+    """Blackbody color via the native light temperature when the running
+    Blender has it (4.4+), else the approximated RGB."""
+    if hasattr(light_data, "use_temperature"):
+        light_data.use_temperature = True
+        light_data.temperature = kelvin
+    else:
+        light_data.color = fallback_rgb
+
+
 class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
     bl_idname = "home_builder_walls.add_room_lights"
     bl_label = "Add Room Lights"
-    bl_description = "Add ceiling lights to the room based on room size"
+    bl_description = ("Add recessed ceiling lights laid out and sized to "
+                      "the room. The defaults are computed from the room; "
+                      "just click OK")
     bl_options = {'UNDO'}
 
     light_spacing: bpy.props.FloatProperty(
         name="Light Spacing",
-        description="Minimum spacing between lights",
+        description="Spacing between lights (defaults to half the ceiling height)",
         default=1.2192,  # 4 feet in meters
         min=0.3,
         max=3.0,
@@ -3798,38 +3883,78 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
 
     edge_offset: bpy.props.FloatProperty(
         name="Edge Offset",
-        description="Distance from walls to lights",
+        description="Distance from walls to the outer lights (defaults to half the spacing)",
         default=0.6096,  # 2 feet in meters
         min=0.15,
         max=1.5,
         unit='LENGTH'
     )  # type: ignore
 
+    auto_power: bpy.props.BoolProperty(
+        name="Size Power to Room",
+        description="Compute each light's power from the room's floor area, "
+                    "light count, and ceiling height so the room is evenly lit",
+        default=True
+    )  # type: ignore
+
     light_power: bpy.props.FloatProperty(
         name="Light Power",
-        description="Power of each light in watts",
-        default=200.0,
-        min=10.0,
+        description="Power of each light in watts (when not sized automatically)",
+        default=60.0,
+        min=1.0,
         max=2000.0,
         unit='POWER'
     )  # type: ignore
 
     light_temperature: bpy.props.FloatProperty(
         name="Color Temperature",
-        description="Light color temperature in Kelvin",
-        default=3000.0,
+        description="Light color temperature in Kelvin (3000 warm, 3500 "
+                    "soft white, 4000 neutral)",
+        default=3500.0,
         min=2000.0,
         max=6500.0
     )  # type: ignore
 
+    light_size: bpy.props.FloatProperty(
+        name="Fixture Size",
+        description="Diameter of each downlight; larger = softer shadows",
+        default=0.15,  # 6" can
+        min=0.02,
+        max=1.0,
+        unit='LENGTH'
+    )  # type: ignore
+
+    light_spread: bpy.props.FloatProperty(
+        name="Beam Spread",
+        description="Beam angle of each downlight; narrower makes pools of "
+                    "light and wall scallops, wider is flatter",
+        default=math.radians(120.0),
+        min=math.radians(30.0),
+        max=math.radians(180.0),
+        subtype='ANGLE'
+    )  # type: ignore
+
     ceiling_offset: bpy.props.FloatProperty(
-        name="Ceiling Offset", 
+        name="Ceiling Offset",
         description="Distance below ceiling to place lights",
         default=0.0254,  # 1 inch
         min=0.0,
         max=0.3,
         unit='LENGTH'
     )  # type: ignore
+
+    ambient_fill: bpy.props.BoolProperty(
+        name="Ambient Fill",
+        description="Give a plain-color world a soft neutral background so "
+                    "surfaces facing away from the lights are not black. "
+                    "HDRI / sky worlds are never changed",
+        default=True
+    )  # type: ignore
+
+    # Filled in by invoke so draw() can show the computed watts.
+    _room_area = 0.0
+    _room_lights = 0
+    _room_ceiling = LIGHT_REFERENCE_CEILING
 
     def calculate_light_grid(self,boundary_points, min_spacing=1.2, edge_offset=0.6):
         """
@@ -3919,22 +4044,23 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
         return (red / 255.0, green / 255.0, blue / 255.0)
 
 
-    def create_room_lights(self,light_positions, height, light_power=200, light_temperature=3000):
+    def create_room_lights(self, light_positions, height, light_power=60,
+                           light_temperature=3500):
         """
-        Create point lights at the specified positions.
-        
+        Create downward-facing area (disc) lights at the specified positions.
+
         Args:
             light_positions: List of 2D Vector positions
             height: Z height for lights
             light_power: Power in watts
             light_temperature: Color temperature in Kelvin
-        
+
         Returns:
             List of created light objects
         """
 
         lights = []
-        
+
         # Create or get scene-specific collection for lights
         scene = bpy.context.scene
         light_collection_name = f"{scene.name} - Lights"
@@ -3946,59 +4072,40 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
             # Ensure it's linked to the current scene
             if light_collection.name not in scene.collection.children:
                 scene.collection.children.link(light_collection)
-        
-        # Get color from temperature
-        color = self.kelvin_to_rgb(light_temperature)
-        
+
+        fallback_color = self.kelvin_to_rgb(light_temperature)
+
         for i, pos in enumerate(light_positions):
-            # Create light data
-            light_data = bpy.data.lights.new(name=f"Room_Light_{i:03d}", type='POINT')
+            # A disc area light with its default orientation already
+            # points straight down (-Z), like a recessed can. One-sided,
+            # so the ceiling above it gets bounce only -- no hot spot.
+            light_data = bpy.data.lights.new(name=f"Room_Light_{i:03d}", type='AREA')
+            light_data.shape = 'DISK'
+            light_data.size = self.light_size
+            light_data.spread = self.light_spread
             light_data.energy = light_power
-            light_data.shadow_soft_size = 0.1  # Soft shadows
-            light_data.color = color
-            
+            _apply_light_color(light_data, light_temperature, fallback_color)
+
             # Create light object
             light_obj = bpy.data.objects.new(name=f"Room_Light_{i:03d}", object_data=light_data)
             light_obj.location = (pos.x, pos.y, height)
-            
+
             # Link to collection
             light_collection.objects.link(light_obj)
-            
+
             # Mark as room light
             light_obj['IS_ROOM_LIGHT'] = True
-            
+
             lights.append(light_obj)
-        
+
         return lights
 
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=350)
-
-    def draw(self, context):
-        layout = self.layout
-        
-        box = layout.box()
-        box.label(text="Light Placement", icon='LIGHT')
-        col = box.column(align=True)
-        col.prop(self, 'light_spacing')
-        col.prop(self, 'edge_offset')
-        
-        box = layout.box()
-        box.label(text="Light Properties", icon='OUTLINER_OB_LIGHT')
-        col = box.column(align=True)
-        col.prop(self, 'light_power')
-        col.prop(self, 'light_temperature')
-        col.prop(self, 'ceiling_offset')
-
-    def execute(self, context):
+    def _room_chains(self):
+        """[(chain, boundary_points)] for every room: closed loops when
+        any exist, else bounding boxes around open chains."""
         chains = find_wall_chains()
-        
         if not chains:
-            self.report({'WARNING'}, "No connected walls found")
-            return {'CANCELLED'}
-        
-        # Separate closed loops from open chains
+            return []
         closed_chains = []
         open_chains = []
         for chain in chains:
@@ -4007,67 +4114,144 @@ class home_builder_walls_OT_add_room_lights(bpy.types.Operator):
                 closed_chains.append((chain, points))
             else:
                 open_chains.append(chain)
-        
-        # Use closed loops if available, otherwise fall back to bounding boxes
-        use_chains = []
         if closed_chains:
-            use_chains = [(chain, points) for chain, points in closed_chains]
+            return closed_chains
+        use_chains = []
+        for chain in open_chains:
+            all_points = []
+            for w in chain:
+                start, end = get_wall_endpoints(w)
+                all_points.append(Vector((start.x, start.y, 0)))
+                all_points.append(Vector((end.x, end.y, 0)))
+            if len(all_points) < 2:
+                continue
+            min_x = min(p.x for p in all_points)
+            max_x = max(p.x for p in all_points)
+            min_y = min(p.y for p in all_points)
+            max_y = max(p.y for p in all_points)
+            if abs(max_x - min_x) < 0.01:
+                max_x = min_x + 3.0
+            if abs(max_y - min_y) < 0.01:
+                max_y = min_y + 3.0
+            points = [
+                Vector((min_x, min_y, 0)),
+                Vector((max_x, min_y, 0)),
+                Vector((max_x, max_y, 0)),
+                Vector((min_x, max_y, 0)),
+                Vector((min_x, min_y, 0)),
+            ]
+            use_chains.append((chain, points))
+        return use_chains
+
+    def _refresh_room_stats(self):
+        """Total floor area, light count at the current spacing, and the
+        (first room's) ceiling height -- what auto power is sized from."""
+        area = 0.0
+        count = 0
+        ceiling = LIGHT_REFERENCE_CEILING
+        for i, (chain, points) in enumerate(self._room_chains()):
+            if i == 0:
+                try:
+                    ceiling = hb_types.GeoNodeWall(chain[0]).get_input('Height')
+                except Exception:
+                    pass
+            area += _polygon_area(points)
+            count += len(self.calculate_light_grid(
+                points, min_spacing=self.light_spacing,
+                edge_offset=self.edge_offset))
+        self._room_area = area
+        self._room_lights = count
+        self._room_ceiling = ceiling
+
+    def _auto_watts(self):
+        return _light_watts_for_room(self._room_area, self._room_lights,
+                                     self._room_ceiling)
+
+    def invoke(self, context, event):
+        # Recessed-lighting rules of thumb from the ceiling height:
+        # spacing = ceiling / 2, wall offset = spacing / 2. Recomputed on
+        # every invoke so a room change gives fresh defaults.
+        chains = self._room_chains()
+        if chains:
+            try:
+                ceiling = hb_types.GeoNodeWall(chains[0][0][0]).get_input('Height')
+            except Exception:
+                ceiling = LIGHT_REFERENCE_CEILING
+            self.light_spacing = max(0.6, min(1.8, ceiling / 2.0))
+            self.edge_offset = max(0.15, min(1.5, self.light_spacing / 2.0))
+        self._refresh_room_stats()
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        # Spacing edits change the light count, which changes auto watts.
+        self._refresh_room_stats()
+
+        box = layout.box()
+        box.label(text="Light Placement", icon='LIGHT')
+        col = box.column(align=True)
+        col.prop(self, 'light_spacing')
+        col.prop(self, 'edge_offset')
+        col.prop(self, 'ceiling_offset')
+        col.label(text=f"{self._room_lights} light(s) over "
+                       f"{self._room_area:.1f} m²")
+
+        box = layout.box()
+        box.label(text="Light Properties", icon='OUTLINER_OB_LIGHT')
+        col = box.column(align=True)
+        col.prop(self, 'auto_power')
+        if self.auto_power:
+            col.label(text=f"≈ {self._auto_watts():.0f} W per light",
+                      icon='BLANK1')
         else:
-            for chain in open_chains:
-                all_points = []
-                for w in chain:
-                    start, end = get_wall_endpoints(w)
-                    all_points.append(Vector((start.x, start.y, 0)))
-                    all_points.append(Vector((end.x, end.y, 0)))
-                if len(all_points) < 2:
-                    continue
-                min_x = min(p.x for p in all_points)
-                max_x = max(p.x for p in all_points)
-                min_y = min(p.y for p in all_points)
-                max_y = max(p.y for p in all_points)
-                if abs(max_x - min_x) < 0.01:
-                    max_x = min_x + 3.0
-                if abs(max_y - min_y) < 0.01:
-                    max_y = min_y + 3.0
-                points = [
-                    Vector((min_x, min_y, 0)),
-                    Vector((max_x, min_y, 0)),
-                    Vector((max_x, max_y, 0)),
-                    Vector((min_x, max_y, 0)),
-                    Vector((min_x, min_y, 0)),
-                ]
-                use_chains.append((chain, points))
-        
+            col.prop(self, 'light_power')
+        col.prop(self, 'light_temperature')
+        col.prop(self, 'light_size')
+        col.prop(self, 'light_spread')
+        col.prop(self, 'ambient_fill')
+
+    def execute(self, context):
+        use_chains = self._room_chains()
+        if not use_chains:
+            self.report({'WARNING'}, "No connected walls found")
+            return {'CANCELLED'}
+
+        self._refresh_room_stats()
+        watts = self._auto_watts() if self.auto_power else self.light_power
+        if self.ambient_fill:
+            _apply_ambient_fill(context.scene)
+
         total_lights = 0
-        
+
         for chain, points in use_chains:
-            
+
             # Get ceiling height from first wall in chain
             wall = hb_types.GeoNodeWall(chain[0])
             ceiling_height = wall.get_input('Height')
-            
+
             # Calculate light positions
             light_positions = self.calculate_light_grid(
-                points, 
-                min_spacing=self.light_spacing, 
+                points,
+                min_spacing=self.light_spacing,
                 edge_offset=self.edge_offset
             )
-            
+
             if not light_positions:
                 continue
-            
+
             # Create lights
             lights = self.create_room_lights(
                 light_positions,
                 height=ceiling_height - self.ceiling_offset,
-                light_power=self.light_power,
+                light_power=watts,
                 light_temperature=self.light_temperature
             )
-            
+
             total_lights += len(lights)
-        
+
         if total_lights > 0:
-            self.report({'INFO'}, f"Created {total_lights} light(s)")
+            self.report({'INFO'}, f"Created {total_lights} light(s) at {watts:.0f} W")
             return {'FINISHED'}
         else:
             self.report({'WARNING'}, "No closed wall loops found for light placement")
@@ -4176,7 +4360,14 @@ class home_builder_walls_OT_update_room_lights(bpy.types.Operator):
         # Read current values from first light
         first_light = light_objects[0].data
         self.light_power = first_light.energy
-        self.light_radius = first_light.shadow_soft_size
+        # Area (disc) room lights carry their softness in size; older
+        # point-light rooms in shadow_soft_size.
+        if first_light.type == 'AREA':
+            self.light_radius = first_light.size / 2.0
+        else:
+            self.light_radius = first_light.shadow_soft_size
+        if getattr(first_light, "use_temperature", False):
+            self.light_temperature = first_light.temperature
 
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
@@ -4201,8 +4392,11 @@ class home_builder_walls_OT_update_room_lights(bpy.types.Operator):
 
         for obj in light_objects:
             obj.data.energy = self.light_power
-            obj.data.color = color
-            obj.data.shadow_soft_size = self.light_radius
+            _apply_light_color(obj.data, self.light_temperature, color)
+            if obj.data.type == 'AREA':
+                obj.data.size = self.light_radius * 2.0
+            else:
+                obj.data.shadow_soft_size = self.light_radius
 
         self.report({'INFO'}, f"Updated {len(light_objects)} room light(s)")
         return {'FINISHED'}
