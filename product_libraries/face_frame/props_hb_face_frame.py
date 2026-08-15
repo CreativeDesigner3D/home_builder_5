@@ -4482,9 +4482,10 @@ def _update_cabinet_width(self, context):
 
     A cabinet's origin is its LEFT edge, so a width change naturally
     grows / shrinks the right side. Anchored RIGHT, the origin shifts
-    by the width delta so the right edge stays put instead - resize
-    without having to move the cabinet after (the old version's
-    anchor-left/right). The previous width is stashed on the object
+    by the full width delta so the right edge stays put instead;
+    anchored CENTER it shifts by half, holding the centreline (the old
+    version's anchor left / center / right). Resize without having to
+    move the cabinet after. The previous width is stashed on the object
     (seeded from the cage's Dim X, which still holds the pre-write
     value when the callback fires) so back-to-back writes under a
     suspended recalc compute the right delta. System width writes
@@ -4500,12 +4501,13 @@ def _update_cabinet_width(self, context):
             old = hb_types.GeoNodeCage(root).get_input('Dim X')
         except Exception:
             old = None
-    if (old is not None
-            and getattr(self, 'anchor_side', 'LEFT') == 'RIGHT'
+    share = {'RIGHT': 1.0, 'CENTER': 0.5}.get(
+        getattr(self, 'anchor_side', 'LEFT'), 0.0)
+    if (old is not None and share
             and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
         delta = self.width - old
         if abs(delta) > 1e-9:
-            root.location.x -= delta
+            root.location.x -= delta * share
     root['HB_ANCHOR_LAST_WIDTH'] = self.width
     _update_cabinet_dim(self, context)
 
@@ -5747,12 +5749,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     # Which edge stays put when the width changes. LEFT is the natural
     # behavior (origin at the left edge); RIGHT shifts the origin by the
-    # width delta so the cabinet resizes toward the left instead.
+    # width delta so the cabinet resizes toward the left instead; CENTER
+    # splits the delta so the centreline holds -- what you want when the
+    # cabinet is centred on something fixed (a window, an appliance
+    # whose size changed) and both edges should move evenly.
     anchor_side: EnumProperty(
         name="Anchor Side",
-        description="Which side of the cabinet stays put when the width changes",
+        description="Which part of the cabinet stays put when the width changes",
         items=[
             ('LEFT', "Left", "The left edge stays put; width changes move the right edge"),
+            ('CENTER', "Center", "The centreline stays put; width changes move both edges evenly"),
             ('RIGHT', "Right", "The right edge stays put; width changes move the left edge"),
         ],
         default='LEFT',
