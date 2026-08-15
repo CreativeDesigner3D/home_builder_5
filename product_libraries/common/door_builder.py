@@ -577,6 +577,11 @@ def _groove_section(style):
         hw = inch(0.0625)                 # 1/8 wide slot
         d = inch(0.09375)                 # 3/32 deep
         return [(-hw, 0.0), (-hw, d), (hw, d), (hw, 0.0)]
+    if style == 'VEE':
+        # 90-degree vee: half-width equals depth, so 1/8" deep reads as a
+        # 1/4"-wide groove at the face -- the standard v-groove cut.
+        d = inch(0.125)
+        return [(-d, 0.0), (0.0, d), (d, 0.0)]
     q = inch(0.0625)                      # quirk width each side
     r = inch(0.09)                        # bead radius
     d = inch(0.11)                        # quirk depth (crest d - r below face)

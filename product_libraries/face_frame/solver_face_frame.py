@@ -411,7 +411,7 @@ def left_scribe_offset(layout):
         return inch(0.75)
     # 1/4 applied panels (FLUSH_X strip + textured beadboard / shiplap)
     # all sit in a 1/4 scribe gap so they tuck flush against the side.
-    if layout.l_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP'):
+    if layout.l_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
         return inch(0.25)
     return layout.l_scribe
 
@@ -438,7 +438,7 @@ def right_scribe_offset(layout):
         return 0.0
     if layout.r_fin_end in ('PANELED', 'FALSE_FF', 'WORKING_FF'):
         return inch(0.75)
-    if layout.r_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP'):
+    if layout.r_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
         return inch(0.25)
     return layout.r_scribe
 

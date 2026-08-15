@@ -38,6 +38,7 @@ FIN_END_ITEMS = [
     ('WORKING_FF', "Working Face Frame", "Applied frame with working fronts"),
     ('BEADBOARD', "Beadboard", "Beadboard finished end"),
     ('SHIPLAP', "Shiplap", "Shiplap finished end"),
+    ('V_GROOVE', "V-Groove", "V-groove finished end"),
     ('FLUSH_X', "Finished Flush X Inches", "Finished strip running the front X inches of the side"),
 ]
 
@@ -52,6 +53,7 @@ RETURN_MEMBER_TYPE_ITEMS = [
     ('PANELED', "Paneled", "Applied panel with rails / stiles and an inset panel"),
     ('BEADBOARD', "Beadboard", "3/4 part with vertical quirk-bead grooves"),
     ('SHIPLAP', "Shiplap", "3/4 part with nickel-gap plank reveals"),
+    ('V_GROOVE', "V-Groove", "3/4 part with vertical v-groove cuts"),
 ]
 
 
@@ -1909,7 +1911,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'MANTLE_HEADER_FRONT', 'MANTLE_HEADER_BOTTOM',
         # Blind ends + finished back + flush skins / decorative panels
         'BLIND_PANEL_LEFT', 'BLIND_PANEL_RIGHT',
-        'FINISHED_BACK', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP',
+        'FINISHED_BACK', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE',
         # Finished-side return closeout (return panel + rear stile) wrapping
         # the exposed corner of a side extended back past a finished back.
         'LEFT_SIDE_RETURN', 'RIGHT_SIDE_RETURN',
@@ -2321,7 +2323,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # visible geometry (GN cutpart display hidden), so the
             # finish goes on the mesh slot directly - cutpart surface
             # inputs are inert here.
-            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP', 'INSET_PANEL')
+            if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
+                          'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 if finish_mat is not None:
@@ -7803,6 +7806,8 @@ class Face_Frame_Opening_Props(PropertyGroup):
              "Vertical quirk-bead grooves carved across the face"),
             ('SHIPLAP', "Shiplap",
              "Nickel-gap plank reveals carved across the face"),
+            ('V_GROOVE', "V-Groove",
+             "Vertical v-groove cuts carved across the face"),
         ],
         default='PANEL',
         update=_update_cabinet_dim,

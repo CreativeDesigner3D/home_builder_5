@@ -400,12 +400,14 @@ TAG_RETURN_MEMBER = 'hb_return_member'
 # and the back field (flat, paneled or textured) butts into it. Shared by
 # the geometry gate (_finished_side_return_width) and both UI surfaces
 # that draw the return rows.
-RETURN_BACK_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP')
+RETURN_BACK_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
+                          'V_GROOVE')
 
 # Side conditions that can carry a return closeout when extended back.
 # Same surfaces as the back set: any side with a finished face -- flat,
 # paneled or textured -- can wrap its exposed back corner.
-RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP')
+RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
+                          'V_GROOVE')
 
 # Applied flush-X strip: a 1/4 part covering the front portion of a
 # cabinet side when LEFT/RIGHT_finished_end_condition is FLUSH_X. The
@@ -439,6 +441,7 @@ TAG_BAY_FINISH_OPENING = 'hb_bay_finish_opening'
 # display disabled (same pattern as HB_STATIC_SLAB fronts).
 PART_ROLE_BEADBOARD = 'BEADBOARD'
 PART_ROLE_SHIPLAP = 'SHIPLAP'
+PART_ROLE_V_GROOVE = 'V_GROOVE'
 TAG_TEXTURED_PANEL_SIDE = 'hb_textured_panel_side'
 # Stamped on a textured panel whose mesh data carries the static carved
 # geometry; the material walk assigns the finish to the mesh slot
@@ -447,11 +450,14 @@ TAG_STATIC_TEXTURED = 'HB_STATIC_TEXTURED'
 TEXTURED_PANEL_ROLES = {
     'BEADBOARD': PART_ROLE_BEADBOARD,
     'SHIPLAP':   PART_ROLE_SHIPLAP,
+    'V_GROOVE':  PART_ROLE_V_GROOVE,
 }
 # Beadboard plank spacing (matches the 'MDF Beadboard' door-panel kind);
-# shiplap course pitch (matches the wood-hood default board width).
+# shiplap course pitch (matches the wood-hood default board width);
+# v-groove plank spacing (the usual 4" sheet-goods layout).
 TEXTURED_BEADBOARD_SPACING = 1.6 * 0.0254
 TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
+TEXTURED_V_GROOVE_SPACING = 4.0 * 0.0254
 
 # Applied panel side tag - written on a panel root that's been spawned
 # by a cabinet to serve as its left/right/back finished end. Drives
@@ -6303,7 +6309,7 @@ class FaceFrameCabinet(GeoNodeCage):
             existing = None
         if kind == 'PANELED':
             self._build_return_paneled(role, name, existing, paneled)
-        elif kind in ('BEADBOARD', 'SHIPLAP'):
+        elif kind in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
             self._build_return_textured(role, name, existing, finished, kind)
         else:
             self._build_return_finished(role, name, existing, finished)
@@ -7029,27 +7035,31 @@ class FaceFrameCabinet(GeoNodeCage):
 
         BEADBOARD: vertical quirk-bead grooves (door_builder's BEAD
         section) along local X, repeated across the width, pattern
-        centered like a grooved door panel. SHIPLAP: nickel-gap plank
-        reveals (KERF section) along local Y, repeated up the length at
-        TEXTURED_SHIPLAP_PITCH from the bottom. Grooves that don't fit
-        leave a plain slab.
+        centered like a grooved door panel. V_GROOVE: the same vertical
+        layout with a 90-degree vee cut at TEXTURED_V_GROOVE_SPACING.
+        SHIPLAP: nickel-gap plank reveals (KERF section) along local Y,
+        repeated up the length at TEXTURED_SHIPLAP_PITCH from the
+        bottom. Grooves that don't fit leave a plain slab.
         """
         import bmesh
         from ..common import door_builder
 
         s = -1.0 if mirror_z else 1.0
         sec = door_builder._groove_section(
-            'BEAD' if condition == 'BEADBOARD' else 'KERF')
+            {'BEADBOARD': 'BEAD', 'V_GROOVE': 'VEE'}.get(condition, 'KERF'))
         hw = max(du for du, dv in sec)
         deep = max(dv for du, dv in sec)
         if deep >= thickness:
             sec = None
 
         # Groove centers along the repeat axis (u), and the span the
-        # cross-section is drawn across.
-        if condition == 'BEADBOARD':
+        # cross-section is drawn across. Beadboard and v-groove share the
+        # vertical layout and differ only in section and spacing.
+        if condition in ('BEADBOARD', 'V_GROOVE'):
             span_u, run = width, length      # profile across Y, extrude X
-            spacing = TEXTURED_BEADBOARD_SPACING
+            spacing = (TEXTURED_V_GROOVE_SPACING
+                       if condition == 'V_GROOVE'
+                       else TEXTURED_BEADBOARD_SPACING)
             margin = max(2.0 * hw, 0.004)
             k = 1 + int(span_u / spacing) if spacing > 0 else 0
             centers = [span_u / 2.0 + (i + 0.5) * spacing
@@ -7077,7 +7087,7 @@ class FaceFrameCabinet(GeoNodeCage):
         loop.append((0.0, 0.0))
 
         bm = bmesh.new()
-        if condition == 'BEADBOARD':
+        if condition in ('BEADBOARD', 'V_GROOVE'):
             ring0 = [bm.verts.new((0.0, -u, z)) for u, z in loop]
             ring1 = [bm.verts.new((run, -u, z)) for u, z in loop]
         else:
@@ -7214,7 +7224,8 @@ class FaceFrameCabinet(GeoNodeCage):
 
             if part_obj is None:
                 part = CabinetPart()
-                label = 'Beadboard' if condition == 'BEADBOARD' else 'Shiplap'
+                label = {'BEADBOARD': 'Beadboard',
+                         'V_GROOVE': 'V-Groove'}.get(condition, 'Shiplap')
                 part.create(f'{label} {side[0]}')
                 part.obj.parent = self.obj
                 part.obj['hb_part_role'] = desired_role
@@ -8716,7 +8727,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # lands where the slab sat and the grooves face the room.
             if leaf['role'] == PART_ROLE_INSET_PANEL:
                 tex = getattr(op_props, 'inset_panel_type', 'PANEL')
-                if tex in ('BEADBOARD', 'SHIPLAP'):
+                if tex in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
                     front.obj.location.y = (
                         leaf['part_position'][1] - thickness)
                     self._textured_panel_mesh(
@@ -12750,7 +12761,7 @@ class MiscPart(CabinetPart):
                 if surf is not None:
                     obj.data.materials.append(surf)
             return
-        if ptype not in ('BEADBOARD', 'SHIPLAP'):
+        if ptype not in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
             mod_name = getattr(obj.home_builder, 'mod_name', '')
             mod = obj.modifiers.get(mod_name) if mod_name else None
             if obj.data is not None and obj.get(TAG_STATIC_TEXTURED):
