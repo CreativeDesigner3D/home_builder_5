@@ -27,6 +27,8 @@ from ..hb_gpu_draw import (
 
 
 # ---- Layout constants -------------------------------------------------------
+# All in unscaled pixels -- every one is multiplied by _s() at use, so the
+# panel tracks Blender's UI scale instead of shrinking on high-DPI screens.
 
 PANEL_TOP_MARGIN      = 12      # distance from top of visible window region
 PANEL_WIDTH           = 250
@@ -87,6 +89,20 @@ PIN_ACTIVE_BG          = (0.20, 0.43, 0.70, 1.0)
 # scenes can be switched in a row. Clicking away (or Esc) still closes it.
 # Sticky for the session -- a module global, intentionally not per-instance.
 _pinned = False
+
+
+# ---- Scale ------------------------------------------------------------------
+
+def _s():
+    """Global UI scale (Resolution Scale x DPI). This panel is GPU-drawn in
+    raw pixels, so every dimension and font size is multiplied by this to
+    track Blender's UI -- otherwise it stays device-pixel sized and reads
+    as a postage stamp on high-DPI / scaled displays. Same helper the
+    viewport HUD uses."""
+    try:
+        return bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        return 1.0
 
 
 # ---- Scene helpers ----------------------------------------------------------
@@ -150,27 +166,28 @@ def _collect_groups():
 def _draw_rename_glyph(shader, rect, color):
     """A small text-field box with a cursor bar -- the rename affordance."""
     rx, ry, rw, rh = rect
-    pad = 4
+    s = _s()
+    pad = 4 * s
     bx, by = rx + pad, ry + pad
     bw, bh = rw - pad * 2, rh - pad * 2
     _draw_rect_outline(shader, bx, by, bw, bh, color)
     cx = bx + bw / 3.0
-    _draw_rect(shader, cx, by + 2, 1.5, bh - 4, color)
+    _draw_rect(shader, cx, by + 2 * s, 1.5 * s, bh - 4 * s, color)
 
 
 def _draw_delete_glyph(shader, rect, color):
     """An X -- the delete affordance."""
     rx, ry, rw, rh = rect
-    pad = 5
+    pad = 5 * _s()
     x0, y0 = rx + pad, ry + pad
     x1, y1 = rx + rw - pad, ry + rh - pad
     _draw_lines(shader, [(x0, y0), (x1, y1), (x0, y1), (x1, y0)], color)
 
 
 def _draw_plus_glyph(shader, cx, cy, size, color):
-    """A plus sign centered at (cx, cy)."""
+    """A plus sign centered at (cx, cy). ``size`` arrives pre-scaled."""
     half = size / 2.0
-    thick = 1.5
+    thick = 1.5 * _s()
     _draw_rect(shader, cx - half, cy - thick / 2.0, size, thick, color)
     _draw_rect(shader, cx - thick / 2.0, cy - half, thick, size, color)
 
@@ -179,11 +196,12 @@ def _draw_pin_glyph(shader, rect, color):
     """A small thumbtack -- the pin toggle affordance: a flat head with a
     short needle dropping from it."""
     rx, ry, rw, rh = rect
+    s = _s()
     cx = rx + rw / 2.0
-    head_w, head_h = 9, 4
-    head_y = ry + rh - 5 - head_h
+    head_w, head_h = 9 * s, 4 * s
+    head_y = ry + rh - 5 * s - head_h
     _draw_rect(shader, cx - head_w / 2.0, head_y, head_w, head_h, color)
-    _draw_lines(shader, [(cx, head_y), (cx, ry + 4)], color)
+    _draw_lines(shader, [(cx, head_y), (cx, ry + 4 * s)], color)
 
 
 # ---- Layout computation -----------------------------------------------------
@@ -203,16 +221,29 @@ def _build_layout(region, area, current_scene_name,
     """
     groups = _collect_groups()
 
-    content_h = PANEL_HEADER_HEIGHT + SECTION_GAP
+    s = _s()
+    panel_hdr_h = PANEL_HEADER_HEIGHT * s
+    section_gap = SECTION_GAP * s
+    section_hdr_h = SECTION_HEADER_HEIGHT * s
+    row_h = ROW_HEIGHT * s
+    new_room_gap = NEW_ROOM_GAP * s
+    new_room_h = NEW_ROOM_BTN_HEIGHT * s
+    pad_x = PANEL_PADDING_X * s
+    pad_y = PANEL_PADDING_Y * s
+    btn = ACTION_BTN_SIZE * s
+    btn_gap = ACTION_BTN_GAP * s
+    btn_right_pad = ACTION_BTN_RIGHT_PAD * s
+
+    content_h = panel_hdr_h + section_gap
     for i, (_, _, scenes, _) in enumerate(groups):
         if i > 0:
-            content_h += SECTION_GAP
-        content_h += SECTION_HEADER_HEIGHT
-        content_h += ROW_HEIGHT * len(scenes)
-    content_h += NEW_ROOM_GAP + NEW_ROOM_BTN_HEIGHT
+            content_h += section_gap
+        content_h += section_hdr_h
+        content_h += row_h * len(scenes)
+    content_h += new_room_gap + new_room_h
 
-    panel_w = PANEL_WIDTH
-    panel_h = content_h + PANEL_PADDING_Y * 2
+    panel_w = PANEL_WIDTH * s
+    panel_h = content_h + pad_y * 2
 
     x_min, x_max, y_min, y_max = _get_visible_window_bounds(area)
     visible_w = max(x_max - x_min, panel_w)
@@ -225,55 +256,50 @@ def _build_layout(region, area, current_scene_name,
     else:
         # Center horizontally within the visible window area; anchor to top.
         panel_x = x_min + (visible_w - panel_w) / 2.0
-        panel_top = y_max - PANEL_TOP_MARGIN
+        panel_top = y_max - PANEL_TOP_MARGIN * s
     panel_y = panel_top - panel_h
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
-    content_x = panel_x + PANEL_PADDING_X
-    content_w = panel_w - PANEL_PADDING_X * 2
+    content_x = panel_x + pad_x
+    content_w = panel_w - pad_x * 2
     entries = []
 
-    cursor_y = panel_top - PANEL_PADDING_Y
+    cursor_y = panel_top - pad_y
 
-    ph_rect = (content_x, cursor_y - PANEL_HEADER_HEIGHT,
-               content_w, PANEL_HEADER_HEIGHT)
-    pin_y = ph_rect[1] + (PANEL_HEADER_HEIGHT - ACTION_BTN_SIZE) / 2.0
-    pin_x = content_x + content_w - ACTION_BTN_RIGHT_PAD - ACTION_BTN_SIZE
-    pin_rect = (pin_x, pin_y, ACTION_BTN_SIZE, ACTION_BTN_SIZE)
+    ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
+    pin_y = ph_rect[1] + (panel_hdr_h - btn) / 2.0
+    pin_x = content_x + content_w - btn_right_pad - btn
+    pin_rect = (pin_x, pin_y, btn, btn)
     entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
-    cursor_y -= PANEL_HEADER_HEIGHT + SECTION_GAP
+    cursor_y -= panel_hdr_h + section_gap
 
     for i, (label, color, scenes, parent_fn) in enumerate(groups):
         if i > 0:
-            cursor_y -= SECTION_GAP
-        header_rect = (content_x, cursor_y - SECTION_HEADER_HEIGHT,
-                       content_w, SECTION_HEADER_HEIGHT)
+            cursor_y -= section_gap
+        header_rect = (content_x, cursor_y - section_hdr_h,
+                       content_w, section_hdr_h)
         entries.append(('header', label, color, header_rect))
-        cursor_y -= SECTION_HEADER_HEIGHT
+        cursor_y -= section_hdr_h
 
-        for s in scenes:
-            row_rect = (content_x, cursor_y - ROW_HEIGHT,
-                        content_w, ROW_HEIGHT)
-            parent = parent_fn(s) if parent_fn else None
+        for sc in scenes:
+            row_rect = (content_x, cursor_y - row_h, content_w, row_h)
+            parent = parent_fn(sc) if parent_fn else None
             rename_rect = delete_rect = None
-            if _is_room(s):
-                by = (cursor_y - ROW_HEIGHT
-                      + (ROW_HEIGHT - ACTION_BTN_SIZE) / 2.0)
-                dx = (content_x + content_w
-                      - ACTION_BTN_RIGHT_PAD - ACTION_BTN_SIZE)
-                rnx = dx - ACTION_BTN_GAP - ACTION_BTN_SIZE
-                delete_rect = (dx, by, ACTION_BTN_SIZE, ACTION_BTN_SIZE)
-                rename_rect = (rnx, by, ACTION_BTN_SIZE, ACTION_BTN_SIZE)
+            if _is_room(sc):
+                by = cursor_y - row_h + (row_h - btn) / 2.0
+                dx = content_x + content_w - btn_right_pad - btn
+                rnx = dx - btn_gap - btn
+                delete_rect = (dx, by, btn, btn)
+                rename_rect = (rnx, by, btn, btn)
             entries.append((
-                'row', s, parent, color,
-                s.name == current_scene_name, row_rect,
+                'row', sc, parent, color,
+                sc.name == current_scene_name, row_rect,
                 rename_rect, delete_rect,
             ))
-            cursor_y -= ROW_HEIGHT
+            cursor_y -= row_h
 
-    cursor_y -= NEW_ROOM_GAP
-    new_room_rect = (content_x, cursor_y - NEW_ROOM_BTN_HEIGHT,
-                     content_w, NEW_ROOM_BTN_HEIGHT)
+    cursor_y -= new_room_gap
+    new_room_rect = (content_x, cursor_y - new_room_h, content_w, new_room_h)
     entries.append(('new_room', new_room_rect))
 
     return panel_rect, entries
@@ -283,15 +309,18 @@ def _build_layout(region, area, current_scene_name,
 
 def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
     rx, ry, rw, rh = rect
-    blf.size(font_id, HEADER_FONT_SIZE)
+    s = _s()
+    hdr_font = HEADER_FONT_SIZE * s
+    row_font = ROW_FONT_SIZE * s
+    blf.size(font_id, hdr_font)
     label = "CURRENT"
     label_w = blf.dimensions(font_id, label)[0]
-    baseline = _vcenter_baseline(rect, font_id, ROW_FONT_SIZE)
-    _draw_text(font_id, rx, baseline, HEADER_FONT_SIZE, HEADER_TEXT, label)
-    _draw_text(font_id, rx + label_w + 8, baseline, ROW_FONT_SIZE,
+    baseline = _vcenter_baseline(rect, font_id, row_font)
+    _draw_text(font_id, rx, baseline, hdr_font, HEADER_TEXT, label)
+    _draw_text(font_id, rx + label_w + 8 * s, baseline, row_font,
                TEXT_PRIMARY, current_name)
     # separator line at the bottom of the header rect
-    _draw_rect(shader, rx, ry, rw, 1, SEPARATOR_COLOR)
+    _draw_rect(shader, rx, ry, rw, max(1.0, s), SEPARATOR_COLOR)
     # pin toggle -- when lit, the navigator stays open across scene picks
     px, py, pw, ph = pin_rect
     hovered = _point_in_rect(mx, my, pin_rect)
@@ -317,28 +346,32 @@ def _draw_row(shader, font_id, entry, mx, my):
     elif hovered:
         _draw_rect(shader, rx, ry, rw, rh, ROW_HOVER_BG)
 
-    accent_alpha = 1.0 if is_current else (0.85 if hovered else 0.55)
-    _draw_rect(shader, rx + ACCENT_LEFT_PAD, ry + 4,
-               ACCENT_WIDTH, rh - 8, (*color, accent_alpha))
+    s = _s()
+    row_font = ROW_FONT_SIZE * s
+    parent_font = PARENT_FONT_SIZE * s
 
-    text_x = rx + ROW_TEXT_LEFT_PAD
+    accent_alpha = 1.0 if is_current else (0.85 if hovered else 0.55)
+    _draw_rect(shader, rx + ACCENT_LEFT_PAD * s, ry + 4 * s,
+               ACCENT_WIDTH * s, rh - 8 * s, (*color, accent_alpha))
+
+    text_x = rx + ROW_TEXT_LEFT_PAD * s
     name_color = TEXT_PRIMARY if is_current else TEXT_NORMAL
-    baseline = _vcenter_baseline(rect, font_id, ROW_FONT_SIZE)
+    baseline = _vcenter_baseline(rect, font_id, row_font)
 
     if parent:
-        blf.size(font_id, PARENT_FONT_SIZE)
+        blf.size(font_id, parent_font)
         parent_w = blf.dimensions(font_id, parent)[0]
         sep = "  \u00b7  "
         sep_w = blf.dimensions(font_id, sep)[0]
         _draw_text(font_id, text_x, baseline,
-                   PARENT_FONT_SIZE, TEXT_DIM, parent)
+                   parent_font, TEXT_DIM, parent)
         _draw_text(font_id, text_x + parent_w, baseline,
-                   PARENT_FONT_SIZE, TEXT_DIM, sep)
+                   parent_font, TEXT_DIM, sep)
         _draw_text(font_id, text_x + parent_w + sep_w, baseline,
-                   ROW_FONT_SIZE, name_color, scene.name)
+                   row_font, name_color, scene.name)
     else:
         _draw_text(font_id, text_x, baseline,
-                   ROW_FONT_SIZE, name_color, scene.name)
+                   row_font, name_color, scene.name)
 
     if rename_rect is not None:
         r_hover = _point_in_rect(mx, my, rename_rect)
@@ -363,16 +396,19 @@ def _draw_new_room_button(shader, font_id, rect, mx, my):
                NEW_ROOM_HOVER_BG if hovered else NEW_ROOM_BG)
     _draw_rect_outline(shader, rx, ry, rw, rh, PANEL_BORDER)
     label = "New Room"
-    blf.size(font_id, ROW_FONT_SIZE)
+    s = _s()
+    row_font = ROW_FONT_SIZE * s
+    blf.size(font_id, row_font)
     label_w = blf.dimensions(font_id, label)[0]
-    plus_size = 10
-    group_w = plus_size + 8 + label_w
+    plus_size = 10 * s
+    gap = 8 * s
+    group_w = plus_size + gap + label_w
     gx = rx + (rw - group_w) / 2.0
     cy = ry + rh / 2.0
     _draw_plus_glyph(shader, gx + plus_size / 2.0, cy, plus_size, TEXT_PRIMARY)
-    baseline = _vcenter_baseline(rect, font_id, ROW_FONT_SIZE)
-    _draw_text(font_id, gx + plus_size + 8, baseline,
-               ROW_FONT_SIZE, TEXT_PRIMARY, label)
+    baseline = _vcenter_baseline(rect, font_id, row_font)
+    _draw_text(font_id, gx + plus_size + gap, baseline,
+               row_font, TEXT_PRIMARY, label)
 
 
 # ---- Draw callback ----------------------------------------------------------
@@ -402,8 +438,9 @@ def paint_navigator(panel_rect, entries, mx, my):
         elif kind == 'header':
             _, label, color, rect = entry
             rx = rect[0]
-            baseline = _vcenter_baseline(rect, font_id, HEADER_FONT_SIZE)
-            _draw_text(font_id, rx, baseline, HEADER_FONT_SIZE,
+            hdr_font = HEADER_FONT_SIZE * _s()
+            baseline = _vcenter_baseline(rect, font_id, hdr_font)
+            _draw_text(font_id, rx, baseline, hdr_font,
                        HEADER_TEXT, label)
         elif kind == 'row':
             _draw_row(shader, font_id, entry, mx, my)

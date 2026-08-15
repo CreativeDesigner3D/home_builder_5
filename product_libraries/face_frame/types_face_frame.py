@@ -13581,6 +13581,7 @@ def recalculate_face_frame_cabinet(obj):
     try:
         cabinet = _wrap_cabinet(root)
         cabinet.recalculate()
+        _resize_seated_wood_tops(root)
         _reapply_cabinet_style(root)
         _reapply_selection_mode_highlights(root)
     finally:
@@ -13589,6 +13590,25 @@ def recalculate_face_frame_cabinet(obj):
     # Standalone panels get the applied-back behaviour after the core
     # recalc (own guard prevents recursion via its bay insert/delete).
     _reconcile_standalone_panel(root)
+
+
+def _resize_seated_wood_tops(root):
+    """Refit wood tops seated on this cabinet after its size changed.
+
+    A seated top sizes from its anchor cabinet plus the overhangs, but
+    that math only runs inside WoodTopPart.rebuild() -- which nothing
+    fired when the cabinet underneath was resized, so the board kept the
+    width / depth / height it was placed at. Style re-apply happens after
+    this so a rebuilt board still picks up its materials.
+    """
+    for child in root.children_recursive:
+        if not child.get(WOOD_TOP_TAG):
+            continue
+        # rebuild() re-reads the board's OWN parent, so a top seated on a
+        # nested cage still fits the cabinet it actually sits on.
+        top = WoodTopPart()
+        top.obj = child
+        top.rebuild()
 
 
 def _reapply_selection_mode_highlights(root):

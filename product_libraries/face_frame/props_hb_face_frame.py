@@ -10339,6 +10339,39 @@ def _update_wood_top(self, context):
     top.rebuild()
 
 
+# Set while a nosing height is being seeded automatically, so the height
+# callback can tell that write apart from a user edit.
+_SEEDING_NOSING_HEIGHT = False
+
+
+def _update_wood_top_nosing_style(self, context):
+    """Turning on an extra-height nosing seeds its height from the board
+    thickness -- a nosing a different thickness than the top it edges is
+    the exception, not the norm, so the property default (2") was the
+    wrong starting point. A height the user dialed in is left alone.
+    """
+    global _SEEDING_NOSING_HEIGHT
+    if (self.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
+            and not self.get('nosing_height_set')
+            and abs(self.nosing_height - self.thickness) > 0.0001):
+        _SEEDING_NOSING_HEIGHT = True
+        try:
+            # Writing the height runs its own update, which rebuilds.
+            self.nosing_height = self.thickness
+        finally:
+            _SEEDING_NOSING_HEIGHT = False
+        return
+    _update_wood_top(self, context)
+
+
+def _update_wood_top_nosing_height(self, context):
+    """A hand-set nosing height sticks: mark it so a later style switch
+    doesn't re-seed it from the board thickness."""
+    if not _SEEDING_NOSING_HEIGHT:
+        self['nosing_height_set'] = True
+    _update_wood_top(self, context)
+
+
 class Face_Frame_Wood_Top_Props(PropertyGroup):
     """Options for a Wood Top (countertop part): ONE lone finished
     board (no cage, no sub-parts -- like Misc Part).
@@ -10396,12 +10429,13 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
     nosing_style: EnumProperty(
         name="Nosing",
         items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
-        update=_update_wood_top,
+        update=_update_wood_top_nosing_style,
     )  # type: ignore
     nosing_height: FloatProperty(
         name="Nosing Height", default=units.inch(2.0),
         min=units.inch(0.5), soft_max=units.inch(3.0),
-        unit='LENGTH', precision=4, update=_update_wood_top,
+        unit='LENGTH', precision=4,
+        update=_update_wood_top_nosing_height,
     )  # type: ignore
     nosing_front: BoolProperty(
         name="Nosing Front", default=True,
