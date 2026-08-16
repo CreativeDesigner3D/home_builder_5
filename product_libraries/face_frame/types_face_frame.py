@@ -421,16 +421,24 @@ PART_ROLE_FULL_OVERLAY_STILE = 'FULL_OVERLAY_STILE'
 TAG_FO_STILE_SIDE = 'hb_fo_stile_side'
 
 # Per-bay finish liner: 1/4 finish-material panels added to the inner
-# faces of a bay's opening (left / right / top / back) when the bay's
+# faces of a bay's opening (left / right / top) when the bay's
 # finish_bay flag is set, so the exterior finish reads inside the
-# opening. Keyed by bay index + face so they reuse-in-place / sweep
-# cleanly across recalcs. See _reconcile_bay_finish_panels.
+# opening. The back and bay floor get no liner - the carcass BACK /
+# BOTTOM panels are cut from finish stock instead (TAG_SEGMENT_FINISHED).
+# Keyed by bay index + face so they reuse-in-place / sweep cleanly
+# across recalcs. See _reconcile_bay_finish_panels.
 PART_ROLE_BAY_FINISH = 'BAY_FINISH'
 TAG_BAY_FINISH_BAY = 'hb_bay_finish_bay'
 TAG_BAY_FINISH_FACE = 'hb_bay_finish_face'
 # Which opening within the bay a finish liner belongs to: an opening
 # leaf index for a per-opening finish, or -1 for a whole-bay finish.
 TAG_BAY_FINISH_OPENING = 'hb_bay_finish_opening'
+
+# Stamped on a segmented carcass panel (BACK / BOTTOM) when the bays it
+# spans are a finished region: the panel itself is the finish, so the
+# material walk gives it the exterior finish instead of the interior.
+# Segments break at finish boundaries so one flag covers the whole part.
+TAG_SEGMENT_FINISHED = 'hb_segment_finished'
 
 # Textured-finish applied panels: 1/4 parts representing beadboard or
 # shiplap finishes on a side (LEFT / RIGHT / BACK). The part keeps its
@@ -2418,6 +2426,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
+                child[TAG_SEGMENT_FINISHED] = seg['finished']
 
             elif role == PART_ROLE_FRONT_STRETCHER:
                 seg = front_str_by_start.get(child.get('hb_segment_start_bay'))
@@ -2463,6 +2472,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['vertical_length'])
                 part.set_input('Width', seg['horizontal_length'])
                 part.set_input('Thickness', seg['thickness'])
+                child[TAG_SEGMENT_FINISHED] = seg['finished']
 
             # ---- End stiles ----
             elif role == PART_ROLE_LEFT_STILE:
@@ -6896,13 +6906,17 @@ class FaceFrameCabinet(GeoNodeCage):
         A finished region (a whole bay via finish_bay, or a single opening
         via finish_opening) gets 1/4 finish-material liner panels on its
         inner faces so the exterior finish reads inside it. FULL finish
-        lines the full cavity depth on five faces (LEFT / RIGHT / TOP /
-        BACK / BOTTOM); FLUSH finish lines the FF opening with a band flush
-        to the FF front face, running finish_*_flush_depth back (0 = full
-        depth) with no BACK panel (open behind for an appliance). A removed
-        bay bottom drops the BOTTOM panel and runs the verticals to the
-        floor. The geometry is identical for bays and openings - only the
-        region bounds differ - so both route through _finish_region_specs.
+        lines the full cavity depth on the LEFT / RIGHT / TOP faces only -
+        the back and the bay floor get no applied part; the carcass BACK /
+        BOTTOM panels behind the region are cut from finish stock instead
+        (solver's finish_carcass flag splits those segments so unfinished
+        neighbouring bays keep interior panels). FLUSH finish lines the FF
+        opening with a band flush to the FF front face, running
+        finish_*_flush_depth back (0 = full depth) on all four sides with
+        no BACK panel (open behind for an appliance). A removed bay bottom
+        runs the verticals to the floor. The geometry is identical for
+        bays and openings - only the region bounds differ - so both route
+        through _finish_region_specs.
 
         A bay-level finish supersedes per-opening finishes within that bay
         (the bay liner already covers everything). Liners are keyed by
@@ -7036,7 +7050,13 @@ class FaceFrameCabinet(GeoNodeCage):
                                     loc=(op_left_x, band_back_y, op_bottom_z),
                                     length=op_width, width=depth)))
         else:
-            # FULL finish lining the full cavity depth on the cavity walls.
+            # FULL finish lining the full cavity depth on the cavity
+            # walls. Only the verticals and the ceiling are applied 1/4
+            # parts: the shop lines the SIDES of a finished bay but cuts
+            # the back and the bay floor from finish stock instead, so
+            # those carry no liner here (the carcass BACK / BOTTOM parts
+            # take the finish material, splitting per bay - see
+            # solver.carcass_back_segments / carcass_bottom_segments).
             vert_bottom_z = 0.0 if to_floor else bottom_z
             vert_height   = top_z - vert_bottom_z
             specs = [
@@ -7053,18 +7073,7 @@ class FaceFrameCabinet(GeoNodeCage):
                                loc=(left_x + t, cavity_back_y, top_z),
                                length=max(cage_dim_x - 2 * t, 0.0),
                                width=cage_dim_y)),
-                ('BACK',  dict(rot=(math.radians(90), math.radians(-90), 0.0),
-                               mirror_y=True, mirror_z=False,
-                               loc=(left_x, cavity_back_y, vert_bottom_z),
-                               length=vert_height, width=cage_dim_x)),
             ]
-            if not to_floor:
-                specs.append(
-                    ('BOTTOM', dict(rot=(0.0, 0.0, 0.0),
-                                    mirror_y=True, mirror_z=False,
-                                    loc=(left_x + t, cavity_back_y, bottom_z),
-                                    length=max(cage_dim_x - 2 * t, 0.0),
-                                    width=cage_dim_y)))
         return specs
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,

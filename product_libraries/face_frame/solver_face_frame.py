@@ -255,6 +255,7 @@ class FaceFrameLayout:
 
     def _read_bay(self, bay_obj):
         bp = bay_obj.face_frame_bay
+        tree = self._read_tree_root(bay_obj)
         return {
             'width':              bp.width,
             'height':             bp.height,
@@ -275,7 +276,11 @@ class FaceFrameLayout:
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
             'finish_bay_flush_depth': bp.finish_bay_flush_depth,
-            'tree':               self._read_tree_root(bay_obj),
+            # The carcass panels behind this bay (back / bottom) are cut
+            # from finish stock rather than being lined with an applied
+            # 1/4 panel - see _bay_finish_carcass.
+            'finish_carcass':     _bay_finish_carcass(bp, tree),
+            'tree':               tree,
         }
 
     def _read_tree_root(self, bay_obj):
@@ -349,6 +354,11 @@ class FaceFrameLayout:
             'unlock_size':  op.unlock_size,
             'size_role':    obj.get('SIZE_ROLE'),
             'opening_index': op.opening_index,
+            # Per-opening finish, read here so the carcass segment builders
+            # can tell whether the panels behind a bay are finished stock
+            # (see _bay_finish_carcass).
+            'finish_opening':          op.finish_opening,
+            'finish_opening_material': op.finish_opening_material,
             # Whether the bottom-most leaf has a front decides if a
             # remove_bottom bay's capping splitter is a real bottom rail
             # (frontless: appliance / open shelving) or a true mid rail
@@ -381,8 +391,44 @@ class FaceFrameLayout:
             'finish_bay':         False,
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
+            'finish_carcass':     False,
             'tree':               None,
         }
+
+
+def _tree_all_openings_finished(node):
+    """True when every opening leaf under `node` is a finished opening
+    showing the exterior finish (and there is at least one leaf).
+
+    A bay whose openings are ALL finished reads the same as finish_bay
+    for the carcass panels behind them - the whole back / bottom is
+    finish stock. A bay with a mix keeps interior carcass panels; only
+    the finished opening's applied side liners show the finish (the
+    back / bottom are not split horizontally within a bay).
+    """
+    if node is None:
+        return False
+    if node.get('kind') == 'leaf':
+        return (bool(node.get('finish_opening'))
+                and node.get('finish_opening_material') == 'FINISH')
+    children = node.get('children') or []
+    return bool(children) and all(
+        _tree_all_openings_finished(c) for c in children)
+
+
+def _bay_finish_carcass(bay_props, tree):
+    """True when the bay's carcass back / bottom panels are cut from
+    finish stock instead of interior stock.
+
+    That happens when the whole bay is finished (finish_bay) or when
+    every opening in it is (see _tree_all_openings_finished), and the
+    region asks for the FINISH material rather than the style's
+    INTERIOR one (with INTERIOR the panels are already what's wanted,
+    so there's nothing to split for).
+    """
+    if bay_props.finish_bay:
+        return bay_props.finish_bay_material == 'FINISH'
+    return _tree_all_openings_finished(tree)
 
 
 # ---------------------------------------------------------------------------
@@ -2229,6 +2275,8 @@ def _carcass_bottom_passthrough(layout, gap_index):
     - bay depths differ (each panel sized to its bay's depth)
     - bottom rail widths differ (panel Z computed from bay_bottom_z + brw)
     - either bay has remove_bottom or remove_carcass set
+    - finish_carcass differs (a finished bay's floor is finish stock, so
+      it splits off to leave its neighbours interior)
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -2247,6 +2295,8 @@ def _carcass_bottom_passthrough(layout, gap_index):
         return False
     if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
             or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
+        return False
+    if bool(bay_a.get('finish_carcass')) != bool(bay_b.get('finish_carcass')):
         return False
     return True
 
@@ -2457,15 +2507,20 @@ def carcass_bottom_segments(layout):
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
             'thickness':  layout.mt,
+            # Segments break at finish boundaries, so the start bay
+            # speaks for the whole panel.
+            'finished':   bool(first_bay.get('finish_carcass')),
         })
     return segments
 
 
 def _carcass_back_passthrough(layout, gap_index):
     """Back panel breaks when bay floors, ceilings, or depths differ,
-    when either bay has remove_carcass set, or when either bay has
+    when either bay has remove_carcass set, when either bay has
     remove_bottom set (the flagged bay's back drops to the cabinet
-    floor and so can't share a Z origin with its neighbours)."""
+    floor and so can't share a Z origin with its neighbours), or when
+    finish_carcass differs (a finished bay's back is finish stock, so
+    it splits off to leave its neighbours interior)."""
     if gap_index >= len(layout.mid_stiles):
         return False
     bay_a = layout.bays[gap_index]
@@ -2483,6 +2538,8 @@ def _carcass_back_passthrough(layout, gap_index):
     if bay_a.get('remove_carcass') or bay_b.get('remove_carcass'):
         return False
     if bay_a.get('remove_bottom') or bay_b.get('remove_bottom'):
+        return False
+    if bool(bay_a.get('finish_carcass')) != bool(bay_b.get('finish_carcass')):
         return False
     return True
 
@@ -2552,6 +2609,9 @@ def carcass_back_segments(layout):
             'horizontal_length': right_x - left_x,
             'vertical_length':   carcass_top_z(layout, start) - z_origin,
             'thickness':       back_thickness(layout),
+            # Segments break at finish boundaries, so the start bay
+            # speaks for the whole panel.
+            'finished':        bool(first_bay.get('finish_carcass')),
         })
     return segments
 

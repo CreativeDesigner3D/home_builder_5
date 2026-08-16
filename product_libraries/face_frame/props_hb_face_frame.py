@@ -2560,6 +2560,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 )
                 continue
 
+            # Carcass back / bay floor behind a finished region: those
+            # faces get no applied liner - the panel itself is cut from
+            # finish stock (see _finish_region_specs). The solver splits
+            # these segments at finish boundaries and stamps the flag, so
+            # one read covers the whole part and unfinished neighbouring
+            # bays keep their own interior panels.
+            if role in ('BACK', 'BOTTOM') and child.get('hb_segment_finished'):
+                self._set_part_surfaces(child, finish_mat, finish_mat_rotated)
+                continue
+
             # Finished-region liner panels: the exterior finish by default,
             # or the style's interior material when the owning bay/opening
             # asks for it. Liners are parented to the cabinet ROOT, so the
