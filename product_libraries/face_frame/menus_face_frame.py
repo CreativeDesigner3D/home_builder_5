@@ -500,6 +500,12 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
         if (obj is not None
                 and obj.get('hb_part_role')
                 == types_face_frame.PART_ROLE_ROLLOUT_BOX):
+            # Per-box U-notch, the rollout's version of the sink duo
+            # drawer. Self-polling: hidden when the box predates the
+            # per-box options and its indices don't resolve.
+            layout.operator("hb_face_frame.sink_duo_rollout_prompts",
+                            text="U-Shaped Rollout...",
+                            icon='SELECT_SUBTRACT')
             if _has_drawer_box_construction_options():
                 _draw_drawer_box_construction_menu(layout)
             if _has_drawer_slides_options():

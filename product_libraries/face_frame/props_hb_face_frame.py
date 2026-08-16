@@ -7365,6 +7365,30 @@ class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
         default=units.inch(3.625), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # U-shaped rollout: same notch the sink duo drawer cuts, but per BOX
+    # rather than per opening -- a stack under a sink usually needs the
+    # top box wrapped around the plumbing and the lower one left whole.
+    # Field names match the opening's sink_duo_* so _apply_sink_duo_notch
+    # reads either one unchanged.
+    sink_duo: BoolProperty(
+        name="U-Shaped Box",
+        description="Notch this rollout box from the back so it wraps "
+                    "the sink basin / plumbing",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    sink_duo_notch_width: FloatProperty(
+        name="Notch Width",
+        description="Width of the U-notch, centered across the box",
+        default=units.inch(9.0), unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    sink_duo_notch_depth: FloatProperty(
+        name="Notch Depth",
+        description="How far the U-notch reaches into the box from the "
+                    "back; 0 uses two-thirds of the box depth",
+        default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 class Face_Frame_Interior_Item(bpy.types.PropertyGroup):

@@ -625,6 +625,47 @@ PART_ROLE_PULLOUT_SHELF = 'PULLOUT_SHELF'
 PART_ROLE_PULLOUT_SPACER = 'PULLOUT_SPACER'
 PART_ROLE_ROLLOUT_BOX = 'ROLLOUT_BOX'
 PART_ROLE_ROLLOUT_SPACER = 'ROLLOUT_SPACER'
+# Which interior item + rollout_boxes entry built a rollout box. Stamped
+# at create so a right-click command can find the per-box options for
+# the object under the cursor (the boxes themselves are wiped and
+# rebuilt every recalc, so the options can't live on them).
+TAG_ROLLOUT_ITEM_INDEX = 'hb_rollout_item_index'
+TAG_ROLLOUT_BOX_INDEX = 'hb_rollout_box_index'
+
+
+def rollout_box_props(opening_obj, item_index, box_index):
+    """The Face_Frame_Rollout_Box entry behind a rollout box object, or
+    None when the indices no longer resolve (item deleted, stack
+    shortened, or a file saved before the per-box options existed)."""
+    if opening_obj is None or item_index < 0 or box_index < 0:
+        return None
+    op_props = getattr(opening_obj, 'face_frame_opening', None)
+    if op_props is None:
+        return None
+    items = getattr(op_props, 'interior_items', ())
+    if item_index >= len(items):
+        return None
+    boxes = getattr(items[item_index], 'rollout_boxes', ())
+    if box_index >= len(boxes):
+        return None
+    return boxes[box_index]
+
+
+def rollout_box_props_for_object(obj):
+    """(opening_obj, box_props) for a rollout box object, or (None, None).
+    Walks up to the owning opening cage and reads the stamped indices."""
+    if obj is None or obj.get('hb_part_role') != PART_ROLE_ROLLOUT_BOX:
+        return None, None
+    node = obj.parent
+    while node is not None and not node.get(TAG_OPENING_CAGE):
+        node = node.parent
+    if node is None:
+        return None, None
+    return node, rollout_box_props(
+        node,
+        obj.get(TAG_ROLLOUT_ITEM_INDEX, -1),
+        obj.get(TAG_ROLLOUT_BOX_INDEX, -1),
+    )
 PART_ROLE_TRAY_DIVIDER = 'TRAY_DIVIDER'
 PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
@@ -10491,6 +10532,16 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
+        # Per-box U-notch (the rollout equivalent of the sink duo drawer).
+        # The indices are stamped so the right-click command can walk back
+        # from this object to the rollout_boxes entry that owns it.
+        item_index = desc.get('item_index', -1)
+        box_index = desc.get('box_index', -1)
+        box.obj[TAG_ROLLOUT_ITEM_INDEX] = item_index
+        box.obj[TAG_ROLLOUT_BOX_INDEX] = box_index
+        box_props = rollout_box_props(opening_obj, item_index, box_index)
+        if box_props is not None and getattr(box_props, 'sink_duo', False):
+            self._apply_sink_duo_notch(box.obj, dx, dy, dz, box_props)
         return box
 
     def _has_toe_kick(self):

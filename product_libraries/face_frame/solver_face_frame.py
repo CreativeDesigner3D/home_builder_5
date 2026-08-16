@@ -4584,7 +4584,7 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
     return out
 
 
-def _rollout_descriptors(rect, cage_dim_y, item):
+def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
     # Per-box stack: each box in item.rollout_boxes carries its own height,
     # so the boxes are placed bottom to top by a running Z sum rather than a
     # uniform step. Items saved before per-box heights have an empty
@@ -4621,6 +4621,11 @@ def _rollout_descriptors(rect, cage_dim_y, item):
             'orientation':  'BOX',
             'position':     (box_x, setback, z),
             'dims':         (box_dx, box_dy, item_height),
+            # Which rollout_boxes entry built this box, so the builder can
+            # read its per-box options (the U-notch) and the right-click
+            # command can find its way back from the object.
+            'item_index':   item_index,
+            'box_index':    k,
         })
         z += item_height + distance_between
     if not getattr(item, 'hide_rollout_spacers', False):
@@ -4884,7 +4889,7 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
         return descs
 
     out = []
-    for item in opening_props.interior_items:
+    for item_index, item in enumerate(opening_props.interior_items):
         if item.kind == 'ADJUSTABLE_SHELF':
             # getattr: tolerate item collections created before the
             # nosing props existed (e.g. a live session spanning an
@@ -4919,7 +4924,8 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'ROLLOUT':
-            out.extend(_rollout_descriptors(rect, cage_dim_y, item))
+            out.extend(_rollout_descriptors(rect, cage_dim_y, item,
+                                            item_index))
         elif item.kind == 'TRAY_DIVIDERS':
             out.extend(_tray_dividers_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'VANITY_SHELVES':

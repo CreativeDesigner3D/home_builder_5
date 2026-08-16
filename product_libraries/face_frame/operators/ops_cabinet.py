@@ -1989,6 +1989,77 @@ class hb_face_frame_OT_sink_duo_drawer_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_sink_duo_rollout_prompts(bpy.types.Operator):
+    """Toggle / size the U-notch on ONE rollout box.
+
+    The rollout equivalent of the sink duo drawer, but per box rather
+    than per opening: a stack under a sink usually wants the box that
+    passes the trap notched and the others left whole. The options live
+    on the opening's rollout_boxes entry (the boxes themselves are wiped
+    and rebuilt every recalc); the props live-bind, so edits rebuild the
+    box as the user types.
+    """
+    bl_idname = "hb_face_frame.sink_duo_rollout_prompts"
+    bl_label = "U-Shaped Rollout"
+    bl_description = ("Notch this rollout box from the back so it wraps "
+                      "the sink basin / plumbing")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    item_index: bpy.props.IntProperty(
+        default=-1, options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+    box_index: bpy.props.IntProperty(
+        default=-1, options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        _opening, box_props = types_face_frame.rollout_box_props_for_object(
+            context.active_object)
+        return box_props is not None
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        opening, box_props = types_face_frame.rollout_box_props_for_object(obj)
+        if box_props is None:
+            self.report({'WARNING'}, "No rollout box options found")
+            return {'CANCELLED'}
+        self.opening_name = opening.name
+        self.item_index = obj.get(
+            types_face_frame.TAG_ROLLOUT_ITEM_INDEX, -1)
+        self.box_index = obj.get(
+            types_face_frame.TAG_ROLLOUT_BOX_INDEX, -1)
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def _box_props(self):
+        return types_face_frame.rollout_box_props(
+            bpy.data.objects.get(self.opening_name),
+            self.item_index, self.box_index)
+
+    def draw(self, context):
+        layout = self.layout
+        box_props = self._box_props()
+        if box_props is None:
+            layout.label(text="Rollout box not found", icon='INFO')
+            return
+        col = layout.column(align=True)
+        col.prop(box_props, 'sink_duo')
+        sub = col.column(align=True)
+        sub.enabled = box_props.sink_duo
+        sub.prop(box_props, 'sink_duo_notch_width')
+        sub.prop(box_props, 'sink_duo_notch_depth')
+        col.separator()
+        col.label(text="Notch Depth 0 uses 2/3 of the box depth",
+                  icon='INFO')
+
+    def execute(self, context):
+        # Live-bound via the rollout box props' update callbacks.
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single bay.
 
@@ -5876,6 +5947,7 @@ classes = (
     hb_face_frame_OT_opening_prompts,
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_sink_duo_drawer_prompts,
+    hb_face_frame_OT_sink_duo_rollout_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
