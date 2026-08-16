@@ -2267,6 +2267,36 @@ def mid_stile_bend_halves(layout, gap_index):
 # ---------------------------------------------------------------------------
 # Per-segment carcass bottom panels - the bay floors
 # ---------------------------------------------------------------------------
+def bay_finish_bottom(layout, bay_index):
+    """True when the bay's carcass BOTTOM is cut from finish stock.
+
+    Either the whole bay reads finished (finish_carcass), or the
+    bottom-most opening in it is finished - a finished region's floor is
+    never lined, so the panel it sits on IS the finish, and for the
+    bottom-most opening that panel is the bay floor. Cached on the
+    layout: the passthrough asks per gap and the segment builder asks
+    again per run.
+    """
+    bay = layout.bays[bay_index]
+    if bay.get('finish_carcass'):
+        return True
+    cache = layout.__dict__.setdefault('_finish_bottom_cache', {})
+    if bay_index not in cache:
+        found = False
+        for leaf in bay_openings(layout, bay_index)['leaves']:
+            if abs(leaf['cage_z']) > 1e-6:
+                continue
+            op_obj = bpy.data.objects.get(leaf['obj_name'])
+            if op_obj is None:
+                continue
+            op = op_obj.face_frame_opening
+            if op.finish_opening and op.finish_opening_material == 'FINISH':
+                found = True
+                break
+        cache[bay_index] = found
+    return cache[bay_index]
+
+
 def _carcass_bottom_passthrough(layout, gap_index):
     """True if the bay-floor (carcass bottom) panel spans gap_index uninterrupted.
 
@@ -2275,8 +2305,8 @@ def _carcass_bottom_passthrough(layout, gap_index):
     - bay depths differ (each panel sized to its bay's depth)
     - bottom rail widths differ (panel Z computed from bay_bottom_z + brw)
     - either bay has remove_bottom or remove_carcass set
-    - finish_carcass differs (a finished bay's floor is finish stock, so
-      it splits off to leave its neighbours interior)
+    - bay_finish_bottom differs (a finished floor is finish stock, so it
+      splits off to leave its neighbours interior)
     """
     if gap_index >= len(layout.mid_stiles):
         return False
@@ -2296,7 +2326,8 @@ def _carcass_bottom_passthrough(layout, gap_index):
     if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
             or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
         return False
-    if bool(bay_a.get('finish_carcass')) != bool(bay_b.get('finish_carcass')):
+    if bay_finish_bottom(layout, gap_index) != bay_finish_bottom(layout,
+                                                                 gap_index + 1):
         return False
     return True
 
@@ -2509,7 +2540,7 @@ def carcass_bottom_segments(layout):
             'thickness':  layout.mt,
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
-            'finished':   bool(first_bay.get('finish_carcass')),
+            'finished':   bay_finish_bottom(layout, start),
         })
     return segments
 

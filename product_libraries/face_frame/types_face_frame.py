@@ -440,6 +440,15 @@ TAG_BAY_FINISH_OPENING = 'hb_bay_finish_opening'
 # Segments break at finish boundaries so one flag covers the whole part.
 TAG_SEGMENT_FINISHED = 'hb_segment_finished'
 
+# Stamped on the part a finished OPENING sits on - the carcass bottom
+# for a bottom-most leaf, otherwise the bay shelf / division under it.
+# A finished region's floor is never lined; the panel already there is
+# cut from finish stock. Re-stamped from scratch every recalc.
+TAG_FINISH_FLOOR = 'hb_finish_floor'
+FINISH_FLOOR_ROLES = (
+    PART_ROLE_BOTTOM, PART_ROLE_BAY_SHELF, PART_ROLE_BAY_DIVISION,
+)
+
 # Textured-finish applied panels: 1/4 parts representing beadboard or
 # shiplap finishes on a side (LEFT / RIGHT / BACK). The part keeps its
 # driven GN cutpart (the L/W/T carrier downstream passes read) but the
@@ -6933,6 +6942,16 @@ class FaceFrameCabinet(GeoNodeCage):
                    child.get(TAG_BAY_FINISH_FACE))
             existing[key] = child
 
+        # Floor candidates are re-stamped from scratch every recalc so a
+        # region that stops being finished (or moves) releases the part
+        # it was finishing.
+        for child in self.obj.children_recursive:
+            if (child.get('hb_part_role') in FINISH_FLOOR_ROLES
+                    and child.get(TAG_FINISH_FLOOR)):
+                del child[TAG_FINISH_FLOOR]
+        bay_cages = {c.get('hb_bay_index'): c for c in self.obj.children
+                     if c.get('IS_FACE_FRAME_BAY_CAGE')}
+
         wanted = set()
         if not layout.is_angled:
             # Shared with solver.finish_liner_insets, which keeps the
@@ -6988,18 +7007,70 @@ class FaceFrameCabinet(GeoNodeCage):
                                  'bottom': leaf['reveal_bottom']},
                     )
                     op_to_floor = bay_to_floor and abs(leaf['cage_z']) < 1e-6
+                    # A lone finished opening can't split the bay's back
+                    # panel horizontally, so it takes a BACK liner. When
+                    # the bay reads finished as a whole the carcass back
+                    # is already finish stock and the liner would double
+                    # up on it.
                     specs = self._finish_region_specs(
                         layout, region, bool(op.finish_opening_flush),
-                        op.finish_opening_flush_depth, op_to_floor, t)
+                        op.finish_opening_flush_depth, op_to_floor, t,
+                        want_back=not bay.get('finish_carcass'))
                     for face, spec in specs:
                         self._emit_bay_finish_panel(bi, oi, face, spec, t, existing)
                         wanted.add((bi, oi, face))
+                    # The floor gets no liner - the part the opening sits
+                    # on is finished instead.
+                    if op.finish_opening_material == 'FINISH':
+                        self._stamp_finish_opening_floor(bay_cages.get(bi), leaf)
 
         for key, child in existing.items():
             if key not in wanted:
                 bpy.data.objects.remove(child, do_unlink=True)
 
-    def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor, t):
+    def _stamp_finish_opening_floor(self, bay_cage, leaf):
+        """Mark the part a finished opening sits on so the material walk
+        gives it the exterior finish.
+
+        The floor is never lined - the shop finishes the panel that is
+        already there. Which panel that is depends on where the leaf
+        sits in its bay: a leaf resting on the bay floor is handled by
+        the solver (solver.bay_finish_bottom splits the carcass bottom
+        so unfinished neighbouring bays keep an interior floor), so what
+        is left here is a leaf resting on the bay shelf / division under
+        it. Opening cages and bay backings are both positioned in
+        BAY-LOCAL coordinates (split nodes are pinned to the bay origin),
+        so the leaf's cage_z can be matched straight against a backing's
+        top face without mapping either into cabinet space. That also
+        means the backing search MUST stay inside the owning bay - every
+        bay repeats the same local coordinates, so a cabinet-wide scan
+        happily matches a sibling bay's shelf at the same height.
+        """
+        if abs(leaf['cage_z']) < 1e-6 or bay_cage is None:
+            return
+        tol = inch(1.0 / 32.0)
+        left = leaf['cage_x']
+        right = left + leaf['cage_dim_x']
+        for child in bay_cage.children_recursive:
+            if child.get('hb_part_role') not in (PART_ROLE_BAY_SHELF,
+                                                 PART_ROLE_BAY_DIVISION):
+                continue
+            # A V-split backing is a vertical panel (rotated -90 about
+            # Y); only a horizontal one can be a floor.
+            if abs(child.rotation_euler.y) > 1e-6:
+                continue
+            part = GeoNodeCutpart(child)
+            top_z = child.location.z + part.get_input('Thickness')
+            if abs(top_z - leaf['cage_z']) > tol:
+                continue
+            length = part.get_input('Length')
+            if (child.location.x <= left + tol
+                    and child.location.x + length >= right - tol):
+                child[TAG_FINISH_FLOOR] = True
+                return
+
+    def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
+                             t, want_back=False):
         """Build the (face, spec) list for one finished region.
 
         `region` is cabinet-local: left_x / right_x / bottom_z / top_z, the
@@ -7053,12 +7124,14 @@ class FaceFrameCabinet(GeoNodeCage):
                                     length=op_width, width=depth)))
         else:
             # FULL finish lining the full cavity depth on the cavity
-            # walls. Only the verticals and the ceiling are applied 1/4
-            # parts: the shop lines the SIDES of a finished bay but cuts
-            # the back and the bay floor from finish stock instead, so
-            # those carry no liner here (the carcass BACK / BOTTOM parts
-            # take the finish material, splitting per bay - see
-            # solver.carcass_back_segments / carcass_bottom_segments).
+            # walls. The sides and the ceiling are applied 1/4 parts;
+            # the FLOOR never is - the part the region sits on (carcass
+            # bottom or the bay shelf below it) is cut from finish stock
+            # instead. The BACK is finish stock too when the whole bay
+            # is finished (want_back False, the carcass back splits per
+            # bay), but a single finished opening inside an unfinished
+            # bay can't split the bay's back panel horizontally, so it
+            # gets a liner there instead.
             vert_bottom_z = 0.0 if to_floor else bottom_z
             vert_height   = top_z - vert_bottom_z
             specs = [
@@ -7076,6 +7149,12 @@ class FaceFrameCabinet(GeoNodeCage):
                                length=max(cage_dim_x - 2 * t, 0.0),
                                width=cage_dim_y)),
             ]
+            if want_back:
+                specs.append(
+                    ('BACK', dict(rot=(math.radians(90), math.radians(-90), 0.0),
+                                  mirror_y=True, mirror_z=False,
+                                  loc=(left_x, cavity_back_y, vert_bottom_z),
+                                  length=vert_height, width=cage_dim_x)))
         return specs
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,

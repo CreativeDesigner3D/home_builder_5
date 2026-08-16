@@ -2462,6 +2462,17 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, interior_mat, interior_mat_rotated)
                 continue
 
+            # The panel a finished OPENING sits on. Its floor is never
+            # lined - the part already there (carcass bottom, or the bay
+            # shelf / division under the opening) is the finish. Stamped
+            # during recalc by _stamp_finish_opening_floor, which knows
+            # the bay tree; checked ahead of the shelf branch below so it
+            # also covers a BAY_SHELF, whose cage walk resolves to the
+            # bay rather than the finished opening above it.
+            if child.get('hb_finish_floor'):
+                self._set_part_surfaces(child, finish_mat, finish_mat_rotated)
+                continue
+
             # Interior shelves in a finished region take the exterior
             # finish so the finished look continues onto the shelving;
             # shelves elsewhere stay interior. A shelf is finished when its
