@@ -4359,6 +4359,10 @@ SHELF_X_CLEARANCE = inch(1.0 / 16.0)   # side gap for shelf-pin clearance
 SHELF_FRONT_SETBACK = inch(0.25)       # tucked behind the face frame plane
 SHELF_BACK_SETBACK = inch(0.25)        # finger gap to the back panel
 
+# Applied finish liner stock. Interior parts in a finished region stop
+# at the liner face, not the cavity wall - see finish_liner_insets.
+FINISH_LINER_THICKNESS = inch(0.25)
+
 ACCESSORY_TEXT_SIZE = inch(1.5)
 ACCESSORY_Y_OFFSET = inch(1.0)         # nudge into the cavity so it reads
                                        # cleanly against the cabinet back
@@ -5210,18 +5214,86 @@ def _walk_interior_node(node, rect, origin_offset,
                             layout, cab_props, out, opening_ff)
 
 
+def finish_liner_insets(opening_obj, layout, rect):
+    """(left, right, top) clearance an opening's interior parts owe to
+    the applied finish liners around it, in opening-local X / Z.
+
+    A finished region carries 1/4 liner panels on its LEFT / RIGHT / TOP
+    faces (see types._finish_region_specs), so anything living inside it
+    - shelves, dividers, rollouts, interior frames - has to stop at the
+    liner face rather than the bare cavity wall. There is no bottom or
+    back inset: those faces get no liner (the carcass panels are cut
+    from finish stock instead), so interior parts keep their normal
+    clearance to them.
+
+    A liner only borders an opening on the sides where the opening
+    actually reaches the finished region's edge. A bay-level finish
+    lines the BAY cage, so a middle opening in a side-by-side split owes
+    nothing on the sides its neighbours cover; a per-opening finish
+    lines that opening, so it owes all three.
+
+    All zero when the region isn't finished, when the finish is FLUSH (a
+    band around the FF opening, not a cavity lining), or on an angled
+    cabinet (no liners are built there).
+    """
+    zero = (0.0, 0.0, 0.0)
+    if layout.is_angled:
+        return zero
+    t = FINISH_LINER_THICKNESS
+    eps = 1e-6
+
+    # A bay-level finish supersedes any per-opening one (the bay liner
+    # already covers everything), matching _reconcile_bay_finish_panels.
+    bay_cage = opening_obj.parent
+    while bay_cage is not None and not bay_cage.get('IS_FACE_FRAME_BAY_CAGE'):
+        bay_cage = bay_cage.parent
+    if bay_cage is not None and bay_cage.face_frame_bay.finish_bay:
+        if bay_cage.face_frame_bay.finish_bay_flush:
+            return zero
+        bi = bay_cage.get('hb_bay_index')
+        if bi is None or not (0 <= bi < len(layout.bays)):
+            return zero
+        bay_dim_x, _, bay_dim_z = bay_cage_dims(layout, bi)
+        left = t if rect['cage_x'] <= eps else 0.0
+        right = (t if abs(rect['cage_x'] + rect['cage_dim_x'] - bay_dim_x) <= eps
+                 else 0.0)
+        top = (t if abs(rect['cage_z'] + rect['cage_dim_z'] - bay_dim_z) <= eps
+               else 0.0)
+        return (left, right, top)
+
+    op = opening_obj.face_frame_opening
+    if op.finish_opening and not op.finish_opening_flush:
+        return (t, t, t)
+    return zero
+
+
 def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     """Top-level entry point for the recalc. Routes through the tree if
     one exists on `opening_obj`, else falls through to the flat path.
+
+    Interior parts are laid out inside the finish liners when the
+    opening sits in a finished region - see finish_liner_insets. The
+    rect shrinks by the bordering liner thicknesses and every descriptor
+    shifts back by the left inset, so the whole tree (splits included)
+    lands in the lined cavity without each item kind knowing about it.
     """
+    left_in, right_in, top_in = finish_liner_insets(opening_obj, layout, rect)
+    if left_in or right_in or top_in:
+        rect = dict(rect)
+        rect['cage_dim_x'] = max(0.0, rect['cage_dim_x'] - left_in - right_in)
+        rect['cage_dim_z'] = max(0.0, rect['cage_dim_z'] - top_in)
+
     root = _interior_tree_root(opening_obj)
     op_props = opening_obj.face_frame_opening
     if root is None:
-        return interior_item_descriptors(layout, rect, cab_props,
-                                         op_props, op_props)
-    out = []
-    _walk_interior_node(root, rect, (0.0, 0.0, 0.0),
-                        layout, cab_props, out, op_props)
+        out = interior_item_descriptors(layout, rect, cab_props,
+                                        op_props, op_props)
+    else:
+        out = []
+        _walk_interior_node(root, rect, (0.0, 0.0, 0.0),
+                            layout, cab_props, out, op_props)
+    if left_in:
+        out = [_shifted_descriptor(d, (left_in, 0.0, 0.0)) for d in out]
     return out
 
 

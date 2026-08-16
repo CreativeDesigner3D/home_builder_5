@@ -6935,7 +6935,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
         wanted = set()
         if not layout.is_angled:
-            t = inch(0.25)
+            # Shared with solver.finish_liner_insets, which keeps the
+            # interior parts clear of these panels.
+            t = solver.FINISH_LINER_THICKNESS
             for bi, bay in enumerate(layout.bays):
                 bay_left_x, bay_right_x = solver._cage_x_bounds(layout, bi)
                 _, bay_dim_y, bay_dim_z = solver.bay_cage_dims(layout, bi)
