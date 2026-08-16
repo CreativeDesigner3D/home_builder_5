@@ -2225,6 +2225,29 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 hb_utils.set_gn_input(mod, tree['Panel Material'].identifier, panel_mat)
             break
 
+    def _part_paint_override(self, part_obj):
+        """(surface, edge) the Paint Part tool put on ``part_obj``, or
+        (None, None) when it wasn't painted.
+
+        The stamp names the style the user painted WITH, which can differ
+        from the cabinet's own; an unknown name (style since deleted or
+        renamed) falls back to this cabinet's style rather than dropping
+        the paint entirely.
+        """
+        override = part_obj.get('hb_part_material_override')
+        if override not in ('FINISH', 'INTERIOR'):
+            return None, None
+        ov_style = self
+        ov_name = part_obj.get('hb_part_material_style')
+        if ov_name:
+            for cs in get_style_props().cabinet_styles:
+                if cs.name == ov_name:
+                    ov_style = cs
+                    break
+        if override == 'FINISH':
+            return ov_style.get_finish_material()
+        return ov_style.get_interior_material()
+
     def _apply_materials_to_cabinet(self, cabinet_obj):
         """Walk every CABINET_PART under cabinet_obj and write surface
         materials based on role. Face frame classifies by part role
@@ -2318,41 +2341,34 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 continue
             role = child.get('hb_part_role')
 
-            # Static textured panels (beadboard / shiplap ends, and
-            # textured return members): the carved python mesh is the
-            # visible geometry (GN cutpart display hidden), so the
-            # finish goes on the mesh slot directly - cutpart surface
-            # inputs are inert here.
+            # Per-part paint override (set by the Paint Part tool) wins
+            # over the role-based default and survives recalc since it
+            # lives on the part. Unset / 'AUTO' leaves this None and the
+            # role logic below decides.
+            ov_mat, ov_edge = self._part_paint_override(child)
+
+            # Static textured panels (beadboard / shiplap / v-groove ends,
+            # wood tops, inset panels, and textured return members): the
+            # carved python mesh is the visible geometry (GN cutpart
+            # display hidden), so the finish goes on the mesh slot
+            # directly - cutpart surface inputs are inert here. A painted
+            # one takes the colour it was painted with; this branch used
+            # to overwrite it with the cabinet's own finish on every
+            # rebuild, so painting a beadboard end came undone the next
+            # time anything resized the cabinet.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
                           'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
-                if finish_mat is not None:
+                slot_mat = ov_mat if ov_mat is not None else finish_mat
+                if slot_mat is not None:
                     me = child.data
                     while len(me.materials) < 1:
                         me.materials.append(None)
-                    me.materials[0] = finish_mat
+                    me.materials[0] = slot_mat
                 continue
 
-            # Per-part paint override (set by the Paint Part tool) wins
-            # over the role-based default and survives recalc since it
-            # lives on the part. Unset / 'AUTO' falls through to the role
-            # logic below.
-            override = child.get('hb_part_material_override')
-            if override in ('FINISH', 'INTERIOR'):
-                # Materialize from the style the user painted with (stored
-                # on the part), falling back to this cabinet's own style.
-                ov_style = self
-                ov_name = child.get('hb_part_material_style')
-                if ov_name:
-                    for cs in get_style_props().cabinet_styles:
-                        if cs.name == ov_name:
-                            ov_style = cs
-                            break
-                if override == 'FINISH':
-                    ov_mat, ov_edge = ov_style.get_finish_material()
-                else:
-                    ov_mat, ov_edge = ov_style.get_interior_material()
+            if ov_mat is not None:
                 self._set_part_surfaces(child, ov_mat, ov_edge)
                 continue
 
