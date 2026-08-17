@@ -138,7 +138,7 @@ REED_DEPTH_RATIO = 0.125    # of the shaft radius
 
 
 def block_height_default(rail_width):
-    """Catalog default: an end block runs BLOCK_PAST_RAIL longer than
+    """Standard default: an end block runs BLOCK_PAST_RAIL longer than
     the top rail (the caller passes the top rail width for both blocks;
     on a flush kick the bottom block's includes the kick it drops
     over)."""
@@ -408,7 +408,7 @@ def cleanup(cabinet_obj, keep=()):
 def _component_stack(placement, spec):
     """[(component, z, build args...)] for one column, or None when the
     frame span can't hold even a plain shaft. Heights of 0 mean 'use
-    the catalog default' (top rail + 1", both blocks)."""
+    the standard default' (top rail + 1", both blocks)."""
     zb = placement['z_bottom']
     zt = placement['z_top']
     if zt - zb < MIN_SHAFT_RUN:

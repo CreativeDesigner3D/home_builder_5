@@ -6684,7 +6684,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     decorative_corner_back_right: BoolProperty(
         name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
-    # The catalog posts are 2" x 2" only; the size is not offered in the
+    # The vendor posts are 2" x 2" only; the size is not offered in the
     # UI (kept as a property for older files and for the solver, which
     # pulls the face frame in by it).
     decorative_corner_size: FloatProperty(

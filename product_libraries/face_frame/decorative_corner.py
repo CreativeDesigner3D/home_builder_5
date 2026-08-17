@@ -13,7 +13,7 @@ skins and kicks are cut around it. The stile beside a post is a 1-1/2"
 member (1-1/4" on full overlay) -- props_hb_face_frame writes that
 width when the corner is switched on.
 
-Anatomy, bottom to top (the catalog calls the plain square sections
+Anatomy, bottom to top (the vendor calls the plain square sections
 "square blocks"; a bead ring over a short square is one "transition
 detail"):
 
@@ -625,7 +625,7 @@ def cleanup(cabinet_obj, keep_corners=()):
 # Entry point
 # ----------------------------------------------------------------------
 def post_size(cab_props, width, depth):
-    """Face size the posts on this cabinet are built at: the catalog
+    """Face size the posts on this cabinet are built at: the standard
     2" (the size prop, kept for older files), but never more than half
     the cabinet in either direction or two posts on one face would
     collide. The solver reads this too, to pull the face frame in by

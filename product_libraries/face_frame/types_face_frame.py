@@ -9782,7 +9782,7 @@ class FaceFrameCabinet(GeoNodeCage):
         and the side compartments take up the slack, which is how the
         tray is trimmed to the drawer it ships in.
 
-        A catalog configuration pins the layout through the hint:
+        A published configuration pins the layout through the hint:
         CORE = slot core width, BAND = back compartment depth, CROSS =
         cross compartment depth (0 = none), MIDSPLIT = a rail across
         the middle slot that far from the front. Without them the tray
@@ -9838,7 +9838,7 @@ class FaceFrameCabinet(GeoNodeCage):
         for p in spans:
             mb.box(p, p + th, iy0, slot_back, zb, z1)
         # A short compartment at the front of the middle slot (the
-        # catalog's "E"/"F" trays): rail butted between that slot's
+        # vendor's "E"/"F" trays): rail butted between that slot's
         # partitions, its front face MIDSPLIT from the tray front.
         mid = inch(params.get('MIDSPLIT', 0.0))
         if mid > th and slots >= 2 and len(spans) == slots - 1:
