@@ -285,6 +285,11 @@ class SupportFrame(Product):
         self.add_property('Front Right Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Back Left Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
         self.add_property('Back Right Leg Type', 'COMBOBOX', 0, combobox_items=["Inset", "Wrapped"])
+        # Square posts, or a vendor turning built into each post (see
+        # common/turned_leg): the prompts dialog rebuilds the legs on change.
+        from ..common import turned_leg
+        self.add_property(turned_leg.LEG_STYLE_PROP, 'COMBOBOX', 0,
+                          combobox_items=turned_leg.style_items())
 
     def create(self, name="Support Frame"):
         self.create_product(name)

@@ -2,6 +2,11 @@ import bpy
 from .... import hb_utils, hb_types, units, hb_project
 
 
+def _turned_leg():
+    from ...common import turned_leg
+    return turned_leg
+
+
 def get_product_bp(obj):
     """Walk up parent hierarchy to find the product base point."""
     if obj is None:
@@ -25,6 +30,9 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
 
     product = None
     part_type = ""
+    # Support frame: the Leg Style seen at the last check(), so a style
+    # CHANGE (vs a size edit) can size the legs to the style's blank.
+    _leg_style_seen = None
 
     @classmethod
     def poll(cls, context):
@@ -35,6 +43,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         product_bp = get_product_bp(context.object)
         self.part_type = product_bp.get('PART_TYPE', '')
+        self._leg_style_seen = product_bp.get(_turned_leg().LEG_STYLE_PROP)
 
         if product_bp.get('IS_FRAMELESS_MISC_PART'):
             self.product = hb_types.GeoNodeCutpart(product_bp)
@@ -60,7 +69,24 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product.set_input('Dim Z', self.height)
             self.product.set_input('Dim Y', self.depth)
         hb_utils.run_calc_fix(context, self.product.obj)
+        if self.part_type == 'SUPPORT_FRAME':
+            self._sync_support_frame_legs(self.product.obj)
         return True
+
+    def _sync_support_frame_legs(self, obj):
+        """Rebuild the corner legs' turnings from the dialog state. A style
+        change first sizes the legs to that style's stock blank (drivers
+        settle on the next calc pass); every change re-fits the meshes so
+        leg height / size edits reshape the turning."""
+        tl = _turned_leg()
+        if tl.LEG_STYLE_PROP not in obj:
+            return
+        style = obj.get(tl.LEG_STYLE_PROP)
+        if style != self._leg_style_seen:
+            self._leg_style_seen = style
+            tl.size_frame_legs_from_style(obj)
+            hb_utils.run_calc_fix(bpy.context, obj)
+        tl.sync_frame_legs(obj)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -177,6 +203,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.label(text="Leg Height:")
         row.prop(obj, '["Leg Height"]', text="")
+        if _turned_leg().LEG_STYLE_PROP in obj:   # frames built before the option
+            row = col.row(align=True)
+            row.label(text="Leg Style:")
+            row.prop(obj, '["%s"]' % _turned_leg().LEG_STYLE_PROP, text="")
 
         col.separator()
 

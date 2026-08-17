@@ -28,6 +28,7 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox, GeoNodeRe
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
+from ..common import turned_leg
 from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
@@ -13050,6 +13051,10 @@ def apply_active_finish_to_product(product_obj):
         # Top/Bottom Surface + edge inputs; it silently no-ops on any object
         # that isn't a cutpart, so the MESH guard is enough.
         cs._set_part_surfaces(child, finish_mat, finish_mat_rotated)
+        # A static turning (turned support-frame leg) carries the
+        # material on its own mesh; keep it following the cutpart input.
+        if child.get(turned_leg.STATIC_TAG):
+            turned_leg.sync_static_material(child)
     product_obj['STYLE_NAME'] = cs.name
 
 
