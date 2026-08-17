@@ -1521,6 +1521,19 @@ def _on_df_mullion(self, context):
         _reapply_frame_store(store, front)
 
 
+def _on_df_glass(self, context):
+    """Glass Panels: which panel rows of this front are glass lites.
+    Independent of the frame lock (a panel choice, not frame geometry);
+    written straight to the durable store and re-applied."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_GLASS_TOP'] = self.glass_top
+        store['HB_FRAME_OVR_GLASS_BOTTOM'] = self.glass_bottom
+        store['HB_FRAME_OVR_GLASS_ROWS'] = self.glass_rows
+        _reapply_frame_store(store, front)
+
+
 def _on_df_lock(self, context):
     """Lock pins the whole interface: snapshot the shown values onto the
     OPENING-cage store and flag it locked so the solver honors them on every
@@ -1637,6 +1650,24 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
                     "opening-height chart)",
         update=_on_df_mullion)  # type: ignore
 
+    # Glass Panels: per-row glass lites in an otherwise wood-panelled
+    # door (glass top over a wood bottom). Top / Bottom cover the split
+    # door; the rows string ("1 3", counted from the top) covers grids.
+    glass_top: bpy.props.BoolProperty(
+        name="Top Panel Glass", default=False,
+        description="Build the top panel row as a glass lite",
+        update=_on_df_glass)  # type: ignore
+    glass_bottom: bpy.props.BoolProperty(
+        name="Bottom Panel Glass", default=False,
+        description="Build the bottom panel row as a glass lite",
+        update=_on_df_glass)  # type: ignore
+    glass_rows: StringProperty(
+        name="Glass Rows", default='',
+        description="Panel rows to build as glass, counted from the "
+                    "top, e.g. \"1 3\" (for grids; blank = just the "
+                    "Top / Bottom toggles)",
+        update=_on_df_glass)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return has_door_style_modifier(context.active_object)
@@ -1683,6 +1714,10 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             self.col_ratios = ''
             self.mullion_lites_wide = 0
             self.mullion_lites_high = 0
+        # Glass rows are not lock-gated: seed from the store either way.
+        self.glass_top = bool(store.get('HB_FRAME_OVR_GLASS_TOP', False))
+        self.glass_bottom = bool(store.get('HB_FRAME_OVR_GLASS_BOTTOM', False))
+        self.glass_rows = str(store.get('HB_FRAME_OVR_GLASS_ROWS', '') or '')
         self.lock_frame = locked
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
@@ -1731,6 +1766,16 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             mrow.label(text="Mullion:")
             mrow.prop(self, 'mullion_lites_wide', text="Wide")
             mrow.prop(self, 'mullion_lites_high', text="High")
+
+        # Glass Panels -- always enabled (not frame geometry, so not behind
+        # the Modify Door lock). The rows string only matters for grids.
+        gbox = col.box()
+        gbox.label(text="Glass Panels")
+        grow = gbox.row(align=True)
+        grow.prop(self, 'glass_top', text="Top")
+        grow.prop(self, 'glass_bottom', text="Bottom")
+        if self.mid_rails > 1:
+            gbox.prop(self, 'glass_rows', text="Rows")
 
         # Read-only readout of the resulting interior-panel heights. Lives in
         # the always-enabled column (not the lock-greyed body) so it's visible

@@ -2208,6 +2208,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 me.materials[1] = finish_mat_rotated
             if panel_mat is not None:
                 me.materials[2] = panel_mat
+            # Per-row glass lites index slot 3 (door_builder 'glass').
+            if front_obj.get('HB_GLASS_CELLS'):
+                while len(me.materials) < 4:
+                    me.materials.append(None)
+                me.materials[3] = self._get_glass_panel_material()
             return
         for mod in front_obj.modifiers:
             if mod.type != 'NODES' or not mod.node_group:
@@ -3234,6 +3239,29 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     y = front_width - right_stile_width - units.inch(1.0)
     text_obj.location.y = -y if mirror_y else y
     text_obj.location.z = units.inch(0.76)
+
+
+def _front_glass_rows(frame_store, n_rows):
+    """Panel rows (0 = TOP) the user marked as glass in the Set Door
+    Frame dialog: Top / Bottom toggles plus an explicit 1-based
+    from-the-top list ("1 3") for grids. Independent of the frame lock
+    -- it is a panel choice, not frame geometry. Empty set = none."""
+    rows = set()
+    if n_rows <= 0:
+        return rows
+    if frame_store.get('HB_FRAME_OVR_GLASS_TOP', False):
+        rows.add(0)
+    if frame_store.get('HB_FRAME_OVR_GLASS_BOTTOM', False):
+        rows.add(n_rows - 1)
+    text = str(frame_store.get('HB_FRAME_OVR_GLASS_ROWS', '') or '')
+    for tok in text.replace(',', ' ').split():
+        try:
+            i = int(tok) - 1
+        except ValueError:
+            continue
+        if 0 <= i < n_rows:
+            rows.add(i)
+    return rows
 
 
 def _front_frame_store(front_obj):
@@ -4288,13 +4316,36 @@ class Face_Frame_Door_Style(PropertyGroup):
                     secs['mullion']['rows'] = _mrows
                 if _mcols > 0:
                     secs['mullion']['cols'] = _mcols
+            # Per-row glass (Set Door Frame > Glass Panels): a split
+            # door with a glass top and a wood bottom. Rows resolve
+            # against THIS door's layout; the lite rects are stamped
+            # for the drawings' hatch pass.
+            glass_rows = _front_glass_rows(
+                frame_store,
+                door_builder.panel_row_count(info, front_width,
+                                             front_length))
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
                                          shape=(dict(shape_k,
                                                      rise=shape_rise_cap)
                                                 if shape_k else None),
+                                         glass_rows=glass_rows or None,
                                          **secs)
+            if glass_rows:
+                cells = door_builder.glass_cell_rects(
+                    info, front_width, front_length, glass_rows)
+                front_obj['HB_GLASS_CELLS'] = [
+                    v for rect in cells for v in rect]
+                # The lite faces index slot 3; give it the glass material
+                # now (the cabinet material walk keeps it current after).
+                me = front_obj.data
+                while len(me.materials) < 4:
+                    me.materials.append(None)
+                me.materials[3] = (
+                    Face_Frame_Cabinet_Style._get_glass_panel_material())
+            elif 'HB_GLASS_CELLS' in front_obj:
+                del front_obj['HB_GLASS_CELLS']
             _mirror_front_mesh_y_if_unmirrored(front_obj)
             cut = _front_cutpart_mod(front_obj)
             if cut is not None:

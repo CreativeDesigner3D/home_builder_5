@@ -305,7 +305,55 @@ def evaluate_layout(info, width, height):
 _PART_MAT_SLOT = {
     'slab': 0, 'left_stile': 0, 'right_stile': 0, 'mid_stile': 0,
     'top_rail': 1, 'bottom_rail': 1, 'mid_rail': 1, 'panel': 2,
+    'glass': 3,
 }
+
+# Per-row glass in an otherwise wood-panelled door (a split door with a
+# glass top and a wood bottom): the glass lite is 1/4" stock set at the
+# back of the frame with a small setback, whatever the wood panels do.
+GLASS_LITE_THICKNESS = inch(0.25)
+GLASS_LITE_BACK_SET = inch(0.125)
+
+
+def panel_row_count(info, width, height):
+    """Number of panel rows the layout produces at this size."""
+    return len(_panel_rows(evaluate_layout(info, width, height)))
+
+
+def _panel_rows(parts):
+    """Distinct panel-row bottoms, TOP row first."""
+    return sorted({round(p['z0'], 6) for p in parts if p['key'] == 'panel'},
+                  reverse=True)
+
+
+def _apply_glass_rows(parts, thickness, glass_rows):
+    """Re-key the panel parts of the given rows (0 = TOP row) as glass
+    lites: thin, at the back of the frame, material slot 'glass'.
+    Returns the new part list."""
+    if not glass_rows:
+        return parts
+    rows = _panel_rows(parts)
+    wanted = {rows[i] for i in glass_rows if 0 <= i < len(rows)}
+    if not wanted:
+        return parts
+    out = []
+    for p in parts:
+        if p['key'] == 'panel' and round(p['z0'], 6) in wanted:
+            p = dict(p, key='glass', thickness=GLASS_LITE_THICKNESS,
+                     y_inset=max(0.0, thickness - GLASS_LITE_THICKNESS
+                                 - GLASS_LITE_BACK_SET))
+        out.append(p)
+    return out
+
+
+def glass_cell_rects(info, width, height, glass_rows):
+    """(x0, z0, w, h) of every glass cell (door-local: x across from the
+    left edge, z up from the bottom) for the given rows -- what the
+    drawings need to hatch per lite."""
+    parts = _apply_glass_rows(evaluate_layout(info, width, height),
+                              inch(0.75), glass_rows)
+    return [(p['x0'], p['z0'], p['x1'] - p['x0'], p['z1'] - p['z0'])
+            for p in parts if p['key'] == 'glass']
 
 
 def _panel_grid(info, width, height):
@@ -941,7 +989,8 @@ def _emit_shaped_panel(verts, faces, slots, part, thickness, top_pts,
         if not out or abs(p[0] - out[-1][0]) > 1e-9 \
                 or abs(p[1] - out[-1][1]) > 1e-9:
             out.append(p)
-    _emit_prism(verts, faces, slots, out, 0.0, 0.0, zf, zb, 2)
+    _emit_prism(verts, faces, slots, out, 0.0, 0.0, zf, zb,
+                _PART_MAT_SLOT[part['key']])
     return True
 
 
@@ -1312,7 +1361,8 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     panel_section=None, inner_rail_section=None,
                     inner_stile_section=None, member_section=None,
                     applied_section=None, applied_scope='ALL',
-                    panel_grooves=None, mullion=None, shape=None):
+                    panel_grooves=None, mullion=None, shape=None,
+                    glass_rows=None):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -1349,10 +1399,16 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     mullion bars clip under it. The caller widens the shaped rails by
     the peak rise so the catalog rail width survives at the crest.
 
-    ``materials`` is an optional (stile, rail, panel) triple assigned
-    as the mesh's material slots; face material indices are set either
-    way (mid stiles index as stiles, mid rails as rails). Zero-size
-    members (e.g. a per-side stile width of 0.0) are skipped.
+    ``glass_rows`` (set of panel-row indices, 0 = TOP row) turns those
+    rows' panels into glass lites (thin, at the back of the frame,
+    material slot 3) regardless of the style's panel kind -- a split
+    door with a glass top and a wood bottom. Sticking strips and
+    mullions still sweep those cells; raises and grooves do not.
+
+    ``materials`` is an optional (stile, rail, panel[, glass]) tuple
+    assigned as the mesh's material slots; face material indices are
+    set either way (mid stiles index as stiles, mid rails as rails).
+    Zero-size members (e.g. a per-side stile width of 0.0) are skipped.
     """
     mitered = (member_section is not None
                and info.get('door_type') != 'SLAB')
@@ -1364,6 +1420,8 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
         faces = []
         face_slots = []
     parts = evaluate_layout(info, width, height)
+    if glass_rows and info.get('door_type') != 'SLAB':
+        parts = _apply_glass_rows(parts, thickness, glass_rows)
     # Shaped (arched) top / bottom opening edges: one curve per cell in
     # the top row (and bottom row for the Double shapes), the rails'
     # opening edges following the same polylines. shape['rise'] caps
@@ -1376,7 +1434,7 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
             and info.get('door_type') != 'SLAB'):
         curve = shape.get('curve', 'ARCH')
         cap = shape.get('rise')
-        panels = [p for p in parts if p['key'] == 'panel'
+        panels = [p for p in parts if p['key'] in ('panel', 'glass')
                   and p['x1'] > p['x0'] and p['z1'] > p['z0']]
         rows = []
         if panels:
@@ -1406,11 +1464,11 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     bottom_rail_segs.append(pts)
     cells = []
     for part in parts:
-        if mitered and part['key'] != 'panel':
+        if mitered and part['key'] not in ('panel', 'glass'):
             continue
         if part['x1'] - part['x0'] <= 0.0 or part['z1'] - part['z0'] <= 0.0:
             continue
-        if part['key'] == 'panel':
+        if part['key'] in ('panel', 'glass'):
             cells.append(part)
         t_pts = shaped_top.get(id(part))
         b_pts = shaped_bottom.get(id(part))
@@ -1435,8 +1493,8 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                                    dict(part, z1=part['z0']),
                                    thickness, None, b_pts)
             continue
-        # Shaped flat cell.
-        if (part['key'] == 'panel' and (t_pts or b_pts)
+        # Shaped flat cell (a glass lite in a shaped row too).
+        if (part['key'] in ('panel', 'glass') and (t_pts or b_pts)
                 and _emit_shaped_panel(verts, faces, face_slots, part,
                                        thickness, t_pts, b_pts)):
             continue
