@@ -37,10 +37,17 @@ class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
+    def tag_front(self):
+        """5.2 modifier-input writes don't tag; rebuild the front."""
+        if self.front:
+            self.front.update_tag()
+
     def check(self, context):
+        self.tag_front()
         return True
 
     def execute(self, context):
+        self.tag_front()
         return {'FINISHED'}
 
     def draw(self, context):

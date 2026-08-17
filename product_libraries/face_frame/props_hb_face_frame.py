@@ -25,6 +25,7 @@ from ... import units
 from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import decorative_corner
+from . import cabinet_column
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -2283,6 +2284,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # standing in the cabinet's own corner,
                                  # so always the exterior finish.
                                  'DECORATIVE_CORNER',
+                                 # Cabinet column turnings: purchased
+                                 # split turnings applied over stiles,
+                                 # finished to match the exterior.
+                                 'CABINET_COLUMN',
                                  # Mantle moulding sweeps: curve objects
                                  # whose bevel geometry renders the
                                  # curve's material slot.
@@ -2310,7 +2315,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # visible geometry (GN cutpart display hidden), so the
             # finish goes on the mesh slot directly - cutpart surface
             # inputs are inert here.
-            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP')
+            if ((role in ('BEADBOARD', 'SHIPLAP', 'WOOD_TOP', 'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 if finish_mat is not None:
@@ -4450,6 +4455,19 @@ def _update_overstool_accessory(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _overall_height_get(self):
+    """Box height plus the leg drop when the sides extend down - the
+    catalog's overall height for over-stool style cabinets."""
+    drop = self.extend_sides_down_amount if self.extend_sides_down else 0.0
+    return self.height + drop
+
+
+def _overall_height_set(self, value):
+    drop = self.extend_sides_down_amount if self.extend_sides_down else 0.0
+    # Writing height runs its own update / recalc.
+    self.height = max(value - drop, units.inch(1.0))
+
+
 def _update_cabinet_width(self, context):
     """Width update: honor the cabinet's anchor side, then recalc.
 
@@ -5045,6 +5063,59 @@ class Face_Frame_Mid_Stile_Width(PropertyGroup):
         unit='LENGTH',
         precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Cabinet_Column(PropertyGroup):
+    """One cabinet column applied over a face frame stile: a split
+    turning (end blocks, spools, styled shaft) standing proud of the
+    frame face. Lives in a CollectionProperty on
+    Face_Frame_Cabinet_Props keyed by stile_key; edited via the
+    Cabinet Column dialog on the stile's right-click menu. No update
+    callbacks - the operator runs one recalc after writing the entry
+    (see cabinet_column.py and types_face_frame._apply_cabinet_columns).
+    """
+    stile_key: StringProperty(
+        name="Stile Key",
+        description="Which stile carries this column: LEFT, RIGHT, or "
+                    "MID_<gap index>",
+    )  # type: ignore
+    style: EnumProperty(
+        name="Column Style",
+        items=cabinet_column.STYLE_ITEMS,
+        default='SMOOTH',
+    )  # type: ignore
+    size: EnumProperty(
+        name="Column Size",
+        items=cabinet_column.SIZE_ITEMS,
+        default='LARGE',
+    )  # type: ignore
+    top_block: BoolProperty(
+        name="Top End Block", default=True,
+    )  # type: ignore
+    top_block_height: FloatProperty(
+        name="Top Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the top rail)",
+    )  # type: ignore
+    bottom_block: BoolProperty(
+        name="Bottom End Block", default=True,
+    )  # type: ignore
+    bottom_block_height: FloatProperty(
+        name="Bottom Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (1\" taller than the bottom rail)",
+    )  # type: ignore
+    floor_block: BoolProperty(
+        name="Bottom Block at Floor", default=False,
+        description="Plain plinth block at the floor (for a flush kick "
+                    "or a stile extended to the floor)",
+    )  # type: ignore
+    floor_block_height: FloatProperty(
+        name="Floor Block Height", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
+        description="0 = default (fills the kick recess, or 4\" on a "
+                    "flush kick)",
     )  # type: ignore
 
 
@@ -6535,6 +6606,15 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         description="How far both side panels drop below the box bottom",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Derived, not stored: box height + leg drop. Lets the user type the
+    # catalog's overall height directly instead of doing the drop math.
+    overall_height: FloatProperty(
+        name="Overall Height",
+        unit='LENGTH', precision=4,
+        description="Total height including the extended legs; writing it "
+                    "sets the box height to this value minus the leg drop",
+        get=_overall_height_get, set=_overall_height_set,
+    )  # type: ignore
     side_front_profile: BoolProperty(
         name="Side Front Profile",
         default=False,
@@ -6922,6 +7002,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
 
     mid_stile_widths: CollectionProperty(type=Face_Frame_Mid_Stile_Width)  # type: ignore
+    # Cabinet columns: split turnings applied over stiles, keyed by
+    # stile (LEFT / RIGHT / MID_<gap>). See cabinet_column.py.
+    cabinet_columns: CollectionProperty(type=Face_Frame_Cabinet_Column)  # type: ignore
     corner_sections: CollectionProperty(type=Face_Frame_Corner_Section)  # type: ignore
     pie_drawer_qty: IntProperty(
         name="Drawer Qty",
@@ -7601,6 +7684,21 @@ class Face_Frame_Opening_Props(PropertyGroup):
         update=_update_front_type,
     )  # type: ignore
 
+    # INSET_PANEL fronts: optional carved texture on the panel face,
+    # mirroring the Misc Part panel types (plain / beadboard / shiplap).
+    inset_panel_type: EnumProperty(
+        name="Panel Type",
+        items=[
+            ('PANEL', "Panel", "Plain flat panel"),
+            ('BEADBOARD', "Beadboard",
+             "Vertical quirk-bead grooves carved across the face"),
+            ('SHIPLAP', "Shiplap",
+             "Nickel-gap plank reveals carved across the face"),
+        ],
+        default='PANEL',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # ---- APPLIANCE front type: filler stiles fitting an appliance ----
     # When front_type == 'APPLIANCE' the opening carries no door/drawer;
     # instead up to two narrow face-frame filler stiles are added at the
@@ -7828,9 +7926,26 @@ class Face_Frame_Opening_Props(PropertyGroup):
          "Hinged door pairs fold, then slide back into the cabinet"),
         ('RETRACTING_TOP', "Top-Mount Retracting",
          "Full-width door that retracts up into the cabinet"),
+        # Lift-up family (top-hinged uppers). A plain TOP hinge is the
+        # tilt-up door; these pick the stay-open lift hardware instead.
+        ('LIFT_UP', "Lift-Up",
+         "Top-hinged door on lift stays; opens effortlessly and holds "
+         "any position"),
+        ('LIFT_UP_DELUXE', "Deluxe Lift-Up",
+         "Parallel-arm lift-up hardware; holds any position, deeper "
+         "cabinet required"),
+        ('LIFT_UP_BIFOLD', "Deluxe Bi-fold Lift-Up",
+         "Two-panel door that folds as it lifts; for taller openings"),
     ]
     door_mechanism: EnumProperty(
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Powered opener option for the deluxe lift-up mechanisms.
+    lift_up_servo: BoolProperty(
+        name="Servo Drive",
+        description="Electric-assist opener on the lift-up door",
+        default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -10262,6 +10377,7 @@ classes = (
     Face_Frame_Panel_Row_Height,
     Face_Frame_Panel_Col_Width,
     Face_Frame_Mid_Stile_Width,
+    Face_Frame_Cabinet_Column,
     Face_Frame_Corner_Section,
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,

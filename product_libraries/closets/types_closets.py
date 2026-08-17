@@ -1793,10 +1793,11 @@ class ClosetStarter(GeoNodeCage):
             # thickness back for each shelf underneath. The clear space
             # between one shelf and the next is the same the whole way
             # up, which is what a shelf is set by.
-            spacing = (interior_h - st * len(adj)) / (len(adj) + 1) + st
+            spacing = (interior_h - st * len(adj)) / (len(adj) + 1)
             adj_depth = max(depth - adj_setback, inch(1.0))
             for i, child in enumerate(adj):
-                z = max(0.0, min(spacing * (i + 1), interior_h - st))
+                z = max(0.0, min(spacing * (i + 1) + st * i,
+                                 interior_h - st))
                 child.location = (clip, 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
@@ -2387,6 +2388,10 @@ class ClosetStarter(GeoNodeCage):
             # BASE convention (near the top edge). Naming one instead
             # holds the door to it, clamped to stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
+            if length_up:
+                # A length-up front carries its origin at the top
+                # edge, so the bottom is a door height below it.
+                bottom_w -= height
             tall_target = v_tall
             rule = (op.door_pull_location if op is not None else 'AUTO')
             base_y = height - v_base - half
@@ -4394,7 +4399,9 @@ class LShelfClosetStarter(GeoNodeCage):
             if PROP_ACCESSORY_WARNING in self.obj:
                 del self.obj[PROP_ACCESSORY_WARNING]
             return ''
-        across = D if sp.l_rod_on_left else W
+        # The rod on the side wall hangs its clothes across the back
+        # wall's run (X), the back-wall rod across the side's (Y).
+        across = W if sp.l_rod_on_left else D
         msg = ''
         if across + 0.0005 < const.L_ROD_MIN_CLEAR:
             wall = "back" if sp.l_rod_on_left else "side"
@@ -4633,7 +4640,7 @@ class LShelfClosetStarter(GeoNodeCage):
                  (W - pt - cl, -so, cover_z), False,
                  hide_rail or bool(sp.turn_off_right_panel)),
                 ('Back Corner Cover', 'Hang Rail Cover Back Corner',
-                 0.0, True, (wo + pt, -so, cover_z), False,
+                 0.0, False, (wo + pt, -so, cover_z), False,
                  hide_rail or not flip),
                 ('Side Cover', 'Hang Rail Cover Side', -90.0, False,
                  (so, -(D - pt - cl), cover_z), True,

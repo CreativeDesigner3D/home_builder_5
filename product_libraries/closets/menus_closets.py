@@ -146,6 +146,10 @@ class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
         layout.menu("HOME_BUILDER_MT_closet_accessories_insert",
                     text=acc.FAMILY_LABELS.get(acc.FAMILY_INSERT,
                                                "Insert"))
+        if acc.FAMILY_CLEAT in families:
+            layout.menu("HOME_BUILDER_MT_closet_accessories_cleat",
+                        text=acc.FAMILY_LABELS.get(acc.FAMILY_CLEAT,
+                                                   "Cleat"))
         # The Curate line stands apart while it is being evaluated;
         # the guard lets this menu draw even where that module is
         # not registered.
@@ -181,6 +185,13 @@ class HOME_BUILDER_MT_closet_accessories_panel(
     bl_idname = "HOME_BUILDER_MT_closet_accessories_panel"
     bl_label = "Panel"
     family = 'PANEL'
+
+
+class HOME_BUILDER_MT_closet_accessories_cleat(
+        _closet_accessory_family_menu):
+    bl_idname = "HOME_BUILDER_MT_closet_accessories_cleat"
+    bl_label = "Cleat"
+    family = 'CLEAT'
 
 
 class HOME_BUILDER_MT_closet_accessories_insert(
@@ -358,6 +369,7 @@ classes = (
     HOME_BUILDER_MT_closet_accessories,
     HOME_BUILDER_MT_closet_accessories_opening,
     HOME_BUILDER_MT_closet_accessories_panel,
+    HOME_BUILDER_MT_closet_accessories_cleat,
     HOME_BUILDER_MT_closet_accessories_insert,
     HOME_BUILDER_MT_closet_part_commands,
 )

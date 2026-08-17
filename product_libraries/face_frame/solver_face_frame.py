@@ -967,7 +967,12 @@ def finish_kick_segments(layout):
             else:
                 left_x = 0.0
         else:
-            left_x = _carcass_meeting_x(layout, start - 1)
+            if _void_gap(layout, start - 1):
+                # The to-floor division finishing the void blocks the
+                # pass-under; the finish kick butts its near face.
+                left_x = _mid_div_right_outer_x(layout, start - 1)
+            else:
+                left_x = _carcass_meeting_x(layout, start - 1)
         if end == last_bay:
             if layout.kick_inset_right > 0:
                 right_x = layout.dim_x - layout.kick_inset_right
@@ -976,7 +981,10 @@ def finish_kick_segments(layout):
             else:
                 right_x = layout.dim_x
         else:
-            right_x = _carcass_meeting_x(layout, end)
+            if _void_gap(layout, end):
+                right_x = _mid_div_left_outer_x(layout, end)
+            else:
+                right_x = _carcass_meeting_x(layout, end)
         # Finish kick lives just IN FRONT of the subfront (its back face
         # flush with the subfront's front face), so its perpendicular
         # offset from the FF outer plane is (tks + tkt - finish_t).
@@ -2364,6 +2372,16 @@ def _step_gap(layout, gap_index):
         and mid_stile_notches(layout, gap_index))
 
 
+def _void_gap(layout, gap_index):
+    """True when either bay at gap_index has remove_carcass. The mid
+    division drops to the floor there to finish the void's side, so
+    nothing passes under it - segments stop at their own side's
+    division face (same rule as a step gap)."""
+    bay_a = layout.bays[gap_index]
+    bay_b = layout.bays[gap_index + 1]
+    return bool(bay_a.get('remove_carcass') or bay_b.get('remove_carcass'))
+
+
 def _segment_x_bounds(layout, start, end):
     """Left and right X for a segment that should fill from cabinet inner
     side wall to cabinet inner side wall, meeting adjacent segments at
@@ -2373,13 +2391,13 @@ def _segment_x_bounds(layout, start, end):
     """
     if start == 0:
         left_x = carcass_inner_left_x(layout)
-    elif _step_gap(layout, start - 1):
+    elif _step_gap(layout, start - 1) or _void_gap(layout, start - 1):
         left_x = _mid_div_right_outer_x(layout, start - 1)
     else:
         left_x = _carcass_meeting_x(layout, start - 1)
     if end == layout.bay_count - 1:
         right_x = carcass_inner_right_x(layout)
-    elif _step_gap(layout, end):
+    elif _step_gap(layout, end) or _void_gap(layout, end):
         right_x = _mid_div_left_outer_x(layout, end)
     else:
         right_x = _carcass_meeting_x(layout, end)
@@ -2758,6 +2776,12 @@ def mid_division_panels(layout, gap_index):
     bay_b = layout.bays[gap_index + 1]
     ms = layout.mid_stiles[gap_index]
 
+    # A neighbor bay with remove_carcass leaves an open void to the
+    # floor; the surviving division becomes the void's side wall and
+    # runs to the floor (kick and floor segments stop at its faces via
+    # _void_gap).
+    void_gap = _void_gap(layout, gap_index)
+
     center_x = _mid_div_center_x(layout, gap_index)
     dt = layout.division_thickness
     # When adjacent bay tops differ (top_offset change at this gap),
@@ -2824,7 +2848,7 @@ def mid_division_panels(layout, gap_index):
             lower_brw = layout.bays[lower_idx]['bottom_rail_width']
         bottom_z = (bay_bottom_z(layout, lower_idx) + lower_brw
                     - ms['extend_down_amount'])
-        if ms.get('to_floor'):
+        if ms.get('to_floor') or void_gap:
             bottom_z = 0.0
         higher_top_z = max(carcass_top_z(layout, gap_index),
                            carcass_top_z(layout, gap_index + 1))
@@ -2849,7 +2873,7 @@ def mid_division_panels(layout, gap_index):
                 if n['end'] == 'BOTTOM':
                     bottom_z = (bay_bottom_z(layout, lower_idx)
                                 - ms['extend_down_amount'])
-                    if ms.get('to_floor'):
+                    if ms.get('to_floor') or void_gap:
                         bottom_z = 0.0
                 else:
                     top_z = (max(bay_top_z(layout, gap_index),
@@ -2884,7 +2908,14 @@ def mid_division_panels(layout, gap_index):
     # right face at center_x + dt).
     a_bottom_z, a_top_z = _bay_z_range(gap_index)
     b_bottom_z, b_top_z = _bay_z_range(gap_index + 1)
-    return [
+    if void_gap:
+        # The removed bay contributes no wall of its own; the neighbor's
+        # wall runs to the floor to finish the void's side.
+        if bay_b.get('remove_carcass'):
+            a_bottom_z = 0.0
+        if bay_a.get('remove_carcass'):
+            b_bottom_z = 0.0
+    panels = [
         {
             'slot':      0,
             'bay_side':  'A',
@@ -2916,6 +2947,11 @@ def mid_division_panels(layout, gap_index):
             'notch_route_depth':  dt,
         },
     ]
+    if bay_a.get('remove_carcass'):
+        panels = [p for p in panels if p['bay_side'] != 'A']
+    if bay_b.get('remove_carcass'):
+        panels = [p for p in panels if p['bay_side'] != 'B']
+    return panels
 
 
 # ---------------------------------------------------------------------------

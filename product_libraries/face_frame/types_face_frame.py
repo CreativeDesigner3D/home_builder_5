@@ -34,6 +34,7 @@ from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
 from . import decorative_corner
+from . import cabinet_column
 from . import bar_storage
 from . import pulls
 
@@ -794,7 +795,8 @@ PART_ROLE_OVERSTOOL_TOWEL_BAR = 'OVERSTOOL_TOWEL_BAR'
 # opening height, 3/4" round towel bar). The shelf is back-aligned against
 # the full-height back and hangs so the clear opening between the box
 # bottom and the shelf top is exactly the spec opening.
-OVERSTOOL_SHELF_DEPTH = inch(6.0)
+OVERSTOOL_SHELF_FRONT_SETBACK = inch(2.75)  # leg front to shelf front (6" shelf at the default 9" depth)
+OVERSTOOL_SHELF_MIN_DEPTH = inch(2.0)
 OVERSTOOL_SHELF_THICKNESS = inch(0.75)
 OVERSTOOL_CLEAR_OPENING = inch(6.0)  # box bottom down to shelf top
 OVERSTOOL_TOWEL_BAR_DIAMETER = inch(0.75)
@@ -1338,7 +1340,12 @@ class FaceFrameCabinet(GeoNodeCage):
             # 3) Insert mid_stile_widths entry at new_gap_index by
             #    add()-then-shuffle, since CollectionProperty has no
             #    insert(at). Shift values from new_gap_index forward.
-            self._insert_mid_stile_width_entry(new_gap_index, inch(2.0))
+            #    Seed from the cabinet's default (style-synced) rather
+            #    than a constant: a hardcoded seed left inserted gaps at
+            #    2" on styled cabinets whose stiles are 1.5", with no
+            #    override flag to explain it.
+            self._insert_mid_stile_width_entry(
+                new_gap_index, cab_props.bay_mid_stile_width)
 
             # 4) Build the new bay object + opening.
             new_bay = self._create_bay_at(new_bay_index)
@@ -1659,7 +1666,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cab_props.width
             - cab_props.left_stile_width
             - cab_props.right_stile_width
-            - (bay_qty - 1) * inch(2.0)
+            - (bay_qty - 1) * cab_props.bay_mid_stile_width
         ) / bay_qty
 
         for i in range(bay_qty):
@@ -1699,7 +1706,7 @@ class FaceFrameCabinet(GeoNodeCage):
         cab_props.mid_stile_widths.clear()
         for i in range(bay_qty - 1):
             ms_entry = cab_props.mid_stile_widths.add()
-            ms_entry.width = inch(2.0)
+            ms_entry.width = cab_props.bay_mid_stile_width
 
             mid_stile = CabinetPart()
             mid_stile.create(f'Mid Stile {i + 1}')
@@ -2884,6 +2891,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # above have already reshaped (back extension, extended bottom,
         # finished bottom). No-op + cleanup when no corner is on.
         self._apply_decorative_corners(layout)
+
+        # Cabinet columns: split turnings applied over stiles, proud of
+        # the frame face. Nothing to cut, so ordering only needs the
+        # frame's final geometry. No-op + cleanup when none assigned.
+        self._apply_cabinet_columns(layout)
 
     def _part_ff_theta(self, layout, role, child):
         """Z rotation added to a FF part's baseline. Single-plane cabinets
@@ -5253,8 +5265,13 @@ class FaceFrameCabinet(GeoNodeCage):
         drop is too small to fit opening + shelf."""
         left_inner, right_inner, _front_y, leg_bottom = self._overstool_interior(layout)
         part = GeoNodeCutpart(shelf_obj)
+        # Shelf depth follows the cabinet depth: from the full-height back
+        # forward to a fixed setback behind the leg fronts.
+        shelf_depth = max(layout.dim_y - solver.back_thickness(layout)
+                          - OVERSTOOL_SHELF_FRONT_SETBACK,
+                          OVERSTOOL_SHELF_MIN_DEPTH)
         part.set_input('Length', right_inner - left_inner)
-        part.set_input('Width', OVERSTOOL_SHELF_DEPTH)
+        part.set_input('Width', shelf_depth)
         part.set_input('Thickness', OVERSTOOL_SHELF_THICKNESS)
         drop = solver.side_extend_down(layout)
         z = max(leg_bottom + drop - OVERSTOOL_CLEAR_OPENING
@@ -5754,6 +5771,93 @@ class FaceFrameCabinet(GeoNodeCage):
         spec = decorative_corner.spec_from_props(cab, self._has_toe_kick())
         decorative_corner.apply_corners(
             self.obj, cab.width, cab.depth, cab.height, spec)
+
+    # =====================================================================
+    # Cabinet columns (split turnings over stiles)
+    # =====================================================================
+    def _apply_cabinet_columns(self, layout):
+        """Build / position / remove the split-turned columns applied
+        over this cabinet's stiles. Placement math (which stile, frame
+        extent, plane angle) is resolved here from the solver layout;
+        the geometry, stacking, and object management live in
+        cabinet_column.py.
+
+        v1 covers straight and single-angled fronts on standard
+        cabinets. Corner types and piecewise (multi-bay angled) fronts
+        only clean up - the FF-plane parameterization of a column
+        centered on a bend isn't defined yet.
+        """
+        cab = self.obj.face_frame_cabinet
+        entries = list(getattr(cab, 'cabinet_columns', ()))
+        if (not entries or cab.corner_type != 'NONE'
+                or layout.angled_multi):
+            cabinet_column.apply_columns(self.obj, [])
+            return
+
+        flush_floor = (layout.has_toe_kick
+                       and layout.toe_kick_type == 'FLUSH')
+        theta = solver.face_frame_angle(layout)
+
+        placements = []
+        for entry in entries:
+            key = entry.stile_key
+            if key == 'LEFT':
+                ffx = layout.lsw / 2.0
+                bay_lo = bay_hi = 0
+                label = "Left"
+            elif key == 'RIGHT':
+                ffx = solver.face_frame_length(layout) - layout.rsw / 2.0
+                bay_lo = bay_hi = layout.bay_count - 1
+                label = "Right"
+            elif key.startswith('MID_'):
+                try:
+                    gap = int(key[4:])
+                except ValueError:
+                    continue
+                if gap >= len(layout.mid_stiles):
+                    # Bay layout changed under the assignment; keep the
+                    # entry (it revives if the gap returns) but build
+                    # nothing.
+                    continue
+                ms_width = layout.mid_stiles[gap]['width']
+                ffx = (solver.bay_x_position(layout, gap)
+                       + layout.bays[gap]['width'] + ms_width / 2.0)
+                bay_lo, bay_hi = gap, gap + 1
+                label = "Mid %d" % (gap + 1)
+            else:
+                continue
+
+            z_bottom = min(solver.bay_bottom_z(layout, bay_lo),
+                           solver.bay_bottom_z(layout, bay_hi))
+            z_top = max(solver.bay_top_z(layout, bay_lo),
+                        solver.bay_top_z(layout, bay_hi))
+            bay = layout.bays[bay_lo]
+            bottom_rail = bay['bottom_rail_width']
+            if flush_floor:
+                # Flush kick: the frame runs to the floor and the wide
+                # rail is kick + rail, so the column and its default
+                # bottom block follow it down.
+                bottom_rail += bay['kick_height']
+                z_bottom = 0.0
+
+            x, y, _z = solver.ff_outer_world_pos(layout, ffx, 0.0)
+            placements.append({
+                'key': key,
+                'label': label,
+                'x': x, 'y': y, 'theta': theta,
+                'z_bottom': z_bottom, 'z_top': z_top,
+                'style': entry.style,
+                'size': entry.size,
+                'top_block': entry.top_block,
+                'top_block_height': entry.top_block_height,
+                'bottom_block': entry.bottom_block,
+                'bottom_block_height': entry.bottom_block_height,
+                'floor_block': entry.floor_block,
+                'floor_block_height': entry.floor_block_height,
+                'top_rail_width': bay['top_rail_width'],
+                'bottom_rail_width': bottom_rail,
+            })
+        cabinet_column.apply_columns(self.obj, placements)
 
     # =====================================================================
     # Applied finished-end panels (parented panel roots covering a side)
@@ -8209,6 +8313,20 @@ class FaceFrameCabinet(GeoNodeCage):
             front.set_input('Length', length)
             front.set_input('Width', width)
             front.set_input('Thickness', thickness)
+
+            # Textured inset panel (beadboard / shiplap): carve the
+            # static mesh in place of the plain slab. The carve puts the
+            # grooves on the part's local z=0 face with the material
+            # extending -z (mirror_z), so shift the part back one
+            # thickness along the pivot's front axis: the panel body
+            # lands where the slab sat and the grooves face the room.
+            if leaf['role'] == PART_ROLE_INSET_PANEL:
+                tex = getattr(op_props, 'inset_panel_type', 'PANEL')
+                if tex in ('BEADBOARD', 'SHIPLAP'):
+                    front.obj.location.y = (
+                        leaf['part_position'][1] - thickness)
+                    self._textured_panel_mesh(
+                        front.obj, length, width, thickness, tex, True)
 
             # Per-leaf frame-width override (tri-view mirror doors zero the
             # interior stiles where mirrors meet). Stamped onto the door
@@ -12157,6 +12275,63 @@ class MiscPart(CabinetPart):
         self.set_input('Length', width)
         self.rebuild()
 
+    # Slotted-shelf construction (production spec): slats set in a
+    # solid perimeter frame, slat faces flush with the frame top.
+    SLOTTED_FRAME_WIDTH = inch(4.0)
+    SLOTTED_SLAT_WIDTH = inch(3.0)
+    SLOTTED_SLAT_THICKNESS = inch(0.625)
+    SLOTTED_TARGET_GAP = inch(1.5)
+    SLOTTED_MIN_GAP = inch(0.5)
+
+    def _slotted_shelf_mesh(self, length, width, t):
+        """Write a static slotted-shelf mesh: a perimeter frame of
+        SLOTTED_FRAME_WIDTH members at full thickness with equally
+        spaced slats spanning front-to-back, tops flush with the frame.
+        Same local space as the flat cutpart: x 0..length, y 0..-width
+        (Mirror Y), z 0..t. Falls back to a plain slab footprint when
+        the part is too small to carry a frame."""
+        import bmesh
+        fw = self.SLOTTED_FRAME_WIDTH
+        sw = self.SLOTTED_SLAT_WIDTH
+        st = min(self.SLOTTED_SLAT_THICKNESS, t)
+        boxes = []
+        if length <= 2.0 * fw + sw or width <= 2.0 * fw:
+            boxes.append((0.0, length, -width, 0.0, 0.0, t))
+        else:
+            # Perimeter frame: back, front, left, right members.
+            boxes.append((0.0, length, -fw, 0.0, 0.0, t))
+            boxes.append((0.0, length, -width, -width + fw, 0.0, t))
+            boxes.append((0.0, fw, -width + fw, -fw, 0.0, t))
+            boxes.append((length - fw, length, -width + fw, -fw, 0.0, t))
+            # Slats across the interior, equal gaps both sides.
+            interior = length - 2.0 * fw
+            g0 = self.SLOTTED_TARGET_GAP
+            n = max(1, int(round((interior + g0) / (sw + g0))))
+            while n > 1 and (interior - n * sw) / (n + 1) < self.SLOTTED_MIN_GAP:
+                n -= 1
+            gap = (interior - n * sw) / (n + 1)
+            for i in range(n):
+                x0 = fw + gap + i * (sw + gap)
+                boxes.append((x0, x0 + sw, -width + fw, -fw, t - st, t))
+        bm = bmesh.new()
+        for (x0, x1, y0, y1, z0, z1) in boxes:
+            vs = [bm.verts.new((x, y, z))
+                  for z in (z0, z1) for y in (y0, y1) for x in (x0, x1)]
+            # verts ordered: z0(y0(x0,x1), y1(x0,x1)), z1(...)
+            faces = ((0, 1, 3, 2), (4, 6, 7, 5), (0, 2, 6, 4),
+                     (1, 5, 7, 3), (0, 4, 5, 1), (2, 3, 7, 6))
+            for f in faces:
+                bm.faces.new([vs[i] for i in f])
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(self.obj.data)
+        bm.free()
+        mod_name = getattr(self.obj.home_builder, 'mod_name', '')
+        mod = self.obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        self.obj[TAG_STATIC_TEXTURED] = True
+
     def rebuild(self):
         """Sync the board's display with its panel type (stored on the
         object as HB_MISC_PANEL_TYPE). PANEL is the live GN cutpart;
@@ -12164,9 +12339,23 @@ class MiscPart(CabinetPart):
         builder the finished-end applied panels use, sized from the
         cutpart's own Length / Width / Thickness inputs so size edits
         re-carve in place. The carved (exterior) face lands on the
-        board's TOP face -- the finish face of the flat-lying part."""
+        board's TOP face -- the finish face of the flat-lying part.
+        SLOTTED_SHELF builds a frame-and-slats static mesh instead."""
         obj = self.obj
         ptype = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
+        if ptype == 'SLOTTED_SHELF':
+            self._slotted_shelf_mesh(
+                self.get_input('Length'),
+                self.get_input('Width'),
+                self.get_input('Thickness'))
+            if obj.data is not None and not obj.data.materials:
+                try:
+                    surf = self.get_input('Top Surface')
+                except Exception:
+                    surf = None
+                if surf is not None:
+                    obj.data.materials.append(surf)
+            return
         if ptype not in ('BEADBOARD', 'SHIPLAP'):
             mod_name = getattr(obj.home_builder, 'mod_name', '')
             mod = obj.modifiers.get(mod_name) if mod_name else None

@@ -2,6 +2,7 @@ from . import props_closets
 from . import menus_closets
 from . import operators
 from . import gpu_overlay_closets
+from . import drop_dims_closets
 
 NAMESPACE = "hb_closets"
 MENU_NAME = "Closet"
@@ -15,6 +16,7 @@ def register():
 
 
 def unregister():
+    drop_dims_closets.unregister()
     gpu_overlay_closets.unregister()
     operators.unregister()
     menus_closets.unregister()
