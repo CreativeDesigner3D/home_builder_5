@@ -15,6 +15,16 @@ from .... import hb_utils, hb_types, units, appliance_spec_registry
 APPLIANCE_PANEL_REVEAL = units.inch(1.0)     # gap between appliance edge and panel
 APPLIANCE_PANEL_GAP = units.inch(1.0)        # gap between adjacent panels
 APPLIANCE_PANEL_THICKNESS = units.inch(0.75)
+# Full-inset integral rails: frame members fastened to the top / bottom of
+# a panel section (and between sections) so an inset run reads continuous
+# across the appliance. The rail is a face-frame member (3/4" stock, its
+# face flush with the inset panel faces); a panel meeting a rail keeps
+# the inset reveal instead of the appliance reveal.
+INTEGRAL_RAIL_THICKNESS = units.inch(0.75)
+INTEGRAL_RAIL_REVEAL = units.inch(0.125)
+# Under-counter appliances (dishwasher / beverage centre): the panel run
+# starts above the toe kick, like the neighbouring base cabinets' frames.
+_KICK_APPLIANCE_TYPES = {'DISHWASHER', 'UNDER_COUNTER'}
 # Type B/C backer panel thickness; the door face is applied to its front.
 BACKER_THICKNESS = {'B': units.inch(0.25), 'C': units.inch(0.35)}
 # Type C installation-flange rout (representative; tune in Blender): a recess
@@ -140,6 +150,54 @@ def _solve_region(total, holds, sizes):
     return [sizes[i] if holds[i] else max(0.0, share) for i in range(n)]
 
 
+def _default_opts():
+    return {'toe_kick': 0.0, 'rail_width': 0.0,
+            'rail_top': False, 'rail_bottom': False, 'rail_between': False}
+
+
+def _has_rails(opts):
+    return bool(opts and opts.get('rail_width', 0.0) > 0.0
+                and (opts.get('rail_top') or opts.get('rail_bottom')
+                     or opts.get('rail_between')))
+
+
+def _stack(z_lo, z_hi, holds, sizes, opts):
+    """One vertical run of fronts inside [z_lo, z_hi], bottom to top, with
+    the optional integral rails: held fronts keep their size, the rest
+    share the leftover. A front meeting a rail keeps INTEGRAL_RAIL_REVEAL
+    to it; a free end keeps the appliance reveal; free neighbours keep the
+    panel gap. Returns (front_spans, rail_spans) as (z0, z1) lists."""
+    opts = opts or _default_opts()
+    n = len(holds)
+    rw = opts.get('rail_width', 0.0) if _has_rails(opts) else 0.0
+    r_top = bool(rw and opts.get('rail_top'))
+    r_bot = bool(rw and opts.get('rail_bottom'))
+    r_mid = bool(rw and opts.get('rail_between'))
+    bottom_margin = (rw + INTEGRAL_RAIL_REVEAL) if r_bot else APPLIANCE_PANEL_REVEAL
+    top_margin = (rw + INTEGRAL_RAIL_REVEAL) if r_top else APPLIANCE_PANEL_REVEAL
+    gap = (rw + 2.0 * INTEGRAL_RAIL_REVEAL) if r_mid else APPLIANCE_PANEL_GAP
+    usable = (z_hi - z_lo) - bottom_margin - top_margin - gap * (n - 1)
+    held = sum(sizes[i] for i in range(n) if holds[i])
+    autos = [i for i in range(n) if not holds[i]]
+    share = (usable - held) / len(autos) if autos else 0.0
+    heights = [sizes[i] if holds[i] else max(0.0, share) for i in range(n)]
+    fronts, rails = [], []
+    if r_bot:
+        rails.append((z_lo, z_lo + rw))
+    z = z_lo + bottom_margin
+    for i, h in enumerate(heights):
+        fronts.append((z, z + h))
+        z += h
+        if i < n - 1:
+            if r_mid:
+                rails.append((z + INTEGRAL_RAIL_REVEAL,
+                              z + INTEGRAL_RAIL_REVEAL + rw))
+            z += gap
+    if r_top:
+        rails.append((z_hi - rw, z_hi))
+    return fronts, rails
+
+
 def _banner_split(config, dim_z, front_sizes, front_holds):
     """Split dim_z for a banner config into (banner_heights, region_height,
     ncol_fronts): the full-width bottom banners (bottom-to-top) plus the height
@@ -155,22 +213,42 @@ def _banner_split(config, dim_z, front_sizes, front_holds):
     return v[:nb], v[nb], ncol_fronts
 
 
-def _solve_layout(config, dim_x, dim_z, front_sizes, front_holds, col_widths, col_holds):
+def _solve_layout(config, dim_x, dim_z, front_sizes, front_holds, col_widths,
+                  col_holds, opts=None):
     """Return [(x0, x1, z0, z1)] literal panel rects (meters) for the config, in
     _iter_fronts order: column fronts first, then any full-width bottom banners.
     Column widths solve over dim_x; front heights over dim_z, or over the region
-    above the banners when the config has them."""
+    above the banners when the config has them. ``opts`` (see _default_opts):
+    the toe kick lifts the run's bottom; integral rails are solved by _stack
+    (column configs; banner configs ignore them). _solve_rails gives the
+    rail rects."""
+    return _solve_layout_full(config, dim_x, dim_z, front_sizes, front_holds,
+                              col_widths, col_holds, opts)[0]
+
+
+def _solve_rails(config, dim_x, dim_z, front_sizes, front_holds, col_widths,
+                 col_holds, opts=None):
+    """[(x0, x1, z0, z1)] of the integral rails, per column bottom-to-top."""
+    return _solve_layout_full(config, dim_x, dim_z, front_sizes, front_holds,
+                              col_widths, col_holds, opts)[1]
+
+
+def _solve_layout_full(config, dim_x, dim_z, front_sizes, front_holds,
+                       col_widths, col_holds, opts=None):
+    opts = opts or _default_opts()
     cols = _CONFIG_LAYOUT.get(config, _CONFIG_LAYOUT['SINGLE'])
     ncol = len(cols)
     banners = _CONFIG_FULLWIDTH_BOTTOM.get(config, ())
     solved_w = _solve(dim_x, [col_holds[c] for c in range(ncol)],
                       [col_widths[c] for c in range(ncol)])
+    z_lo = max(0.0, opts.get('toe_kick', 0.0) or 0.0)
 
     if banners:
-        banner_h, region_h, ncf = _banner_split(config, dim_z, front_sizes, front_holds)
+        banner_h, region_h, ncf = _banner_split(config, dim_z - z_lo,
+                                                front_sizes, front_holds)
         rects = [None] * (ncf + len(banners))
         x0b, x1b = APPLIANCE_PANEL_REVEAL, dim_x - APPLIANCE_PANEL_REVEAL
-        z = APPLIANCE_PANEL_REVEAL
+        z = z_lo + APPLIANCE_PANEL_REVEAL
         for i in range(len(banners)):
             rects[ncf + i] = (x0b, x1b, z, z + banner_h[i])
             z += banner_h[i] + APPLIANCE_PANEL_GAP
@@ -189,9 +267,10 @@ def _solve_layout(config, dim_x, dim_z, front_sizes, front_holds, col_widths, co
                 rects[g + k] = (x0, x1, z_cursor, z_cursor + h_solved[k])
                 z_cursor += h_solved[k] + APPLIANCE_PANEL_GAP
             g += len(col)
-        return rects
+        return rects, []
 
     rects = []
+    rails = []
     x_cursor = APPLIANCE_PANEL_REVEAL
     g = 0
     for ci, col in enumerate(cols):
@@ -199,16 +278,15 @@ def _solve_layout(config, dim_x, dim_z, front_sizes, front_holds, col_widths, co
         x0, x1 = x_cursor, x_cursor + w
         x_cursor += w + APPLIANCE_PANEL_GAP
         idxs = list(range(g, g + len(col)))
-        h_solved = _solve(dim_z, [front_holds[i] for i in idxs],
-                          [front_sizes[i] for i in idxs])
-        z_cursor = APPLIANCE_PANEL_REVEAL
-        for k, _front in enumerate(col):
-            h = h_solved[k]
-            z0, z1 = z_cursor, z_cursor + h
-            z_cursor += h + APPLIANCE_PANEL_GAP
+        spans, rail_spans = _stack(z_lo, dim_z,
+                                   [front_holds[i] for i in idxs],
+                                   [front_sizes[i] for i in idxs], opts)
+        for z0, z1 in spans:
             rects.append((x0, x1, z0, z1))
+        for z0, z1 in rail_spans:
+            rails.append((x0, x1, z0, z1))
         g += len(col)
-    return rects
+    return rects, rails
 
 
 def _set_front_geometry(obj, front_y, rect):
@@ -279,18 +357,94 @@ def _rout_flange(backer, dim_x, dim_z, backer_t):
 
 
 def _stamp_cage(appliance_obj, config, panel_type, front_sizes, front_holds,
-                col_widths, col_holds):
+                col_widths, col_holds, opts=None):
+    opts = opts or _default_opts()
     appliance_obj['APPLIANCE_PANEL_CONFIG'] = config
     appliance_obj['APPLIANCE_PANEL_TYPE'] = panel_type
     appliance_obj['APPLIANCE_PANEL_LAYOUT'] = json.dumps({
         'front_sizes': front_sizes, 'front_holds': front_holds,
-        'col_widths': col_widths, 'col_holds': col_holds})
+        'col_widths': col_widths, 'col_holds': col_holds,
+        'toe_kick': opts.get('toe_kick', 0.0),
+        'rail_width': opts.get('rail_width', 0.0),
+        'rail_top': bool(opts.get('rail_top')),
+        'rail_bottom': bool(opts.get('rail_bottom')),
+        'rail_between': bool(opts.get('rail_between'))})
+    # Published for downstream consumers (drawings / pricing): which
+    # integral rails were built, and how many rail pieces in all.
+    if _has_rails(opts):
+        appliance_obj['APPLIANCE_PANEL_RAILS'] = ','.join(
+            k for k, on in (('TOP', opts.get('rail_top')),
+                            ('BOTTOM', opts.get('rail_bottom')),
+                            ('BETWEEN', opts.get('rail_between'))) if on)
+        appliance_obj['APPLIANCE_PANEL_RAIL_WIDTH'] = opts.get('rail_width', 0.0)
+    else:
+        for key in ('APPLIANCE_PANEL_RAILS', 'APPLIANCE_PANEL_RAIL_WIDTH',
+                    'APPLIANCE_PANEL_RAIL_COUNT'):
+            if key in appliance_obj:
+                del appliance_obj[key]
     if 'Panel Ready' in appliance_obj:
         appliance_obj['Panel Ready'] = True
 
 
+def _finish_rail(rail_obj):
+    """Integral rails are face-frame members: give them the active
+    cabinet style's finish (surface + rotated edges), the way the other
+    non-cabinet products take it."""
+    from .. import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None:
+        return
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return
+    cs = ff.cabinet_styles[idx]
+    finish_mat, finish_mat_rotated = cs.get_finish_material()
+    if finish_mat is None:
+        return
+    cs._set_part_surfaces(rail_obj, finish_mat, finish_mat_rotated)
+    rail_obj['STYLE_NAME'] = cs.name
+
+
+def _build_rails(appliance_obj, rail_rects, front_y):
+    """Create / resize the integral rail parts to match ``rail_rects``
+    (bottom-to-top per column). Reuses existing rails by index; removes
+    extras. Rails are plain cutparts (no door style) in the panel plane."""
+    existing = [c for c in appliance_obj.children if c.get('IS_APPLIANCE_PANEL_RAIL')]
+    existing.sort(key=lambda o: o.get('AP_RAIL_INDEX', 0))
+    for obj in existing[len(rail_rects):]:
+        bpy.data.objects.remove(obj, do_unlink=True)
+    existing = existing[:len(rail_rects)]
+    for idx, rect in enumerate(rail_rects):
+        x0, x1, z0, z1 = rect
+        if idx < len(existing):
+            obj = existing[idx]
+            part = hb_types.GeoNodeCutpart(obj)
+        else:
+            rail = types_face_frame.CabinetPart()
+            rail.create('Appliance Panel Rail')
+            obj = rail.obj
+            obj['IS_APPLIANCE_PANEL_RAIL'] = True
+            obj['AP_RAIL_INDEX'] = idx
+            obj['hb_part_role'] = types_face_frame.PART_ROLE_TOP_RAIL
+            obj['Finish Top'] = True
+            obj['Finish Bottom'] = True
+            obj.parent = appliance_obj
+            obj.rotation_euler = (math.radians(90), math.radians(-90), 0)
+            rail.set_input('Thickness', INTEGRAL_RAIL_THICKNESS)
+            rail.set_input('Mirror Y', True)
+            part = rail
+        obj.location = (x0, front_y, z0)
+        part.set_input('Width', x1 - x0)
+        part.set_input('Length', z1 - z0)
+        _finish_rail(obj)
+    if rail_rects:
+        appliance_obj['APPLIANCE_PANEL_RAIL_COUNT'] = len(rail_rects)
+    elif 'APPLIANCE_PANEL_RAIL_COUNT' in appliance_obj:
+        del appliance_obj['APPLIANCE_PANEL_RAIL_COUNT']
+
+
 def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
-                           front_holds, col_widths, col_holds):
+                           front_holds, col_widths, col_holds, opts=None):
     """Create or resize the panel fronts from solved literal sizes.
 
     On a live size drag the configuration is unchanged and the panel count
@@ -304,8 +458,10 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
     dim_y = cage.get_input('Dim Y')
     dim_z = cage.get_input('Dim Z')
 
-    rects = _solve_layout(config, dim_x, dim_z, front_sizes, front_holds,
-                          col_widths, col_holds)
+    opts = opts or _default_opts()
+    rects, rail_rects = _solve_layout_full(config, dim_x, dim_z, front_sizes,
+                                           front_holds, col_widths, col_holds,
+                                           opts)
 
     # Type B/C add a backer panel; the door faces shift forward of it.
     backer_t = BACKER_THICKNESS.get(panel_type, 0.0)
@@ -316,14 +472,16 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
 
     # In-place resize when the structure is unchanged (the common live-edit case).
     # Panel type is part of the structure (it drives the backer), so a type
-    # change falls through to a full rebuild.
+    # change falls through to a full rebuild. Rails resize / come and go
+    # on their own (they are plain parts, no door style to re-apply).
     if (len(existing) == len(rects)
             and appliance_obj.get('APPLIANCE_PANEL_CONFIG') == config
             and appliance_obj.get('APPLIANCE_PANEL_TYPE') == panel_type):
         for obj, rect in zip(existing, rects):
             _set_front_geometry(obj, front_y, rect)
+        _build_rails(appliance_obj, rail_rects, front_y)
         _stamp_cage(appliance_obj, config, panel_type, front_sizes, front_holds,
-                    col_widths, col_holds)
+                    col_widths, col_holds, opts)
         return
 
     # Structure changed: tear down fronts + backer and recreate.
@@ -354,6 +512,7 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
 
     if backer_t > 0:
         _build_backer(appliance_obj, dim_x, dim_y, dim_z, backer_t, panel_type)
+    _build_rails(appliance_obj, rail_rects, front_y)
 
     # Door style needs the real dims live before it is applied (mid-rail on tall
     # doors keys off height).
@@ -367,7 +526,7 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
             child.hide_render = True
 
     _stamp_cage(appliance_obj, config, panel_type, front_sizes, front_holds,
-                col_widths, col_holds)
+                col_widths, col_holds, opts)
 
 
 # --- Manufacturer spec dropdowns: items come from whatever provider the host
@@ -453,6 +612,51 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
     col_hold_1: BoolProperty(name="Hold", default=False)  # type: ignore
     col_hold_2: BoolProperty(name="Hold", default=False)  # type: ignore
 
+    # Under-counter appliances: the panel run starts above the toe kick
+    # (seeded from the base cabinet default; editable).
+    toe_kick: FloatProperty(name="Toe Kick", unit='LENGTH', default=0.0, min=0.0)  # type: ignore
+    # Full-inset integral rails: width seeded from the active style's base
+    # top rail (editable); which rails is the drafter's call, per section.
+    rail_width: FloatProperty(name="Rail Width", unit='LENGTH',
+                              default=_I(1.5), min=_I(0.5))  # type: ignore
+    rail_top: BoolProperty(name="Top", default=False,
+                           description="Integral rail across the top of the panel run")  # type: ignore
+    rail_bottom: BoolProperty(name="Bottom", default=False,
+                              description="Integral rail across the bottom of the panel run")  # type: ignore
+    rail_between: BoolProperty(name="Between", default=False,
+                               description="Integral rail between stacked panel sections")  # type: ignore
+
+    def _opts(self):
+        return {'toe_kick': self.toe_kick, 'rail_width': self.rail_width,
+                'rail_top': self.rail_top, 'rail_bottom': self.rail_bottom,
+                'rail_between': self.rail_between}
+
+    @staticmethod
+    def _default_toe_kick(bp):
+        """Under-counter appliances start above the toe kick: the base
+        cabinet's toe kick default (the per-cabinet property default)."""
+        if not bp or bp.get('APPLIANCE_TYPE') not in _KICK_APPLIANCE_TYPES:
+            return 0.0
+        from .. import props_hb_face_frame as props
+        try:
+            return props.Face_Frame_Cabinet_Props.bl_rna.properties[
+                'toe_kick_height'].default
+        except Exception:
+            return _I(4.0)
+
+    @staticmethod
+    def _default_rail_width():
+        """The active cabinet style's base top rail width, so the rails
+        mimic the cabinetry around the appliance."""
+        from .. import props_hb_face_frame as props
+        ff = props.get_style_props()
+        try:
+            cs = ff.cabinet_styles[ff.active_cabinet_style_index]
+            w = getattr(cs, 'ff_top_rail_width_base', 0.0)
+            return w if w > 0.0 else _I(1.5)
+        except Exception:
+            return _I(1.5)
+
     @classmethod
     def poll(cls, context):
         obj = context.object
@@ -508,11 +712,20 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
                     setattr(self, 'col_width_%d' % (i + 1), v)
                 for i, v in enumerate(data.get('col_holds', [])[:MAX_COLUMNS]):
                     setattr(self, 'col_hold_%d' % (i + 1), v)
+                self.toe_kick = float(data.get('toe_kick', self._default_toe_kick(bp)))
+                self.rail_width = float(data.get('rail_width', 0.0)) or self._default_rail_width()
+                self.rail_top = bool(data.get('rail_top', False))
+                self.rail_bottom = bool(data.get('rail_bottom', False))
+                self.rail_between = bool(data.get('rail_between', False))
                 self.last_config = cfg
             except (ValueError, TypeError):
                 self._reset_to_preset(self.configuration)
+                self.toe_kick = self._default_toe_kick(bp)
+                self.rail_width = self._default_rail_width()
         else:
             self._reset_to_preset(self.configuration)
+            self.toe_kick = self._default_toe_kick(bp)
+            self.rail_width = self._default_rail_width()
         self.execute(context)
         return context.window_manager.invoke_props_popup(self, event)
 
@@ -565,7 +778,7 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
             self._reset_to_preset(self.configuration)
         sizes, holds, cwid, chold = self._gather(self.configuration)
         build_appliance_panels(bp, self.configuration, self.panel_type,
-                               sizes, holds, cwid, chold)
+                               sizes, holds, cwid, chold, self._opts())
         return {'FINISHED'}
 
     def draw(self, context):
@@ -606,13 +819,34 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
         sizes, holds, cwid, chold = self._gather(config)
         ncol = _num_columns(config)
         solved_w = _solve(dim_x, chold, cwid) if dim_x else cwid
+        opts = self._opts()
+        z_lo = max(0.0, self.toe_kick)
+
+        if bp is not None and bp.get('APPLIANCE_TYPE') in _KICK_APPLIANCE_TYPES:
+            kbox = layout.box()
+            kbox.prop(self, 'toe_kick', text="Toe Kick Height")
+
+        rbox = layout.box()
+        rbox.label(text="Full Inset Integral Rails")
+        rrow = rbox.row(align=True)
+        rrow.prop(self, 'rail_top')
+        rrow.prop(self, 'rail_bottom')
+        stacked = any(len(c) > 1 for c in
+                      _CONFIG_LAYOUT.get(config, _CONFIG_LAYOUT['SINGLE']))
+        if stacked:
+            rrow.prop(self, 'rail_between')
+        wrow = rbox.row()
+        wrow.enabled = _has_rails(opts) or self.rail_top or self.rail_bottom \
+            or self.rail_between
+        wrow.prop(self, 'rail_width')
 
         box = layout.box()
         box.label(text="Fronts (hold to fix a size; others share the rest)")
         fronts = list(_iter_fronts(config))
         banner_fronts = [(g, lbl) for g, c, lbl, _s, _h in fronts if c is None]
         if banner_fronts and dim_z:
-            banner_h, region_h, _ncf = _banner_split(config, dim_z, sizes, holds)
+            banner_h, region_h, _ncf = _banner_split(config, dim_z - z_lo,
+                                                     sizes, holds)
         else:
             banner_h, region_h = [], dim_z
         for ci in range(ncol):
@@ -635,8 +869,9 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
                 h_solved = _solve_region(region_h, [holds[i] for i in idxs],
                                          [sizes[i] for i in idxs])
             else:
-                h_solved = _solve(dim_z, [holds[i] for i in idxs],
-                                  [sizes[i] for i in idxs])
+                spans, _rails = _stack(z_lo, dim_z, [holds[i] for i in idxs],
+                                       [sizes[i] for i in idxs], opts)
+                h_solved = [z1 - z0 for z0, z1 in spans]
             for pos, (g, lbl) in enumerate(reversed(col_fronts)):
                 k = len(col_fronts) - 1 - pos
                 row = cbox.row(align=True)
