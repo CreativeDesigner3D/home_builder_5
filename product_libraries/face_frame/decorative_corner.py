@@ -20,9 +20,9 @@ detail"):
     square block  -- the transition detail's base, DETAIL_HEIGHT tall,
                      flush with both cabinet faces so it reads proud of
                      the profiled shaft
-    astragal      -- half-round bead ring, proud of the shaft but
-                     clipped to the notch so it never rides over the
-                     face frame or the cabinet body
+    astragal      -- half-round bead ring standing proud of both
+                     cabinet faces, run a short way past each face
+                     and rounded off into it (returned into itself)
     shaft         -- the styled run: 2" radius / colonial / fluted
     astragal
     square block  -- the "square block run" crown moulding dies into
@@ -59,9 +59,11 @@ from ...units import inch
 
 # Nominal post face size. The catalog corners are 2" x 2".
 DEFAULT_SIZE = inch(2.0)
-# Bead ring height and how far it stands proud of the shaft.
+# Bead ring height, how far it stands proud of the cabinet faces, and
+# how far it runs past each face before rounding off into it.
 ASTRAGAL_HEIGHT = inch(0.75)
 ASTRAGAL_PROJECTION = inch(0.25)
+ASTRAGAL_RETURN = inch(0.5)
 # Square base of a transition detail (under the bead ring at the
 # bottom of the post).
 DEFAULT_DETAIL_HEIGHT = inch(3.0)
@@ -259,14 +261,71 @@ def _square_radius(size, deg):
 def _band_radii(kind, style, size, deg, bulge):
     if kind == _SQUARE:
         return _square_radius(size, deg)
-    if kind == _ASTRAGAL:
-        # Bead ring proud of the shaft, but never past the notch: it
-        # is clipped to the square block's outline so it dies flush
-        # into the face frame / cabinet faces instead of riding over
-        # them (the ring's ends taper into the faces).
-        return min(size + ASTRAGAL_PROJECTION * bulge,
-                   _square_radius(size, deg))
+    # The bead ring is its own shell (see _ring_shell); the main loft
+    # runs the shaft straight through its band.
     return _style_radius(style, size, deg)
+
+
+def _ring_shell(style, size, z0, z1, base_index):
+    """(verts, faces) of one bead ring as a closed tube shell.
+
+    The ring is a half-round bead swept about the notch corner: proud
+    of both cabinet faces by ASTRAGAL_PROJECTION at its apex, running
+    ASTRAGAL_RETURN past each face onto the frame / side and rounding
+    off there (a bead returned into itself), the way the shop makes
+    it. Its inner surface tucks just under the shaft's deepest cut so
+    the ring reads as turned from the post, and its extension past the
+    faces sits a hair inside the cabinet planes so nothing is coplanar.
+    """
+    ret_deg = math.degrees(ASTRAGAL_RETURN / size)
+    inset = inch(0.005)
+    r_base = size - inset
+    r_in = min(_style_radius(style, size, d) for d in _sample_degrees(style))
+    r_in = min(r_in, r_base) - inch(0.03)
+    z_steps = 8
+    end_steps = 6
+
+    degs = [-ret_deg + ret_deg * i / end_steps for i in range(end_steps)]
+    degs += [i * 3.0 for i in range(31)]
+    degs += [90.0 + ret_deg * (i + 1) / end_steps for i in range(end_steps)]
+
+    def end_scale(deg):
+        over = -deg if deg < 0.0 else (deg - 90.0 if deg > 90.0 else 0.0)
+        if over <= 0.0:
+            return 1.0
+        u = min(over / ret_deg, 1.0)
+        return math.sqrt(max(0.0, 1.0 - u * u))
+
+    verts = []
+    sections = []
+    for deg in degs:
+        rad = math.radians(deg)
+        cx, cy = math.cos(rad), math.sin(rad)
+        scale = end_scale(deg)
+        loop = []
+        # Closed section: inner bottom -> inner top -> outer, top to
+        # bottom, so consecutive sections loft into a tube.
+        loop.append((r_in * cx, r_in * cy, z0))
+        loop.append((r_in * cx, r_in * cy, z1))
+        for i in range(z_steps + 1):
+            t = 1.0 - i / float(z_steps)
+            r = r_base + ASTRAGAL_PROJECTION * math.sin(math.pi * t) * scale
+            loop.append((r * cx, r * cy, z0 + (z1 - z0) * t))
+        sections.append(len(verts))
+        verts.extend(loop)
+    m = z_steps + 3
+    faces = []
+    for k in range(len(sections) - 1):
+        a = base_index + sections[k]
+        b = base_index + sections[k + 1]
+        for j in range(m):
+            j2 = (j + 1) % m
+            faces.append((a + j, a + j2, b + j2, b + j))
+    first = base_index + sections[0]
+    last = base_index + sections[-1]
+    faces.append(tuple(first + j for j in range(m)))
+    faces.append(tuple(last + j for j in reversed(range(m))))
+    return verts, faces
 
 
 # ----------------------------------------------------------------------
@@ -318,19 +377,12 @@ def band_stack(height, kick_height, bottom_option, top_detail, block_run,
 def _band_rings(bands):
     """[(z, kind, bulge)] rings for the loft. Bands meet at a shared Z
     with different radii, so each boundary emits two rings and the quads
-    between them close the step as a horizontal face. The astragal
-    subdivides so its bead reads round."""
+    between them close the step as a horizontal face. The bead rings
+    are separate shells, so their bands loft as plain shaft here."""
     rings = []
     for z0, z1, kind in bands:
-        if kind == _ASTRAGAL:
-            steps = 8
-            for i in range(steps + 1):
-                t = i / float(steps)
-                rings.append((z0 + (z1 - z0) * t,
-                              kind, math.sin(math.pi * t)))
-        else:
-            rings.append((z0, kind, 0.0))
-            rings.append((z1, kind, 0.0))
+        rings.append((z0, kind, 0.0))
+        rings.append((z1, kind, 0.0))
     return rings
 
 
@@ -343,7 +395,8 @@ def build_post_mesh(mesh, style, size, bands):
     Section space: the notch's inner corner is the origin, the post
     fills the first quadrant, and the cabinet faces are u = size and
     v = size. Every ring is one centre vertex plus the boundary
-    samples, so the two flat cut faces fall out of the loft.
+    samples, so the two flat cut faces fall out of the loft. The bead
+    rings are added as their own shells afterwards.
     """
     degs = _sample_degrees(style)
     dirs = [(math.cos(math.radians(d)), math.sin(math.radians(d)))
@@ -383,6 +436,15 @@ def build_post_mesh(mesh, style, size, bands):
     for j in range(n - 1):
         faces.append((0, 1 + j, 2 + j))
         faces.append((last, last + 2 + j, last + 1 + j))
+
+    # Bead rings: one closed shell each, proud of the faces and
+    # returned into them, sitting over the shaft the loft ran through.
+    for z0, z1, kind in bands:
+        if kind != _ASTRAGAL:
+            continue
+        rv, rf = _ring_shell(style, size, z0, z1, len(verts))
+        verts.extend(rv)
+        faces.extend(rf)
 
     mesh.clear_geometry()
     mesh.from_pydata(verts, [], faces)
