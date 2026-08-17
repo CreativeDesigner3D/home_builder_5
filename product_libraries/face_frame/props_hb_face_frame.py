@@ -8108,6 +8108,24 @@ class Face_Frame_Opening_Props(PropertyGroup):
     pull_override_category: StringProperty(
         name="Pull Override Category", default="",
     )  # type: ignore
+    # Per-opening vertical pull placement for swing doors (right-click a
+    # door -> Set Pull Location...). AUTO = the cabinet-type rule (base:
+    # top of door, upper: bottom, tall: by door position / length);
+    # the rest pin the pull regardless of that rule -- e.g. a tall
+    # opening's double doors with the pulls at the top, middle, or
+    # bottom of the doors. Drawer fronts ignore it.
+    pull_location_override: EnumProperty(
+        name="Pull Location",
+        items=[
+            ('AUTO', "Automatic", "Cabinet-type rule (base: top, upper: bottom, tall: by door height)"),
+            ('TOP', "Top of Door", "Base-style: measured down from the top of the door"),
+            ('MIDDLE', "Middle of Door", "Centered on the door height"),
+            ('BOTTOM', "Bottom of Door", "Upper-style: measured up from the bottom of the door"),
+            ('TALL', "Tall Reach Height", "Tall-style: the tall vertical offset up from the door bottom"),
+        ],
+        default='AUTO',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # ---- Drawer box size overrides ----
     # Per-axis overrides for the drawer box behind this opening's drawer

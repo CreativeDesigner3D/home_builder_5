@@ -9344,7 +9344,24 @@ class FaceFrameCabinet(GeoNodeCage):
         # that vertical door-pull bars need doesn't apply, so vert_half
         # is 0 for pullouts.
         vert_half = 0.0 if is_pullout else half_pull_len
+        # Per-opening pinned placement (Set Pull Location...) for swing
+        # doors and pullouts; drawers and flip doors keep their own rules.
+        loc_override = (getattr(op_props, 'pull_location_override', 'AUTO')
+                        if op_props is not None else 'AUTO')
+        if kind == 'drawer' and not is_pullout:
+            loc_override = 'AUTO'
         if is_flip:
+            loc_override = 'AUTO'
+        if loc_override == 'TOP':
+            x = length - scene_props.pull_vertical_location_base - vert_half
+        elif loc_override == 'MIDDLE':
+            x = length / 2.0
+        elif loc_override == 'BOTTOM':
+            x = scene_props.pull_vertical_location_upper + vert_half
+        elif loc_override == 'TALL':
+            x = min(scene_props.pull_vertical_location_tall + vert_half,
+                    length - scene_props.pull_vertical_location_base - vert_half)
+        elif is_flip:
             # Flip door: pull centered on the UNHINGED edge. TOP hinge
             # (flip up) -> unhinged edge is the bottom, so the pull sits
             # near the door bottom; BOTTOM hinge (flip / tilt down) ->

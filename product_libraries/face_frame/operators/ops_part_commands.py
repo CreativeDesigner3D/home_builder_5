@@ -2979,6 +2979,66 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
         return {'FINISHED'}
 
 
+_PULL_LOCATION_ITEMS = [
+    ('AUTO', "Automatic", "Cabinet-type rule (base: top, upper: bottom, tall: by door height)"),
+    ('TOP', "Top of Door", "Base-style: measured down from the top of the door"),
+    ('MIDDLE', "Middle of Door", "Centered on the door height"),
+    ('BOTTOM', "Bottom of Door", "Upper-style: measured up from the bottom of the door"),
+    ('TALL', "Tall Reach Height", "Tall-style: the tall vertical offset up from the door bottom"),
+]
+
+
+class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
+    """Pin the vertical pull position on the selected doors' openings:
+    top / middle / bottom of the door (or the tall reach height), or
+    back to the automatic cabinet-type rule. Stored per opening so it
+    survives recalcs; the scene offsets still set the exact distances."""
+    bl_idname = "hb_face_frame.set_pull_location"
+    bl_label = "Set Pull Location"
+    bl_description = ("Set where the pull sits on the selected doors "
+                      "(stored per opening)")
+    bl_options = {'UNDO'}
+
+    location: bpy.props.EnumProperty(
+        name="Location", items=_PULL_LOCATION_ITEMS,
+        default='AUTO')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') in ('DOOR', 'PULLOUT_FRONT'))
+
+    def execute(self, context):
+        from . import ops_cabinet
+        openings = {}
+        skipped = 0
+        for obj in context.selected_objects:
+            if obj.get('hb_part_role') not in ('DOOR', 'PULLOUT_FRONT'):
+                continue
+            opening = ops_cabinet._find_owning_opening(obj)
+            if opening is None:
+                skipped += 1
+                continue
+            openings[opening.name] = opening
+        if not openings:
+            self.report({'WARNING'},
+                        "No doors with openings selected"
+                        + (" (corner cabinet doors use the automatic rule)"
+                           if skipped else ""))
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
+            for opening in openings.values():
+                opening.face_frame_opening.pull_location_override = self.location
+        label = next(l for i, l, _d in _PULL_LOCATION_ITEMS
+                     if i == self.location)
+        msg = f"{len(openings)} opening(s): pulls at {label.lower()}"
+        if skipped:
+            msg += f"; {skipped} corner front(s) skipped"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 def _fb_bays_changed(self, context):
     """Write the dialog's bay toggles back to the cabinet's
     finished_bottom_bays (all checked stores '' - whole cabinet), so
@@ -3144,6 +3204,7 @@ class hb_face_frame_OT_apply_finished_bottom_to_room(bpy.types.Operator):
 
 classes = (
     hb_face_frame_OT_set_front_pull,
+    hb_face_frame_OT_set_pull_location,
     hb_face_frame_OT_set_finished_bottom,
     hb_face_frame_OT_apply_finished_bottom_to_room,
     hb_face_frame_OT_set_part_width,

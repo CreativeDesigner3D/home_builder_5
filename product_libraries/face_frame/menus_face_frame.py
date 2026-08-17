@@ -332,6 +332,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role in ops_part_commands._ROLES_WITH_PULL:
             layout.operator("hb_face_frame.set_front_pull",
                             text="Set Pull...", icon='TOOL_SETTINGS')
+        # Swing doors / pullouts: pin the pull's vertical position on
+        # this opening (top / middle / bottom of the door).
+        if role in ('DOOR', 'PULLOUT_FRONT'):
+            layout.operator_menu_enum(
+                "hb_face_frame.set_pull_location", "location",
+                text="Set Pull Location", icon='TOOL_SETTINGS')
 
         # Face frame members (stiles / rails / splitters) keep their role-aware
         # Set Width. Every other cabinet part adjusts its size via Make
