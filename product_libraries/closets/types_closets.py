@@ -116,6 +116,9 @@ PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
 PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# A cleat accessory hung on a wall rather than in an opening. It has
+# no opening to follow, so its figures are all its own.
+PROP_ACCESSORY_ON_WALL = 'hb_accessory_on_wall'
 # A corner shelf that has been locked. Lock and adjustable are the
 # same board cut the same way - what differs is how it is held: pins
 # in routed notches, or cams into the wings. So it is a flag on the
@@ -6036,7 +6039,8 @@ def cleat_hook_height(cage):
     return height if height > 0.0 else const.CLEAT_HOOK_HEIGHT
 
 
-def accessory_drop_height(opening, acc_def, raw_z, skip=None):
+def accessory_drop_height(opening, acc_def, raw_z, skip=None,
+                          dodge=True):
     """Where an accessory actually lands when it is dropped at a
     given height in an opening.
 
@@ -6047,7 +6051,10 @@ def accessory_drop_height(opening, acc_def, raw_z, skip=None):
     it wants below it plus five inches up, which is why a drawer let
     go low in an opening drops rather than floats. Then it is held
     back from the top so the room it wants above it still fits, and
-    last it is put clear of whatever else is in the opening."""
+    last it is put clear of whatever else is in the opening - unless
+    dodge is off, for a panel accessory on an OUTSIDE face, where
+    the opening's contents are on the other side of the panel and
+    are not in its way."""
     from . import accessories_closets as acc
     grid = const.ACCESSORY_DROP_GRID
     z = round(raw_z / grid) * grid if grid > 0.0 else raw_z
@@ -6078,6 +6085,8 @@ def accessory_drop_height(opening, acc_def, raw_z, skip=None):
     if need > 0.0 and z + need > interior_h:
         z = interior_h - need
     z = max(0.0, z)
+    if not dodge:
+        return z
     return clear_height_for(opening, acc_def, z, skip)
 
 
@@ -6195,6 +6204,91 @@ def add_accessory(opening, key):
     cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
     cage.obj['PROMPT_ID'] = 'hb_closets.accessory_prompts'
     return cage.obj
+
+
+def add_wall_accessory(wall, key):
+    """Hang a cleat accessory on a wall rather than in an opening.
+
+    The prior library dropped its hook cleats anywhere a part could
+    land, walls included; this is that placement in the new shape.
+    The cage is the one an opening gets - same prompts, same parts,
+    same right-click - with the wall for a parent and a length of
+    its own, since there is no opening to follow."""
+    from . import accessories_closets as acc
+    acc_def = acc.get(key)
+    if acc_def is None or acc_def.family != acc.FAMILY_CLEAT:
+        return None
+    cage = GeoNodeCage()
+    cage.create(acc_def.label)
+    cage.set_input('Mirror Y', True)
+    cage.obj.parent = wall
+    cage.obj.matrix_parent_inverse.identity()
+    cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
+    cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
+    cage.obj[PROP_ACCESSORY_ON_WALL] = 1
+    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
+                                      if acc_def.colors else '')
+    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
+                                       if acc_def.fabrics else '')
+    cage.obj[PROP_ACCESSORY_Z] = 0.0
+    # The board arrives at a length of its own and keeps it - there
+    # is no opening whose width it could follow.
+    cage.obj[PROP_CLEAT_LENGTH] = float(acc_def.width or inch(24))
+    band = acc_def.bands[0] if acc_def.bands else None
+    if band is not None:
+        cage.obj[PROP_ACCESSORY_MODEL] = band[2]
+    cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    cage.obj['PROMPT_ID'] = 'hb_closets.accessory_prompts'
+    layout_wall_accessory(cage.obj)
+    return cage.obj
+
+
+def wall_accessory_length(cage):
+    """How long a wall-hung cleat is: its own figure, then the
+    catalog's width, then a couple of feet to fall back on."""
+    length = float(cage.get(PROP_CLEAT_LENGTH, 0.0) or 0.0)
+    if length > 0.0:
+        return length
+    from . import accessories_closets as acc
+    acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+    if acc_def is not None and acc_def.width:
+        return float(acc_def.width)
+    return inch(24)
+
+
+def layout_wall_accessory(cage):
+    """Build or refresh a wall-hung cleat accessory in place.
+
+    The same board-and-hooks layout an opening's cleat gets, run
+    against the cage's own stored figures. There is no reconciler
+    pass out on the wall, so whoever changes a figure calls this."""
+    from . import accessories_closets as acc
+    from . import materials_closets
+    acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+    if acc_def is None:
+        return
+    kids = {}
+    for child in cage.children:
+        kids.setdefault(child.get('hb_part_role'), []).append(child)
+    pt = bpy.context.scene.hb_closets.panel_thickness
+    ref = wall_accessory_length(cage)
+    length, _x, height, qty, inset = cleat_hook_values(cage, ref)
+    geo = GeoNodeCage(cage)
+    geo.set_input('Dim X', length)
+    geo.set_input('Dim Y', pt)
+    geo.set_input('Dim Z', height)
+    # The layout methods carry no starter state; the class is only
+    # the place they live, so a bare instance serves as well on a
+    # wall as the reconciler's does in a run.
+    helper = ClosetStarter(cage)
+    helper._acc_cleat_hooks(cage, acc_def, kids, ref, height,
+                            length, qty, inset, pt)
+    try:
+        for child in cage.children:
+            if child.get('hb_part_role') == PART_ROLE_ACCESSORY_PART:
+                materials_closets.apply_to_part(child)
+    except Exception:
+        pass
 
 
 def clear_opening_contents(opening):
