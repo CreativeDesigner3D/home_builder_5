@@ -4617,6 +4617,13 @@ def _bottom_rail_profile_items(self, context):
                 stem = fn[:-len('.blend')]        # 'Beckony Cutter'
                 label = stem[:-len(' Cutter')]     # 'Beckony'
                 items.append((stem, label, label + ' bottom-rail profile'))
+    # Explicit values: positional for the historical entries (what saved
+    # files already hold), a fixed high slot for the procedural additions
+    # so new '* Cutter.blend' assets can't renumber them.
+    items = [(i[0], i[1], i[2], n) for n, i in enumerate(items)]
+    items.append(('TRADITIONAL', 'Traditional',
+                  'Straight ramps into a rounded shoulder and a flat raised '
+                  'centre', 100))
     _BOTTOM_RAIL_PROFILE_ITEMS_CACHE[:] = items
     return _BOTTOM_RAIL_PROFILE_ITEMS_CACHE
 
@@ -4628,8 +4635,11 @@ def _bay_bottom_rail_profile_items(self, context):
     """Per-bay variant of _bottom_rail_profile_items with a leading
     'Use Cabinet Setting' inherit entry (same GC-guard cache pattern)."""
     items = [('CABINET', 'Use Cabinet Setting',
-              'Follow the cabinet-level Bottom Rail Profile pick')]
-    items += [tuple(i) for i in _bottom_rail_profile_items(self, context)]
+              'Follow the cabinet-level Bottom Rail Profile pick', 0)]
+    # Cabinet-level values shifted by one behind the CABINET entry (the
+    # positional numbering saved bay overrides already carry).
+    items += [(i[0], i[1], i[2], i[3] + 1)
+              for i in _bottom_rail_profile_items(self, context)]
     _BAY_BOTTOM_RAIL_PROFILE_ITEMS_CACHE[:] = items
     return _BAY_BOTTOM_RAIL_PROFILE_ITEMS_CACHE
 

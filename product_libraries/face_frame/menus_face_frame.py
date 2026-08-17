@@ -926,7 +926,8 @@ class HOME_BUILDER_MT_face_frame_bottom_rail_profile(bpy.types.Menu):
                 ov = getattr(bay.face_frame_bay, 'bottom_rail_profile', 'CABINET')
                 if ov and ov != 'CABINET':
                     current = ov
-        items = [('NONE', 'None'), ('ARCH', 'Arched')]
+        items = [('NONE', 'None'), ('ARCH', 'Arched'),
+                 ('TRADITIONAL', 'Traditional')]
         d = types_face_frame.bottom_rail_profile_dir()
         if os.path.isdir(d):
             for fn in sorted(os.listdir(d)):

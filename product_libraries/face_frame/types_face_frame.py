@@ -943,6 +943,16 @@ BOTTOM_RAIL_PROFILE_CUT_MOD_NAME = 'Bottom Rail Profile Cut'
 BOTTOM_RAIL_PROFILE_END_MARGIN = inch(2.0)  # flat, uncut rail left at each end
 _BOTTOM_RAIL_PROFILE_ARCH = 'ARCH'          # procedural smooth-arch option (no blend)
 BOTTOM_RAIL_PROFILE_ARCH_RISE = inch(2.0)   # arch height at the centre
+# Procedural "traditional" valance: a straight ramp up from each end, a
+# rounded shoulder, then a flat raised centre. Fixed end details, the
+# plateau stretches with the rail (same as an authored profile).
+_BOTTOM_RAIL_PROFILE_TRADITIONAL = 'TRADITIONAL'
+BOTTOM_RAIL_PROFILE_TRADITIONAL_RISE = inch(2.0)       # plateau height
+BOTTOM_RAIL_PROFILE_TRADITIONAL_RAMP_RUN = inch(4.0)   # straight ramp span
+BOTTOM_RAIL_PROFILE_TRADITIONAL_RAMP_RISE = inch(1.6)  # ramp height at its top
+BOTTOM_RAIL_PROFILE_TRADITIONAL_SHOULDER = inch(2.0)   # rounded run onto the plateau
+_BOTTOM_RAIL_PROCEDURAL_PROFILES = frozenset((
+    _BOTTOM_RAIL_PROFILE_ARCH, _BOTTOM_RAIL_PROFILE_TRADITIONAL))
 _BOTTOM_RAIL_PROFILE_SUFFIX = ' Cutter.blend'
 _BOTTOM_RAIL_PROFILE_POLY_CACHE = {}   # profile_id -> list[(x, y)] meters
 
@@ -1058,6 +1068,38 @@ def _bottom_rail_arch_poly(chord, rise=None, segments=48):
         dx = x - cx
         top.append((x, cy + math.sqrt(max(0.0, radius * radius - dx * dx))))
     return top + [(chord, below), (0.0, below)]
+
+
+def _bottom_rail_traditional_poly(chord, segments=16):
+    """Closed (x, y) loop for the traditional valance cut spanning x in
+    [0, chord]: from y=0 at each end a straight ramp rises RAMP_RISE over
+    RAMP_RUN, a rounded shoulder (cubic, ramp-tangent in / level out) carries
+    it up to RISE over SHOULDER, and the centre runs flat at RISE. End details
+    are fixed size, so a wider rail only lengthens the plateau. Returns None
+    when the span can't hold both end details plus a plateau."""
+    rise = BOTTOM_RAIL_PROFILE_TRADITIONAL_RISE
+    run = BOTTOM_RAIL_PROFILE_TRADITIONAL_RAMP_RUN
+    ramp_rise = BOTTOM_RAIL_PROFILE_TRADITIONAL_RAMP_RISE
+    shoulder = BOTTOM_RAIL_PROFILE_TRADITIONAL_SHOULDER
+    end_detail = run + shoulder
+    if chord <= 2.0 * end_detail + inch(1.0):
+        return None
+    # Left end detail: ramp then shoulder, sampled as a cubic bezier that
+    # leaves along the ramp direction and arrives level on the plateau.
+    p0 = (run, ramp_rise)
+    p3 = (end_detail, rise)
+    p1 = (run + shoulder * 0.5, ramp_rise + (ramp_rise / run) * shoulder * 0.5)
+    p2 = (end_detail - shoulder * 0.35, rise)
+    left = [(0.0, 0.0), p0]
+    for i in range(1, segments + 1):
+        t = i / segments
+        mt = 1.0 - t
+        x = (mt ** 3) * p0[0] + 3 * (mt ** 2) * t * p1[0] + 3 * mt * (t ** 2) * p2[0] + (t ** 3) * p3[0]
+        y = (mt ** 3) * p0[1] + 3 * (mt ** 2) * t * p1[1] + 3 * mt * (t ** 2) * p2[1] + (t ** 3) * p3[1]
+        left.append((x, min(y, rise)))
+    right = [(chord - x, y) for (x, y) in reversed(left)]
+    below = -inch(0.25)
+    return left + right + [(chord, below), (0.0, below)]
 
 
 # Baseline rotation_euler.z for parts that live in the face frame plane.
@@ -5179,6 +5221,8 @@ class FaceFrameCabinet(GeoNodeCage):
         inner_len = length - 2.0 * margin
         if profile_id == _BOTTOM_RAIL_PROFILE_ARCH:
             rpoly = _bottom_rail_arch_poly(inner_len)
+        elif profile_id == _BOTTOM_RAIL_PROFILE_TRADITIONAL:
+            rpoly = _bottom_rail_traditional_poly(inner_len)
         else:
             rpoly = _bottom_rail_profile_stretched(poly, inner_len)
         if not rpoly:
@@ -5257,7 +5301,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 seg_key = rail.name
             profile_id = self._segment_bottom_rail_profile(cab_default, seg_key)
             mod = rail.modifiers.get(BOTTOM_RAIL_PROFILE_CUT_MOD_NAME)
-            is_arch = profile_id == _BOTTOM_RAIL_PROFILE_ARCH
+            is_arch = profile_id in _BOTTOM_RAIL_PROCEDURAL_PROFILES
             if profile_id not in ('NONE', '') and not is_arch:
                 if profile_id not in poly_cache:
                     poly_cache[profile_id] = _bottom_rail_profile_poly(profile_id)
@@ -12810,7 +12854,7 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         # applied GN anyway.
         if not BOARD.get('IS_MANUAL_PART'):
             profile_id = getattr(cab, 'bottom_rail_profile', 'NONE')
-            is_arch = profile_id == _BOTTOM_RAIL_PROFILE_ARCH
+            is_arch = profile_id in _BOTTOM_RAIL_PROCEDURAL_PROFILES
             poly = (None if (is_arch or profile_id in ('NONE', ''))
                     else _bottom_rail_profile_poly(profile_id))
             if profile_id in ('NONE', '') or (not is_arch and not poly):
