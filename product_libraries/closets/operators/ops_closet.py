@@ -4398,6 +4398,16 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         description="How far in from each end the first and last "
                     "hook sit. The rest are spread evenly "
                     "between")  # type: ignore
+    remove_front: bpy.props.BoolProperty(
+        name="Remove Drawer Front",
+        description="Leave the drop-down front off and show the "
+                    "compartment open - the prior library's "
+                    "option")  # type: ignore
+    opening_height: bpy.props.FloatProperty(
+        name="Drawer Opening Height", min=0.0, unit='LENGTH',
+        precision=4,
+        description="How tall the compartment under the cap shelf "
+                    "is. Zero uses the standard height")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -4461,6 +4471,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         self.cleat_height = c_h
         self.hook_qty = qty
         self.hook_inset = inset
+        self.remove_front = bool(
+            obj.get(types_closets.PROP_ACCESSORY_NO_FRONT))
+        self.opening_height = float(
+            obj.get(types_closets.PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
         return context.window_manager.invoke_props_dialog(self,
                                                           width=320)
 
@@ -4515,14 +4529,16 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if self.hook_qty > 1:
                 col.prop(self, 'hook_inset')
         if acc_def.family == acc.FAMILY_INSERT:
+            box = layout.box()
+            col = box.column(align=True)
+            col.prop(self, 'opening_height')
+            col.prop(self, 'remove_front')
             # It stands on a shelf. Letting a height be typed here
             # would lift it off that shelf and leave it on nothing, so
             # where it sits is settled when it is placed and not
             # after - which is how the prior library had it too.
-            box = layout.box()
             box.label(text="Height is set by placing it.",
                       icon='INFO')
-            box.label(text="It stands on the shelf under it.")
         else:
             col.prop(self, 'location')
         warning = obj.get(types_closets.PROP_ACCESSORY_WARNING, '')
@@ -4557,6 +4573,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
                 obj[types_closets.PROP_ACCESSORY_Z] = float(
                     self.location)
+            if acc_def is not None and acc_def.family == acc.FAMILY_INSERT:
+                obj[types_closets.PROP_ACCESSORY_NO_FRONT] = (
+                    1 if self.remove_front else 0)
+                obj[types_closets.PROP_ACCESSORY_OPEN_H] = float(
+                    self.opening_height)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
                     self.setback)

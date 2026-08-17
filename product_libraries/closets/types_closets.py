@@ -119,6 +119,10 @@ PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
 # A cleat accessory hung on a wall rather than in an opening. It has
 # no opening to follow, so its figures are all its own.
 PROP_ACCESSORY_ON_WALL = 'hb_accessory_on_wall'
+# The ironing board drawer's own choices, the prior library's: the
+# drop-down front can be left off, and the compartment height set.
+PROP_ACCESSORY_NO_FRONT = 'hb_accessory_no_front'
+PROP_ACCESSORY_OPEN_H = 'hb_accessory_open_h'
 # A corner shelf that has been locked. Lock and adjustable are the
 # same board cut the same way - what differs is how it is held: pins
 # in routed notches, or cams into the wings. So it is a flag on the
@@ -3035,7 +3039,13 @@ class ClosetStarter(GeoNodeCage):
                                PART_ROLE_ACCESSORY_PART, kids)
                 self._acc_part(cage, 'Accessory Shelf',
                                PART_ROLE_ACCESSORY_PART, kids)
-                if not kids.get(PART_ROLE_DRAWER_FRONT):
+                if cage.get(PROP_ACCESSORY_NO_FRONT):
+                    # Left off by choice, the prior library's option:
+                    # the compartment shows open.
+                    for f in kids.pop(PART_ROLE_DRAWER_FRONT,
+                                      None) or ():
+                        _remove_part_tree(f)
+                elif not kids.get(PART_ROLE_DRAWER_FRONT):
                     front = self._make_front(
                         cage, 'Ironing Board Front',
                         PART_ROLE_DRAWER_FRONT, side)
@@ -3208,7 +3218,11 @@ class ClosetStarter(GeoNodeCage):
         take the opening's width."""
         st = scene_props.shelf_thickness
         plat_t = const.IRONING_BOARD_PLATFORM_THICKNESS
-        open_h = const.IRONING_BOARD_OPENING_HEIGHT
+        # The compartment height is the person's where one was given,
+        # the prior library's figure otherwise.
+        open_h = float(cage.get(PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
+        if open_h <= 0.0:
+            open_h = const.IRONING_BOARD_OPENING_HEIGHT
         # The plate the board bolts to: flush to the front edge, its
         # underside on the opening floor, centered left to right.
         plate = self._acc_part(cage, 'Ironing Board Mount',

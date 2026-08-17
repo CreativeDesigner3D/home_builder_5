@@ -1610,6 +1610,16 @@ class Closets_Scene_Props(PropertyGroup):
                     "else, the way the prior library did",
         default=True)  # type: ignore
 
+    closet_door_edgeband: EnumProperty(
+        name="Door Edgebanding",
+        description="How thick the fronts' edgebanding is bought - "
+                    "the room-wide choice the prior library offered. "
+                    "Companion systems read it for what a front's "
+                    "edges cost and how long they take to run",
+        items=[('1MM', "1mm", "Standard 1mm edgebanding"),
+               ('3MM', "3mm", "Heavy 3mm edgebanding")],
+        default='1MM')  # type: ignore
+
     closet_crown_profile: EnumProperty(
         name="Crown Profile",
         description="Profile used by Add Crown Molding",
@@ -1799,6 +1809,7 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.prop(self, 'closet_front_style', text="Front Style")
         col.prop(self, 'closet_panel_type', text="Door Panel")
+        col.prop(self, 'closet_door_edgeband', text="Edgebanding")
 
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',
