@@ -154,6 +154,8 @@ class GroupLayout:
         self.angled_multi = False
         self.blind_offset_left = 0.0
         self.blind_offset_right = 0.0
+        self.ff_inset_left = 0.0
+        self.ff_inset_right = 0.0
         # Cabinets only (no appliances) for CABINET_BOUNDARY records -
         # those record adjacent face-frame cabinet pairs the user can
         # drag between. Appliances are locked and don't participate.

@@ -1,14 +1,17 @@
 """Cabinet columns applied over face frame stiles.
 
 A cabinet column is a split (half) turning applied to the FACE of the
-frame, centered on a stile: it stands proud of the face frame, so
-unlike a decorative corner post nothing is notched or cut. Anatomy,
-top to bottom:
+frame over a stile: it stands proud of the face frame, so unlike a
+decorative corner post nothing is notched or cut. On an end stile the
+column sits flush with the cabinet's end (block face in line with the
+outer edge of the frame), the rest of the stile showing as a reveal
+beside it - which is why a stile carrying a column is widened (4" by
+default, see STILE_WIDTH). Between bays it is centered on the mid
+stile. Anatomy, top to bottom:
 
     end block   -- plain square block, turned dome on its inner end;
                    adjustable height, by default 1" taller than the
-                   rail it covers (block hangs 1" past the rail's
-                   inner edge onto the stile)
+                   TOP rail (top and bottom blocks alike)
     spool       -- the turned transition (bead, taper, cap)
     shaft       -- the styled run between the spools: smooth or reeded
     spool       -- mirrored
@@ -48,8 +51,12 @@ KERF = inch(0.094)
 # the shaft runs plain between the blocks; below it again, no column.
 MIN_SHAFT_RUN = inch(1.0)
 
-# Extra length an end block covers past its rail's inner edge.
+# Extra length an end block runs past the top rail width.
 BLOCK_PAST_RAIL = inch(1.0)
+
+# Width a stile is opened up to when it takes a column: the large
+# block (3-1/4") plus a reveal beside it.
+STILE_WIDTH = inch(4.0)
 
 # Fallback plinth height on a flush kick, where the frame bottom is
 # the floor and there is no kick recess to fill.
@@ -131,9 +138,18 @@ REED_DEPTH_RATIO = 0.125    # of the shaft radius
 
 
 def block_height_default(rail_width):
-    """Catalog default: the end block runs BLOCK_PAST_RAIL longer than
-    the rail it covers."""
+    """Catalog default: an end block runs BLOCK_PAST_RAIL longer than
+    the top rail (the caller passes the top rail width for both blocks;
+    on a flush kick the bottom block's includes the kick it drops
+    over)."""
     return max(inch(0.5), rail_width + BLOCK_PAST_RAIL)
+
+
+def end_axis_offset(size):
+    """FF-x from the frame's end to a column axis that puts the block
+    flush with that end: half the block width."""
+    spec = SIZE_SPECS.get(size, SIZE_SPECS['LARGE'])
+    return spec['block_width'] / 2.0
 
 
 # ----------------------------------------------------------------------
@@ -392,7 +408,7 @@ def cleanup(cabinet_obj, keep=()):
 def _component_stack(placement, spec):
     """[(component, z, build args...)] for one column, or None when the
     frame span can't hold even a plain shaft. Heights of 0 mean 'use
-    the catalog default' (rail + 1")."""
+    the catalog default' (top rail + 1", both blocks)."""
     zb = placement['z_bottom']
     zt = placement['z_top']
     if zt - zb < MIN_SHAFT_RUN:
@@ -450,7 +466,9 @@ def apply_columns(cabinet_obj, placements):
         top_block, bottom_block, floor_block        booleans
         top_block_height, bottom_block_height,
         floor_block_height    0 = catalog default
-        top_rail_width, bottom_rail_width           for the defaults
+        top_rail_width, bottom_rail_width           for the defaults:
+                              both are the TOP rail width; the bottom
+                              one adds the kick on a flush kick
     """
     keep = set()
     published = []

@@ -388,11 +388,15 @@ def draw_construction(layout, cab_props):
             row = col.row(align=True)
             row.prop(cab_props, 'decorative_corner_back_left', toggle=True)
             row.prop(cab_props, 'decorative_corner_back_right', toggle=True)
+            # Posts are the catalog's 2" x 2" only, so no size field:
+            # the bottom detail's square base and the crown block run
+            # are the two lengths a job actually varies.
             col = dcbox.column(align=True)
             col.prop(cab_props, 'decorative_corner_bottom', text="Bottom")
             col.prop(cab_props, 'decorative_corner_top_detail',
                      text="Top Transition Detail")
-            col.prop(cab_props, 'decorative_corner_size', text="Size")
+            col.prop(cab_props, 'decorative_corner_detail_height',
+                     text="Transition Detail Height")
             col.prop(cab_props, 'decorative_corner_block_run',
                      text="Square Block Run")
 

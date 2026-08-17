@@ -32,6 +32,53 @@ from . import bar_storage
 # ---------------------------------------------------------------------------
 # Layout snapshot
 # ---------------------------------------------------------------------------
+def blind_insets(cab):
+    """(left, right) amount a BLIND end pulls the face frame plane in
+    from the cabinet's ends. Zero on a side that isn't a live blind."""
+    left = (cab.blind_amount_left
+            if (cab.left_stile_type == 'BLIND' and cab.blind_left
+                and cab.blind_amount_left > 0) else 0.0)
+    right = (cab.blind_amount_right
+             if (cab.right_stile_type == 'BLIND' and cab.blind_right
+                 and cab.blind_amount_right > 0) else 0.0)
+    return left, right
+
+
+def decorative_corner_insets(cab):
+    """(left, right) amount a decorative corner post on a FRONT corner
+    pulls the face frame plane in from that end.
+
+    The post is let into the cabinet's front corner and the frame stays
+    whole and butts into it: the frame's left endpoint moves right by
+    the post size for a front-left post (mirror on the right). Only
+    the carcass is notched around the post. Angled fronts and corner
+    cabinets don't take posts, so they read zero here.
+    """
+    if getattr(cab, 'decorative_corner_style', 'NONE') == 'NONE':
+        return 0.0, 0.0
+    if cab.cabinet_type == 'PANEL' or cab.corner_type != 'NONE':
+        return 0.0, 0.0
+    if cab.unlock_left_depth or cab.unlock_right_depth:
+        return 0.0, 0.0
+    from . import decorative_corner
+    size = decorative_corner.post_size(cab, cab.width, cab.depth)
+    if size <= 0.0:
+        return 0.0, 0.0
+    left = size if getattr(cab, 'decorative_corner_front_left', False) else 0.0
+    right = size if getattr(cab, 'decorative_corner_front_right', False) else 0.0
+    return left, right
+
+
+def face_frame_insets(cab):
+    """(left, right) total inset of the face frame plane from the
+    cabinet's ends: blind offset plus decorative corner post. Both the
+    layout snapshot and the bay-width distribution read this so the
+    bays share exactly the frame length the solver builds."""
+    bl, br = blind_insets(cab)
+    dl, dr = decorative_corner_insets(cab)
+    return bl + dl, br + dr
+
+
 class FaceFrameLayout:
     """Snapshot of a cabinet's solved state.
 
@@ -139,14 +186,13 @@ class FaceFrameLayout:
         # so end stiles, rails, and bays all naturally fit inside the
         # remaining FF area; the blind panels themselves still anchor
         # to the cabinet's outer edges (x=0 / x=dim_x).
-        is_blind_left = (cab.left_stile_type == 'BLIND'
-                         and cab.blind_left
-                         and cab.blind_amount_left > 0)
-        is_blind_right = (cab.right_stile_type == 'BLIND'
-                          and cab.blind_right
-                          and cab.blind_amount_right > 0)
-        self.blind_offset_left = cab.blind_amount_left if is_blind_left else 0.0
-        self.blind_offset_right = cab.blind_amount_right if is_blind_right else 0.0
+        self.blind_offset_left, self.blind_offset_right = blind_insets(cab)
+        # Total FF-plane inset per side: the blind offset plus a
+        # decorative corner post the frame butts into (see
+        # decorative_corner_insets). Every FF-local <-> world X
+        # conversion goes through these; blind_offset_* stay for the
+        # blind-specific parts (blind panels, corner FO stiles).
+        self.ff_inset_left, self.ff_inset_right = face_frame_insets(cab)
 
         # FULL-overlay blind corner sides: the corner stile carries an
         # applied overlay stile in front (mitered with the partner
@@ -1878,8 +1924,8 @@ def face_frame_length(layout):
     """
     if not layout.is_angled:
         return (layout.dim_x
-                - layout.blind_offset_left
-                - layout.blind_offset_right)
+                - layout.ff_inset_left
+                - layout.ff_inset_right)
     if layout.angled_multi:
         # Multi-bay angled parameterizes the piecewise front by WORLD
         # X (bay widths stay world-x; members on angled segments scale
@@ -1894,9 +1940,10 @@ def ff_outer_world_pos(layout, ff_x, world_z):
     the left endpoint of the (potentially shrunken) face frame, at
     height world_z.
 
-    For non-angled cabinets ff_x maps to world X via the blind offset:
-    the FF plane's left endpoint sits at world x = blind_offset_left,
-    so the function returns (ff_x + blind_offset_left, -dim_y, z).
+    For non-angled cabinets ff_x maps to world X via the FF inset
+    (blind offset + decorative corner post): the FF plane's left
+    endpoint sits at world x = ff_inset_left, so the function returns
+    (ff_x + ff_inset_left, -dim_y, z).
     Callers pass FF-local coordinates from bay_x_position /
     face_frame_length so the offset is added once at the world
     boundary.
@@ -1908,7 +1955,7 @@ def ff_outer_world_pos(layout, ff_x, world_z):
     blind offsets.
     """
     if not layout.is_angled:
-        return (ff_x + layout.blind_offset_left, -layout.dim_y, world_z)
+        return (ff_x + layout.ff_inset_left, -layout.dim_y, world_z)
     if layout.angled_multi:
         y, _theta = _multi_front_at(layout, ff_x)
         return (ff_x, y, world_z)
@@ -2085,7 +2132,7 @@ def mid_stile_position(layout, gap_index):
 
     x = (bay_x_position(layout, gap_index)
          + bay_a['width']
-         + layout.blind_offset_left)
+         + layout.ff_inset_left)
     y = -layout.dim_y
     return (x, y, base_z)
 
@@ -2338,7 +2385,7 @@ def _mid_stile_center_x(layout, gap_index):
     _mid_div_center_x, which folds in the user's division offset (so
     the division can sit off-center under the stile, scribe-style).
 
-    bay_x_position returns FF-local; add blind_offset_left so this
+    bay_x_position returns FF-local; add ff_inset_left so this
     function honors its world-X contract regardless of blind state.
     """
     bay_a = layout.bays[gap_index]
@@ -2346,7 +2393,7 @@ def _mid_stile_center_x(layout, gap_index):
     msw = ms['width']
     base_x = (bay_x_position(layout, gap_index)
               + bay_a['width']
-              + layout.blind_offset_left)
+              + layout.ff_inset_left)
     return base_x + msw / 2.0
 
 
@@ -3336,17 +3383,17 @@ def bay_opening_center_x(layout, bay_index):
         left_inner = layout.lsw
     else:
         gap = bay_index - 1
-        left_inner = ((_mid_stile_center_x(layout, gap) - layout.blind_offset_left)
+        left_inner = ((_mid_stile_center_x(layout, gap) - layout.ff_inset_left)
                       + layout.mid_stiles[gap]['width'] / 2.0)
     # Right bounding stile inner (left-facing) edge, FF-local X.
     if bay_index >= last:
         right_inner = ff_len - layout.rsw
     else:
         gap = bay_index
-        right_inner = ((_mid_stile_center_x(layout, gap) - layout.blind_offset_left)
+        right_inner = ((_mid_stile_center_x(layout, gap) - layout.ff_inset_left)
                        - layout.mid_stiles[gap]['width'] / 2.0)
-    # Back to cabinet-local X (the FF plane starts at blind_offset_left).
-    return (left_inner + right_inner) / 2.0 + layout.blind_offset_left
+    # Back to cabinet-local X (the FF plane starts at ff_inset_left).
+    return (left_inner + right_inner) / 2.0 + layout.ff_inset_left
 
 
 # ---------------------------------------------------------------------------
@@ -3394,7 +3441,7 @@ def _bay_root_reveals(layout, bay_index):
     # Cage bounds are world; bay_x_position is FF-local. Convert to
     # world so the reveal subtractions don't mix coordinate systems.
     ff_opening_left_x = (bay_x_position(layout, bay_index)
-                         + layout.blind_offset_left)
+                         + layout.ff_inset_left)
     ff_opening_right_x = ff_opening_left_x + bay['width']
 
     _, _, cage_dim_z = bay_cage_dims(layout, bay_index)

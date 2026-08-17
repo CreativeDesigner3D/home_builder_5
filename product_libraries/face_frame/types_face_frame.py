@@ -2020,19 +2020,11 @@ class FaceFrameCabinet(GeoNodeCage):
                   else cab_props.depth)
             available_width = math.hypot(cab_props.width, ld - rd)
         else:
-            # Mirror FaceFrameLayout.blind_offset_* coupling so the bay
-            # share matches the FF area the solver will actually use.
-            blind_left = (cab_props.blind_amount_left
-                          if (cab_props.left_stile_type == 'BLIND'
-                              and cab_props.blind_left
-                              and cab_props.blind_amount_left > 0)
-                          else 0.0)
-            blind_right = (cab_props.blind_amount_right
-                           if (cab_props.right_stile_type == 'BLIND'
-                               and cab_props.blind_right
-                               and cab_props.blind_amount_right > 0)
-                           else 0.0)
-            available_width = cab_props.width - blind_left - blind_right
+            # Same FF-plane insets FaceFrameLayout uses (blind offset +
+            # decorative corner post) so the bay share matches the FF
+            # area the solver will actually build.
+            inset_left, inset_right = solver.face_frame_insets(cab_props)
+            available_width = cab_props.width - inset_left - inset_right
 
         remainder = available_width - consumed - locked_total
         share = remainder / len(unlocked_bays)
@@ -5924,12 +5916,18 @@ class FaceFrameCabinet(GeoNodeCage):
         placements = []
         for entry in entries:
             key = entry.stile_key
+            # End columns sit flush with the cabinet end (block face in
+            # line with the frame's outer edge), the rest of the widened
+            # stile reading as a reveal beside them; mid columns are
+            # centered on their stile.
+            end_off = cabinet_column.end_axis_offset(entry.size)
             if key == 'LEFT':
-                ffx = layout.lsw / 2.0
+                ffx = min(end_off, layout.lsw / 2.0)
                 bay_lo = bay_hi = 0
                 label = "Left"
             elif key == 'RIGHT':
-                ffx = solver.face_frame_length(layout) - layout.rsw / 2.0
+                ffx = (solver.face_frame_length(layout)
+                       - min(end_off, layout.rsw / 2.0))
                 bay_lo = bay_hi = layout.bay_count - 1
                 label = "Right"
             elif key.startswith('MID_'):
@@ -5955,7 +5953,9 @@ class FaceFrameCabinet(GeoNodeCage):
             z_top = max(solver.bay_top_z(layout, bay_lo),
                         solver.bay_top_z(layout, bay_hi))
             bay = layout.bays[bay_lo]
-            bottom_rail = bay['bottom_rail_width']
+            # Both end blocks default to 1" over the TOP rail; the
+            # bottom one on a flush kick also drops over the kick.
+            bottom_rail = bay['top_rail_width']
             if flush_floor:
                 # Flush kick: the frame runs to the floor and the wide
                 # rail is kick + rail, so the column and its default
@@ -6694,12 +6694,12 @@ class FaceFrameCabinet(GeoNodeCage):
         x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fft, 0.0)))).x
         pullback = (solver.FULL_CORNER_SIDE_OVERLAY + self.FO_CORNER_REVEAL)
         if side == 'LEFT':
-            x_inner = layout.blind_offset_left + layout.lsw - pullback
+            x_inner = layout.ff_inset_left + layout.lsw - pullback
             x_outer = min(x_bff, x_bap)
             width = x_inner - x_outer
             x_anchor = x_outer
         else:
-            x_inner = (layout.dim_x - layout.blind_offset_right
+            x_inner = (layout.dim_x - layout.ff_inset_right
                        - layout.rsw + pullback)
             x_outer = max(x_bff, x_bap)
             width = x_outer - x_inner
@@ -9695,7 +9695,14 @@ class FaceFrameCabinet(GeoNodeCage):
         compartment behind them, side compartments left and right, and
         one compartment across the back. The slot band keeps its pitch
         and the side compartments take up the slack, which is how the
-        tray is trimmed to the drawer it ships in."""
+        tray is trimmed to the drawer it ships in.
+
+        A catalog configuration pins the layout through the hint:
+        CORE = slot core width, BAND = back compartment depth, CROSS =
+        cross compartment depth (0 = none), MIDSPLIT = a rail across
+        the middle slot that far from the front. Without them the tray
+        lays itself out from the drawer size.
+        """
         th = self.INSERT_WALL_TH
         mb = self._build_tray_insert(box_obj, rect, item, params,
                                      mb=DrawerInsertMesh(), slots=1)
@@ -9711,13 +9718,19 @@ class FaceFrameCabinet(GeoNodeCage):
         # compartment behind it is the back band, the slot core takes
         # the rest. core_back is the rail's FRONT face, so everything
         # running forward from it stops there rather than into it.
-        band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
+        if 'BAND' in params:
+            band = inch(params['BAND'])
+        else:
+            band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
         core_back = iy1
-        if (iy1 - band) - iy0 >= inch(6.0):
+        if band > th and (iy1 - band) - iy0 >= inch(6.0):
             core_back = iy1 - band
             mb.box(ix0, ix1, core_back, core_back + th, zb, z1)
         slots = max(min(rect.slots or 5, 12), 2)
-        core_w = min(self.CUTLERY_SLOT_PITCH * slots, ix1 - ix0)
+        core_w = inch(params.get('CORE', 0.0))
+        if core_w < th:
+            core_w = self.CUTLERY_SLOT_PITCH * slots
+        core_w = min(core_w, ix1 - ix0)
         cx0 = (ix0 + ix1) / 2.0 - core_w / 2.0
         cx1 = cx0 + core_w
         # Partitions bounding the slot core run its full depth. Where
@@ -9730,12 +9743,26 @@ class FaceFrameCabinet(GeoNodeCage):
             kx0, kx1 = cx0 + th, cx1 - th
         # Cross compartment at the back of the core: its rail butts
         # between whatever bounds the core.
+        cross = inch(params['CROSS']) if 'CROSS' in params else \
+            self.CUTLERY_CROSS_DEPTH
         slot_back = core_back
-        if core_back - iy0 > self.CUTLERY_CROSS_DEPTH + inch(4.0):
-            slot_back = core_back - self.CUTLERY_CROSS_DEPTH - th
+        if cross > th and core_back - iy0 > cross + inch(4.0):
+            slot_back = core_back - cross - th
             mb.box(kx0, kx1, slot_back, slot_back + th, zb, z1)
-        for p in self._partition_spans(kx0, kx1, slots, th):
+        spans = self._partition_spans(kx0, kx1, slots, th)
+        for p in spans:
             mb.box(p, p + th, iy0, slot_back, zb, z1)
+        # A short compartment at the front of the middle slot (the
+        # catalog's "E"/"F" trays): rail butted between that slot's
+        # partitions, its front face MIDSPLIT from the tray front.
+        mid = inch(params.get('MIDSPLIT', 0.0))
+        if mid > th and slots >= 2 and len(spans) == slots - 1:
+            i = slots // 2
+            left = kx0 if i == 0 else spans[i - 1] + th
+            right = kx1 if i == slots - 1 else spans[i]
+            if (right - left > th and
+                    slot_back - (iy0 + mid + th) > inch(1.0)):
+                mb.box(left, right, iy0 + mid, iy0 + mid + th, zb, z1)
         self._emit_drawer_insert(box_obj, name, mb)
 
     def _build_knife_block_insert(self, box_obj, rect, item, params):

@@ -5203,7 +5203,15 @@ class Face_Frame_Cabinet_Column(PropertyGroup):
     bottom_block_height: FloatProperty(
         name="Bottom Block Height", default=0.0,
         unit='LENGTH', precision=4, min=0.0,
-        description="0 = default (1\" taller than the bottom rail)",
+        description="0 = default (1\" taller than the top rail, like "
+                    "the top block)",
+    )  # type: ignore
+    # Width the stile was opened up to when the column was set, so
+    # removing the column can put it back (only if it still holds
+    # that width). 0 = the stile was left alone.
+    stile_width: FloatProperty(
+        name="Stile Width", default=0.0,
+        unit='LENGTH', precision=4, min=0.0,
     )  # type: ignore
     floor_block: BoolProperty(
         name="Bottom Block at Floor", default=False,
@@ -5727,6 +5735,59 @@ def _update_left_stile_type(self, context):
 
 def _update_right_stile_type(self, context):
     _recompute_blind_stile_width(self, 'RIGHT')
+    _update_cabinet_dim(self, context)
+
+
+def _sync_decorative_corner_stile(cab_props, side):
+    """Write the end stile width for a front decorative corner.
+
+    The frame butts into the post, and the stile beside it is a 1-1/2"
+    member (1-1/4" on full overlay). The stile is unlocked while it
+    holds that width so a style re-apply leaves it alone; when the
+    post on that side goes away and the stile still carries the
+    post width, it is re-locked and drops back to its style / type
+    driven width. A stile the user already unlocked (manual control)
+    is left alone, like the blind stile coupling.
+    """
+    if side == 'LEFT':
+        on = cab_props.decorative_corner_front_left
+        attr, lock_attr = 'left_stile_width', 'unlock_left_stile'
+    else:
+        on = cab_props.decorative_corner_front_right
+        attr, lock_attr = 'right_stile_width', 'unlock_right_stile'
+    on = on and cab_props.decorative_corner_style != 'NONE'
+    width = decorative_corner.stile_width(cab_props.id_data)
+    stamp = 'HB_DECO_CORNER_STILE_%s' % side
+    root = cab_props.id_data
+    if on:
+        if not root.get(stamp):
+            # Remember whether the unlock is ours to undo.
+            if getattr(cab_props, lock_attr):
+                root[stamp] = 'USER_UNLOCKED'
+            else:
+                root[stamp] = 'UNLOCKED_BY_CORNER'
+                setattr(cab_props, lock_attr, True)
+        if abs(getattr(cab_props, attr) - width) > 1e-7:
+            setattr(cab_props, attr, width)
+        return
+    was = root.get(stamp)
+    if not was:
+        return
+    del root[stamp]
+    if abs(getattr(cab_props, attr) - width) > 1e-7:
+        # User moved it since; keep their width (and their unlock).
+        return
+    if was == 'UNLOCKED_BY_CORNER':
+        # Re-locking re-applies the style's stile width; unstyled
+        # cabinets fall back to the type-driven width.
+        setattr(cab_props, lock_attr, False)
+        if not root.get('STYLE_NAME'):
+            _recompute_blind_stile_width(cab_props, side)
+
+
+def _update_decorative_corners(self, context):
+    _sync_decorative_corner_stile(self, 'LEFT')
+    _sync_decorative_corner_stile(self, 'RIGHT')
     _update_cabinet_dim(self, context)
 
 
@@ -6589,7 +6650,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Decorative Corner Style",
         items=decorative_corner.STYLE_ITEMS,
         default='NONE',
-        update=_update_cabinet_dim,
+        update=_update_decorative_corners,
     )  # type: ignore
     decorative_corner_bottom: EnumProperty(
         name="Bottom Condition",
@@ -6599,11 +6660,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "gets a transition detail and square bottom block",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Front corners move the face frame over by the post size and set
+    # the stile beside the post (see _update_decorative_corners).
     decorative_corner_front_left: BoolProperty(
-        name="Front Left", default=False, update=_update_cabinet_dim,
+        name="Front Left", default=False, update=_update_decorative_corners,
     )  # type: ignore
     decorative_corner_front_right: BoolProperty(
-        name="Front Right", default=False, update=_update_cabinet_dim,
+        name="Front Right", default=False, update=_update_decorative_corners,
     )  # type: ignore
     decorative_corner_back_left: BoolProperty(
         name="Back Left", default=False, update=_update_cabinet_dim,
@@ -6611,19 +6674,30 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     decorative_corner_back_right: BoolProperty(
         name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    # The catalog posts are 2" x 2" only; the size is not offered in the
+    # UI (kept as a property for older files and for the solver, which
+    # pulls the face frame in by it).
     decorative_corner_size: FloatProperty(
         name="Corner Size", default=decorative_corner.DEFAULT_SIZE,
         unit='LENGTH', precision=4, min=units.inch(0.25),
         description="Face size of the post, and the size of the square "
                     "notch cut into the cabinet corner",
+        update=_update_decorative_corners,
+    )  # type: ignore
+    decorative_corner_detail_height: FloatProperty(
+        name="Transition Detail Height",
+        default=decorative_corner.DEFAULT_DETAIL_HEIGHT,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Square base of the bottom transition detail, under "
+                    "the bead ring (the bead itself adds 3/4\")",
         update=_update_cabinet_dim,
     )  # type: ignore
     decorative_corner_block_run: FloatProperty(
         name="Square Block Run",
         default=decorative_corner.DEFAULT_BLOCK_RUN,
         unit='LENGTH', precision=4, min=0.0,
-        description="Length of the plain square block between a "
-                    "transition detail and the end of the post",
+        description="Length of the plain square block above the top "
+                    "transition detail, that crown moulding dies into",
         update=_update_cabinet_dim,
     )  # type: ignore
     decorative_corner_top_detail: BoolProperty(

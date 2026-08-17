@@ -652,7 +652,10 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
     """Apply, edit, or remove the cabinet column on the selected stile.
 
     A cabinet column is a split turning (end blocks, spools, styled
-    shaft) applied over the frame face, centered on a stile. The
+    shaft) applied over the frame face on a stile - flush with the
+    cabinet end on an end stile, centered on a mid stile. The stile is
+    opened up to Stile Width (4" by default) when the column is set,
+    and put back when it is removed if it still holds that width. The
     assignment lives in the cabinet's cabinet_columns collection keyed
     by stile; this dialog is its only editor. Also reachable by
     right-clicking a built column component (the key rides on it).
@@ -669,6 +672,12 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
     size: EnumProperty(
         name="Size", items=cabinet_column.SIZE_ITEMS,
         default='LARGE')  # type: ignore
+    stile_width: FloatProperty(
+        name="Stile Width", default=cabinet_column.STILE_WIDTH,
+        unit='LENGTH', precision=4, min=0.0,
+        description="Width the stile under the column is opened up to "
+                    "(0 = leave the stile as it is)",
+    )  # type: ignore
     top_block: BoolProperty(
         name="Top End Block", default=True)  # type: ignore
     top_block_height: FloatProperty(
@@ -679,7 +688,8 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
         name="Bottom End Block", default=True)  # type: ignore
     bottom_block_height: FloatProperty(
         name="Height", default=0.0, unit='LENGTH', precision=4, min=0.0,
-        description="0 = default (1\" taller than the bottom rail)",
+        description="0 = default (1\" taller than the top rail, like "
+                    "the top block)",
     )  # type: ignore
     floor_block: BoolProperty(
         name="Bottom Block at Floor", default=False,
@@ -723,6 +733,73 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
                 return i
         return -1
 
+    @staticmethod
+    def _stile_width_target(root, key):
+        """(getter, setter, unlocker) for the width of the stile at
+        key, or None when the key doesn't resolve to a stile."""
+        cab = root.face_frame_cabinet
+        if key == 'LEFT':
+            return (lambda: cab.left_stile_width,
+                    lambda v: setattr(cab, 'left_stile_width', v),
+                    lambda f: setattr(cab, 'unlock_left_stile', f))
+        if key == 'RIGHT':
+            return (lambda: cab.right_stile_width,
+                    lambda v: setattr(cab, 'right_stile_width', v),
+                    lambda f: setattr(cab, 'unlock_right_stile', f))
+        if key.startswith('MID_'):
+            try:
+                gap = int(key[4:])
+            except ValueError:
+                return None
+            coll = cab.mid_stile_widths
+            while len(coll) <= gap:
+                coll.add()
+            ms = coll[gap]
+            return (lambda: ms.width,
+                    lambda v: setattr(ms, 'width', v),
+                    lambda f: setattr(ms, 'unlock', f))
+        return None
+
+    def _apply_stile_width(self, root, key, width):
+        """Open the stile up to the column's stile width. Unlocked so
+        a style re-apply leaves it alone (like Set Width does)."""
+        if width <= 0.0:
+            return
+        target = self._stile_width_target(root, key)
+        if target is None:
+            return
+        get, put, unlock = target
+        unlock(True)
+        if abs(get() - width) > 1e-7:
+            put(width)
+
+    def _restore_stile_width(self, root, key, applied):
+        """Undo _apply_stile_width when the column is removed: only if
+        the stile still holds the width the column set (a user edit
+        since is theirs to keep). Re-locking snaps a styled cabinet's
+        stile back to the style value; an unstyled one takes the
+        cabinet default (mid) or type-driven width (ends)."""
+        if applied <= 0.0:
+            return
+        target = self._stile_width_target(root, key)
+        if target is None:
+            return
+        get, put, unlock = target
+        if abs(get() - applied) > 1e-7:
+            return
+        unlock(False)
+        cab = root.face_frame_cabinet
+        if key in ('LEFT', 'RIGHT'):
+            # Re-locking an end stile re-applied the style; only an
+            # unstyled cabinet needs the type-driven width written.
+            if not root.get('STYLE_NAME'):
+                from .. import props_hb_face_frame
+                props_hb_face_frame._recompute_blind_stile_width(cab, key)
+        else:
+            # Mid stile relock doesn't re-apply the style; the
+            # cabinet default is what the style cascade writes.
+            put(cab.bay_mid_stile_width)
+
     def invoke(self, context, event):
         obj = context.active_object
         self._key = self._stile_key(obj)
@@ -734,6 +811,7 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
             entry = self._root.face_frame_cabinet.cabinet_columns[idx]
             self.style = entry.style
             self.size = entry.size
+            self.stile_width = entry.stile_width
             self.top_block = entry.top_block
             self.top_block_height = entry.top_block_height
             self.bottom_block = entry.bottom_block
@@ -747,6 +825,7 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
         col = layout.column()
         col.prop(self, 'style')
         col.prop(self, 'size')
+        col.prop(self, 'stile_width')
         row = col.row(align=True)
         row.prop(self, 'top_block')
         sub = row.row(align=True)
@@ -781,13 +860,17 @@ class hb_face_frame_OT_set_cabinet_column(bpy.types.Operator):
         idx = self._existing(root, key)
         if self.remove:
             if idx >= 0:
+                applied = cab.cabinet_columns[idx].stile_width
                 cab.cabinet_columns.remove(idx)
+                self._restore_stile_width(root, key, applied)
         else:
             entry = (cab.cabinet_columns[idx] if idx >= 0
                      else cab.cabinet_columns.add())
             entry.stile_key = key
             entry.style = self.style
             entry.size = self.size
+            entry.stile_width = self.stile_width
+            self._apply_stile_width(root, key, self.stile_width)
             entry.top_block = self.top_block
             entry.top_block_height = self.top_block_height
             entry.bottom_block = self.bottom_block

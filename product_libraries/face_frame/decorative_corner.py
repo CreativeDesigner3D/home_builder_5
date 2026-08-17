@@ -1,20 +1,31 @@
 """Decorative corner posts on a cabinet's vertical corners.
 
 A decorative corner is a turned / milled post let into a vertical
-corner of the cabinet: the corner is notched square, the post fills the
+corner of the cabinet: the carcass is notched square, the post fills the
 notch, and its outer face carries a profile. Islands and exposed run
 ends are the usual hosts, so the post is offered per corner (front
 left / right, back left / right).
 
-Anatomy, bottom to top (the catalog calls the plain square sections
-"square blocks" and each bead ring a "transition detail"):
+The face frame is NOT notched. On a front corner the whole frame moves
+over by the post size and its end stile butts into the post (see
+solver_face_frame.decorative_corner_insets); only carcass parts, end
+skins and kicks are cut around it. The stile beside a post is a 1-1/2"
+member (1-1/4" on full overlay) -- props_hb_face_frame writes that
+width when the corner is switched on.
 
-    square block  -- fills the notch flush with both cabinet faces,
-                     so it reads proud of the profiled shaft
-    astragal      -- half-round bead ring standing proud of both faces
+Anatomy, bottom to top (the catalog calls the plain square sections
+"square blocks"; a bead ring over a short square is one "transition
+detail"):
+
+    square block  -- the transition detail's base, DETAIL_HEIGHT tall,
+                     flush with both cabinet faces so it reads proud of
+                     the profiled shaft
+    astragal      -- half-round bead ring, proud of the shaft but
+                     clipped to the notch so it never rides over the
+                     face frame or the cabinet body
     shaft         -- the styled run: 2" radius / colonial / fluted
     astragal
-    square block  -- the block crown moulding dies into
+    square block  -- the "square block run" crown moulding dies into
 
 Section geometry. Every band is a radius function about the notch's
 INNER corner, so one loft builds the whole post. Post-local section
@@ -48,11 +59,17 @@ from ...units import inch
 
 # Nominal post face size. The catalog corners are 2" x 2".
 DEFAULT_SIZE = inch(2.0)
-# Bead ring height and how far it stands proud of the cabinet faces.
+# Bead ring height and how far it stands proud of the shaft.
 ASTRAGAL_HEIGHT = inch(0.75)
 ASTRAGAL_PROJECTION = inch(0.25)
-# Plain square-block run between a transition detail and the post end.
+# Square base of a transition detail (under the bead ring at the
+# bottom of the post).
+DEFAULT_DETAIL_HEIGHT = inch(3.0)
+# Plain square-block run above the top transition detail, for crown.
 DEFAULT_BLOCK_RUN = inch(3.0)
+# End stile beside a post: standard overlays / full overlay.
+STILE_WIDTH = inch(1.5)
+STILE_WIDTH_FULL_OVERLAY = inch(1.25)
 # Depth the reeds are cut below the shaft's outer radius.
 REED_DEPTH = inch(0.1875)
 REED_COUNT = 5
@@ -110,13 +127,10 @@ _SHAFT = 'SHAFT'
 # Parts the corner notch cuts through. An explicit allow-list, like the
 # pipe chase's: the notch box overshoots the cabinet faces so the
 # boolean never grazes a coplanar face, and that overshoot reaches into
-# the door plane -- fronts must stay out of it.
+# the door plane -- fronts must stay out of it. The face frame is not
+# here either: it is built inboard of the post (its end stile butts
+# into it) rather than notched.
 CUT_PART_ROLES = frozenset({
-    # Face frame
-    'LEFT_STILE', 'RIGHT_STILE',
-    'LEFT_REFRIG_STILE', 'RIGHT_REFRIG_STILE',
-    'FULL_OVERLAY_STILE',
-    'TOP_RAIL', 'BOTTOM_RAIL',
     # Carcass
     'LEFT_SIDE', 'RIGHT_SIDE', 'TOP', 'BOTTOM',
     'BACK', 'FINISHED_BACK',
@@ -246,7 +260,12 @@ def _band_radii(kind, style, size, deg, bulge):
     if kind == _SQUARE:
         return _square_radius(size, deg)
     if kind == _ASTRAGAL:
-        return size + ASTRAGAL_PROJECTION * bulge
+        # Bead ring proud of the shaft, but never past the notch: it
+        # is clipped to the square block's outline so it dies flush
+        # into the face frame / cabinet faces instead of riding over
+        # them (the ring's ends taper into the faces).
+        return min(size + ASTRAGAL_PROJECTION * bulge,
+                   _square_radius(size, deg))
     return _style_radius(style, size, deg)
 
 
@@ -261,8 +280,15 @@ def post_bottom_z(bottom_option, kick_height):
     return max(0.0, kick_height)
 
 
-def band_stack(height, kick_height, bottom_option, top_detail, block_run):
+def band_stack(height, kick_height, bottom_option, top_detail, block_run,
+               detail_height=DEFAULT_DETAIL_HEIGHT):
     """[(z0, z1, kind)] bottom to top, or None when there is no room.
+
+    The bottom transition detail is a bead ring over a DETAIL_HEIGHT
+    square base (the "to floor" options run that base on down past the
+    kick); the top detail is a bead ring under the square block run
+    crown moulding dies into. The two lengths are independent - a
+    taller crown block must not stretch the detail at the floor.
 
     End details are all-or-nothing: if adding them would leave less
     than MIN_SHAFT_RUN of shaft the post falls back to one plain run,
@@ -276,7 +302,7 @@ def band_stack(height, kick_height, bottom_option, top_detail, block_run):
     upper = []
     shaft_z0, shaft_z1 = z_bot, z_top
     if bottom_option != 'STANDARD':
-        a0 = max(0.0, kick_height) + block_run
+        a0 = max(0.0, kick_height) + detail_height
         lower = [(z_bot, a0, _SQUARE), (a0, a0 + ASTRAGAL_HEIGHT, _ASTRAGAL)]
         shaft_z0 = a0 + ASTRAGAL_HEIGHT
     if top_detail:
@@ -536,6 +562,26 @@ def cleanup(cabinet_obj, keep_corners=()):
 # ----------------------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------------------
+def post_size(cab_props, width, depth):
+    """Face size the posts on this cabinet are built at: the catalog
+    2" (the size prop, kept for older files), but never more than half
+    the cabinet in either direction or two posts on one face would
+    collide. The solver reads this too, to pull the face frame in by
+    the same amount the post takes."""
+    size = max(inch(0.25),
+               getattr(cab_props, 'decorative_corner_size', DEFAULT_SIZE))
+    return min(size, width / 2.0, depth / 2.0)
+
+
+def stile_width(cabinet_obj):
+    """Width of an end stile that butts into a post: 1-1/2", or 1-1/4"
+    when the cabinet's style is full overlay."""
+    from . import types_face_frame
+    if types_face_frame._resolve_style_overlay(cabinet_obj) == 'FULL':
+        return STILE_WIDTH_FULL_OVERLAY
+    return STILE_WIDTH
+
+
 def spec_from_props(cab_props, has_toe_kick):
     """Read the cabinet's decorative-corner props into a plain dict.
     getattr defaults keep this safe against older files."""
@@ -555,6 +601,10 @@ def spec_from_props(cab_props, has_toe_kick):
         'block_run': max(0.0,
                          getattr(cab_props, 'decorative_corner_block_run',
                                  DEFAULT_BLOCK_RUN)),
+        'detail_height': max(0.0,
+                             getattr(cab_props,
+                                     'decorative_corner_detail_height',
+                                     DEFAULT_DETAIL_HEIGHT)),
         'top_detail': getattr(cab_props, 'decorative_corner_top_detail',
                               True),
         'kick_height': kick,
@@ -578,7 +628,8 @@ def apply_corners(cabinet_obj, width, depth, height, spec):
         bands = band_stack(height, spec.get('kick_height', 0.0),
                            spec.get('bottom', 'STANDARD'),
                            spec.get('top_detail', True),
-                           spec.get('block_run', DEFAULT_BLOCK_RUN))
+                           spec.get('block_run', DEFAULT_BLOCK_RUN),
+                           spec.get('detail_height', DEFAULT_DETAIL_HEIGHT))
     if bands is None:
         cleanup(cabinet_obj)
         _apply_cuts(cabinet_obj, {})
