@@ -1371,6 +1371,13 @@ class FaceFrameCabinet(GeoNodeCage):
             cab_props.top_rail_width = ff_scene.ff_top_rail_width
             cab_props.bottom_rail_width = ff_scene.ff_bottom_rail_width
             cab_props.face_frame_thickness = ff_scene.ff_face_frame_thickness
+            # Project toe kick defaults (product classes that need a
+            # fixed kick -- refrigerator 0, lap drawer float -- override
+            # after this in their own create()).
+            tk_h = getattr(ff_scene, 'default_toe_kick_height', None)
+            if tk_h is not None:
+                cab_props.toe_kick_height = tk_h
+                cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
 
         # Set dimensions last; this fires the update path
         cab_props.width = self.default_width

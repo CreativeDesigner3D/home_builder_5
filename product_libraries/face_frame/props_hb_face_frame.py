@@ -8685,6 +8685,37 @@ def _sync_top_drawer_opening_height(self, context):
         _SYNCING_TOP_DRAWER_HEIGHT = False
 
 
+# Same cross-room mirror for the project toe kick defaults (one guard
+# for both props; each callback re-enters the other scenes' callbacks).
+_SYNCING_TOE_KICK_DEFAULTS = False
+
+
+def _sync_toe_kick_defaults(self, context):
+    """Keep the default toe kick height / setback uniform across every
+    ROOM scene, like _sync_top_drawer_opening_height. Seeds new cabinets
+    only; use Update Toe Kicks to push onto built cabinets."""
+    global _SYNCING_TOE_KICK_DEFAULTS
+    if _SYNCING_TOE_KICK_DEFAULTS:
+        return
+    _SYNCING_TOE_KICK_DEFAULTS = True
+    try:
+        own = self.id_data
+        for scene in bpy.data.scenes:
+            if scene is own:
+                continue
+            if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_SPACES_DETAIL'):
+                continue
+            ff = getattr(scene, 'hb_face_frame', None)
+            if ff is None:
+                continue
+            for attr in ('default_toe_kick_height', 'default_toe_kick_setback'):
+                val = getattr(self, attr)
+                if abs(getattr(ff, attr) - val) > 1e-9:
+                    setattr(ff, attr, val)
+    finally:
+        _SYNCING_TOE_KICK_DEFAULTS = False
+
+
 def _pull_category_enum_items(self, context):
     # Deferred import to avoid a circular dependency: pulls.py imports
     # this module for the thumbnail preview collection.
@@ -9027,6 +9058,29 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=units.inch(24.0),
         unit='LENGTH',
         precision=4,
+    )  # type: ignore
+
+    # ---- Toe kick defaults ----
+    # Project-wide toe kick: seeds toe_kick_height / toe_kick_setback on
+    # every new cabinet (create_cabinet_root) and drives Update Toe
+    # Kicks, which pushes the values onto the cabinets already built.
+    # Mirrored across room scenes. Per-cabinet values stay editable.
+    default_toe_kick_height: FloatProperty(
+        name="Toe Kick Height",
+        description="Toe kick height for new cabinets in this project",
+        default=units.inch(4.0),
+        unit='LENGTH',
+        precision=4,
+        update=_sync_toe_kick_defaults,
+    )  # type: ignore
+
+    default_toe_kick_setback: FloatProperty(
+        name="Toe Kick Setback",
+        description="Toe kick depth (setback from the cabinet front) for new cabinets in this project",
+        default=units.inch(3.0),
+        unit='LENGTH',
+        precision=4,
+        update=_sync_toe_kick_defaults,
     )  # type: ignore
 
     base_cabinet_height: FloatProperty(
@@ -9389,6 +9443,14 @@ class Face_Frame_Scene_Props(PropertyGroup):
         sub = row.row()
         sub.enabled = False
         sub.prop(self, 'upper_cabinet_height', text="")
+
+        # Project toe kick: seeds new cabinets; the refresh pushes the
+        # values onto every cabinet already in the room.
+        row = layout.row()
+        row.label(text="Toe Kick H / D:")
+        row.prop(self, 'default_toe_kick_height', text="")
+        row.prop(self, 'default_toe_kick_setback', text="")
+        row.operator('hb_face_frame.update_toe_kicks', text="", icon='FILE_REFRESH')
 
         layout.separator()
         ohbox = layout.box()

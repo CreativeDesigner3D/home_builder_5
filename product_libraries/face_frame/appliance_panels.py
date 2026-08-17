@@ -255,10 +255,15 @@ class suspended:
 
 
 def default_toe_kick(appliance_obj):
-    """Under-counter appliances start above the toe kick: the base cabinet's
-    toe kick default (the per-cabinet property default)."""
+    """Under-counter appliances start above the toe kick: the project toe
+    kick default (scene hb_face_frame), else the per-cabinet property
+    default."""
     if appliance_obj is None or appliance_obj.get('APPLIANCE_TYPE') not in KICK_APPLIANCE_TYPES:
         return 0.0
+    ff = getattr(bpy.context.scene, 'hb_face_frame', None)
+    tk = getattr(ff, 'default_toe_kick_height', None) if ff is not None else None
+    if tk is not None:
+        return tk
     from . import props_hb_face_frame as props
     try:
         return props.Face_Frame_Cabinet_Props.bl_rna.properties['toe_kick_height'].default
