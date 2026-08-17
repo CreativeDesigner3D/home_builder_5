@@ -7019,6 +7019,22 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "amount to cover a corner void. 0 = flush with the side.",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Extend Top (uppers): same idea for the carcass top panel, covering the
+    # void above the corner meeting. Applied in _apply_top_extension.
+    extend_top_left: FloatProperty(
+        name="Extend Top Left X", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang the carcass top past the LEFT side by this "
+                    "amount to cover a corner void. 0 = flush with the side.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    extend_top_right: FloatProperty(
+        name="Extend Top Right X", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Overhang the carcass top past the RIGHT side by this "
+                    "amount to cover a corner void. 0 = flush with the side.",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     inset_toe_kick_left: FloatProperty(
         name="Inset Toe Kick Left", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,

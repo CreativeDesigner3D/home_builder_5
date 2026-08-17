@@ -361,6 +361,13 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'extend_bottom_left', text="Extend Bottom Left X")
             col.prop(cab_props, 'extend_bottom_right', text="Extend Bottom Right X")
 
+            # Same for the top panel (void above the corner meeting).
+            box = uex.box()
+            box.label(text="Extend Top", icon='MOD_BEVEL')
+            col = box.column(align=True)
+            col.prop(cab_props, 'extend_top_left', text="Extend Top Left X")
+            col.prop(cab_props, 'extend_top_right', text="Extend Top Right X")
+
     # Decorative corners: a milled post let into a vertical corner.
     # Picking a style alone does nothing - the corners it goes on are
     # chosen per corner below, so one cabinet can carry a post on just

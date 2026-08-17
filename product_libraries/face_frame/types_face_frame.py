@@ -2934,11 +2934,13 @@ class FaceFrameCabinet(GeoNodeCage):
         if self._has_carcass():
             self._apply_back_extension(layout)
 
-        # Extend Bottom (uppers): overhang the carcass bottom past a side to
-        # cover the corner void where two uppers meet. Runs after the part
-        # loop / back extension so it reshapes the positioned bottom in place.
+        # Extend Bottom / Top (uppers): overhang the carcass bottom or top
+        # past a side to cover the corner void where two uppers meet. Runs
+        # after the part loop / back extension so it reshapes the positioned
+        # deck parts in place.
         if self._has_carcass() and layout.cabinet_type == 'UPPER':
             self._apply_bottom_extension(layout)
+            self._apply_top_extension(layout)
 
         # Finished bottom (uppers): applied finish panel + LED route +
         # optional render light. Unconditional so a cleared condition
@@ -4838,12 +4840,27 @@ class FaceFrameCabinet(GeoNodeCage):
         cab = self.obj.face_frame_cabinet
         ext_l = getattr(cab, 'extend_bottom_left', 0.0) or 0.0
         ext_r = getattr(cab, 'extend_bottom_right', 0.0) or 0.0
+        self._extend_deck_part(PART_ROLE_BOTTOM, ext_l, ext_r, layout)
+
+    def _apply_top_extension(self, layout):
+        """Top-panel twin of _apply_bottom_extension: overhang the carcass
+        top past a side to cover the void ABOVE where two uppers meet in a
+        corner (a stacked / bulkhead condition). Same mechanics -- only the
+        top part grows, faces stay square, self-corrects at 0."""
+        cab = self.obj.face_frame_cabinet
+        ext_l = getattr(cab, 'extend_top_left', 0.0) or 0.0
+        ext_r = getattr(cab, 'extend_top_right', 0.0) or 0.0
+        self._extend_deck_part(PART_ROLE_TOP, ext_l, ext_r, layout)
+
+    def _extend_deck_part(self, role, ext_l, ext_r, layout):
+        """Grow the outermost TOP / BOTTOM segment(s) of `role` past the
+        cabinet end(s) by ext_l / ext_r (outward only)."""
         if ext_l == 0.0 and ext_r == 0.0:
             return
         for child in self.obj.children:
-            if child.get('hb_part_role') == PART_ROLE_BOTTOM:
+            if child.get('hb_part_role') == role:
                 self._widen_back_panel(child, ext_l, ext_r, 'Length',
-                                       allow_shrink=True)
+                                       allow_shrink=True, layout=layout)
 
     def _widen_back_panel(self, child, ext_l, ext_r, span_input,
                           allow_shrink=True, layout=None):
