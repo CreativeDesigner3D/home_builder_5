@@ -84,7 +84,10 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
     bl_idname = "hb_face_frame.add_appliance_panels"
     bl_label = "Appliance Panels"
     bl_description = "Add or edit door-style panels on a panel-ready appliance"
-    bl_options = {'REGISTER', 'UNDO'}
+    # UNDO only, no REGISTER: the dialog edits ID data (the appliance's
+    # property groups) live, and a redo-style popup would swap that data
+    # out from under its buttons on every operator-property change.
+    bl_options = {'UNDO'}
 
     manufacturer: EnumProperty(name="Manufacturer", items=_manufacturer_enum)  # type: ignore
     model: EnumProperty(name="Model", items=_model_enum)  # type: ignore
@@ -125,8 +128,27 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
             except TypeError:
                 pass
         self.notes = ""
-        self.execute(context)
-        return context.window_manager.invoke_props_popup(self, event)
+        ap.rebuild(bp)
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def check(self, context):
+        """Live-bound like the Set-* dialogs: react to the operator's own
+        picks here (spec model / preset); the property-group fields
+        rebuild through their own update callbacks."""
+        bp = hb_utils.get_appliance_bp(context.object)
+        if bp is None:
+            return False
+        if (self.manufacturer not in ('MANUAL', '')
+                and self.model not in ('NONE', '')
+                and self.model != self.last_model):
+            self._apply_spec(context, bp)
+            self.last_model = self.model
+            ap.rebuild(bp)
+        if self.configuration != self.last_config:
+            ap.seed_preset(bp, self.configuration, keep_options=True)
+            self.last_config = self.configuration
+            ap.rebuild(bp)
+        return True
 
     def _apply_spec(self, context, bp):
         """Fill the section model from the selected manufacturer model."""
@@ -158,17 +180,11 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
         })
 
     def execute(self, context):
+        # Live-bound via check() and the property-group updates; OK just
+        # confirms the state that is already built.
         bp = hb_utils.get_appliance_bp(context.object)
         if bp is None:
             return {'CANCELLED'}
-        if (self.manufacturer not in ('MANUAL', '')
-                and self.model not in ('NONE', '')
-                and self.model != self.last_model):
-            self._apply_spec(context, bp)
-            self.last_model = self.model
-        if self.configuration != self.last_config:
-            ap.seed_preset(bp, self.configuration, keep_options=True)
-            self.last_config = self.configuration
         ap.rebuild(bp)
         return {'FINISHED'}
 
