@@ -54,6 +54,57 @@ def _builtin_path(model_name):
     return ''
 
 
+def is_builtin(path):
+    """Whether a path names a model the library draws itself."""
+    return bool(path) and path.startswith(BUILTIN_SCHEME)
+
+
+def build_sized_model(path, name, w, h, d):
+    """A built model at given measures - the basket path. Returns a
+    fresh object or None; the caller parents and places it."""
+    reg = _builders()
+    if reg is None or not is_builtin(path):
+        return None
+    obj = reg.build_sized(path[len(BUILTIN_SCHEME):], w, h, d)
+    if obj is not None:
+        obj.name = name
+    return obj
+
+
+def restretch_builtin(model, width):
+    """Pull a built telescoping model out to a width by rebuilding
+    its mesh in place. Says whether it handled the model."""
+    reg = _builders()
+    if reg is None or model is None:
+        return False
+    name = model.get('hb_accessory_model', '')
+    if name not in getattr(reg, 'STRETCH', {}):
+        return False
+    if abs(float(model.get('hb_stretch_w', 0.0)) - width) < 1e-5:
+        return True
+    fresh = reg.build_stretch(name, width)
+    if fresh is None:
+        return False
+    old = model.data
+    model.data = fresh.data
+    bpy.data.objects.remove(fresh, do_unlink=True)
+    if old is not None and old.users == 0:
+        bpy.data.meshes.remove(old)
+    model['hb_stretch_w'] = width
+    return True
+
+
+def apply_finish(obj, color='', fabric=''):
+    """Dress a built instance in its chosen finish, where the
+    builders are present and the names are known. Quiet otherwise."""
+    reg = _builders()
+    if reg is not None:
+        try:
+            reg.apply_finish(obj, color, fabric)
+        except Exception:
+            pass
+
+
 def _registry():
     """HB5's accessory provider registry, or None if it is not there
     (an older build of the add-on)."""

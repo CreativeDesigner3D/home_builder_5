@@ -73,6 +73,51 @@ def _glass():
     return _mat('Closet Accessory Mirror', (0.75, 0.78, 0.80), 1.0, 0.05)
 
 
+# The finishes an accessory is offered in, by the names the catalog
+# uses. A built model starts in the shared neutral metal and fabric;
+# apply_finish overrides them per instance, object-level, so every
+# instance keeps sharing the one mesh.
+_FINISH_SPECS = {
+    'Chrome': ((0.80, 0.80, 0.82), 1.0, 0.08),
+    'Black': ((0.03, 0.03, 0.03), 0.9, 0.45),
+    'Slate': ((0.13, 0.14, 0.16), 0.9, 0.40),
+    'Matte Nickel': ((0.44, 0.44, 0.42), 1.0, 0.45),
+    'Matte Aluminum': ((0.55, 0.56, 0.58), 1.0, 0.45),
+    'Matte Gold': ((0.60, 0.45, 0.18), 1.0, 0.40),
+    'White': ((0.88, 0.88, 0.87), 0.2, 0.55),
+}
+_FABRIC_SPECS = {
+    'Fabric Beach': ((0.72, 0.66, 0.55), 0.0, 0.9),
+    'Fabric Slate': ((0.35, 0.37, 0.40), 0.0, 0.9),
+    'Fabric Black': ((0.08, 0.08, 0.08), 0.0, 0.9),
+}
+
+
+def apply_finish(obj, color='', fabric=''):
+    """Dress one instance in its chosen finish and fabric.
+
+    The mesh keeps the shared neutral materials; the override rides
+    the object's slots, so two instances of the one mesh can wear
+    two finishes. Unknown or empty names leave the neutral in place."""
+    if obj is None or obj.type != 'MESH' or obj.data is None:
+        return
+    fin = _FINISH_SPECS.get(color)
+    fab = _FABRIC_SPECS.get(fabric)
+    if fin is None and fab is None:
+        return
+    metal, fabric_mat = _metal(), _fabric()
+    for i, mesh_mat in enumerate(obj.data.materials):
+        if i >= len(obj.material_slots):
+            break
+        slot = obj.material_slots[i]
+        if mesh_mat is metal and fin is not None:
+            slot.link = 'OBJECT'
+            slot.material = _mat('Closet Accessory ' + color, *fin)
+        elif mesh_mat is fabric_mat and fab is not None:
+            slot.link = 'OBJECT'
+            slot.material = _mat('Closet Accessory ' + fabric, *fab)
+
+
 # ---------------------------------------------------------------------------
 # Mesh helpers. Every part is a box or a bar; the census says where.
 # ---------------------------------------------------------------------------
@@ -374,6 +419,45 @@ def build_storage_box(w_in=18, d_in=14):
     return b.done('Storage Box %d' % w_in)
 
 
+def build_wire_basket(w=0.6096, h=0.2794, d=0.3556):
+    """A vinyl-coated wire basket at the size it was made: a rim,
+    corner posts, horizontal wire runs one to the inch down the
+    sides, and floor wires one to the inch along the depth - the
+    counts the prior library drove its rig by. Drawn from its own
+    front-left-bottom corner, running back +Y."""
+    b = _Build()
+    t = 0.004
+    # rim: a stouter frame around the mouth
+    b.box(w, 0.006, 0.006, 0.0, 0.0, h - 0.006)
+    b.box(w, 0.006, 0.006, 0.0, d - 0.006, h - 0.006)
+    b.box(0.006, d - 0.012, 0.006, 0.0, 0.006, h - 0.006)
+    b.box(0.006, d - 0.012, 0.006, w - 0.006, 0.006, h - 0.006)
+    # corner posts
+    for x in (0.001, w - 0.005):
+        for y in (0.001, d - 0.005):
+            b.box(t, t, h - 0.006, x, y, 0.0)
+    # horizontal wire runs, one to the inch of height
+    runs = max(2, int(round(h / _IN)) - 1)
+    for i in range(runs):
+        z = h * (i + 0.5) / (runs + 0.5) - 0.004
+        b.box(w, t, t, 0.0, 0.0, z)
+        b.box(w, t, t, 0.0, d - t, z)
+        b.box(t, d - 2 * t, t, 0.0, t, z)
+        b.box(t, d - 2 * t, t, w - t, t, z)
+    # a few uprights steadying the long faces
+    ups = max(3, int(round(w / (3 * _IN))))
+    for i in range(ups):
+        x = w * (i + 0.5) / ups - t / 2.0
+        b.box(t, t, h - 0.008, x, 0.0, 0.0)
+        b.box(t, t, h - 0.008, x, d - t, 0.0)
+    # floor wires, one to the inch of depth
+    floor = max(2, int(round(d / _IN)))
+    for i in range(floor):
+        y = d * (i + 0.5) / floor - t / 2.0
+        b.box(w - 2 * t, t, t, t, y, 0.0)
+    return b.done('Wire Basket')
+
+
 def build_wardrobe_lift(w=0.65):
     """The pull-down rod on its spring arms, drawn at rest."""
     b = _Build()
@@ -584,7 +668,26 @@ MODELS.update({
     'Mirror Full Rotation 47.blend': _sized(build_mirror, h_in=47,
                                             rotates=True),
     'Wardrobe Lift.blend': build_wardrobe_lift,
+    'Wire Basket.blend': build_wire_basket,
 })
+
+# The two that are made to a size given at placement rather than
+# picked from a band: the basket to three chosen measures, the lift
+# pulled out to the opening.
+SIZED = {'Wire Basket.blend': build_wire_basket}
+STRETCH = {'Wardrobe Lift.blend': build_wardrobe_lift}
+
+
+def build_sized(name, w, h, d):
+    """A model built to given measures, or None."""
+    fn = SIZED.get(name)
+    return fn(w=w, h=h, d=d) if fn is not None else None
+
+
+def build_stretch(name, width):
+    """A model built out to a width, or None."""
+    fn = STRETCH.get(name)
+    return fn(w=width) if fn is not None else None
 
 
 def offers(name):

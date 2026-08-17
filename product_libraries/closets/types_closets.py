@@ -2827,7 +2827,10 @@ class ClosetStarter(GeoNodeCage):
         markers = [c for c in model.children
                    if c.get('hb_part_role') == PART_ROLE_ACCESSORY_RIG]
         if not markers:
-            return False
+            # A built model has no rig to pull: it is drawn again at
+            # the width instead, where the builders know it.
+            from . import accessories_closets as acc
+            return acc.restretch_builtin(model, width)
         far = max(markers, key=lambda o: o.get('hb_rig_x', 0.0))
         for marker in markers:
             marker.location.x = (width if marker is far
@@ -2939,6 +2942,9 @@ class ClosetStarter(GeoNodeCage):
                 # this library, or by hand - comes back straight.
                 existing.rotation_euler = (0.0, 0.0, 0.0)
                 self._acc_placeholder(cage, False, kids)
+                acc.apply_finish(existing,
+                                 cage.get(PROP_ACCESSORY_COLOR, ''),
+                                 cage.get(PROP_ACCESSORY_FABRIC, ''))
                 return existing
             # The width was changed under it. These are bought at a
             # set size rather than stretched, so a different width is
@@ -2983,6 +2989,8 @@ class ClosetStarter(GeoNodeCage):
         kids.setdefault(PART_ROLE_ACCESSORY_MODEL, []).append(obj)
         # The real thing turned up, so the stand-in comes off.
         self._acc_placeholder(cage, False, kids)
+        acc.apply_finish(obj, cage.get(PROP_ACCESSORY_COLOR, ''),
+                         cage.get(PROP_ACCESSORY_FABRIC, ''))
         return obj
 
     def _accessories(self, children, width, depth, interior_h, side,
@@ -3297,6 +3305,47 @@ class ClosetStarter(GeoNodeCage):
                 return obj
         return None
 
+    def _acc_basket_built(self, cage, acc_def, kids, cage_d, want,
+                          path):
+        """The built basket: no rig, no markers - a fresh mesh at
+        the measures it was made, redrawn when they change."""
+        from . import accessories_closets as acc
+        b_w, b_h, b_d = want
+        stamp = '%s|%.4f|%.4f|%.4f' % (path, b_w, b_h, b_d)
+        root = self._basket_rig_root(kids)
+        if root is not None and root.get('hb_built') != stamp:
+            _remove_part_tree(root)
+            kids[PART_ROLE_ACCESSORY_RIG] = []
+            root = None
+        if root is None:
+            mesh = acc.build_sized_model(path, acc_def.label,
+                                         b_w, b_h, b_d)
+            if mesh is None:
+                return False
+            root = bpy.data.objects.new(acc_def.label + ' Rig', None)
+            root.empty_display_size = 0.0001
+            bpy.context.scene.collection.objects.link(root)
+            root.parent = cage
+            root.matrix_parent_inverse.identity()
+            root['hb_part_role'] = PART_ROLE_ACCESSORY_RIG
+            root['hb_rig_root'] = 1
+            root['hb_built'] = stamp
+            bpy.context.scene.collection.objects.link(mesh)
+            mesh.parent = root
+            mesh.matrix_parent_inverse.identity()
+            mesh['hb_part_role'] = PART_ROLE_ACCESSORY_MODEL
+            mesh[PROP_ACCESSORY_MODEL] = accessory_model_name(
+                cage, acc_def)
+            mesh['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            kids.setdefault(PART_ROLE_ACCESSORY_RIG, []).append(root)
+        root.location = (0.0, -cage_d, 0.0)
+        for child in root.children:
+            if child.get('hb_part_role') == PART_ROLE_ACCESSORY_MODEL:
+                acc.apply_finish(child,
+                                 cage.get(PROP_ACCESSORY_COLOR, ''),
+                                 cage.get(PROP_ACCESSORY_FABRIC, ''))
+        return True
+
     def _acc_basket(self, cage, acc_def, kids, cage_d, want):
         """A wire basket, drawn to the size it has been made.
 
@@ -3319,9 +3368,14 @@ class ClosetStarter(GeoNodeCage):
         is what has to land on the front of the opening."""
         from . import accessories_closets as acc
         b_w, b_h, b_d = want
+        path = accessory_model_path_for(cage, acc_def)
+        if acc.is_builtin(path):
+            # A built basket needs no marker rig - it is simply
+            # drawn again at the size it was made when that changes.
+            return self._acc_basket_built(cage, acc_def, kids,
+                                          cage_d, want, path)
         root = self._basket_rig_root(kids)
         if root is None:
-            path = accessory_model_path_for(cage, acc_def)
             if not acc.model_is_installed(path):
                 return False
             meshes, markers = acc.instance_rig_model(path,
@@ -3431,9 +3485,12 @@ class ClosetStarter(GeoNodeCage):
             existing.append(obj)
         # A different hook was chosen: the row points at the new mesh
         # rather than being torn down and built again.
+        color = cage.get(PROP_ACCESSORY_COLOR, '')
+        fab = cage.get(PROP_ACCESSORY_FABRIC, '')
         for i, obj in enumerate(existing):
             if obj.data is not src.data:
                 obj.data = src.data
+            acc.apply_finish(obj, color, fab)
             obj[PROP_HOOK_INDEX] = i
             obj[PROP_ACCESSORY_MODEL] = name
             if qty > 1:
