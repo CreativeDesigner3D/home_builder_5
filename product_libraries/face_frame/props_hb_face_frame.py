@@ -6716,6 +6716,8 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     show_wood_top: BoolProperty(name="Show Wood Top", default=False)  # type: ignore
     show_decorative_corners: BoolProperty(
         name="Show Decorative Corners", default=False)  # type: ignore
+    show_bottom_rail_profile: BoolProperty(
+        name="Show Bottom Rail Profile", default=False)  # type: ignore
     # ---- Angled back extension (trapezoidal back) ----
     # Per-cabinet, per-end: extend the BACK corner outward in +X (left or
     # right) by the given amount, splaying that side panel so the back is

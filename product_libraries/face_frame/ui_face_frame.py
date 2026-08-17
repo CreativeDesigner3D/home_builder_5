@@ -290,14 +290,6 @@ def draw_construction(layout, cab_props):
     if cab_props.show_finished_ends:
         draw_finished_ends(box, cab_props)
 
-    # Decorative bottom-rail profile (valance) - base / upper. The chosen
-    # '* Cutter' curve is cut into the bottom rail with fixed end details and
-    # a stretched middle (see types_face_frame._apply_bottom_rail_profile).
-    if cab_props.cabinet_type in ('BASE', 'UPPER'):
-        rpbox = layout.box()
-        rpbox.label(text="Bottom Rail Profile", icon='MOD_BEVEL')
-        rpbox.prop(cab_props, 'bottom_rail_profile', text="Profile")
-
     abx = layout.box()
     abx.prop(cab_props, 'show_angled_back_extension',
              text="Angled Back Extension",
@@ -434,6 +426,18 @@ def draw_construction(layout, cab_props):
                          text="Back Left")
                 col.prop(cab_props, 'furniture_top_radius_back_right',
                          text="Back Right")
+
+    # Decorative bottom-rail profile (valance) - base / upper. The chosen
+    # '* Cutter' curve is cut into the bottom rail with fixed end details and
+    # a stretched middle (see types_face_frame._apply_bottom_rail_profile).
+    if cab_props.cabinet_type in ('BASE', 'UPPER'):
+        rpbox = layout.box()
+        rpbox.prop(cab_props, 'show_bottom_rail_profile',
+                   text="Bottom Rail Profile",
+                   icon='TRIA_DOWN' if cab_props.show_bottom_rail_profile
+                   else 'TRIA_RIGHT', emboss=False)
+        if cab_props.show_bottom_rail_profile:
+            rpbox.prop(cab_props, 'bottom_rail_profile', text="Profile")
 
 
 def draw_refrigerator_options(layout, root):
