@@ -305,24 +305,36 @@ def _set_front_geometry(obj, front_y, rect):
         ops_part_commands._reapply_front_style(obj)
 
 
-def _build_backer(appliance_obj, dim_x, dim_y, dim_z, backer_t, panel_type):
-    """Type B/C: a plywood backer panel spanning the appliance front, behind
-    the door faces (the faces are applied to its front). Type C is additionally
-    routed for the appliance's installation flange. No door style (plain panel)."""
+def _build_backer(appliance_obj, dim_x, dim_y, dim_z, backer_t, panel_type,
+                  z_lo=0.0):
+    """Type B/C: a plywood backer panel spanning the appliance front above the
+    toe kick, behind the door faces (the faces are applied to its front). Type
+    C is additionally routed for the appliance's installation flange. No door
+    style (plain panel)."""
     backer = types_face_frame.CabinetPart()
     backer.create('Appliance Panel Backer')
     backer.obj['IS_APPLIANCE_PANEL_BACKER'] = True
     backer.obj['APPLIANCE_PANEL_BACKER_TYPE'] = panel_type
     backer.obj.parent = appliance_obj
     backer.obj.rotation_euler = (math.radians(90), math.radians(-90), 0)
-    backer.obj.location = (0.0, -dim_y, 0.0)   # full appliance front, behind fronts
+    backer.obj.location = (0.0, -dim_y, z_lo)   # appliance front above the kick
     backer.set_input('Width', dim_x)
-    backer.set_input('Length', dim_z)
+    backer.set_input('Length', dim_z - z_lo)
     backer.set_input('Thickness', backer_t)
     backer.set_input('Mirror Y', True)
     if panel_type == 'C':
-        _rout_flange(backer, dim_x, dim_z, backer_t)
+        _rout_flange(backer, dim_x, dim_z - z_lo, backer_t)
     return backer
+
+
+def _resize_backer(appliance_obj, dim_x, dim_y, dim_z, z_lo):
+    """In-place: follow a toe kick / size edit on the existing backer."""
+    for child in appliance_obj.children:
+        if child.get('IS_APPLIANCE_PANEL_BACKER'):
+            part = hb_types.GeoNodeCutpart(child)
+            child.location = (0.0, -dim_y, z_lo)
+            part.set_input('Width', dim_x)
+            part.set_input('Length', dim_z - z_lo)
 
 
 def _rout_flange(backer, dim_x, dim_z, backer_t):
@@ -480,6 +492,8 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
         for obj, rect in zip(existing, rects):
             _set_front_geometry(obj, front_y, rect)
         _build_rails(appliance_obj, rail_rects, front_y)
+        _resize_backer(appliance_obj, dim_x, dim_y, dim_z,
+                       max(0.0, opts.get('toe_kick', 0.0) or 0.0))
         _stamp_cage(appliance_obj, config, panel_type, front_sizes, front_holds,
                     col_widths, col_holds, opts)
         return
@@ -511,7 +525,8 @@ def build_appliance_panels(appliance_obj, config, panel_type, front_sizes,
         fronts.append(front)
 
     if backer_t > 0:
-        _build_backer(appliance_obj, dim_x, dim_y, dim_z, backer_t, panel_type)
+        _build_backer(appliance_obj, dim_x, dim_y, dim_z, backer_t, panel_type,
+                      z_lo=max(0.0, opts.get('toe_kick', 0.0) or 0.0))
     _build_rails(appliance_obj, rail_rects, front_y)
 
     # Door style needs the real dims live before it is applied (mid-rail on tall
