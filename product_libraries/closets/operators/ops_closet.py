@@ -1686,7 +1686,7 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         resolved = self._resolve_opening_under_cursor(context)
         if resolved is None:
             return
-        opening, local_z, _interior = resolved
+        opening, local_z = resolved[0], resolved[1]
         if opening is not self._opening:
             root_prev = (types_closets.find_starter_root(self._opening)
                          if self._opening else None)
@@ -1823,6 +1823,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=3,
                                min=0, max=20)  # type: ignore
+    unlock_qty: bpy.props.BoolProperty(
+        name="Shelf Quantity",
+        description="Hold the count typed here instead of following "
+                    "the opening's height (one shelf per foot)",
+        default=False)  # type: ignore
     # A shelf on clips is cut narrower than the opening so it drops
     # in, and can be held back from the front edge. Both figures come
     # from the room until this opening takes one over.
@@ -1855,11 +1860,14 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     def invoke(self, context, event):
         opening = types_closets.find_opening_cage(context.active_object)
-        # Default to the computed count for this opening's height; keep
-        # an existing user setting if the opening already has shelves.
-        existing = int(opening.hb_closet_opening.adj_shelf_qty)
-        self.qty = existing or types_closets.default_adj_shelf_qty(opening)
+        # The count follows the opening's height until its padlock is
+        # closed on a typed figure; either way the field shows what
+        # the opening would get right now.
         op = opening.hb_closet_opening
+        self.unlock_qty = bool(op.unlock_adj_qty)
+        existing = int(op.adj_shelf_qty)
+        self.qty = (existing if self.unlock_qty and existing
+                    else types_closets.default_adj_shelf_qty(opening))
         room = context.scene.hb_closets
         # A figure the opening has not taken over reads back as the
         # room's, so there is something to see before unlocking it.
@@ -1875,7 +1883,8 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
 
     def draw(self, context):
         col = self.layout.column(align=True)
-        col.prop(self, 'qty')
+        _locked_field(col, self, 'qty', 'unlock_qty',
+                      text="Shelf Quantity")
         col = self.layout.column(align=True)
         _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                       text="Clip Gap")
@@ -1887,7 +1896,10 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         if opening is None:
             return {'CANCELLED'}
         op = opening.hb_closet_opening
-        op.adj_shelf_qty = self.qty
+        op.unlock_adj_qty = self.unlock_qty
+        op.adj_shelf_qty = (
+            self.qty if self.unlock_qty
+            else types_closets.default_adj_shelf_qty(opening))
         op.unlock_shelf_clip_gap = self.unlock_clip_gap
         op.shelf_clip_gap = self.clip_gap
         op.unlock_shelf_setback = self.unlock_setback
@@ -3300,6 +3312,9 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
             return {'CANCELLED'}
         qty = int(opening.hb_closet_opening.adj_shelf_qty)
         opening.hb_closet_opening.adj_shelf_qty = max(0, qty + self.delta)
+        # Stepping the count by hand takes it over: the height rule
+        # would deal the step right back out on the next solve.
+        opening.hb_closet_opening.unlock_adj_qty = True
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
         _apply_selection_shading(context, root)
@@ -3696,8 +3711,9 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _opening_under_cursor(context, region, mouse_pos):
-    """(opening, local_z, interior_h) for the opening under the mouse.
+def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
+    """(opening, local_z, interior_h, local_x, open_w, in_rect) for
+    the opening under the mouse.
 
     Closet interiors are open-backed, so a scene raycast usually
     sails THROUGH an opening and hits the wall/floor behind it (and
@@ -3705,7 +3721,13 @@ def _opening_under_cursor(context, region, mouse_pos):
     don't depend on geometry at all: intersect the mouse ray with
     every opening cage's user-facing plane (front face; y=0 face for
     a double island's BACK openings) and take the nearest hit that
-    lands inside the opening rectangle."""
+    lands inside the opening rectangle.
+
+    x_margin widens the catch past each side, so a panel accessory
+    can be offered the OUTSIDE face of an end panel by pointing just
+    past the run. A hit inside a rectangle always beats a margin
+    hit - in the middle of a run the strip past one opening's edge
+    is the inside of the next one, and the next one owns it."""
     from bpy_extras import view3d_utils
     from ...face_frame import split_preview
     rv3d = region.data if region is not None else None
@@ -3739,12 +3761,18 @@ def _opening_under_cursor(context, region, mouse_pos):
         if t <= 0.0:
             continue
         p = o_l + d_l * t
-        if -0.001 <= p.x <= o_w + 0.001 and -0.001 <= p.z <= o_h + 0.001:
-            if best is None or t < best[0]:
-                best = (t, obj, p.z, o_h)
+        if not (-0.001 <= p.z <= o_h + 0.001):
+            continue
+        in_rect = -0.001 <= p.x <= o_w + 0.001
+        if not in_rect and not (
+                -x_margin - 0.001 <= p.x <= o_w + x_margin + 0.001):
+            continue
+        key = (0 if in_rect else 1, t)
+        if best is None or key < best[0]:
+            best = (key, obj, p.z, o_h, p.x, o_w, in_rect)
     if best is None:
         return None
-    return best[1], best[2], best[3]
+    return best[1], best[2], best[3], best[4], best[5], best[6]
 
 
 class hb_closets_OT_place_accessory(bpy.types.Operator,
@@ -3787,6 +3815,12 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
     _opening = None
     _root = None
     _face = 0
+    # Whether the face still follows the cursor. Arrowing to a face
+    # is a choice, and a choice is kept; until then pointing at a
+    # half of the opening - or past its end - says which face is
+    # meant, the way the prior library read the cursor's side.
+    _face_auto = True
+    _on_wall = False
     _note = ""
 
     @classmethod
@@ -3809,6 +3843,8 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self._face = 1
+        self._face_auto = True
+        self._on_wall = False
         hb_placement.draw_header_text(
             context, "Move over an opening to place the accessory")
         context.window.cursor_set('CROSSHAIR')
@@ -3826,6 +3862,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 pass
         self._cage = None
         self._opening = None
+        self._on_wall = False
 
     def _carry_into(self, opening):
         """Move what is being carried into a different opening."""
@@ -3851,23 +3888,148 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         self._root = types_closets.find_starter_root(opening)
         return True
 
-    def _follow(self, context):
+    def _carry_onto_wall(self, wall):
+        """Move what is being carried onto a wall - the cleat path."""
+        if (self._on_wall and self._cage is not None
+                and self._cage.parent is wall):
+            return True
+        self._drop()
+        cage = types_closets.add_wall_accessory(wall, self.accessory)
+        if cage is None:
+            return False
+        if (self.properties.is_property_set('model')
+                and self.model != 'NONE'):
+            cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+            types_closets.layout_wall_accessory(cage)
+        self._cage = cage
+        self._opening = None
+        self._root = None
+        self._on_wall = True
+        return True
+
+    def _wall_under_cursor(self, context, event):
+        """The wall the cursor is over, by raycast - with the carried
+        accessory hidden first, so it does not catch its own ray."""
+        hidden = []
+        if self._cage is not None:
+            try:
+                for o in ([self._cage]
+                          + list(self._cage.children_recursive)):
+                    if not o.hide_get():
+                        o.hide_set(True)
+                        hidden.append(o)
+            except ReferenceError:
+                pass
+        try:
+            self.update_snap(context, event)
+        finally:
+            for o in hidden:
+                try:
+                    o.hide_set(False)
+                except ReferenceError:
+                    pass
+        if self.hit_location is None:
+            return None
+        return _detect_wall(self, context)
+
+    def _follow_wall(self, context, wall):
+        """Carry the cleat along a wall: gridded, held to the wall's
+        height, snapped to the floor when it is let go low."""
+        from .. import const_closets as const
+        if not self._carry_onto_wall(wall):
+            return False
+        cage = self._cage
+        local = wall.matrix_world.inverted() @ Vector(self.hit_location)
+        length = types_closets.wall_accessory_length(cage)
+        height = types_closets.cleat_hook_height(cage)
+        grid = const.ACCESSORY_DROP_GRID
+        # Carried by its middle, the way it reads under a cursor.
+        x = local.x - length / 2.0
+        x = round(x / grid) * grid if grid > 0.0 else x
+        z = round(local.z / grid) * grid if grid > 0.0 else local.z
+        if local.z < const.CLEAT_HOOK_FLOOR_REACH:
+            z = 0.0
+        wall_len = wall_h = 0.0
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_len = float(wall_geo.get_input('Length') or 0.0)
+            wall_h = float(wall_geo.get_input('Height') or 0.0)
+        except Exception:
+            pass
+        if wall_len > 0.0:
+            x = max(0.0, min(x, max(wall_len - length, 0.0)))
+        if wall_h > 0.0:
+            z = max(0.0, min(z, max(wall_h - height, 0.0)))
+        cage.location = (x, 0.0, z)
+        cage.rotation_euler = (0.0, 0.0, 0.0)
+        cage[types_closets.PROP_ACCESSORY_Z] = z
+        drop_dims_closets.hide()
+        where = types_closets._in_str(z)
+        why = " (on the floor)" if z <= 1e-6 else ""
+        from .. import accessories_closets as acc
+        acc_def = acc.get(self.accessory)
+        self._note = "%s on the wall at %s off the floor%s" % (
+            acc_def.label, where, why)
+        return True
+
+    def _cursor_face(self, in_rect, local_x, open_w):
+        """Which panel face the cursor is pointing at: an outside
+        face past the run's end, otherwise the near inside face."""
+        from .. import accessories_closets as acc
+        if not in_rect:
+            key = (acc.PANEL_OUTSIDE_LEFT if local_x < 0.0
+                   else acc.PANEL_OUTSIDE_RIGHT)
+        else:
+            key = (acc.PANEL_INSIDE_LEFT if local_x < open_w / 2.0
+                   else acc.PANEL_INSIDE_RIGHT)
+        return acc.PANEL_LOCATION_KEYS.index(key)
+
+    def _follow(self, context, event=None):
         """Put the carried accessory where the cursor says, by the
         rules that decide where one actually lands."""
         from .. import accessories_closets as acc
+        acc_def = acc.get(self.accessory)
+        is_panel = (acc_def is not None
+                    and acc_def.family == acc.FAMILY_PANEL)
+        is_cleat = (acc_def is not None
+                    and acc_def.family == acc.FAMILY_CLEAT)
+        # A panel accessory is caught a little past each end of the
+        # run too, so the outside of an end panel can be pointed at.
+        margin = 0.30 if is_panel else 0.0
         resolved = _opening_under_cursor(context, self.region,
-                                         self.mouse_pos)
+                                         self.mouse_pos,
+                                         x_margin=margin)
         if resolved is None:
+            # A cleat with no opening under it takes a wall instead -
+            # the prior library dropped its hook cleats anywhere a
+            # part could land.
+            if is_cleat and event is not None:
+                wall = self._wall_under_cursor(context, event)
+                if wall is not None and self._follow_wall(context,
+                                                          wall):
+                    return
             self._drop()
             drop_dims_closets.hide()
-            self._note = "Move over an opening to place the accessory"
+            self._note = ("Move over an opening or a wall to place "
+                          "the accessory" if is_cleat else
+                          "Move over an opening to place the "
+                          "accessory")
             return
-        opening, raw, _interior = resolved
+        opening, raw, _interior, local_x, open_w, in_rect = resolved
+        if self._on_wall:
+            self._drop()
         if not self._carry_into(opening):
             return
-        acc_def = acc.get(self.accessory)
+        if is_panel and self._face_auto:
+            self._face = self._cursor_face(in_rect, local_x, open_w)
+        outside = is_panel and acc.PANEL_LOCATION_KEYS[
+            self._face] in (acc.PANEL_OUTSIDE_LEFT,
+                            acc.PANEL_OUTSIDE_RIGHT)
+        # On an outside face the opening's contents are on the other
+        # side of the panel; nothing in there is in its way.
         z = types_closets.accessory_drop_height(
-            opening, acc_def, raw, skip=self._cage)
+            opening, acc_def, raw, skip=self._cage,
+            dodge=not outside)
         self._cage[types_closets.PROP_ACCESSORY_Z] = z
         if acc_def.family == acc.FAMILY_PANEL:
             self._cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
@@ -3979,7 +4141,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             # Move the closet to the accessory rather than the other
             # way round, without having to put it down first.
             cage = self._cage
-            if cage is None:
+            if cage is None or self._on_wall:
                 return {'RUNNING_MODAL'}
             if not cage.get(types_closets.PROP_ACCESSORY_WARNING, ''):
                 self._note = "The opening already fits it"
@@ -3996,16 +4158,20 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             step = -1 if event.type == 'LEFT_ARROW' else 1
             self._face = (self._face + step) % len(
                 acc.PANEL_LOCATION_KEYS)
+            # An arrowed face is a choice, and a choice is kept; the
+            # cursor stops picking it.
+            self._face_auto = False
             self._follow(context)
             hb_placement.draw_header_text(context, self._note)
             return {'RUNNING_MODAL'}
 
         if event.type == 'MOUSEMOVE':
-            # Plane-based resolution only needs the mouse position; no
-            # raycast, so no hide/unhide dance around the carried cage.
+            # Plane-based resolution only needs the mouse position;
+            # the event rides along for the one case that raycasts -
+            # a cleat looking for a wall.
             self.mouse_pos = Vector((event.mouse_region_x,
                                      event.mouse_region_y))
-            self._follow(context)
+            self._follow(context, event)
             hb_placement.draw_header_text(context, self._note)
             return {'RUNNING_MODAL'}
 
@@ -4271,8 +4437,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         # A cleat is shown the length it actually is rather than the
         # zero that means "follow the opening", so there is a real
         # figure to shorten. Typed back to the opening's width it goes
-        # back to following, the way a bay size does.
-        width = types_closets._cage_dim_x(obj.parent)
+        # back to following, the way a bay size does. One on a wall
+        # has no opening to follow - its own length is the reference.
+        if obj.get(types_closets.PROP_ACCESSORY_ON_WALL):
+            width = types_closets.wall_accessory_length(obj)
+        else:
+            width = types_closets._cage_dim_x(obj.parent)
         c_len, c_x, c_h, qty, inset = types_closets.cleat_hook_values(
             obj, width)
         acc_def = _accessory_of(obj)
@@ -4332,9 +4502,13 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             box = layout.box()
             col = box.column(align=True)
             col.prop(self, 'cleat_length')
-            width = types_closets._cage_dim_x(obj.parent)
-            if self.cleat_length < width - 1e-6:
-                col.prop(self, 'cleat_x')
+            # On a wall there is no opening to sit inside: where it
+            # is along the wall was said by placing it, and can be
+            # said again by grabbing it.
+            if not obj.get(types_closets.PROP_ACCESSORY_ON_WALL):
+                width = types_closets._cage_dim_x(obj.parent)
+                if self.cleat_length < width - 1e-6:
+                    col.prop(self, 'cleat_x')
             col.prop(self, 'cleat_height')
             col = box.column(align=True)
             col.prop(self, 'hook_qty')
@@ -4355,7 +4529,8 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         if warning:
             box = layout.box()
             box.label(text=warning, icon='ERROR')
-        if _accessory_can_fit(obj, acc_def):
+        if (_accessory_can_fit(obj, acc_def)
+                and not obj.get(types_closets.PROP_ACCESSORY_ON_WALL)):
             row = layout.row()
             row.scale_y = 1.3
             row.operator("hb_closets.fit_opening_to_accessory",
@@ -4397,15 +4572,21 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                     if 0 <= i < len(sizes):
                         obj[prop] = float(sizes[i])
             if acc_def is not None and acc_def.family == acc.FAMILY_CLEAT:
-                width = types_closets._cage_dim_x(obj.parent)
-                # Given the opening's own width, it goes back to
-                # following the opening rather than being pinned to
-                # the figure it happens to be at today.
-                follows = self.cleat_length >= width - 1e-6
-                obj[types_closets.PROP_CLEAT_LENGTH] = (
-                    0.0 if follows else float(self.cleat_length))
-                obj[types_closets.PROP_CLEAT_X] = (
-                    -1.0 if follows else float(self.cleat_x))
+                if obj.get(types_closets.PROP_ACCESSORY_ON_WALL):
+                    # A wall cleat has no opening to follow: its
+                    # length is always its own.
+                    obj[types_closets.PROP_CLEAT_LENGTH] = float(
+                        self.cleat_length)
+                else:
+                    width = types_closets._cage_dim_x(obj.parent)
+                    # Given the opening's own width, it goes back to
+                    # following the opening rather than being pinned
+                    # to the figure it happens to be at today.
+                    follows = self.cleat_length >= width - 1e-6
+                    obj[types_closets.PROP_CLEAT_LENGTH] = (
+                        0.0 if follows else float(self.cleat_length))
+                    obj[types_closets.PROP_CLEAT_X] = (
+                        -1.0 if follows else float(self.cleat_x))
                 obj[types_closets.PROP_CLEAT_HEIGHT] = float(
                     self.cleat_height)
                 obj[types_closets.PROP_HOOK_QTY] = int(self.hook_qty)
@@ -4413,6 +4594,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                     self.hook_inset)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+        elif obj.get(types_closets.PROP_ACCESSORY_ON_WALL):
+            # Out on a wall no reconciler comes past; the layout is
+            # run here, and the height typed in is applied here too.
+            obj.location.z = float(
+                obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
+            types_closets.layout_wall_accessory(obj)
         return {'FINISHED'}
 
 

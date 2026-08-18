@@ -30,6 +30,80 @@ import bpy
 
 HOST_KEY = 'closet_accessory'
 
+# A model the library draws itself rather than reads off disk. The
+# built-in builders answer to the same model names the catalog uses,
+# so a saved drawing keeps meaning the same thing; a real installed
+# file always wins over a builder.
+BUILTIN_SCHEME = 'builtin://'
+
+
+def _builders():
+    try:
+        from . import accessory_models
+    except Exception:
+        return None
+    return accessory_models
+
+
+def _builtin_path(model_name):
+    """A loadable pseudo-path for a model the library can draw
+    itself, or '' when it cannot."""
+    reg = _builders()
+    if reg is not None and model_name and reg.offers(model_name):
+        return BUILTIN_SCHEME + model_name
+    return ''
+
+
+def is_builtin(path):
+    """Whether a path names a model the library draws itself."""
+    return bool(path) and path.startswith(BUILTIN_SCHEME)
+
+
+def build_sized_model(path, name, w, h, d):
+    """A built model at given measures - the basket path. Returns a
+    fresh object or None; the caller parents and places it."""
+    reg = _builders()
+    if reg is None or not is_builtin(path):
+        return None
+    obj = reg.build_sized(path[len(BUILTIN_SCHEME):], w, h, d)
+    if obj is not None:
+        obj.name = name
+    return obj
+
+
+def restretch_builtin(model, width):
+    """Pull a built telescoping model out to a width by rebuilding
+    its mesh in place. Says whether it handled the model."""
+    reg = _builders()
+    if reg is None or model is None:
+        return False
+    name = model.get('hb_accessory_model', '')
+    if name not in getattr(reg, 'STRETCH', {}):
+        return False
+    if abs(float(model.get('hb_stretch_w', 0.0)) - width) < 1e-5:
+        return True
+    fresh = reg.build_stretch(name, width)
+    if fresh is None:
+        return False
+    old = model.data
+    model.data = fresh.data
+    bpy.data.objects.remove(fresh, do_unlink=True)
+    if old is not None and old.users == 0:
+        bpy.data.meshes.remove(old)
+    model['hb_stretch_w'] = width
+    return True
+
+
+def apply_finish(obj, color='', fabric=''):
+    """Dress a built instance in its chosen finish, where the
+    builders are present and the names are known. Quiet otherwise."""
+    reg = _builders()
+    if reg is not None:
+        try:
+            reg.apply_finish(obj, color, fabric)
+        except Exception:
+            pass
+
 
 def _registry():
     """HB5's accessory provider registry, or None if it is not there
@@ -135,8 +209,9 @@ def clear_model_cache():
 def load_accessory_model(path):
     """Appended source object for one model file, or None. Cached per
     path; a stale entry (the file reloaded underneath us) is
-    re-appended rather than handed back dead."""
-    if not path or not os.path.isfile(path):
+    re-appended rather than handed back dead. A builtin path builds
+    its model by code instead of reading a file."""
+    if not path:
         return None
     cached = _accessory_models.get(path)
     if cached is not None:
@@ -145,6 +220,15 @@ def load_accessory_model(path):
             return cached
         except ReferenceError:
             pass
+    if path.startswith(BUILTIN_SCHEME):
+        reg = _builders()
+        obj = (reg.build(path[len(BUILTIN_SCHEME):])
+               if reg is not None else None)
+        if obj is not None:
+            _accessory_models[path] = obj
+        return obj
+    if not os.path.isfile(path):
+        return None
     try:
         with bpy.data.libraries.load(path) as (src, dst):
             dst.objects = list(src.objects)
@@ -182,6 +266,11 @@ def instance_rig_model(path, name):
 
     Returns (meshes, markers), both empty when there is nothing to
     bring in or when what is there turns out not to be a rig."""
+    if path and path.startswith(BUILTIN_SCHEME):
+        # A built model has no marker rig (yet): it comes back as a
+        # plain mesh with no markers, and draws at its natural size.
+        obj = instance_accessory_model(path, name)
+        return ((obj,), ()) if obj is not None else ((), ())
     if not path or not os.path.isfile(path):
         return (), ()
     try:
@@ -434,17 +523,26 @@ def _def_from_item(item):
     for s in item.get('sizes') or ():
         # (label, size, name, path). The name is what a drawing
         # remembers - it has to mean the same thing on the next
-        # machine - and the path is only good for this session.
+        # machine - and the path is only good for this session. A
+        # model that is not installed falls back to the library's
+        # own light builder for that name, where there is one.
+        name = s.get('model') or ''
+        path = s.get('model_path') or ''
+        if not model_is_installed(path):
+            path = _builtin_path(name) or path
         sizes.append((s.get('name') or '',
                       float(s.get('size') or 0.0),
-                      s.get('model') or '',
-                      s.get('model_path') or ''))
+                      name, path))
+    model_path = item.get('model_path') or ''
+    if not model_is_installed(model_path):
+        model_path = _builtin_path(item.get('model') or '') \
+            or model_path
     return AccessoryDef(
         key=item.get('code') or '',
         label=item.get('name') or item.get('code') or '',
         family=item.get('family') or FAMILY_OPENING,
         model=item.get('model') or '',
-        model_path=item.get('model_path') or '',
+        model_path=model_path,
         bands=tuple(sizes),
         band_axis=item.get('band_axis') or BAND_BY_WIDTH,
         width=float(item.get('width') or 0.0),
@@ -495,9 +593,18 @@ def catalog():
     global _catalog_cache
     if _catalog_cache:
         return _catalog_cache
+    items = registry_items()
+    if not items:
+        # Nothing is offering a catalog: the library falls back to
+        # its own generic set, drawn by its own light builders. A
+        # host add-on that registers later takes over - with its own
+        # names, its sizes and its size limits.
+        reg = _builders()
+        items = list(getattr(reg, 'BUILTIN_ITEMS', ()) or ()) \
+            if reg is not None else []
     built = []
     seen = set()
-    for item in registry_items():
+    for item in items:
         code = item.get('code')
         if not code or code in seen:
             continue
@@ -565,6 +672,8 @@ def model_is_installed(path):
     of them. clear_model_cache() forgets it."""
     if not path:
         return False
+    if path.startswith(BUILTIN_SCHEME):
+        return True
     known = _installed_cache.get(path)
     if known is None:
         known = os.path.isfile(path)

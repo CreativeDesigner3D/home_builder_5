@@ -982,6 +982,14 @@ class Closet_Opening_Props(PropertyGroup):
         description="How many adjustable shelves to space through the "
                     "opening",
         default=0, min=0, max=20)  # type: ignore
+    # The count follows the opening's height (one shelf per foot, the
+    # prior library's rule) until someone takes it over, so a resize
+    # re-deals the shelves. The padlock in the shelf dialog sets this.
+    unlock_adj_qty: BoolProperty(
+        name="Shelf Quantity Lock",
+        description="Hold the shelf count typed here instead of "
+                    "following the opening's height",
+        default=False)  # type: ignore
     # How the shelves in this opening are cut. Both figures are the
     # room's until this opening takes one over, which is what the
     # unlock flags say. They describe how a shelf is made rather than

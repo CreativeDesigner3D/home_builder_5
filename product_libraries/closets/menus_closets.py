@@ -112,12 +112,6 @@ def _draw_add_part_entries(layout):
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
-    layout.operator("hb_closets.add_cubbies",
-                    text="Cubbies...", icon='MESH_GRID')
-    layout.operator("hb_closets.add_rollouts",
-                    text="Rollout Trays...", icon='MESH_PLANE')
-    layout.operator("hb_closets.add_slanted_shelves",
-                    text="Slanted Shoe Shelves...", icon='SORTBYEXT')
     layout.menu("HOME_BUILDER_MT_closet_accessories",
                 text="Add Accessory",
                 icon='OUTLINER_OB_GROUP_INSTANCE')
@@ -126,8 +120,10 @@ def _draw_add_part_entries(layout):
 class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
     """What can be hung in a closet, grouped the way it mounts.
 
-    Picking one starts placing it, so the choice and the placing are
-    one action rather than a dialog and then a height typed in."""
+    One submenu per mounting family, so the list reads as three short
+    menus rather than one long one. Picking one starts placing it, so
+    the choice and the placing are one action rather than a dialog and
+    then a height typed in."""
     bl_idname = "HOME_BUILDER_MT_closet_accessories"
     bl_label = "Add Accessory"
 
@@ -135,25 +131,89 @@ class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):
         from . import accessories_closets as acc
         layout = self.layout
         offered = acc.catalog_items()
-        if not offered:
-            layout.label(text="No accessories are available",
-                         icon='INFO')
-            layout.label(text="They come with the product catalog")
-            return
-        first = True
-        for family in (acc.FAMILY_OPENING, acc.FAMILY_PANEL,
-                       acc.FAMILY_INSERT, acc.FAMILY_CLEAT):
-            in_family = [d for d in offered if d.family == family]
-            if not in_family:
-                continue
-            if not first:
-                layout.separator()
-            first = False
-            layout.label(text=acc.FAMILY_LABELS.get(family, family))
-            for acc_def in in_family:
-                op = layout.operator("hb_closets.place_accessory",
-                                     text=acc_def.label)
-                op.accessory = acc_def.key
+        families = {d.family for d in offered}
+        for family, menu_id in (
+                (acc.FAMILY_OPENING,
+                 "HOME_BUILDER_MT_closet_accessories_opening"),
+                (acc.FAMILY_PANEL,
+                 "HOME_BUILDER_MT_closet_accessories_panel")):
+            if family in families:
+                layout.menu(menu_id,
+                            text=acc.FAMILY_LABELS.get(family, family))
+        # Insert is always offered: alongside whatever the catalog
+        # carries, it is where the built-in inserts - rollouts, shoe
+        # shelves, cubbies - live.
+        layout.menu("HOME_BUILDER_MT_closet_accessories_insert",
+                    text=acc.FAMILY_LABELS.get(acc.FAMILY_INSERT,
+                                               "Insert"))
+        if acc.FAMILY_CLEAT in families:
+            layout.menu("HOME_BUILDER_MT_closet_accessories_cleat",
+                        text=acc.FAMILY_LABELS.get(acc.FAMILY_CLEAT,
+                                                   "Cleat"))
+        # The Curate line stands apart while it is being evaluated;
+        # the guard lets this menu draw even where that module is
+        # not registered.
+        if hasattr(bpy.types,
+                   'HOME_BUILDER_MT_closet_accessories_curate'):
+            layout.separator()
+            layout.menu("HOME_BUILDER_MT_closet_accessories_curate",
+                        text="Curate")
+
+
+class _closet_accessory_family_menu(bpy.types.Menu):
+    """One mounting family's slice of the accessory catalog."""
+    family = None
+
+    def draw(self, context):
+        from . import accessories_closets as acc
+        layout = self.layout
+        for acc_def in acc.catalog_items(family=self.family):
+            op = layout.operator("hb_closets.place_accessory",
+                                 text=acc_def.label)
+            op.accessory = acc_def.key
+
+
+class HOME_BUILDER_MT_closet_accessories_opening(
+        _closet_accessory_family_menu):
+    bl_idname = "HOME_BUILDER_MT_closet_accessories_opening"
+    bl_label = "Opening"
+    family = 'OPENING'
+
+
+class HOME_BUILDER_MT_closet_accessories_panel(
+        _closet_accessory_family_menu):
+    bl_idname = "HOME_BUILDER_MT_closet_accessories_panel"
+    bl_label = "Panel"
+    family = 'PANEL'
+
+
+class HOME_BUILDER_MT_closet_accessories_cleat(
+        _closet_accessory_family_menu):
+    bl_idname = "HOME_BUILDER_MT_closet_accessories_cleat"
+    bl_label = "Cleat"
+    family = 'CLEAT'
+
+
+class HOME_BUILDER_MT_closet_accessories_insert(
+        _closet_accessory_family_menu):
+    """The insert family: the built-in opening fills first, then
+    whatever insert accessories the catalog carries."""
+    bl_idname = "HOME_BUILDER_MT_closet_accessories_insert"
+    bl_label = "Insert"
+    family = 'INSERT'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_closets.add_rollouts",
+                        text="Rollout Trays...", icon='MESH_PLANE')
+        layout.operator("hb_closets.add_slanted_shelves",
+                        text="Slanted Shoe Shelves...", icon='SORTBYEXT')
+        layout.operator("hb_closets.add_cubbies",
+                        text="Cubbies...", icon='MESH_GRID')
+        from . import accessories_closets as acc
+        if acc.catalog_items(family=self.family):
+            layout.separator()
+        _closet_accessory_family_menu.draw(self, context)
 
 
 class HOME_BUILDER_MT_closet_opening_commands(bpy.types.Menu):
@@ -307,6 +367,10 @@ classes = (
     HOME_BUILDER_MT_closet_change_opening,
     HOME_BUILDER_MT_closet_doors_drawers,
     HOME_BUILDER_MT_closet_accessories,
+    HOME_BUILDER_MT_closet_accessories_opening,
+    HOME_BUILDER_MT_closet_accessories_panel,
+    HOME_BUILDER_MT_closet_accessories_cleat,
+    HOME_BUILDER_MT_closet_accessories_insert,
     HOME_BUILDER_MT_closet_part_commands,
 )
 
