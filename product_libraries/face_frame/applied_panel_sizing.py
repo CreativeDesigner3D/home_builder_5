@@ -286,11 +286,10 @@ def _clip_poly_half_plane(poly, p, n):
     return out
 
 
-def _diagonal_bar_poly(x0, z0, x1, z1, flip, bar_w):
-    """Convex (x, z) polygon of one X bar: a ``bar_w``-wide strip along
-    the opening diagonal, clipped to the opening rectangle (so the bar
-    ends land as angled cuts against the frame, like the catalog
-    drawing). ``flip`` picks the other diagonal."""
+def _diagonal_axis(x0, z0, x1, z1, flip):
+    """Start point, unit direction and unit normal of one opening
+    diagonal in (x, z); ``flip`` picks the other diagonal. None when
+    the opening is degenerate."""
     import math
     if flip:
         a, b = (x0, z1), (x1, z0)
@@ -299,9 +298,20 @@ def _diagonal_bar_poly(x0, z0, x1, z1, flip, bar_w):
     dx, dz = b[0] - a[0], b[1] - a[1]
     length = math.hypot(dx, dz)
     if length < 1e-6:
-        return []
+        return None
     ux, uz = dx / length, dz / length
-    nx, nz = -uz, ux
+    return a, b, (ux, uz), (-uz, ux)
+
+
+def _diagonal_bar_poly(x0, z0, x1, z1, flip, bar_w):
+    """Convex (x, z) polygon of one X bar: a ``bar_w``-wide strip along
+    the opening diagonal, clipped to the opening rectangle (so the bar
+    ends land as angled cuts against the frame, like the catalog
+    drawing). ``flip`` picks the other diagonal."""
+    axis = _diagonal_axis(x0, z0, x1, z1, flip)
+    if axis is None:
+        return []
+    a, b, (ux, uz), (nx, nz) = axis
     h = bar_w / 2.0
     # Overshoot the strip past both corners; the rectangle clip owns
     # the end cuts.
@@ -354,11 +364,29 @@ def apply_panel_x_frame(cab_obj, panel_obj, side):
 
     y_front = -depth + _X_FACE_SETBACK
     y_back = 0.0   # against the cabinet side / wall plane
+    # One bar runs through; the crossing bar is cut into two segments
+    # that butt against it. Two full intersecting prisms would share
+    # coplanar front faces where they cross and z-fight in the
+    # viewport, reading as an overlap instead of a joint.
+    polys = []
+    through = _diagonal_bar_poly(x0, z0, x1, z1, False, _X_BAR_WIDTH)
+    if len(through) >= 3:
+        polys.append(through)
+    crossing = _diagonal_bar_poly(x0, z0, x1, z1, True, _X_BAR_WIDTH)
+    axis = _diagonal_axis(x0, z0, x1, z1, False)
+    if len(crossing) >= 3 and axis is not None and through:
+        a, _b, _u, (nx, nz) = axis
+        h = _X_BAR_WIDTH / 2.0
+        for sign in (1.0, -1.0):
+            p = (a[0] + nx * h * sign, a[1] + nz * h * sign)
+            seg = _clip_poly_half_plane(crossing, p, (nx * sign, nz * sign))
+            if len(seg) >= 3:
+                polys.append(seg)
+    elif len(crossing) >= 3:
+        polys.append(crossing)
+
     verts, faces = [], []
-    for flip in (False, True):
-        poly = _diagonal_bar_poly(x0, z0, x1, z1, flip, _X_BAR_WIDTH)
-        if len(poly) < 3:
-            continue
+    for poly in polys:
         base = len(verts)
         count = len(poly)
         verts.extend((px, y_front, pz) for px, pz in poly)
