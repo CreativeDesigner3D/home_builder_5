@@ -915,7 +915,7 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
     callout: bpy.props.EnumProperty(
         items=[('RC', "Restrictor Clips", ""),
                ('TL', "Touch Latches", ""),
-               ('FR', "Finger Rout", "")],
+               ('FR', "Finger Route", "")],
         default='TL', options={'HIDDEN'},
     )  # type: ignore
 

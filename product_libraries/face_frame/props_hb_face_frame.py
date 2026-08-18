@@ -3454,7 +3454,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         default=False,
     )  # type: ignore
     include_finger_rout: BoolProperty(
-        name="Include Finger Rout (FR)",
+        name="Include Finger Route (FR)",
         description="Fronts using this style get an FR callout on drawings",
         default=False,
     )  # type: ignore

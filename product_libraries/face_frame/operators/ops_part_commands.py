@@ -1923,7 +1923,7 @@ class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
     touch_latches: bpy.props.BoolProperty(
         name="Touch Latches (TL)", default=False, update=_on_hw_field)  # type: ignore
     finger_rout: bpy.props.BoolProperty(
-        name="Finger Rout (FR)", default=False, update=_on_hw_field)  # type: ignore
+        name="Finger Route (FR)", default=False, update=_on_hw_field)  # type: ignore
 
     @classmethod
     def poll(cls, context):
