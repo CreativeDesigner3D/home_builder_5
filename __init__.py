@@ -78,8 +78,41 @@ def _update_use_viewport_hud(self, context):
                 area.tag_redraw()
 
 
+def _apply_sidebar_tab_first():
+    """Sync the tab-pin panel with the preference. Safe to call from
+    register(); from a property update it must be deferred (see below)."""
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+        enabled = bool(prefs.sidebar_tab_first)
+    except (KeyError, AttributeError):
+        enabled = False
+    view3d_sidebar.apply_tab_pin(enabled)
+
+
+def _update_sidebar_tab_first(self, context):
+    """Panel (un)registration can't happen inside a property update, so
+    defer it onto a one-shot timer, then redraw the 3D viewports."""
+    def _apply():
+        try:
+            _apply_sidebar_tab_first()
+        except Exception as e:
+            print(f"Home Builder: sidebar tab pin toggle skipped: {e}")
+        _update_use_viewport_hud(None, None)
+        return None
+    bpy.app.timers.register(_apply, first_interval=0.0)
+
+
 class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+
+    sidebar_tab_first: bpy.props.BoolProperty(
+        name="Keep Sidebar Tab First",
+        description="Always list the Home Builder tab first in the 3D "
+                    "viewport sidebar. When off, Blender orders it with "
+                    "the other add-on tabs",
+        default=False,
+        update=_update_sidebar_tab_first,
+    ) # type: ignore
 
     use_viewport_hud: bpy.props.BoolProperty(
         name="Viewport Controls",
@@ -219,6 +252,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
 
+        layout.prop(self, "sidebar_tab_first")
         layout.prop(self, "use_viewport_hud")
         layout.prop(self, "hide_2d_drawing_panels")
         
@@ -278,6 +312,10 @@ def register():
     ops_general.register()
     ops.register()
     view3d_sidebar.register()
+    try:
+        _apply_sidebar_tab_first()
+    except Exception as e:
+        print(f"Home Builder: sidebar tab pin init skipped: {e}")
     menu_apend.register()
     menus.register()
     closets.register()

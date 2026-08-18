@@ -82,6 +82,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                 layout.operator("hb_face_frame.edit_blind_corner",
                                 text="Blind Corner Properties...",
                                 icon='SNAP_EDGE')
+                layout.operator("hb_face_frame.swap_blind_corner",
+                                text="Swap Blind Cabinet",
+                                icon='ARROW_LEFTRIGHT')
         # Duplicate: copy-and-place. Seeds the placement modal from
         # this cabinet; the drop deep-copies the whole hierarchy so
         # bay configs, fronts, and the style come along. F in the

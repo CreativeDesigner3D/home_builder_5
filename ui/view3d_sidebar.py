@@ -15,22 +15,67 @@ def _hide_2d_drawing_panels(context):
     return bool(getattr(prefs, "hide_2d_drawing_panels", False))
 
 # =============================================================================
-# HOME BUILDER UI PANELS
-# All panels in the "Home Builder" category tab
+# SIDEBAR TAB PIN
+# Blender lists sidebar tabs in panel registration order, except that a
+# category owning a header-less panel (HIDE_HEADER, poll True) is moved to
+# the front. This empty panel exists only to give the tab that pin; it is
+# registered on demand from the "Keep Sidebar Tab First" preference rather
+# than with the regular panel classes.
 # =============================================================================
-
-# -----------------------------------------------------------------------------
-# PANEL 0: ROOMS
-# -----------------------------------------------------------------------------
-class HOME_BUILDER_PT_hidden_header(bpy.types.Panel):
-    bl_label = "Project"
-    bl_idname = "HOME_BUILDER_PT_hidden_header"
+class HOME_BUILDER_PT_tab_pin(bpy.types.Panel):
+    bl_label = "Home Builder Tab"
+    bl_idname = "HOME_BUILDER_PT_tab_pin"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = CATEGORY_NAME
     bl_order = 0
     bl_options = {'HIDE_HEADER'}
-    
+
+    def draw(self, context):
+        pass
+
+
+def apply_tab_pin(enabled):
+    """Register / unregister the tab-pin panel. Idempotent. Must not be
+    called from inside a property update callback or a draw -- defer onto
+    bpy.app.timers from there."""
+    registered = hasattr(bpy.types, HOME_BUILDER_PT_tab_pin.bl_idname)
+    if enabled and not registered:
+        bpy.utils.register_class(HOME_BUILDER_PT_tab_pin)
+    elif not enabled and registered:
+        bpy.utils.unregister_class(
+            getattr(bpy.types, HOME_BUILDER_PT_tab_pin.bl_idname))
+
+
+# =============================================================================
+# HOME BUILDER UI PANELS
+# All panels in the "Home Builder" category tab
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PANEL 0: SELECTION MODE
+# -----------------------------------------------------------------------------
+class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
+    bl_label = "Selection Mode"
+    bl_idname = "HOME_BUILDER_PT_selection_mode"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_order = 0
+
+    @classmethod
+    def poll(cls, context):
+        # With the viewport HUD on, room navigation and selection mode
+        # are drawn in the 3D view; only the object-color warning is
+        # left for this panel, so hide it entirely when that isn't needed.
+        try:
+            prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        except (KeyError, AttributeError):
+            return True
+        if not getattr(prefs, 'use_viewport_hud', False):
+            return True
+        return context.space_data.shading.color_type != 'OBJECT'
+
     def draw(self, context):
         layout = self.layout
 
@@ -1397,7 +1442,7 @@ class HOME_BUILDER_PT_room_layout_stairs(bpy.types.Panel):
 
 
 classes = (
-    HOME_BUILDER_PT_hidden_header,
+    HOME_BUILDER_PT_selection_mode,
     HOME_BUILDER_PT_project,
     HOME_BUILDER_PT_project_info,
     HOME_BUILDER_PT_project_rooms,
@@ -1430,5 +1475,6 @@ def register():
         bpy.utils.register_class(cls)
 
 def unregister():
+    apply_tab_pin(False)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

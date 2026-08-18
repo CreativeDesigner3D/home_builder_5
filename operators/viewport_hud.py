@@ -2,8 +2,9 @@
 
 When the `use_viewport_hud` addon preference is enabled, draws controls
 along the top of every 3D viewport: a left-anchored scene-navigator
-trigger (just past the toolbar) and a centered selection-mode picker for
-the active product library.
+trigger (just past the toolbar; it moves into the centered row when the
+viewport's overlay text occupies that corner) and a centered
+selection-mode picker for the active product library.
 A permanent draw handler renders the strip; addon keymap entries route
 clicks and hover moves on widget rects to their actions while passing
 every other event through. No persistent modal operator is used --
@@ -419,6 +420,18 @@ def _rows():
     ]
 
 
+def _corner_has_overlay_text(area):
+    """True when Blender draws its own text block (General Info,
+    Statistics, Performance) in this viewport's top-left corner -- the spot
+    the nav button normally occupies."""
+    space = area.spaces.active if area is not None else None
+    overlay = getattr(space, "overlay", None)
+    if overlay is None or not overlay.show_overlays:
+        return False
+    return bool(overlay.show_text or overlay.show_stats
+                or getattr(overlay, "show_performance", False))
+
+
 def compute_layout(context, area):
     """Return [(widget, rect), ...] for every currently-visible widget, in
     WINDOW-local pixel coords. Shared by the draw handler and the click
@@ -437,13 +450,19 @@ def compute_layout(context, area):
 
     # The scene-navigator button is left-anchored just past the toolbar,
     # not part of the centered rows -- a fixed spot makes it easy to find
-    # and its panel opens directly below it.
+    # and its panel opens directly below it. When the viewport's overlay
+    # text is on that corner belongs to Blender, so the button yields and
+    # joins the first centered row as its leftmost group instead.
+    rows = _rows()
     if _NAV_BUTTON.visible(context):
-        placed.append((_NAV_BUTTON, (x_min + margin_x, top_y,
-                                     _NAV_BUTTON.width, btn_h)))
+        if _corner_has_overlay_text(area):
+            rows = [[[_NAV_BUTTON]] + rows[0]] + rows[1:]
+        else:
+            placed.append((_NAV_BUTTON, (x_min + margin_x, top_y,
+                                         _NAV_BUTTON.width, btn_h)))
 
     cursor_y = top_y
-    for row in _rows():
+    for row in rows:
         groups = [[w for w in g if w.visible(context)] for g in row]
         groups = [g for g in groups if g]
         if not groups:
@@ -659,6 +678,32 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
+class home_builder_OT_hud_scroll(bpy.types.Operator):
+    """Routes a wheel notch over the pinned navigator's list to its scroll;
+    anywhere else the wheel passes through to the viewport as usual."""
+    bl_idname = "home_builder.hud_scroll"
+    bl_label = "Home Builder HUD Scroll"
+    bl_options = {'INTERNAL'}
+
+    rows: bpy.props.IntProperty(default=1)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _hud_event_poll(context) and scene_navigator.is_pinned()
+
+    def invoke(self, context, event):
+        area = context.area
+        ax, atop = _nav_anchor(context, area)
+        layout = scene_navigator.build_pinned_layout(
+            context, area, context.region, ax, atop)
+        if layout and scene_navigator.handle_navigator_scroll(
+                context, event.mouse_region_x, event.mouse_region_y,
+                layout[1], self.rows):
+            area.tag_redraw()
+            return {'FINISHED'}
+        return {'PASS_THROUGH'}
+
+
 class home_builder_OT_hud_hover(bpy.types.Operator):
     """Tracks the cursor for HUD hover highlights. Stores the region-local
     mouse position for the draw handler and tags a redraw only when the
@@ -708,6 +753,13 @@ def _register_keymaps():
         home_builder_OT_hud_hover.bl_idname, 'MOUSEMOVE', 'ANY',
         any=True, head=True)
     _addon_keymaps.append((km, kmi))
+    step = scene_navigator.SCROLL_STEP_ROWS
+    for ev_type, rows in (('WHEELUPMOUSE', -step), ('WHEELDOWNMOUSE', step)):
+        kmi = km.keymap_items.new(
+            home_builder_OT_hud_scroll.bl_idname, ev_type, 'PRESS',
+            any=True, head=True)
+        kmi.properties.rows = rows
+        _addon_keymaps.append((km, kmi))
 
 
 def _unregister_keymaps():
@@ -728,6 +780,7 @@ def ensure_listener():
 
 classes = (
     home_builder_OT_hud_click,
+    home_builder_OT_hud_scroll,
     home_builder_OT_hud_hover,
 )
 

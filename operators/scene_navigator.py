@@ -9,6 +9,10 @@ it closes on the first pick. Room rows carry rename and delete buttons,
 and a New Room button sits at the bottom -- each of those closes the
 navigator and opens the corresponding operator dialog. Click outside /
 Esc / RMB dismisses.
+
+The panel sizes itself to its longest name (within limits; longer names are
+ellipsized), its list is clamped to the viewport and scrolls with the mouse
+wheel, and section headers click to collapse.
 """
 
 import bpy
@@ -31,16 +35,26 @@ from ..hb_gpu_draw import (
 # panel tracks Blender's UI scale instead of shrinking on high-DPI screens.
 
 PANEL_TOP_MARGIN      = 12      # distance from top of visible window region
-PANEL_WIDTH           = 250
+PANEL_BOTTOM_MARGIN   = 12      # the panel never reaches closer to the bottom
+PANEL_MIN_WIDTH       = 250     # width grows with the longest name up to MAX
+PANEL_MAX_WIDTH       = 440
 PANEL_PADDING_X       = 10
 PANEL_PADDING_Y       = 8
 
 ROW_HEIGHT            = 24
 SECTION_GAP           = 6
 SECTION_HEADER_HEIGHT = 22
+SECTION_CHEVRON_W     = 12      # collapse chevron column ahead of the label
 ACCENT_WIDTH          = 3
 ACCENT_LEFT_PAD       = 6
 ROW_TEXT_LEFT_PAD     = ACCENT_LEFT_PAD + ACCENT_WIDTH + 8
+ROW_TEXT_RIGHT_PAD    = 8       # gap kept between text and the row's right edge
+PARENT_MIN_NAME_W     = 60      # drop the parent prefix if the name gets narrower
+
+LIST_MIN_ROWS         = 3       # scrolling list never shrinks below this
+SCROLL_STEP_ROWS      = 2       # rows per wheel notch
+SCROLLBAR_WIDTH       = 4
+SCROLLBAR_PAD         = 4
 
 PANEL_HEADER_HEIGHT   = 26
 ACTION_BTN_SIZE       = 18
@@ -82,6 +96,9 @@ PIN_GLYPH              = (0.78, 0.78, 0.78, 1.0)
 PIN_GLYPH_ACTIVE       = (1.0, 1.0, 1.0, 1.0)
 PIN_ACTIVE_BG          = (0.20, 0.43, 0.70, 1.0)
 
+SCROLLBAR_TRACK        = (1.0, 1.0, 1.0, 0.06)
+SCROLLBAR_THUMB        = (1.0, 1.0, 1.0, 0.28)
+
 
 # ---- Module state -----------------------------------------------------------
 
@@ -89,6 +106,16 @@ PIN_ACTIVE_BG          = (0.20, 0.43, 0.70, 1.0)
 # scenes can be switched in a row. Clicking away (or Esc) still closes it.
 # Sticky for the session -- a module global, intentionally not per-instance.
 _pinned = False
+
+# List scroll offset in scaled px (0 = top). Clamped by _build_layout, which
+# also nudges it so the current scene's row is in view whenever the current
+# scene changes -- otherwise the user's own scrolling wins.
+_scroll = 0.0
+_last_current = None
+
+# Section labels the user has collapsed (sticky for the session). Switching
+# into a scene re-expands the section that contains it.
+_collapsed = set()
 
 
 # ---- Scale ------------------------------------------------------------------
@@ -204,21 +231,65 @@ def _draw_pin_glyph(shader, rect, color):
     _draw_lines(shader, [(cx, head_y), (cx, ry + 4 * s)], color)
 
 
+def _draw_chevron(shader, cx, cy, size, collapsed, color):
+    """Section disclosure chevron centered at (cx, cy): points right when
+    the section is collapsed, down when expanded. ``size`` is pre-scaled."""
+    h = size / 2.0
+    if collapsed:
+        pts = [(cx - h / 2.0, cy + h), (cx + h / 2.0, cy),
+               (cx + h / 2.0, cy), (cx - h / 2.0, cy - h)]
+    else:
+        pts = [(cx - h, cy + h / 2.0), (cx, cy - h / 2.0),
+               (cx, cy - h / 2.0), (cx + h, cy + h / 2.0)]
+    _draw_lines(shader, pts, color)
+
+
+# ---- Text fitting -----------------------------------------------------------
+
+def _text_w(font_id, size, text):
+    blf.size(font_id, size)
+    return blf.dimensions(font_id, text)[0]
+
+
+def _fit_text(font_id, size, text, max_w):
+    """Return ``text`` if it fits in ``max_w`` px at ``size``, else the
+    longest prefix that fits with a trailing ellipsis."""
+    if _text_w(font_id, size, text) <= max_w:
+        return text
+    ell = "…"
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _text_w(font_id, size, text[:mid].rstrip() + ell) <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (text[:lo].rstrip() + ell) if lo > 0 else ell
+
+
 # ---- Layout computation -----------------------------------------------------
 
 def _build_layout(region, area, current_scene_name,
                   anchor_x=-1.0, anchor_top=-1.0):
     """Compute panel rect + entry rects from current region size and scenes.
 
+    The panel is as wide as its longest row (clamped to MIN/MAX and the
+    viewport); the section list is clamped to the viewport height and
+    scrolls -- rows scrolled out of the clip rect are omitted, partially
+    visible ones are kept (the painter clips them, hit-testing checks the
+    clip rect). Collapsed sections contribute only their header.
+
     Returns (panel_rect, entries). panel_rect is (x, y, w, h) in region px
     (y is the bottom edge). entries is a list of tuples:
         ('panel_header', current_scene_name, rect, pin_rect)
-        ('header', label, color, rect)
+        ('list', clip_rect, track_rect_or_None, thumb_rect_or_None)
+        ('header', label, color, rect, collapsed, count)
         ('row', scene, parent, color, is_current, rect,
                 rename_rect_or_None, delete_rect_or_None)
         ('new_room', rect)
     Room rows carry rename/delete sub-rects; other rows carry None.
     """
+    global _scroll, _last_current
     groups = _collect_groups()
 
     s = _s()
@@ -233,39 +304,86 @@ def _build_layout(region, area, current_scene_name,
     btn = ACTION_BTN_SIZE * s
     btn_gap = ACTION_BTN_GAP * s
     btn_right_pad = ACTION_BTN_RIGHT_PAD * s
+    row_font = ROW_FONT_SIZE * s
+    parent_font = PARENT_FONT_SIZE * s
+    hdr_font = HEADER_FONT_SIZE * s
+    font_id = 0
 
-    content_h = panel_hdr_h + section_gap
-    for i, (_, _, scenes, _) in enumerate(groups):
+    # A scene switch re-expands its section and re-targets the scroll.
+    current_changed = current_scene_name != _last_current
+    _last_current = current_scene_name
+    if current_changed:
+        for label, _c, scenes, _p in groups:
+            if any(sc.name == current_scene_name for sc in scenes):
+                _collapsed.discard(label)
+
+    # ---- Flatten the list into items + measure the widest row ----------
+    # items: (kind, payload, height, needed_w) in display order.
+    room_reserve = btn_right_pad + btn * 2 + btn_gap + 6 * s
+    plain_reserve = ROW_TEXT_RIGHT_PAD * s
+    text_left = ROW_TEXT_LEFT_PAD * s
+    items = []
+    for i, (label, color, scenes, parent_fn) in enumerate(groups):
+        collapsed = label in _collapsed
         if i > 0:
-            content_h += section_gap
-        content_h += section_hdr_h
-        content_h += row_h * len(scenes)
-    content_h += new_room_gap + new_room_h
+            items.append(('gap', None, section_gap, 0.0))
+        hdr_w = (SECTION_CHEVRON_W * s + _text_w(font_id, hdr_font, label)
+                 + (_text_w(font_id, hdr_font, f"  {len(scenes)}")
+                    if collapsed else 0.0))
+        items.append(('header', (label, color, collapsed, len(scenes)),
+                      section_hdr_h, hdr_w))
+        if collapsed:
+            continue
+        for sc in scenes:
+            parent = parent_fn(sc) if parent_fn else None
+            tw = _text_w(font_id, row_font, sc.name)
+            if parent:
+                tw += _text_w(font_id, parent_font, parent + "  ·  ")
+            reserve = room_reserve if _is_room(sc) else plain_reserve
+            items.append(('row', (sc, parent, color), row_h,
+                          text_left + tw + reserve))
+    list_h_full = sum(it[2] for it in items)
 
-    panel_w = PANEL_WIDTH * s
-    panel_h = content_h + pad_y * 2
-
+    # ---- Panel geometry --------------------------------------------------
     x_min, x_max, y_min, y_max = _get_visible_window_bounds(area)
+    panel_top = anchor_top if anchor_top >= 0.0 else y_max - PANEL_TOP_MARGIN * s
+
+    fixed_h = (pad_y * 2 + panel_hdr_h + section_gap
+               + new_room_gap + new_room_h)
+    max_list_h = (panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)) - fixed_h
+    list_h = list_h_full
+    scrollable = list_h_full > max_list_h
+    sb_reserve = (SCROLLBAR_WIDTH + SCROLLBAR_PAD) * s if scrollable else 0.0
+    if scrollable:
+        list_h = max(max_list_h, row_h * LIST_MIN_ROWS)
+    panel_h = fixed_h + list_h
+    panel_y = panel_top - panel_h
+
+    hdr_needed = (_text_w(font_id, hdr_font, "CURRENT") + 8 * s
+                  + _text_w(font_id, row_font, current_scene_name)
+                  + 8 * s + btn + btn_right_pad)
+    needed_w = max([hdr_needed]
+                   + [it[3] + sb_reserve for it in items]) + pad_x * 2
+    avail_w = (x_max - x_min) - PANEL_TOP_MARGIN * s * 2
+    panel_w = max(PANEL_MIN_WIDTH * s,
+                  min(needed_w, PANEL_MAX_WIDTH * s, avail_w))
     visible_w = max(x_max - x_min, panel_w)
 
     if anchor_top >= 0.0:
         # Anchored under a specific button (the viewport HUD trigger);
         # clamp so a wide panel stays on screen.
         panel_x = min(max(anchor_x, x_min), x_max - panel_w)
-        panel_top = anchor_top
     else:
         # Center horizontally within the visible window area; anchor to top.
         panel_x = x_min + (visible_w - panel_w) / 2.0
-        panel_top = y_max - PANEL_TOP_MARGIN * s
-    panel_y = panel_top - panel_h
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
     content_x = panel_x + pad_x
     content_w = panel_w - pad_x * 2
     entries = []
 
+    # ---- Panel header ----------------------------------------------------
     cursor_y = panel_top - pad_y
-
     ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
     pin_y = ph_rect[1] + (panel_hdr_h - btn) / 2.0
     pin_x = content_x + content_w - btn_right_pad - btn
@@ -273,21 +391,54 @@ def _build_layout(region, area, current_scene_name,
     entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
     cursor_y -= panel_hdr_h + section_gap
 
-    for i, (label, color, scenes, parent_fn) in enumerate(groups):
-        if i > 0:
-            cursor_y -= section_gap
-        header_rect = (content_x, cursor_y - section_hdr_h,
-                       content_w, section_hdr_h)
-        entries.append(('header', label, color, header_rect))
-        cursor_y -= section_hdr_h
+    # ---- Scrolling list --------------------------------------------------
+    list_top = cursor_y
+    list_bottom = list_top - list_h
+    row_w = content_w - sb_reserve
+    track_rect = thumb_rect = None
+    if scrollable:
+        sb_w = SCROLLBAR_WIDTH * s
+        max_scroll = list_h_full - list_h
+        # Bring the current scene's row into view on a scene switch.
+        if current_changed:
+            off = 0.0
+            for kind, payload, h, _w in items:
+                if kind == 'row' and payload[0].name == current_scene_name:
+                    if off < _scroll:
+                        _scroll = off
+                    elif off + h > _scroll + list_h:
+                        _scroll = off + h - list_h
+                    break
+                off += h
+        _scroll = min(max(_scroll, 0.0), max_scroll)
+        track_rect = (content_x + content_w - sb_w, list_bottom, sb_w, list_h)
+        thumb_h = max(list_h * (list_h / list_h_full), row_h)
+        thumb_y = (list_top - thumb_h
+                   - (list_h - thumb_h) * (_scroll / max_scroll))
+        thumb_rect = (track_rect[0], thumb_y, sb_w, thumb_h)
+    else:
+        _scroll = 0.0
+    clip_rect = (content_x, list_bottom, content_w, list_h)
+    entries.append(('list', clip_rect, track_rect, thumb_rect))
 
-        for sc in scenes:
-            row_rect = (content_x, cursor_y - row_h, content_w, row_h)
-            parent = parent_fn(sc) if parent_fn else None
+    y = list_top + _scroll          # top edge of the first item
+    for kind, payload, h, _w in items:
+        item_top, item_bot = y, y - h
+        y -= h
+        if kind == 'gap' or item_bot >= list_top or item_top <= list_bottom:
+            continue                # entirely outside the clip -> skip
+        if kind == 'header':
+            label, color, collapsed, count = payload
+            entries.append(('header', label, color,
+                            (content_x, item_bot, row_w, h),
+                            collapsed, count))
+        else:
+            sc, parent, color = payload
+            row_rect = (content_x, item_bot, row_w, h)
             rename_rect = delete_rect = None
             if _is_room(sc):
-                by = cursor_y - row_h + (row_h - btn) / 2.0
-                dx = content_x + content_w - btn_right_pad - btn
+                by = item_bot + (h - btn) / 2.0
+                dx = content_x + row_w - btn_right_pad - btn
                 rnx = dx - btn_gap - btn
                 delete_rect = (dx, by, btn, btn)
                 rename_rect = (rnx, by, btn, btn)
@@ -296,13 +447,81 @@ def _build_layout(region, area, current_scene_name,
                 sc.name == current_scene_name, row_rect,
                 rename_rect, delete_rect,
             ))
-            cursor_y -= row_h
 
-    cursor_y -= new_room_gap
+    # ---- New Room button -------------------------------------------------
+    cursor_y = list_bottom - new_room_gap
     new_room_rect = (content_x, cursor_y - new_room_h, content_w, new_room_h)
     entries.append(('new_room', new_room_rect))
 
     return panel_rect, entries
+
+
+def _list_clip(entries):
+    for entry in entries or ():
+        if entry[0] == 'list':
+            return entry[1]
+    return None
+
+
+def scroll_by(rows):
+    """Scroll the list by ``rows`` row-heights (positive = down). The next
+    _build_layout clamps it."""
+    global _scroll
+    _scroll += rows * ROW_HEIGHT * _s()
+
+
+def is_scrollable(entries):
+    for entry in entries or ():
+        if entry[0] == 'list':
+            return entry[2] is not None
+    return False
+
+
+def hit_test(mx, my, entries):
+    """Resolve a point against navigator entries.
+
+    Returns (kind, payload) or None:
+        ('pin', None)          panel-header pin toggle
+        ('section', label)     section header (collapse / expand)
+        ('rename', scene) / ('delete', scene) / ('row', scene)
+        ('new_room', None)
+    List entries scrolled partly out of the clip rect only hit on their
+    visible part. Shared by the modal and the pinned/HUD click path so the
+    two can't disagree.
+    """
+    clip = _list_clip(entries)
+    for entry in entries or ():
+        kind = entry[0]
+        if kind == 'panel_header':
+            if _point_in_rect(mx, my, entry[3]):
+                return ('pin', None)
+        elif kind == 'header':
+            if clip and not _point_in_rect(mx, my, clip):
+                continue
+            if _point_in_rect(mx, my, entry[3]):
+                return ('section', entry[1])
+        elif kind == 'row':
+            if clip and not _point_in_rect(mx, my, clip):
+                continue
+            (_, scene, _parent, _color, _is_current, rect,
+             rename_rect, delete_rect) = entry
+            if rename_rect and _point_in_rect(mx, my, rename_rect):
+                return ('rename', scene)
+            if delete_rect and _point_in_rect(mx, my, delete_rect):
+                return ('delete', scene)
+            if _point_in_rect(mx, my, rect):
+                return ('row', scene)
+        elif kind == 'new_room':
+            if _point_in_rect(mx, my, entry[1]):
+                return ('new_room', None)
+    return None
+
+
+def toggle_section(label):
+    if label in _collapsed:
+        _collapsed.discard(label)
+    else:
+        _collapsed.add(label)
 
 
 # ---- Draw helpers -----------------------------------------------------------
@@ -317,8 +536,10 @@ def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
     label_w = blf.dimensions(font_id, label)[0]
     baseline = _vcenter_baseline(rect, font_id, row_font)
     _draw_text(font_id, rx, baseline, hdr_font, HEADER_TEXT, label)
-    _draw_text(font_id, rx + label_w + 8 * s, baseline, row_font,
-               TEXT_PRIMARY, current_name)
+    name_x = rx + label_w + 8 * s
+    name_w = pin_rect[0] - 8 * s - name_x
+    _draw_text(font_id, name_x, baseline, row_font, TEXT_PRIMARY,
+               _fit_text(font_id, row_font, current_name, name_w))
     # separator line at the bottom of the header rect
     _draw_rect(shader, rx, ry, rw, max(1.0, s), SEPARATOR_COLOR)
     # pin toggle -- when lit, the navigator stays open across scene picks
@@ -358,20 +579,33 @@ def _draw_row(shader, font_id, entry, mx, my):
     name_color = TEXT_PRIMARY if is_current else TEXT_NORMAL
     baseline = _vcenter_baseline(rect, font_id, row_font)
 
+    # Text must stop short of the action buttons (room rows) or the row's
+    # right edge; the parent prefix is dropped first, then the name is
+    # ellipsized, so long names never run under the buttons or the border.
+    if rename_rect is not None:
+        avail = rename_rect[0] - 6 * s - text_x
+    else:
+        avail = rx + rw - ROW_TEXT_RIGHT_PAD * s - text_x
+
     if parent:
         blf.size(font_id, parent_font)
         parent_w = blf.dimensions(font_id, parent)[0]
         sep = "  \u00b7  "
         sep_w = blf.dimensions(font_id, sep)[0]
+        if parent_w + sep_w + PARENT_MIN_NAME_W * s > avail:
+            parent = None
+    if parent:
         _draw_text(font_id, text_x, baseline,
                    parent_font, TEXT_DIM, parent)
         _draw_text(font_id, text_x + parent_w, baseline,
                    parent_font, TEXT_DIM, sep)
+        name = _fit_text(font_id, row_font, scene.name,
+                         avail - parent_w - sep_w)
         _draw_text(font_id, text_x + parent_w + sep_w, baseline,
-                   row_font, name_color, scene.name)
+                   row_font, name_color, name)
     else:
-        _draw_text(font_id, text_x, baseline,
-                   row_font, name_color, scene.name)
+        name = _fit_text(font_id, row_font, scene.name, avail)
+        _draw_text(font_id, text_x, baseline, row_font, name_color, name)
 
     if rename_rect is not None:
         r_hover = _point_in_rect(mx, my, rename_rect)
@@ -430,20 +664,64 @@ def paint_navigator(panel_rect, entries, mx, my):
     _draw_rect_outline(shader, px, py, pw, ph, PANEL_BORDER)
 
     font_id = 0
+    s = _s()
+    # The list is scissor-clipped so partially scrolled rows cut off cleanly
+    # at the list edges. gpu scissor coords are framebuffer-relative, so
+    # offset our region-local clip rect by whatever scissor is current
+    # (the region's own), and restore it afterwards.
+    clip = _list_clip(entries)
+    saved_scissor = None
+    if clip is not None:
+        saved_scissor = gpu.state.scissor_get()
+        ox, oy = saved_scissor[0], saved_scissor[1]
+        cx, cy, cw, ch = clip
+        gpu.state.scissor_test_set(True)
+        gpu.state.scissor_set(int(ox + cx), int(oy + cy),
+                              int(cw) + 1, int(ch) + 1)
+
+    # Hover inside the list only counts on the visible part of the clip.
+    if clip is not None and not _point_in_rect(mx, my, clip):
+        lmx = lmy = -1.0
+    else:
+        lmx, lmy = mx, my
+
+    for entry in entries:
+        kind = entry[0]
+        if kind == 'header':
+            _, label, color, rect, collapsed, count = entry
+            rx, ry, rw, rh = rect
+            hdr_font = HEADER_FONT_SIZE * s
+            hovered = _point_in_rect(lmx, lmy, rect)
+            if hovered:
+                _draw_rect(shader, rx, ry, rw, rh, ROW_HOVER_BG)
+            baseline = _vcenter_baseline(rect, font_id, hdr_font)
+            chev = SECTION_CHEVRON_W * s
+            _draw_chevron(shader, rx + chev / 2.0 - 1 * s, ry + rh / 2.0,
+                          6 * s, collapsed,
+                          TEXT_NORMAL if hovered else HEADER_TEXT)
+            _draw_text(font_id, rx + chev, baseline, hdr_font,
+                       TEXT_NORMAL if hovered else HEADER_TEXT, label)
+            if collapsed:
+                lw = _text_w(font_id, hdr_font, label)
+                _draw_text(font_id, rx + chev + lw, baseline, hdr_font,
+                           TEXT_DIM, f"  {count}")
+        elif kind == 'row':
+            _draw_row(shader, font_id, entry, lmx, lmy)
+
+    if saved_scissor is not None:
+        gpu.state.scissor_set(*saved_scissor)
+        gpu.state.scissor_test_set(False)
+
     for entry in entries:
         kind = entry[0]
         if kind == 'panel_header':
             _draw_panel_header(shader, font_id, entry[2], entry[1],
                                entry[3], mx, my)
-        elif kind == 'header':
-            _, label, color, rect = entry
-            rx = rect[0]
-            hdr_font = HEADER_FONT_SIZE * _s()
-            baseline = _vcenter_baseline(rect, font_id, hdr_font)
-            _draw_text(font_id, rx, baseline, hdr_font,
-                       HEADER_TEXT, label)
-        elif kind == 'row':
-            _draw_row(shader, font_id, entry, mx, my)
+        elif kind == 'list':
+            _, _clip, track, thumb = entry
+            if track is not None:
+                _draw_rect(shader, *track, SCROLLBAR_TRACK)
+                _draw_rect(shader, *thumb, SCROLLBAR_THUMB)
         elif kind == 'new_room':
             _draw_new_room_button(shader, font_id, entry[1], mx, my)
 
@@ -494,46 +772,43 @@ def handle_navigator_click(context, mx, my, entries):
     never close the panel -- it's pinned; only the header pin glyph un-pins.
     """
     global _pinned
-    for entry in entries or ():
-        kind = entry[0]
-        if kind == 'panel_header':
-            if _point_in_rect(mx, my, entry[3]):
-                _pinned = False          # pin glyph un-pins (hides the panel)
-                return True
+    hit = hit_test(mx, my, entries)
+    if hit is None:
+        return False
+    kind, scene = hit
+    try:
+        if kind == 'pin':
+            _pinned = False          # pin glyph un-pins (hides the panel)
+        elif kind == 'section':
+            toggle_section(scene)
+        elif kind == 'rename':
+            with context.temp_override(scene=scene):
+                bpy.ops.home_builder.rename_room(
+                    'INVOKE_DEFAULT', scene_name=scene.name)
+        elif kind == 'delete':
+            bpy.ops.home_builder.delete_room(
+                'INVOKE_DEFAULT', scene_name=scene.name)
         elif kind == 'row':
-            (_, scene, _parent, _color, _is_current, rect,
-             rename_rect, delete_rect) = entry
-            if rename_rect and _point_in_rect(mx, my, rename_rect):
-                try:
-                    with context.temp_override(scene=scene):
-                        bpy.ops.home_builder.rename_room(
-                            'INVOKE_DEFAULT', scene_name=scene.name)
-                except Exception:
-                    pass
-                return True
-            if delete_rect and _point_in_rect(mx, my, delete_rect):
-                try:
-                    bpy.ops.home_builder.delete_room(
-                        'INVOKE_DEFAULT', scene_name=scene.name)
-                except Exception:
-                    pass
-                return True
-            if _point_in_rect(mx, my, rect):
-                if scene.name != context.scene.name:
-                    try:
-                        bpy.ops.home_builder_layouts.go_to_layout_view(
-                            scene_name=scene.name)
-                    except Exception:
-                        pass
-                return True
+            if scene.name != context.scene.name:
+                bpy.ops.home_builder_layouts.go_to_layout_view(
+                    scene_name=scene.name)
         elif kind == 'new_room':
-            if _point_in_rect(mx, my, entry[1]):
-                try:
-                    bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
-                except Exception:
-                    pass
-                return True
-    return False
+            bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
+    except Exception:
+        pass
+    return True
+
+
+def handle_navigator_scroll(context, mx, my, entries, rows):
+    """Wheel over the pinned navigator: scroll its list. Returns True when
+    consumed (cursor over a scrollable list), False to pass through."""
+    if not is_scrollable(entries):
+        return False
+    clip = _list_clip(entries)
+    if clip is None or not _point_in_rect(mx, my, clip):
+        return False
+    scroll_by(rows)
+    return True
 
 
 # ---- Modal operator ---------------------------------------------------------
@@ -645,63 +920,76 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
+        if event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'} \
+                and event.value == 'PRESS':
+            if is_scrollable(self.entries):
+                scroll_by(-SCROLL_STEP_ROWS if event.type == 'WHEELUPMOUSE'
+                          else SCROLL_STEP_ROWS)
+                self._rebuild_layout(context)
+                if context.area:
+                    context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             mx = event.mouse_x - self.region.x
             my = event.mouse_y - self.region.y
-            for entry in self.entries or ():
-                kind = entry[0]
-                if kind == 'panel_header':
-                    if _point_in_rect(mx, my, entry[3]):
-                        _pinned = not _pinned
-                        if _pinned:
-                            # Hand the navigator to the persistent viewport
-                            # HUD, which draws + routes it while you design.
-                            # Close this transient modal so it isn't drawn
-                            # twice. If the HUD is disabled there's nothing to
-                            # hand off to -- fall back to the old in-modal
-                            # pinned behavior (stay open across picks).
-                            from . import viewport_hud
-                            if viewport_hud._hud_enabled():
-                                self._cleanup(context)
-                                return {'FINISHED'}
+            hit = hit_test(mx, my, self.entries)
+            if hit is None:
+                # nothing hit -- dismiss
+                self._cleanup(context)
+                return {'CANCELLED'}
+            kind, scene = hit
+            if kind == 'pin':
+                _pinned = not _pinned
+                if _pinned:
+                    # Hand the navigator to the persistent viewport HUD,
+                    # which draws + routes it while you design. Close this
+                    # transient modal so it isn't drawn twice. If the HUD is
+                    # disabled there's nothing to hand off to -- fall back
+                    # to the old in-modal pinned behavior (stay open across
+                    # picks).
+                    from . import viewport_hud
+                    if viewport_hud._hud_enabled():
+                        self._cleanup(context)
+                        return {'FINISHED'}
+                self._rebuild_layout(context)
+                if context.area:
+                    context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if kind == 'section':
+                toggle_section(scene)
+                self._rebuild_layout(context)
+                if context.area:
+                    context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+            if kind == 'rename':
+                self._cleanup(context)
+                self._rename_room(context, scene)
+                return {'FINISHED'}
+            if kind == 'delete':
+                self._cleanup(context)
+                self._delete_room(context, scene)
+                return {'FINISHED'}
+            if kind == 'row':
+                # Pinned: switch but keep the navigator open so the user
+                # can pick another scene. Unpinned: switch and close --
+                # the original behavior.
+                if _pinned:
+                    if scene.name != context.scene.name:
+                        self._switch_to(context, scene.name)
                         self._rebuild_layout(context)
                         if context.area:
                             context.area.tag_redraw()
-                        return {'RUNNING_MODAL'}
-                elif kind == 'row':
-                    (_, scene, _parent, _color, _is_current, rect,
-                     rename_rect, delete_rect) = entry
-                    if rename_rect and _point_in_rect(mx, my, rename_rect):
-                        self._cleanup(context)
-                        self._rename_room(context, scene)
-                        return {'FINISHED'}
-                    if delete_rect and _point_in_rect(mx, my, delete_rect):
-                        self._cleanup(context)
-                        self._delete_room(context, scene)
-                        return {'FINISHED'}
-                    if _point_in_rect(mx, my, rect):
-                        # Pinned: switch but keep the navigator open so the
-                        # user can pick another scene. Unpinned: switch and
-                        # close -- the original behavior.
-                        if _pinned:
-                            if scene.name != context.scene.name:
-                                self._switch_to(context, scene.name)
-                                self._rebuild_layout(context)
-                                if context.area:
-                                    context.area.tag_redraw()
-                            return {'RUNNING_MODAL'}
-                        self._cleanup(context)
-                        if scene.name != context.scene.name:
-                            self._switch_to(context, scene.name)
-                        return {'FINISHED'}
-                elif kind == 'new_room':
-                    if _point_in_rect(mx, my, entry[1]):
-                        self._cleanup(context)
-                        self._create_room(context)
-                        return {'FINISHED'}
-            # nothing hit -- dismiss
-            self._cleanup(context)
-            return {'CANCELLED'}
+                    return {'RUNNING_MODAL'}
+                self._cleanup(context)
+                if scene.name != context.scene.name:
+                    self._switch_to(context, scene.name)
+                return {'FINISHED'}
+            if kind == 'new_room':
+                self._cleanup(context)
+                self._create_room(context)
+                return {'FINISHED'}
+            return {'RUNNING_MODAL'}
 
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             self._cleanup(context)

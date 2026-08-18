@@ -6102,6 +6102,130 @@ def _blind_corner_pair_for(root):
     return None
 
 
+def _swap_blind_corner_roles(blind_obj, placed_obj, blind_side, *,
+                             match_depth, void_amount,
+                             blind_stile_width, placed_stile_width):
+    """Reverse which cabinet of a configured square blind corner is the
+    blind one: the placed cabinet becomes the blind cabinet (its corner
+    end grows to the wall corner and takes the void), and the blind
+    cabinet becomes the placed one (its corner end pulls back to butt
+    the other's front). Three moves, all delta-based on the current
+    state so no as-placed widths need to be remembered:
+
+      1. undo the current corner: restore the blind cabinet's width by
+         the HB_BLIND_VOID_* reduction, clear its blind flags/marker,
+         and re-arm the placed cabinet's pinned corner finish;
+      2. move the corner ends: the placed cabinet grows by its measured
+         gap to the corner, the blind cabinet shrinks by the placed
+         cabinet's depth (the same "butt the neighbor's front" rule
+         placement uses);
+      3. _apply_blind_corner_state with the roles reversed and the
+         corner's current mode / void / stile settings.
+
+    Location shifts follow each cabinet's own local X (matrix_basis) so a
+    rotated peninsula pair swaps the same way a wall pair does.
+    """
+    n_props = blind_obj.face_frame_cabinet
+    p_props = placed_obj.face_frame_cabinet
+    marker = ('HB_BLIND_VOID_LEFT' if blind_side == 'LEFT'
+              else 'HB_BLIND_VOID_RIGHT')
+    reduction = float(blind_obj.get(marker, 0.0))
+    # The placed cabinet's corner end is the side opposite its BLIND
+    # corner stile (see _apply_blind_corner_state).
+    p_side = 'RIGHT' if blind_side == 'LEFT' else 'LEFT'
+
+    # Corner point: the blind cabinet's as-placed end reached the wall
+    # corner, and the marker says how far its end has since retreated.
+    if blind_side == 'LEFT':
+        corner = blind_obj.matrix_world @ Vector((-reduction, 0.0, 0.0))
+    else:
+        corner = blind_obj.matrix_world @ Vector(
+            (n_props.width + reduction, 0.0, 0.0))
+
+    # Gap between the placed cabinet's corner end and the wall corner,
+    # measured along its own width axis toward the corner.
+    p_axis = (placed_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0)))
+    p_axis.z = 0.0
+    if p_axis.length > 1e-9:
+        p_axis.normalize()
+    if p_side == 'LEFT':
+        p_end = placed_obj.matrix_world.translation.copy()
+        toward = -p_axis
+    else:
+        p_end = placed_obj.matrix_world @ Vector((p_props.width, 0.0, 0.0))
+        toward = p_axis
+    gap = (corner - p_end)
+    gap.z = 0.0
+    p_gap = max(gap.dot(toward), 0.0)
+
+    n_basis = blind_obj.matrix_basis.to_3x3()
+    p_basis = placed_obj.matrix_basis.to_3x3()
+    n_pull = p_props.depth   # new placed cabinet butts the new blind's front
+
+    with types_face_frame.suspend_recalc():
+        # 1. Undo the current corner.
+        if blind_side == 'LEFT':
+            blind_obj.location += n_basis @ Vector((-reduction, 0.0, 0.0))
+            n_props.width += reduction
+            n_props.blind_left = False
+            n_props.blind_amount_left = 0.0
+        else:
+            n_props.width += reduction
+            n_props.blind_right = False
+            n_props.blind_amount_right = 0.0
+        if marker in blind_obj:
+            del blind_obj[marker]
+        # The placed cabinet's corner side was pinned UNFINISHED + 0.25"
+        # scribe; it becomes the blind end now, so clear the neighbor
+        # scribe and hand the side back to auto exposure. Auto is
+        # re-armed LAST -- the scribe update callback flips it off.
+        setattr(p_props, f'{p_side.lower()}_scribe', 0.0)
+        setattr(p_props, f'{p_side.lower()}_finish_end_auto', True)
+        for obj in (blind_obj, placed_obj):
+            if 'HB_BLIND_PAIR' in obj:
+                del obj['HB_BLIND_PAIR']
+
+        # 2. Move the corner ends: placed grows to the corner, blind
+        #    pulls back to the placed cabinet's front.
+        if p_side == 'LEFT':
+            placed_obj.location += p_basis @ Vector((-p_gap, 0.0, 0.0))
+        p_props.width += p_gap
+        new_n_width = max(n_props.width - n_pull, units.inch(1.0))
+        n_shrink = n_props.width - new_n_width
+        if blind_side == 'LEFT':
+            blind_obj.location += n_basis @ Vector((n_shrink, 0.0, 0.0))
+        n_props.width = new_n_width
+
+        # 3. Re-apply with the roles reversed.
+        _apply_blind_corner_state(
+            placed_obj, blind_obj, p_side,
+            match_depth=match_depth,
+            void_amount=void_amount,
+            blind_stile_width=blind_stile_width,
+            placed_stile_width=placed_stile_width,
+        )
+
+    for obj in (blind_obj, placed_obj):
+        try:
+            exposure.recalc_with_neighbors(obj)
+        except Exception:
+            pass
+
+    # The new blind end is concealed by the perpendicular cabinet, which
+    # same-wall exposure detection can't see (it just re-finished it
+    # above). A fresh placement leaves that end as it was computed at
+    # the wall edge before the blind shrink -- unexposed, unfinished,
+    # wall scribe, auto still armed -- so reproduce exactly that state.
+    # Auto is re-armed last: the enum / scribe callbacks flip it off.
+    side = p_side.lower()
+    with types_face_frame.suspend_recalc():
+        setattr(p_props, f'{side}_exposure', 'UNEXPOSED')
+        setattr(p_props, f'{side}_finished_end_condition', 'UNFINISHED')
+        setattr(p_props, f'{side}_scribe',
+                getattr(exposure, '_WALL_SCRIBE', units.inch(0.5)))
+        setattr(p_props, f'{side}_finish_end_auto', True)
+
+
 class _BlindCornerDialogMixin:
     """Shared props + dialog body + apply for the placement-time blind
     dialog and the post-placement editor. A PLAIN mixin on purpose:
@@ -6156,6 +6280,15 @@ class _BlindCornerDialogMixin:
         default=units.inch(3.0),
         min=0.0, unit='LENGTH', precision=4,
     )  # type: ignore
+    swap_roles: bpy.props.BoolProperty(
+        name="Swap Blind Cabinet",
+        description=(
+            "Make the other cabinet the blind one: the placed cabinet "
+            "runs into the corner and takes the void, and the current "
+            "blind cabinet pulls back to butt its front"
+        ),
+        default=False,
+    )  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -6165,11 +6298,22 @@ class _BlindCornerDialogMixin:
             layout.label(text="Cabinet reference lost", icon='ERROR')
             return
 
-        side_label = "left" if self.blind_side == 'LEFT' else "right"
-        layout.label(
-            text=f"{blind.name}'s {side_label} end will become blind",
-            icon='INFO',
-        )
+        if self.swap_roles:
+            side_label = "right" if self.blind_side == 'LEFT' else "left"
+            layout.label(
+                text=f"{placed.name}'s {side_label} end will become blind",
+                icon='INFO',
+            )
+        else:
+            side_label = "left" if self.blind_side == 'LEFT' else "right"
+            layout.label(
+                text=f"{blind.name}'s {side_label} end will become blind",
+                icon='INFO',
+            )
+
+        row = layout.row(align=True)
+        row.label(text="Swap Blind Cabinet:")
+        row.prop(self, 'swap_roles', text="")
 
         row = layout.row(align=True)
         row.label(text="Match Cabinet Depth:")
@@ -6199,14 +6343,45 @@ class _BlindCornerDialogMixin:
         if blind_obj is None or placed_obj is None:
             self.report({'WARNING'}, "Cabinet missing; aborting blind setup")
             return {'CANCELLED'}
-        _apply_blind_corner_state(
-            blind_obj, placed_obj, self.blind_side,
+        settings = dict(
             match_depth=self.match_cabinet_depth,
             void_amount=self.void_amount,
             blind_stile_width=self.blind_stile_width,
             placed_stile_width=self.placed_stile_width,
         )
+        _apply_blind_corner_state(blind_obj, placed_obj, self.blind_side,
+                                  **settings)
+        if self.swap_roles:
+            # Swap needs a configured pair to undo, so it runs on top of
+            # the just-applied state (placement dialog) or the existing
+            # one (editor) -- either way the corner ends up mirrored.
+            _swap_blind_corner_roles(blind_obj, placed_obj, self.blind_side,
+                                     **settings)
         return {'FINISHED'}
+
+
+def _blind_corner_current_settings(blind_obj, placed_obj, side):
+    """Read a configured corner's mode / void / exposed stile widths
+    back out of the pair, in the dialog's terms (exposed stile amounts,
+    void = total reduction so far)."""
+    bp = blind_obj.face_frame_cabinet
+    pp = placed_obj.face_frame_cabinet
+    is_blind = bp.blind_left if side == 'LEFT' else bp.blind_right
+    marker = ('HB_BLIND_VOID_LEFT' if side == 'LEFT'
+              else 'HB_BLIND_VOID_RIGHT')
+    # Blind flag off on a configured corner = it was set up in
+    # match-depth mode (no blind area remains). The void is the current
+    # total reduction either way, so unchecking match-depth starts from
+    # the corner's real gap. Stored stile widths carry the 0.75"
+    # tucked-behind add; the dialog fields are the EXPOSED amounts.
+    stile_w = bp.left_stile_width if side == 'LEFT' else bp.right_stile_width
+    return dict(
+        match_depth=not is_blind,
+        void_amount=float(blind_obj.get(marker, 0.0)),
+        blind_stile_width=max(stile_w - units.inch(0.75), 0.0),
+        placed_stile_width=(pp.right_stile_width if side == 'LEFT'
+                            else pp.left_stile_width),
+    )
 
 
 class hb_face_frame_OT_set_blind_corner_void_amount(_BlindCornerDialogMixin,
@@ -6285,26 +6460,45 @@ class hb_face_frame_OT_edit_blind_corner(_BlindCornerDialogMixin,
         self.blind_cabinet_name = blind_obj.name
         self.current_cabinet_name = placed_obj.name
         self.blind_side = side
+        self.swap_roles = False
 
-        bp = blind_obj.face_frame_cabinet
-        pp = placed_obj.face_frame_cabinet
-        is_blind = bp.blind_left if side == 'LEFT' else bp.blind_right
-        marker = ('HB_BLIND_VOID_LEFT' if side == 'LEFT'
-                  else 'HB_BLIND_VOID_RIGHT')
-        # Blind flag off on a configured corner = it was set up in
-        # match-depth mode (no blind area remains). The void field is
-        # seeded with the current total reduction either way, so
-        # unchecking match-depth starts from the corner's real gap.
-        self.match_cabinet_depth = not is_blind
-        self.void_amount = float(blind_obj.get(marker, 0.0))
-        # Stored stile widths carry the 0.75" tucked-behind add; the
-        # dialog fields are the EXPOSED amounts.
-        stile_w = (bp.left_stile_width if side == 'LEFT'
-                   else bp.right_stile_width)
-        self.blind_stile_width = max(stile_w - units.inch(0.75), 0.0)
-        self.placed_stile_width = (pp.right_stile_width if side == 'LEFT'
-                                   else pp.left_stile_width)
+        cur = _blind_corner_current_settings(blind_obj, placed_obj, side)
+        self.match_cabinet_depth = cur['match_depth']
+        self.void_amount = cur['void_amount']
+        self.blind_stile_width = cur['blind_stile_width']
+        self.placed_stile_width = cur['placed_stile_width']
         return context.window_manager.invoke_props_dialog(self, width=420)
+
+
+class hb_face_frame_OT_swap_blind_corner(bpy.types.Operator):
+    """One-click role swap for a configured square blind corner from
+    either cabinet's right-click menu: the placed cabinet becomes the
+    blind cabinet and vice versa, keeping the corner's current mode,
+    void and stile settings. The same swap is available as a checkbox
+    in Blind Corner Properties when the settings need changing too."""
+    bl_idname = "hb_face_frame.swap_blind_corner"
+    bl_label = "Swap Blind Cabinet"
+    bl_description = ("Make the other cabinet of this blind corner the "
+                      "blind one; the corner's void and stile settings "
+                      "are kept")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return hb_face_frame_OT_edit_blind_corner.poll(context)
+
+    def execute(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        resolved = _blind_corner_pair_for(root)
+        if resolved is None:
+            self.report({'WARNING'},
+                        "No configured blind corner found for this cabinet")
+            return {'CANCELLED'}
+        blind_obj, placed_obj, side = resolved
+        _swap_blind_corner_roles(
+            blind_obj, placed_obj, side,
+            **_blind_corner_current_settings(blind_obj, placed_obj, side))
+        return {'FINISHED'}
 
 
 class hb_face_frame_OT_set_angled_corner_void_amount(bpy.types.Operator):
@@ -6606,6 +6800,7 @@ classes = (
     hb_face_frame_OT_place_corner_cabinet,
     hb_face_frame_OT_set_blind_corner_void_amount,
     hb_face_frame_OT_edit_blind_corner,
+    hb_face_frame_OT_swap_blind_corner,
     hb_face_frame_OT_set_angled_corner_void_amount,
 )
 
