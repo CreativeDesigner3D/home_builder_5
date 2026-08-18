@@ -4460,11 +4460,10 @@ class FaceFrameCabinet(GeoNodeCage):
     # they stay out of part lists; tagged IS_APPLIANCE so downstream
     # consumers treat them like any other appliance.
     UCA_TAG = 'HB_UNDER_CABINET_APPLIANCE'
-    # kind -> (object name, APPLIANCE_TYPE, default height, default depth)
+    # kind -> (object name, APPLIANCE_TYPE)
     _UCA_SPECS = {
-        'MICROWAVE': ("Microwave", 'MICROWAVE', inch(16.0), inch(15.0)),
-        'HOOD': ("Under Cabinet Hood", 'UNDER_CABINET_HOOD',
-                 inch(6.0), inch(17.5)),
+        'MICROWAVE': ("Microwave", 'MICROWAVE'),
+        'HOOD': ("Under Cabinet Hood", 'UNDER_CABINET_HOOD'),
     }
 
     @staticmethod
@@ -4487,6 +4486,18 @@ class FaceFrameCabinet(GeoNodeCage):
         mat.diffuse_color = (0.55, 0.56, 0.58, 1.0)
         return mat
 
+    @classmethod
+    def _uca_material(cls, finish):
+        """Material for an appliance block. Stainless is generated in
+        code; every other finish is an accessory-finish material (the
+        same metals the pulls offer), falling back to stainless when the
+        finish library has no such name."""
+        if finish and finish != 'STAINLESS':
+            mat = pulls.load_finish_material(finish)
+            if mat is not None:
+                return mat
+        return cls._stainless_material()
+
     def _uca_children(self):
         return [c for c in self.obj.children if c.get(self.UCA_TAG)]
 
@@ -4503,7 +4514,11 @@ class FaceFrameCabinet(GeoNodeCage):
         explicit width; the block hangs from the underside of the bay
         (or of its finished bottom panel, when one covers it) and runs
         forward from the back of the cabinet, so a unit deeper than the
-        cabinet sticks out the front the way it does in the field."""
+        cabinet sticks out the front the way it does in the field.
+
+        The bay's opening has already been raised by the appliance
+        height (see props._sync_under_cabinet_opening), so the block
+        drops into the space the shortened box left below it."""
         if layout.cabinet_type != 'UPPER':
             self._cleanup_under_cabinet_appliances()
             return
@@ -4520,9 +4535,9 @@ class FaceFrameCabinet(GeoNodeCage):
             spec = self._UCA_SPECS.get(kind)
             if spec is None:
                 continue
-            name, appliance_type, def_h, def_d = spec
-            height = props.under_cabinet_appliance_height or def_h
-            depth = props.under_cabinet_appliance_depth or def_d
+            name, appliance_type = spec
+            height = props.under_cabinet_appliance_height
+            depth = props.under_cabinet_appliance_depth
             bay_width = layout.bays[bay_index]['width']
             width = props.under_cabinet_appliance_width or bay_width
             if not width or not height or not depth:
@@ -4558,11 +4573,16 @@ class FaceFrameCabinet(GeoNodeCage):
                 block[self.UCA_TAG] = kind
                 block['hb_uca_key'] = key
                 block['IS_APPLIANCE'] = True
-                mat = self._stainless_material()
-                if block.data.materials:
-                    block.data.materials[0] = mat
-                else:
+            # Finish: applied when the bay's pick changes, so a designer
+            # who assigns their own material to the block keeps it.
+            finish = getattr(props, 'under_cabinet_appliance_finish',
+                             'STAINLESS')
+            if block.get('hb_uca_finish') != finish:
+                mat = self._uca_material(finish)
+                if mat is not None:
+                    block.data.materials.clear()
                     block.data.materials.append(mat)
+                    block['hb_uca_finish'] = finish
             if block.get(self.UCA_TAG) != kind:
                 # Switched kind on an existing bay - rename so the
                 # outliner matches what is now hanging there.

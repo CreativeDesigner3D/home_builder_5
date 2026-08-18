@@ -38,6 +38,19 @@ PULL_FINISHES = [
 ]
 
 
+# Metal finishes offered for appliance blocks. STAINLESS is generated in
+# code (no asset needed) and is what most appliances are; the rest are the
+# same accessory-finish materials the pulls use.
+APPLIANCE_FINISHES = [
+    ('STAINLESS', "Stainless Steel", "Brushed stainless steel"),
+    ('Matte Aluminum', "Matte Aluminum", ""),
+    ('Matte Nickel', "Matte Nickel", ""),
+    ('Polished Chrome', "Polished Chrome", ""),
+    ('Slate', "Slate", ""),
+    ('Black', "Black", ""),
+]
+
+
 def load_finish_material(name):
     """Existing-or-appended finish material by name; None if missing."""
     if not name:

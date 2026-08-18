@@ -5323,12 +5323,20 @@ def _set_opening_interior(op_props, interior):
     # OPEN -> leave cleared
 
 
+def _appliance_finish_items(self, context):
+    # Module-level list so Blender keeps the item strings alive.
+    from .. import pulls
+    return pulls.APPLIANCE_FINISHES
+
+
 class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
     """Hang a microwave or a short vent hood under the selected upper
-    bay. Writes the choice and its overall size to the bay; the recalc
-    builds a block at that size under the bay (under its finished bottom
-    when it has one) running forward from the back of the cabinet, so a
-    unit deeper than the cabinet stands proud of the front.
+    bay. Writes the choice, its overall size and its finish to the bay;
+    the opening resizes around the appliance (raised by its height, and
+    widened / narrowed to its width) and the recalc builds a block at
+    that size in the space left below, running forward from the back of
+    the cabinet so a unit deeper than the cabinet stands proud of the
+    front.
 
     Block geometry only - the detailed models live in the separate
     appliance library and are swapped in over the block.
@@ -5357,11 +5365,18 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
     )  # type: ignore
     width: bpy.props.FloatProperty(
         name="Width", unit='LENGTH', precision=4, default=inch(30.0), min=0.0,
-        description="Width of the appliance; 0 follows the bay width",
+        description="Width of the appliance; the opening resizes to it. "
+                    "0 leaves the widths alone",
     )  # type: ignore
     height: bpy.props.FloatProperty(
         name="Height", unit='LENGTH', precision=4, default=inch(16.0), min=0.0,
-        description="How far the appliance hangs below the bay",
+        description="How far the appliance hangs below the bay; the "
+                    "opening is raised by this much to make room",
+    )  # type: ignore
+    finish: bpy.props.EnumProperty(
+        name="Finish",
+        description="Metal finish on the appliance",
+        items=_appliance_finish_items,
     )  # type: ignore
     depth: bpy.props.FloatProperty(
         name="Depth", unit='LENGTH', precision=4, default=inch(15.0), min=0.0,
@@ -5418,6 +5433,7 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
             self.height = props.under_cabinet_appliance_height
             self.depth = props.under_cabinet_appliance_depth
             self.last_kind = current
+        self.finish = props.under_cabinet_appliance_finish
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def draw(self, context):
@@ -5433,10 +5449,12 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
         sizes.prop(self, 'width')
         sizes.prop(self, 'height')
         sizes.prop(self, 'depth')
+        sizes.prop(self, 'finish')
         if self.appliance != 'NONE':
             note = layout.column(align=True)
             note.scale_y = 0.8
-            note.label(text="Width 0 follows the bay width.")
+            note.label(text="The opening is raised to make room.")
+            note.label(text="Width 0 leaves the widths alone.")
 
     def execute(self, context):
         bay = self._resolve_bay(context)
@@ -5444,12 +5462,17 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
             self.report({'WARNING'}, "Select a bay first")
             return {'CANCELLED'}
         props = bay.face_frame_bay
-        props.under_cabinet_appliance_width = self.width
-        props.under_cabinet_appliance_height = self.height
-        props.under_cabinet_appliance_depth = self.depth
-        # Set the kind last: every write triggers a recalc, so the sizes
-        # are already in place when the block gets built.
-        props.under_cabinet_appliance = self.appliance
+        with types_face_frame.suspend_recalc():
+            # One suspend for the lot: each size write resizes the
+            # opening on its own, and the recalcs they queue coalesce
+            # into one at the end.
+            props.under_cabinet_appliance_finish = self.finish
+            props.under_cabinet_appliance_width = self.width
+            props.under_cabinet_appliance_height = self.height
+            props.under_cabinet_appliance_depth = self.depth
+            # Kind last: its update does the opening resize, so the
+            # sizes are already in place when the block gets built.
+            props.under_cabinet_appliance = self.appliance
         root = types_face_frame.find_cabinet_root(bay)
         if root is not None:
             types_face_frame.recalculate_face_frame_cabinet(root)

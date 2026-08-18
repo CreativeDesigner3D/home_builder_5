@@ -5613,6 +5613,107 @@ def _update_bay_appliance_garage(self, context):
     types_face_frame.recalculate_face_frame_cabinet(root)
 
 
+# ---- Under-cabinet appliance: opening resize -------------------------
+# Custom-prop keys on the bay cage holding what the opening looked like
+# before an appliance shrank it, so clearing the appliance puts it back.
+UCA_SAVED_HEIGHT = 'hb_uca_saved_height'
+UCA_SAVED_UNLOCK_HEIGHT = 'hb_uca_saved_unlock_height'
+UCA_SAVED_WIDTH = 'hb_uca_saved_width'
+UCA_SAVED_UNLOCK_WIDTH = 'hb_uca_saved_unlock_width'
+UCA_SAVED_CAB_WIDTH = 'hb_uca_saved_cab_width'
+UCA_MIN_OPENING_HEIGHT = units.inch(6.0)
+
+
+def _sync_under_cabinet_opening(bay_obj, root):
+    """Resize this bay's opening around its under-cabinet appliance.
+
+    The appliance takes the bottom of the bay's vertical space: the
+    opening is raised by the appliance height, and since an upper's box
+    anchors at the bay bottom the carcass and its sides come up with it,
+    leaving the appliance hanging in the space they gave up.
+
+    The appliance width does the same horizontally. On the only bay of a
+    cabinet there is no neighbour to give up the space, so the CABINET
+    takes the width (a 30" microwave wants a 30" upper); with neighbours
+    the bay locks to the width and they redistribute around it. A width
+    of 0 leaves the widths alone, which is the usual case for a hood -
+    it is ordered to the cabinet, not the other way round.
+
+    Everything changed here is saved on the bay first, so clearing the
+    appliance restores the opening exactly. Re-runs recompute from the
+    saved values, so editing the appliance size never compounds.
+    """
+    from . import types_face_frame
+    bp = bay_obj.face_frame_bay
+    cab = root.face_frame_cabinet
+    if bp.under_cabinet_appliance == 'NONE':
+        if UCA_SAVED_HEIGHT in bay_obj:
+            bp.unlock_height = bool(bay_obj[UCA_SAVED_UNLOCK_HEIGHT])
+            bp.height = bay_obj[UCA_SAVED_HEIGHT]
+            del bay_obj[UCA_SAVED_HEIGHT]
+            del bay_obj[UCA_SAVED_UNLOCK_HEIGHT]
+        if UCA_SAVED_CAB_WIDTH in bay_obj:
+            cab.width = bay_obj[UCA_SAVED_CAB_WIDTH]
+            del bay_obj[UCA_SAVED_CAB_WIDTH]
+        if UCA_SAVED_WIDTH in bay_obj:
+            bp.unlock_width = bool(bay_obj[UCA_SAVED_UNLOCK_WIDTH])
+            bp.width = bay_obj[UCA_SAVED_WIDTH]
+            del bay_obj[UCA_SAVED_WIDTH]
+            del bay_obj[UCA_SAVED_UNLOCK_WIDTH]
+        return
+
+    if UCA_SAVED_HEIGHT not in bay_obj:
+        bay_obj[UCA_SAVED_HEIGHT] = bp.height
+        bay_obj[UCA_SAVED_UNLOCK_HEIGHT] = bp.unlock_height
+    # Unlock before writing the height: the write fires a recalc whose
+    # height sync would otherwise put the bay straight back to the
+    # cabinet height.
+    bp.unlock_height = True
+    bp.height = max(bay_obj[UCA_SAVED_HEIGHT] - bp.under_cabinet_appliance_height,
+                    UCA_MIN_OPENING_HEIGHT)
+
+    appl_width = bp.under_cabinet_appliance_width
+    if appl_width <= 0.0:
+        return
+    bays = [c for c in root.children
+            if c.get(types_face_frame.TAG_BAY_CAGE)]
+    if len(bays) > 1:
+        if UCA_SAVED_WIDTH not in bay_obj:
+            bay_obj[UCA_SAVED_WIDTH] = bp.width
+            bay_obj[UCA_SAVED_UNLOCK_WIDTH] = bp.unlock_width
+        bp.unlock_width = True
+        bp.width = appl_width
+    elif (cab.corner_type == 'NONE'
+          and not cab.unlock_left_depth and not cab.unlock_right_depth):
+        # Single square bay: the cabinet is the opening's width, so it
+        # resizes instead. (An angled single bay sizes its opening off
+        # the hypotenuse - left alone rather than guessed at.)
+        if UCA_SAVED_CAB_WIDTH not in bay_obj:
+            bay_obj[UCA_SAVED_CAB_WIDTH] = cab.width
+        cab.width = appl_width
+
+
+def _appliance_finish_enum_items(self, context):
+    # Deferred import, and a module-level list so Blender keeps the
+    # item strings alive (same reasoning as the pull finish items).
+    from . import pulls
+    return pulls.APPLIANCE_FINISHES
+
+
+def _update_under_cabinet_appliance(self, context):
+    """The appliance under this bay, or its width / height, changed:
+    resize the bay's opening around it, then recalc."""
+    from . import types_face_frame
+    obj = self.id_data
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return
+    if root.face_frame_cabinet.cabinet_type == 'UPPER':
+        with types_face_frame.suspend_recalc():
+            _sync_under_cabinet_opening(obj, root)
+    types_face_frame.recalculate_face_frame_cabinet(root)
+
+
 def _update_exterior_config(self, context):
     """exterior_config changed: repopulate the section collection from the
     new preset, sync the garage extension, then recalc."""
@@ -7540,7 +7641,8 @@ class Face_Frame_Bay_Props(PropertyGroup):
     # A microwave or short vent hood hanging under this bay. Block
     # geometry only, sized to the real appliance, so it reads in 3D and
     # lands on the elevations; detailed models ship separately and are
-    # swapped in over the block.
+    # swapped in over the block. The opening resizes around it - see
+    # _sync_under_cabinet_opening.
     under_cabinet_appliance: EnumProperty(
         name="Under Cabinet Appliance",
         description="Appliance hanging under this bay",
@@ -7549,19 +7651,26 @@ class Face_Frame_Bay_Props(PropertyGroup):
             ('MICROWAVE', "Microwave",  "Over-the-range microwave"),
             ('HOOD',      "Hood",       "Short under-cabinet vent hood"),
         ],
-        default='NONE', update=_update_cabinet_dim,
+        default='NONE', update=_update_under_cabinet_appliance,
     )  # type: ignore
     under_cabinet_appliance_width: FloatProperty(
         name="Appliance Width",
-        description="Width of the appliance under this bay; 0 follows the "
-                    "bay width",
+        description="Width of the appliance under this bay; the opening "
+                    "resizes to it. 0 leaves the widths alone",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_under_cabinet_appliance,
     )  # type: ignore
     under_cabinet_appliance_height: FloatProperty(
         name="Appliance Height",
-        description="How far the appliance hangs below the bay",
+        description="How far the appliance hangs below the bay; the "
+                    "opening is raised by this much to make room",
         default=units.inch(16.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_under_cabinet_appliance,
+    )  # type: ignore
+    under_cabinet_appliance_finish: EnumProperty(
+        name="Appliance Finish",
+        description="Metal finish on the appliance under this bay",
+        items=_appliance_finish_enum_items,
         update=_update_cabinet_dim,
     )  # type: ignore
     under_cabinet_appliance_depth: FloatProperty(
