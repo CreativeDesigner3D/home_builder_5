@@ -1688,6 +1688,13 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             op_props = original.face_frame_opening
             inherited_size = op_props.size
             inherited_unlock = op_props.unlock_size
+            # SIZE_ROLE describes the SLOT, not the opening: it says how
+            # this position in the parent tree is sized. The split node
+            # takes the slot over, so the stamp moves with it. Left on
+            # the original, a later re-sync would push a height onto a
+            # node whose size now means something else entirely (a width,
+            # under a V-split) and unbalance its new siblings.
+            inherited_role = original.get('SIZE_ROLE')
 
             # Create split node empty
             split_obj = bpy.data.objects.new('Split Node', None)
@@ -1704,6 +1711,9 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
                                  else self.mid_stile_width)
             sp.add_backing = self.add_backing
+            if 'SIZE_ROLE' in original:
+                split_obj['SIZE_ROLE'] = inherited_role
+                del original['SIZE_ROLE']
 
             # Find the bay (for opening_index counter) before re-parenting.
             bay = original
@@ -5750,9 +5760,10 @@ class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
     top opening in the current scene.
 
     Cabinets pin their top drawer opening to the scene value when built
-    (the 'TOP_DRAWER' size role, stamped on the opening as SIZE_ROLE);
-    changing the value afterward does not re-flow existing cabinets, so
-    this pushes the current value back out to them.
+    (the 'TOP_DRAWER' size role, stamped as SIZE_ROLE on the opening, or
+    on the split node that later took over its slot); changing the value
+    afterward does not re-flow existing cabinets, so this pushes the
+    current value back out to them.
     """
     bl_idname = "hb_face_frame.refresh_top_drawer_openings"
     bl_label = "Refresh Top Drawer Openings"
@@ -5760,17 +5771,46 @@ class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
                       "drawer-preset cabinets in this scene")
     bl_options = {'UNDO'}
 
+    @staticmethod
+    def _row_node(obj):
+        """Resolve a stamped node to the node that occupies the drawer ROW.
+
+        A node's size is measured along its parent split's axis: under an
+        'H' split it is a height, under a 'V' split a width. Files written
+        before the stamp moved with the split node can carry the role on an
+        opening that has since been split side-by-side, where writing size
+        would set that opening's WIDTH and leave its siblings to absorb the
+        difference. Walk up out of any V-splits so the write always lands on
+        the node whose size is the row height.
+        """
+        node = obj
+        while True:
+            parent = node.parent
+            if (parent is None
+                    or not parent.get(types_face_frame.TAG_SPLIT_NODE)
+                    or parent.face_frame_split.axis != 'V'):
+                return node
+            node = parent
+
     def execute(self, context):
         val = context.scene.hb_face_frame.top_drawer_opening_height
         count = 0
+        done = set()
         for obj in context.scene.objects:
             if obj.get('SIZE_ROLE') != 'TOP_DRAWER':
                 continue
-            op = obj.face_frame_opening
+            node = self._row_node(obj)
+            # Side-by-side siblings can resolve to the same row; write once.
+            if node.name in done:
+                continue
+            done.add(node.name)
+            props = (node.face_frame_split
+                     if node.get(types_face_frame.TAG_SPLIT_NODE)
+                     else node.face_frame_opening)
             # unlock_size BEFORE size: the size write fires a recalc, and an
             # unlocked node would just redistribute over the new value.
-            op.unlock_size = True
-            op.size = val
+            props.unlock_size = True
+            props.size = val
             count += 1
         self.report({'INFO'}, f"Refreshed {count} top drawer opening(s)")
         return {'FINISHED'}
