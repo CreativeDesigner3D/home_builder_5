@@ -7536,6 +7536,42 @@ class Face_Frame_Bay_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # ---- Under-cabinet appliance (uppers) ----
+    # A microwave or short vent hood hanging under this bay. Block
+    # geometry only, sized to the real appliance, so it reads in 3D and
+    # lands on the elevations; detailed models ship separately and are
+    # swapped in over the block.
+    under_cabinet_appliance: EnumProperty(
+        name="Under Cabinet Appliance",
+        description="Appliance hanging under this bay",
+        items=[
+            ('NONE',      "None",       "Nothing under this bay"),
+            ('MICROWAVE', "Microwave",  "Over-the-range microwave"),
+            ('HOOD',      "Hood",       "Short under-cabinet vent hood"),
+        ],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
+    under_cabinet_appliance_width: FloatProperty(
+        name="Appliance Width",
+        description="Width of the appliance under this bay; 0 follows the "
+                    "bay width",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    under_cabinet_appliance_height: FloatProperty(
+        name="Appliance Height",
+        description="How far the appliance hangs below the bay",
+        default=units.inch(16.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    under_cabinet_appliance_depth: FloatProperty(
+        name="Appliance Depth",
+        description="Front-to-back depth of the appliance, measured from "
+                    "the back of the cabinet",
+        default=units.inch(15.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
 
 class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
     """One drawer box in a ROLLOUT stack. Each box carries its own height

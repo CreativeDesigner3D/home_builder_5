@@ -2954,6 +2954,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # cleans up its parts.
         self._apply_finished_bottom(layout)
 
+        # Under-cabinet appliances (uppers): microwave / short vent hood
+        # blocks hanging under a bay. Unconditional so clearing a bay's
+        # selection removes its block.
+        self._apply_under_cabinet_appliances(layout)
+
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
         # Unconditional so stale annotations are wiped even when the
@@ -4443,6 +4448,133 @@ class FaceFrameCabinet(GeoNodeCage):
         if not want_light:
             self._cleanup_finished_bottom(
                 roles=(PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP))
+
+    # =====================================================================
+    # Under-cabinet appliances (uppers)
+    # =====================================================================
+    # Block stand-ins for a microwave or a short vent hood hanging under
+    # an upper bay. Overall sizes are real, the geometry is a plain box:
+    # enough to read in 3D and to land on the elevations. Detailed models
+    # ship in a separate optional library and are swapped in over the
+    # block. Not cabinet parts - no CABINET_PART / hb_part_role tag - so
+    # they stay out of part lists; tagged IS_APPLIANCE so downstream
+    # consumers treat them like any other appliance.
+    UCA_TAG = 'HB_UNDER_CABINET_APPLIANCE'
+    # kind -> (object name, APPLIANCE_TYPE, default height, default depth)
+    _UCA_SPECS = {
+        'MICROWAVE': ("Microwave", 'MICROWAVE', inch(16.0), inch(15.0)),
+        'HOOD': ("Under Cabinet Hood", 'UNDER_CABINET_HOOD',
+                 inch(6.0), inch(17.5)),
+    }
+
+    @staticmethod
+    def _stainless_material():
+        """Shared brushed-stainless material for appliance blocks,
+        created on first use. The viewport display color keeps them
+        reading as metal in Solid shading too."""
+        mat = bpy.data.materials.get('HB Stainless Steel')
+        if mat is not None:
+            return mat
+        mat = bpy.data.materials.new('HB Stainless Steel')
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get('Principled BSDF')
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = (0.55, 0.56, 0.58, 1.0)
+            if 'Metallic' in bsdf.inputs:
+                bsdf.inputs['Metallic'].default_value = 1.0
+            if 'Roughness' in bsdf.inputs:
+                bsdf.inputs['Roughness'].default_value = 0.35
+        mat.diffuse_color = (0.55, 0.56, 0.58, 1.0)
+        return mat
+
+    def _uca_children(self):
+        return [c for c in self.obj.children if c.get(self.UCA_TAG)]
+
+    def _cleanup_under_cabinet_appliances(self, keep_keys=None):
+        """Remove appliance blocks; with keep_keys only stale bays go."""
+        for child in self._uca_children():
+            if keep_keys is not None and child.get('hb_uca_key') in keep_keys:
+                continue
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def _apply_under_cabinet_appliances(self, layout):
+        """Build / position one appliance block per upper bay that asks
+        for one. Width follows the bay opening unless the bay carries an
+        explicit width; the block hangs from the underside of the bay
+        (or of its finished bottom panel, when one covers it) and runs
+        forward from the back of the cabinet, so a unit deeper than the
+        cabinet sticks out the front the way it does in the field."""
+        if layout.cabinet_type != 'UPPER':
+            self._cleanup_under_cabinet_appliances()
+            return
+
+        fb_panels = [c for c in self.obj.children
+                     if c.get('hb_part_role') == PART_ROLE_FINISHED_BOTTOM]
+        live_keys = set()
+        for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
+            bay_index = bay_obj.get('hb_bay_index', 0)
+            if bay_obj.hide_viewport or bay_index >= layout.bay_count:
+                continue
+            props = bay_obj.face_frame_bay
+            kind = getattr(props, 'under_cabinet_appliance', 'NONE')
+            spec = self._UCA_SPECS.get(kind)
+            if spec is None:
+                continue
+            name, appliance_type, def_h, def_d = spec
+            height = props.under_cabinet_appliance_height or def_h
+            depth = props.under_cabinet_appliance_depth or def_d
+            bay_width = layout.bays[bay_index]['width']
+            width = props.under_cabinet_appliance_width or bay_width
+            if not width or not height or not depth:
+                continue
+
+            # Centered on the bay opening, back against the cabinet back.
+            bay_left = solver.bay_x_position(layout, bay_index)
+            x0 = bay_left + (bay_width - width) / 2.0
+            z_top = solver.bay_bottom_z(layout, bay_index)
+            for panel in fb_panels:
+                try:
+                    p_len = self._part_input(panel, 'Length')
+                except Exception:
+                    continue
+                p_x0 = panel.location.x
+                if (p_x0 < x0 + width and p_x0 + (p_len or 0.0) > x0
+                        and panel.location.z < z_top):
+                    z_top = panel.location.z
+
+            key = str(bay_index)
+            live_keys.add(key)
+            block = None
+            for child in self._uca_children():
+                if child.get('hb_uca_key') == key:
+                    block = child
+                    break
+            if block is None:
+                mesh = bpy.data.meshes.new(name)
+                block = bpy.data.objects.new(name, mesh)
+                for coll in self.obj.users_collection:
+                    coll.objects.link(block)
+                block.parent = self.obj
+                block[self.UCA_TAG] = kind
+                block['hb_uca_key'] = key
+                block['IS_APPLIANCE'] = True
+                mat = self._stainless_material()
+                if block.data.materials:
+                    block.data.materials[0] = mat
+                else:
+                    block.data.materials.append(mat)
+            if block.get(self.UCA_TAG) != kind:
+                # Switched kind on an existing bay - rename so the
+                # outliner matches what is now hanging there.
+                block.name = name
+            block[self.UCA_TAG] = kind
+            block['APPLIANCE_TYPE'] = appliance_type
+            block['APPLIANCE_LABEL'] = name
+            block.location = (x0, 0.0, z_top - height)
+            self._rebuild_box_mesh(block, 0.0, width, -depth, 0.0,
+                                   0.0, height)
+
+        self._cleanup_under_cabinet_appliances(keep_keys=live_keys)
 
     # =====================================================================
     # Hutch finished back (uppers with ends extended down)

@@ -5323,6 +5323,139 @@ def _set_opening_interior(op_props, interior):
     # OPEN -> leave cleared
 
 
+class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
+    """Hang a microwave or a short vent hood under the selected upper
+    bay. Writes the choice and its overall size to the bay; the recalc
+    builds a block at that size under the bay (under its finished bottom
+    when it has one) running forward from the back of the cabinet, so a
+    unit deeper than the cabinet stands proud of the front.
+
+    Block geometry only - the detailed models live in the separate
+    appliance library and are swapped in over the block.
+    """
+    bl_idname = "hb_face_frame.set_under_cabinet_appliance"
+    bl_label = "Under Cabinet Appliance"
+    bl_description = ("Show a microwave or a short vent hood hanging "
+                      "under this upper bay, in 3D and on the elevations")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # Per-kind starting sizes. Microwaves are a fixed 30" box; hoods are
+    # ordered to the cabinet, so their width starts at 0 (follow the bay).
+    _KIND_DEFAULTS = {
+        'MICROWAVE': (inch(30.0), inch(16.0), inch(15.0)),
+        'HOOD': (0.0, inch(6.0), inch(17.5)),
+    }
+
+    appliance: bpy.props.EnumProperty(
+        name="Appliance",
+        items=[
+            ('NONE',      "None",      "Remove the appliance under this bay"),
+            ('MICROWAVE', "Microwave", "Over-the-range microwave"),
+            ('HOOD',      "Hood",      "Short under-cabinet vent hood"),
+        ],
+        default='MICROWAVE',
+    )  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Width", unit='LENGTH', precision=4, default=inch(30.0), min=0.0,
+        description="Width of the appliance; 0 follows the bay width",
+    )  # type: ignore
+    height: bpy.props.FloatProperty(
+        name="Height", unit='LENGTH', precision=4, default=inch(16.0), min=0.0,
+        description="How far the appliance hangs below the bay",
+    )  # type: ignore
+    depth: bpy.props.FloatProperty(
+        name="Depth", unit='LENGTH', precision=4, default=inch(15.0), min=0.0,
+        description="Front-to-back depth, measured from the back of the "
+                    "cabinet",
+    )  # type: ignore
+    bay_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+    # The kind the size fields were last seeded from, so re-picking the
+    # appliance in the open dialog resets the sizes to that kind's
+    # defaults without stomping a size the user has typed since.
+    last_kind: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or not obj.get(types_face_frame.TAG_BAY_CAGE):
+            return False
+        root = types_face_frame.find_cabinet_root(obj)
+        return (root is not None
+                and root.face_frame_cabinet.cabinet_type == 'UPPER')
+
+    def _resolve_bay(self, context):
+        if self.bay_name:
+            o = bpy.data.objects.get(self.bay_name)
+            if o is not None and o.get(types_face_frame.TAG_BAY_CAGE):
+                return o
+        o = context.active_object
+        if o is not None and o.get(types_face_frame.TAG_BAY_CAGE):
+            return o
+        return None
+
+    def _seed_from_kind(self, kind):
+        sizes = self._KIND_DEFAULTS.get(kind)
+        if sizes is None:
+            return
+        self.width, self.height, self.depth = sizes
+        self.last_kind = kind
+
+    def invoke(self, context, event):
+        bay = self._resolve_bay(context)
+        if bay is None:
+            self.report({'WARNING'}, "Select a bay first")
+            return {'CANCELLED'}
+        self.bay_name = bay.name
+        props = bay.face_frame_bay
+        current = props.under_cabinet_appliance
+        if current == 'NONE':
+            self.appliance = 'MICROWAVE'
+            self._seed_from_kind('MICROWAVE')
+        else:
+            # Re-editing: show what the bay already carries.
+            self.appliance = current
+            self.width = props.under_cabinet_appliance_width
+            self.height = props.under_cabinet_appliance_height
+            self.depth = props.under_cabinet_appliance_depth
+            self.last_kind = current
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        # Switching the appliance in the open dialog re-seeds the sizes
+        # to that kind's defaults.
+        if self.appliance != 'NONE' and self.appliance != self.last_kind:
+            self._seed_from_kind(self.appliance)
+        layout = self.layout
+        col = layout.column(align=True)
+        col.prop(self, 'appliance', text="Appliance")
+        sizes = col.column(align=True)
+        sizes.enabled = self.appliance != 'NONE'
+        sizes.prop(self, 'width')
+        sizes.prop(self, 'height')
+        sizes.prop(self, 'depth')
+        if self.appliance != 'NONE':
+            note = layout.column(align=True)
+            note.scale_y = 0.8
+            note.label(text="Width 0 follows the bay width.")
+
+    def execute(self, context):
+        bay = self._resolve_bay(context)
+        if bay is None:
+            self.report({'WARNING'}, "Select a bay first")
+            return {'CANCELLED'}
+        props = bay.face_frame_bay
+        props.under_cabinet_appliance_width = self.width
+        props.under_cabinet_appliance_height = self.height
+        props.under_cabinet_appliance_depth = self.depth
+        # Set the kind last: every write triggers a recalc, so the sizes
+        # are already in place when the block gets built.
+        props.under_cabinet_appliance = self.appliance
+        root = types_face_frame.find_cabinet_root(bay)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     """Configure the active BASE bay as a sink or cooktop bay: apply a
     sink-style front preset, set the bay width, optionally drop the bay,
@@ -6008,6 +6141,7 @@ classes = (
     HB_UL_face_frame_accessory_search,
     hb_face_frame_OT_search_accessory,
     hb_face_frame_OT_add_appliance_to_bay,
+    hb_face_frame_OT_set_under_cabinet_appliance,
     hb_face_frame_OT_remove_appliance_from_bay,
     hb_face_frame_OT_insert_bay,
     hb_face_frame_OT_delete_bay,

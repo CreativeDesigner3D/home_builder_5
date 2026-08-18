@@ -225,6 +225,12 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
             if cabinet_type == 'BASE':
                 layout.menu("HOME_BUILDER_MT_face_frame_add_appliance",
                             text="Add Appliance to Bay", icon='MOD_FLUIDSIM')
+            # Under-cabinet appliance (uppers only): a microwave or a
+            # short vent hood hanging below the bay.
+            if cabinet_type == 'UPPER':
+                layout.operator(
+                    "hb_face_frame.set_under_cabinet_appliance",
+                    text="Under Cabinet Appliance...", icon='MOD_FLUIDSIM')
             # Flush toe kick toggle - base / tall only (uppers have no
             # kick to flush).
             if cabinet_type in ('BASE', 'TALL'):
