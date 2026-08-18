@@ -715,7 +715,10 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
     # same-condition rebuild (captured before the wipe, reapplied
     # after). Keyed by (bay_index, opening_index) - opening_index is
     # only unique within one bay's tree. A condition flip re-defaults
-    # everything.
+    # everything. The inset panel texture (Beadboard / Shiplap /
+    # V-Groove) rides along: picking it in Opening mode fires this
+    # very rebuild, which used to hand back a plain panel unless Auto
+    # Openings was off (portal #0a4d7148).
     default_front = _CONDITION_FRONT_TYPE.get(condition, 'INSET_PANEL')
     prev_condition = panel_obj.get(
         types_face_frame.TAG_APPLIED_PANEL_CONDITION)
@@ -723,8 +726,9 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
     if prev_condition == condition:
         for c in panel_obj.children_recursive:
             if c.get(types_face_frame.TAG_OPENING_CAGE):
+                op = c.face_frame_opening
                 preserved_fronts[_opening_key(c)] = (
-                    c.face_frame_opening.front_type)
+                    op.front_type, op.inset_panel_type)
     panel_obj[types_face_frame.TAG_APPLIED_PANEL_CONDITION] = condition
 
     # Bay quantity: real-bay mid stile only when no rails are in play.
@@ -829,9 +833,14 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
                 if not c.get(types_face_frame.TAG_OPENING_CAGE):
                     continue
                 op = c.face_frame_opening
-                ft = preserved_fronts.get(_opening_key(c))
+                prev = preserved_fronts.get(_opening_key(c))
+                if not prev:
+                    continue
+                ft, pt = prev
                 if ft and ft != op.front_type:
                     op.front_type = ft
+                if pt and pt != op.inset_panel_type:
+                    op.inset_panel_type = pt
 
 
 def _opening_key(opening_obj):
