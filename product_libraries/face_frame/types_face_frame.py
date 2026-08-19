@@ -710,6 +710,37 @@ PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
 # is not also printed into the opening - the item data is what feeds the
 # schedules and legends downstream.
 DRAWER_BOX_FRONT_TYPES = frozenset({'DRAWER_FRONT', 'PULLOUT'})
+# Drawer boxes are bought / built in a fixed range of box heights and
+# then set into whatever opening they land in - they are not cut to the
+# opening. Rows are (minimum opening height, box height) in inches,
+# read from the tallest row down; an opening under the first row's
+# minimum is too short for a stock box. Sized to the opening rather
+# than to the box's own clearances so a tall opening (a pullout behind
+# a full-height door, say) still gets a real drawer instead of a box
+# the height of the door.
+STOCK_DRAWER_BOX_HEIGHTS = (
+    (12.0, 11.125),
+    (11.0, 10.125),
+    (10.0,  9.125),
+    ( 9.0,  8.125),
+    ( 8.0,  7.125),
+    ( 7.0,  6.125),
+    ( 6.0,  5.125),
+    ( 5.0,  4.125),
+    ( 4.5,  3.625),
+    ( 4.0,  3.125),
+    ( 3.0,  2.125),
+)
+
+
+def stock_drawer_box_height(opening_height):
+    """Box height for an opening of this height (scene units), or None
+    when the opening is shorter than the smallest stock box."""
+    opening_in = opening_height / inch(1.0)
+    for min_opening_in, box_in in STOCK_DRAWER_BOX_HEIGHTS:
+        if opening_in >= min_opening_in - 1.0e-4:
+            return inch(box_in)
+    return None
 # Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
 # / half-circle, stemware, plate rack). One role for the whole family:
 # each insert is a single derived mesh built in bar_storage.py; the
@@ -10753,6 +10784,17 @@ class FaceFrameCabinet(GeoNodeCage):
         box_dx = cage_x - rl - rr - 2.0 * side_clr
         box_dy = (cage_y - rear_clr) - front_back_y
         box_dz = cage_z - rt - rb - top_clr - bottom_clr
+
+        # Snap to a stock box height. Clearance-derived sizing cuts the
+        # box to the opening, which produces boxes that are not made -
+        # most visibly a pullout behind a tall door, drawn as a drawer
+        # nearly the height of the door. The box keeps its bottom
+        # clearance and the extra room stays above it.
+        if scene_props.use_stock_drawer_box_heights:
+            opening_dz = cage_z - rt - rb
+            stock_dz = stock_drawer_box_height(opening_dz)
+            if stock_dz is not None:
+                box_dz = min(stock_dz, opening_dz - bottom_clr)
 
         # Per-opening size overrides (right-click the box -> Drawer Box
         # Size...). Overridden axes replace the clearance-derived size,

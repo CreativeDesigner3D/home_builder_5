@@ -9075,6 +9075,18 @@ class Face_Frame_Scene_Props(PropertyGroup):
         description="Gap between the bottom of the drawer box and the opening bottom",
         default=units.inch(0.5), unit='LENGTH', precision=4,
     )  # type: ignore
+    # Boxes come in a fixed range of heights (types_face_frame.
+    # STOCK_DRAWER_BOX_HEIGHTS) rather than being cut to the opening.
+    # Off, the clearances alone size the box - which draws a pullout
+    # behind a tall door as a drawer nearly the height of the door.
+    use_stock_drawer_box_heights: BoolProperty(
+        name="Stock Box Heights",
+        description="Size each drawer box to the nearest stock box "
+                    "height for its opening instead of cutting it to "
+                    "the opening",
+        default=True,
+        update=update_include_drawer_boxes,
+    )  # type: ignore
 
     # ---- Finished Ends and Backs defaults ----
     # Drives the "Apply to All Exposed" bulk operator and seeds new
@@ -10364,6 +10376,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes")
+
+        col.prop(props, 'use_stock_drawer_box_heights',
+                 text="Stock Box Heights")
 
         col.separator()
         col.label(text="Clearances:")
