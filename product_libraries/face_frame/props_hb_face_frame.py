@@ -1309,18 +1309,24 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # page). These have no geometric effect -- they're presentation fields the
     # user types in. Defaults mirror common catalog selections so a fresh style
     # reads sensibly. Editable from the Style Sections panel.
+    # Corner treatment DOES drive geometry (see
+    # FaceFrameCabinet._apply_corner_treatment): the pick is cut into the
+    # face frame's exposed arrises -- the end stile's outer front edge at a
+    # flush finished end, and the bottom front edge of upper cabinets.
+    # 'Cove' keeps its identifier for saved files; it reads as 1/4" Cove.
     ss_corner_treatment: EnumProperty(
         name="Corner Treatment",
-        description="Corner treatment for the style section page",
+        description="Corner treatment cut into the face frame's exposed front arrises (finished-end stiles, upper cabinet bottoms) and shown on the style section page",
         items=[
             ('1/4" x 1/4" Chamfer', '1/4" x 1/4" Chamfer', ''),
-            ('Cove', 'Cove', ''),
+            ('Cove', '1/4" Cove', ''),
             ('1/8" Radius', '1/8" Radius', ''),
             ('Square', 'Square', ''),
             ('1/4" Radius', '1/4" Radius', ''),
             ('3/8" Radius', '3/8" Radius', ''),
         ],
         default='Square',
+        update=_propagate_cabinet_style,
     )  # type: ignore
     ss_fin_opening_edge: EnumProperty(
         name="Fin Opening Edge",
@@ -1504,8 +1510,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # <field>_is_custom is set, the UI shows <field>_custom (free text) in
     # place of the dropdown and the style section resolves the typed value --
     # for entering a value the catalog list doesn't offer.
-    ss_corner_treatment_is_custom: BoolProperty(name="Custom Corner Treatment", default=False)  # type: ignore
-    ss_corner_treatment_custom: StringProperty(name="Corner Treatment", default="")  # type: ignore
+    ss_corner_treatment_is_custom: BoolProperty(name="Custom Corner Treatment", default=False, update=_propagate_cabinet_style)  # type: ignore
+    ss_corner_treatment_custom: StringProperty(name="Corner Treatment", default="", update=_propagate_cabinet_style)  # type: ignore
     ss_fin_opening_edge_is_custom: BoolProperty(name="Custom Fin Opening Edge", default=False)  # type: ignore
     ss_fin_opening_edge_custom: StringProperty(name="Fin Opening Edge", default="")  # type: ignore
     ss_drawer_slides_is_custom: BoolProperty(name="Custom Drawer Slides", default=False)  # type: ignore
@@ -1796,6 +1802,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             props.default_door_inset_amount = full_inset / 2.0
         else:
             props.default_door_inset_amount = 0.0
+
+    def corner_treatment_name(self):
+        """This cabinet style's corner treatment pick (ss_corner_treatment,
+        or its custom free text). 'Square' / empty mean no cut; the
+        recalc resolves the name through door_profiles.named_edge_run."""
+        if getattr(self, 'ss_corner_treatment_is_custom', False):
+            return self.ss_corner_treatment_custom.strip() or None
+        return self.ss_corner_treatment
 
     def assign_style_to_cabinet(self, cabinet_obj):
         """Write the style's overlay floats + inset amount onto the cabinet
@@ -2332,6 +2346,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # transfer the cutter's material, so
                                  # the finish rides along onto the cut.
                                  'BOTTOM_RAIL_PROFILE_CUTTER',
+                                 'CORNER_TREATMENT_CUTTER',
                                  'FINISHED_BOTTOM_LED_CUTTER',
                                  'DECORATIVE_CORNER_CUTTER',
                                  'BOX_MITER_CUTTER'):

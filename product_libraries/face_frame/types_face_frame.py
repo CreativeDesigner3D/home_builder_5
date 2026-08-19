@@ -956,6 +956,26 @@ _BOTTOM_RAIL_PROCEDURAL_PROFILES = frozenset((
 _BOTTOM_RAIL_PROFILE_SUFFIX = ' Cutter.blend'
 _BOTTOM_RAIL_PROFILE_POLY_CACHE = {}   # profile_id -> list[(x, y)] meters
 
+# ---------------------------------------------------------------------------
+# Corner treatment: the cabinet style's ss_corner_treatment (1/8-1/4-3/8
+# radius, 1/4 cove, 1/4 x 1/4 chamfer) milled into the face frame's exposed
+# front arrises -- the end stile's outer front edge where that side is a
+# flush finished end, and the bottom front edge of an upper (bottom rail
+# plus the stile bottoms). One boolean cutter prism per part per arris,
+# built in the part's own frame so angled fronts come along for free.
+# See _apply_corner_treatment.
+# ---------------------------------------------------------------------------
+PART_ROLE_CORNER_TREATMENT_CUTTER = 'CORNER_TREATMENT_CUTTER'
+CORNER_TREATMENT_MOD_NAMES = {
+    'LENGTH': 'Corner Treatment Edge',     # along the part's length
+    'WIDTH': 'Corner Treatment Bottom',    # across a stile's bottom end
+}
+# Finished-end conditions whose outer face is flush with the end stile's
+# edge (the stile arris IS the cabinet corner). Applied 3/4 panels /
+# frames sit outboard of the stile and keep their own square corner.
+CORNER_TREATMENT_FLUSH_ENDS = frozenset((
+    'FINISHED', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'))
+
 
 def bottom_rail_profile_dir():
     return os.path.join(os.path.dirname(__file__), 'face_frame_assets', 'profiles')
@@ -2982,6 +3002,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Bottom-rail decorative profile (valance): cut the chosen profile
         # into the bottom rail(s). No-op + cleanup when off.
         self._apply_bottom_rail_profile(layout)
+
+        # Corner treatment: the style's edge detail on the exposed face
+        # frame arrises. No-op + cleanup when Square / unset.
+        self._apply_corner_treatment(layout)
 
         # Over-stool leg accessories: shelf and/or towel bar between the legs
         # per the overstool_accessory dropdown. No-op + cleanup when off.
@@ -5515,6 +5539,180 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
+
+    # =====================================================================
+    # Corner treatment (face-frame arris detail)
+    # =====================================================================
+    def _corner_treatment_run(self):
+        """Shaped run [(u, v), ...] for the assigned cabinet style's corner
+        treatment, or None (no style / Square / unknown name)."""
+        style_name = self.obj.get('STYLE_NAME')
+        if not style_name:
+            return None
+        try:
+            from .props_hb_face_frame import get_style_props
+            ff = get_style_props()
+            cs = next((c for c in ff.cabinet_styles if c.name == style_name), None)
+            if cs is None:
+                return None
+            from ..common import door_profiles
+            return door_profiles.named_edge_run(cs.corner_treatment_name())
+        except Exception:
+            return None
+
+    def _corner_treatment_cutters(self):
+        return [c for c in self.obj.children
+                if c.get('hb_part_role') == PART_ROLE_CORNER_TREATMENT_CUTTER]
+
+    def _ensure_corner_treatment_cutter(self, key):
+        for child in self._corner_treatment_cutters():
+            if child.get('hb_ct_key') == key:
+                return child
+        name = 'Corner Treatment Cutter ' + key
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_CORNER_TREATMENT_CUTTER
+        cutter['hb_ct_key'] = key
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_corner_treatment_cutter(self, cutter, part_obj, run, axis):
+        """Rebuild the cutter as a prism of the removed-corner outline swept
+        along one arris of a cutpart. Cutpart mesh-local convention: x is
+        the Length axis, the front-outer arris lies on (y = 0, z = 0), the
+        Width runs in +/-y per 'Mirror Y' and the Thickness in +/-z per
+        'Mirror Z'. axis 'LENGTH' sweeps that arris end to end (stile
+        outer edge / rail bottom edge); 'WIDTH' sweeps across the x = 0
+        end (a stile's bottom) so the bottom detail wraps the corner.
+        Built in cabinet-local coords via the part's matrix_local (parts
+        are direct children of the root). Returns False (mesh cleared)
+        when the part can't be read."""
+        part = GeoNodeCutpart(part_obj)
+        try:
+            length = part.get_input('Length')
+            width = part.get_input('Width')
+            mirror_y = bool(part.get_input('Mirror Y'))
+            mirror_z = bool(part.get_input('Mirror Z'))
+        except Exception:
+            cutter.data.clear_geometry()
+            return False
+        umax = max(u for u, v in run)
+        vmax = max(v for u, v in run)
+        if umax <= 0.0 or vmax <= 0.0 or length <= 0.0 or width <= 0.0:
+            cutter.data.clear_geometry()
+            return False
+        ys = -1.0 if mirror_y else 1.0
+        zs = -1.0 if mirror_z else 1.0
+        eps = inch(0.05)
+        # Removed corner in (u across the face from the arris, v into the
+        # thickness from the front face), padded outside the part so the
+        # boolean never sits on a coplanar face.
+        outline = [(-eps, -eps), (umax, -eps)] + list(run) + [(-eps, vmax)]
+        if axis == 'LENGTH':
+            span = (-eps, length + eps)
+
+            def pt(u, v, s):
+                return Vector((s, ys * u, zs * v))
+        else:
+            span = (-eps, width + eps)
+
+            def pt(u, v, s):
+                return Vector((u, ys * s, zs * v))
+        ml = part_obj.matrix_local
+        bm = bmesh.new()
+        loop0 = [bm.verts.new(ml @ pt(u, v, span[0])) for (u, v) in outline]
+        loop1 = [bm.verts.new(ml @ pt(u, v, span[1])) for (u, v) in outline]
+        bm.faces.new(loop0)
+        bm.faces.new(list(reversed(loop1)))
+        n = len(outline)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((loop0[i], loop0[j], loop1[j], loop1[i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+        return True
+
+    def _cleanup_corner_treatment(self, keep_keys=()):
+        """Drop corner-treatment booleans + cutters not in keep_keys."""
+        keep = set(keep_keys)
+        for child in self.obj.children:
+            for axis, mod_name in CORNER_TREATMENT_MOD_NAMES.items():
+                if f"{child.name}|{axis}" in keep:
+                    continue
+                mod = child.modifiers.get(mod_name)
+                if mod is not None:
+                    child.modifiers.remove(mod)
+        for cutter in list(self._corner_treatment_cutters()):
+            if cutter.get('hb_ct_key') in keep:
+                continue
+            mesh = cutter.data
+            bpy.data.objects.remove(cutter, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+    def _apply_corner_treatment(self, layout):
+        """Cut the style's corner treatment into the exposed face frame
+        arrises: the end stile's outer front edge (plus the refrigerator
+        stile-in-lieu-of-leg below it) on each flush finished end, and on
+        uppers the bottom front edge -- bottom rail(s) along their length
+        and the end stiles across their bottoms. Square / no style / no
+        flush ends = full cleanup."""
+        run = self._corner_treatment_run()
+        wanted = []   # (part_obj, axis)
+        if run is not None:
+            sides = set()
+            if layout.l_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
+                sides.add('LEFT')
+            if layout.r_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
+                sides.add('RIGHT')
+            bottom = layout.cabinet_type == 'UPPER'
+            for child in self.obj.children:
+                if child.hide_viewport:
+                    continue
+                role = child.get('hb_part_role')
+                if role in (PART_ROLE_LEFT_STILE, PART_ROLE_LEFT_REFRIG_STILE):
+                    side = 'LEFT'
+                elif role in (PART_ROLE_RIGHT_STILE, PART_ROLE_RIGHT_REFRIG_STILE):
+                    side = 'RIGHT'
+                elif role == PART_ROLE_BOTTOM_RAIL:
+                    side = None
+                else:
+                    continue
+                if side is not None and side in sides:
+                    wanted.append((child, 'LENGTH'))
+                if bottom:
+                    if role == PART_ROLE_BOTTOM_RAIL:
+                        wanted.append((child, 'LENGTH'))
+                    elif role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
+                        wanted.append((child, 'WIDTH'))
+        live_keys = set()
+        for part_obj, axis in wanted:
+            key = f"{part_obj.name}|{axis}"
+            cutter = self._ensure_corner_treatment_cutter(key)
+            if not self._position_corner_treatment_cutter(cutter, part_obj, run, axis):
+                continue
+            live_keys.add(key)
+            mod_name = CORNER_TREATMENT_MOD_NAMES[axis]
+            mod = part_obj.modifiers.get(mod_name)
+            if mod is None:
+                mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            # Cut faces read the cutter's material (the material walk
+            # keeps the cutter on the finish).
+            mod.material_mode = 'TRANSFER'
+            if mod.object is not cutter:
+                mod.object = cutter
+        self._cleanup_corner_treatment(live_keys)
 
     # =====================================================================
     # Over-stool leg accessories (shelf / towel bar between the legs)

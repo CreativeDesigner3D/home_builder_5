@@ -728,6 +728,11 @@ _EDGE_SECTION_BUILDERS = {
     'beveled': lambda: [(0.75 * _INCH, 0.0), (0.0, 0.25 * _INCH)],
     # Concave 3/8 cove scooped out of the front arris.
     'bay': lambda: _edge_arc(0.375 * _INCH, True),
+    # Cabinet corner treatments (face-frame arris details): 1/4 cove and
+    # a 1/4 x 1/4 chamfer alongside the shared radius cuts above.
+    '1/4" cove': lambda: _edge_arc(0.25 * _INCH, True),
+    'cove': lambda: _edge_arc(0.25 * _INCH, True),
+    '1/4" x 1/4" chamfer': lambda: [(0.25 * _INCH, 0.0), (0.0, 0.25 * _INCH)],
     # Digitized from the molding edge asset pack (see above).
     'estate': lambda: _poly(_ESTATE_PTS),
     'eclipse': lambda: _poly(_ECLIPSE_PTS),
@@ -741,6 +746,21 @@ _EDGE_SECTION_BUILDERS = {
     '3/8" inset radius': lambda: _inset_edge(
         _edge_arc(0.375 * _INCH, False)),
 }
+
+
+def named_edge_run(name):
+    """Catalog edge / corner-treatment name -> the raw shaped run
+    [(u, v), ...] in meters (u inward across the face from the member
+    edge, v into the thickness from the front face), ordered from the
+    face landing to where the cut exits the edge. No thickness fitting
+    and no straight run appended -- callers sweeping a cutter along an
+    arris want just the removed-corner outline. None for Square /
+    empty / unknown names."""
+    key = (name or '').strip().lower()
+    build = _EDGE_SECTION_BUILDERS.get(key)
+    if build is None:
+        return None
+    return list(build())
 
 
 def named_edge_section(name, thickness):
