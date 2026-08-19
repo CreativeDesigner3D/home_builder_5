@@ -6846,8 +6846,9 @@ class FaceFrameCabinet(GeoNodeCage):
             applied_panel_sizing.apply_panel_split_structure(
                 self.obj, panel_obj, side, condition,
             )
-            # Toe-kick corner notch on bottom rail + facing stile.
-            # No-op for BACK panels and non-NOTCH toe kicks.
+            # Toe-kick corner notch on bottom rail + facing stile;
+            # a BACK panel takes end cuts for an inset kick instead.
+            # No-op for non-NOTCH toe kicks.
             applied_panel_sizing.apply_panel_toe_kick_notch(
                 self.obj, panel_obj, side,
             )

@@ -481,8 +481,9 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     panel's bottom rail and facing stile so the panel cleanly clears
     a NOTCH-type toe kick recess. Active only when the parent cabinet
     is BASE/TALL with toe_kick_type == 'NOTCH'; otherwise the modifier
-    is left in place (lazily added) but hidden. BACK panels are
-    skipped - the back has no toe kick to clear.
+    is left in place (lazily added) but hidden. BACK panels have no
+    front to clear and take their own end cuts instead - see
+    _apply_back_panel_kick_notches.
 
     X (depth) differs per part: the facing stile sits at the front of
     the panel and gets the full toe_kick_setback. The bottom rail
@@ -493,6 +494,7 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     Y (height) is the same for both: toe_kick_height.
     """
     if side == 'BACK':
+        _apply_back_panel_kick_notches(cab_obj, panel_obj)
         return
     cab = cab_obj.face_frame_cabinet
     # A stile dropped to the floor fills the toe-kick recess on that end, so
@@ -594,17 +596,124 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         _ensure_and_drive_notch(part_obj, part_active, x_val, y_val, flips)
 
 
-def _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips):
-    """Lazily add Notch Front Bottom on part_obj, then refresh ALL
+# Back-panel end notches ride their own modifiers so each end can be
+# driven independently; the front-facing path only ever needs one cut.
+_BACK_NOTCH_MOD_NAME = {
+    'LEFT':  'Notch Left Bottom',
+    'RIGHT': 'Notch Right Bottom',
+}
+
+# The back panel is rotated pi around Z, so its local X = 0 edge sits
+# at the cabinet's RIGHT side and its far edge at the cabinet's LEFT
+# (see _stile_widths). Flip X picks the end of the part the notch
+# removes: False = the local X = 0 end, True = the far end.
+_BACK_NOTCH_FLIPS_BOTTOM_RAIL = {
+    'LEFT':  (True, False, False),
+    'RIGHT': (False, False, False),
+}
+_BACK_NOTCH_FLIPS_END_STILE = (False, True, False)
+
+# Panel stile role at each cabinet end, and the panel prop holding its
+# width - mirrored, since the back panel faces the other way.
+_BACK_END_STILE_ROLE = {
+    'LEFT':  types_face_frame.PART_ROLE_RIGHT_STILE,
+    'RIGHT': types_face_frame.PART_ROLE_LEFT_STILE,
+}
+_BACK_END_STILE_WIDTH_PROP = {
+    'LEFT':  'right_stile_width',
+    'RIGHT': 'left_stile_width',
+}
+
+
+def _apply_back_panel_kick_notches(cab_obj, panel_obj):
+    """Notch the bottom ends of a finished / paneled BACK so it
+    follows an inset toe kick.
+
+    A side toe-kick inset holds that end's kick in from the cabinet
+    face, and the panel on that END is held up at the bay bottom so
+    the inset kick stays visible beneath it (applied_panel_geometry).
+    The back panel runs the full width floor to top, so with nothing
+    taken off it drops past the inset kick and reads as a leg standing
+    beside it instead of stopping where the kick does. Removing
+    (inset x kick height) from each inset end puts the back's bottom
+    edge on the kick's own footprint - the same cut the ends get, on
+    the axis the back runs along.
+
+    The cut is split between the end stile (taken for its full width)
+    and the bottom rail behind it (the rest of the inset), the same
+    division the front-facing notch uses. An end whose stile runs to
+    the floor fills the recess itself and keeps both parts whole.
+    """
+    if cab_obj.get('IS_LEG_PRODUCT'):
+        return
+    cab = cab_obj.face_frame_cabinet
+    kick = cab.toe_kick_height
+    buildable = (cab.cabinet_type in ('BASE', 'TALL')
+                 and cab.toe_kick_type != 'FLOATING'
+                 and kick > 0.0)
+
+    bottom_rail = None
+    stiles = {}
+    for c in panel_obj.children_recursive:
+        role = c.get('hb_part_role')
+        if role == types_face_frame.PART_ROLE_BOTTOM_RAIL:
+            bottom_rail = c
+        elif role in (types_face_frame.PART_ROLE_LEFT_STILE,
+                      types_face_frame.PART_ROLE_RIGHT_STILE):
+            stiles[role] = c
+
+    panel_props = panel_obj.face_frame_cabinet
+    for end in ('LEFT', 'RIGHT'):
+        if end == 'LEFT':
+            inset = cab.inset_toe_kick_left
+            to_floor = cab.extend_left_stile_to_floor
+        else:
+            inset = cab.inset_toe_kick_right
+            to_floor = cab.extend_right_stile_to_floor
+        active = buildable and inset > 0.0 and not to_floor
+        stile_width = getattr(panel_props,
+                              _BACK_END_STILE_WIDTH_PROP[end], 0.0)
+        name = _BACK_NOTCH_MOD_NAME[end]
+
+        stile = stiles.get(_BACK_END_STILE_ROLE[end])
+        if stile is not None:
+            _ensure_and_drive_notch(
+                stile, active,
+                kick,                    # X = height (stile runs up)
+                stile_width,             # Y = the stile's full width
+                _BACK_NOTCH_FLIPS_END_STILE,
+                name=name, create_if_missing=active)
+        if bottom_rail is not None:
+            # The rail starts behind the end stile, so it only clears
+            # what is left of the inset once the stile took its width.
+            rail_run = max(0.0, inset - stile_width)
+            _ensure_and_drive_notch(
+                bottom_rail, active and rail_run > 0.0,
+                rail_run,                # X = run along the rail
+                kick,                    # Y = height
+                _BACK_NOTCH_FLIPS_BOTTOM_RAIL[end],
+                name=name,
+                create_if_missing=active and rail_run > 0.0)
+
+
+def _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips,
+                            name='Notch Front Bottom',
+                            create_if_missing=True):
+    """Lazily add the named corner notch on part_obj, then refresh ALL
     inputs (including Flip X/Y/Z) and toggle visibility every recalc.
     Caller pre-computes x_val (depth) and y_val (height) since they
     differ per part.
+
+    create_if_missing=False leaves a part alone when it has never
+    carried this notch and does not need one now - used by the back
+    panel, whose end notches are the exception rather than the rule.
     """
-    mod = part_obj.modifiers.get('Notch Front Bottom')
+    mod = part_obj.modifiers.get(name)
     if mod is None:
+        if not create_if_missing:
+            return
         wrapper = hb_types.GeoNodeCutpart(part_obj)
-        cpm = wrapper.add_part_modifier(
-            'CPM_CORNERNOTCH', 'Notch Front Bottom')
+        cpm = wrapper.add_part_modifier('CPM_CORNERNOTCH', name)
         mod = cpm.mod
     if mod.node_group is None:
         return
