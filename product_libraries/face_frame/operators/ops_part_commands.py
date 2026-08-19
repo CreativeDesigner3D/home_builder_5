@@ -645,6 +645,14 @@ class hb_face_frame_OT_toggle_stile_to_floor(bpy.types.Operator):
             coll[gap].to_floor = not coll[gap].to_floor
         else:
             return {'CANCELLED'}
+        # On an applied panel the flag lands on the panel's own props,
+        # but the geometry it drives (the panel's kick notch) is built
+        # by the HOST cabinet's recalc - the panel's own recalc, which
+        # the property update just ran, can't reach it.
+        if root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE):
+            host = types_face_frame.find_cabinet_root(root.parent)
+            if host is not None:
+                types_face_frame.recalculate_face_frame_cabinet(host)
         return {'FINISHED'}
 
 

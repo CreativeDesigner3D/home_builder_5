@@ -368,13 +368,20 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_part_scribe",
                             text="Set Scribe...", icon='SNAP_EDGE')
 
-        # Stile-to-floor: end stiles and between-bay mid stiles.
+        # Stile-to-floor: end stiles and between-bay mid stiles. On an
+        # applied panel only the stile facing the cabinet front has a
+        # kick recess to drop into, so the other one doesn't offer it.
         if role in (types_face_frame.PART_ROLE_LEFT_STILE,
                     types_face_frame.PART_ROLE_RIGHT_STILE,
                     types_face_frame.PART_ROLE_MID_STILE):
-            layout.operator("hb_face_frame.toggle_stile_to_floor",
-                            text="Toggle Stile to Floor",
-                            icon='TRIA_DOWN_BAR')
+            from . import applied_panel_sizing
+            panel_side = (panel_root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                          if panel_root is not None else None)
+            if panel_side is None or role == (
+                    applied_panel_sizing.panel_facing_stile_role(panel_side)):
+                layout.operator("hb_face_frame.toggle_stile_to_floor",
+                                text="Toggle Stile to Floor",
+                                icon='TRIA_DOWN_BAR')
 
         # Cabinet column: split turning applied over the stile. Also
         # offered on a built column component (the stile key rides on

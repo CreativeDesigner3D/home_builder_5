@@ -232,6 +232,32 @@ _FACING_STILE_ROLE = {
     'RIGHT': types_face_frame.PART_ROLE_LEFT_STILE,
 }
 
+
+def panel_facing_stile_role(side):
+    """Role of the panel stile that faces the cabinet front, or
+    None for a BACK panel (which has no front-facing stile)."""
+    return _FACING_STILE_ROLE.get(side)
+
+
+def panel_front_stile_to_floor(panel_obj, side):
+    """True when the panel's own front stile runs to the floor.
+
+    The kick notch only ever cuts the panel's front-bottom corner, so
+    the facing stile is the only one it can free: dropped to the floor
+    it stands in the kick recess as a leg instead of being cut back,
+    and only the bottom rail behind it stays notched. The flag is the
+    panel's own extend_*_stile_to_floor, written by Toggle Stile to
+    Floor on that stile."""
+    role = _FACING_STILE_ROLE.get(side)
+    if role is None:
+        return False
+    props = getattr(panel_obj, 'face_frame_cabinet', None)
+    if props is None:
+        return False
+    if role == types_face_frame.PART_ROLE_RIGHT_STILE:
+        return props.extend_right_stile_to_floor
+    return props.extend_left_stile_to_floor
+
 # CPM_CORNERNOTCH Flip X / Flip Y / Flip Z values per side, per part.
 # These pick which corner of the part the notch removes. The cabinet
 # side panel uses (False, True, False); panel parts have different
@@ -540,6 +566,12 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     # Facing stile: rotated such that X = kick height, Y = depth - the
     # same notch corner but the part's local X axis points up the
     # stile instead of along the rail.
+    # A facing stile set to the floor fills the recess on this end
+    # itself, so it keeps its full length and only the rail behind it
+    # is notched.
+    stile_notched = active and not panel_front_stile_to_floor(
+        panel_obj, side)
+
     parts = []
     if bottom_rail is not None:
         parts.append((
@@ -547,6 +579,7 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
             _NOTCH_FLIPS_BOTTOM_RAIL[side],
             max(0.0, setback - facing_width),  # X = depth
             kick,                               # Y = height
+            active,
         ))
     if facing_stile is not None:
         parts.append((
@@ -554,10 +587,11 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
             _NOTCH_FLIPS_FACING_STILE[side],
             kick,         # X = height (stile runs vertically)
             stile_depth,  # Y = depth
+            stile_notched,
         ))
 
-    for part_obj, flips, x_val, y_val in parts:
-        _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips)
+    for part_obj, flips, x_val, y_val, part_active in parts:
+        _ensure_and_drive_notch(part_obj, part_active, x_val, y_val, flips)
 
 
 def _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips):
