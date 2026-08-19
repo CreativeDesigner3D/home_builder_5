@@ -4940,6 +4940,26 @@ def ff_overlay_bucket(overlay):
     return OVERLAY_TO_FF_BUCKET.get(overlay, 'CLASSIC')
 
 
+# Inset overlays carry a face-frame edge profile milled around every
+# opening (door_profiles.inset_frame_run). Overlays not listed read as
+# square opening edges.
+OVERLAY_FRAME_PROFILE = {
+    'Full Inset, Beaded Edge': 'BEADED',
+    'Full Inset, Chamfer': 'CHAMFER',
+    'Full Inset, Metro': 'METRO',
+    'Partial Inset, Beaded Edge': 'BEADED',
+    'Partial Inset, Chamfer': 'CHAMFER',
+    'Partial Inset, Metro': 'METRO',
+    'Profile Beaded Inset': 'BEADED',
+}
+
+
+def frame_profile_for_overlay(overlay):
+    """Inset frame profile kind for a catalog overlay ('SQUARE' when the
+    overlay has no milled opening edge)."""
+    return OVERLAY_FRAME_PROFILE.get(overlay, 'SQUARE')
+
+
 # ===========================================================================
 # UI display + filtering layer.
 #

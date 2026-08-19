@@ -763,6 +763,59 @@ def named_edge_run(name):
     return list(build())
 
 
+# ---- Inset face-frame profiles --------------------------------------
+# The frame profile milled around every opening of an inset face frame
+# (Square / Beaded / Metro / Chamfer). Runs share the edge-section space
+# above: u outward from the opening edge into the member, v into the
+# thickness from the front face, ordered face-landing first and ending
+# on the opening edge (u = 0). Proportions read off the inset frame
+# profile drawings at 3/4 stock -- tune the constants if the shop's
+# cutters differ.
+_FRAME_CHAMFER = 0.1875 * _INCH          # 3/16 x 3/16
+_FRAME_METRO_W = 0.1875 * _INCH          # rabbet across the face
+_FRAME_METRO_D = 0.1875 * _INCH          # rabbet into the thickness
+_FRAME_BEAD_R = 0.125 * _INCH            # 1/4 dia half-round bead
+_FRAME_QUIRK_W = 0.0625 * _INCH          # quirk inboard of the bead
+_FRAME_QUIRK_D = 0.125 * _INCH
+# The bead crest sits a hair below the face so the cutter never lands
+# coplanar with the front face (a tangent crest makes a zero-width
+# sliver in the boolean).
+_FRAME_BEAD_DROP = 0.0004
+
+
+def _beaded_frame_run(segs=12):
+    r = _FRAME_BEAD_R
+    cv = r + _FRAME_BEAD_DROP            # bead centre depth from the face
+    qd = max(_FRAME_QUIRK_D, cv)
+    pts = [(2.0 * r + _FRAME_QUIRK_W, 0.0),
+           (2.0 * r + _FRAME_QUIRK_W, qd),
+           (2.0 * r, qd)]
+    if qd > cv + 1e-9:
+        pts.append((2.0 * r, cv))
+    for i in range(1, segs + 1):
+        t = math.pi * i / segs
+        pts.append((r + r * math.cos(t), cv - r * math.sin(t)))
+    # Last point lands on the opening edge (u = 0) at the spring line.
+    pts[-1] = (0.0, cv)
+    return pts
+
+
+_FRAME_PROFILE_BUILDERS = {
+    'CHAMFER': lambda: [(_FRAME_CHAMFER, 0.0), (0.0, _FRAME_CHAMFER)],
+    'METRO': lambda: [(_FRAME_METRO_W, 0.0), (_FRAME_METRO_W, _FRAME_METRO_D),
+                      (0.0, _FRAME_METRO_D)],
+    'BEADED': _beaded_frame_run,
+}
+
+
+def inset_frame_run(kind):
+    """Inset frame profile kind ('SQUARE' / 'BEADED' / 'METRO' /
+    'CHAMFER') -> shaped run [(u, v), ...] in meters, or None for Square /
+    unknown (plain square opening edges)."""
+    build = _FRAME_PROFILE_BUILDERS.get((kind or '').strip().upper())
+    return list(build()) if build else None
+
+
 def named_edge_section(name, thickness):
     """Catalog edge profile name -> sweep section fitted to the door
     thickness, same output space as edge_profile_section (u >= 0 inward

@@ -1803,6 +1803,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         else:
             props.default_door_inset_amount = 0.0
 
+    def frame_profile_kind(self):
+        """Inset face-frame edge profile implied by this style's overlay
+        ('SQUARE' / 'BEADED' / 'METRO' / 'CHAMFER'); the recalc mills it
+        around every opening via door_profiles.inset_frame_run."""
+        return style_options.frame_profile_for_overlay(self.finish_overlay)
+
     def corner_treatment_name(self):
         """This cabinet style's corner treatment pick (ss_corner_treatment,
         or its custom free text). 'Square' / empty mean no cut; the
@@ -2347,6 +2353,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # the finish rides along onto the cut.
                                  'BOTTOM_RAIL_PROFILE_CUTTER',
                                  'CORNER_TREATMENT_CUTTER',
+                                 'FRAME_PROFILE_CUTTER',
                                  'FINISHED_BOTTOM_LED_CUTTER',
                                  'DECORATIVE_CORNER_CUTTER',
                                  'BOX_MITER_CUTTER'):

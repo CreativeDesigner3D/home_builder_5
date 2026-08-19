@@ -976,6 +976,31 @@ CORNER_TREATMENT_MOD_NAMES = {
 CORNER_TREATMENT_FLUSH_ENDS = frozenset((
     'FINISHED', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'))
 
+# ---------------------------------------------------------------------------
+# Inset frame profile: the style overlay's face-frame edge detail (Beaded /
+# Metro / Chamfer; Square = none) milled around every opening. One mitred
+# ring cutter per opening cage, booleaned off every face-frame member whose
+# box overlaps it, so stiles, rails and mid members all pick up the detail
+# with real mitres at the opening corners. See _apply_frame_profile.
+# ---------------------------------------------------------------------------
+PART_ROLE_FRAME_PROFILE_CUTTER = 'FRAME_PROFILE_CUTTER'
+FRAME_PROFILE_MOD_PREFIX = 'Frame Profile '
+FRAME_PROFILE_PART_ROLES = FACE_FRAME_PART_ROLES | frozenset((
+    PART_ROLE_LEFT_REFRIG_STILE, PART_ROLE_RIGHT_REFRIG_STILE))
+
+
+def matrix_to_root(obj, root):
+    """obj's transform relative to root, recomposed from each level's
+    fresh loc/rot/scale (matrix_basis) so it is valid mid-recalc --
+    matrix_local / matrix_world lag until the depsgraph refreshes.
+    Identity when obj is root itself."""
+    m = Matrix.Identity(4)
+    cur = obj
+    while cur is not None and cur is not root:
+        m = cur.matrix_parent_inverse @ cur.matrix_basis @ m
+        cur = cur.parent
+    return m
+
 
 def bottom_rail_profile_dir():
     return os.path.join(os.path.dirname(__file__), 'face_frame_assets', 'profiles')
@@ -3006,6 +3031,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Corner treatment: the style's edge detail on the exposed face
         # frame arrises. No-op + cleanup when Square / unset.
         self._apply_corner_treatment(layout)
+
+        # Inset frame profile: the overlay's edge detail around every
+        # opening. No-op + cleanup for square-edged overlays.
+        self._apply_frame_profile(layout)
 
         # Over-stool leg accessories: shelf and/or towel bar between the legs
         # per the overstool_accessory dropdown. No-op + cleanup when off.
@@ -5590,9 +5619,8 @@ class FaceFrameCabinet(GeoNodeCage):
         'Mirror Z'. axis 'LENGTH' sweeps that arris end to end (stile
         outer edge / rail bottom edge); 'WIDTH' sweeps across the x = 0
         end (a stile's bottom) so the bottom detail wraps the corner.
-        Built in cabinet-local coords via the part's matrix_local (parts
-        are direct children of the root). Returns False (mesh cleared)
-        when the part can't be read."""
+        Built in cabinet-local coords via matrix_to_root. Returns False
+        (mesh cleared) when the part can't be read."""
         part = GeoNodeCutpart(part_obj)
         try:
             length = part.get_input('Length')
@@ -5624,7 +5652,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
             def pt(u, v, s):
                 return Vector((u, ys * s, zs * v))
-        ml = part_obj.matrix_local
+        ml = matrix_to_root(part_obj, self.obj)
         bm = bmesh.new()
         loop0 = [bm.verts.new(ml @ pt(u, v, span[0])) for (u, v) in outline]
         loop1 = [bm.verts.new(ml @ pt(u, v, span[1])) for (u, v) in outline]
@@ -5713,6 +5741,220 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod.object is not cutter:
                 mod.object = cutter
         self._cleanup_corner_treatment(live_keys)
+
+    # =====================================================================
+    # Inset frame profile (Beaded / Metro / Chamfer around every opening)
+    # =====================================================================
+    def _frame_profile_run(self):
+        """Shaped run for the assigned style's inset frame profile, or
+        None (no style / square-edged overlay)."""
+        style_name = self.obj.get('STYLE_NAME')
+        if not style_name:
+            return None
+        try:
+            from .props_hb_face_frame import get_style_props
+            ff = get_style_props()
+            cs = next((c for c in ff.cabinet_styles if c.name == style_name), None)
+            if cs is None:
+                return None
+            from ..common import door_profiles
+            return door_profiles.inset_frame_run(cs.frame_profile_kind())
+        except Exception:
+            return None
+
+    def _frame_profile_cutters(self):
+        return [c for c in self.obj.children
+                if c.get('hb_part_role') == PART_ROLE_FRAME_PROFILE_CUTTER]
+
+    def _ensure_frame_profile_cutter(self, key):
+        for child in self._frame_profile_cutters():
+            if child.get('hb_fp_key') == key:
+                return child
+        name = 'Frame Profile Cutter ' + key
+        mesh = bpy.data.meshes.new(name)
+        cutter = bpy.data.objects.new(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_FRAME_PROFILE_CUTTER
+        cutter['hb_fp_key'] = key
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    @staticmethod
+    def _frame_profile_outline(run):
+        """Removed-material outline around one opening arris: the run plus
+        a padding corner just inside the opening / in front of the face
+        so the boolean never sits on a coplanar face."""
+        eps = inch(0.05)
+        umax = max(u for u, v in run)
+        vmax = max(v for u, v in run)
+        return [(-eps, -eps), (umax, -eps)] + list(run) + [(-eps, vmax)], umax, vmax, eps
+
+    def _position_frame_profile_cutter(self, cutter, bay_obj, rect, run, fft):
+        """Rebuild the cutter as the outline swept around one face-frame
+        opening rectangle with mitred corners, in cabinet-local coords.
+        ``rect`` = (x0, z0, w, h) in BAY-local coords (the bay cage sits
+        on the face frame's BACK plane at local y = 0, so the front face
+        is y = -fft; angled bays carry their rotation in the cage
+        transform). Returns the cutter's cabinet-local bounds (min, max)
+        or None."""
+        x0, z0, w, h = rect
+        if w <= 0.0 or h <= 0.0:
+            cutter.data.clear_geometry()
+            return None
+        outline, umax, vmax, eps = self._frame_profile_outline(run)
+        if umax <= 0.0 or vmax <= 0.0:
+            cutter.data.clear_geometry()
+            return None
+        m = matrix_to_root(bay_obj, self.obj)
+        corners = [(x0, z0), (x0 + w, z0), (x0 + w, z0 + h), (x0, z0 + h)]
+        dirs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        bm = bmesh.new()
+        rings = []
+        lo = [float('inf')] * 3
+        hi = [float('-inf')] * 3
+        for (cx, cz), (dx, dz) in zip(corners, dirs):
+            ring = []
+            for (u, v) in outline:
+                p = m @ Vector((cx + dx * u, -fft + v, cz + dz * u))
+                for i in range(3):
+                    lo[i] = min(lo[i], p[i])
+                    hi[i] = max(hi[i], p[i])
+                ring.append(bm.verts.new(p))
+            rings.append(ring)
+        n = len(outline)
+        for c in range(4):
+            a = rings[c]
+            b = rings[(c + 1) % 4]
+            for k in range(n):
+                j = (k + 1) % n
+                bm.faces.new((a[k], a[j], b[j], b[k]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+        return (Vector(lo), Vector(hi))
+
+    def _part_root_bounds(self, part_obj):
+        """Cabinet-local AABB of a cutpart from its fresh transform and
+        Length / Width / Thickness (mesh-local box x [0, L], y signed by
+        Mirror Y, z signed by Mirror Z), or None."""
+        part = GeoNodeCutpart(part_obj)
+        try:
+            length = part.get_input('Length')
+            width = part.get_input('Width')
+            thickness = part.get_input('Thickness')
+            ys = -1.0 if part.get_input('Mirror Y') else 1.0
+            zs = -1.0 if part.get_input('Mirror Z') else 1.0
+        except Exception:
+            return None
+        m = matrix_to_root(part_obj, self.obj)
+        lo = [float('inf')] * 3
+        hi = [float('-inf')] * 3
+        for x in (0.0, length):
+            for y in (0.0, ys * width):
+                for z in (0.0, zs * thickness):
+                    p = m @ Vector((x, y, z))
+                    for i in range(3):
+                        lo[i] = min(lo[i], p[i])
+                        hi[i] = max(hi[i], p[i])
+        return (Vector(lo), Vector(hi))
+
+    def _cleanup_frame_profile(self, keep_pairs=(), keep_keys=()):
+        """Drop frame-profile booleans not in keep_pairs {(part name,
+        opening key)} and cutters not in keep_keys."""
+        keep_pairs = set(keep_pairs)
+        keep_keys = set(keep_keys)
+        for child in self.obj.children_recursive:
+            for mod in list(child.modifiers):
+                if not mod.name.startswith(FRAME_PROFILE_MOD_PREFIX):
+                    continue
+                key = mod.name[len(FRAME_PROFILE_MOD_PREFIX):]
+                if (child.name, key) in keep_pairs:
+                    continue
+                child.modifiers.remove(mod)
+        for cutter in list(self._frame_profile_cutters()):
+            if cutter.get('hb_fp_key') in keep_keys:
+                continue
+            mesh = cutter.data
+            bpy.data.objects.remove(cutter, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+    def _apply_frame_profile(self, layout):
+        """Mill the overlay's frame profile around every opening: one
+        mitred ring cutter per opening leaf (its cage rect minus the
+        reveals = the face frame opening), booleaned off each visible
+        face-frame member whose box overlaps the ring. Square overlays /
+        no style = full cleanup."""
+        run = self._frame_profile_run()
+        if run is None:
+            self._cleanup_frame_profile()
+            return
+        fft = layout.fft
+        members = []
+        for child in self.obj.children_recursive:
+            if child.hide_viewport:
+                continue
+            if child.get('hb_part_role') not in FRAME_PROFILE_PART_ROLES:
+                continue
+            bounds = self._part_root_bounds(child)
+            if bounds is not None:
+                members.append((child, bounds))
+        tol = 1e-4
+        live_pairs = set()
+        live_keys = set()
+        bay_objs = {}
+        for node in self.obj.children:
+            if node.get(TAG_BAY_CAGE):
+                bay_objs[node.get('hb_bay_index')] = node
+        for bi in range(layout.bay_count):
+            bay_obj = bay_objs.get(bi)
+            if bay_obj is None:
+                continue
+            for leaf in solver.bay_openings(layout, bi)['leaves']:
+                op_obj = bpy.data.objects.get(leaf.get('obj_name') or '')
+                if op_obj is None or op_obj.hide_viewport:
+                    continue
+                # Leaf cage rect minus its reveals = the face frame opening.
+                rl = leaf['reveal_left']
+                rr = leaf['reveal_right']
+                rt = leaf['reveal_top']
+                rb = leaf['reveal_bottom']
+                rect = (leaf['cage_x'] + rl, leaf['cage_z'] + rb,
+                        leaf['cage_dim_x'] - rl - rr,
+                        leaf['cage_dim_z'] - rt - rb)
+                key = op_obj.name
+                cutter = self._ensure_frame_profile_cutter(key)
+                bounds = self._position_frame_profile_cutter(
+                    cutter, bay_obj, rect, run, fft)
+                if bounds is None:
+                    continue
+                clo, chi = bounds
+                hit = False
+                for part_obj, (plo, phi) in members:
+                    if any(plo[i] >= chi[i] - tol or phi[i] <= clo[i] + tol
+                           for i in range(3)):
+                        continue
+                    hit = True
+                    mod_name = FRAME_PROFILE_MOD_PREFIX + key
+                    mod = part_obj.modifiers.get(mod_name)
+                    if mod is None:
+                        mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                        mod.operation = 'DIFFERENCE'
+                        mod.solver = 'EXACT'
+                    mod.material_mode = 'TRANSFER'
+                    if mod.object is not cutter:
+                        mod.object = cutter
+                    live_pairs.add((part_obj.name, key))
+                if hit:
+                    live_keys.add(key)
+        self._cleanup_frame_profile(live_pairs, live_keys)
 
     # =====================================================================
     # Over-stool leg accessories (shelf / towel bar between the legs)
