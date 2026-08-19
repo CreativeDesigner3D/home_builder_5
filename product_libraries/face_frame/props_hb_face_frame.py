@@ -1958,7 +1958,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # the per-side finished_end_condition, not the role alone)
         'TOP', 'BOTTOM',
         'FRONT_STRETCHER', 'REAR_STRETCHER', 'BACK',
-        'TOE_KICK_SUBFRONT',
+        'TOE_KICK_SUBFRONT', 'TOE_KICK_SUBREAR',
         # Leg product back + nailers
         'LEG_BACK', 'LEG_NAILER_LEFT', 'LEG_NAILER_RIGHT',
         # Internal dividers / shelves

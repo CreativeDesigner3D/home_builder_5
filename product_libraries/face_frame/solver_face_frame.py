@@ -918,6 +918,51 @@ def has_kick_subfront(layout):
     return layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'
 
 
+# Clear space held between the cabinet back and the back face of the
+# rear kick beam, so plumbing and wiring can come up through the floor
+# of the cabinet behind it.
+KICK_REAR_BEAM_CLEARANCE = inch(6.0)
+
+
+def kick_subrear_segments(layout):
+    """Rear kick beam segments - the second beam of the sub-base, run
+    parallel to the subfront near the back of the cabinet to carry the
+    back edge of the carcass bottom.
+
+    Same stock, height and segmentation as the subfront, but positioned
+    off the BACK (which stays square even when the front is angled) and
+    held clear of it by KICK_REAR_BEAM_CLEARANCE. Front-only details -
+    the setback and the end insets - don't apply. Skipped on cabinets
+    too shallow for the beam to clear the subfront.
+    """
+    if not has_kick_subfront(layout):
+        return []
+    beam_back_y = -KICK_REAR_BEAM_CLEARANCE
+    beam_front_y = beam_back_y - layout.tkt
+    subfront_back_y = -layout.dim_y + layout.tks + layout.tkt
+    if beam_front_y <= subfront_back_y:
+        return []
+    segments = []
+    for start, end in _compute_segments(layout, _kick_subfront_passthrough):
+        first_bay = layout.bays[start]
+        if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
+            continue
+        if first_bay.get('floating_bay'):
+            continue
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          beam_back_y,
+            'z':          0.0,
+            'length':     right_x - left_x,
+            'width':      first_bay['kick_height'],
+            'thickness':  layout.tkt,
+        })
+    return segments
+
+
 def _kick_subfront_passthrough(layout, gap_index):
     """True if a single kick subfront spans gap_index uninterrupted.
     Breaks where adjacent bays have different kick_heights, where

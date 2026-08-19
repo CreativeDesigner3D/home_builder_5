@@ -132,6 +132,9 @@ PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
 # area light itself renders as nothing).
 PART_ROLE_FB_LED_STRIP = 'FINISHED_BOTTOM_LED_STRIP'
 PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
+# Second beam of the sub-base, run near the back to carry the back
+# edge of the carcass bottom (see solver.kick_subrear_segments).
+PART_ROLE_TOE_KICK_SUBREAR = 'TOE_KICK_SUBREAR'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
 PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
@@ -822,7 +825,7 @@ PIPE_CHASE_PANEL_THICKNESS = inch(0.75)
 PIPE_CHASE_CUT_PART_ROLES = frozenset({
     PART_ROLE_BACK, PART_ROLE_FINISHED_BACK,
     PART_ROLE_BOTTOM, PART_ROLE_TOP,
-    PART_ROLE_REAR_STRETCHER,
+    PART_ROLE_REAR_STRETCHER, PART_ROLE_TOE_KICK_SUBREAR,
     PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
     PART_ROLE_MID_DIVISION,
     PART_ROLE_BAY_SHELF,
@@ -2331,6 +2334,8 @@ class FaceFrameCabinet(GeoNodeCage):
             if self._has_toe_kick():
                 kick_subfront_segs = solver.kick_subfront_segments(layout)
                 self._reconcile_kick_subfronts(kick_subfront_segs)
+                kick_subrear_segs = solver.kick_subrear_segments(layout)
+                self._reconcile_kick_subrears(kick_subrear_segs)
                 finish_kick_segs = solver.finish_kick_segments(layout)
                 self._reconcile_finish_kicks(finish_kick_segs)
                 self._ensure_corner_finish_kick(
@@ -2363,8 +2368,10 @@ class FaceFrameCabinet(GeoNodeCage):
                     kind='END', mirror_z=False)
             else:
                 kick_subfront_segs = []
+                kick_subrear_segs = []
                 finish_kick_segs = []
                 self._reconcile_kick_subfronts([])
+                self._reconcile_kick_subrears([])
                 self._reconcile_finish_kicks([])
 
             # Blind panels exist on every carcass-bearing cabinet (Base /
@@ -2402,12 +2409,14 @@ class FaceFrameCabinet(GeoNodeCage):
             front_stretcher_segs = []
             rear_stretcher_segs = []
             kick_subfront_segs = []
+            kick_subrear_segs = []
             finish_kick_segs = []
 
         top_seg_by_start = {s['start_bay']: s for s in top_segments}
         bot_seg_by_start = {s['start_bay']: s for s in bottom_segments}
         drop_filler_by_key = {(s['bay'], s['side']): s for s in drop_filler_segs}
         kick_seg_by_start = {s['start_bay']: s for s in kick_subfront_segs}
+        rear_seg_by_start = {s['start_bay']: s for s in kick_subrear_segs}
         finish_kick_seg_by_start = {s['start_bay']: s for s in finish_kick_segs}
         carc_bot_by_start = {s['start_bay']: s for s in carcass_bottom_segs}
         carc_back_by_start = {s['start_bay']: s for s in carcass_back_segs}
@@ -2660,6 +2669,15 @@ class FaceFrameCabinet(GeoNodeCage):
 
             elif role == PART_ROLE_TOE_KICK_SUBFRONT:
                 seg = kick_seg_by_start.get(child.get('hb_segment_start_bay'))
+                if seg is None:
+                    continue
+                child.location = (seg['x'], seg['y'], seg['z'])
+                part.set_input('Length', seg['length'])
+                part.set_input('Width', seg['width'])
+                part.set_input('Thickness', seg['thickness'])
+
+            elif role == PART_ROLE_TOE_KICK_SUBREAR:
+                seg = rear_seg_by_start.get(child.get('hb_segment_start_bay'))
                 if seg is None:
                     continue
                 child.location = (seg['x'], seg['y'], seg['z'])
@@ -8288,6 +8306,47 @@ class FaceFrameCabinet(GeoNodeCage):
         kick.obj.rotation_euler.x = math.radians(90)
         kick.set_input('Mirror Z', True)
         return kick
+
+    def _reconcile_kick_subrears(self, segments):
+        """Match Toe Kick Rear Beam children against segments. Same
+        three-pass delete/match/create as _reconcile_kick_subfronts.
+        """
+        wanted_starts = {seg['start_bay'] for seg in segments}
+
+        to_delete = []
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_TOE_KICK_SUBREAR:
+                continue
+            if child.get('hb_segment_start_bay') not in wanted_starts:
+                to_delete.append(child)
+        for child in to_delete:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+        existing_starts = {
+            child.get('hb_segment_start_bay')
+            for child in self.obj.children
+            if child.get('hb_part_role') == PART_ROLE_TOE_KICK_SUBREAR
+        }
+
+        for seg in segments:
+            if seg['start_bay'] in existing_starts:
+                continue
+            self._create_kick_subrear_part(seg['start_bay'])
+
+    def _create_kick_subrear_part(self, start_bay_index):
+        """Create one rear kick beam part keyed to its segment. Same
+        orientation as the subfront: rotation X=90 + Mirror Z so
+        Length=X, Width=Z, Thickness extends toward the cabinet front.
+        """
+        beam = CabinetPart()
+        beam.create(f'Toe Kick Rear Beam {start_bay_index + 1}')
+        beam.obj.parent = self.obj
+        beam.obj['hb_part_role'] = PART_ROLE_TOE_KICK_SUBREAR
+        beam.obj['CABINET_PART'] = True
+        beam.obj['hb_segment_start_bay'] = start_bay_index
+        beam.obj.rotation_euler.x = math.radians(90)
+        beam.set_input('Mirror Z', True)
+        return beam
 
     def _reconcile_finish_kicks(self, segments):
         """Match Finish Toe Kick children against segments. Three-pass
