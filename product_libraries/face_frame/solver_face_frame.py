@@ -921,7 +921,18 @@ def has_kick_subfront(layout):
 # Clear space held between the cabinet back and the back face of the
 # rear kick beam, so plumbing and wiring can come up through the floor
 # of the cabinet behind it.
-KICK_REAR_BEAM_CLEARANCE = inch(6.0)
+KICK_REAR_BEAM_CLEARANCE = inch(5.0)
+# Cabinets shallower than this have no room for that clearance, so the
+# beam pulls back tight against the back panel instead, landing in line
+# with the carcass bottom and the stretchers above it.
+KICK_REAR_BEAM_SHALLOW_DEPTH = inch(15.0)
+
+
+def kick_rear_beam_clearance(layout):
+    """Gap between the cabinet back and the rear beam's back face."""
+    if layout.dim_y < KICK_REAR_BEAM_SHALLOW_DEPTH - inch(0.01):
+        return back_thickness(layout)
+    return KICK_REAR_BEAM_CLEARANCE
 
 
 def kick_subrear_segments(layout):
@@ -931,18 +942,20 @@ def kick_subrear_segments(layout):
 
     Same stock, height and segmentation as the subfront, but positioned
     off the BACK (which stays square even when the front is angled) and
-    held clear of it by KICK_REAR_BEAM_CLEARANCE. Front-only details -
-    the setback and the end insets - don't apply. Skipped on cabinets
-    too shallow for the beam to clear the subfront.
+    held clear of it by kick_rear_beam_clearance. The front-only setback
+    doesn't apply, but the end insets do - the beam is captured between
+    the kick returns just like the subfront is. Skipped on cabinets too
+    shallow for the beam to clear the subfront.
     """
     if not has_kick_subfront(layout):
         return []
-    beam_back_y = -KICK_REAR_BEAM_CLEARANCE
+    beam_back_y = -kick_rear_beam_clearance(layout)
     beam_front_y = beam_back_y - layout.tkt
     subfront_back_y = -layout.dim_y + layout.tks + layout.tkt
     if beam_front_y <= subfront_back_y:
         return []
     segments = []
+    last_bay = layout.bay_count - 1
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
         if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
@@ -950,6 +963,13 @@ def kick_subrear_segments(layout):
         if first_bay.get('floating_bay'):
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
+        # Same end treatment as the subfront: an inset end grows a
+        # return that runs the full depth of the sub-base, so the beam
+        # butts against the return's inboard face rather than the side.
+        if start == 0 and layout.kick_inset_left > 0:
+            left_x = layout.kick_inset_left + layout.tkt
+        if end == last_bay and layout.kick_inset_right > 0:
+            right_x = layout.dim_x - layout.kick_inset_right - layout.tkt
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
