@@ -2226,14 +2226,60 @@ class FaceFrameCabinet(GeoNodeCage):
             ff_height = (bp.height - bp.top_rail_width
                          - eff_bottom - bp.kick_height)
             ff_width = bp.width
-            self._redistribute_split_node(root, ff_width, ff_height, cab_props)
+            self._redistribute_split_node(root, ff_width, ff_height, cab_props,
+                                          bay_props=bp, is_bay_root=True)
+
+    def _splitter_widths_for(self, sp, children, n_splitters,
+                             bay_props, is_bay_root):
+        """Per-member splitter widths for the size math, matching what
+        the solver actually builds.
+
+        The node's scalar splitter_width is only the default: a member
+        with an active per-index entry holds its own width, and the
+        member capping a bay that dropped its bottom rail, whose lowest
+        child is a frontless opening, is built as that bay's BOTTOM RAIL
+        rather than a mid rail (see solver._walk_tree). Distributing on
+        the scalar alone left the stored opening sizes disagreeing with
+        the built daylight wherever either rule applies -- an appliance
+        cabinet whose lowest zone runs open to the floor reported its
+        door opening one rail-difference short.
+        """
+        ov = sp.splitter_widths
+        widths = [
+            (ov[i].width if i < len(ov) and ov[i].active
+             else sp.splitter_width)
+            for i in range(n_splitters)
+        ]
+        if not (n_splitters and sp.axis == 'H' and is_bay_root
+                and bay_props is not None
+                and getattr(bay_props, 'remove_bottom', False)):
+            return widths
+        last = children[-1]
+        if not last.get(TAG_OPENING_CAGE):
+            return widths
+        if (last.face_frame_opening.front_type
+                not in solver._FRONTLESS_FRONT_TYPES):
+            return widths
+        i = n_splitters - 1
+        if i < len(ov) and ov[i].remove_member:
+            return widths
+        bottom_rail = bay_props.bottom_rail_width or 0.0
+        if bottom_rail > 0.0:
+            widths[i] = bottom_rail
+        return widths
 
     def _redistribute_split_node(self, node, parent_ff_width,
-                                 parent_ff_height, cab_props):
+                                 parent_ff_height, cab_props,
+                                 bay_props=None, is_bay_root=False):
         """If `node` is a split, redistribute among its children and
         recurse into each child. The parent_ff_* args describe the FF
         opening dim of the rect this node occupies (which is what its
         children share). Leaves end the recursion.
+
+        `bay_props` / `is_bay_root` describe where this node sits so the
+        splitter widths can follow the same rules the solver builds by
+        (see _splitter_widths_for); only the bay's own root node can
+        carry the bottom-rail member.
         """
         if not node.get(TAG_SPLIT_NODE):
             return
@@ -2248,8 +2294,9 @@ class FaceFrameCabinet(GeoNodeCage):
 
         is_h = (sp.axis == 'H')
         parent_dim = parent_ff_height if is_h else parent_ff_width
-        splitter_w = sp.splitter_width
         n_splitters = len(children) - 1
+        splitter_total = sum(self._splitter_widths_for(
+            sp, children, n_splitters, bay_props, is_bay_root))
 
         locked_total = 0.0
         unlocked = []
@@ -2269,7 +2316,7 @@ class FaceFrameCabinet(GeoNodeCage):
             solver.VANITY_DOOR_EXTRA_WIDTH for c in unlocked
             if c.get('SIZE_ROLE') == 'VANITY_DOOR'
         )
-        remainder = parent_dim - n_splitters * splitter_w - locked_total
+        remainder = parent_dim - splitter_total - locked_total
         share = ((remainder - extra_total) / len(unlocked)) if unlocked else 0.0
 
         _DISTRIBUTING_WIDTHS.add(id(self.obj))
@@ -2287,7 +2334,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 child_w, child_h = parent_ff_width, size_val
             else:
                 child_w, child_h = size_val, parent_ff_height
-            self._redistribute_split_node(c, child_w, child_h, cab_props)
+            self._redistribute_split_node(c, child_w, child_h, cab_props,
+                                          bay_props=bay_props)
 
     def _read_node_size(self, obj):
         """Return (size, unlock_size) for any tree node (leaf opening
@@ -11973,13 +12021,14 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         cab_props.toe_kick_height = 0.0
         # Raise the back so it only spans the door zone above the
         # refrigerator. Mirrors the standard back z_origin formula
-        # (top of rail - mt) anchored at the top of the mid rail above
-        # the appliance opening: kick + appliance + mid rail - mt. No
-        # bottom_rail term: the bays carry remove_bottom (set below),
-        # so the appliance opening starts at the kick top with no rail
-        # below it. Captured at create-time; the user can tweak from
-        # the cabinet prompts after (same formula in
-        # _update_refrigerator_opening_height).
+        # (top of rail - mt) anchored at the top of the rail above the
+        # appliance opening: kick + appliance + rail - mt. That rail is
+        # the cabinet's BOTTOM rail, not a mid rail: the bays carry
+        # remove_bottom (set below), so the appliance opening runs open
+        # to the kick and the member capping it is built as the bay's
+        # bottom rail (see solver._walk_tree). Captured at create-time;
+        # the user can tweak from the cabinet prompts after (same
+        # formula in _update_refrigerator_opening_height).
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             # Seed the per-cabinet opening height from the scene default
@@ -11990,7 +12039,7 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
             cab_props.back_bottom_inset = (
                 cab_props.toe_kick_height
                 + scene.hb_face_frame.refrigerator_height
-                + cab_props.bay_mid_rail_width
+                + cab_props.bottom_rail_width
                 - cab_props.material_thickness
             )
         self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
