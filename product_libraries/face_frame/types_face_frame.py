@@ -2946,6 +2946,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 # no notch modifiers and panel['notch_active'] is False
                 # there anyway).
                 self._update_mid_div_notches(child, panel)
+                # Toe-kick notch for a division that finishes a void
+                # down to the floor.
+                self._drive_mid_div_floor_notch(child, layout, msi, panel)
 
             elif role == PART_ROLE_PARTITION_SKIN:
                 msi = child.get('hb_mid_stile_index', 0)
@@ -8511,6 +8514,42 @@ class FaceFrameCabinet(GeoNodeCage):
             kick = layout.bays[neighbor_idx]['kick_height']
             setback = self.obj.face_frame_cabinet.toe_kick_setback
             route = skin['thickness']
+        else:
+            kick = setback = route = 0.0
+        ng = mod.node_group
+        for input_name, value in (('X', kick), ('Y', setback),
+                                  ('Route Depth', route)):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
+
+    def _drive_mid_div_floor_notch(self, div_obj, layout, gap_index, panel):
+        """Drive a mid division's 'Notch Front Bottom' modifier so a
+        division that runs to the floor clears the toe-kick recess at the
+        cabinet front.
+
+        The floor drop happens where a neighbouring bay has its carcass
+        removed and this division becomes the void's side wall; without
+        the notch it stands proud of the kick beside it. Gating lives in
+        solver.mid_division_floor_notch. Added lazily so divisions built
+        before notch support upgrade in place. Flip X=False (bottom) /
+        Flip Y=True (front) match the partition skin, which shares the
+        mid-division orientation."""
+        mod = div_obj.modifiers.get('Notch Front Bottom')
+        if mod is None:
+            cpm = GeoNodeCutpart(div_obj).add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Front Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', True)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        active, kick = solver.mid_division_floor_notch(layout, gap_index)
+        if active:
+            setback = self.obj.face_frame_cabinet.toe_kick_setback
+            route = panel['thickness']
         else:
             kick = setback = route = 0.0
         ng = mod.node_group

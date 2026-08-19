@@ -2957,6 +2957,34 @@ def mid_division_front_notch_active(layout, gap_index):
     return _front_stretcher_passthrough(layout, gap_index)
 
 
+def mid_division_floor_notch(layout, gap_index):
+    """``(active, kick_height)`` for the front-bottom toe-kick notch on a
+    mid division that runs to the floor.
+
+    A division flanking a bay with its carcass removed becomes that
+    void's side wall and drops to the floor, where it stands proud of
+    the recessed kick beside it unless it is notched - the same cut a
+    carcass side gets. A gap whose mid stile is itself dropped to the
+    floor stays uncut: the stile already encloses the kick corner from
+    the front (same reasoning as the side notch).
+
+    The kick height comes from the neighbour that still builds a kick -
+    the removed bay carries none. Inactive when neither does.
+    """
+    if not (layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'):
+        return (False, 0.0)
+    if gap_index >= len(layout.mid_stiles):
+        return (False, 0.0)
+    if not _void_gap(layout, gap_index):
+        return (False, 0.0)
+    if layout.mid_stiles[gap_index].get('to_floor'):
+        return (False, 0.0)
+    for idx in (gap_index, gap_index + 1):
+        if not _end_bay_drops_kick(layout, idx):
+            return (True, layout.bays[idx]['kick_height'])
+    return (False, 0.0)
+
+
 def mid_division_panels(layout, gap_index):
     """Per-gap mid-division panel data.
 
