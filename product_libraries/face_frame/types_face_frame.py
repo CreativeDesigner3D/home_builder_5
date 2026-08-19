@@ -15153,7 +15153,15 @@ def merge_cabinets(anchor, absorbed, side):
         a_props.mid_stile_widths.clear()
         for w, ulk, ext_up, ext_dn in merged_mids:
             entry = a_props.mid_stile_widths.add()
-            entry.width = w
+            # The merge keeps the anchor's cabinet props, so the merged
+            # cabinet has ONE mid-stile default. A width carried over
+            # from the absorbed cabinet can predate its own sizing pass
+            # (a cabinet merged on the drop is consumed before anything
+            # writes its style widths, so its bays still hold the
+            # property default) and would read as an unexplained wider
+            # stile on the merged front. Only a width the user unlocked
+            # is a real override and survives verbatim.
+            entry.width = w if ulk else a_props.bay_mid_stile_width
             entry.unlock = ulk
             entry.extend_up_amount = ext_up
             entry.extend_down_amount = ext_dn
