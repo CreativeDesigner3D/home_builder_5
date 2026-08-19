@@ -9151,6 +9151,17 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=True,
     )  # type: ignore
 
+    auto_join_cabinets: BoolProperty(
+        name="Auto Join",
+        description=(
+            "Join a newly placed cabinet into the abutting cabinet "
+            "beside it when the two match. Turn off to keep every "
+            "cabinet a separate unit - a cabinet placed at a different "
+            "depth to its neighbour, for instance"
+        ),
+        default=True,
+    )  # type: ignore
+
     cabinet_placement_holdoff: FloatProperty(
         name="Cabinet Placement Hold-off",
         description=(
@@ -9754,6 +9765,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
             ("Base", "Base"), ("Tall", "Tall"), ("Upper", "Upper"),
             ("Lap", "Lap Drawer"), ("Stacked", "Upper Stacked"),
         ])
+        layout.prop(self, 'auto_join_cabinets')
 
     # =====================================================================
     # UI: corner cabinet library

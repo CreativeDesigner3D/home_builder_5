@@ -1046,7 +1046,14 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     "Compatible" is everything merge_cabinets pre-flights: same height
     / depth / world Z, matching orientation, abutting within tolerance,
     no corner type. Prefers the left neighbor when both sides match.
+
+    The scene's Auto Join toggle turns the whole thing off, for runs
+    where abutting cabinets are meant to stay separate units. Joining
+    two cabinets by hand from the right-click menu still works.
     """
+    if not context.scene.hb_face_frame.auto_join_cabinets:
+        return None
+
     # Tall and refrigerator cabinets (both cabinet_type='TALL') don't
     # auto-merge - heights are visually distinct so adjacent placement
     # is usually intentional, not a join. Manual join via the
