@@ -1245,6 +1245,14 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
                 sub.prop(item, 'shelf_nosing_style', text="Nosing")
                 if item.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
                     sub.prop(item, 'shelf_nosing_height', text="Nosing Height")
+                # Jobs usually run one nosing throughout, so offer a
+                # one-click push onto every shelf in the room.
+                apply_nose = sub.operator(
+                    "hb_face_frame.apply_shelf_nosing_to_room",
+                    text="Apply to Room", icon='DUPLICATE',
+                )
+                apply_nose.index = i
+                apply_nose.target_name = target_name
         elif item.kind == 'PULLOUT_SHELF':
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)

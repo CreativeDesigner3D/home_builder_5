@@ -2410,6 +2410,82 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
+    """Push the nosing profile on one shelf item onto every adjustable /
+    half-depth shelf in the room. Shelf nosing is otherwise set item by
+    item, which is a lot of clicks on a job that runs one profile
+    throughout."""
+    bl_idname = "hb_face_frame.apply_shelf_nosing_to_room"
+    bl_label = "Apply to Room"
+    bl_description = ("Apply this nosing profile and height to every "
+                      "adjustable and half-depth shelf in the room")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(
+        name="Index",
+        description="Source item index (-1 uses the active index)",
+        default=-1,
+    )  # type: ignore
+
+    target_name: bpy.props.StringProperty(
+        name="Target Name",
+        description="Object name to target instead of active_object",
+        default="",
+    )  # type: ignore
+
+    def execute(self, context):
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            return {'CANCELLED'}
+        target_props = _interior_items_target(target)
+        if target_props is None:
+            return {'CANCELLED'}
+        idx = (self.index if self.index >= 0
+               else target_props.interior_items_index)
+        if not (0 <= idx < len(target_props.interior_items)):
+            return {'CANCELLED'}
+        source = target_props.interior_items[idx]
+        style = source.shelf_nosing_style
+        height = source.shelf_nosing_height
+
+        # Snapshot first: each write recalcs the cabinet, and recalcs
+        # can add / remove scene objects under a live iteration.
+        objects = list(context.scene.objects)
+        roots = []
+        with types_face_frame.suspend_recalc():
+            for obj in objects:
+                if not (obj.get(types_face_frame.TAG_OPENING_CAGE)
+                        or obj.get(types_face_frame.TAG_INTERIOR_REGION)):
+                    continue
+                # Skips opening cages whose items moved onto a tree -
+                # their flat collection is dead and never read.
+                item_props = _interior_items_target(obj)
+                if item_props is None:
+                    continue
+                changed = False
+                for item in item_props.interior_items:
+                    if item.kind not in {'ADJUSTABLE_SHELF',
+                                         'HALF_DEPTH_SHELF'}:
+                        continue
+                    if (item.shelf_nosing_style == style
+                            and abs(item.shelf_nosing_height - height) < 1e-9):
+                        continue
+                    item.shelf_nosing_style = style
+                    item.shelf_nosing_height = height
+                    changed = True
+                if not changed:
+                    continue
+                root = types_face_frame.find_cabinet_root(obj)
+                if root is not None and root not in roots:
+                    roots.append(root)
+
+        for root in roots:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        self.report({'INFO'},
+                    f"Shelf nosing applied to {len(roots)} cabinet(s)")
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_add_rollout_box(bpy.types.Operator):
     """Append a drawer box to a rollout stack. Targets the interior item
     at item_index on the resolved opening / region. New boxes default to
@@ -6148,6 +6224,7 @@ classes = (
     hb_face_frame_OT_mid_stile_prompts,
     hb_face_frame_OT_add_interior_item,
     hb_face_frame_OT_remove_interior_item,
+    hb_face_frame_OT_apply_shelf_nosing_to_room,
     hb_face_frame_OT_add_rollout_box,
     hb_face_frame_OT_remove_rollout_box,
     hb_face_frame_OT_add_interior_division,
