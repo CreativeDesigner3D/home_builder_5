@@ -5890,6 +5890,12 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         if 0 <= idx < len(scene_props.cabinet_styles):
             scene_props.cabinet_styles[idx].assign_style_to_cabinet(cab_obj)
 
+        # Resolve the arm ends the same way a straight placement does:
+        # an end nothing meets is open to the room and gets the default
+        # finished end, an end a run closes goes back to unfinished -
+        # on this cabinet and on the runs it just met.
+        exposure.recalc_with_neighbors(cab_obj)
+
         for o in context.selected_objects:
             o.select_set(False)
         cab_obj.select_set(True)

@@ -306,6 +306,67 @@ def _corner_sink_closing_neighbors(sink_obj, side):
     return hits
 
 
+# ---------------------------------------------------------------------------
+# Corner cabinet arm ends
+# ---------------------------------------------------------------------------
+
+# A corner arm meets a neighbouring run end to end; placement lands the
+# two ends on the same point and the tolerance absorbs manual nudges.
+# Matches the tolerance the placement stile-type detection uses for the
+# same meeting points.
+_CORNER_MEET_TOL = units.inch(1.0)
+
+
+def _is_corner_cabinet(obj):
+    """True for the L-shaped corner cabinets (pie cut / diagonal). Their
+    open ends are the two arm ends sitting on different walls, so the
+    axis-aligned sibling scan can't reason about them.
+    """
+    cab = getattr(obj, 'face_frame_cabinet', None)
+    if cab is None:
+        return False
+    return getattr(cab, 'corner_type', 'NONE') != 'NONE'
+
+
+def _end_meet_point(obj, side):
+    """World-XY point where obj's given end meets an abutting run - that
+    end's corner on the wall line. A straight carcass meets at its back
+    corner (local (0, 0) left, (width, 0) right); a corner cabinet's
+    left arm runs out along -Y and meets at (0, -depth), its right arm
+    at (width, 0).
+    """
+    cab = obj.face_frame_cabinet
+    if side == 'left':
+        local = (Vector((0.0, -cab.depth, 0.0)) if _is_corner_cabinet(obj)
+                 else Vector((0.0, 0.0, 0.0)))
+    else:
+        local = Vector((cab.width, 0.0, 0.0))
+    w = obj.matrix_world @ local
+    return Vector((w.x, w.y))
+
+
+def _meeting_end_neighbor(cab_obj, side, corners_only=False):
+    """Carcass cabinet whose own end meets cab_obj's given end, or None.
+
+    Works across parent walls: a corner cabinet is parented to one wall
+    while its other arm runs along the perpendicular one, so neither run
+    shows up in the other's sibling scan. Z-spans must overlap so an
+    upper never reads as covering the base below it.
+    """
+    pt = _end_meet_point(cab_obj, side)
+    for obj in bpy.context.scene.objects:
+        if obj is cab_obj or not _is_face_frame_carcass(obj):
+            continue
+        if corners_only and not _is_corner_cabinet(obj):
+            continue
+        if not _zspans_overlap(cab_obj, obj):
+            continue
+        for other_side in ('left', 'right'):
+            if (_end_meet_point(obj, other_side) - pt).length <= _CORNER_MEET_TOL:
+                return obj
+    return None
+
+
 def _side_exposure(cab_obj, side):
     """Returns (exposure_state, dishwasher_adjacent, wall_edge).
 
@@ -315,6 +376,16 @@ def _side_exposure(cab_obj, side):
     and EXPOSED never carry wall_edge=True since the early-return
     happens before the neighbor loop.
     """
+    # Corner cabinets are L-shaped and their two open ends sit on
+    # different walls. The sibling scan below only ever sees one wall's
+    # children, and it reads the left arm end as the wall start, so
+    # corners resolve by meeting point instead: an end another run
+    # meets is covered, an end nothing meets is open to the room.
+    if _is_corner_cabinet(cab_obj):
+        if _meeting_end_neighbor(cab_obj, side) is not None:
+            return ('UNEXPOSED', False, False)
+        return ('EXPOSED', False, False)
+
     parent = cab_obj.parent
     if parent is None:
         # Free-standing (island / peninsula): an end flush against a
@@ -372,6 +443,11 @@ def _side_exposure(cab_obj, side):
         # faces the closed corner recess) - unfinished, neighbor
         # scribe.
         if _abutting_corner_sink(cab_obj, side) is not None:
+            return ('UNEXPOSED', False, False)
+        # A corner cabinet reaching over from the perpendicular wall is
+        # not a sibling either, so its arm end closing this side never
+        # shows up in the scan above.
+        if _meeting_end_neighbor(cab_obj, side, corners_only=True) is not None:
             return ('UNEXPOSED', False, False)
         return ('EXPOSED', False, False)
 
@@ -713,6 +789,13 @@ def recalc_with_neighbors(cab_obj):
                 sink = _abutting_corner_sink(cab_obj, side)
                 if sink is not None:
                     recalc_cabinet_exposure(sink)
+        # Corner cabinets meet runs on the perpendicular wall, which the
+        # sibling scan can't reach from either end.
+        for side in ('left', 'right'):
+            neighbor = _meeting_end_neighbor(
+                cab_obj, side, corners_only=not _is_corner_cabinet(cab_obj))
+            if neighbor is not None:
+                recalc_cabinet_exposure(neighbor)
 
 
 def recalc_after_appliance_placement(app_obj):
