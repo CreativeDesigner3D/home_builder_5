@@ -1369,11 +1369,11 @@ class FaceFrameCabinet(GeoNodeCage):
         cab_props.cabinet_type = self.default_cabinet_type
 
         # Type-specific top scribe defaults: amount the carcass top is
-        # held down from bay_top_z. Uppers get a small cosmetic gap;
-        # talls get a larger one for ceiling scribing on the side.
+        # held down from bay_top_z. Uppers and talls both reserve a 1/2
+        # band for scribing to the ceiling; bases get none.
         # Sides drop with the carcass top unless flagged finished.
         cab_props.top_scribe = {
-            'UPPER': inch(0.125),
+            'UPPER': inch(0.5),
             'TALL':  inch(0.5),
         }.get(self.default_cabinet_type, 0.0)
 

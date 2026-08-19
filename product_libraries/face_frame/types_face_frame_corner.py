@@ -921,7 +921,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if angled is not None:
             angled.hide_viewport = False
             angled.hide_render = False
-            back_height = height - z_back_floor - t
+            back_height = (height - z_back_floor - t
+                           - max(cab_props.top_scribe, 0.0))
             angled.location = (clip, 0.0, z_back_floor)
             angled.rotation_euler.z = math.radians(-45.0)
             _set_mod_inputs(angled, angled.home_builder.mod_name, (
@@ -1699,7 +1700,17 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
 
         z_back_floor = (kick_height + brw) if has_kick else brw
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
-        z_top = height - t
+        # Top scribe holds the carcass top down from the cabinet top,
+        # leaving the face frame top rail to be trimmed on site. Sides
+        # and backs follow the top down; an end flagged FINISHED keeps
+        # its visible face full height - same rule as the straight
+        # cabinet's Top Scribe.
+        top_scribe = max(cab_props.top_scribe, 0.0)
+        z_top = height - t - top_scribe
+        l_top_drop = (0.0 if cab_props.left_finished_end_condition
+                      == 'FINISHED' else top_scribe)
+        r_top_drop = (0.0 if cab_props.right_finished_end_condition
+                      == 'FINISHED' else top_scribe)
 
         # Side panels run to the floor (NOTCH / FLUSH / upper) or float by
         # the kick height (FLOATING / LOOSE / LOOSE_FLUSH leave the kick
@@ -1750,7 +1761,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # Right Back's room face (Y=-t), so Width shrinks by
             # l_scribe.
             left_back.location = (0.0, -t, z_back_floor)
-            back_height = height - z_back_floor - t
+            back_height = height - z_back_floor - t - top_scribe
             _set_mod_inputs(left_back, left_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', depth - t * 2 - fflo - l_scribe),
@@ -1763,7 +1774,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # and Right Side's shifted back face (X=width-t-ffro-
             # r_scribe), so Width shrinks by r_scribe.
             right_back.location = (0.0, 0.0, z_back_floor)
-            back_height = height - z_back_floor - t
+            back_height = height - z_back_floor - t - top_scribe
             _set_mod_inputs(right_back, right_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', width - t - ffro - r_scribe),
@@ -1778,7 +1789,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # so long as l_scribe < lsw - t. Width unchanged.
             left_side.location = (0.0, -depth + fflo + l_scribe, side_z)
             _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
-                ('Length', side_len),
+                ('Length', side_len - l_top_drop),
                 ('Width', ld - fft),
                 ('Thickness', t),
             ))
@@ -1799,7 +1810,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # Width unchanged.
             right_side.location = (width - ffro - r_scribe, 0.0, side_z)
             _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
-                ('Length', side_len),
+                ('Length', side_len - r_top_drop),
                 ('Width', rd - fft),
                 ('Thickness', t),
             ))
@@ -2633,7 +2644,15 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # standard upper bay's remove_bottom behavior.
             z_back_floor = kick_height if has_kick else 0.0
         z_bottom = (kick_height + brw - t) if has_kick else (brw - t)
-        z_top = height - t
+        # Top scribe: see _recalculate_pie_cut - the carcass top, sides
+        # and backs drop by this amount while the face frame stays full
+        # height for site trimming.
+        top_scribe = max(cab_props.top_scribe, 0.0)
+        z_top = height - t - top_scribe
+        l_top_drop = (0.0 if cab_props.left_finished_end_condition
+                      == 'FINISHED' else top_scribe)
+        r_top_drop = (0.0 if cab_props.right_finished_end_condition
+                      == 'FINISHED' else top_scribe)
 
         parts = _children_by_corner_role(self.obj)
 
@@ -2663,7 +2682,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         left_back = parts.get(PART_ROLE_CORNER_LEFT_BACK)
         if left_back is not None:
             left_back.location = (0.0, -t, z_back_floor)
-            back_height = height - z_back_floor - t
+            back_height = height - z_back_floor - t - top_scribe
             _set_mod_inputs(left_back, left_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', depth - t * 2 - fflo),
@@ -2673,7 +2692,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_back = parts.get(PART_ROLE_CORNER_RIGHT_BACK)
         if right_back is not None:
             right_back.location = (0.0, 0.0, z_back_floor)
-            back_height = height - z_back_floor - t
+            back_height = height - z_back_floor - t - top_scribe
             _set_mod_inputs(right_back, right_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', width - t - ffro),
@@ -2687,7 +2706,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if left_side is not None:
             left_side.location = (0.0, -depth + fflo, side_z)
             _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
-                ('Length', side_len),
+                ('Length', side_len - l_top_drop),
                 ('Width', ld + fflo),
                 ('Thickness', t),
             ))
@@ -2705,7 +2724,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if right_side is not None:
             right_side.location = (width - ffro, 0.0, side_z)
             _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
-                ('Length', side_len),
+                ('Length', side_len - r_top_drop),
                 ('Width', rd + ffro),
                 ('Thickness', t),
             ))
