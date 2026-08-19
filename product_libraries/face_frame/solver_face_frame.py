@@ -276,7 +276,14 @@ class FaceFrameLayout:
         # Mid stile widths from the cabinet's collection (one per gap)
         ms_coll = cab.mid_stile_widths
         n_gaps = max(0, self.bay_count - 1)
-        default_ms = inch(2.0)
+        # A gap with no entry of its own falls back to the cabinet's
+        # own mid-stile default, which the style apply keeps in sync.
+        # A hardcoded 2in here put un-overridden 2in mid stiles on
+        # cabinets whose style runs a different width -- the style
+        # cascade only ever touches entries that exist, so a gap the
+        # collection never grew an entry for stayed at the constant no
+        # matter what style was assigned.
+        default_ms = cab.bay_mid_stile_width
         self.mid_stiles = []
         for i in range(n_gaps):
             if i < len(ms_coll):
