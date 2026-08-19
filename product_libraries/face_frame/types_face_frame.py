@@ -493,6 +493,19 @@ APPLIED_PANEL_END_TYPES = frozenset({'PANELED', 'FALSE_FF', 'WORKING_FF'})
 # openings' fronts while a same-condition recalc preserves overrides.
 TAG_APPLIED_PANEL_CONDITION = 'hb_applied_panel_condition'
 
+# Stamped on a working face frame panel root: the depth its drawer and
+# pullout boxes may run back into the host cabinet's cavity. The panel
+# itself is only the 3/4 reserve deep, so without this the box depth
+# solves nonpositive and the drawers come out empty - but a working
+# frame is a real access side, so its boxes belong in the cabinet
+# behind it. Paneled / false-front ends carry no boxes.
+TAG_APPLIED_BOX_DEPTH = 'hb_applied_box_depth'
+# Cap for that auto depth. The cavity behind a side working frame is
+# the full interior width of the host, deeper than anything a slide
+# runs; hold the auto size to a standard slide length and leave the
+# rest to the per-opening Drawer Box Size override.
+APPLIED_BOX_MAX_DEPTH = inch(21.0)
+
 # Pivot empty parent of every front part. Holds the swing rotation
 # (door / pullout) or the slide translation (drawer front) so the front
 # part itself stays at a fixed local transform relative to the pivot.
@@ -6783,6 +6796,18 @@ class FaceFrameCabinet(GeoNodeCage):
             panel_props.height = height
             panel_props.depth = depth
 
+            # Working frames get real drawer boxes, running back into
+            # the cavity the missing carcass side opened up. Sides only
+            # - a working back would reach into the cabinet the same
+            # way, but back conditions stay decorative for now.
+            if condition == 'WORKING_FF' and side in ('LEFT', 'RIGHT'):
+                span = (solver.carcass_inner_right_x(layout)
+                        - solver.carcass_inner_left_x(layout))
+                panel_obj[TAG_APPLIED_BOX_DEPTH] = min(
+                    max(span, 0.0), APPLIED_BOX_MAX_DEPTH)
+            elif TAG_APPLIED_BOX_DEPTH in panel_obj:
+                del panel_obj[TAG_APPLIED_BOX_DEPTH]
+
             # Sizing first - apply_panel_split_structure reads the
             # panel's bay.location.z to compute the mid rail position,
             # and bay.location.z is downstream of the panel's
@@ -10604,6 +10629,11 @@ class FaceFrameCabinet(GeoNodeCage):
         cage_x = rect['cage_dim_x']
         cage_y = rect['cage_dim_y']
         cage_z = rect['cage_dim_z']
+        # Working face frame panel: the box runs back into the host
+        # cabinet's cavity, not the panel's own 3/4 reserve.
+        applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
+        if applied_depth:
+            cage_y = max(cage_y, float(applied_depth))
         rl = rect['reveal_left']
         rr = rect['reveal_right']
         rt = rect['reveal_top']
