@@ -79,10 +79,18 @@ TAMBOUR_SLAT_GAP = inch(0.0625)
 TAMBOUR_THICKNESS = inch(0.375)
 # How far behind the FF front plane the tambour face sits.
 TAMBOUR_INSET = inch(0.0625)
-# Fixed shelf at a section boundary (TALL hutch / bookcase): full
-# L-bounding panel like Top/Bottom, top face flush with the top of
-# its mid rail. Carved by the same Diagonal Cut + Clip Back Cut pair.
+# Fixed shelf at a section boundary: full L-bounding panel like
+# Top/Bottom, top face flush with the top of its mid rail. Carved by
+# the same Diagonal Cut + Clip Back Cut pair. Built on TALL and UPPER
+# corners - a mid rail there decks the opening above it (and gives the
+# lowest interior item something to sit on); BASE corners are left
+# alone, where the second section is normally a sink apron.
 PART_ROLE_CORNER_FIXED_SHELF = 'CORNER_FIXED_SHELF'
+# Remove Bottom leaves the lowest section with no bottom rail to
+# overlay. Its front lifts by this much instead, so an upper set down
+# on a counter top clears it. A default only - a section with its
+# bottom overlay unlocked keeps its own value.
+OPEN_BASE_BOTTOM_OVERLAY = -inch(0.125)
 # Clip-back: a uniform 45 degree chamfer on the rear (wall-corner)
 # of any corner cabinet. A GeoNodeCage cutter carves the rear
 # corner off the bottom, top, and both backs; an angled back
@@ -2285,7 +2293,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # exterior_config is in the signature because the SINK_DOORS
         # config adds an apron part to an otherwise-identical DOORS
         # section set.
-        sig = (cab_props.diag_door_swing + '|' + cab_props.exterior_config
+        # Leading version token: bumped when the part set a signature
+        # stands for changes, so existing cabinets rebuild once instead
+        # of keeping a stale part set that still matches.
+        sig = ('v2|' + cab_props.diag_door_swing + '|'
+               + cab_props.exterior_config
                + '|' + '|'.join(
                    '%s:%d:%s%s' % (
                        s.content,
@@ -2480,11 +2492,14 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         name='Clip Back Cut', type='BOOLEAN')
                     clip.operation = 'DIFFERENCE'
                     clip.object = back_cutter_obj
-        # TALL hutch / bookcase: one FIXED shelf per section boundary,
-        # top face flush with the top of its mid rail (positioned in
-        # the recalc). Full L-bounding panel like Top/Bottom - the same
-        # boolean pair carves the pentagon front and the rear clip.
-        if self.default_cabinet_type == 'TALL':
+        # One FIXED shelf per section boundary, top face flush with the
+        # top of its mid rail (positioned in the recalc). Full
+        # L-bounding panel like Top/Bottom - the same boolean pair
+        # carves the pentagon front and the rear clip. Uppers get it as
+        # well as talls: the rail between two sections decks the
+        # opening above, and the lowest interior item in that opening
+        # sits on it.
+        if self.default_cabinet_type in ('TALL', 'UPPER'):
             for j in range(n - 1):
                 fixed = CabinetPart()
                 fixed.create('Diagonal Fixed Shelf %d' % (j + 1))
@@ -2945,21 +2960,25 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # mirrored into the section prop so the greyed field reads
             # the live value; unlocked = the section's own value).
             _sec = sections[i]
+            # Remove Bottom: the lowest section has no bottom rail to
+            # overlay, so instead of hanging the cabinet default below
+            # the carcass floor its front lifts clear of whatever the
+            # cabinet sits on. Only the DEFAULT moves - unlocking the
+            # section's Bottom Overlay still wins, which it could not
+            # when this was forced flush after the fact.
+            sec_bot_default = bot_ov
+            if open_base and i == n_sec - 1:
+                sec_bot_default = OPEN_BASE_BOTTOM_OVERLAY
             if (not _sec.unlock_top_overlay
                     and abs(_sec.top_overlay - top_ov) > 1e-7):
                 _sec.top_overlay = top_ov
             if (not _sec.unlock_bottom_overlay
-                    and abs(_sec.bottom_overlay - bot_ov) > 1e-7):
-                _sec.bottom_overlay = bot_ov
+                    and abs(_sec.bottom_overlay - sec_bot_default) > 1e-7):
+                _sec.bottom_overlay = sec_bot_default
             sec_top_ov = (_sec.top_overlay
                           if _sec.unlock_top_overlay else top_ov)
             sec_bot_ov = (_sec.bottom_overlay
-                          if _sec.unlock_bottom_overlay else bot_ov)
-            # Remove Bottom: the lowest section has no bottom rail to
-            # overlay, so its front stops flush with the carcass floor
-            # instead of hanging an overlay's worth below the cabinet.
-            if open_base and i == n_sec - 1:
-                sec_bot_ov = 0.0
+                          if _sec.unlock_bottom_overlay else sec_bot_default)
             if sections[i].content in ('DOORS', 'GARAGE'):
                 # Doors filling this section. Same horizontal layout as
                 # a single-opening pair; Length and Z come from the
@@ -3130,7 +3149,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                             ('Width', mrw),
                             ('Thickness', fft),
                         ))
-                # TALL hutch / bookcase: fixed shelf at this boundary,
+                # Fixed shelf at this boundary (talls and uppers),
                 # top face flush with the TOP of the mid rail. Same
                 # full L footprint as Top/Bottom; the boolean cutters
                 # carve the pentagon front + rear clip.
