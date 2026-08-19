@@ -10956,6 +10956,48 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         description="Mill the nosing on the right edge",
         update=_update_wood_top,
     )  # type: ignore
+    # Applied edge. A veneer-core top is built as a core board plus a
+    # separate edge band (typically 3/4"); the band is its own part so
+    # the shop gets the edge type and can size it on its own. The
+    # overhangs still measure to the outside of the band, so turning
+    # an edge on shrinks the core rather than growing the top. Mutually
+    # exclusive with the milled nosing, which owns the same edges.
+    edge_type: EnumProperty(
+        name="Edge",
+        items=[
+            ('NONE', "None", "No applied edge - the top is one board"),
+            ('SQUARE', "Square", "Square applied edge band"),
+            ('EASED', "Eased",
+             "Applied edge band with the exposed corners eased"),
+        ],
+        default='NONE',
+        update=_update_wood_top,
+    )  # type: ignore
+    edge_thickness: FloatProperty(
+        name="Edge Thickness", default=units.inch(0.75),
+        min=units.inch(0.125), soft_max=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_wood_top,
+    )  # type: ignore
+    edge_front: BoolProperty(
+        name="Edge Front", default=True,
+        description="Apply the edge band to the front",
+        update=_update_wood_top,
+    )  # type: ignore
+    edge_back: BoolProperty(
+        name="Edge Back", default=False,
+        description="Apply the edge band to the back",
+        update=_update_wood_top,
+    )  # type: ignore
+    edge_left: BoolProperty(
+        name="Edge Left", default=False,
+        description="Apply the edge band to the left end",
+        update=_update_wood_top,
+    )  # type: ignore
+    edge_right: BoolProperty(
+        name="Edge Right", default=False,
+        description="Apply the edge band to the right end",
+        update=_update_wood_top,
+    )  # type: ignore
 
 
 class Face_Frame_Valance_Props(PropertyGroup):

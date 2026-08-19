@@ -174,6 +174,7 @@ FLOATING_SHELF_TAG = 'IS_FLOATING_SHELF'
 # onto cabinet tops; see WoodTopFaceFrameCabinet.
 WOOD_TOP_TAG = 'IS_WOOD_TOP'
 PART_ROLE_WOOD_TOP = 'WOOD_TOP'
+PART_ROLE_WOOD_TOP_EDGE = 'WOOD_TOP_EDGE'
 PART_ROLE_SHELF_FRONT = 'SHELF_FRONT'
 PART_ROLE_SHELF_TOP = 'SHELF_TOP'
 PART_ROLE_SHELF_BOTTOM = 'SHELF_BOTTOM'
@@ -14252,6 +14253,18 @@ class WoodTopPart(CabinetPart):
         build the nosed front edge when a nosing style is set."""
         obj = self.obj
         wt = obj.wood_top
+        # An applied edge takes the outer band of the top: the board
+        # this object drives becomes the core, the band builds as its
+        # own part, and the overhangs still measure to the outside of
+        # the edge. The milled nosing owns the same edges, so the two
+        # are mutually exclusive.
+        edge_t = getattr(wt, 'edge_thickness', 0.0)
+        edged = [s for s in ('front', 'back', 'left', 'right')
+                 if getattr(wt, 'edge_' + s, False)]
+        if (getattr(wt, 'edge_type', 'NONE') == 'NONE'
+                or wt.nosing_style not in (None, '', 'NONE')
+                or edge_t <= 0.0):
+            edged = []
         anchor = (obj.parent
                   if obj.parent is not None
                   and obj.parent.get(TAG_CABINET_CAGE) else None)
@@ -14259,16 +14272,27 @@ class WoodTopPart(CabinetPart):
             ap = anchor.face_frame_cabinet
             width = ap.width + wt.overhang_left + wt.overhang_right
             depth = ap.depth + wt.overhang_front + wt.overhang_back
+            # Origin walks in to the core's back-left corner so the
+            # band's outer face lands on the overhang line.
             obj.location = (
-                -wt.overhang_left, wt.overhang_back, ap.height)
+                -wt.overhang_left + (edge_t if 'left' in edged else 0.0),
+                wt.overhang_back - (edge_t if 'back' in edged else 0.0),
+                ap.height)
             obj.rotation_euler = (0.0, 0.0, 0.0)
         else:
             width = wt.width
             depth = wt.depth
         t = wt.thickness
-        self.set_input('Length', width)
-        self.set_input('Width', depth)
+        core_w = width - edge_t * (('left' in edged) + ('right' in edged))
+        core_d = depth - edge_t * (('front' in edged) + ('back' in edged))
+        # A band wider than the top itself would invert the core.
+        if core_w < inch(1.0) or core_d < inch(1.0):
+            edged = []
+            core_w, core_d = width, depth
+        self.set_input('Length', core_w)
+        self.set_input('Width', core_d)
         self.set_input('Thickness', t)
+        self._sync_edge_bands(obj, core_w, core_d, t, wt, edged)
 
         mod_name = getattr(obj.home_builder, 'mod_name', '')
         mod = obj.modifiers.get(mod_name) if mod_name else None
@@ -14284,7 +14308,7 @@ class WoodTopPart(CabinetPart):
             if TAG_STATIC_TEXTURED in obj:
                 del obj[TAG_STATIC_TEXTURED]
             return
-        self._write_nosed_mesh(obj, width, depth, t, wt, nosed_sides)
+        self._write_nosed_mesh(obj, core_w, core_d, t, wt, nosed_sides)
         if mod is not None:
             mod.show_viewport = False
             mod.show_render = False
@@ -14299,6 +14323,75 @@ class WoodTopPart(CabinetPart):
                 surf = None
             if surf is not None:
                 obj.data.materials.append(surf)
+
+    @staticmethod
+    def _sync_edge_bands(obj, core_w, core_d, t, wt, edged):
+        """Build / refresh one edge band part per edged side, parented to
+        the core board. Front and back bands run the full outer length;
+        the end bands butt between them. Bands are sized in the core's
+        local frame (X right, Y back-to-front through 0..-core_d, Z up
+        from the core bottom). Sides that were turned off lose their
+        part.
+        """
+        existing = {}
+        for child in list(obj.children):
+            if child.get('hb_part_role') != PART_ROLE_WOOD_TOP_EDGE:
+                continue
+            existing[child.get('hb_wood_top_edge_side')] = child
+        for side, part in existing.items():
+            if side in edged:
+                continue
+            bpy.data.objects.remove(part, do_unlink=True)
+        if not edged:
+            return
+
+        edge_t = wt.edge_thickness
+        out_l = edge_t if 'left' in edged else 0.0
+        out_r = edge_t if 'right' in edged else 0.0
+        # (length, width, location) per side.
+        layout = {
+            'front': (core_w + out_l + out_r, edge_t,
+                      (-out_l, -core_d, 0.0)),
+            'back':  (core_w + out_l + out_r, edge_t,
+                      (-out_l, edge_t, 0.0)),
+            'left':  (edge_t, core_d, (-edge_t, 0.0, 0.0)),
+            'right': (edge_t, core_d, (core_w, 0.0, 0.0)),
+        }
+        for side in edged:
+            part = existing.get(side)
+            band = CabinetPart()
+            if part is None:
+                band.create(f'Wood Top Edge {side.capitalize()}')
+                part = band.obj
+                part.parent = obj
+                part['hb_part_role'] = PART_ROLE_WOOD_TOP_EDGE
+                part['hb_wood_top_edge_side'] = side
+                part['CABINET_PART'] = True
+                part['IS_FINISHED'] = True
+                part['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                band.set_input('Mirror Y', True)
+            else:
+                band.obj = part
+            # Carried for downstream consumers (drawings, part lists):
+            # the band is a distinct piece with its own edge spec.
+            part['hb_wood_top_edge_type'] = wt.edge_type
+            length, band_w, loc = layout[side]
+            band.set_input('Length', length)
+            band.set_input('Width', band_w)
+            band.set_input('Thickness', t)
+            part.location = loc
+            part.rotation_euler = (0.0, 0.0, 0.0)
+            # Eased reads as a softened arris on the exposed corners;
+            # square leaves them sharp.
+            bev = part.modifiers.get('Eased Edge')
+            if wt.edge_type == 'EASED':
+                if bev is None:
+                    bev = part.modifiers.new('Eased Edge', 'BEVEL')
+                bev.width = inch(0.0625)
+                bev.segments = 3
+                bev.limit_method = 'ANGLE'
+            elif bev is not None:
+                part.modifiers.remove(bev)
 
     @staticmethod
     def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
@@ -14718,9 +14811,11 @@ def _resize_seated_wood_tops(root):
     width / depth / height it was placed at. Style re-apply happens after
     this so a rebuilt board still picks up its materials.
     """
-    for child in root.children_recursive:
-        if not child.get(WOOD_TOP_TAG):
-            continue
+    # Collect first: rebuild() adds / removes the top's own edge band
+    # parts, which are themselves in children_recursive.
+    tops = [child for child in root.children_recursive
+            if child.get(WOOD_TOP_TAG)]
+    for child in tops:
         # rebuild() re-reads the board's OWN parent, so a top seated on a
         # nested cage still fits the cabinet it actually sits on.
         top = WoodTopPart()

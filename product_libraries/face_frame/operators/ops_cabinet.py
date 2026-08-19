@@ -750,16 +750,36 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         col.prop(wt, 'top_type')
         col.prop(wt, 'thickness')
         col.separator()
+        # Applied edge: the top splits into a core board plus a separate
+        # edge band. Off while a milled nosing is set - both work the
+        # same edges.
+        edge_col = col.column(align=True)
+        edge_col.use_property_split = True
+        edge_col.enabled = wt.nosing_style == 'NONE'
+        edge_col.prop(wt, 'edge_type')
+        if wt.edge_type != 'NONE':
+            edge_col.prop(wt, 'edge_thickness')
+            row = edge_col.row(align=True)
+            row.label(text="Edge Sides:")
+            row = edge_col.row(align=True)
+            row.prop(wt, 'edge_front', text="Front", toggle=True)
+            row.prop(wt, 'edge_back', text="Back", toggle=True)
+            row.prop(wt, 'edge_left', text="Left", toggle=True)
+            row.prop(wt, 'edge_right', text="Right", toggle=True)
+        col.separator()
         # Nosing: edge profile from the shelf-nosing set; the
         # extra-height styles take a height of their own. Side toggles
         # pick which edges are milled (exposed sides, not walls).
-        col.prop(wt, 'nosing_style')
+        nose_col = col.column(align=True)
+        nose_col.use_property_split = True
+        nose_col.enabled = wt.edge_type == 'NONE'
+        nose_col.prop(wt, 'nosing_style')
         if wt.nosing_style != 'NONE':
             if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
-                col.prop(wt, 'nosing_height')
-            row = col.row(align=True)
+                nose_col.prop(wt, 'nosing_height')
+            row = nose_col.row(align=True)
             row.label(text="Nosing Sides:")
-            row = col.row(align=True)
+            row = nose_col.row(align=True)
             row.prop(wt, 'nosing_front', text="Front", toggle=True)
             row.prop(wt, 'nosing_back', text="Back", toggle=True)
             row.prop(wt, 'nosing_left', text="Left", toggle=True)
