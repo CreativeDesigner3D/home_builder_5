@@ -5726,7 +5726,8 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return cutter
 
-    def _position_corner_treatment_cutter(self, cutter, part_obj, run, axis):
+    def _position_corner_treatment_cutter(self, cutter, part_obj, run, axis,
+                                          far_trim=0.0):
         """Rebuild the cutter as a prism of the removed-corner outline swept
         along one arris of a cutpart. Cutpart mesh-local convention: x is
         the Length axis, the front-outer arris lies on (y = 0, z = 0), the
@@ -5734,6 +5735,9 @@ class FaceFrameCabinet(GeoNodeCage):
         'Mirror Z'. axis 'LENGTH' sweeps that arris end to end (stile
         outer edge / rail bottom edge); 'WIDTH' sweeps across the x = 0
         end (a stile's bottom) so the bottom detail wraps the corner.
+        ``far_trim`` pulls the sweep back from the far (x = Length) end:
+        an end stile's milled arris dies into the top rail instead of
+        running out at the top of the frame.
         Built in cabinet-local coords via matrix_to_root. Returns False
         (mesh cleared) when the part can't be read."""
         part = GeoNodeCutpart(part_obj)
@@ -5758,7 +5762,14 @@ class FaceFrameCabinet(GeoNodeCage):
         # boolean never sits on a coplanar face.
         outline = [(-eps, -eps), (umax, -eps)] + list(run) + [(-eps, vmax)]
         if axis == 'LENGTH':
-            span = (-eps, length + eps)
+            # A trimmed run stops ON the trim plane (no eps overshoot):
+            # that face is where the milled detail ends, not a boolean
+            # face that needs clearing off the part.
+            far = length - far_trim if far_trim > 0.0 else length + eps
+            if far <= 0.0:
+                cutter.data.clear_geometry()
+                return False
+            span = (-eps, far)
 
             def pt(u, v, s):
                 return Vector((s, ys * u, zs * v))
@@ -5802,6 +5813,29 @@ class FaceFrameCabinet(GeoNodeCage):
             if mesh is not None and mesh.users == 0:
                 bpy.data.meshes.remove(mesh)
 
+    @staticmethod
+    def _corner_treatment_top_trim(layout, role):
+        """How far short of the top of an end stile the milled arris
+        stops: the treatment dies into the top rail rather than running
+        out at the top of the frame, so the rail's band of the stile
+        stays square. A dropped front (sink / cooktop bay) carries the
+        rail down with it, and the stile above it stays square too.
+        0 for the refrigerator stiles-in-lieu-of-leg (they meet the
+        raised end stile, not a rail) and for a bay with no top rail.
+        """
+        if role == PART_ROLE_LEFT_STILE:
+            bay_index = 0
+        elif role == PART_ROLE_RIGHT_STILE:
+            bay_index = layout.bay_count - 1
+        else:
+            return 0.0
+        if not (0 <= bay_index < len(layout.bays)):
+            return 0.0
+        rail = layout.bays[bay_index].get('top_rail_width', 0.0) or 0.0
+        if rail <= 0.0:
+            return 0.0
+        return rail + solver.front_drop(layout, bay_index)
+
     def _apply_corner_treatment(self, layout):
         """Cut the style's corner treatment into the exposed face frame
         arrises: the end stile's outer front edge (plus the refrigerator
@@ -5810,7 +5844,7 @@ class FaceFrameCabinet(GeoNodeCage):
         and the end stiles across their bottoms. Square / no style / no
         flush ends = full cleanup."""
         run = self._corner_treatment_run()
-        wanted = []   # (part_obj, axis)
+        wanted = []   # (part_obj, axis, far_trim)
         if run is not None:
             sides = set()
             if layout.l_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
@@ -5831,17 +5865,19 @@ class FaceFrameCabinet(GeoNodeCage):
                 else:
                     continue
                 if side is not None and side in sides:
-                    wanted.append((child, 'LENGTH'))
+                    wanted.append((child, 'LENGTH',
+                                   self._corner_treatment_top_trim(layout, role)))
                 if bottom:
                     if role == PART_ROLE_BOTTOM_RAIL:
-                        wanted.append((child, 'LENGTH'))
+                        wanted.append((child, 'LENGTH', 0.0))
                     elif role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
-                        wanted.append((child, 'WIDTH'))
+                        wanted.append((child, 'WIDTH', 0.0))
         live_keys = set()
-        for part_obj, axis in wanted:
+        for part_obj, axis, far_trim in wanted:
             key = f"{part_obj.name}|{axis}"
             cutter = self._ensure_corner_treatment_cutter(key)
-            if not self._position_corner_treatment_cutter(cutter, part_obj, run, axis):
+            if not self._position_corner_treatment_cutter(
+                    cutter, part_obj, run, axis, far_trim):
                 continue
             live_keys.add(key)
             mod_name = CORNER_TREATMENT_MOD_NAMES[axis]
