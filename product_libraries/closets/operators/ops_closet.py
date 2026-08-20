@@ -4719,9 +4719,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             obj, width)
         acc_def = _accessory_of(obj)
         if acc_def is not None:
-            given = obj.get(types_closets.PROP_ACCESSORY_SETBACK)
-            self.setback = float(acc_def.setback if given is None
-                                 else given)
+            # Opened on where it actually is, not on the catalog
+            # figure - a hook that has centred itself has to show the
+            # figure it centred at, or typing in this box would move it.
+            self.setback = float(
+                types_closets.accessory_setback(obj, acc_def))
         if acc_def is not None and acc_def.is_sized:
             b_w, b_h, b_d = types_closets.basket_values(
                 obj, acc_def, width)

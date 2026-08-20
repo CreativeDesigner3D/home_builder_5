@@ -375,6 +375,13 @@ class AccessoryDef:
                 accessory itself is mounted, measured to its own front
                 edge. A choice rather than a fact, and one the person
                 can overrule per accessory.
+    center_depth
+                True for the ones that belong halfway back on a panel
+                rather than near its front - a hook is hung on, not
+                pulled out of. Their setback is worked out from the
+                opening's depth instead of read off the line above, so
+                they stay centered as the depth changes. A figure
+                typed against one accessory still wins over both.
     model_z     how far (m) up from the bottom of its space it sits
     colors      finish names offered, () = no finish choice
     fabrics     fabric names offered, () = no fabric choice
@@ -389,7 +396,7 @@ class AccessoryDef:
                  'height', 'depth', 'space_above', 'space_below',
                  'model_drop', 'stretch', 'widths', 'heights',
                  'depths', 'min_width', 'max_width', 'setback',
-                 'model_y', 'model_z',
+                 'center_depth', 'model_y', 'model_z',
                  'floor_snap',
                  'colors', 'fabrics', 'ready', 'description')
 
@@ -398,7 +405,8 @@ class AccessoryDef:
                  depth=0.0, space_above=0.0, space_below=0.0,
                  model_drop=0.0, stretch=False, widths=(),
                  heights=(), depths=(), min_width=0.0,
-                 max_width=0.0, setback=0.0, model_y=0.0,
+                 max_width=0.0, setback=0.0, center_depth=False,
+                 model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
                  ready=False, description=""):
         self.key = key
@@ -419,6 +427,7 @@ class AccessoryDef:
         self.heights = tuple(heights)
         self.depths = tuple(depths)
         self.setback = setback
+        self.center_depth = center_depth
         self.min_width = min_width
         self.max_width = max_width
         self.model_y = model_y
@@ -556,6 +565,7 @@ def _def_from_item(item):
         heights=_sizes(item.get('heights')),
         depths=_sizes(item.get('depths')),
         setback=float(item.get('setback') or 0.0),
+        center_depth=bool(item.get('center_depth')),
         min_width=float(item.get('min_width') or 0.0),
         max_width=float(item.get('max_width') or 0.0),
         model_y=float(item.get('model_y') or 0.0),

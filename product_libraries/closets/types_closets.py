@@ -3650,14 +3650,22 @@ class ClosetStarter(GeoNodeCage):
         except Exception:
             return 0.0
 
-    def _accessory_setback(self, cage, acc_def):
-        """How far back from the front of the opening this accessory
-        is mounted, measured to its own front edge. What the catalog
-        says unless this one has been given a figure of its own."""
-        given = cage.get(PROP_ACCESSORY_SETBACK)
-        if given is None:
-            return acc_def.setback
-        return max(0.0, float(given))
+    def _model_depth(self, model):
+        """How deep one model is front to back, read off it the same
+        way its front reach is."""
+        try:
+            ys = [c[1] for c in model.bound_box]
+            return max(0.0, max(ys) - min(ys))
+        except Exception:
+            return 0.0
+
+    def _accessory_setback(self, cage, acc_def, depth=None,
+                           model_depth=None):
+        """How far back from the front of the opening this accessory is
+        mounted. The opening's depth and the model are both already to
+        hand here, so they are passed along rather than looked up
+        again."""
+        return accessory_setback(cage, acc_def, depth, model_depth)
 
     def _layout_panel_accessory(self, cage, acc_def, kids, width,
                                 depth, pt):
@@ -3695,7 +3703,8 @@ class ClosetStarter(GeoNodeCage):
             # plate lands where it was asked for instead of hanging
             # out through the front of the closet.
             reach = self._model_front_reach(found[0])
-            back = self._accessory_setback(cage, acc_def)
+            back = self._accessory_setback(
+                cage, acc_def, depth, self._model_depth(found[0]))
             found[0].location = (x, -depth + reach + back, 0.0)
             found[0].scale.x = -1.0 if mirror else 1.0
         return x, mirror
@@ -6361,6 +6370,61 @@ def _cage_dim_x(obj):
         return float(GeoNodeCage(obj).get_input('Dim X') or 0.0)
     except Exception:
         return 0.0
+
+
+def _cage_dim_y(obj):
+    """One cage's depth, or 0 for anything that is not a cage."""
+    try:
+        return float(GeoNodeCage(obj).get_input('Dim Y') or 0.0)
+    except Exception:
+        return 0.0
+
+
+def accessory_model_depth(cage):
+    """How deep the model under an accessory is, front to back.
+
+    Read off the model rather than the catalog: the catalog figure says
+    what space the accessory wants reserved, which is not the same as
+    how big the thing that draws turns out to be. 0 where nothing has
+    been drawn yet."""
+    for child in cage.children_recursive:
+        if child.get('hb_part_role') != PART_ROLE_ACCESSORY_MODEL:
+            continue
+        try:
+            ys = [c[1] for c in child.bound_box]
+            return max(0.0, max(ys) - min(ys))
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+def accessory_setback(cage, acc_def, depth=None, model_depth=None):
+    """How far back from the front of the opening an accessory is
+    mounted, measured to its own front edge.
+
+    A figure typed against this one wins over everything. Failing that,
+    a hook and its like sit halfway back on the panel - worked out from
+    the opening's depth, so they stay in the middle as the depth
+    changes rather than at a fixed distance that only centres one size
+    of closet. Everything else takes what the catalog says, which for a
+    rack or a pull-out is near the front where it is reached from.
+    """
+    given = cage.get(PROP_ACCESSORY_SETBACK)
+    if given is not None:
+        return max(0.0, float(given))
+    if acc_def is None:
+        return 0.0
+    if getattr(acc_def, 'center_depth', False):
+        if depth is None:
+            depth = _cage_dim_y(cage.parent)
+        if depth > 0.0:
+            # Centred on what actually draws, so the hook itself ends
+            # up in the middle of the panel rather than its front edge
+            # landing where the middle is.
+            size = model_depth or accessory_model_depth(cage) \
+                or acc_def.depth
+            return max(0.0, (depth - size) / 2.0)
+    return acc_def.setback
 
 
 def add_accessory(opening, key):
