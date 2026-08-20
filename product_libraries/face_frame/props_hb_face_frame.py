@@ -4167,26 +4167,28 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Shaped (arched) top edge: widen the shaped rail(s) by the
         # curve's peak rise so the catalog rail width survives at the
         # crest; the geometry follows in build_door_mesh (shape=).
-        # Twin forces a mid stile below (one arch per lite). Mitered
-        # members keep their own profile -- the catalog offers no
-        # shapes there.
+        # Twin carries no curve -- it only forces the mid stile below,
+        # so the rails stay at their catalog width. Mitered members
+        # keep their own profile -- the catalog offers no shapes there.
         shape_k = None
         shape_rise_cap = 0.0
+        _msw = 0.0
         if member_sec is None:
             shape_k = style_options.shape_kind(self.front_shape)
         if shape_k is not None:
             _msw = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
             _n_ms = 1 if shape_k.get('twin') else 0
-            _cell_w = (front_width - eff_left_stile - eff_right_stile
-                       - _n_ms * _msw) / (_n_ms + 1)
-            if _cell_w > units.inch(2):
-                shape_rise_cap = door_builder.shape_rise(
-                    shape_k['curve'], _cell_w)
-                eff_top_rail += shape_rise_cap
-                if shape_k.get('double'):
-                    eff_bottom_rail += shape_rise_cap
-            else:
-                shape_k = None
+            if shape_k.get('curve'):
+                _cell_w = (front_width - eff_left_stile - eff_right_stile
+                           - _n_ms * _msw) / (_n_ms + 1)
+                if _cell_w > units.inch(2):
+                    shape_rise_cap = door_builder.shape_rise(
+                        shape_k['curve'], _cell_w)
+                    eff_top_rail += shape_rise_cap
+                    if shape_k.get('double'):
+                        eff_bottom_rail += shape_rise_cap
+                else:
+                    shape_k = None
 
         min_width = eff_left_stile + eff_right_stile + units.inch(1)
         if ovr_grid_stiles:
@@ -4351,7 +4353,9 @@ class Face_Frame_Door_Style(PropertyGroup):
                                          front_thickness,
                                          shape=(dict(shape_k,
                                                      rise=shape_rise_cap)
-                                                if shape_k else None),
+                                                if shape_k
+                                                and shape_k.get('curve')
+                                                else None),
                                          glass_rows=glass_rows or None,
                                          **secs)
             if glass_rows:

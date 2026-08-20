@@ -547,7 +547,8 @@ def _hood_door_mesh_spec(hood_obj, opts, width, height, thickness):
         else:
             # Arched shapes: widen the shaped rail(s) by the curve's
             # peak rise so the catalog rail width survives at the
-            # crest; Twin forces one mid stile (one arch per lite).
+            # crest. Twin carries no curve -- it only forces one mid
+            # stile, splitting the front into two square panels.
             shape_k = None
             try:
                 from ..face_frame import style_options
@@ -568,7 +569,7 @@ def _hood_door_mesh_spec(hood_obj, opts, width, height, thickness):
                        if info.get('right_stile_width') is not None
                        else info['stile_width'])
                 cell_w = (width - lsw - rsw - n_ms * msw) / (n_ms + 1)
-                if cell_w > inch(2):
+                if shape_k.get('curve') and cell_w > inch(2):
                     rise = door_builder.shape_rise(shape_k['curve'], cell_w)
                     info['top_rail_width'] = (
                         info['top_rail_width']

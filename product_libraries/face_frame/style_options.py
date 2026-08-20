@@ -5304,21 +5304,23 @@ def panel_kind(name):
 # Curved-top geometry per catalog shape-choice name (DOOR_CASCADE
 # middle level). 'curve' picks the door_builder curve family (ARCH =
 # circular eyebrow, CROWN = cathedral ogee); 'double' mirrors it onto
-# the bottom rail; 'twin' forces a mid stile so each lite gets its own
-# arch. Names not listed (Square, the slab-series plank widths / grain
-# orientations, Tudor pending its curve) build square.
+# the bottom rail; 'twin' splits the front with one mid stile. Twin
+# carries no curve -- the catalog draws it as a square-top front with
+# two panels side by side. Names not listed (Square, the slab-series
+# plank widths / grain orientations, Tudor pending its curve) build
+# square.
 SHAPE_KINDS = {
     'Arch': {'curve': 'ARCH'},
     'Crown': {'curve': 'CROWN'},
     'Double Arch': {'curve': 'ARCH', 'double': True},
     'Double Crown': {'curve': 'CROWN', 'double': True},
-    'Twin': {'curve': 'ARCH', 'twin': True},
+    'Twin': {'twin': True},
 }
 
 
 def shape_kind(name):
-    """Kind dict for a catalog shape-choice name, or None for square /
-    non-curved shapes."""
+    """Kind dict for a catalog shape-choice name, or None for names
+    that build as a plain square front."""
     return SHAPE_KINDS.get((name or '').strip())
 
 
