@@ -158,6 +158,7 @@ PART_ROLE_LEG_PANEL_RIGHT = 'LEG_PANEL_RIGHT'
 PART_ROLE_LEG_STILE = 'LEG_STILE'
 PART_ROLE_LEG_TK_STILE = 'LEG_TK_STILE'
 PART_ROLE_LEG_TK_FILLER = 'LEG_TK_FILLER'
+PART_ROLE_LEG_FINISH_KICK = 'LEG_FINISH_KICK'
 # Leg product v2: finished front bands + interior back / nailers.
 PART_ROLE_LEG_FINISH_X_LEFT = 'LEG_FINISH_X_LEFT'
 PART_ROLE_LEG_FINISH_X_RIGHT = 'LEG_FINISH_X_RIGHT'
@@ -12354,6 +12355,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             (PART_ROLE_LEG_STILE, 'Leg Stile', False),
             (PART_ROLE_LEG_TK_STILE, 'Leg Toe Kick Stile', False),
             (PART_ROLE_LEG_TK_FILLER, 'Leg Toe Kick Filler', False),
+            (PART_ROLE_LEG_FINISH_KICK, 'Leg Finish Toe Kick', False),
         )
         return {role: self._ensure_leg_part(role, name, add_notch)
                 for role, name, add_notch in spec}
@@ -12532,6 +12534,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         STILE = parts[PART_ROLE_LEG_STILE]
         TKS = parts[PART_ROLE_LEG_TK_STILE]
         TKF = parts[PART_ROLE_LEG_TK_FILLER]
+        TKFIN = parts[PART_ROLE_LEG_FINISH_KICK]
 
         # Back shifts the side panels forward by its thickness.
         back_off = bt if has_back else 0.0
@@ -12620,6 +12623,24 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         TKF.hide_viewport = not tkf_visible
         TKF.hide_render = not tkf_visible
         TKF['IS_FINISHED'] = True
+
+        # Finished facing over the toe-kick stile - the same 0.25"
+        # cosmetic board a cabinet's recessed kick carries. A board's
+        # origin plane is its front face with Thickness running back,
+        # so sitting it ft forward of the kick stile puts its back face
+        # on the stile's front. A flush kick is already in the face
+        # frame plane, so there is nothing to face.
+        tkfin_t = cab.finish_toe_kick_thickness
+        tkfin_visible = (tk_visible and not flush_tk
+                         and cab.include_finish_toe_kick
+                         and tkfin_t > 0.0)
+        place(TKFIN, tkh, tk_width, tkfin_t,
+              (tk_x, -depth + tks - tkfin_t, 0.0),
+              (0.0, math.radians(-90), math.radians(90)),
+              {'Mirror Y': True, 'Mirror Z': True})
+        TKFIN.hide_viewport = not tkfin_visible
+        TKFIN.hide_render = not tkfin_visible
+        TKFIN['IS_FINISHED'] = True
 
         # --- Finished front bands (Finish-X) -------------------------
         # A finished band covering the front fx_width inches on the

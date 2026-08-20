@@ -61,6 +61,7 @@ PART_ROLE_CORNER_LOOSE_END_RIGHT = 'CORNER_LOOSE_END_RIGHT'
 PART_ROLE_DIAGONAL_CUTTER = 'DIAGONAL_CUTTER'
 PART_ROLE_DIAGONAL_SIDE_CUTTER = 'DIAGONAL_SIDE_CUTTER'
 PART_ROLE_DIAGONAL_KICK = 'DIAGONAL_KICK'
+PART_ROLE_DIAGONAL_FINISH_KICK = 'DIAGONAL_FINISH_KICK'
 PART_ROLE_CORNER_INTERIOR = 'CORNER_INTERIOR'
 PART_ROLE_CORNER_PARTITION = 'CORNER_PARTITION'
 PART_ROLE_CORNER_TRAY_DIVIDER = 'CORNER_TRAY_DIVIDER'
@@ -120,6 +121,7 @@ CORNER_PART_ROLES = frozenset({
     PART_ROLE_DIAGONAL_CUTTER,
     PART_ROLE_DIAGONAL_SIDE_CUTTER,
     PART_ROLE_DIAGONAL_KICK,
+    PART_ROLE_DIAGONAL_FINISH_KICK,
     PART_ROLE_CORNER_INTERIOR,
     PART_ROLE_CORNER_PARTITION,
     PART_ROLE_CORNER_BACK_CUTTER,
@@ -389,6 +391,24 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         else:
             raise NotImplementedError(
                 f"Corner type {self.default_corner_type!r} not yet supported")
+
+    def _ensure_diagonal_finish_kick(self):
+        """Lazy-create the diagonal finish toe kick (the 0.25" facing
+        over the diagonal sub kick) if absent, so cabinets built before
+        the part existed pick it up on their next recalc. Same
+        orientation as the sub kick behind it.
+        """
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_DIAGONAL_FINISH_KICK:
+                return child
+        fk = CabinetPart()
+        fk.create('Diagonal Finish Kick')
+        fk.obj.parent = self.obj
+        fk.obj['hb_part_role'] = PART_ROLE_DIAGONAL_FINISH_KICK
+        fk.obj['CABINET_PART'] = True
+        fk.obj.rotation_euler.x = math.radians(90)
+        fk.set_input('Mirror Z', True)
+        return fk.obj
 
     def _build_corner_loose_ladder_parts(self):
         """Create the six LOOSE / LOOSE_FLUSH ladder parts shared by both
@@ -840,6 +860,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             diag_kick.obj['CABINET_PART'] = True
             diag_kick.obj.rotation_euler.x = math.radians(90)
             diag_kick.set_input('Mirror Z', True)
+
+            # 0.25" finished facing over the diagonal sub kick, the
+            # same cosmetic board the straight cabinets and the pie cut
+            # carry. Positioned / hidden by recalc.
+            self._ensure_diagonal_finish_kick()
             # Loose ladder parts - the same L sub-base as the pie cut.
             # The diagonal kick above is the NOTCH front; these L parts
             # are shown only for LOOSE / LOOSE_FLUSH by the shared
@@ -2669,6 +2694,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         r_top_drop = (0.0 if cab_props.right_finished_end_condition
                       == 'FINISHED' else top_scribe)
 
+        if self._has_toe_kick():
+            self._ensure_diagonal_finish_kick()
+
         parts = _children_by_corner_role(self.obj)
 
         # Bottom + Top: full L-bounding rectangles (no notch input -
@@ -2848,20 +2876,20 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # (below), FLUSH / FLOATING have no kick board - so show it for
         # NOTCH only.
         diag_notch = kf.has_kick and kf.tk == 'NOTCH'
+        kick_setback = cab_props.toe_kick_setback
+        kick_left_x = ld + fflo - kick_setback
+        kick_left_y = -depth + fflo + t
+        kick_right_x = width - ffro - t
+        kick_right_y = -(rd + ffro) + kick_setback
+        kick_dx = kick_right_x - kick_left_x
+        kick_dy = kick_right_y - kick_left_y
+        kick_length = math.sqrt(kick_dx * kick_dx + kick_dy * kick_dy)
+        kick_angle = math.atan2(kick_dy, kick_dx)
         diag_kick = parts.get(PART_ROLE_DIAGONAL_KICK)
         if diag_kick is not None:
             diag_kick.hide_viewport = not diag_notch
             diag_kick.hide_render = not diag_notch
         if diag_kick is not None and diag_notch:
-            kick_setback = cab_props.toe_kick_setback
-            kick_left_x = ld + fflo - kick_setback
-            kick_left_y = -depth + fflo + t
-            kick_right_x = width - ffro - t
-            kick_right_y = -(rd + ffro) + kick_setback
-            kick_dx = kick_right_x - kick_left_x
-            kick_dy = kick_right_y - kick_left_y
-            kick_length = math.sqrt(kick_dx * kick_dx + kick_dy * kick_dy)
-            kick_angle = math.atan2(kick_dy, kick_dx)
             diag_kick.location = (kick_left_x, kick_left_y, 0.0)
             diag_kick.rotation_euler.z = kick_angle
             _set_mod_inputs(diag_kick, diag_kick.home_builder.mod_name, (
@@ -2869,6 +2897,30 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 ('Width', kick_height),
                 ('Thickness', t),
             ))
+
+        # Finished facing over the diagonal sub kick - the same 0.25"
+        # cosmetic board the straight cabinets and the pie cut carry.
+        # A board's origin plane is its front face with Thickness
+        # running inward, so pushing the kick line out by ft along its
+        # room-side normal (sin, -cos of the kick angle) lands the
+        # facing's back face flush on the sub kick's front face.
+        diag_ft = cab_props.finish_toe_kick_thickness
+        diag_finish = parts.get(PART_ROLE_DIAGONAL_FINISH_KICK)
+        if diag_finish is not None:
+            diag_finish.hide_viewport = not kf.finish
+            diag_finish.hide_render = not kf.finish
+            if kf.finish:
+                diag_finish.location = (
+                    kick_left_x + diag_ft * math.sin(kick_angle),
+                    kick_left_y - diag_ft * math.cos(kick_angle),
+                    0.0)
+                diag_finish.rotation_euler.z = kick_angle
+                _set_mod_inputs(
+                    diag_finish, diag_finish.home_builder.mod_name, (
+                        ('Length', kick_length),
+                        ('Width', kick_height),
+                        ('Thickness', diag_ft),
+                    ))
 
         # Loose ladder (LOOSE / LOOSE_FLUSH): the same L sub-base as the
         # pie cut, inscribed in the diagonal footprint. front_setback

@@ -1908,13 +1908,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'FINISH_TOE_KICK', 'MID_FINISH_KICK',
         'CORNER_LEFT_FINISH_KICK', 'CORNER_RIGHT_FINISH_KICK',
         'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
+        'DIAGONAL_FINISH_KICK',
         'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
         # Loose ladder sub-base boards - finished material
         'LOOSE_KICK_FRONT', 'LOOSE_KICK_REAR',
         'LOOSE_KICK_END_LEFT', 'LOOSE_KICK_END_RIGHT',
         # Leg product boards - finished material
         'LEG_PANEL_LEFT', 'LEG_PANEL_RIGHT', 'LEG_STILE',
-        'LEG_TK_STILE', 'LEG_TK_FILLER',
+        'LEG_TK_STILE', 'LEG_TK_FILLER', 'LEG_FINISH_KICK',
         'LEG_FINISH_X_LEFT', 'LEG_FINISH_X_RIGHT',
         # Floating shelf boards - finished material
         'SHELF_FRONT', 'SHELF_TOP', 'SHELF_BOTTOM',
@@ -2013,6 +2014,28 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'CORNER_SHELF', 'CORNER_FIXED_SHELF',
     }
 
+    @staticmethod
+    def _set_part_route_material(part_obj, mat):
+        """Push mat into the Material input of every CPM_ routing
+        modifier on a part (notches, cutouts). The faces a route opens
+        are new geometry with no slot of their own, so without this a
+        notched panel shows raw white where it was cut. The routed face
+        is an edge condition, so callers pass the edge material.
+        """
+        if mat is None:
+            return
+        for mod in part_obj.modifiers:
+            ng = getattr(mod, 'node_group', None)
+            if ng is None or not ng.name.startswith('CPM_'):
+                continue
+            node_input = ng.interface.items_tree.get('Material')
+            if node_input is None:
+                continue
+            try:
+                hb_utils.set_gn_input(mod, node_input.identifier, mat)
+            except Exception:
+                pass
+
     def _set_part_surfaces(self, part_obj, surface_mat, edge_mat):
         """Plug surface_mat into Top Surface + Bottom Surface and edge_mat
         into all four edge slots of a cutpart. Silently no-ops when
@@ -2035,6 +2058,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 part.set_input("Edge L2", edge_mat)
             except Exception:
                 pass
+        self._set_part_route_material(part_obj, edge_mat or surface_mat)
 
     def _set_part_surfaces_split(self, part_obj, top_mat, bottom_mat, edge_mat):
         """Like _set_part_surfaces but writes Top Surface and Bottom
@@ -2059,6 +2083,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 part.set_input("Edge L2", edge_mat)
         except Exception:
             pass
+        self._set_part_route_material(part_obj, edge_mat or bottom_mat)
 
     def _door_style_grain(self, front_obj):
         """Grain direction ('VERTICAL' / 'HORIZONTAL', default VERTICAL) of the
