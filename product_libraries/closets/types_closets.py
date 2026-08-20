@@ -179,6 +179,11 @@ PART_ROLE_BRIDGE_SHELF = 'CLOSET_BRIDGE_SHELF'
 # the change can be carried over on open. See
 # carry_over_opening_settings(). Nothing else should read or write them.
 PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
+# A shelf someone put at a height of their own rather than one the
+# opening dealt out. It is cut like any other shelf on clips and it
+# machines like one, but the count does not own it: it is not dealt,
+# not re-spaced, and not taken away when the count comes down.
+PROP_SHELF_HELD = 'hb_shelf_held'
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
 PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
@@ -635,6 +640,38 @@ def add_shelf_cleat(shelf_obj):
     return cleat.obj
 
 
+def add_opening_shelf(opening_obj, z_offset):
+    """Create a shelf on clips at a height of its own.
+
+    It is cut and drilled like the shelves an opening deals out, but it
+    stands where it was put instead of being re-spaced with them, and
+    it does not divide the opening the way a fixed shelf does - which
+    is how the prior library's dropped shelf behaved."""
+    shelf = add_fixed_shelf(opening_obj, z_offset,
+                            role=PART_ROLE_ADJ_SHELF)
+    shelf[PROP_SHELF_HELD] = 1
+    return shelf
+
+
+def add_opening_cleat(opening_obj, z_offset, anchor_top=False):
+    """Create a cleat that spans an opening at a height.
+
+    It is the same part a bay carries across its back, put in one
+    opening instead: the next recalculate() gives it the opening's
+    width and stands it against the rear, so it keeps spanning as the
+    opening is resized. Anchored to the top it hangs down from there
+    rather than standing up from the height it was given."""
+    cleat = CabinetPart()
+    cleat.create('Cleat')
+    cleat.obj.parent = opening_obj
+    cleat.obj['hb_part_role'] = PART_ROLE_CLEAT
+    cleat.obj['hb_z_offset'] = float(z_offset)
+    cleat.obj['hb_anchor_top'] = 1 if anchor_top else 0
+    cleat.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    cleat.obj.rotation_euler.x = math.radians(90)
+    return cleat.obj
+
+
 def add_rod(opening_obj, z_offset):
     """Create a hang rod under an opening, anchored to the opening top so
     it keeps its hang height when the bay grows."""
@@ -647,21 +684,31 @@ def add_rod(opening_obj, z_offset):
     return rod.obj
 
 
-# The loose parts, and the size and stance each one starts at. A part
-# dropped on its own is not worked out by anything afterwards, so what
-# it arrives as is all the help there is - a cleat should arrive lying
-# like a cleat and a back standing like a back, rather than every one
-# of them arriving as the same flat rectangle to be turned by hand.
+# The loose parts, and the size and stance each one starts at away
+# from an opening. Dropped on its own a part is not worked out by
+# anything afterwards, so what it arrives as is all the help there is -
+# a cleat should arrive lying like a cleat and a back standing like a
+# back, rather than every one of them arriving as the same flat
+# rectangle to be turned by hand. The figures are the ones the prior
+# library cut these at.
 #   (label, length, width, thickness, upright)
 LOOSE_PARTS = {
     'MISC': ("Misc Part", inch(30), inch(18), inch(0.75), False),
-    'BACK': ("Back", inch(30), inch(30), const.APPLIED_BACK_THICKNESS,
+    'BACK': ("Back", inch(30), inch(18), const.APPLIED_BACK_THICKNESS,
              True),
     'CLEAT': ("Cleat", inch(30), const.CLEAT_WIDTH,
               const.SHELF_THICKNESS, True),
-    'SHELF': ("Shelf", inch(30), inch(12), const.SHELF_THICKNESS,
+    'SHELF': ("Shelf", inch(30), inch(14), const.SHELF_THICKNESS,
               False),
 }
+
+# The loose parts that have somewhere to belong. Dropped into an
+# opening each of these takes that opening's size rather than the size
+# it was cut at, and goes on taking it as the opening is resized. A
+# misc part is not among them on purpose: it is the one part nothing
+# works out for the person, and the prior library left it alone in an
+# opening too.
+FITTED_LOOSE_PARTS = ('BACK', 'CLEAT', 'SHELF')
 
 
 def add_misc_part(name='Misc Part', kind='MISC'):
@@ -1691,6 +1738,26 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width)
                 part.set_input('Width', depth)
                 part.set_input('Thickness', st)
+            elif role == PART_ROLE_CLEAT:
+                # A cleat dropped into an opening spans it at the back
+                # the way a bay's cleat spans the bay, and rides the
+                # height it was dropped at. Anchored to the top it
+                # hangs down from there instead of standing up from
+                # below. On a double island's back opening the rear is
+                # the far end, so it goes there and extrudes the other
+                # way.
+                z_off = child.get('hb_z_offset', 0.0)
+                top = bool(child.get('hb_anchor_top'))
+                z = interior_h - z_off if top else z_off
+                z = max(0.0, min(z, interior_h))
+                child.location = (
+                    0.0, -depth if side == 'BACK' else 0.0, z)
+                part = GeoNodeCutpart(child)
+                part.set_input('Mirror Y', top)
+                part.set_input('Mirror Z', side == 'BACK')
+                part.set_input('Length', width)
+                part.set_input('Width', const.CLEAT_WIDTH)
+                part.set_input('Thickness', st)
             elif role == PART_ROLE_ROD:
                 op = opening.hb_closet_opening
                 z_off = child.get('hb_z_offset', const.ROD_TOP_OFFSET)
@@ -1792,6 +1859,22 @@ class ClosetStarter(GeoNodeCage):
 
         # ----- Adjustable shelves: even spacing bottom-up -----
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
+        adj_depth = max(depth - adj_setback, inch(1.0))
+        # A shelf put in at a height of its own stands there and is
+        # cut like the rest; it takes no part in the spacing, so it
+        # comes out of the list before the others are dealt.
+        held = [c for c in adj if c.get(PROP_SHELF_HELD)]
+        adj = [c for c in adj if not c.get(PROP_SHELF_HELD)]
+        for child in held:
+            z = float(child.get('hb_z_offset', 0.0))
+            if child.get('hb_anchor_top'):
+                z = interior_h - z
+            child.location = (clip, 0.0,
+                              max(0.0, min(z, interior_h - st)))
+            part = GeoNodeCutpart(child)
+            part.set_input('Length', shelf_w)
+            part.set_input('Width', adj_depth)
+            part.set_input('Thickness', st)
         if adj:
             adj.sort(key=lambda o: o.get('hb_adj_index', 0))
             # The prior library took every shelf's own thickness out
@@ -1801,7 +1884,6 @@ class ClosetStarter(GeoNodeCage):
             # between one shelf and the next is the same the whole way
             # up, which is what a shelf is set by.
             spacing = (interior_h - st * len(adj)) / (len(adj) + 1)
-            adj_depth = max(depth - adj_setback, inch(1.0))
             for i, child in enumerate(adj):
                 z = max(0.0, min(spacing * (i + 1) + st * i,
                                  interior_h - st))
@@ -2470,8 +2552,11 @@ class ClosetStarter(GeoNodeCage):
             qty = default_adj_shelf_qty(opening)
             if qty != int(op.adj_shelf_qty):
                 op.adj_shelf_qty = qty
+        # A shelf someone put at a height of their own is not one of
+        # the opening's: the count neither deals it nor takes it away.
         existing = [c for c in opening.children
-                    if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF]
+                    if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF
+                    and not c.get(PROP_SHELF_HELD)]
         existing.sort(key=lambda o: o.get('hb_adj_index', 0))
         while len(existing) > qty:
             bpy.data.objects.remove(existing.pop(), do_unlink=True)

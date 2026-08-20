@@ -306,8 +306,12 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         from . import types_closets
         layout = self.layout
         obj = context.active_object
+        # Add/Remove Shelf steps the count an opening deals out, so it
+        # is only offered on a shelf that count owns - not on one put
+        # in at a height of its own.
         if (obj is not None and obj.get('hb_part_role')
-                == types_closets.PART_ROLE_ADJ_SHELF):
+                == types_closets.PART_ROLE_ADJ_SHELF
+                and not obj.get(types_closets.PROP_SHELF_HELD)):
             op = layout.operator("hb_closets.adj_shelf_step",
                                  text="Add Shelf", icon='ADD')
             op.delta = 1

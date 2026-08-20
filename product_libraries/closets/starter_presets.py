@@ -40,13 +40,16 @@ PART_SECTIONS = [
          "A part you size and place yourself",
          'hb_closets.place_misc_part', {'kind': 'MISC'}),
         ('Back', "Back",
-         "A back panel on its own, for a site fix",
+         "A back panel. Dropped in an opening it closes it; "
+         "anywhere else it stands on its own for a site fix",
          'hb_closets.place_misc_part', {'kind': 'BACK'}),
         ('Cleat', "Cleat",
-         "A cleat on its own, for fixing to a wall",
+         "A cleat. Dropped in an opening it spans it at the height "
+         "it is dropped; anywhere else it fixes to a wall",
          'hb_closets.place_misc_part', {'kind': 'CLEAT'}),
         ('Shelf', "Shelf",
-         "A shelf on its own, outside any opening",
+         "A shelf. Dropped in an opening it is cut to it and lands "
+         "on the nearest system hole; anywhere else it stands alone",
          'hb_closets.place_misc_part', {'kind': 'SHELF'}),
         ('Continuous Top', "Continuous Top",
          "One top across a whole run, in two pieces when it is "
