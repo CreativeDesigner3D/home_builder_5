@@ -6950,17 +6950,12 @@ def _cfg_double_hang(opening):
     Only the mid-shelf configuration puts a shelf in there.
     """
     add_rod(opening, const.ROD_TOP_OFFSET)
-    drop = const.DOUBLE_HANG_TOP_OPENING + const.ROD_TOP_OFFSET
-    try:
-        interior_h = GeoNodeCage(opening).get_input('Dim Z')
-    except Exception:
-        interior_h = 0.0
-    # An opening too short to give the upper hang its room and still
-    # leave something worth hanging under it shares what it has
-    # instead, rather than standing one rod on the other.
-    if interior_h > 0.0 and drop > interior_h - inch(12.0):
-        drop = max(interior_h / 2.0, const.ROD_TOP_OFFSET)
-    add_rod(opening, drop)
+    # Every double hang is set out at the same top opening, however
+    # tall the bay is - a bay too short to leave much under it gets
+    # what it gets, and the designer moves the rod if that is not what
+    # the job wants. Bay Properties' Top Opening Height moves it.
+    add_rod(opening,
+            const.DOUBLE_HANG_TOP_OPENING + const.ROD_TOP_OFFSET)
 
 
 def _cfg_doors(opening):

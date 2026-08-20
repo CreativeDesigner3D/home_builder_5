@@ -5785,11 +5785,46 @@ def _bay_top_opening(bay, side='FRONT'):
     return openings[-1] if openings else None
 
 
-def _top_opening_height(bay, side='FRONT'):
-    """How tall the opening above the top shelf currently measures, or
-    None where the bay has no shelf splitting it."""
-    if not _bay_split_shelves(bay, side):
+def _double_hang_lower_rod(bay, side='FRONT'):
+    """The lower of the two rods of a double hang that has no shelf
+    between them, or None where the bay is not one.
+
+    A bay with a shelf splitting it is measured by that shelf instead,
+    so this only answers for the one that has none."""
+    if _bay_split_shelves(bay, side):
         return None
+    openings = [c for c in bay.children
+                if c.get(types_closets.TAG_OPENING_CAGE)
+                and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side]
+    if len(openings) != 1:
+        return None
+    rods = [c for c in openings[0].children
+            if c.get('hb_part_role') == types_closets.PART_ROLE_ROD]
+    if len(rods) < 2:
+        return None
+    rods.sort(key=lambda o: o.location.z)
+    return rods[0]
+
+
+def _top_opening_height(bay, side='FRONT'):
+    """How tall the top opening of a bay currently measures.
+
+    Where a shelf splits the bay that is the opening standing above
+    every one of them. A double hang has no shelf to measure from, so
+    what is measured there is the room the upper hang takes: the top of
+    the opening down to the rod hanging under it. None where the bay is
+    neither."""
+    if not _bay_split_shelves(bay, side):
+        rod = _double_hang_lower_rod(bay, side)
+        if rod is None or rod.parent is None:
+            return None
+        try:
+            interior_h = float(
+                hb_types.GeoNodeCage(rod.parent).get_input('Dim Z'))
+        except Exception:
+            return None
+        return max(0.0, interior_h - float(rod.location.z)
+                   - const.ROD_TOP_OFFSET)
     opening = _bay_top_opening(bay, side)
     if opening is None:
         return None
@@ -5805,23 +5840,26 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
     bl_label = "Closet Bay Properties"
     bl_options = {'UNDO'}
 
-    # How tall the opening above the bay's top shelf reads. Typing a
-    # height here moves that shelf; everything below it stays where the
-    # user put it and the openings under it keep their contents.
+    # How tall the bay's top opening reads. Where a shelf splits the
+    # bay, typing a height here moves that shelf; everything below it
+    # stays where the user put it and the openings under it keep their
+    # contents. In a double hang there is no shelf, so it moves the rod
+    # the upper hang finishes at instead.
     # The standard opening heights, with a typed height for an opening
-    # that is not on the ladder - a shelf dragged by hand can leave one
-    # anywhere, and the dialog has to be able to show what is there.
+    # that is not on the ladder - a shelf or a rod dragged by hand can
+    # leave one anywhere, and the dialog has to show what is there.
     top_opening_preset: bpy.props.EnumProperty(
         name="Top Opening Height",
-        description="Height of the opening above the top shelf in this "
-                    "bay. Changing it moves that shelf",
+        description="Height of this bay's top opening. Changing it "
+                    "moves the shelf under that opening, or in a "
+                    "double hang the rod the upper hang finishes at",
         items=const.OPENING_HEIGHT_ITEMS + [
             ('CUSTOM', "Custom", "Type a height of your own")],
         default=const.TOP_OPENING_HEIGHT_KEY)  # type: ignore
     top_opening_height: bpy.props.FloatProperty(
         name="Custom Height",
-        description="Height of the opening above the top shelf when it "
-                    "is not one of the standard heights",
+        description="Height of the top opening when it is not one of "
+                    "the standard heights",
         default=const.TOP_SHELF_OPENING_HEIGHT,
         min=units.inch(1.0), unit='LENGTH', precision=4)  # type: ignore
 
@@ -5944,13 +5982,24 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         target = self._top_opening_target()
         if current is not None and abs(current - target) > 1e-6:
             shelves = _bay_split_shelves(bay)
-            shelf = shelves[-1]
-            below = (float(shelves[-2].get('hb_z_offset', 0.0))
-                     if len(shelves) > 1 else 0.0)
-            st = types_closets.run_sizes(bay).shelf_thickness
-            floor = below + (st if len(shelves) > 1 else 0.0) + units.inch(1.0)
-            z = float(shelf.get('hb_z_offset', 0.0)) + (current - target)
-            shelf['hb_z_offset'] = float(max(floor, z))
+            if shelves:
+                shelf = shelves[-1]
+                below = (float(shelves[-2].get('hb_z_offset', 0.0))
+                         if len(shelves) > 1 else 0.0)
+                st = types_closets.run_sizes(bay).shelf_thickness
+                floor = (below + (st if len(shelves) > 1 else 0.0)
+                         + units.inch(1.0))
+                z = float(shelf.get('hb_z_offset', 0.0)) + (current - target)
+                shelf['hb_z_offset'] = float(max(floor, z))
+            else:
+                # A double hang finishes its upper hang at a rod rather
+                # than a shelf, so the rod is what moves. It hangs from
+                # the top of the opening the way the one above it does,
+                # its own drop below the line asked for.
+                rod = _double_hang_lower_rod(bay)
+                if rod is not None:
+                    rod['hb_z_offset'] = float(target + const.ROD_TOP_OFFSET)
+                    rod['hb_anchor_top'] = 1
             root = types_closets.find_starter_root(bay)
             if root is not None:
                 types_closets.recalculate_closet_starter(root)
