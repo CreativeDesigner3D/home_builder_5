@@ -3378,6 +3378,8 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self.register_placement_object(self._part_obj)
+        if self._fits_openings:
+            self.add_placement_dim_handler(context)
         label = types_closets.LOOSE_PARTS[self.kind][0].lower()
         hb_placement.draw_header_text(
             context,
@@ -3457,6 +3459,7 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         opening = self._opening
         self._opening = None
         self._fitted_at = None
+        self._placement_dim_specs = []
         root = None
         if opening is not None:
             try:
@@ -3477,41 +3480,97 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         if self._part_obj is not None:
             self._part_obj.hide_set(False)
 
-    def _fit_opening(self, context, opening, local_z, interior_h):
-        """Put the part at the height the cursor is at, the way the
-        prior library put this kind of part. A run is only solved again
-        when that height has actually moved - the cursor reports far
-        more often than the part changes."""
+    def _height_for(self, local_z, interior_h):
+        """Where this kind of part lands for a cursor at that height,
+        as (height above the opening bottom, hung from the top). A back
+        answers None: it is the whole opening and has no height of its
+        own."""
         if self._preview is None:
-            return
+            return None, False
         if self.kind == 'SHELF':
             # 32mm system: a shelf lands on a system hole. The lattice
             # is measured from the bay interior bottom, so the segment
             # offset goes on before the snap and comes off after -
             # holes stay lined up across a split.
-            seg_bottom = opening.get('hb_seg_bottom', 0.0)
+            seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
             z = (const.snap_system_hole(seg_bottom + local_z)
                  - seg_bottom)
-            z = max(0.0, min(z, interior_h))
-            top = False
+            return max(0.0, min(z, interior_h)), False
+        # A cleat dropped near the floor takes the floor, and one
+        # dropped near the top takes the top and hangs from it. Between
+        # the two it stays where it is put. Both are read off where the
+        # cursor actually is, and the top wins in an opening short
+        # enough for the two bands to overlap.
+        z = max(0.0, min(local_z, interior_h))
+        top = z > interior_h - units.inch(5.0)
+        if top or z < units.inch(10.0):
+            z = 0.0
+        return z, top
+
+    def _part_band(self, context, z, top, interior_h):
+        """The band of the opening the part is standing in."""
+        if self.kind == 'CLEAT':
+            thick = const.CLEAT_WIDTH
         else:
-            # A cleat dropped near the floor takes the floor, and one
-            # dropped near the top takes the top and hangs from it.
-            # Between the two it stays where it is put. Both are read
-            # off where the cursor actually is, and the top wins in a
-            # opening short enough for the two bands to overlap.
-            z = max(0.0, min(local_z, interior_h))
-            top = z > interior_h - units.inch(5.0)
-            if top or z < units.inch(10.0):
-                z = 0.0
-        if self._fitted_at == (z, top):
+            thick = context.scene.hb_closets.shelf_thickness
+        if top:
+            return max(0.0, interior_h - thick), interior_h
+        return z, min(z + thick, interior_h)
+
+    def _show_dims(self, context, opening, z, top, interior_h):
+        """The figures the prior library drew while a part was being
+        put in: how wide it is being cut, and how much of the opening
+        is left below it and above it. Drawn in front of the opening
+        so nothing standing in there hides them."""
+        try:
+            cage = hb_types.GeoNodeCage(opening)
+            width = cage.get_input('Dim X')
+            depth = cage.get_input('Dim Y')
+        except Exception:
             return
-        self._fitted_at = (z, top)
-        self._preview['hb_z_offset'] = float(z)
-        self._preview['hb_anchor_top'] = 1 if top else 0
-        root = types_closets.find_starter_root(opening)
-        if root is not None:
-            types_closets.recalculate_closet_starter(root)
+        wm = opening.matrix_world
+        y = -depth - units.inch(1.0)
+        x = units.inch(2.0)
+        unit_settings = context.scene.unit_settings
+
+        def dim(a, b, value):
+            return hb_placement.PlacementDimSpec(
+                wm @ Vector(a), wm @ Vector(b),
+                units.unit_to_string(unit_settings, value), None)
+
+        specs = []
+        if z is None:
+            # A back is the whole of the opening, so the panel it is
+            # being cut to is the whole of what there is to say.
+            specs.append(dim((0.0, y, 0.0), (width, y, 0.0), width))
+            specs.append(dim((x, y, 0.0), (x, y, interior_h), interior_h))
+        else:
+            low, high = self._part_band(context, z, top, interior_h)
+            specs.append(dim((0.0, y, low), (width, y, low), width))
+            if low > units.inch(0.5):
+                specs.append(dim((x, y, 0.0), (x, y, low), low))
+            if interior_h - high > units.inch(0.5):
+                specs.append(dim((x, y, high), (x, y, interior_h),
+                                 interior_h - high))
+        self._placement_dim_specs = specs
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _fit_opening(self, context, opening, local_z, interior_h):
+        """Put the part at the height the cursor is at, the way the
+        prior library put this kind of part, and say what it has
+        landed at. A run is only solved again when that height has
+        actually moved - the cursor reports far more often than the
+        part changes - but the figures are drawn either way."""
+        z, top = self._height_for(local_z, interior_h)
+        if z is not None and self._fitted_at != (z, top):
+            self._fitted_at = (z, top)
+            self._preview['hb_z_offset'] = float(z)
+            self._preview['hb_anchor_top'] = 1 if top else 0
+            root = types_closets.find_starter_root(opening)
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+        self._show_dims(context, opening, z, top, interior_h)
 
     def _place_in_opening(self, context):
         """Commit: the opening keeps what it has been shown, and the
@@ -3571,6 +3630,7 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             Vector(self.hit_location))
 
     def _end(self, context):
+        self.remove_placement_dim_handler()
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
 
