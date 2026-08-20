@@ -1,5 +1,5 @@
 import bpy
-from mathutils import Vector
+from mathutils import Vector, Matrix, Euler
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -4956,7 +4956,7 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
                 Vector((cw, -cd, ch)),
             ]
 
-            mw = root.matrix_world
+            mw = _resolved_world_matrix(root)
             for lc in local_corners:
                 wc = mw @ lc
                 min_x = min(min_x, wc.x); max_x = max(max_x, wc.x)
@@ -4973,6 +4973,27 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         rotation = (0, 0, 0)
 
         return (location, rotation, overall_w, overall_d, overall_h)
+
+
+def _resolved_world_matrix(obj):
+    """``obj.matrix_world`` that is safe to read from any scene.
+
+    ``Object.matrix_world`` is depsgraph-evaluated runtime data: it is not
+    stored in the file and is only written back for objects in a view layer
+    that has actually been evaluated. An object living in a scene that has
+    not been visited in this session therefore reports an identity matrix,
+    which silently reads as "sits at the world origin". Anything that groups
+    or measures objects in another scene has to fall back to the transform
+    that IS stored on the object.
+
+    For an unparented root the basis matrix is the world matrix by
+    definition, so prefer it whenever the reported world matrix has gone
+    identity on us.
+    """
+    mw = obj.matrix_world
+    if obj.parent is None and mw == Matrix.Identity(4):
+        return obj.matrix_basis.copy()
+    return mw.copy()
 
 
 def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
@@ -5007,14 +5028,6 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     # active object and shows the named Menu class.
     group.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_group_commands'
 
-    # Flush the depsgraph BEFORE reparenting: assigning root.matrix_world
-    # below computes each root's basis against the cage's CURRENT
-    # matrix_world, and a freshly created object's matrix_world is
-    # identity until a depsgraph update folds in the location set above.
-    # Without this, every member lands displaced by the cage's location
-    # (basis was computed as if the cage sat at the origin).
-    bpy.context.view_layer.update()
-
     # Reparent preserving world transforms - the user placed these
     # cabinets where they wanted them and the group shouldn't shift
     # them at creation time. The cabinet roots' own cages stay
@@ -5022,10 +5035,21 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     # from cluttering the group cage; child parts (carcass, doors,
     # drawers) remain visible because hide_viewport doesn't
     # propagate to children.
+    #
+    # The child basis is composed by hand rather than assigned through
+    # root.matrix_world: that setter solves the basis against the cage's
+    # CURRENT evaluated matrix, which is identity on a freshly created
+    # object (and stays identity for as long as the cage's scene goes
+    # unevaluated), so every member would land displaced by the cage's
+    # location. The cage's transform is known exactly right here, so use it.
+    group_matrix = (Matrix.Translation(loc)
+                    @ Euler(rot, 'XYZ').to_matrix().to_4x4())
+    group_matrix_inv = group_matrix.inverted_safe()
     for root in roots:
-        world_matrix = root.matrix_world.copy()
+        world_matrix = _resolved_world_matrix(root)
         root.parent = group.obj
-        root.matrix_world = world_matrix
+        root.matrix_parent_inverse = Matrix.Identity(4)
+        root.matrix_basis = group_matrix_inv @ world_matrix
         # Cabinet / product cages get hidden so only the group cage
         # shows (their part children stay visible); appliances keep
         # their visible geometry on the root, so hiding them would
