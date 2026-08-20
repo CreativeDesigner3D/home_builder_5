@@ -9626,6 +9626,21 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: cabinet sizes section
     # =====================================================================
+    def _refrigerator_opening_width(self, context=None):
+        """Width of the opening the refrigerator actually gets: the
+        cabinet width less both end stiles. A refrigerator cabinet is a
+        tall cabinet and both of its sides use the standard end-stile
+        row, so the widths come from the active style's tall end stile.
+        Returns None when there is no style to read widths from."""
+        ff = get_style_props(context)
+        idx = ff.active_cabinet_style_index
+        if not (0 <= idx < len(ff.cabinet_styles)):
+            return None
+        style = ff.cabinet_styles[idx]
+        opening = (self.refrigerator_cabinet_width
+                   - style.ff_end_stile_width_tall * 2)
+        return opening if opening > 0.0 else 0.0
+
     def draw_cabinet_sizes_ui(self, layout, context):
         unit_settings = context.scene.unit_settings
 
@@ -9725,8 +9740,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
             row.label(text="Refrigerator Height:")
             row.prop(self, 'refrigerator_height', text="")
             row = abox.row()
-            row.label(text="Refrigerator Width:")
+            row.label(text="Refrigerator Cabinet Width:")
             row.prop(self, 'refrigerator_cabinet_width', text="")
+            opening = self._refrigerator_opening_width(context)
+            if opening is not None:
+                row = abox.row()
+                row.label(text="Refrigerator Opening Width:")
+                row.label(text=units.unit_to_string(unit_settings, opening))
             row = abox.row()
             row.label(text="Dishwasher / Range:")
             row.prop(self, 'dishwasher_width', text="")
