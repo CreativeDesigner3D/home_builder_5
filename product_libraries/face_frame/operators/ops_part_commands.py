@@ -1481,6 +1481,20 @@ def _front_panel_openings(front):
     return (bottom_opening, top_opening)
 
 
+def _front_overall_size(front):
+    """Overall (width, height) of a front for a read-only readout, read
+    off its cutpart (a front's Length runs vertically). The frame fields
+    above are per-member; this is the door itself, which is what gets
+    ordered. None when the part can't be read."""
+    if front is None:
+        return None
+    try:
+        part = GeoNodeCutpart(front)
+        return (part.get_input('Width'), part.get_input('Length'))
+    except Exception:
+        return None
+
+
 def _frame_store(front_obj):
     """Persistent home for a front's locked frame data: its OPENING cage,
     which survives the per-recalc front rebuild (the front itself does not).
@@ -1868,15 +1882,29 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         if self.mid_rails > 1:
             gbox.prop(self, 'glass_rows', text="Rows")
 
+        us = context.scene.unit_settings
+        front = _door_frame_for_dialog(self)
+
+        # Read-only readout of the finished front's overall size, in the
+        # always-enabled column so it shows whether or not the frame is
+        # locked. Live like the rest of the dialog: an edit above resizes
+        # nothing here (the front keeps its hole), but a front whose size
+        # changed elsewhere reads correctly on the next open.
+        size = _front_overall_size(front)
+        if size is not None:
+            sbox = col.box()
+            sbox.label(text="Door Size")
+            sbox.label(text="Width:  " + units.unit_to_string(us, size[0]))
+            sbox.label(text="Height:  " + units.unit_to_string(us, size[1]))
+
         # Read-only readout of the resulting interior-panel heights. Lives in
         # the always-enabled column (not the lock-greyed body) so it's visible
         # whether the frame is locked or following its style. Grid fronts
         # skip it -- the two-opening readout doesn't describe N rows.
         openings = (None if self.mid_rails > 0 else
-                    _front_panel_openings(_door_frame_for_dialog(self)))
+                    _front_panel_openings(front))
         if openings is not None:
             bottom_opening, top_opening = openings
-            us = context.scene.unit_settings
             box = col.box()
             box.label(text="Panel Heights")
             if top_opening is None:
