@@ -10285,7 +10285,7 @@ class FaceFrameCabinet(GeoNodeCage):
     # Fallback inside faces of the box, used only when the drawer box
     # asset doesn't publish its own (see _drawer_box_interior): wall
     # thickness, and the top of the bottom panel an insert stands on.
-    DRAWER_BOX_SIDE_TH = inch(0.5)
+    DRAWER_BOX_SIDE_TH = inch(0.625)
     DRAWER_BOX_INSIDE_FLOOR = inch(0.75)
     # Headroom an insert leaves under the rim of the box.
     DRAWER_INSERT_RIM_GAP = inch(0.75)
