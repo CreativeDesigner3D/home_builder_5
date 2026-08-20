@@ -80,7 +80,7 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                     or _bc_props.left_stile_type == 'BLIND'
                     or _bc_props.right_stile_type == 'BLIND'):
                 layout.operator("hb_face_frame.edit_blind_corner",
-                                text="Blind Corner Properties...",
+                                text="Blind/Corner Properties...",
                                 icon='SNAP_EDGE')
                 layout.operator("hb_face_frame.swap_blind_corner",
                                 text="Swap Blind Cabinet",

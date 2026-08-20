@@ -6055,7 +6055,7 @@ def _apply_blind_corner_state(blind_obj, placed_obj, blind_side, *,
             placed_props.left_scribe = units.inch(0.25)
 
         # Pair reference so the corner can be re-opened from either
-        # cabinet's right-click menu (Blind Corner Properties...).
+        # cabinet's right-click menu (Blind/Corner Properties...).
         blind_obj['HB_BLIND_PAIR'] = placed_obj.name
         placed_obj['HB_BLIND_PAIR'] = blind_obj.name
 
@@ -6262,7 +6262,7 @@ class _BlindCornerDialogMixin:
     )  # type: ignore
 
     match_cabinet_depth: bpy.props.BoolProperty(
-        name="Match Cabinet Depth",
+        name="Void Corner",
         description=(
             "Auto-set the void so the blind cabinet's exposed end "
             "lines up with the back of the placed cabinet's face frame"
@@ -6329,7 +6329,7 @@ class _BlindCornerDialogMixin:
         row.prop(self, 'swap_roles', text="")
 
         row = layout.row(align=True)
-        row.label(text="Match Cabinet Depth:")
+        row.label(text="Void Corner:")
         row.prop(self, 'match_cabinet_depth', text="")
 
         if self.match_cabinet_depth:
@@ -6445,7 +6445,7 @@ class hb_face_frame_OT_edit_blind_corner(_BlindCornerDialogMixin,
     resolved from the clicked cabinet and the fields are seeded from
     the corner's CURRENT state, so OK applies just the difference."""
     bl_idname = "hb_face_frame.edit_blind_corner"
-    bl_label = "Blind Corner Properties"
+    bl_label = "Blind/Corner Properties"
     bl_description = ("Adjust the void amount and stile widths of the "
                       "blind corner this cabinet is part of")
     bl_options = {'UNDO'}
@@ -6488,7 +6488,7 @@ class hb_face_frame_OT_swap_blind_corner(bpy.types.Operator):
     either cabinet's right-click menu: the placed cabinet becomes the
     blind cabinet and vice versa, keeping the corner's current mode,
     void and stile settings. The same swap is available as a checkbox
-    in Blind Corner Properties when the settings need changing too."""
+    in Blind/Corner Properties when the settings need changing too."""
     bl_idname = "hb_face_frame.swap_blind_corner"
     bl_label = "Swap Blind Cabinet"
     bl_description = ("Make the other cabinet of this blind corner the "
