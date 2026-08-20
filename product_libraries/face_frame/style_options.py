@@ -5121,17 +5121,34 @@ _SERIES_GLASS_FRAME_TOTAL = {
     'Konza': {'1/2': 2.25, '3/4': 2.25, '1 1/4': 2.25, '2': 3.0},
 }
 
+# Panel-dependent frames: for these series the PANEL choice decides
+# whether the door is a slab at all, and sizes the frame when it is not.
+# The slab panel builds as a plain slab; the framed panels use the same
+# width on the stiles and the rails (doors and drawer faces alike).
+SERIES_PANEL_FRAME = {
+    'Notable': {
+        'Slab': {'is_slab': True},
+        'Prep for Glass': {'stile': 2.5, 'rail': 2.5, 'drw_rail': 2.5},
+        'Speaker Cloth': {'stile': 2.5, 'rail': 2.5, 'drw_rail': 2.5},
+    },
+}
 
-def frame_for_series(series, shape=None):
+
+def frame_for_series(series, shape=None, panel=None):
     """Frame spec dict for a series: {stile, rail, drw_rail, [panel_inset],
     [panel_thickness], [is_slab]}. Falls back to DEFAULT_FRAME. Widths in
     inches. For shape-width series (SERIES_SHAPE_FRAME, e.g. Konza) the
-    catalog shape picks the member widths, so pass the style's shape."""
+    catalog shape picks the member widths, so pass the style's shape; for
+    panel-width series (SERIES_PANEL_FRAME, e.g. Notable) the panel picks
+    them - and picks slab vs 5-piece - so pass the style's panel too."""
     spec = dict(DEFAULT_FRAME)
     spec.update(SERIES_FRAME.get(series, {}))
     by_shape = SERIES_SHAPE_FRAME.get(series)
     if by_shape and shape:
         spec.update(by_shape.get((shape or '').strip(), {}))
+    by_panel = SERIES_PANEL_FRAME.get(series)
+    if by_panel and panel:
+        spec.update(by_panel.get((panel or '').strip(), {}))
     return spec
 
 
@@ -5149,11 +5166,18 @@ def glass_inner_frame_width(series, shape, panel):
     total = totals.get((shape or '').strip())
     if total is None:
         return None
-    outer = frame_for_series(series, shape)['stile']
+    outer = frame_for_series(series, shape, panel)['stile']
     return max(total - outer, 0.0) or None
 
 
-def series_is_slab(series):
+def series_is_slab(series, panel=None):
+    """True when the series builds a plain slab. Panel-width series (e.g.
+    Notable) answer per panel, so pass the style's panel when known."""
+    by_panel = SERIES_PANEL_FRAME.get(series)
+    if by_panel and panel:
+        entry = by_panel.get((panel or '').strip())
+        if entry is not None:
+            return entry.get('is_slab', False)
     return SERIES_FRAME.get(series, {}).get('is_slab', False)
 
 

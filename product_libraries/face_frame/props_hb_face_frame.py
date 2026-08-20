@@ -433,7 +433,8 @@ def _apply_series_frame_to_door_style(self):
     keep reading stile_width / rail_width / door_type unchanged. Widths in the
     baked spec are inches -> converted with units.inch()."""
     spec = style_options.frame_for_series(self.front_series,
-                                          getattr(self, 'front_shape', None))
+                                          getattr(self, 'front_shape', None),
+                                          getattr(self, 'front_panel', None))
     if spec.get('is_slab'):
         self.door_type = 'SLAB'
         return
