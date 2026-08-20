@@ -6941,6 +6941,28 @@ def _cfg_rod(opening):
     add_rod(opening, const.ROD_TOP_OFFSET)
 
 
+def _cfg_double_hang(opening):
+    """Two hangs in the one opening.
+
+    A double hang is two rods, not a shelf with a rod either side of
+    it: the upper one hangs under the top of the opening and the lower
+    one under the line its room finishes at, with nothing between them.
+    Only the mid-shelf configuration puts a shelf in there.
+    """
+    add_rod(opening, const.ROD_TOP_OFFSET)
+    drop = const.DOUBLE_HANG_TOP_OPENING + const.ROD_TOP_OFFSET
+    try:
+        interior_h = GeoNodeCage(opening).get_input('Dim Z')
+    except Exception:
+        interior_h = 0.0
+    # An opening too short to give the upper hang its room and still
+    # leave something worth hanging under it shares what it has
+    # instead, rather than standing one rod on the other.
+    if interior_h > 0.0 and drop > interior_h - inch(12.0):
+        drop = max(interior_h / 2.0, const.ROD_TOP_OFFSET)
+    add_rod(opening, drop)
+
+
 def _cfg_doors(opening):
     opening.hb_closet_opening.door_swing = 'DOUBLE'
     seed_door_shelves(opening)
@@ -6998,20 +7020,22 @@ def apply_bay_config(bay_obj, config):
         opening.hb_closet_opening.adj_shelf_qty = max(
             1, min(8, int(ih / inch(12.0))))
     elif config == 'DOUBLE_HANG':
-        splits = [ih / 2.0]
-        actions = [(0, _cfg_rod), (1, _cfg_rod)]
+        # Two rods in the one opening, the upper one taking the room a
+        # double hang is set out at. No shelf between them.
+        actions = [(0, _cfg_double_hang)]
     elif config == 'DH_TOP_SHELF':
         # A shelf near the top leaves a storage opening above the two
-        # hangs, which split what is left of the bay between them.
+        # hangs. The hangs share the opening under it, with nothing
+        # between them.
         hang_top = max(inch(2.0),
                        ih - const.TOP_SHELF_OPENING_HEIGHT - st)
-        splits = [hang_top / 2.0, hang_top]
-        actions = [(0, _cfg_rod), (1, _cfg_rod)]
+        splits = [hang_top]
+        actions = [(0, _cfg_double_hang)]
     elif config == 'DH_MID_SHELF':
         # Two hangs with a storage band between them. The upper hang is
         # measured down from the top of the bay and the band hangs
         # under it, so the lower hang takes whatever is left.
-        top = min(ih - const.MID_SHELF_OPENING_HEIGHT - st,
+        top = min(ih - const.DOUBLE_HANG_TOP_OPENING - st,
                   ih - st - inch(1.0))
         low = max(inch(1.0), top - const.MID_SHELF_BAND_HEIGHT)
         if top - low < st + inch(1.0):
