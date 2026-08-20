@@ -4893,8 +4893,9 @@ class LShelfClosetStarter(GeoNodeCage):
                 shelf['hb_part_role'] = (PART_ROLE_FIXED_SHELF if locked
                                          else PART_ROLE_ADJ_SHELF)
                 shelf['hb_l_carcass'] = 1 if carcass else 0
-                shelf.color = (const.L_LOCK_SHELF_COLOR if locked
-                               and not carcass else (1.0, 1.0, 1.0, 1.0))
+                # Colour is not set here: the marking pass at the end
+                # of the solve reads the role this just wrote and paints
+                # every fixed shelf in the file the same way.
                 # shelves are held off both walls by the wall
                 # offset (the partition and shelf formulas assume it).
                 shelf.location = (wo, -wo, z)
@@ -5831,6 +5832,46 @@ def recalculate_closet_starter(obj):
     carry_over_front_locks(root)
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
+    mark_parts(root)
+
+
+# The shelves that hold a unit square rather than resting on clips.
+# Same three the machining calls lock shelves.
+LOCK_SHELF_ROLES = (PART_ROLE_BOTTOM_SHELF, PART_ROLE_TOP_SHELF,
+                    PART_ROLE_FIXED_SHELF)
+
+# Only these roles are painted. Anything else that has been given a
+# colour of its own - the red block standing in for a model that is
+# not installed, say - is left alone.
+_MARKABLE_ROLES = LOCK_SHELF_ROLES + (PART_ROLE_PANEL,)
+
+
+def part_marker_color(obj):
+    """The colour a part is marked with, or None where it takes the
+    plain one.
+
+    A shelf that is fixed rather than on clips is marked the way the
+    prior library marked its lock shelves. A panel that finishes an end
+    is marked the same, so the two things worth knowing about a run at
+    a glance - what is holding it square and where it is finished -
+    both read off the viewport rather than out of a prompt.
+    """
+    role = obj.get('hb_part_role')
+    if role in LOCK_SHELF_ROLES:
+        return const.LOCK_SHELF_COLOR
+    if role == PART_ROLE_PANEL and obj.get('hb_finished_end'):
+        return const.LOCK_SHELF_COLOR
+    return None
+
+
+def mark_parts(root):
+    """Paint a run's parts after it has been solved, so a shelf that
+    has just been fixed or an end that has just been finished says so
+    without waiting for anything else to happen."""
+    for obj in root.children_recursive:
+        if obj.get('hb_part_role') not in _MARKABLE_ROLES:
+            continue
+        obj.color = part_marker_color(obj) or const.PLAIN_PART_COLOR
 
 
 def _recalculate_now(obj):

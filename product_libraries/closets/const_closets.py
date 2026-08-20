@@ -347,10 +347,15 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # corner - which is what the prior library did, and what the hardware
 # allows. It stands this far off the wall it does not run along, and
 # clear of the one it does.
-# A locked shelf reads orange in the viewport, the way the prior
-# library marked them, so a stack of shelves says at a glance which
-# of them is holding the unit square.
-L_LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+# The parts worth spotting across a room read orange in the viewport:
+# a shelf that is fixed rather than on clips, the way the prior library
+# marked its lock shelves, so a stack says at a glance which of them is
+# holding the unit square - and a panel that finishes an end, so a run
+# says where its finished ends are without a prompt being opened to
+# ask.
+LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+# The colour everything else takes.
+PLAIN_PART_COLOR = (1.0, 1.0, 1.0, 1.0)
 
 # The filler that closes an inside corner: two boards standing on
 # edge, one lapping the other, and a top laid over both. The widths

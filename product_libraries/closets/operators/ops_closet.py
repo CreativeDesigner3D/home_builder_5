@@ -387,6 +387,13 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
         else:
             toggle_cabinet_color(obj, False,
                                  type_name=self.MODE_TAGS.get(mode, ''))
+            # That pass hands every part back the plain colour, which
+            # would paint out the fixed shelves and the finished ends.
+            # They are put back afterwards so the marking survives a
+            # change of selection mode.
+            marker = types_closets.part_marker_color(obj)
+            if marker is not None:
+                obj.color = marker
 
     def execute(self, context):
         props = context.scene.hb_closets
