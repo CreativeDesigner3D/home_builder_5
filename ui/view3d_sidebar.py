@@ -542,14 +542,6 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
         row.operator("home_builder_walls.draw_floor_cutter", icon="MOD_BOOLEAN")
         layout.operator("home_builder_walls.add_ceiling")
 
-        # Clearing the room shell out of the way: the floor, ceiling and
-        # lights are what clutter a 3D view of the cabinets.
-        col = layout.column(align=True)
-        col.operator("home_builder_walls.toggle_room_scenery",
-                     text="Hide/Show Floor, Ceiling & Lights", icon='HIDE_OFF')
-        col.operator("home_builder_walls.delete_room_scenery",
-                     text="Delete Floor, Ceiling & Lights", icon='TRASH')
-
 
 # SUBPANEL: Lighting
 class HOME_BUILDER_PT_room_layout_lighting(bpy.types.Panel):
