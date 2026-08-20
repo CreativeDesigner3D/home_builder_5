@@ -241,10 +241,10 @@ ROD_WIDTH_DEDUCTION = inch(0.25)
 # double-hang configurations. 40 3/4" on the standard ladder of opening
 # heights (1036.95 mm), which is where a double hang is set out.
 DOUBLE_HANG_TOP_OPENING = inch(40.8248)
-# The shallow storage opening a top shelf leaves over the two hangs,
-# and the storage band a mid shelf hangs between them.
+# The shallow storage opening a top shelf leaves over the two hangs.
+# A mid shelf needs no figure of its own: it sits where the upper
+# hang's room finishes.
 TOP_SHELF_OPENING_HEIGHT = inch(10.5866)
-MID_SHELF_BAND_HEIGHT = inch(12.0)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
 # the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.

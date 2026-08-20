@@ -7027,19 +7027,19 @@ def apply_bay_config(bay_obj, config):
         splits = [hang_top]
         actions = [(0, _cfg_double_hang)]
     elif config == 'DH_MID_SHELF':
-        # Two hangs with a storage band between them. The upper hang is
-        # measured down from the top of the bay and the band hangs
-        # under it, so the lower hang takes whatever is left.
-        top = min(ih - const.DOUBLE_HANG_TOP_OPENING - st,
-                  ih - st - inch(1.0))
-        low = max(inch(1.0), top - const.MID_SHELF_BAND_HEIGHT)
-        if top - low < st + inch(1.0):
-            top = low + st + inch(1.0)
-        splits = [low, top]
+        # Two hangs with ONE shelf between them - that shelf is what
+        # this configuration is for. It sits where the upper hang's
+        # room finishes, so the upper hang takes the same top opening
+        # every other double hang does and the lower one takes what is
+        # left under it.
+        top = max(inch(1.0),
+                  min(ih - const.DOUBLE_HANG_TOP_OPENING - st,
+                      ih - st - inch(1.0)))
+        splits = [top]
         # The shelf under the upper hang takes a cleat behind it, the
         # way the prior library built this configuration.
         cleat_at = top
-        actions = [(0, _cfg_rod), (2, _cfg_rod)]
+        actions = [(0, _cfg_rod), (1, _cfg_rod)]
     elif drawer_qty is not None:
         qty = drawer_qty
 
