@@ -353,7 +353,10 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # holding the unit square - and a panel that finishes an end, so a run
 # says where its finished ends are without a prompt being opened to
 # ask.
-LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+# Strong rather than pale: the marking has to carry across a room at
+# the zoom a run is actually looked at, and the soft peach the prior
+# library used washed out against melamine under the viewport's light.
+LOCK_SHELF_COLOR = (1.0, 0.35, 0.05, 1.0)
 # The colour everything else takes.
 PLAIN_PART_COLOR = (1.0, 1.0, 1.0, 1.0)
 
