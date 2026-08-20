@@ -4293,6 +4293,97 @@ class home_builder_walls_OT_delete_room_lights(bpy.types.Operator):
         return {'FINISHED'}
 
 
+ROOM_SCENERY_TAGS = ('IS_FLOOR_BP', 'IS_CEILING_BP', 'IS_ROOM_LIGHT')
+
+
+def _room_scenery_objects(scene):
+    """Floor, ceiling and room light objects of a scene, with their children.
+
+    These are the parts of the room shell that get in the way of looking at
+    (or rendering) the cabinets: the floor and ceiling planes hide whatever
+    the camera is behind, and the light objects clutter the viewport.
+    The list is materialised up front so callers can delete from it without
+    mutating the collection they are walking.
+    """
+    objs = []
+    seen = set()
+    for obj in scene.objects:
+        if not any(obj.get(tag) for tag in ROOM_SCENERY_TAGS):
+            continue
+        for target in [obj] + list(obj.children_recursive):
+            if target.name not in seen:
+                seen.add(target.name)
+                objs.append(target)
+    return objs
+
+
+class home_builder_walls_OT_toggle_room_scenery(bpy.types.Operator):
+    bl_idname = "home_builder_walls.toggle_room_scenery"
+    bl_label = "Hide Floor, Ceiling & Lights"
+    bl_description = ("Hide the floor, ceiling and room lights in the viewport "
+                      "and in renders, or show them again if they are hidden")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        objs = _room_scenery_objects(context.scene)
+        if not objs:
+            self.report({'WARNING'}, "No floor, ceiling, or room lights found")
+            return {'CANCELLED'}
+
+        # Anything still visible means the room is "shown", so the button
+        # hides; only once everything is hidden does it bring them back.
+        hide = any(not obj.hide_viewport for obj in objs)
+        for obj in objs:
+            obj.hide_viewport = hide
+            obj.hide_render = hide
+            # hide_set drives the eye icon, which is what the user toggled
+            # if they hid one of these by hand.
+            try:
+                obj.hide_set(hide)
+            except RuntimeError:
+                # Object is not in the active view layer.
+                pass
+
+        self.report({'INFO'},
+                    ("Hid " if hide else "Showed ") + f"{len(objs)} object(s)")
+        return {'FINISHED'}
+
+
+class home_builder_walls_OT_delete_room_scenery(bpy.types.Operator):
+    bl_idname = "home_builder_walls.delete_room_scenery"
+    bl_label = "Delete Floor, Ceiling & Lights"
+    bl_description = ("Remove the floor, ceiling and room lights from the "
+                      "scene, leaving the walls and the cabinets")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        objs = _room_scenery_objects(scene)
+        if not objs:
+            self.report({'WARNING'}, "No floor, ceiling, or room lights found")
+            return {'CANCELLED'}
+
+        count = len(objs)
+        light_data = [obj.data for obj in objs
+                      if obj.type == 'LIGHT' and obj.data is not None]
+        for obj in objs:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        for data in light_data:
+            if data.users == 0:
+                bpy.data.lights.remove(data)
+
+        # Drop the now-empty lights collection (old and new naming).
+        for col_name in [f"{scene.name} - Lights", "Room Lights"]:
+            col = bpy.data.collections.get(col_name)
+            if col is not None and len(col.objects) == 0:
+                if col.name in scene.collection.children:
+                    scene.collection.children.unlink(col)
+                bpy.data.collections.remove(col)
+
+        self.report({'INFO'}, f"Deleted {count} object(s)")
+        return {'FINISHED'}
+
+
 class home_builder_walls_OT_update_room_lights(bpy.types.Operator):
     bl_idname = "home_builder_walls.update_room_lights"
     bl_label = "Update Room Lights"
@@ -5914,6 +6005,8 @@ classes = (
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
     home_builder_walls_OT_delete_room_lights,
+    home_builder_walls_OT_toggle_room_scenery,
+    home_builder_walls_OT_delete_room_scenery,
     home_builder_walls_OT_update_room_lights,
     home_builder_walls_OT_update_wall_height,
     home_builder_walls_OT_update_wall_thickness,
