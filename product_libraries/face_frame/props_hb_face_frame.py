@@ -8305,6 +8305,16 @@ class Face_Frame_Opening_Props(PropertyGroup):
     pull_override_category: StringProperty(
         name="Pull Override Category", default="",
     )  # type: ignore
+    # A false front carries no pull by default (a sink front reads as
+    # dead). Set when the user picks a pull for a FALSE_FRONT opening
+    # (right-click the front -> Set Pull...), so a dead front in a bank
+    # of drawers can still read as a drawer. Cleared by No Pull.
+    false_front_pull: BoolProperty(
+        name="Pull on False Front",
+        description="Give this false front a pull so it reads as a drawer",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-opening vertical pull placement for swing doors (right-click a
     # door -> Set Pull Location...). AUTO = the cabinet-type rule (base:
     # top of door, upper: bottom, tall: by door position / length);

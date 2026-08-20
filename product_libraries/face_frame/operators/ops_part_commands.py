@@ -2834,13 +2834,26 @@ class hb_face_frame_OT_set_bottom_rail_profile(bpy.types.Operator):
 
 
 # Front roles that carry a pull - the roles the Set Pull command
-# surfaces on.
+# surfaces on. A false front is bare unless the user picks a pull for
+# it, so it is offered here too and the choice also flips the opening's
+# false_front_pull flag (see _sync_false_front_pull).
 _ROLES_WITH_PULL = frozenset({
     types_face_frame.PART_ROLE_DOOR,
     types_face_frame.PART_ROLE_DRAWER_FRONT,
     types_face_frame.PART_ROLE_PULLOUT_FRONT,
     types_face_frame.PART_ROLE_TILT_OUT,
+    types_face_frame.PART_ROLE_FALSE_FRONT,
 })
+
+
+def _sync_false_front_pull(op_props, override):
+    """Mirror a pull assignment onto a FALSE_FRONT opening's
+    false_front_pull flag: any real pull (or the scene default) turns
+    the pull on, the 'NONE' sentinel turns it off. Other front types
+    are untouched."""
+    if op_props.front_type != 'FALSE_FRONT':
+        return
+    op_props.false_front_pull = override != 'NONE'
 
 
 def _set_pull_category_items(self, context):
@@ -2977,6 +2990,7 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
                 op_props = opening.face_frame_opening
                 op_props.pull_override_category = override_cat
                 op_props.pull_override = override
+                _sync_false_front_pull(op_props, override)
         msg = (f"{len(openings)} opening(s) set to "
                + ("scene default" if self.category == 'DEFAULT'
                   else "no pull" if self.category == 'NO_PULL'

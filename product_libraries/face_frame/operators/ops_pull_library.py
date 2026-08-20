@@ -196,6 +196,8 @@ class hb_face_frame_OT_assign_pull(bpy.types.Operator):
                     op_props.pull_override_category = (
                         '' if selection == 'NONE' else category)
                     op_props.pull_override = selection
+                    ops_part_commands._sync_false_front_pull(
+                        op_props, selection)
             msg = f"{stem} assigned to {len(openings)} opening(s)"
             if skipped:
                 msg += f"; {skipped} corner front(s) skipped"

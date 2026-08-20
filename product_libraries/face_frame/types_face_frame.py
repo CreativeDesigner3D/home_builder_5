@@ -10080,9 +10080,11 @@ class FaceFrameCabinet(GeoNodeCage):
                                op_props=None):
         """Attach a pull instance to `front_part` based on the cabinet's
         type and the front's role (DOOR / DRAWER_FRONT / PULLOUT_FRONT).
-        FALSE_FRONT and INSET_PANEL skip - both are decorative
-        and don't carry a pull. Returns the pull Object (or None if no
-        pull is selected or the asset can't be loaded).
+        INSET_PANEL skips, and a FALSE_FRONT only gets one when its
+        opening asks for it (false_front_pull) - a dead front in a bank
+        of drawers still has to read as a drawer. Returns the pull
+        Object (or None if no pull is selected or the asset can't be
+        loaded).
 
         op_props (the owning opening's props, when the caller has one)
         carries the per-opening pull override: a stored pull file wins
@@ -10095,10 +10097,13 @@ class FaceFrameCabinet(GeoNodeCage):
         rotation_euler.x = +90 deg maps the asset's bar axis along
         the door's vertical and orients its body in -Z (outward).
         """
-        if role in (PART_ROLE_FALSE_FRONT, PART_ROLE_INSET_PANEL):
+        if role == PART_ROLE_INSET_PANEL:
+            return None
+        if role == PART_ROLE_FALSE_FRONT and not getattr(
+                op_props, 'false_front_pull', False):
             return None
         scene_props = bpy.context.scene.hb_face_frame
-        kind = 'drawer' if role in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT, PART_ROLE_TILT_OUT) else 'door'
+        kind = 'drawer' if role in (PART_ROLE_DRAWER_FRONT, PART_ROLE_PULLOUT_FRONT, PART_ROLE_TILT_OUT, PART_ROLE_FALSE_FRONT) else 'door'
         # A pullout front carries a drawer-style pull - drawer pull
         # asset, horizontal bar - but it's a full door-height front, so
         # its vertical placement follows the door / cabinet-type formula

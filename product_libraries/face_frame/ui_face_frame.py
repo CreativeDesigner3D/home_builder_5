@@ -1061,8 +1061,11 @@ def draw_opening_properties(layout, opening_obj):
 
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.
+        # Pull: a false front is bare by default; turn it on where the
+        # dead front sits in a bank of drawers and has to match them.
         if op.front_type == 'FALSE_FRONT':
             fcol.prop(op, 'is_tilt_out', text="Tilt-Out")
+            fcol.prop(op, 'false_front_pull', text="Add Pull")
 
         # Inset panel texture (plain / beadboard / shiplap).
         if op.front_type == 'INSET_PANEL':
