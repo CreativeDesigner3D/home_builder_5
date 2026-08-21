@@ -2124,8 +2124,12 @@ def _door_shape_targets(context):
 
 
 def _apply_door_shape(op, context):
-    """Write the dialog's choice onto every target door and rebuild it."""
+    """Write the dialog's choice onto every target door, rebuild it, and
+    re-cut the frame members above the doors that changed - restyling a
+    front is not a cabinet recalc, so the frame would otherwise keep its
+    square opening until the next unrelated edit."""
     from .. import props_hb_face_frame as _props
+    roots = []
     for front in _door_shape_targets(context):
         store = _frame_store(front)
         k_shape, k_hand, k_radius = _props.front_round_top_keys(front, store)
@@ -2138,6 +2142,11 @@ def _apply_door_shape(op, context):
             store[k_hand] = op.hand
             store[k_radius] = op.radius_mode
         _reapply_front_style(front)
+        root = types_face_frame.find_cabinet_root(front)
+        if root is not None and root not in roots:
+            roots.append(root)
+    for root in roots:
+        types_face_frame.refresh_round_top_frames(root)
 
 
 def _on_door_shape_field(self, context):

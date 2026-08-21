@@ -648,6 +648,18 @@ def _propagate_door_style(self, context):
               and obj.get('hb_part_role') in roles]
     for obj in fronts:
         self.assign_style_to_front(obj)
+    # A style edit can move the stile / rail widths a round-top door's
+    # curve is measured from, and restyling fronts is not a recalc, so
+    # re-cut the frame members above them.
+    if fronts:
+        from . import types_face_frame as _tff
+        refreshed = []
+        for obj in fronts:
+            root = _tff.find_cabinet_root(obj)
+            if root is not None and root not in refreshed:
+                refreshed.append(root)
+        for root in refreshed:
+            _tff.refresh_round_top_frames(root)
     # Wood-hood doors are static python-built meshes, not restyleable
     # fronts -- rebuild any built hood whose resolved cabinet style uses
     # this door style (STYLE_NAME's style, else the active style, the

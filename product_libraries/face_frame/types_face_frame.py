@@ -3193,12 +3193,6 @@ class FaceFrameCabinet(GeoNodeCage):
         # frame's final geometry. No-op + cleanup when none assigned.
         self._apply_cabinet_columns(layout)
 
-        # Round-top doors: carry a quarter / half circle door's curve
-        # into the frame member above it, so the opening follows the
-        # door instead of showing square above the arc. Last, because it
-        # reads the members' final sizes. No-op + cleanup when no door
-        # in the cabinet is round.
-        self._apply_round_top_frames(layout)
 
     # ------------------------------------------------------------------
     # Round-top doors: the face frame follows the arc
@@ -3432,9 +3426,13 @@ class FaceFrameCabinet(GeoNodeCage):
         if self._ARCH_RAIL_TAG in obj:
             del obj[self._ARCH_RAIL_TAG]
 
-    def _apply_round_top_frames(self, layout):
+    def _apply_round_top_frames(self):
         """Carry each round-top door's curve into the frame member above
-        it. No-op + cleanup when no door in the cabinet is round."""
+        it. Reads the built doors and members rather than the layout
+        snapshot, so it can also be re-run on its own when a door's
+        shape changes without a full recalc (see
+        refresh_round_top_frames). No-op + cleanup when no door in the
+        cabinet is round."""
         was_arched = [o for o in self.obj.children_recursive
                       if o.get(self._ARCH_RAIL_TAG)]
         arcs = self._round_top_door_arcs()
@@ -14882,6 +14880,20 @@ def get_cabinet_class(cabinet_name):
     return BaseFaceFrameCabinet
 
 
+def refresh_round_top_frames(obj):
+    """Re-cut the frame members above a cabinet's round-top doors after
+    a door's shape changed. Setting the shape restyles just that door,
+    which is not a cabinet recalc, so the member above it would keep its
+    square opening until the next unrelated edit. No-op off a cabinet."""
+    root = find_cabinet_root(obj)
+    if root is None or not root.get(TAG_CABINET_CAGE):
+        return
+    try:
+        FaceFrameCabinet(root)._apply_round_top_frames()
+    except Exception:
+        pass
+
+
 def find_cabinet_root(obj):
     """Walk up parents from obj to find the face frame cabinet root.
 
@@ -15131,6 +15143,12 @@ def recalculate_face_frame_cabinet(obj):
         cabinet.recalculate()
         _resize_seated_wood_tops(root)
         _reapply_cabinet_style(root)
+        # Round-top doors: carry a quarter / half circle door's curve
+        # into the frame member above it, so the opening follows the
+        # door instead of showing square above the arc. After the style
+        # pass, which is what gives each door the frame its curve is
+        # measured from. No-op + cleanup when no door is round.
+        refresh_round_top_frames(root)
         _reapply_selection_mode_highlights(root)
     finally:
         _RECALCULATING.discard(id(root))
