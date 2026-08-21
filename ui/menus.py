@@ -664,6 +664,79 @@ class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):
         layout.operator("object.delete", text="Delete Dimension", icon='X')
 
 
+def is_annotation_text(obj):
+    """True for a 2D annotation text object the drafter placed."""
+    return bool(obj and obj.type == 'FONT'
+                and (obj.get('IS_DETAIL_TEXT')
+                     or obj.get('IS_2D_ANNOTATION')))
+
+
+def get_annotation_text_objects(context):
+    """Annotation text the text commands act on.
+
+    Every selected annotation text, so a block of notes can be set in
+    one go. Falls back to the active object when the selection holds
+    no text -- right-clicking an object makes it active without
+    necessarily selecting it.
+    """
+    objs = [o for o in context.selected_objects if is_annotation_text(o)]
+    if not objs and is_annotation_text(context.object):
+        objs = [context.object]
+    return objs
+
+
+class HOME_BUILDER_OT_set_text_alignment(bpy.types.Operator):
+    bl_idname = "home_builder.set_text_alignment"
+    bl_label = "Set Text Alignment"
+    bl_description = "Align the selected annotation text"
+    bl_options = {'UNDO'}
+
+    alignment: bpy.props.EnumProperty(
+        name="Alignment",
+        items=[('LEFT', "Left", "Align the text left"),
+               ('CENTER', "Center", "Center the text"),
+               ('RIGHT', "Right", "Align the text right")],
+        default='LEFT')
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_annotation_text_objects(context)) > 0
+
+    def execute(self, context):
+        objs = get_annotation_text_objects(context)
+        for obj in objs:
+            obj.data.align_x = self.alignment
+        return {'FINISHED'}
+
+
+class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
+    """Right-click commands for a placed annotation text.
+
+    Annotation text carries no MENU_ID of its own, so ui/menu_apend
+    falls back to this menu for any 2D annotation text. That way notes
+    already placed in a saved project get the commands too."""
+
+    bl_label = "Text Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        current = obj.data.align_x if is_annotation_text(obj) else None
+        layout.operator_context = 'INVOKE_DEFAULT'
+        alignments = (
+            ('LEFT', "Align Left", 'ALIGN_LEFT'),
+            ('CENTER', "Align Center", 'ALIGN_CENTER'),
+            ('RIGHT', "Align Right", 'ALIGN_RIGHT'),
+        )
+        for value, label, icon in alignments:
+            props = layout.operator("home_builder.set_text_alignment",
+                                    text=label, icon=icon,
+                                    depress=(current == value))
+            props.alignment = value
+        layout.separator()
+        layout.operator("object.delete", text="Delete Text", icon='X')
+
+
 def draw_home_builder_menu(self, context):
     self.layout.menu("HOME_BUILDER_MT_main_menu")
 
@@ -683,6 +756,8 @@ classes = (
     HOME_BUILDER_OT_move_dimension_text,
     HOME_BUILDER_OT_show_dimension_properties,
     HOME_BUILDER_MT_dimension_commands,
+    HOME_BUILDER_OT_set_text_alignment,
+    HOME_BUILDER_MT_text_commands,
 )
 
 
