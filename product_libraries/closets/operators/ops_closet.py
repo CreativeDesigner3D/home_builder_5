@@ -4817,11 +4817,25 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                          text="Fit Opening To Accessory",
                          icon='ARROW_LEFTRIGHT')
 
+    def check(self, context):
+        """Blender calls this the moment a field in the dialog changes.
+
+        Doing the work here rather than only on OK is what lets the
+        accessory move while a figure is being dragged, instead of
+        sitting still and jumping once the dialog is closed. Backing
+        out of the dialog leaves what was tried applied - the same as
+        dragging the thing by hand and thinking better of it."""
+        self._apply(context)
+        return True
+
     def execute(self, context):
+        return ({'FINISHED'} if self._apply(context) else {'CANCELLED'})
+
+    def _apply(self, context):
         from .. import accessories_closets as acc
         obj = types_closets.find_accessory_cage(context.active_object)
         if obj is None:
-            return {'CANCELLED'}
+            return False
         acc_def = acc.get(obj.get(types_closets.PROP_ACCESSORY_KEY, ''))
         root = types_closets.find_starter_root(obj)
         with types_closets.suspend_recalc():
@@ -4885,7 +4899,7 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             obj.location.z = float(
                 obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
             types_closets.layout_wall_accessory(obj)
-        return {'FINISHED'}
+        return True
 
 
 class hb_closets_OT_place_continuous_top(bpy.types.Operator,
