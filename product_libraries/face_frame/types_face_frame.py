@@ -3193,6 +3193,278 @@ class FaceFrameCabinet(GeoNodeCage):
         # frame's final geometry. No-op + cleanup when none assigned.
         self._apply_cabinet_columns(layout)
 
+        # Round-top doors: carry a quarter / half circle door's curve
+        # into the frame member above it, so the opening follows the
+        # door instead of showing square above the arc. Last, because it
+        # reads the members' final sizes. No-op + cleanup when no door
+        # in the cabinet is round.
+        self._apply_round_top_frames(layout)
+
+    # ------------------------------------------------------------------
+    # Round-top doors: the face frame follows the arc
+    # ------------------------------------------------------------------
+    # A quarter / half circle door cuts its own top corner away, which
+    # would leave the square frame opening showing daylight above the
+    # curve. The member above the door has to carry the same curve: it
+    # grows down to the door's springline and its bottom edge becomes an
+    # arc concentric with the door's, sitting the overlay inside it. One
+    # wide curved rail, the way it is cut from a blank.
+    #
+    # The member keeps its cutpart Length / Width (the rail width the
+    # user set, and everything that reads it) and renders a static mesh
+    # instead, the same trade the python-built doors make.
+
+    _ARCH_RAIL_TAG = 'HB_ARCH_FRAME_RAIL'
+    _ARCH_RAIL_SEGS = 24
+
+    def _part_local_matrix(self, obj):
+        """obj's transform in this cabinet's space, composed from the
+        stored transform channels rather than matrix_world, which is a
+        depsgraph result and is stale mid-recalc."""
+        m = Matrix.Identity(4)
+        node = obj
+        while node is not None and node is not self.obj:
+            m = (node.matrix_parent_inverse @ node.matrix_basis) @ m
+            node = node.parent
+        return m
+
+    def _cutpart_box_local(self, obj):
+        """(x0, x1, y0, y1, z0, z1) of a cutpart's box in this cabinet's
+        space, from its Length / Width / Thickness and mirror flags -
+        analytic, so it holds before the depsgraph has evaluated the
+        modifier. None when obj isn't a cutpart."""
+        try:
+            part = GeoNodeCutpart(obj)
+            length = part.get_input('Length')
+            width = part.get_input('Width')
+            thickness = part.get_input('Thickness')
+            mx = bool(part.get_input('Mirror X'))
+            my = bool(part.get_input('Mirror Y'))
+            mz = bool(part.get_input('Mirror Z'))
+        except Exception:
+            return None
+        spans = ((-length, 0.0) if mx else (0.0, length),
+                 (-width, 0.0) if my else (0.0, width),
+                 (-thickness, 0.0) if mz else (0.0, thickness))
+        m = self._part_local_matrix(obj)
+        pts = [m @ Vector((x, y, z))
+               for x in spans[0] for y in spans[1] for z in spans[2]]
+        return (min(p.x for p in pts), max(p.x for p in pts),
+                min(p.y for p in pts), max(p.y for p in pts),
+                min(p.z for p in pts), max(p.z for p in pts))
+
+    def _round_top_door_arcs(self):
+        """The outline arcs of this cabinet's round-top doors, in cabinet
+        space: dicts of centre (cx, cz), radius, the x span the arc
+        covers and the door's top edge. Empty when no door is round."""
+        from . import props_hb_face_frame as ff_props
+        arcs = []
+        for obj in self.obj.children_recursive:
+            if obj.get('hb_part_role') != PART_ROLE_DOOR:
+                continue
+            geom, _reason = ff_props.front_round_top_geometry(obj)
+            if geom is None:
+                continue
+            # The door mesh runs its height along +X and its width along
+            # -Y (or +Y unmirrored, see _mirror_front_mesh_y_if_unmirrored),
+            # so door-local (x across, z up) maps in as (z, -x) / (z, x).
+            sign = -1.0
+            try:
+                if not GeoNodeCutpart(obj).get_input('Mirror Y'):
+                    sign = 1.0
+            except Exception:
+                pass
+            mat = self._part_local_matrix(obj)
+
+            def to_cab(dx, dz):
+                return mat @ Vector((dz, sign * dx, 0.0))
+
+            centre = to_cab(geom['centre_x'], geom['z_spring'])
+            ends = [to_cab(*geom['outline'][0]), to_cab(*geom['outline'][-1])]
+            radius = geom['radius']
+            arcs.append(dict(cx=centre.x, cz=centre.z, radius=radius,
+                             x_lo=min(e.x for e in ends),
+                             x_hi=max(e.x for e in ends),
+                             door_top=centre.z + radius,
+                             door=obj))
+        return arcs
+
+    def _arch_frame_member(self, arc, members):
+        """The frame member sitting above a door arc: the one spanning
+        the door's width whose band the door's top edge reaches into.
+        None when the door has no member above it (a door running to the
+        top of a frameless opening)."""
+        x_mid = (arc['x_lo'] + arc['x_hi']) / 2.0
+        best = None
+        for obj, box in members:
+            x0, x1, _y0, _y1, z0, z1 = box
+            if x_mid < x0 - 1e-6 or x_mid > x1 + 1e-6:
+                continue
+            if arc['door_top'] < z0 - 1e-6 or arc['door_top'] > z1 + 1e-6:
+                continue
+            if best is None or box[4] > best[1][4]:
+                best = (obj, box)
+        return best
+
+    def _arch_bottom_profile(self, box, arcs):
+        """Bottom edge of an arched member, left to right, as absolute
+        (x, z) points in cabinet space: the member's own bottom line,
+        dipping under each door's arc. The frame arc is concentric with
+        the door's, one overlay in, so it meets the door's straight
+        edges tangentially and peaks exactly on the member's bottom."""
+        x0, x1, _y0, _y1, z0, _z1 = box
+        stations = {x0, x1}
+        curves = []
+        for arc in arcs:
+            radius = arc['radius'] - (arc['door_top'] - z0)
+            if radius <= 0.0:
+                continue
+            lo = max(x0, max(arc['x_lo'], arc['cx'] - radius))
+            hi = min(x1, min(arc['x_hi'], arc['cx'] + radius))
+            if hi - lo <= 1e-9:
+                continue
+            curves.append((arc['cx'], arc['cz'], radius, lo, hi))
+            for i in range(self._ARCH_RAIL_SEGS + 1):
+                stations.add(lo + (hi - lo) * i / self._ARCH_RAIL_SEGS)
+        if not curves:
+            return None
+
+        def bottom_at(x):
+            z = z0
+            for cx, cz, radius, lo, hi in curves:
+                if x < lo - 1e-9 or x > hi + 1e-9:
+                    continue
+                dx = min(abs(x - cx), radius)
+                z = min(z, cz + math.sqrt(max(radius * radius - dx * dx, 0.0)))
+            return z
+
+        return [(x, bottom_at(x)) for x in sorted(stations)]
+
+    def _build_arch_member_mesh(self, obj, box, bottom):
+        """Replace a frame member's box with a static mesh whose bottom
+        edge follows ``bottom``, and mute its cutpart so the box stops
+        drawing. Materials come off the cutpart's own sockets so the
+        member keeps its finish."""
+        x0, x1, y0, y1, _z0, z1 = box
+        poly = [(x0, z1), (x1, z1)]
+        poly += [(x, z) for (x, z) in reversed(bottom)]
+        # Drop repeats so the cap ngons stay clean.
+        loop = []
+        for pt in poly:
+            if (not loop or abs(pt[0] - loop[-1][0]) > 1e-9
+                    or abs(pt[1] - loop[-1][1]) > 1e-9):
+                loop.append(pt)
+        if len(loop) < 3:
+            return False
+        inv = self._part_local_matrix(obj).inverted()
+        verts = []
+        for y in (y0, y1):
+            for (x, z) in loop:
+                verts.append(inv @ Vector((x, y, z)))
+        n = len(loop)
+        faces = [tuple(range(n)), tuple(reversed(range(n, 2 * n)))]
+        slots = [0, 0]
+        for i in range(n):
+            j = (i + 1) % n
+            faces.append((i, n + i, n + j, j))
+            slots.append(1)
+        mats = self._cutpart_materials(obj)
+        me = obj.data
+        me.clear_geometry()
+        me.from_pydata([tuple(v) for v in verts], [], faces)
+        if mats:
+            me.materials.clear()
+            for mat in mats:
+                me.materials.append(mat)
+            attr = (me.attributes.get('material_index')
+                    or me.attributes.new('material_index', 'INT', 'FACE'))
+            attr.data.foreach_set('value', slots)
+        me.update()
+        # The member's local axes differ by role, so let bmesh settle
+        # the winding rather than assuming one: the prism is closed,
+        # so recalculated normals all face out.
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+        for mod in obj.modifiers:
+            if mod.type == 'NODES' and mod.node_group \
+                    and mod.node_group.name == 'GeoNodeCutpart':
+                mod.show_viewport = False
+                mod.show_render = False
+        obj[self._ARCH_RAIL_TAG] = True
+        return True
+
+    def _cutpart_materials(self, obj):
+        """(face, edge) materials a cutpart is carrying, for a static
+        mesh that replaces its box."""
+        for mod in obj.modifiers:
+            if mod.type != 'NODES' or not mod.node_group:
+                continue
+            if mod.node_group.name != 'GeoNodeCutpart':
+                continue
+            face = edge = None
+            for item in mod.node_group.interface.items_tree:
+                if getattr(item, 'item_type', '') != 'SOCKET':
+                    continue
+                if item.name == 'Top Surface':
+                    face = mod.get(item.identifier)
+                elif item.name == 'Edge L1':
+                    edge = mod.get(item.identifier)
+            if face is not None or edge is not None:
+                return [face, edge if edge is not None else face]
+        return []
+
+    def _restore_arch_member(self, obj):
+        """Put a member that no longer carries an arch back on its box."""
+        obj.data.clear_geometry()
+        # The box takes its materials from the cutpart's sockets; the
+        # slots the static mesh added would shadow them.
+        obj.data.materials.clear()
+        obj.data.update()
+        for mod in obj.modifiers:
+            if mod.type == 'NODES' and mod.node_group \
+                    and mod.node_group.name == 'GeoNodeCutpart':
+                mod.show_viewport = True
+                mod.show_render = True
+        if self._ARCH_RAIL_TAG in obj:
+            del obj[self._ARCH_RAIL_TAG]
+
+    def _apply_round_top_frames(self, layout):
+        """Carry each round-top door's curve into the frame member above
+        it. No-op + cleanup when no door in the cabinet is round."""
+        was_arched = [o for o in self.obj.children_recursive
+                      if o.get(self._ARCH_RAIL_TAG)]
+        arcs = self._round_top_door_arcs()
+        arched = []
+        if arcs:
+            members = []
+            for obj in self.obj.children_recursive:
+                role = obj.get('hb_part_role') or ''
+                if not role.endswith('_RAIL'):
+                    continue
+                box = self._cutpart_box_local(obj)
+                if box is not None:
+                    members.append((obj, box))
+            by_member = {}
+            for arc in arcs:
+                found = self._arch_frame_member(arc, members)
+                if found is None:
+                    continue
+                obj, box = found
+                by_member.setdefault(obj.name, (obj, box, []))[2].append(arc)
+            for obj, box, member_arcs in by_member.values():
+                bottom = self._arch_bottom_profile(box, member_arcs)
+                if bottom is None:
+                    continue
+                if self._build_arch_member_mesh(obj, box, bottom):
+                    arched.append(obj)
+        for obj in was_arched:
+            if obj not in arched:
+                self._restore_arch_member(obj)
+
     def _part_ff_theta(self, layout, role, child):
         """Z rotation added to a FF part's baseline. Single-plane cabinets
         (square or single-bay angled) share one face_frame_angle.

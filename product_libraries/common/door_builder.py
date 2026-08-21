@@ -1440,6 +1440,9 @@ def round_top_layout(info, width, height, spec):
       'opening'  concentric opening arc clipped / padded to the panel
                  field, ascending x
       'band'     the outline over the panel field (the rail's back)
+      'centre_x' arc centre across the door (its height is z_spring)
+      'radius'   R -- consumers that need to offset the curve (the face
+                 frame member above the door) rebuild it concentric
       'z_spring' springline height (height - R)
       'x_open'   (left, right) panel-field edges the rail lands on
       'cuts'     per stile key, the outline segment crossing it when
@@ -1515,7 +1518,7 @@ def round_top_layout(info, width, height, spec):
             cuts[key] = None
     return dict(outline=outline, opening=opening, band=band,
                 z_spring=z_spring, x_open=(x_open_l, x_open_r),
-                cuts=cuts), None
+                centre_x=x_c, radius=r, cuts=cuts), None
 
 
 def _apply_round_top(parts, geom):

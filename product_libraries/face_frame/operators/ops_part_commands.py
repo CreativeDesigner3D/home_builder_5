@@ -2102,33 +2102,12 @@ def door_shape_available(obj):
 
 def _door_shape_fit_error(front_obj):
     """Why this door can't take its current round-top setting, or None.
-    Reads the same layout the builder does, so the dialog warns with
-    the builder's own answer."""
+    Runs the geometry the door itself was built to, so the dialog warns
+    with the builder's own answer."""
     from .. import props_hb_face_frame as _props
-    from ...common import door_builder
-    spec = _props.front_round_top(front_obj)
-    if spec is None:
+    if front_obj is None:
         return None
-    size = _front_overall_size(front_obj)
-    vals = _front_frame_values(front_obj)
-    if size is None or vals is None:
-        return None
-    width, height = size
-    # Rebuild the builder's own info from the frame the door rendered
-    # with, so the dialog's answer is the geometry's answer.
-    info = door_builder.door_style_info(None)
-    info.update(door_type='5_PIECE',
-                stile_width=vals['left'], rail_width=vals['top'],
-                left_stile_width=vals['left'],
-                right_stile_width=vals['right'],
-                top_rail_width=vals['top'],
-                bottom_rail_width=vals['bottom'],
-                mid_rail_width=vals['mid_w'],
-                add_mid_rail=False,
-                mid_rail_z=(((0.5, 0.0) if vals['center_mid']
-                             else (0.0, vals['mid_loc']))
-                            if vals['add_mid'] else None))
-    return door_builder.round_top_layout(info, width, height, spec)[1]
+    return _props.front_round_top_geometry(front_obj)[1]
 
 
 def _door_shape_targets(context):

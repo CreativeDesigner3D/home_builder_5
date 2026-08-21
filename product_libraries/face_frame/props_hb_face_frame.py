@@ -3312,6 +3312,56 @@ def _front_glass_rows(frame_store, n_rows):
     return rows
 
 
+def front_frame_info(front_obj):
+    """A door_builder info dict for the frame a front actually rendered
+    with, read off its HB_DOOR_FRAME stamp. None for a slab / unstyled
+    front. Lets a consumer re-derive the door's geometry without
+    re-running the whole style resolve."""
+    from ..common import door_builder
+    stamp = front_obj.get('HB_DOOR_FRAME') if front_obj else None
+    if stamp is None:
+        return None
+    info = door_builder.door_style_info(None)
+    top = stamp.get('top_rail', 0.0)
+    left = stamp.get('left_stile', 0.0)
+    mid_w = stamp.get('mid_rail_width', 0.0)
+    info.update(door_type='5_PIECE',
+                stile_width=left, rail_width=top,
+                left_stile_width=left,
+                right_stile_width=stamp.get('right_stile', 0.0),
+                top_rail_width=top,
+                bottom_rail_width=stamp.get('bottom_rail', 0.0),
+                mid_rail_width=mid_w,
+                add_mid_rail=False,
+                mid_rail_z=(((0.5, 0.0) if stamp.get('mid_center', True)
+                             else (0.0, stamp.get('mid_loc', 0.0)))
+                            if stamp.get('add_mid_rail', False) else None))
+    return info
+
+
+def front_round_top_geometry(front_obj):
+    """(geom, reason) for a front's round top -- door_builder.
+    round_top_layout run against the frame the door rendered with, so
+    every consumer (the dialog's warning, the face frame member above
+    the door) reads the same curve the door was built to. (None, None)
+    when the front isn't round-topped."""
+    from ... import hb_types
+    from ..common import door_builder
+    spec = front_round_top(front_obj)
+    if spec is None:
+        return None, None
+    info = front_frame_info(front_obj)
+    if info is None:
+        return None, None
+    try:
+        part = hb_types.GeoNodeCutpart(front_obj)
+        width = part.get_input('Width')
+        height = part.get_input('Length')
+    except Exception:
+        return None, None
+    return door_builder.round_top_layout(info, width, height, spec)
+
+
 def _front_frame_store(front_obj):
     """Persistent home for a front's locked frame overrides.
 
