@@ -15,6 +15,7 @@ from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
+from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
 from .operators import ops_general
@@ -306,6 +307,7 @@ def register():
     doors_windows.register()
     export.register()
     ops_stairs.register()
+    layout_lock.register()
     scene_navigator.register()
     viewport_hud.register()
     room_dim_overlay.register()
@@ -352,6 +354,7 @@ def unregister():
     export.unregister()
     scene_navigator.unregister()
     viewport_hud.unregister()
+    layout_lock.unregister()
     room_dim_overlay.unregister()
     ops_stairs.unregister()
     ops_general.unregister()

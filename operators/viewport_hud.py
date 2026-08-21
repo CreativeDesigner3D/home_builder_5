@@ -32,6 +32,7 @@ from ..hb_gpu_draw import (
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
+from . import layout_lock
 
 # operators/ sits one level below the addon root; the AddonPreferences
 # bl_idname is the root package name.
@@ -402,6 +403,65 @@ _MODAL_TOGGLE_BUTTONS = [
 ]
 
 
+class _SceneToggleButton:
+    """HUD button bound to a boolean Scene property.
+
+    Reads and writes the property directly, so its update callback owns
+    the real work and the HUD stays presentation-only -- the same split
+    the selection-mode picker uses. ``ui_visible`` gates which scenes show
+    it; ``width_chars`` sizes the button to its label so a row of these
+    does not jitter as state changes.
+    """
+
+    def __init__(self, prop_name, label, ui_visible, width_px=112):
+        self.prop_name = prop_name
+        self.label = label
+        self.ui_visible = ui_visible
+        self.width_px = width_px
+
+    @property
+    def width(self):
+        return int(self.width_px * _s())
+
+    def _is_active(self, context):
+        return bool(getattr(context.scene, self.prop_name, False))
+
+    def visible(self, context):
+        return self.ui_visible(context)
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        is_active = self._is_active(context)
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        if is_active:
+            bg = BTN_ACTIVE_BG
+        elif hovered:
+            bg = BTN_HOVER_BG
+        else:
+            bg = BTN_BG
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        color = TEXT_ACTIVE if is_active else TEXT_NORMAL
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color,
+                            self.label)
+
+    def on_click(self, context, area, region):
+        scene = context.scene
+        setattr(scene, self.prop_name,
+                not getattr(scene, self.prop_name, False))
+
+
+def _layout_view_visible(context):
+    """Sheet-only widgets: the mirror image of _product_ui_visible."""
+    return bool(context.scene and context.scene.get('IS_LAYOUT_VIEW'))
+
+
+# Sheet controls. Only one so far; the row is built to take more.
+_LOCK_MODEL_BUTTON = _SceneToggleButton(
+    layout_lock.LOCK_PROP, "Lock 3D Model", _layout_view_visible)
+_LAYOUT_VIEW_BUTTONS = [_LOCK_MODEL_BUTTON]
+
+
 def _rows():
     """Centered HUD rows, top to bottom. Each row is a list of widget groups;
     groups are separated by GROUP_GAP, widgets within a group by BTN_GAP, and
@@ -411,12 +471,15 @@ def _rows():
     it separately, left-anchored just past the toolbar.
 
     The first row holds the selection-mode picker; the second holds the grab
-    toggles. The toggles' visible() checks gate on selection mode and
+    toggles; the third holds the sheet controls, which show only on a
+    layout view (where the first two rows are empty, so it draws at the
+    top). The toggles' visible() checks gate on selection mode and
     modal-active state, so that row contains at most one rendered button at a
     time (or zero, in which case compute_layout skips the row entirely)."""
     return [
         [_MODE_BUTTONS],
         [_MODAL_TOGGLE_BUTTONS],
+        [_LAYOUT_VIEW_BUTTONS],
     ]
 
 
