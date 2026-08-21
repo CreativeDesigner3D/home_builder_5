@@ -9779,9 +9779,9 @@ class FaceFrameCabinet(GeoNodeCage):
         if front_type == 'NONE':
             return
 
-        for leaf in solver.front_leaves(
+        for leaf_index, leaf in enumerate(solver.front_leaves(
             layout, rect, cab_props, op_props
-        ):
+        )):
             pivot = self._create_front_pivot(opening_obj)
             pivot.location = leaf['pivot_position']
             pivot.rotation_euler = leaf['pivot_rotation']
@@ -9789,6 +9789,10 @@ class FaceFrameCabinet(GeoNodeCage):
             front = self._create_front_part(
                 pivot, leaf['role'], leaf['name']
             )
+            # Which leaf of the opening this is (0 = leftmost). Fronts
+            # are rebuilt every recalc, so per-LEAF overrides stored on
+            # the opening (the round-top door shape) key off this.
+            front.obj['HB_LEAF_INDEX'] = leaf_index
             front.obj.location = leaf['part_position']
             length, width, thickness = leaf['part_dims']
             front.set_input('Length', length)

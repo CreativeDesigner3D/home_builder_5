@@ -2028,6 +2028,211 @@ def _on_size_thickness(self, context):
         GeoNodeCutpart(obj).set_input('Thickness', self.part_thickness)
 
 
+# ---------------------------------------------------------------------------
+# Change Door Shape (quarter / half circle tops)
+# ---------------------------------------------------------------------------
+# Catalog quarter and half circle doors curve the door's whole top, not
+# just the panel opening, and they land on ONE door at a time - a pair
+# routinely has a round leaf and a square one. So the choice is stamped
+# per leaf on the front's opening store (fronts are rebuilt every
+# recalc) and read back by assign_style_to_front.
+
+_DOOR_SHAPE_ITEMS = [
+    ('SQUARE', "Square", "Standard square-top door"),
+    ('QUARTER', "Quarter Round",
+     "Quarter circle top, rising to one stile"),
+    ('HALF', "Half Round", "Half circle top, arching over both stiles"),
+]
+
+_DOOR_SHAPE_HAND_ITEMS = [
+    ('LEFT', "Left", "The left stile runs full height"),
+    ('RIGHT', "Right", "The right stile runs full height"),
+]
+
+_DOOR_SHAPE_RADIUS_ITEMS = [
+    ('OUTSIDE', "Outside",
+     "Radius measured from the outside edge of the tall stile "
+     "(the arc runs out to the far corner)"),
+    ('INSIDE', "Inside",
+     "Radius measured from the inside edge of the tall stile "
+     "(that stile keeps a square top)"),
+]
+
+
+def _front_door_style(front_obj):
+    """The front's own door / drawer style, by DOOR_STYLE_NAME."""
+    name = front_obj.get('DOOR_STYLE_NAME') if front_obj else None
+    if not name:
+        return None
+    from .. import props_hb_face_frame as _props
+    ff = _props.get_style_props()
+    if ff is None:
+        return None
+    role = front_obj.get('hb_part_role')
+    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
+            else ff.door_styles)
+    for ds in pool:
+        if ds.name == name:
+            return ds
+    return None
+
+
+def door_shape_available(obj):
+    """True when a round top can be cut into this door: a 5-piece door
+    (not a slab), on a series whose frame the curve can follow - not a
+    mitered one, where the member profile IS the frame, and not one
+    carrying applied moulding - and hung in an opening that can
+    remember the choice."""
+    if obj is None or obj.get('hb_part_role') != types_face_frame.PART_ROLE_DOOR:
+        return False
+    if not has_door_style_modifier(obj):
+        return False
+    if _frame_store(obj) is obj:
+        return False
+    ds = _front_door_style(obj)
+    if ds is None or getattr(ds, 'door_type', '5_PIECE') == 'SLAB':
+        return False
+    if not getattr(ds, 'unlock_profiles', False):
+        from .. import style_options
+        prof = style_options.profiles_for_series(ds.front_series)
+        if prof.get('member') or prof.get('applied'):
+            return False
+    return True
+
+
+def _door_shape_fit_error(front_obj):
+    """Why this door can't take its current round-top setting, or None.
+    Reads the same layout the builder does, so the dialog warns with
+    the builder's own answer."""
+    from .. import props_hb_face_frame as _props
+    from ...common import door_builder
+    spec = _props.front_round_top(front_obj)
+    if spec is None:
+        return None
+    size = _front_overall_size(front_obj)
+    vals = _front_frame_values(front_obj)
+    if size is None or vals is None:
+        return None
+    width, height = size
+    # Rebuild the builder's own info from the frame the door rendered
+    # with, so the dialog's answer is the geometry's answer.
+    info = door_builder.door_style_info(None)
+    info.update(door_type='5_PIECE',
+                stile_width=vals['left'], rail_width=vals['top'],
+                left_stile_width=vals['left'],
+                right_stile_width=vals['right'],
+                top_rail_width=vals['top'],
+                bottom_rail_width=vals['bottom'],
+                mid_rail_width=vals['mid_w'],
+                add_mid_rail=False,
+                mid_rail_z=(((0.5, 0.0) if vals['center_mid']
+                             else (0.0, vals['mid_loc']))
+                            if vals['add_mid'] else None))
+    return door_builder.round_top_layout(info, width, height, spec)[1]
+
+
+def _door_shape_targets(context):
+    """Every selected door that can take a shape (the active one
+    first), de-duplicated."""
+    objs = []
+    active = context.active_object
+    if door_shape_available(active):
+        objs.append(active)
+    for obj in context.selected_objects:
+        if obj not in objs and door_shape_available(obj):
+            objs.append(obj)
+    return objs
+
+
+def _apply_door_shape(op, context):
+    """Write the dialog's choice onto every target door and rebuild it."""
+    from .. import props_hb_face_frame as _props
+    for front in _door_shape_targets(context):
+        store = _frame_store(front)
+        k_shape, k_hand, k_radius = _props.front_round_top_keys(front, store)
+        if op.shape == 'SQUARE':
+            for key in (k_shape, k_hand, k_radius):
+                if key in store:
+                    del store[key]
+        else:
+            store[k_shape] = op.shape
+            store[k_hand] = op.hand
+            store[k_radius] = op.radius_mode
+        _reapply_front_style(front)
+
+
+def _on_door_shape_field(self, context):
+    _apply_door_shape(self, context)
+
+
+class hb_face_frame_OT_set_door_shape(bpy.types.Operator):
+    """Curve the top of the selected doors. Quarter Round rises to one
+    stile, Half Round arches over both; the door's width sets the
+    radius, the way the catalog cuts them. Applies to every selected
+    door, so one leaf of a pair can be round and the other square."""
+    bl_idname = "hb_face_frame.set_door_shape"
+    bl_label = "Change Door Shape"
+    bl_description = "Change the shape of the selected doors' tops"
+    bl_options = {'UNDO'}
+
+    shape: EnumProperty(
+        name="Shape", items=_DOOR_SHAPE_ITEMS,
+        update=_on_door_shape_field)  # type: ignore
+    hand: EnumProperty(
+        name="Tall Side", items=_DOOR_SHAPE_HAND_ITEMS,
+        update=_on_door_shape_field)  # type: ignore
+    radius_mode: EnumProperty(
+        name="Radius", items=_DOOR_SHAPE_RADIUS_ITEMS,
+        update=_on_door_shape_field)  # type: ignore
+
+    source_obj_name: StringProperty(name="Source Object")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return door_shape_available(context.active_object)
+
+    def invoke(self, context, event):
+        from .. import props_hb_face_frame as _props
+        front = context.active_object
+        self.source_obj_name = front.name
+        store = _frame_store(front)
+        k_shape, k_hand, k_radius = _props.front_round_top_keys(front, store)
+        self.shape = store.get(k_shape) or 'SQUARE'
+        self.hand = (store.get(k_hand)
+                     or _props.front_default_round_hand(front, store))
+        self.radius_mode = store.get(k_radius) or 'OUTSIDE'
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.prop(self, "shape", text="Shape")
+        if self.shape == 'QUARTER':
+            col.separator()
+            col.prop(self, "hand", text="Tall Side", expand=True)
+            col.separator()
+            col.prop(self, "radius_mode", text="Radius", expand=True)
+        front = bpy.data.objects.get(self.source_obj_name)
+        reason = _door_shape_fit_error(front) if front else None
+        if reason:
+            box = layout.box()
+            box.alert = True
+            box.label(text=reason, icon='ERROR')
+            box.label(text="The door is building square.")
+        n = len(_door_shape_targets(context))
+        if n > 1:
+            layout.label(text="Applies to %d doors" % n, icon='INFO')
+
+    def execute(self, context):
+        # Live-bound via the prop update callbacks; nothing to do on OK
+        # beyond telling the user when the shape didn't take.
+        front = bpy.data.objects.get(self.source_obj_name)
+        reason = _door_shape_fit_error(front) if front else None
+        if reason:
+            self.report({'WARNING'}, reason)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_set_cabinet_part_size(bpy.types.Operator):
     """Set any cabinet part's size by editing its cutpart GeoNode inputs
     directly. Live-bound (same pattern as the Misc Part dialog). Note: for
@@ -3274,6 +3479,7 @@ classes = (
     hb_face_frame_OT_toggle_door_part_front_kind,
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_door_hardware,
+    hb_face_frame_OT_set_door_shape,
     hb_face_frame_OT_set_cabinet_part_size,
     hb_face_frame_OT_make_part_editable,
     hb_face_frame_OT_revert_part_to_parametric,

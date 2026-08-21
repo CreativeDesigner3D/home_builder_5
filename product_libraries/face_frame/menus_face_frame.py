@@ -329,6 +329,14 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_door_frame",
                             text="Set Door Frame...", icon='MOD_BEVEL')
 
+        # Doors: quarter / half circle tops. Per DOOR, so one leaf of a
+        # pair can be round and the other square. Hidden on doors the
+        # curve can't be cut into (slabs, mitered and applied-moulding
+        # series, doors with nowhere to remember the choice).
+        if ops_part_commands.door_shape_available(obj):
+            layout.operator("hb_face_frame.set_door_shape",
+                            text="Change Door Shape...", icon='SPHERECURVE')
+
         # Doors: per-door hardware callout override (restrictor clips /
         # touch latches / finger rout on THIS door instead of every door
         # of the style).

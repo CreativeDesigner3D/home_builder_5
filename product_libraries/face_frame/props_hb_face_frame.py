@@ -3341,6 +3341,94 @@ def _front_cutpart_mod(front_obj):
     return None
 
 
+# Round-top (quarter / half circle) doors. Unlike the style's shape
+# these are set on ONE door - a pair often has a round leaf and a
+# square one - so they are stamped per leaf on the front's opening
+# store, keyed by the leaf index the type code stamps on each front.
+ROUND_TOP_KEY = 'HB_DOOR_SHAPE'
+ROUND_TOP_HAND_KEY = 'HB_DOOR_SHAPE_HAND'
+ROUND_TOP_RADIUS_KEY = 'HB_DOOR_SHAPE_RADIUS'
+
+
+def opening_door_pivots(store):
+    """The door leaves of an opening store, as their PIVOTS, left to
+    right. One pivot per leaf is how the type code builds them, so
+    pivots count leaves even when a leaf has been made editable and
+    carries several loose part objects. Sorted on opening-local x, which
+    reads the same however the cabinet is turned in the room."""
+    if store is None:
+        return []
+    pivots = []
+    for obj in store.children_recursive:
+        if obj.get('hb_part_role') != 'DOOR' or obj.parent is None:
+            continue
+        if obj.parent not in pivots:
+            pivots.append(obj.parent)
+    return sorted(pivots, key=lambda p: p.location.x)
+
+
+def front_leaf_index(front_obj, store=None):
+    """Which leaf of its opening a front is (0 = leftmost). The type
+    code stamps this when it builds the front; a door built before the
+    stamp existed falls back to its pivot's position in the opening, so
+    an old file behaves without needing a recalc first."""
+    stamped = front_obj.get('HB_LEAF_INDEX')
+    if stamped is not None:
+        return int(stamped)
+    if store is None:
+        store = _front_frame_store(front_obj)
+    pivots = opening_door_pivots(store)
+    if front_obj.parent in pivots:
+        return pivots.index(front_obj.parent)
+    return 0
+
+
+def front_round_top_keys(front_obj, store=None):
+    """(shape, hand, radius) store keys for this front's leaf."""
+    i = front_leaf_index(front_obj, store)
+    return ('%s_%d' % (ROUND_TOP_KEY, i),
+            '%s_%d' % (ROUND_TOP_HAND_KEY, i),
+            '%s_%d' % (ROUND_TOP_RADIUS_KEY, i))
+
+
+def front_default_round_hand(front_obj, store=None):
+    """Default tall side for a round top: the door's pull side, the one
+    opposite its hinges. On a pair that puts the arcs' high points at
+    the meeting stiles, the way the catalog draws them; on a single
+    door it follows the opening's hinge side."""
+    if store is None:
+        store = _front_frame_store(front_obj)
+    if len(opening_door_pivots(store)) > 1:
+        return 'RIGHT' if front_leaf_index(front_obj, store) == 0 else 'LEFT'
+    op = getattr(store, 'face_frame_opening', None)
+    return 'LEFT' if getattr(op, 'hinge_side', 'LEFT') == 'RIGHT' else 'RIGHT'
+
+
+def front_round_top(front_obj, store=None):
+    """The round-top spec for a front (door_builder.round_top_layout),
+    or None when this door is a plain square-top. The mesh is built for
+    the standard Mirror Y front and flipped after when the cutpart is
+    unmirrored (the corner cabinets' right door), so the hand flips
+    with it."""
+    if front_obj is None:
+        return None
+    if store is None:
+        store = _front_frame_store(front_obj)
+    k_shape, k_hand, k_radius = front_round_top_keys(front_obj, store)
+    kind = store.get(k_shape)
+    if not kind or kind == 'SQUARE':
+        return None
+    hand = store.get(k_hand) or front_default_round_hand(front_obj, store)
+    try:
+        from ... import hb_types
+        if not hb_types.GeoNodeCutpart(front_obj).get_input('Mirror Y'):
+            hand = 'RIGHT' if hand == 'LEFT' else 'LEFT'
+    except Exception:
+        pass
+    return {'kind': kind, 'hand': hand,
+            'radius_mode': store.get(k_radius) or 'OUTSIDE'}
+
+
 def _clear_static_door(front_obj):
     """Undo a python-built door on a front: drop the HB_DOOR_FRAME /
     HB_STATIC_SLAB stamp and the static mesh, and re-enable the cutpart
@@ -4196,10 +4284,15 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Twin carries no curve -- it only forces the mid stile below,
         # so the rails stay at their catalog width. Mitered members
         # keep their own profile -- the catalog offers no shapes there.
+        # Round top (quarter / half circle): a per-door override, not
+        # a style trait. The arc owns the whole top, so it supersedes
+        # the style's arched-opening shape and needs no rail widening -
+        # the curved rail keeps its catalog width around the curve.
+        round_top = front_round_top(front_obj, frame_store)
         shape_k = None
         shape_rise_cap = 0.0
         _msw = 0.0
-        if member_sec is None:
+        if member_sec is None and round_top is None:
             shape_k = style_options.shape_kind(self.front_shape)
         if shape_k is not None:
             _msw = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
@@ -4374,6 +4467,11 @@ class Face_Frame_Door_Style(PropertyGroup):
                 frame_store,
                 door_builder.panel_row_count(info, front_width,
                                              front_length))
+            # A door too small for its arc builds square; the Change
+            # Door Shape dialog is where the user hears why.
+            if round_top is not None and door_builder.round_top_layout(
+                    info, front_width, front_length, round_top)[0] is None:
+                round_top = None
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
                                          front_thickness,
@@ -4383,6 +4481,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                                                 and shape_k.get('curve')
                                                 else None),
                                          glass_rows=glass_rows or None,
+                                         round_top=round_top,
                                          **secs)
             if glass_rows:
                 cells = door_builder.glass_cell_rects(

@@ -1356,13 +1356,239 @@ def _emit_shaped_rail(verts, faces, slots, part, thickness, curve_segs,
     return True
 
 
+# ---- Round-top doors (quarter / half circle) ------------------------
+#
+# Catalog quarter / half circle doors: the door OUTLINE is arced, not
+# just the panel opening. One circle drives the whole top -- the outline rides it,
+# the opening rides a concentric circle one rail width in, and the
+# stiles are cut where the outline crosses them. The rail comes out a
+# curved member of constant (perpendicular) width, the way it is cut
+# in the shop.
+#
+# The radius is derived from the door, never entered:
+#   QUARTER / OUTSIDE  centre on the tall stile's OUTER edge, R below
+#                      the top -- R = the door width, so the arc lands
+#                      tangent on the far outer edge.
+#   QUARTER / INSIDE   centre on the tall stile's INNER edge, so
+#                      R = width - that stile and the stile keeps a
+#                      square top.
+#   HALF               centre on the door centreline, R = width / 2.
+# In every case R is the horizontal run from the centre to the far
+# outer edge and the springline sits at z = height - R.
+
+ROUND_TOP_KINDS = ('QUARTER', 'HALF')
+ROUND_TOP_HANDS = ('LEFT', 'RIGHT')
+ROUND_TOP_RADII = ('OUTSIDE', 'INSIDE')
+ROUND_TOP_SEGS = 24
+
+# A stile counts as cut by the outline only when the arc eats more
+# than this into its square top; under that it keeps its rectangular
+# part, and with it the outer edge profile.
+_ROUND_CUT_TOL = inch(0.02)
+
+
+def _arc_z(x_c, z_c, r, x):
+    """Height of the circle's upper half at x, or None outside it."""
+    dx = x - x_c
+    if abs(dx) > r + 1e-9:
+        return None
+    return z_c + math.sqrt(max(r * r - dx * dx, 0.0))
+
+
+def _arc_span(x_c, z_c, r, x0, x1, segs=ROUND_TOP_SEGS):
+    """Upper half of the circle over its overlap with [x0, x1], as an
+    absolute (x, z) polyline in ascending x with the endpoints landing
+    exactly on the span. None when the circle doesn't reach it."""
+    lo = max(x0, x_c - r)
+    hi = min(x1, x_c + r)
+    if hi - lo <= 1e-9:
+        return None
+    a_lo = math.acos(max(min((lo - x_c) / r, 1.0), -1.0))
+    a_hi = math.acos(max(min((hi - x_c) / r, 1.0), -1.0))
+    pts = [(x_c + r * math.cos(a_lo + (a_hi - a_lo) * i / segs),
+            z_c + r * math.sin(a_lo + (a_hi - a_lo) * i / segs))
+           for i in range(segs + 1)]
+    pts[0] = (lo, _arc_z(x_c, z_c, r, lo))
+    pts[-1] = (hi, _arc_z(x_c, z_c, r, hi))
+    return pts
+
+
+def _interp_pts(pts, x):
+    """Height of an ascending-x polyline at x, or None off its ends."""
+    if x < pts[0][0] - 1e-9 or x > pts[-1][0] + 1e-9:
+        return None
+    for i in range(len(pts) - 1):
+        x0, z0 = pts[i]
+        x1, z1 = pts[i + 1]
+        if x0 - 1e-9 <= x <= x1 + 1e-9:
+            if x1 - x0 <= 1e-12:
+                return z0
+            return z0 + (z1 - z0) * (x - x0) / (x1 - x0)
+    return pts[-1][1]
+
+
+def round_top_layout(info, width, height, spec):
+    """Round-top geometry for a door, as (geom, None) or (None, reason).
+
+    ``spec`` is dict(kind='QUARTER'|'HALF', hand='LEFT'|'RIGHT',
+    radius_mode='OUTSIDE'|'INSIDE'); hand names the TALL side and is
+    ignored for HALF. The reason string is written for the user -- the
+    caller reports it and builds the door square.
+
+    geom keys:
+      'outline'  outline arc, ascending x (the curved silhouette)
+      'opening'  concentric opening arc clipped / padded to the panel
+                 field, ascending x
+      'band'     the outline over the panel field (the rail's back)
+      'z_spring' springline height (height - R)
+      'x_open'   (left, right) panel-field edges the rail lands on
+      'cuts'     per stile key, the outline segment crossing it when
+                 the arc cuts that stile, else None
+    """
+    kind = (spec.get('kind') or '').upper()
+    if kind not in ROUND_TOP_KINDS:
+        return None, "Unknown door shape"
+    if info.get('door_type') == 'SLAB':
+        return None, "A slab door has no rails to curve"
+    hand = (spec.get('hand') or 'RIGHT').upper()
+    mode = (spec.get('radius_mode') or 'OUTSIDE').upper()
+    lsw, rsw, msw, trw, brw, mrw = _frame_widths(info)
+    x_open_l, x_open_r = lsw, width - rsw
+    if x_open_r - x_open_l <= inch(1.0):
+        return None, "Door is too narrow for its stiles"
+
+    if kind == 'HALF':
+        x_c = width / 2.0
+        r = width / 2.0
+        ox0, ox1 = 0.0, width
+    elif hand == 'LEFT':
+        x_c = 0.0 if mode == 'OUTSIDE' else lsw
+        r = width - x_c
+        ox0, ox1 = x_c, width
+    else:
+        x_c = width if mode == 'OUTSIDE' else width - rsw
+        r = x_c
+        ox0, ox1 = 0.0, x_c
+    if r <= trw + inch(0.25):
+        return None, "Door is too narrow for a curved rail"
+    z_spring = height - r
+
+    # The springline has to clear everything the curve does not
+    # replace -- the bottom rail, or a mid rail on a split door -- and
+    # still leave a panel worth cutting.
+    below = brw
+    for part in evaluate_layout(info, width, height):
+        if part['key'] == 'mid_rail':
+            below = max(below, part['z1'])
+    if z_spring < below + inch(1.0):
+        need = below + inch(1.0) + r
+        return None, ('Door is too short for this shape: %.2f" wide '
+                      'needs at least %.2f" tall'
+                      % (width / inch(1.0), need / inch(1.0)))
+
+    outline = _arc_span(x_c, z_spring, r, ox0, ox1)
+    band = _arc_span(x_c, z_spring, r,
+                     max(ox0, x_open_l), min(ox1, x_open_r))
+    opening = _arc_span(x_c, z_spring, r - trw,
+                        max(ox0, x_open_l), min(ox1, x_open_r))
+    if not outline or not band or not opening:
+        return None, "Door is too small for this shape"
+    # A stile wider or narrower than the rail leaves the opening arc
+    # short of the panel field: run the rail's inner edge flat out to
+    # the field edge.
+    if opening[0][0] > x_open_l + 1e-9:
+        opening.insert(0, (x_open_l, opening[0][1]))
+    if opening[-1][0] < x_open_r - 1e-9:
+        opening.append((x_open_r, opening[-1][1]))
+    if (opening[0][1] >= band[0][1] - 1e-9
+            or opening[-1][1] >= band[-1][1] - 1e-9):
+        return None, "Door is too small for this shape"
+
+    cuts = {}
+    for key, (sx0, sx1) in (('left_stile', (0.0, lsw)),
+                            ('right_stile', (width - rsw, width))):
+        seg = _arc_span(x_c, z_spring, r,
+                        max(sx0, ox0), min(sx1, ox1))
+        if seg is not None and min(p[1] for p in seg) < height - _ROUND_CUT_TOL:
+            cuts[key] = seg
+        else:
+            cuts[key] = None
+    return dict(outline=outline, opening=opening, band=band,
+                z_spring=z_spring, x_open=(x_open_l, x_open_r),
+                cuts=cuts), None
+
+
+def _apply_round_top(parts, geom):
+    """Rework a square door's part rects for a round top: cut stiles
+    become polygons, the straight top rail becomes the curved band, and
+    the top row of cells (with any mid stile in it) follows the opening
+    arc. Returns (parts, top_pts_by_part_id)."""
+    opening = geom['opening']
+    x_open_l, x_open_r = geom['x_open']
+    out = []
+    for part in parts:
+        if part['key'] == 'top_rail':
+            continue
+        seg = geom['cuts'].get(part['key'])
+        if seg is not None and part['key'] in ('left_stile', 'right_stile'):
+            poly = ([(part['x0'], part['z0']), (part['x1'], part['z0'])]
+                    + list(reversed(seg)))
+            out.append(dict(part, z1=max(p[1] for p in seg),
+                            round_poly=poly))
+            continue
+        out.append(dict(part))
+    # The curved rail as its own part: the outline across the panel
+    # field, down the field edge and back along the opening arc.
+    band_poly = list(geom['band']) + list(reversed(opening))
+    zs = [p[1] for p in band_poly]
+    out.append(dict(key='top_rail', name="Top Rail",
+                    x=(0.0, x_open_l), w=(0.0, x_open_r - x_open_l),
+                    z=(0.0, min(zs)), h=(0.0, max(zs) - min(zs)),
+                    thickness=None, y_inset=0.0,
+                    x0=x_open_l, x1=x_open_r, z0=min(zs), z1=max(zs),
+                    round_poly=band_poly))
+    # Top row: cells take the arc as their top edge; a mid stile in the
+    # row stops under the lowest point of the arc across its width.
+    cells = [p for p in out if p['key'] in ('panel', 'glass')
+             and p['x1'] > p['x0'] and p['z1'] > p['z0']]
+    top_pts = {}
+    if not cells:
+        return out, top_pts
+    z_top = max(p['z1'] for p in cells)
+    for part in out:
+        if part.get('round_poly') is not None:
+            continue
+        if part['z1'] < z_top - 1e-6 or part['x1'] <= part['x0']:
+            continue
+        if part['key'] not in ('panel', 'glass', 'mid_stile'):
+            continue
+        span = [p for p in opening
+                if part['x0'] - 1e-9 <= p[0] <= part['x1'] + 1e-9]
+        for x_edge in (part['x0'], part['x1']):
+            z_edge = _interp_pts(opening, x_edge)
+            if z_edge is None:
+                continue
+            if not span or x_edge < span[0][0] - 1e-9:
+                span.insert(0, (x_edge, z_edge))
+            elif x_edge > span[-1][0] + 1e-9:
+                span.append((x_edge, z_edge))
+        if len(span) < 2:
+            continue
+        if part['key'] == 'mid_stile':
+            part['z1'] = min(p[1] for p in span)
+        else:
+            part['z1'] = max(p[1] for p in span)
+            top_pts[id(part)] = span
+    return out, top_pts
+
+
 def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     outer_section=None, inner_section=None,
                     panel_section=None, inner_rail_section=None,
                     inner_stile_section=None, member_section=None,
                     applied_section=None, applied_scope='ALL',
                     panel_grooves=None, mullion=None, shape=None,
-                    glass_rows=None):
+                    glass_rows=None, round_top=None):
     """Replace ``mesh``'s geometry with the door built as static boxes
     in front-cutpart local space: the door height runs along +X from
     the bottom edge at x=0, the width along -Y (a front cutpart with
@@ -1399,6 +1625,15 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     mullion bars clip under it. The caller widens the shaped rails by
     the peak rise so the catalog rail width survives at the crest.
 
+    ``round_top`` (dict(kind='QUARTER'|'HALF', hand=, radius_mode=),
+    see round_top_layout) arcs the door's OUTLINE as well as its
+    opening -- the catalog quarter / half circle doors. It replaces
+    ``shape``: the top rail becomes a curved band between two
+    concentric arcs, the stiles the arc crosses are cut to it, and the
+    top row of cells follows the opening arc. Members cut by the arc
+    build with square edges (the outer edge profile stays on the
+    straight members). A door too small for the arc builds square.
+
     ``glass_rows`` (set of panel-row indices, 0 = TOP row) turns those
     rows' panels into glass lites (thin, at the back of the frame,
     material slot 3) regardless of the style's panel kind -- a split
@@ -1422,6 +1657,17 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     parts = evaluate_layout(info, width, height)
     if glass_rows and info.get('door_type') != 'SLAB':
         parts = _apply_glass_rows(parts, thickness, glass_rows)
+    # Round top (quarter / half circle): the arc owns the door's whole
+    # top, so it supersedes an arched-opening shape. A door the arc
+    # doesn't fit keeps its square parts.
+    round_pts = {}
+    if (round_top is not None and not mitered
+            and info.get('door_type') != 'SLAB'):
+        round_geom, _reason = round_top_layout(info, width, height,
+                                               round_top)
+        if round_geom is not None:
+            parts, round_pts = _apply_round_top(parts, round_geom)
+            shape = None
     # Shaped (arched) top / bottom opening edges: one curve per cell in
     # the top row (and bottom row for the Double shapes), the rails'
     # opening edges following the same polylines. shape['rise'] caps
@@ -1462,6 +1708,7 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                     pts = [(p['x0'] + x, p['z0'] - r) for (x, r) in c]
                     shaped_bottom[id(p)] = pts
                     bottom_rail_segs.append(pts)
+    shaped_top.update(round_pts)
     cells = []
     for part in parts:
         if mitered and part['key'] not in ('panel', 'glass'):
@@ -1472,6 +1719,15 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
             cells.append(part)
         t_pts = shaped_top.get(id(part))
         b_pts = shaped_bottom.get(id(part))
+        # Round-top members are polygons, not boxes: the curved rail
+        # and any stile the outline arc cuts.
+        r_poly = part.get('round_poly')
+        if r_poly is not None:
+            r_th = thickness if part['thickness'] is None else part['thickness']
+            r_zf = thickness - part['y_inset']
+            _emit_prism(verts, faces, face_slots, r_poly, 0.0, 0.0,
+                        r_zf, r_zf - r_th, _PART_MAT_SLOT[part['key']])
+            continue
         if (part['key'] == 'panel' and panel_section is not None
                 and _emit_raised_panel(verts, faces, face_slots, part,
                                        thickness, panel_section,
