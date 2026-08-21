@@ -3283,20 +3283,32 @@ class FaceFrameCabinet(GeoNodeCage):
                              door=obj))
         return arcs
 
+    # How far a member's bottom may sit clear of the door's top and
+    # still count as the member above it. An overlay door reaches into
+    # the member's band (negative clearance) and an inset one stops a
+    # reveal short, so the gate only has to be wider than a reveal --
+    # wide enough and a door with nothing over it would reach up and
+    # grab a rail two openings away.
+    _ARCH_MEMBER_GAP = inch(1.0)
+
     def _arch_frame_member(self, arc, members):
-        """The frame member sitting above a door arc: the one spanning
-        the door's width whose band the door's top edge reaches into.
-        None when the door has no member above it (a door running to the
-        top of a frameless opening)."""
+        """The frame member sitting above a door arc: the lowest one
+        spanning the door that reaches above the door's top. Inset doors
+        sit a reveal BELOW the member, overlay doors lap up into it, so
+        this takes the nearest member above rather than the one the
+        door's top lands inside. None when the door has nothing over it
+        (a door running to the top of a frameless opening)."""
         x_mid = (arc['x_lo'] + arc['x_hi']) / 2.0
         best = None
         for obj, box in members:
             x0, x1, _y0, _y1, z0, z1 = box
             if x_mid < x0 - 1e-6 or x_mid > x1 + 1e-6:
                 continue
-            if arc['door_top'] < z0 - 1e-6 or arc['door_top'] > z1 + 1e-6:
+            if z1 < arc['door_top'] - 1e-6:
                 continue
-            if best is None or box[4] > best[1][4]:
+            if z0 - arc['door_top'] > self._ARCH_MEMBER_GAP:
+                continue
+            if best is None or z0 < best[1][4]:
                 best = (obj, box)
         return best
 
