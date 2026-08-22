@@ -276,19 +276,24 @@ DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
 # library had them and what gets measured on the floor, so it is kept.
 DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
 DISTANCE_BETWEEN_PULLS = inch(6.0)
-# Where a door's pull sits on it. Three conventions, each measured from
-# somewhere different: Base holds the pull down from the top edge of the
-# door, Upper holds it up from the bottom edge, and Tall holds it at a
-# height off the floor whatever the door is doing. Auto reads the door's
-# own place in the run and picks the one that suits it, which is what an
-# opening starts on; naming one holds the door to it.
+# Where a door's pull sits on it. Four conventions, each measured from
+# somewhere different: From The Bottom holds the pull up from the bottom
+# edge of the door, Base holds it down from the top edge, Tall holds it
+# at a height off the floor whatever the door is doing, and Auto reads
+# the door's own place in the run and picks between the other three.
+# An opening starts on FROM THE BOTTOM, so every door in a room carries
+# its pull in the same place whatever its size and whatever it is made
+# of: a slab and a five-piece door beside each other read as a set, and
+# the pull clears the rail-to-stile miter on the five-piece. Naming
+# another convention holds that one opening's doors to it.
 DOOR_PULL_LOCATION_ITEMS = [
-    ('AUTO', "Auto",
-     "Pick the convention from where the door sits in the run"),
+    ('UPPER', "From The Bottom",
+     "Hold the pull up from the bottom edge of the door - the same "
+     "place on every door whatever its size"),
     ('BASE', "Base", "Hold the pull down from the top edge of the door"),
     ('TALL', "Tall", "Hold the pull at the tall height off the floor"),
-    ('UPPER', "Upper",
-     "Hold the pull up from the bottom edge of the door"),
+    ('AUTO', "Auto",
+     "Pick the convention from where the door sits in the run"),
 ]
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front

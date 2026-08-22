@@ -1260,9 +1260,10 @@ class Closet_Opening_Props(PropertyGroup):
     door_pull_location: EnumProperty(
         name="Door Pull Location",
         description="Which convention holds the pulls on this opening's "
-                    "doors. Auto reads it off where the door sits",
+                    "doors. Every door is held up from its bottom edge "
+                    "unless another convention is named",
         items=const.DOOR_PULL_LOCATION_ITEMS,
-        default='AUTO')  # type: ignore
+        default='UPPER')  # type: ignore
     double_pull_on_front: BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "
@@ -1544,23 +1545,27 @@ class Closets_Scene_Props(PropertyGroup):
         update=pulls_closets.update_room)  # type: ignore
     pull_horizontal_offset: FloatProperty(
         name="From Edge",
-        description="Door edge to pull center",
+        description="Door edge to pull center, on every door - slab and "
+                    "five-piece alike",
+        default=units.inch(1.5), unit='LENGTH',
+        update=pulls_closets.update_room)  # type: ignore
+    pull_vertical_location_upper: FloatProperty(
+        name="From The Bottom",
+        description="Bottom of the door to the bottom of the pull. Every "
+                    "door sits here unless its opening names Base or Tall",
         default=units.inch(2.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_base: FloatProperty(
         name="Base",
-        description="Top of base door to top of pull",
+        description="Top of base door to top of pull. Only doors whose "
+                    "opening names Base",
         default=units.inch(1.5), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_tall: FloatProperty(
         name="Tall",
-        description="Pull height off the floor on tall doors",
+        description="Pull height off the floor. Only doors whose opening "
+                    "names Tall",
         default=units.inch(45.0), unit='LENGTH',
-        update=pulls_closets.update_room)  # type: ignore
-    pull_vertical_location_upper: FloatProperty(
-        name="Upper",
-        description="Bottom of upper door to bottom of pull",
-        default=units.inch(1.5), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     center_pulls_on_drawer_front: BoolProperty(
         name="Center Pulls on Drawer Fronts",
@@ -1826,9 +1831,13 @@ class Closets_Scene_Props(PropertyGroup):
         col.separator()
         col.label(text="Position:")
         col.prop(self, 'pull_horizontal_offset', text="From Edge")
+        col.prop(self, 'pull_vertical_location_upper',
+                 text="Door From Bottom")
+        # The two below reach only the openings that have named Base or
+        # Tall in their own properties; every other door follows the
+        # figure above.
         col.prop(self, 'pull_vertical_location_base', text="Base Vertical")
         col.prop(self, 'pull_vertical_location_tall', text="Tall Vertical")
-        col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front',
                  text="Center Drawer Pulls")
         sub = col.row()

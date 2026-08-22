@@ -6398,9 +6398,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     door_pull_location: bpy.props.EnumProperty(
         name="Door Pull Location",
         description="Which convention holds the pulls on this opening's "
-                    "doors. Auto reads it off where the door sits",
+                    "doors. Every door is held up from its bottom edge "
+                    "unless another convention is named",
         items=const.DOOR_PULL_LOCATION_ITEMS,
-        default='AUTO')  # type: ignore
+        default='UPPER')  # type: ignore
     double_pull_on_front: bpy.props.BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "

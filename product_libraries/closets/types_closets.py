@@ -23,7 +23,6 @@ import bpy
 import math
 from contextlib import contextmanager
 
-from ... import hb_utils
 from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
                          GeoNodeDrawerBox, CabinetPartModifier)
 from mathutils import Matrix, Vector
@@ -2371,9 +2370,11 @@ class ClosetStarter(GeoNodeCage):
         using the face_frame pull assets and scene defaults (shared
         hardware across libraries). Closet front local space: X = width
         across, Y = height up, front face at Z = thickness. Doors get a
-        vertical bar on the latch edge; drawers a centered horizontal
-        bar; hampers a horizontal bar near the top. BACK-side island
-        fronts are pending (mirrored mounting).
+        vertical bar a fixed distance in from the latch edge and up from
+        the bottom edge - the same place on every door in a room,
+        whatever its size and whether it is slab or five-piece; drawers
+        a centered horizontal bar; hampers a horizontal bar near the
+        top. BACK-side island fronts are pending (mirrored mounting).
 
         An opening can say how the pulls on its own fronts sit, or that
         it wants none at all; anything it has not taken over follows the
@@ -2403,8 +2404,8 @@ class ClosetStarter(GeoNodeCage):
         v_tall = getattr(cp, 'pull_vertical_location_tall',
                          units.inch(45.0))
         v_upper = getattr(cp, 'pull_vertical_location_upper',
-                          units.inch(1.5))
-        h_edge = getattr(cp, 'pull_horizontal_offset', units.inch(2.0))
+                          units.inch(2.0))
+        h_edge = getattr(cp, 'pull_horizontal_offset', units.inch(1.5))
         # Drawer-front settings: the opening's own where it has taken
         # them over, the room's otherwise. A pair of pulls and their
         # spacing are the opening's alone - a whole run rarely wants
@@ -2451,38 +2452,33 @@ class ClosetStarter(GeoNodeCage):
             rot = (math.radians(-90.0), 0.0, 0.0)
         else:
             hinge = front.get('hb_hinge', 'LEFT')
-            # 5-piece doors center the pull on the latch stile; slab
-            # doors keep the fixed from-edge offset.
-            stile_w = None
-            mod = next((m for m in front.modifiers
-                        if m.type == 'NODES' and 'Door Style' in m.name),
-                       None)
-            if mod is not None and mod.node_group is not None:
-                for item in mod.node_group.interface.items_tree:
-                    if (item.item_type == 'SOCKET'
-                            and item.in_out == 'INPUT'
-                            and item.name == 'Left Stile Width'):
-                        stile_w = hb_utils.try_get_gn_input(mod, item.identifier)
-                        break
-            offset = (stile_w / 2.0) if stile_w else h_edge
+            # The same distance in from the latch edge on every door,
+            # slab or five-piece. Five-piece doors used to center the
+            # pull on the latch stile instead, which put a slab door and
+            # a five-piece door beside each other at different distances
+            # from their edges and moved with the stile width. One
+            # figure holds them together, and set in far enough it sits
+            # on the stile clear of the rail miter.
+            offset = h_edge
             if hinge == 'LEFT':
                 x = width - offset
             else:
                 x = offset
-            # Base / Tall / Upper, floor-referenced. On Auto the rule
-            # is read off the door: hold the pull at the TALL height
-            # off the floor; when the door bottom is already above that
-            # height use the UPPER convention (near the bottom edge);
-            # when the tall height would land past the door top use the
-            # BASE convention (near the top edge). Naming one instead
-            # holds the door to it, clamped to stay on the front.
+            # Every door is held up from its own bottom edge, so a
+            # short door and a tall one in the same room carry the pull
+            # at the same place. An opening can name one of the older
+            # conventions instead: BASE holds the pull down from the top
+            # edge, TALL holds it at a height off the floor whatever the
+            # door is doing, and AUTO reads the door's place in the run
+            # and picks between the three. All of them are clamped to
+            # stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
             if length_up:
                 # A length-up front carries its origin at the top
                 # edge, so the bottom is a door height below it.
                 bottom_w -= height
             tall_target = v_tall
-            rule = (op.door_pull_location if op is not None else 'AUTO')
+            rule = (op.door_pull_location if op is not None else 'UPPER')
             base_y = height - v_base - half
             if rule == 'BASE':
                 y = base_y
