@@ -3466,6 +3466,53 @@ def front_default_round_hand(front_obj, store=None):
     return 'LEFT' if getattr(op, 'hinge_side', 'LEFT') == 'RIGHT' else 'RIGHT'
 
 
+def front_cabinet_style(front_obj):
+    """The cabinet style governing a front -- its cabinet root's
+    STYLE_NAME resolved against the scene's style list -- or None.
+    Module-level twin of Face_Frame_Door_Style.get_parent_cabinet_style,
+    for the front helpers that have no style instance in hand."""
+    cur = front_obj
+    while cur is not None and not cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+        cur = cur.parent
+    if cur is None:
+        return None
+    name = cur.get('STYLE_NAME')
+    if not name:
+        return None
+    ff = get_style_props()
+    if ff is None:
+        return None
+    for cs in ff.cabinet_styles:
+        if cs.name == name:
+            return cs
+    return None
+
+
+def round_top_frame_block(front_obj):
+    """Why this cabinet's face frame can't carry a curved opening, or
+    None.
+
+    A beaded inset frame runs a bead around every opening, and the bead
+    can't be milled around an arc -- so the catalog does not offer a
+    curved face frame there. An inset door needs its opening to follow
+    its top, which leaves the round top itself unavailable. Read at
+    BUILD time (front_round_top), not just in the dialog, so a cabinet
+    restyled onto a beaded overlay squares its doors instead of drawing
+    something the shop won't make. The per-leaf keys stay put, so
+    moving back off the beaded overlay brings the curves back.
+    """
+    cs = front_cabinet_style(front_obj)
+    if cs is None:
+        return None
+    try:
+        beaded = cs.frame_profile_kind() == 'BEADED'
+    except Exception:
+        return None
+    if beaded:
+        return "A beaded inset face frame can't be curved"
+    return None
+
+
 def front_round_top(front_obj, store=None):
     """The round-top spec for a front (door_builder.round_top_layout),
     or None when this door is a plain square-top. The mesh is built for
@@ -3479,6 +3526,8 @@ def front_round_top(front_obj, store=None):
     k_shape, k_hand, k_radius = front_round_top_keys(front_obj, store)
     kind = store.get(k_shape)
     if not kind or kind == 'SQUARE':
+        return None
+    if round_top_frame_block(front_obj):
         return None
     hand = store.get(k_hand) or front_default_round_hand(front_obj, store)
     try:

@@ -2085,13 +2085,16 @@ def door_shape_available(obj):
     """True when a round top can be cut into this door: a 5-piece door
     (not a slab), on a series whose frame the curve can follow - not a
     mitered one, where the member profile IS the frame, and not one
-    carrying applied moulding - and hung in an opening that can
-    remember the choice."""
+    carrying applied moulding - under a face frame that can be curved
+    at all, and hung in an opening that can remember the choice."""
     if obj is None or obj.get('hb_part_role') != types_face_frame.PART_ROLE_DOOR:
         return False
     if not has_door_style_modifier(obj):
         return False
     if _frame_store(obj) is obj:
+        return False
+    from .. import props_hb_face_frame as _props
+    if _props.round_top_frame_block(obj):
         return False
     ds = _front_door_style(obj)
     if ds is None or getattr(ds, 'door_type', '5_PIECE') == 'SLAB':
